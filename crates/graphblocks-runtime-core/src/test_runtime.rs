@@ -6,7 +6,7 @@ use crate::cancellation::CancellationToken;
 use crate::journal::{ExecutionJournal, JournalError, JournalMetadata};
 use crate::outcome::{BlockError, Outcome};
 use crate::readiness::PortRef;
-use crate::retry::{RetryDecision, RetryPolicy, RetryRequest};
+use crate::retry::{EffectKind, RetryDecision, RetryPolicy, RetryRequest};
 use crate::run_store::{InMemoryRunStore, RunStatus, RunStoreError};
 use crate::scheduler::{
     LocalScheduler, NodeExecutionState, ScheduledNode, SchedulerError, StartedNode,
@@ -14,6 +14,33 @@ use crate::scheduler::{
 
 pub trait NodeExecutor {
     fn execute(&mut self, node: StartedNode) -> Result<Vec<(PortRef, Outcome<Value>)>, BlockError>;
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NodeRetryBoundary {
+    policy: RetryPolicy,
+    effect: Option<EffectKind>,
+    idempotency_key: Option<String>,
+}
+
+impl NodeRetryBoundary {
+    pub fn new(policy: RetryPolicy) -> Self {
+        Self {
+            policy,
+            effect: None,
+            idempotency_key: None,
+        }
+    }
+
+    pub fn with_effect(mut self, effect: EffectKind) -> Self {
+        self.effect = Some(effect);
+        self
+    }
+
+    pub fn with_idempotency_key(mut self, key: impl Into<String>) -> Self {
+        self.idempotency_key = Some(key.into());
+        self
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -59,7 +86,7 @@ impl From<RunStoreError> for TestRuntimeError {
 pub struct InProcessTestRuntime {
     scheduler: LocalScheduler,
     journal: ExecutionJournal,
-    retry_policies: BTreeMap<String, RetryPolicy>,
+    retry_boundaries: BTreeMap<String, NodeRetryBoundary>,
 }
 
 impl InProcessTestRuntime {
@@ -70,7 +97,7 @@ impl InProcessTestRuntime {
         Ok(Self {
             scheduler: LocalScheduler::new(nodes)?,
             journal: ExecutionJournal::new(run_id),
-            retry_policies: BTreeMap::new(),
+            retry_boundaries: BTreeMap::new(),
         })
     }
 
@@ -79,7 +106,17 @@ impl InProcessTestRuntime {
     }
 
     pub fn with_retry_policy(mut self, node_id: impl Into<String>, policy: RetryPolicy) -> Self {
-        self.retry_policies.insert(node_id.into(), policy);
+        self.retry_boundaries
+            .insert(node_id.into(), NodeRetryBoundary::new(policy));
+        self
+    }
+
+    pub fn with_retry_boundary(
+        mut self,
+        node_id: impl Into<String>,
+        boundary: NodeRetryBoundary,
+    ) -> Self {
+        self.retry_boundaries.insert(node_id.into(), boundary);
         self
     }
 
@@ -191,8 +228,16 @@ impl InProcessTestRuntime {
                                 journal: self.journal.clone(),
                             });
                         }
-                        if let Some(policy) = self.retry_policies.get(&node_id) {
-                            match policy.decide(&RetryRequest::new(attempt, error.clone())) {
+                        if let Some(boundary) = self.retry_boundaries.get(&node_id) {
+                            let mut request = RetryRequest::new(attempt, error.clone());
+                            if let Some(effect) = boundary.effect {
+                                request = request.with_effect(effect);
+                            }
+                            if let Some(idempotency_key) = &boundary.idempotency_key {
+                                request = request.with_idempotency_key(idempotency_key.clone());
+                            }
+
+                            match boundary.policy.decide(&request) {
                                 RetryDecision::Retry { delay_ms } => {
                                     self.journal.append_with_metadata(
                                         "node_retry",

@@ -5,10 +5,12 @@ use graphblocks_runtime_core::outcome::{
     BlockError, CancelCode, CancelReason, ErrorCategory, Outcome,
 };
 use graphblocks_runtime_core::readiness::{InputDependency, PortRef, ResolvedInput};
-use graphblocks_runtime_core::retry::RetryPolicy;
+use graphblocks_runtime_core::retry::{EffectKind, RetryPolicy};
 use graphblocks_runtime_core::run_store::{InMemoryRunStore, RunStatus};
 use graphblocks_runtime_core::scheduler::{ScheduledNode, StartedNode};
-use graphblocks_runtime_core::test_runtime::{InProcessTestRuntime, NodeExecutor, TestRunStatus};
+use graphblocks_runtime_core::test_runtime::{
+    InProcessTestRuntime, NodeExecutor, NodeRetryBoundary, TestRunStatus,
+};
 use serde_json::{Value, json};
 
 #[derive(Default)]
@@ -492,5 +494,92 @@ fn in_process_test_runtime_cancels_before_retrying_failed_attempt() {
             .map(|record| record.kind.as_str())
             .collect::<Vec<_>>(),
         vec!["run_started", "node_started", "run_cancelled"],
+    );
+}
+
+struct ExternalWriteFlakyExecutor {
+    attempts: usize,
+}
+
+impl NodeExecutor for ExternalWriteFlakyExecutor {
+    fn execute(
+        &mut self,
+        _node: StartedNode,
+    ) -> Result<Vec<(PortRef, Outcome<Value>)>, BlockError> {
+        self.attempts += 1;
+        if self.attempts == 1 {
+            return Err(BlockError::new(
+                "tool.transient",
+                ErrorCategory::Transient,
+                "temporary tool failure",
+                true,
+            ));
+        }
+        Ok(vec![(
+            PortRef::new("tool", "result"),
+            Outcome::Value(json!("ok")),
+        )])
+    }
+}
+
+#[test]
+fn in_process_test_runtime_rejects_effect_retry_without_idempotency_key() {
+    let policy = RetryPolicy::new(3).retry_on([ErrorCategory::Transient]);
+    let mut runtime = InProcessTestRuntime::new("run-000001", [ScheduledNode::new("tool", [])])
+        .expect("runtime should be created")
+        .with_retry_boundary(
+            "tool",
+            NodeRetryBoundary::new(policy).with_effect(EffectKind::ExternalWrite),
+        );
+    let mut executor = ExternalWriteFlakyExecutor { attempts: 0 };
+
+    let result = runtime.run(&mut executor).expect("runtime should run");
+
+    assert_eq!(result.status, TestRunStatus::Failed);
+    assert_eq!(executor.attempts, 1);
+    assert_eq!(
+        result
+            .journal
+            .records()
+            .last()
+            .and_then(|record| record.payload.as_ref())
+            .and_then(|payload| payload.get("retryStopReason"))
+            .and_then(Value::as_str),
+        Some("missing_idempotency_key"),
+    );
+}
+
+#[test]
+fn in_process_test_runtime_retries_effect_with_idempotency_key() {
+    let policy = RetryPolicy::new(3).retry_on([ErrorCategory::Transient]);
+    let mut runtime = InProcessTestRuntime::new("run-000001", [ScheduledNode::new("tool", [])])
+        .expect("runtime should be created")
+        .with_retry_boundary(
+            "tool",
+            NodeRetryBoundary::new(policy)
+                .with_effect(EffectKind::ExternalWrite)
+                .with_idempotency_key("tool-call-1"),
+        );
+    let mut executor = ExternalWriteFlakyExecutor { attempts: 0 };
+
+    let result = runtime.run(&mut executor).expect("runtime should run");
+
+    assert_eq!(result.status, TestRunStatus::Succeeded);
+    assert_eq!(executor.attempts, 2);
+    assert_eq!(
+        result
+            .journal
+            .records()
+            .iter()
+            .map(|record| record.kind.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "run_started",
+            "node_started",
+            "node_retry",
+            "node_started",
+            "node_completed",
+            "run_succeeded",
+        ],
     );
 }
