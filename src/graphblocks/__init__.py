@@ -5,6 +5,18 @@ from __future__ import annotations
 from .canonical import canonical_dumps, canonical_hash, normalize_graph
 from .compiler import Plan, compile_graph
 from .diagnostics import Diagnostic, DiagnosticSet
+from .documents import (
+    ArtifactRef,
+    AssetRevision,
+    DocumentChunk,
+    DocumentElement,
+    DocumentSpan,
+    ParsedDocument,
+    SourceAsset,
+    SourceLocation,
+    SourceRef,
+    create_local_text_revision,
+)
 from .loader import load_documents
 from .leases import InMemoryLeasePool, Lease, LeaseUnavailableError
 from .migration import migrate_document
@@ -40,10 +52,19 @@ __all__ = [
     "Plan",
     "BlockCatalog",
     "BlockDescriptor",
+    "ArtifactRef",
+    "AssetRevision",
+    "DocumentChunk",
+    "DocumentElement",
+    "DocumentSpan",
     "PluginManifest",
     "PluginRegistry",
     "PortDescriptor",
+    "ParsedDocument",
     "ResourceSlotDescriptor",
+    "SourceAsset",
+    "SourceLocation",
+    "SourceRef",
     "CancellationToken",
     "ExecutionJournal",
     "InProcessRuntime",
@@ -62,6 +83,7 @@ __all__ = [
     "canonical_dumps",
     "canonical_hash",
     "compile_graph",
+    "create_local_text_revision",
     "discover_plugins",
     "load_package_catalog",
     "load_documents",
