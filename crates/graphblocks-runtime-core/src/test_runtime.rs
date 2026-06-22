@@ -232,10 +232,44 @@ impl InProcessTestRuntime {
     where
         E: NodeExecutor,
     {
+        self.run_with_store_state(store, graph_hash, inputs, None, executor)
+    }
+
+    pub fn run_with_store_and_cancellation<E>(
+        &mut self,
+        store: &mut InMemoryRunStore,
+        graph_hash: impl Into<String>,
+        inputs: Value,
+        cancellation_token: &CancellationToken,
+        executor: &mut E,
+    ) -> Result<TestRunResult, TestRuntimeError>
+    where
+        E: NodeExecutor,
+    {
+        self.run_with_store_state(
+            store,
+            graph_hash,
+            inputs,
+            Some(cancellation_token),
+            executor,
+        )
+    }
+
+    fn run_with_store_state<E>(
+        &mut self,
+        store: &mut InMemoryRunStore,
+        graph_hash: impl Into<String>,
+        inputs: Value,
+        cancellation_token: Option<&CancellationToken>,
+        executor: &mut E,
+    ) -> Result<TestRunResult, TestRuntimeError>
+    where
+        E: NodeExecutor,
+    {
         let run = store.create_run(graph_hash, inputs);
         store.set_status(&run.run_id, RunStatus::Running)?;
         self.journal = ExecutionJournal::new(run.run_id);
-        let result = self.run(executor)?;
+        let result = self.run_with_cancellation_state(cancellation_token, executor)?;
         let status = match result.status {
             TestRunStatus::Succeeded => RunStatus::Completed,
             TestRunStatus::Failed => RunStatus::Failed,

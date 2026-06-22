@@ -318,3 +318,34 @@ fn in_process_test_runtime_stops_before_dependent_work_after_cancellation() {
         ],
     );
 }
+
+#[test]
+fn in_process_test_runtime_finalizes_store_record_on_cancellation() {
+    let token = CancellationToken::new(CancellationScope::Run, CancellationGuarantee::Cooperative);
+    token.cancel(CancelReason::new(CancelCode::UserCancel));
+    let mut runtime = InProcessTestRuntime::new("placeholder", [ScheduledNode::new("render", [])])
+        .expect("runtime should be created");
+    let mut executor = RecordingExecutor::default();
+    let mut store = InMemoryRunStore::new();
+
+    let result = runtime
+        .run_with_store_and_cancellation(
+            &mut store,
+            "sha256:graph",
+            json!({"message": "stop"}),
+            &token,
+            &mut executor,
+        )
+        .expect("runtime should run");
+
+    assert_eq!(result.run_id, "run-000001");
+    assert_eq!(result.status, TestRunStatus::Cancelled);
+    assert!(executor.starts.is_empty());
+    assert_eq!(
+        store
+            .get_run("run-000001")
+            .expect("run should be recorded")
+            .status,
+        RunStatus::Cancelled,
+    );
+}
