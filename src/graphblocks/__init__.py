@@ -33,6 +33,14 @@ from .conversation import (
     TurnNotFoundError,
 )
 from .diagnostics import Diagnostic, DiagnosticSet
+from .document_parsers import (
+    DocumentParserError,
+    DocumentParserNotFoundError,
+    DocumentParserRegistry,
+    ParserDescriptor,
+    ParserSelectionLock,
+    plain_text_parser_descriptor,
+)
 from .documents import (
     ArtifactRef,
     AssetRevision,
@@ -121,11 +129,16 @@ __all__ = [
     "ContextPack",
     "DocumentChunk",
     "DocumentElement",
+    "DocumentParserError",
+    "DocumentParserNotFoundError",
+    "DocumentParserRegistry",
     "DocumentSpan",
     "PluginManifest",
     "PluginRegistry",
     "PortDescriptor",
     "ParsedDocument",
+    "ParserDescriptor",
+    "ParserSelectionLock",
     "ResourceSlotDescriptor",
     "SourceAsset",
     "SourceLocation",
@@ -172,6 +185,7 @@ __all__ = [
     "normalize_graph",
     "package_rows",
     "parse_plain_text_document",
+    "plain_text_parser_descriptor",
     "stdlib_registry",
     "validate_plugin_manifest",
     "validate_answer_citations",
