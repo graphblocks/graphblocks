@@ -181,6 +181,87 @@ def build_context_pack(
     )
 
 
+def fuse_search_hits(
+    hit_sets: list[list[SearchHit]],
+    *,
+    strategy: Literal["concatenate", "reciprocal_rank_fusion"] = "reciprocal_rank_fusion",
+    k: int = 60,
+    weights: list[float] | None = None,
+    retriever_id: str = "fused",
+) -> list[SearchHit]:
+    if strategy not in {"concatenate", "reciprocal_rank_fusion"}:
+        raise ValueError("strategy must be concatenate or reciprocal_rank_fusion")
+    if k < 1:
+        raise ValueError("k must be at least 1")
+    if weights is not None and len(weights) != len(hit_sets):
+        raise ValueError("weights length must match hit_sets length")
+
+    grouped_hits: dict[str, list[SearchHit]] = {}
+    first_seen_item_ids: list[str] = []
+    rrf_scores: dict[str, float] = {}
+    for set_index, hit_set in enumerate(hit_sets):
+        weight = weights[set_index] if weights is not None else 1.0
+        for hit in hit_set:
+            item_id = hit.item.item_id
+            if item_id not in grouped_hits:
+                grouped_hits[item_id] = []
+                first_seen_item_ids.append(item_id)
+            grouped_hits[item_id].append(hit)
+            if strategy == "reciprocal_rank_fusion":
+                rrf_scores[item_id] = rrf_scores.get(item_id, 0.0) + weight / (k + hit.rank)
+
+    if strategy == "concatenate":
+        ordered_item_ids = first_seen_item_ids
+        score_kind = "concatenate"
+        max_score = None
+    else:
+        ordered_item_ids = sorted(
+            grouped_hits,
+            key=lambda item_id: (-rrf_scores[item_id], min(hit.rank for hit in grouped_hits[item_id]), item_id),
+        )
+        score_kind = "reciprocal_rank_fusion"
+        max_score = rrf_scores[ordered_item_ids[0]] if ordered_item_ids else None
+
+    fused_hits: list[SearchHit] = []
+    for rank, item_id in enumerate(ordered_item_ids, start=1):
+        source_hits = grouped_hits[item_id]
+        representative = source_hits[0]
+        source_hit_ids = [hit.hit_id for hit in source_hits]
+        source_ranks = {hit.retriever: hit.rank for hit in source_hits}
+        highlights: list[SourceRef] = []
+        seen_source_ids: set[str] = set()
+        for hit in source_hits:
+            for source_ref in hit.highlights or [hit.item.source]:
+                if source_ref.source_id in seen_source_ids:
+                    continue
+                highlights.append(source_ref)
+                seen_source_ids.add(source_ref.source_id)
+        metadata = dict(representative.metadata)
+        metadata.update(
+            {
+                "source_hit_ids": source_hit_ids,
+                "source_ranks": source_ranks,
+                "fusion_strategy": strategy,
+            }
+        )
+        raw_score = rrf_scores[item_id] if strategy == "reciprocal_rank_fusion" else None
+        metadata["fusion_score"] = raw_score
+        fused_hits.append(
+            SearchHit(
+                hit_id=f"{retriever_id}:{item_id}",
+                item=representative.item,
+                rank=rank,
+                retriever=retriever_id,
+                raw_score=raw_score,
+                normalized_score=(raw_score / max_score) if raw_score is not None and max_score else None,
+                score_kind=score_kind,
+                highlights=highlights,
+                metadata=metadata,
+            )
+        )
+    return fused_hits
+
+
 def validate_answer_citations(
     answer: Answer,
     context: ContextPack,

@@ -84,6 +84,7 @@ from .rag import (
     SearchRequest,
     SearchHit,
     build_context_pack,
+    fuse_search_hits,
     knowledge_item_from_chunk,
     validate_answer_citations,
 )
@@ -195,4 +196,5 @@ __all__ = [
     "validate_plugin_manifest",
     "validate_answer_citations",
     "build_context_pack",
+    "fuse_search_hits",
 ]
