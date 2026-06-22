@@ -4,7 +4,27 @@ from dataclasses import dataclass, field
 import re
 from typing import Literal
 
+from .canonical import canonical_hash
 from .documents import DocumentChunk, SourceRef
+
+
+@dataclass(frozen=True, slots=True)
+class SearchRequest:
+    query_text: str
+    top_k: int = 10
+    filters: dict[str, object] = field(default_factory=dict)
+    metadata: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievalResult:
+    retrieval_id: str
+    request: SearchRequest
+    hits: list[SearchHit]
+    total_candidates: int | None = None
+    latency_ms: float | None = None
+    warnings: list[str] = field(default_factory=list)
+    metadata: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,9 +255,20 @@ class InMemoryChunkRetriever:
     retriever_id: str = "local-chunk"
 
     def search(self, query_text: str, top_k: int = 10) -> list[SearchHit]:
-        terms = [term for term in re.findall(r"[A-Za-z0-9_]+", query_text.lower()) if term]
+        return self.retrieve(SearchRequest(query_text=query_text, top_k=top_k)).hits
+
+    def retrieve(self, request: SearchRequest) -> RetrievalResult:
+        request_hash = canonical_hash(
+            {
+                "query_text": request.query_text,
+                "top_k": request.top_k,
+                "filters": request.filters,
+            }
+        )
+        retrieval_id = f"{self.retriever_id}:{request_hash}"
+        terms = [term for term in re.findall(r"[A-Za-z0-9_]+", request.query_text.lower()) if term]
         if not terms:
-            return []
+            return RetrievalResult(retrieval_id=retrieval_id, request=request, hits=[], total_candidates=0)
         scored: list[tuple[int, int, DocumentChunk]] = []
         for index, chunk in enumerate(self.chunks):
             haystack = chunk.text.lower()
@@ -246,10 +277,10 @@ class InMemoryChunkRetriever:
                 scored.append((score, index, chunk))
         scored.sort(key=lambda item: (-item[0], item[1]))
         if not scored:
-            return []
+            return RetrievalResult(retrieval_id=retrieval_id, request=request, hits=[], total_candidates=0)
         max_score = scored[0][0]
         hits: list[SearchHit] = []
-        for rank, (score, _index, chunk) in enumerate(scored[:top_k], start=1):
+        for rank, (score, _index, chunk) in enumerate(scored[: request.top_k], start=1):
             hits.append(
                 SearchHit(
                     hit_id=f"{self.retriever_id}:{chunk.chunk_id}",
@@ -262,4 +293,9 @@ class InMemoryChunkRetriever:
                     highlights=list(chunk.source_refs),
                 )
             )
-        return hits
+        return RetrievalResult(
+            retrieval_id=retrieval_id,
+            request=request,
+            hits=hits,
+            total_candidates=len(scored),
+        )
