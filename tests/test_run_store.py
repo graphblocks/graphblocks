@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from graphblocks.run_store import InMemoryRunStore, StateConflictError
+from graphblocks.run_store import InMemoryRunStore, SQLiteRunStore, StateConflictError
 
 
 def test_run_store_applies_state_patch_with_revision_cas() -> None:
@@ -46,3 +46,42 @@ def test_state_patch_deletes_key_with_none_value() -> None:
     assert updated.state == {"kept": True}
     assert updated.state_revision == 2
 
+
+def test_sqlite_run_store_persists_records_across_instances(tmp_path) -> None:
+    database = tmp_path / "runs.sqlite3"
+    first = SQLiteRunStore(database)
+    record = first.create_run("sha256:test", {"message": {"text": "hello"}})
+    first.patch_state(record.run_id, {"conversation": {"turns": 1}}, expected_revision=0)
+    first.set_status(record.run_id, "succeeded")
+    first.close()
+
+    second = SQLiteRunStore(database)
+    loaded = second.get_run(record.run_id)
+
+    assert loaded.graph_hash == "sha256:test"
+    assert loaded.inputs == {"message": {"text": "hello"}}
+    assert loaded.status == "succeeded"
+    assert loaded.state == {"conversation": {"turns": 1}}
+    assert loaded.state_revision == 1
+
+
+def test_sqlite_run_store_enforces_state_revision_cas(tmp_path) -> None:
+    store = SQLiteRunStore(tmp_path / "runs.sqlite3")
+    record = store.create_run("sha256:test", {})
+    store.patch_state(record.run_id, {"count": 1}, expected_revision=0)
+
+    with pytest.raises(StateConflictError) as error:
+        store.patch_state(record.run_id, {"count": 2}, expected_revision=0)
+
+    assert error.value.current_revision == 1
+    assert store.get_run(record.run_id).state == {"count": 1}
+
+
+def test_sqlite_run_store_allocates_monotonic_run_ids_after_reopen(tmp_path) -> None:
+    database = tmp_path / "runs.sqlite3"
+    first = SQLiteRunStore(database)
+    assert first.create_run("sha256:one", {}).run_id == "run-000001"
+    first.close()
+
+    second = SQLiteRunStore(database)
+    assert second.create_run("sha256:two", {}).run_id == "run-000002"

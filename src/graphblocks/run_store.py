@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass, field
+import json
+from pathlib import Path
+import sqlite3
 from typing import Any, Literal
 
 
@@ -80,3 +83,118 @@ class InMemoryRunStore:
         )
         self.runs[run_id] = updated
         return deepcopy(updated)
+
+
+@dataclass(slots=True)
+class SQLiteRunStore:
+    path: Path | str
+    connection: sqlite3.Connection = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self.path = Path(self.path)
+        self.connection = sqlite3.connect(self.path)
+        self.connection.row_factory = sqlite3.Row
+        self.connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS runs (
+              run_id TEXT PRIMARY KEY,
+              sequence INTEGER NOT NULL UNIQUE,
+              graph_hash TEXT NOT NULL,
+              inputs_json TEXT NOT NULL,
+              status TEXT NOT NULL,
+              state_json TEXT NOT NULL,
+              state_revision INTEGER NOT NULL
+            )
+            """
+        )
+        self.connection.commit()
+
+    def close(self) -> None:
+        self.connection.close()
+
+    def create_run(self, graph_hash: str, inputs: dict[str, Any]) -> RunRecord:
+        row = self.connection.execute("SELECT COALESCE(MAX(sequence), 0) + 1 FROM runs").fetchone()
+        sequence = int(row[0])
+        run_id = f"run-{sequence:06d}"
+        record = RunRecord(run_id=run_id, graph_hash=graph_hash, inputs=deepcopy(inputs))
+        self.connection.execute(
+            """
+            INSERT INTO runs (run_id, sequence, graph_hash, inputs_json, status, state_json, state_revision)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record.run_id,
+                sequence,
+                record.graph_hash,
+                json.dumps(record.inputs, sort_keys=True, separators=(",", ":")),
+                record.status,
+                json.dumps(record.state, sort_keys=True, separators=(",", ":")),
+                record.state_revision,
+            ),
+        )
+        self.connection.commit()
+        return deepcopy(record)
+
+    def get_run(self, run_id: str) -> RunRecord:
+        row = self.connection.execute(
+            """
+            SELECT run_id, graph_hash, inputs_json, status, state_json, state_revision
+            FROM runs
+            WHERE run_id = ?
+            """,
+            (run_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(run_id)
+        return RunRecord(
+            run_id=str(row["run_id"]),
+            graph_hash=str(row["graph_hash"]),
+            inputs=json.loads(str(row["inputs_json"])),
+            status=row["status"],
+            state=json.loads(str(row["state_json"])),
+            state_revision=int(row["state_revision"]),
+        )
+
+    def patch_state(self, run_id: str, patch: dict[str, Any], expected_revision: int) -> RunRecord:
+        current = self.get_run(run_id)
+        if current.state_revision != expected_revision:
+            raise StateConflictError(run_id, expected_revision, current.state_revision)
+
+        next_state = deepcopy(current.state)
+        stack: list[tuple[dict[str, Any], dict[str, Any]]] = [(next_state, patch)]
+        while stack:
+            target, source = stack.pop()
+            for key, value in source.items():
+                if value is None:
+                    target.pop(key, None)
+                elif isinstance(value, dict) and isinstance(target.get(key), dict):
+                    stack.append((target[key], value))
+                else:
+                    target[key] = deepcopy(value)
+
+        updated_revision = current.state_revision + 1
+        cursor = self.connection.execute(
+            """
+            UPDATE runs
+            SET state_json = ?, state_revision = ?
+            WHERE run_id = ? AND state_revision = ?
+            """,
+            (
+                json.dumps(next_state, sort_keys=True, separators=(",", ":")),
+                updated_revision,
+                run_id,
+                expected_revision,
+            ),
+        )
+        if cursor.rowcount != 1:
+            refreshed = self.get_run(run_id)
+            raise StateConflictError(run_id, expected_revision, refreshed.state_revision)
+        self.connection.commit()
+        return self.get_run(run_id)
+
+    def set_status(self, run_id: str, status: Literal["running", "succeeded", "failed", "cancelled"]) -> RunRecord:
+        cursor = self.connection.execute("UPDATE runs SET status = ? WHERE run_id = ?", (status, run_id))
+        if cursor.rowcount != 1:
+            raise KeyError(run_id)
+        self.connection.commit()
+        return self.get_run(run_id)

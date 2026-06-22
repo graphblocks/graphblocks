@@ -9,7 +9,7 @@ from graphblocks.runtime import (
     RuntimeRegistry,
     stdlib_registry,
 )
-from graphblocks.run_store import InMemoryRunStore
+from graphblocks.run_store import InMemoryRunStore, SQLiteRunStore
 
 
 def test_runtime_executes_conversation_vertical_slice() -> None:
@@ -123,6 +123,30 @@ def test_runtime_updates_supplied_run_store_status() -> None:
         },
     }
     store = InMemoryRunStore()
+
+    result = InProcessRuntime(stdlib_registry(), run_store=store).run(graph, {"message": {"text": "hello"}})
+
+    assert result.run_id == "run-000001"
+    assert store.get_run(result.run_id).status == "succeeded"
+
+
+def test_runtime_updates_supplied_sqlite_run_store_status(tmp_path) -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "stored-sqlite-run"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Stored {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+    store = SQLiteRunStore(tmp_path / "runs.sqlite3")
 
     result = InProcessRuntime(stdlib_registry(), run_store=store).run(graph, {"message": {"text": "hello"}})
 

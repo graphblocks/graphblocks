@@ -19,7 +19,7 @@ from .runtime import (
     RuntimeRegistry,
     stdlib_registry,
 )
-from .run_store import InMemoryRunStore, RunRecord, StateConflictError
+from .run_store import InMemoryRunStore, RunRecord, SQLiteRunStore, StateConflictError
 
 __version__ = "0.1.0"
 
@@ -39,6 +39,7 @@ __all__ = [
     "RunResult",
     "RunRecord",
     "RuntimeRegistry",
+    "SQLiteRunStore",
     "Lease",
     "LeaseUnavailableError",
     "StateConflictError",
