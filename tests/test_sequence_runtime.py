@@ -92,3 +92,73 @@ def test_control_map_fails_fast_by_default() -> None:
     assert result.status == "failed"
     assert result.outputs == {}
 
+
+def test_control_select_returns_first_present_case() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "select-first"},
+        "spec": {
+            "nodes": {
+                "select": {
+                    "block": "control.select@1",
+                    "inputs": {"cases": "$input.cases"},
+                    "outputs": {"value": "$output.value"},
+                    "config": {"order": ["ocr", "parsed"]},
+                }
+            }
+        },
+    }
+
+    result = InProcessRuntime(stdlib_registry()).run(
+        graph,
+        {"cases": {"parsed": {"document": "parsed"}, "ocr": {"document": "ocr"}}},
+    )
+
+    assert result.status == "succeeded"
+    assert result.outputs == {"value": {"document": "ocr"}}
+
+
+def test_control_select_treats_null_as_present_value() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "select-null"},
+        "spec": {
+            "nodes": {
+                "select": {
+                    "block": "control.select@1",
+                    "inputs": {"cases": "$input.cases"},
+                    "outputs": {"value": "$output.value"},
+                    "config": {"order": ["value"], "default": "fallback"},
+                }
+            }
+        },
+    }
+
+    result = InProcessRuntime(stdlib_registry()).run(graph, {"cases": {"value": None}})
+
+    assert result.status == "succeeded"
+    assert result.outputs == {"value": None}
+
+
+def test_control_select_fails_without_present_case_or_default() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "select-missing"},
+        "spec": {
+            "nodes": {
+                "select": {
+                    "block": "control.select@1",
+                    "inputs": {"cases": "$input.cases"},
+                    "outputs": {"value": "$output.value"},
+                    "config": {"order": ["missing"]},
+                }
+            }
+        },
+    }
+
+    result = InProcessRuntime(stdlib_registry()).run(graph, {"cases": {}})
+
+    assert result.status == "failed"

@@ -296,9 +296,26 @@ def stdlib_registry() -> RuntimeRegistry:
             return {"outcomes": outcomes, "values": values}
         return {"values": values}
 
+    def control_select(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+        cases = inputs.get("cases", {})
+        if not isinstance(cases, dict):
+            raise TypeError("control.select@1 input 'cases' must be a mapping")
+        order = config.get("order")
+        if order is None:
+            order = list(cases)
+        if not isinstance(order, list):
+            raise TypeError("control.select@1 config.order must be a list")
+        for key in order:
+            if key in cases:
+                return {"value": cases[key], "selected": key}
+        if "default" in config:
+            return {"value": config["default"], "selected": "default"}
+        raise KeyError("control.select@1 found no present case")
+
     registry.register("conversation.begin_turn@1", begin_turn)
     registry.register("prompt.render@1", prompt_render)
     registry.register("model.generate@1", scripted_generate)
     registry.register("conversation.commit_turn@1", commit_turn)
     registry.register("control.map@2", control_map)
+    registry.register("control.select@1", control_select)
     return registry
