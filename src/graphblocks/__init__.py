@@ -9,6 +9,7 @@ from .loader import load_documents
 from .migration import migrate_document
 from .packages import load_package_catalog, package_rows
 from .plugins import PluginManifest, PluginRegistry, discover_plugins, load_plugin_manifest, validate_plugin_manifest
+from .runtime import ExecutionJournal, InProcessRuntime, JournalStateError, RunResult, RuntimeRegistry, stdlib_registry
 
 __version__ = "0.1.0"
 
@@ -18,7 +19,12 @@ __all__ = [
     "Plan",
     "PluginManifest",
     "PluginRegistry",
+    "ExecutionJournal",
+    "InProcessRuntime",
+    "JournalStateError",
     "__version__",
+    "RunResult",
+    "RuntimeRegistry",
     "canonical_dumps",
     "canonical_hash",
     "compile_graph",
@@ -29,5 +35,6 @@ __all__ = [
     "migrate_document",
     "normalize_graph",
     "package_rows",
+    "stdlib_registry",
     "validate_plugin_manifest",
 ]

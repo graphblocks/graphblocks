@@ -41,3 +41,25 @@ def test_packages_cli_lists_catalog(capsys) -> None:
     assert main(["packages", "list"]) == 0
     assert "graphblocks-core" in capsys.readouterr().out
 
+
+def test_run_cli_executes_in_process_runtime(tmp_path, capsys) -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "cli-run"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Echo {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+    path = tmp_path / "graph.yaml"
+    path.write_text(yaml.safe_dump(graph), encoding="utf-8")
+
+    assert main(["run", str(path), "--input-json", '{"message":{"text":"hi"}}']) == 0
+    assert '"prompt": "Echo hi"' in capsys.readouterr().out

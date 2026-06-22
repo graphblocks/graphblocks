@@ -22,6 +22,15 @@ graphblocks plan docs/upstream/GraphBlocks_v1.0_Final/examples/01-enterprise-fed
 graphblocks plugins list
 ```
 
+## Runtime Slice
+
+The package includes an early deterministic in-process runtime for the Phase 1
+vertical slice. It executes normalized finite graphs with the bundled stdlib
+blocks and records a single-terminal execution journal.
+
+```bash
+graphblocks run graph.yaml --input-json '{"message":{"text":"Hello"}}'
+```
+
 The package intentionally does not include model provider, parser, database,
 cloud, server, TUI, Kubernetes, Terraform, voice, or durable stream SDKs.
-

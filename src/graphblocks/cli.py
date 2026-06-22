@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from dataclasses import asdict
 from pathlib import Path
 
 import yaml
@@ -13,6 +14,7 @@ from .loader import load_documents
 from .migration import migrate_document
 from .packages import load_package_catalog, package_rows
 from .plugins import discover_plugins, load_plugin_manifest, validate_plugin_manifest
+from .runtime import InProcessRuntime, stdlib_registry
 
 STRUCTURAL_KINDS = {
     "Application",
@@ -41,6 +43,10 @@ def main(argv: list[str] | None = None) -> int:
     plan_parser.add_argument("--show-bindings", action="store_true", help="include Binding documents from the same file")
     plan_parser.add_argument("--show-packages", action="store_true", help="include inferred semantic block requirements")
     plan_parser.add_argument("--target", default="local-python", help="execution target label for diagnostics")
+
+    run_parser = subparsers.add_parser("run", help="execute a GraphSpec with the deterministic in-process runtime")
+    run_parser.add_argument("path", type=Path)
+    run_parser.add_argument("--input-json", default="{}", help="JSON object used as graph input values")
 
     migrate_parser = subparsers.add_parser("migrate", help="read legacy alpha documents and emit current YAML")
     migrate_parser.add_argument("path", type=Path)
@@ -135,6 +141,30 @@ def main(argv: list[str] | None = None) -> int:
             )
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0 if plan.ok else 1
+    if args.command == "run":
+        documents = load_documents(args.path)
+        graph_documents = [document for document in documents if document.get("kind") == "Graph"]
+        if not graph_documents:
+            print(f"{args.path}: no Graph document found")
+            return 1
+        inputs = json.loads(args.input_json)
+        if not isinstance(inputs, dict):
+            print("--input-json must decode to a JSON object")
+            return 1
+        result = InProcessRuntime(stdlib_registry()).run(graph_documents[0], inputs)
+        print(
+            json.dumps(
+                {
+                    "runId": result.run_id,
+                    "status": result.status,
+                    "outputs": result.outputs,
+                    "journal": [asdict(record) for record in result.journal.records],
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0 if result.status == "succeeded" else 1
     if args.command == "migrate":
         documents = [migrate_document(document) for document in load_documents(args.path)]
         print(yaml.safe_dump_all(documents, sort_keys=False, allow_unicode=True).rstrip())
