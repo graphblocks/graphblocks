@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 
 use serde_json::{Value, json};
 
@@ -6,6 +6,7 @@ use crate::cancellation::CancellationToken;
 use crate::journal::{ExecutionJournal, JournalError, JournalMetadata};
 use crate::outcome::{BlockError, Outcome};
 use crate::readiness::PortRef;
+use crate::retry::{RetryDecision, RetryPolicy, RetryRequest};
 use crate::run_store::{InMemoryRunStore, RunStatus, RunStoreError};
 use crate::scheduler::{
     LocalScheduler, NodeExecutionState, ScheduledNode, SchedulerError, StartedNode,
@@ -58,6 +59,7 @@ impl From<RunStoreError> for TestRuntimeError {
 pub struct InProcessTestRuntime {
     scheduler: LocalScheduler,
     journal: ExecutionJournal,
+    retry_policies: BTreeMap<String, RetryPolicy>,
 }
 
 impl InProcessTestRuntime {
@@ -68,11 +70,17 @@ impl InProcessTestRuntime {
         Ok(Self {
             scheduler: LocalScheduler::new(nodes)?,
             journal: ExecutionJournal::new(run_id),
+            retry_policies: BTreeMap::new(),
         })
     }
 
     pub fn journal(&self) -> &ExecutionJournal {
         &self.journal
+    }
+
+    pub fn with_retry_policy(mut self, node_id: impl Into<String>, policy: RetryPolicy) -> Self {
+        self.retry_policies.insert(node_id.into(), policy);
+        self
     }
 
     pub fn run<E>(&mut self, executor: &mut E) -> Result<TestRunResult, TestRuntimeError>
@@ -145,40 +153,89 @@ impl InProcessTestRuntime {
                 });
             }
             let started = self.scheduler.start_node(&node_id)?;
-            let metadata = JournalMetadata::new().with_node_id(node_id.clone());
-            self.journal
-                .append_with_metadata("node_started", metadata.clone(), None)?;
+            let mut attempt = 1;
+            loop {
+                let metadata = JournalMetadata::new()
+                    .with_node_id(node_id.clone())
+                    .with_attempt_id(format!("attempt-{attempt}"));
+                self.journal
+                    .append_with_metadata("node_started", metadata.clone(), None)?;
 
-            match executor.execute(started) {
-                Ok(outputs) => {
-                    let newly_ready = self.scheduler.complete_node(&node_id, outputs)?;
-                    self.journal
-                        .append_with_metadata("node_completed", metadata, None)?;
-                    for node_id in newly_ready {
-                        ready.push_back(node_id);
+                match executor.execute(started.clone()) {
+                    Ok(outputs) => {
+                        let newly_ready = self.scheduler.complete_node(&node_id, outputs)?;
+                        self.journal
+                            .append_with_metadata("node_completed", metadata, None)?;
+                        for node_id in newly_ready {
+                            ready.push_back(node_id);
+                        }
+                        break;
                     }
-                }
-                Err(error) => {
-                    let payload = json!({
-                        "code": error.code,
-                        "category": format!("{:?}", error.category),
-                        "message": error.message,
-                    });
-                    self.journal.append_with_metadata(
-                        "node_failed",
-                        metadata.clone(),
-                        Some(payload.clone()),
-                    )?;
-                    self.journal.append_terminal_with_metadata(
-                        "run_failed",
-                        metadata,
-                        Some(payload),
-                    )?;
-                    return Ok(TestRunResult {
-                        run_id: self.journal.run_id().to_owned(),
-                        status: TestRunStatus::Failed,
-                        journal: self.journal.clone(),
-                    });
+                    Err(error) => {
+                        if let Some(policy) = self.retry_policies.get(&node_id) {
+                            match policy.decide(&RetryRequest::new(attempt, error.clone())) {
+                                RetryDecision::Retry { delay_ms } => {
+                                    self.journal.append_with_metadata(
+                                        "node_retry",
+                                        metadata,
+                                        Some(json!({
+                                            "attempt": attempt,
+                                            "code": error.code,
+                                            "category": format!("{:?}", error.category),
+                                            "message": error.message,
+                                            "delayMs": delay_ms,
+                                        })),
+                                    )?;
+                                    attempt += 1;
+                                    continue;
+                                }
+                                RetryDecision::Stop { reason } => {
+                                    let payload = json!({
+                                        "code": error.code,
+                                        "category": format!("{:?}", error.category),
+                                        "message": error.message,
+                                        "retryStopReason": reason,
+                                    });
+                                    self.journal.append_with_metadata(
+                                        "node_failed",
+                                        metadata.clone(),
+                                        Some(payload.clone()),
+                                    )?;
+                                    self.journal.append_terminal_with_metadata(
+                                        "run_failed",
+                                        metadata,
+                                        Some(payload),
+                                    )?;
+                                    return Ok(TestRunResult {
+                                        run_id: self.journal.run_id().to_owned(),
+                                        status: TestRunStatus::Failed,
+                                        journal: self.journal.clone(),
+                                    });
+                                }
+                            }
+                        }
+
+                        let payload = json!({
+                            "code": error.code,
+                            "category": format!("{:?}", error.category),
+                            "message": error.message,
+                        });
+                        self.journal.append_with_metadata(
+                            "node_failed",
+                            metadata.clone(),
+                            Some(payload.clone()),
+                        )?;
+                        self.journal.append_terminal_with_metadata(
+                            "run_failed",
+                            metadata,
+                            Some(payload),
+                        )?;
+                        return Ok(TestRunResult {
+                            run_id: self.journal.run_id().to_owned(),
+                            status: TestRunStatus::Failed,
+                            journal: self.journal.clone(),
+                        });
+                    }
                 }
             }
         }

@@ -5,6 +5,7 @@ use graphblocks_runtime_core::outcome::{
     BlockError, CancelCode, CancelReason, ErrorCategory, Outcome,
 };
 use graphblocks_runtime_core::readiness::{InputDependency, PortRef, ResolvedInput};
+use graphblocks_runtime_core::retry::RetryPolicy;
 use graphblocks_runtime_core::run_store::{InMemoryRunStore, RunStatus};
 use graphblocks_runtime_core::scheduler::{ScheduledNode, StartedNode};
 use graphblocks_runtime_core::test_runtime::{InProcessTestRuntime, NodeExecutor, TestRunStatus};
@@ -347,5 +348,100 @@ fn in_process_test_runtime_finalizes_store_record_on_cancellation() {
             .expect("run should be recorded")
             .status,
         RunStatus::Cancelled,
+    );
+}
+
+struct FlakyExecutor {
+    attempts: usize,
+}
+
+impl NodeExecutor for FlakyExecutor {
+    fn execute(
+        &mut self,
+        _node: StartedNode,
+    ) -> Result<Vec<(PortRef, Outcome<Value>)>, BlockError> {
+        self.attempts += 1;
+        if self.attempts == 1 {
+            return Err(BlockError::new(
+                "model.timeout",
+                ErrorCategory::Timeout,
+                "temporary timeout",
+                true,
+            ));
+        }
+        Ok(vec![(
+            PortRef::new("model", "response"),
+            Outcome::Value(json!("ok")),
+        )])
+    }
+}
+
+#[test]
+fn in_process_test_runtime_retries_retryable_node_failure() {
+    let mut runtime = InProcessTestRuntime::new("run-000001", [ScheduledNode::new("model", [])])
+        .expect("runtime should be created")
+        .with_retry_policy("model", RetryPolicy::default_model_read());
+    let mut executor = FlakyExecutor { attempts: 0 };
+
+    let result = runtime.run(&mut executor).expect("runtime should run");
+
+    assert_eq!(result.status, TestRunStatus::Succeeded);
+    assert_eq!(executor.attempts, 2);
+    assert_eq!(
+        result
+            .journal
+            .records()
+            .iter()
+            .map(|record| record.kind.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "run_started",
+            "node_started",
+            "node_retry",
+            "node_started",
+            "node_completed",
+            "run_succeeded",
+        ],
+    );
+}
+
+struct NonRetryableExecutor {
+    attempts: usize,
+}
+
+impl NodeExecutor for NonRetryableExecutor {
+    fn execute(
+        &mut self,
+        _node: StartedNode,
+    ) -> Result<Vec<(PortRef, Outcome<Value>)>, BlockError> {
+        self.attempts += 1;
+        Err(BlockError::new(
+            "model.validation",
+            ErrorCategory::Validation,
+            "invalid request",
+            true,
+        ))
+    }
+}
+
+#[test]
+fn in_process_test_runtime_stops_retry_on_policy_decision() {
+    let mut runtime = InProcessTestRuntime::new("run-000001", [ScheduledNode::new("model", [])])
+        .expect("runtime should be created")
+        .with_retry_policy("model", RetryPolicy::default_model_read());
+    let mut executor = NonRetryableExecutor { attempts: 0 };
+
+    let result = runtime.run(&mut executor).expect("runtime should run");
+
+    assert_eq!(result.status, TestRunStatus::Failed);
+    assert_eq!(executor.attempts, 1);
+    assert_eq!(
+        result
+            .journal
+            .records()
+            .iter()
+            .map(|record| record.kind.as_str())
+            .collect::<Vec<_>>(),
+        vec!["run_started", "node_started", "node_failed", "run_failed"],
     );
 }
