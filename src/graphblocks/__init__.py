@@ -85,6 +85,17 @@ from .evaluation import (
     TypedValueRef,
     evaluate_gate,
 )
+from .exhaustion import (
+    AdmissionDecision,
+    ContinuationEnvelope,
+    ExhaustionController,
+    ExhaustionPolicy,
+    ExhaustionPolicyError,
+    MissingExhaustionBoundaryError,
+    OutputCutoff,
+    PartialOutputPolicy,
+    validate_exhaustion_policy,
+)
 from .loader import load_documents
 from .leases import InMemoryLeasePool, Lease, LeaseUnavailableError
 from .migration import migrate_document
@@ -179,6 +190,7 @@ __all__ = [
     "BudgetSettlement",
     "ByteRange",
     "Abstention",
+    "AdmissionDecision",
     "Answer",
     "ArtifactRef",
     "AssetRevision",
@@ -188,6 +200,7 @@ __all__ = [
     "Claim",
     "ChangeSet",
     "CheckResult",
+    "ContinuationEnvelope",
     "ContentPart",
     "Conversation",
     "ConversationArchivedError",
@@ -224,6 +237,9 @@ __all__ = [
     "SourceRef",
     "CancellationToken",
     "ExecutionJournal",
+    "ExhaustionController",
+    "ExhaustionPolicy",
+    "ExhaustionPolicyError",
     "EvidenceRef",
     "GateConstraint",
     "GateResult",
@@ -258,6 +274,9 @@ __all__ = [
     "Message",
     "MessageNotFoundError",
     "MetricObservation",
+    "MissingExhaustionBoundaryError",
+    "OutputCutoff",
+    "PartialOutputPolicy",
     "StateConflictError",
     "StaticPolicyEvaluator",
     "PutOptions",
@@ -291,6 +310,7 @@ __all__ = [
     "stdlib_registry",
     "validate_plugin_manifest",
     "validate_answer_citations",
+    "validate_exhaustion_policy",
     "build_context_pack",
     "fuse_search_hits",
 ]
