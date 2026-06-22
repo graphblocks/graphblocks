@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 import json
 from pathlib import Path
 import sqlite3
+import time
 from typing import Any, Callable, Literal, Protocol
 
 from .compiler import compile_graph
@@ -44,6 +45,18 @@ JournalFactory = Callable[[str], JournalLike]
 
 class JournalStateError(RuntimeError):
     pass
+
+
+def parse_duration_seconds(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip()
+    for suffix, multiplier in (("ms", 0.001), ("s", 1.0), ("m", 60.0), ("h", 3600.0)):
+        if text.endswith(suffix):
+            return float(text[: -len(suffix)]) * multiplier
+    return float(text)
 
 
 @dataclass(slots=True)
@@ -302,6 +315,7 @@ class InProcessRuntime:
                 block_id = str(node["block"])
                 flow = node.get("flow", {})
                 retry = flow.get("retry", {}) if isinstance(flow, dict) else {}
+                timeout_seconds = parse_duration_seconds(flow.get("timeout")) if isinstance(flow, dict) else None
                 max_attempts = 1
                 if isinstance(retry, dict):
                     max_attempts = int(retry.get("maxAttempts", 1))
@@ -315,11 +329,15 @@ class InProcessRuntime:
                     try:
                         block = self.registry.resolve(block_id)
                         merged_inputs = {**node_inputs[node_name], **resolved_inputs}
+                        started_at = time.monotonic()
+                        deadline = None if timeout_seconds is None else started_at + timeout_seconds
                         attempt_result = block(
                             merged_inputs,
                             node.get("config", {}),
-                            {**context, "node": node_name, "attempt": attempt},
+                            {**context, "node": node_name, "attempt": attempt, "deadline_monotonic": deadline},
                         )
+                        if timeout_seconds is not None and time.monotonic() > started_at + timeout_seconds:
+                            raise TimeoutError(f"node {node_name!r} exceeded timeout {flow.get('timeout')}")
                         if not isinstance(attempt_result, dict):
                             raise TypeError("block returned non-mapping output")
                         result = attempt_result
