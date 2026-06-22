@@ -179,3 +179,85 @@ def create_local_text_revision(
     )
     return asset, revision
 
+
+def parse_plain_text_document(asset: SourceAsset, revision: AssetRevision, text: str) -> ParsedDocument:
+    elements: list[DocumentElement] = []
+    offset = 0
+    order = 0
+    for raw_line in text.splitlines(keepends=True):
+        line_without_newline = raw_line.rstrip("\r\n")
+        line_start = offset
+        line_end = line_start + len(line_without_newline)
+        offset += len(raw_line)
+        if not line_without_newline.strip():
+            continue
+        element_id = f"{revision.revision_id}:element:{order:06d}"
+        elements.append(
+            DocumentElement(
+                element_id=element_id,
+                kind="paragraph",
+                order=order,
+                content=line_without_newline,
+                location=SourceLocation(char_start=line_start, char_end=line_end),
+            )
+        )
+        order += 1
+    if text and (not text.endswith(("\n", "\r"))):
+        # splitlines(keepends=True) already handled the final unterminated line.
+        pass
+    return ParsedDocument(
+        document_id="doc:" + revision.revision_id,
+        asset_id=asset.asset_id,
+        revision_id=revision.revision_id,
+        parser={"processor_id": "plain-text", "version": "1"},
+        elements=elements,
+        plain_text=text,
+    )
+
+
+def chunk_document_by_lines(
+    document: ParsedDocument,
+    revision: AssetRevision,
+    max_elements: int = 8,
+) -> list[DocumentChunk]:
+    if max_elements < 1:
+        raise ValueError("max_elements must be at least 1")
+    chunks: list[DocumentChunk] = []
+    for chunk_index, start in enumerate(range(0, len(document.elements), max_elements)):
+        grouped = document.elements[start : start + max_elements]
+        text = "\n".join(element.content for element in grouped)
+        char_starts = [element.location.char_start for element in grouped if element.location.char_start is not None]
+        char_ends = [element.location.char_end for element in grouped if element.location.char_end is not None]
+        char_start = min(char_starts) if char_starts else None
+        char_end = max(char_ends) if char_ends else None
+        chunk_id = f"{document.document_id}:chunk:{chunk_index:06d}"
+        locator = DocumentSpan(
+            asset_id=document.asset_id,
+            revision_id=document.revision_id,
+            document_id=document.document_id,
+            chunk_id=chunk_id,
+            char_start=char_start,
+            char_end=char_end,
+        )
+        source_ref = SourceRef(
+            source_id=chunk_id,
+            source_kind="document_chunk",
+            revision=document.revision_id,
+            digest=revision.content_hash,
+            locator=locator,
+        )
+        chunks.append(
+            DocumentChunk(
+                chunk_id=chunk_id,
+                document_id=document.document_id,
+                asset_id=document.asset_id,
+                revision_id=document.revision_id,
+                text=text,
+                element_ids=[element.element_id for element in grouped],
+                source_refs=[source_ref],
+                chunker={"processor_id": "plain-text-lines", "version": "1"},
+                token_count=len(text.split()),
+                acl=revision.acl,
+            )
+        )
+    return chunks

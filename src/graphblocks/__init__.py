@@ -15,7 +15,9 @@ from .documents import (
     SourceAsset,
     SourceLocation,
     SourceRef,
+    chunk_document_by_lines,
     create_local_text_revision,
+    parse_plain_text_document,
 )
 from .loader import load_documents
 from .leases import InMemoryLeasePool, Lease, LeaseUnavailableError
@@ -83,6 +85,7 @@ __all__ = [
     "canonical_dumps",
     "canonical_hash",
     "compile_graph",
+    "chunk_document_by_lines",
     "create_local_text_revision",
     "discover_plugins",
     "load_package_catalog",
@@ -91,6 +94,7 @@ __all__ = [
     "migrate_document",
     "normalize_graph",
     "package_rows",
+    "parse_plain_text_document",
     "stdlib_registry",
     "validate_plugin_manifest",
 ]
