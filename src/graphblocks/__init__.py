@@ -123,6 +123,13 @@ from .runtime import (
     stdlib_registry,
 )
 from .run_store import InMemoryRunStore, RunRecord, SQLiteRunStore, StateConflictError
+from .usage import (
+    InMemoryUsageLedger,
+    UsageLedgerError,
+    UsageRecord,
+    UsageRecordConflictError,
+    UsageRecordNotFoundError,
+)
 
 __version__ = "0.1.0"
 
@@ -194,6 +201,7 @@ __all__ = [
     "__version__",
     "InMemoryBudgetLedger",
     "InMemoryRunStore",
+    "InMemoryUsageLedger",
     "InMemoryConversationStore",
     "InMemoryLeasePool",
     "InMemoryChunkRetriever",
@@ -221,6 +229,10 @@ __all__ = [
     "TurnConflictError",
     "TurnNotFoundError",
     "UsageAmount",
+    "UsageLedgerError",
+    "UsageRecord",
+    "UsageRecordConflictError",
+    "UsageRecordNotFoundError",
     "canonical_dumps",
     "canonical_hash",
     "compile_graph",
