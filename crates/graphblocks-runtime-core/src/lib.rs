@@ -8,5 +8,6 @@ pub mod retry;
 pub mod run_store;
 pub mod scheduler;
 pub mod task_group;
+pub mod test_runtime;
 pub mod timeout;
 pub mod typed_value;

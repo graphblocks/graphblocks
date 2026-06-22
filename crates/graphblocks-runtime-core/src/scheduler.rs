@@ -117,6 +117,13 @@ impl LocalScheduler {
         self.states.get(node_id.as_ref()).copied()
     }
 
+    pub fn node_states(&self) -> Vec<(String, NodeExecutionState)> {
+        self.states
+            .iter()
+            .map(|(node_id, state)| (node_id.clone(), *state))
+            .collect()
+    }
+
     pub fn start_node(&mut self, node_id: impl AsRef<str>) -> Result<StartedNode, SchedulerError> {
         let node_id = node_id.as_ref();
         let Some(state) = self.states.get(node_id).copied() else {
