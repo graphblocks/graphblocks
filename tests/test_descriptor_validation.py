@@ -116,3 +116,69 @@ def test_compile_allows_optional_input_without_edge() -> None:
 
     assert "GB1003" not in [item.code for item in plan.diagnostics.diagnostics]
 
+
+def test_compile_rejects_port_type_mismatch() -> None:
+    catalog = BlockCatalog.from_blocks(
+        [
+            {
+                "typeId": "text.source",
+                "version": 1,
+                "outputs": [{"name": "value", "type": "graphblocks.ai/Text@1"}],
+            },
+            {
+                "typeId": "number.sink",
+                "version": 1,
+                "inputs": [{"name": "value", "type": "graphblocks.ai/Number@1"}],
+            },
+        ]
+    )
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "type-mismatch"},
+        "spec": {
+            "nodes": {
+                "source": {"block": "text.source@1"},
+                "sink": {"block": "number.sink@1"},
+            },
+            "edges": [{"from": "source.value", "to": "sink.value"}],
+        },
+    }
+
+    plan = compile_graph(graph, block_catalog=catalog)
+
+    assert not plan.ok
+    assert [item.code for item in plan.diagnostics.diagnostics if item.severity == "error"] == ["GB1018"]
+
+
+def test_compile_accepts_matching_port_types() -> None:
+    catalog = BlockCatalog.from_blocks(
+        [
+            {
+                "typeId": "text.source",
+                "version": 1,
+                "outputs": [{"name": "value", "type": "graphblocks.ai/Text@1"}],
+            },
+            {
+                "typeId": "text.sink",
+                "version": 1,
+                "inputs": [{"name": "value", "type": "graphblocks.ai/Text@1"}],
+            },
+        ]
+    )
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "type-match"},
+        "spec": {
+            "nodes": {
+                "source": {"block": "text.source@1"},
+                "sink": {"block": "text.sink@1"},
+            },
+            "edges": [{"from": "source.value", "to": "sink.value"}],
+        },
+    }
+
+    plan = compile_graph(graph, block_catalog=catalog)
+
+    assert "GB1018" not in [item.code for item in plan.diagnostics.diagnostics]

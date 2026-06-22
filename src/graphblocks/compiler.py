@@ -139,6 +139,8 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                     consumed_nodes.add(owner)
 
             if block_catalog is not None:
+                source_type = None
+                target_type = None
                 source_owner, _, source_path = source.partition(".")
                 target_owner, _, target_path = target.partition(".")
                 if source_owner not in PSEUDO_NODES and source_owner in normalized_nodes and source_path:
@@ -147,8 +149,8 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                         descriptor = block_catalog.get(str(source_node.get("block")))
                         if descriptor is not None and descriptor.outputs:
                             port_name = source_path.split(".", 1)[0]
-                            output_names = {port.name for port in descriptor.outputs}
-                            if port_name not in output_names:
+                            output_ports = {port.name: port for port in descriptor.outputs}
+                            if port_name not in output_ports:
                                 diagnostics.append(
                                     Diagnostic(
                                         "GB1014",
@@ -156,14 +158,16 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                                         f"$.spec.edges[{index}].from",
                                     )
                                 )
+                            else:
+                                source_type = output_ports[port_name].type_ref
                 if target_owner not in PSEUDO_NODES and target_owner in normalized_nodes and target_path:
                     target_node = normalized_nodes[target_owner]
                     if isinstance(target_node, dict):
                         descriptor = block_catalog.get(str(target_node.get("block")))
                         if descriptor is not None and descriptor.inputs:
                             port_name = target_path.split(".", 1)[0]
-                            input_names = {port.name for port in descriptor.inputs}
-                            if port_name not in input_names:
+                            input_ports = {port.name: port for port in descriptor.inputs}
+                            if port_name not in input_ports:
                                 invalid_input_port_nodes.add(target_owner)
                                 diagnostics.append(
                                     Diagnostic(
@@ -172,6 +176,16 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                                         f"$.spec.edges[{index}].to",
                                     )
                                 )
+                            else:
+                                target_type = input_ports[port_name].type_ref
+                if source_type and target_type and source_type != "Any" and target_type != "Any" and source_type != target_type:
+                    diagnostics.append(
+                        Diagnostic(
+                            "GB1018",
+                            f"port type mismatch: {source_type} cannot feed {target_type}",
+                            f"$.spec.edges[{index}]",
+                        )
+                    )
 
     if block_catalog is not None:
         inbound_by_node: dict[str, set[str]] = {name: set() for name in normalized_nodes}
