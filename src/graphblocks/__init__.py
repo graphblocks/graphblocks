@@ -34,6 +34,7 @@ from .plugins import (
     load_plugin_manifest,
     validate_plugin_manifest,
 )
+from .rag import InMemoryChunkRetriever, KnowledgeItemRef, SearchHit, knowledge_item_from_chunk
 from .runtime import (
     CancellationToken,
     ExecutionJournal,
@@ -74,11 +75,14 @@ __all__ = [
     "__version__",
     "InMemoryRunStore",
     "InMemoryLeasePool",
+    "InMemoryChunkRetriever",
+    "KnowledgeItemRef",
     "RunResult",
     "RunRecord",
     "RuntimeRegistry",
     "SQLiteRunStore",
     "SQLiteExecutionJournal",
+    "SearchHit",
     "Lease",
     "LeaseUnavailableError",
     "StateConflictError",
@@ -91,6 +95,7 @@ __all__ = [
     "load_package_catalog",
     "load_documents",
     "load_plugin_manifest",
+    "knowledge_item_from_chunk",
     "migrate_document",
     "normalize_graph",
     "package_rows",
