@@ -139,6 +139,7 @@ class InMemoryBudgetLedger:
     _committed: dict[str, dict[AmountKey, Decimal]] = field(default_factory=dict)
     _overdraft: dict[str, dict[AmountKey, Decimal]] = field(default_factory=dict)
     _reservations: dict[str, BudgetReservation] = field(default_factory=dict)
+    _reservation_holds: dict[str, tuple[str, ...]] = field(default_factory=dict)
     _permits: dict[str, BudgetPermit] = field(default_factory=dict)
     _reservation_counter: int = 0
     _fencing_counter: int = 0
@@ -154,6 +155,8 @@ class InMemoryBudgetLedger:
     ) -> BudgetAccount:
         if budget_id in self._accounts:
             raise BudgetConflictError(f"budget {budget_id!r} already exists")
+        if parent_budget_id is not None and parent_budget_id not in self._accounts:
+            raise BudgetNotFoundError(f"parent budget {parent_budget_id!r} does not exist")
         allocated = _amounts_to_dict(amounts)
         account = BudgetAccount(
             budget_id=budget_id,
@@ -183,18 +186,26 @@ class InMemoryBudgetLedger:
         if budget_id not in self._accounts:
             raise BudgetNotFoundError(f"budget {budget_id!r} does not exist")
         requested = _amounts_to_dict(amounts)
-        available = _amounts_to_dict(self.balance(budget_id).available)
-        for key, amount in requested.items():
-            if amount > available.get(key, Decimal("0")):
-                raise BudgetExceededError(f"budget {budget_id!r} has insufficient available {key[0]} {key[1]}")
+        held_budget_ids = self._budget_chain(budget_id)
+        for held_budget_id in held_budget_ids:
+            available = _amounts_to_dict(self.balance(held_budget_id).available)
+            for key, amount in requested.items():
+                if amount > available.get(key, Decimal("0")):
+                    raise BudgetExceededError(
+                        f"budget {held_budget_id!r} has insufficient available {key[0]} {key[1]}"
+                    )
         self._reservation_counter += 1
         self._fencing_counter += 1
         actual_reservation_id = reservation_id or f"reservation-{self._reservation_counter:06d}"
         if actual_reservation_id in self._reservations:
             raise BudgetConflictError(f"reservation {actual_reservation_id!r} already exists")
-        for key, amount in requested.items():
-            self._reserved[budget_id][key] = self._reserved[budget_id].get(key, Decimal("0")) + amount
-        self._accounts[budget_id] = replace(self._accounts[budget_id], revision=self._accounts[budget_id].revision + 1)
+        for held_budget_id in held_budget_ids:
+            for key, amount in requested.items():
+                self._reserved[held_budget_id][key] = self._reserved[held_budget_id].get(key, Decimal("0")) + amount
+            self._accounts[held_budget_id] = replace(
+                self._accounts[held_budget_id],
+                revision=self._accounts[held_budget_id].revision + 1,
+            )
         reservation = BudgetReservation(
             reservation_id=actual_reservation_id,
             budget_id=budget_id,
@@ -205,6 +216,7 @@ class InMemoryBudgetLedger:
             fencing_token=self._fencing_counter,
         )
         self._reservations[actual_reservation_id] = reservation
+        self._reservation_holds[actual_reservation_id] = held_budget_ids
         return reservation
 
     def commit(self, reservation_id: str, actual_amounts: list[UsageAmount]) -> BudgetSettlement:
@@ -214,24 +226,30 @@ class InMemoryBudgetLedger:
         if reservation.status != "reserved":
             raise BudgetReservationStateError(f"reservation {reservation_id!r} is {reservation.status}")
         budget_id = reservation.budget_id
+        held_budget_ids = self._reservation_holds.get(reservation_id, (budget_id,))
         reserved = _amounts_to_dict(reservation.amounts)
         actual = _amounts_to_dict(actual_amounts)
         released: dict[AmountKey, Decimal] = {}
         overdraft: dict[AmountKey, Decimal] = {}
-        for key, amount in reserved.items():
-            self._reserved[budget_id][key] = self._reserved[budget_id].get(key, Decimal("0")) - amount
-            if self._reserved[budget_id][key] == 0:
-                del self._reserved[budget_id][key]
-            unused = amount - actual.get(key, Decimal("0"))
-            if unused > 0:
-                released[key] = unused
-        for key, amount in actual.items():
-            self._committed[budget_id][key] = self._committed[budget_id].get(key, Decimal("0")) + amount
-            extra = amount - reserved.get(key, Decimal("0"))
-            if extra > 0:
-                overdraft[key] = extra
-                self._overdraft[budget_id][key] = self._overdraft[budget_id].get(key, Decimal("0")) + extra
-        self._accounts[budget_id] = replace(self._accounts[budget_id], revision=self._accounts[budget_id].revision + 1)
+        for held_budget_id in held_budget_ids:
+            for key, amount in reserved.items():
+                self._reserved[held_budget_id][key] = self._reserved[held_budget_id].get(key, Decimal("0")) - amount
+                if self._reserved[held_budget_id][key] == 0:
+                    del self._reserved[held_budget_id][key]
+                unused = amount - actual.get(key, Decimal("0"))
+                if unused > 0 and held_budget_id == budget_id:
+                    released[key] = unused
+            for key, amount in actual.items():
+                self._committed[held_budget_id][key] = self._committed[held_budget_id].get(key, Decimal("0")) + amount
+                extra = amount - reserved.get(key, Decimal("0"))
+                if extra > 0:
+                    if held_budget_id == budget_id:
+                        overdraft[key] = extra
+                    self._overdraft[held_budget_id][key] = self._overdraft[held_budget_id].get(key, Decimal("0")) + extra
+            self._accounts[held_budget_id] = replace(
+                self._accounts[held_budget_id],
+                revision=self._accounts[held_budget_id].revision + 1,
+            )
         updated = replace(reservation, status="committed")
         self._reservations[reservation_id] = updated
         return BudgetSettlement(
@@ -251,12 +269,17 @@ class InMemoryBudgetLedger:
         if reservation.status != "reserved":
             raise BudgetReservationStateError(f"reservation {reservation_id!r} is {reservation.status}")
         budget_id = reservation.budget_id
+        held_budget_ids = self._reservation_holds.get(reservation_id, (budget_id,))
         reserved = _amounts_to_dict(reservation.amounts)
-        for key, amount in reserved.items():
-            self._reserved[budget_id][key] = self._reserved[budget_id].get(key, Decimal("0")) - amount
-            if self._reserved[budget_id][key] == 0:
-                del self._reserved[budget_id][key]
-        self._accounts[budget_id] = replace(self._accounts[budget_id], revision=self._accounts[budget_id].revision + 1)
+        for held_budget_id in held_budget_ids:
+            for key, amount in reserved.items():
+                self._reserved[held_budget_id][key] = self._reserved[held_budget_id].get(key, Decimal("0")) - amount
+                if self._reserved[held_budget_id][key] == 0:
+                    del self._reserved[held_budget_id][key]
+            self._accounts[held_budget_id] = replace(
+                self._accounts[held_budget_id],
+                revision=self._accounts[held_budget_id].revision + 1,
+            )
         self._reservations[reservation_id] = replace(reservation, status="released")
         return BudgetSettlement(
             reservation_id=reservation_id,
@@ -291,10 +314,11 @@ class InMemoryBudgetLedger:
                 raise BudgetReservationStateError(f"reservation {reservation_id!r} is {reservation.status}")
             for key, amount in _amounts_to_dict(reservation.amounts).items():
                 authorized[key] = authorized.get(key, Decimal("0")) + amount
-            fencing_tokens[reservation.budget_id] = max(
-                fencing_tokens.get(reservation.budget_id, 0),
-                reservation.fencing_token,
-            )
+            for held_budget_id in self._reservation_holds.get(reservation_id, (reservation.budget_id,)):
+                fencing_tokens[held_budget_id] = max(
+                    fencing_tokens.get(held_budget_id, 0),
+                    reservation.fencing_token,
+                )
         permit = BudgetPermit(
             permit_id=permit_id,
             reservation_refs=tuple(reservation_ids),
@@ -335,3 +359,18 @@ class InMemoryBudgetLedger:
             overdraft=_dict_to_amounts(self._overdraft[budget_id]),
             revision=account.revision,
         )
+
+    def _budget_chain(self, budget_id: str) -> tuple[str, ...]:
+        chain: list[str] = []
+        seen: set[str] = set()
+        current_id: str | None = budget_id
+        while current_id is not None:
+            if current_id in seen:
+                raise BudgetConflictError(f"budget hierarchy cycle at {current_id!r}")
+            account = self._accounts.get(current_id)
+            if account is None:
+                raise BudgetNotFoundError(f"budget {current_id!r} does not exist")
+            chain.append(current_id)
+            seen.add(current_id)
+            current_id = account.parent_budget_id
+        return tuple(chain)
