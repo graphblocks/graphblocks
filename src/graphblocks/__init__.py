@@ -10,6 +10,7 @@ from .migration import migrate_document
 from .packages import load_package_catalog, package_rows
 from .plugins import PluginManifest, PluginRegistry, discover_plugins, load_plugin_manifest, validate_plugin_manifest
 from .runtime import ExecutionJournal, InProcessRuntime, JournalStateError, RunResult, RuntimeRegistry, stdlib_registry
+from .run_store import InMemoryRunStore, RunRecord, StateConflictError
 
 __version__ = "0.1.0"
 
@@ -23,8 +24,11 @@ __all__ = [
     "InProcessRuntime",
     "JournalStateError",
     "__version__",
+    "InMemoryRunStore",
     "RunResult",
+    "RunRecord",
     "RuntimeRegistry",
+    "StateConflictError",
     "canonical_dumps",
     "canonical_hash",
     "compile_graph",

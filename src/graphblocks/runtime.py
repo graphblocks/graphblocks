@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
 from .compiler import compile_graph
+from .run_store import InMemoryRunStore
 
 JournalKind = Literal[
     "run_started",
@@ -71,6 +72,7 @@ class RuntimeRegistry:
 @dataclass(slots=True)
 class InProcessRuntime:
     registry: RuntimeRegistry
+    run_store: InMemoryRunStore | None = None
 
     def run(self, graph: dict[str, Any], inputs: dict[str, Any], run_id: str = "run-000001") -> RunResult:
         plan = compile_graph(graph)
@@ -80,6 +82,10 @@ class InProcessRuntime:
             raise ValueError(message)
 
         normalized = plan.normalized
+        if self.run_store is not None:
+            stored = self.run_store.create_run(plan.graph_hash, inputs)
+            run_id = stored.run_id
+            self.run_store.set_status(run_id, "running")
         spec = normalized.get("spec", {})
         nodes = spec.get("nodes", {})
         edges = spec.get("edges", [])
@@ -166,11 +172,15 @@ class InProcessRuntime:
                 except Exception as exc:
                     journal.append("node_failed", {"node": node_name, "error": str(exc)})
                     journal.append_terminal("run_failed", {"node": node_name, "error": str(exc)})
+                    if self.run_store is not None:
+                        self.run_store.set_status(run_id, "failed")
                     return RunResult(run_id, "failed", output_values, journal)
 
                 if not isinstance(result, dict):
                     journal.append("node_failed", {"node": node_name, "error": "block returned non-mapping output"})
                     journal.append_terminal("run_failed", {"node": node_name, "error": "block returned non-mapping output"})
+                    if self.run_store is not None:
+                        self.run_store.set_status(run_id, "failed")
                     return RunResult(run_id, "failed", output_values, journal)
 
                 node_outputs[node_name] = result
@@ -205,9 +215,13 @@ class InProcessRuntime:
             if not progressed:
                 unresolved = ", ".join(sorted(remaining))
                 journal.append_terminal("run_failed", {"error": f"unresolved dependencies: {unresolved}"})
+                if self.run_store is not None:
+                    self.run_store.set_status(run_id, "failed")
                 return RunResult(run_id, "failed", output_values, journal)
 
         journal.append_terminal("run_succeeded", {"outputs": output_values})
+        if self.run_store is not None:
+            self.run_store.set_status(run_id, "succeeded")
         return RunResult(run_id, "succeeded", output_values, journal)
 
 
@@ -258,4 +272,3 @@ def stdlib_registry() -> RuntimeRegistry:
     registry.register("model.generate@1", scripted_generate)
     registry.register("conversation.commit_turn@1", commit_turn)
     return registry
-
