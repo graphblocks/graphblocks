@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .approval import ApprovalRecord, ApprovalRequest
 from .blob_store import (
     BlobKey,
     BlobListItem,
@@ -192,6 +193,8 @@ __all__ = [
     "Abstention",
     "AdmissionDecision",
     "Answer",
+    "ApprovalRecord",
+    "ApprovalRequest",
     "ArtifactRef",
     "AssetRevision",
     "Citation",
