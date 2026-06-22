@@ -17,6 +17,7 @@ from .runtime import (
     JournalStateError,
     RunResult,
     RuntimeRegistry,
+    SQLiteExecutionJournal,
     stdlib_registry,
 )
 from .run_store import InMemoryRunStore, RunRecord, SQLiteRunStore, StateConflictError
@@ -40,6 +41,7 @@ __all__ = [
     "RunRecord",
     "RuntimeRegistry",
     "SQLiteRunStore",
+    "SQLiteExecutionJournal",
     "Lease",
     "LeaseUnavailableError",
     "StateConflictError",

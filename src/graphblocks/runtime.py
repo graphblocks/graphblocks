@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+import json
+from pathlib import Path
+import sqlite3
 from typing import Any, Callable, Literal
 
 from .compiler import compile_graph
@@ -62,6 +65,97 @@ class ExecutionJournal:
         record = self.append(kind, payload)
         self.terminal_kind = kind
         return record
+
+
+@dataclass(slots=True)
+class SQLiteExecutionJournal:
+    path: Path | str
+    run_id: str
+    connection: sqlite3.Connection = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self.path = Path(self.path)
+        self.connection = sqlite3.connect(self.path)
+        self.connection.row_factory = sqlite3.Row
+        self.connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS journal_records (
+              run_id TEXT NOT NULL,
+              sequence INTEGER NOT NULL,
+              kind TEXT NOT NULL,
+              payload_json TEXT NOT NULL,
+              terminal INTEGER NOT NULL DEFAULT 0,
+              PRIMARY KEY (run_id, sequence)
+            )
+            """
+        )
+        self.connection.commit()
+
+    @property
+    def terminal_kind(self) -> JournalKind | None:
+        row = self.connection.execute(
+            """
+            SELECT kind FROM journal_records
+            WHERE run_id = ? AND terminal = 1
+            ORDER BY sequence DESC
+            LIMIT 1
+            """,
+            (self.run_id,),
+        ).fetchone()
+        return None if row is None else row["kind"]
+
+    @property
+    def records(self) -> list[JournalRecord]:
+        rows = self.connection.execute(
+            """
+            SELECT sequence, kind, payload_json FROM journal_records
+            WHERE run_id = ?
+            ORDER BY sequence
+            """,
+            (self.run_id,),
+        ).fetchall()
+        return [
+            JournalRecord(int(row["sequence"]), row["kind"], json.loads(str(row["payload_json"])))
+            for row in rows
+        ]
+
+    def append(self, kind: JournalKind, payload: dict[str, Any]) -> JournalRecord:
+        terminal_kind = self.terminal_kind
+        if terminal_kind is not None:
+            raise JournalStateError(f"cannot append {kind} after terminal {terminal_kind}")
+        row = self.connection.execute(
+            "SELECT COALESCE(MAX(sequence), 0) + 1 FROM journal_records WHERE run_id = ?",
+            (self.run_id,),
+        ).fetchone()
+        sequence = int(row[0])
+        self.connection.execute(
+            """
+            INSERT INTO journal_records (run_id, sequence, kind, payload_json, terminal)
+            VALUES (?, ?, ?, ?, 0)
+            """,
+            (self.run_id, sequence, kind, json.dumps(payload, sort_keys=True, separators=(",", ":"))),
+        )
+        self.connection.commit()
+        return JournalRecord(sequence, kind, dict(payload))
+
+    def append_terminal(self, kind: JournalKind, payload: dict[str, Any]) -> JournalRecord:
+        terminal_kind = self.terminal_kind
+        if terminal_kind is not None:
+            raise JournalStateError(f"terminal already recorded as {terminal_kind}")
+        record = self.append(kind, payload)
+        self.connection.execute(
+            """
+            UPDATE journal_records
+            SET terminal = 1
+            WHERE run_id = ? AND sequence = ?
+            """,
+            (self.run_id, record.sequence),
+        )
+        self.connection.commit()
+        return record
+
+    def close(self) -> None:
+        self.connection.close()
 
 
 @dataclass(frozen=True, slots=True)
