@@ -4,6 +4,19 @@ from __future__ import annotations
 
 from .canonical import canonical_dumps, canonical_hash, normalize_graph
 from .compiler import Plan, compile_graph
+from .conversation import (
+    BranchRequest,
+    ContentPart,
+    Conversation,
+    ConversationArchivedError,
+    ConversationConflictError,
+    ConversationError,
+    ConversationNotFoundError,
+    ConversationSnapshot,
+    InMemoryConversationStore,
+    Message,
+    MessageNotFoundError,
+)
 from .diagnostics import Diagnostic, DiagnosticSet
 from .documents import (
     ArtifactRef,
@@ -66,6 +79,7 @@ __all__ = [
     "Diagnostic",
     "DiagnosticSet",
     "Plan",
+    "BranchRequest",
     "BlockCatalog",
     "BlockDescriptor",
     "Abstention",
@@ -76,6 +90,13 @@ __all__ = [
     "CitationValidationIssue",
     "CitationValidationResult",
     "Claim",
+    "ContentPart",
+    "Conversation",
+    "ConversationArchivedError",
+    "ConversationConflictError",
+    "ConversationError",
+    "ConversationNotFoundError",
+    "ConversationSnapshot",
     "ContextPack",
     "DocumentChunk",
     "DocumentElement",
@@ -94,6 +115,7 @@ __all__ = [
     "JournalStateError",
     "__version__",
     "InMemoryRunStore",
+    "InMemoryConversationStore",
     "InMemoryLeasePool",
     "InMemoryChunkRetriever",
     "KnowledgeItemRef",
@@ -105,6 +127,8 @@ __all__ = [
     "SearchHit",
     "Lease",
     "LeaseUnavailableError",
+    "Message",
+    "MessageNotFoundError",
     "StateConflictError",
     "canonical_dumps",
     "canonical_hash",
