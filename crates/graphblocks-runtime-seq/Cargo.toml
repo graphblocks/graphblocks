@@ -1,0 +1,13 @@
+[package]
+name = "graphblocks-runtime-seq"
+version = "0.1.0"
+description = "Bounded sequence runtime primitives for GraphBlocks"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+graphblocks-runtime-core = { path = "../graphblocks-runtime-core" }
+
+[lints]
+workspace = true

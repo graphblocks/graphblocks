@@ -78,6 +78,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "graphblocks-runtime-seq"
+version = "0.1.0"
+dependencies = [
+ "graphblocks-runtime-core",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
