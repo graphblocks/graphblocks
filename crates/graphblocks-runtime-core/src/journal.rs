@@ -124,13 +124,22 @@ impl ExecutionJournal {
         kind: impl Into<String>,
         payload: Value,
     ) -> Result<JournalRecord, JournalError> {
+        self.append_terminal_with_metadata(kind, JournalMetadata::new(), Some(payload))
+    }
+
+    pub fn append_terminal_with_metadata(
+        &mut self,
+        kind: impl Into<String>,
+        metadata: JournalMetadata,
+        payload: Option<Value>,
+    ) -> Result<JournalRecord, JournalError> {
         if let Some(terminal_kind) = &self.terminal_kind {
             return Err(JournalError::TerminalAlreadyRecorded {
                 terminal_kind: terminal_kind.clone(),
             });
         }
 
-        let mut record = self.append(kind, payload)?;
+        let mut record = self.append_with_metadata(kind, metadata, payload)?;
         record.terminal = true;
         self.terminal_kind = Some(record.kind.clone());
         if let Some(stored) = self.records.last_mut() {
