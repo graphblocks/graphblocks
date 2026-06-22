@@ -6,6 +6,7 @@ from .canonical import canonical_dumps, canonical_hash, normalize_graph
 from .compiler import Plan, compile_graph
 from .diagnostics import Diagnostic, DiagnosticSet
 from .loader import load_documents
+from .leases import InMemoryLeasePool, Lease, LeaseUnavailableError
 from .migration import migrate_document
 from .packages import load_package_catalog, package_rows
 from .plugins import PluginManifest, PluginRegistry, discover_plugins, load_plugin_manifest, validate_plugin_manifest
@@ -25,9 +26,12 @@ __all__ = [
     "JournalStateError",
     "__version__",
     "InMemoryRunStore",
+    "InMemoryLeasePool",
     "RunResult",
     "RunRecord",
     "RuntimeRegistry",
+    "Lease",
+    "LeaseUnavailableError",
     "StateConflictError",
     "canonical_dumps",
     "canonical_hash",
