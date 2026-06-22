@@ -5,10 +5,43 @@ metadata:
   version: 0.1.0
 spec:
   pluginId: io.graphblocks.stdlib
+  version: 0.1.0
   maturity: official
   capabilities:
     - graphblocks.schema
-  blocks: []
+    - graphblocks.compiler
+  blocks:
+    - typeId: prompt.render
+      version: 1
+      role: transform
+      implementation: graphblocks.stdlib.prompt.render
+    - typeId: model.generate
+      version: 1
+      role: model
+      implementation: graphblocks.stdlib.scripted_model.generate
+    - typeId: conversation.begin_turn
+      version: 1
+      role: transform
+      implementation: graphblocks.stdlib.conversation.begin_turn
+    - typeId: conversation.commit_turn
+      version: 1
+      role: effect
+      implementation: graphblocks.stdlib.conversation.commit_turn
+    - typeId: control.map
+      version: 2
+      role: control
+      implementation: graphblocks.stdlib.control.map
+    - typeId: control.select
+      version: 1
+      role: control
+      implementation: graphblocks.stdlib.control.select
+    - typeId: retrieve.fuse
+      version: 1
+      role: builder
+      implementation: graphblocks.stdlib.retrieve.fuse
+    - typeId: context.build
+      version: 1
+      role: builder
+      implementation: graphblocks.stdlib.context.build
   connectorFactories: []
   adapters: []
-

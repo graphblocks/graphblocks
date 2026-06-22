@@ -7,6 +7,8 @@ from .compiler import Plan, compile_graph
 from .diagnostics import Diagnostic, DiagnosticSet
 from .loader import load_documents
 from .migration import migrate_document
+from .packages import load_package_catalog, package_rows
+from .plugins import PluginManifest, PluginRegistry, discover_plugins, load_plugin_manifest, validate_plugin_manifest
 
 __version__ = "0.1.0"
 
@@ -14,11 +16,18 @@ __all__ = [
     "Diagnostic",
     "DiagnosticSet",
     "Plan",
+    "PluginManifest",
+    "PluginRegistry",
     "__version__",
     "canonical_dumps",
     "canonical_hash",
     "compile_graph",
+    "discover_plugins",
+    "load_package_catalog",
     "load_documents",
+    "load_plugin_manifest",
     "migrate_document",
     "normalize_graph",
+    "package_rows",
+    "validate_plugin_manifest",
 ]

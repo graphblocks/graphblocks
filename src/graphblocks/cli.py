@@ -11,6 +11,8 @@ from .compiler import compile_graph
 from .diagnostics import Diagnostic
 from .loader import load_documents
 from .migration import migrate_document
+from .packages import load_package_catalog, package_rows
+from .plugins import discover_plugins, load_plugin_manifest, validate_plugin_manifest
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -31,6 +33,26 @@ def main(argv: list[str] | None = None) -> int:
 
     migrate_parser = subparsers.add_parser("migrate", help="read legacy alpha documents and emit current YAML")
     migrate_parser.add_argument("path", type=Path)
+
+    plugins_parser = subparsers.add_parser("plugins", help="inspect static plugin manifests")
+    plugins_subparsers = plugins_parser.add_subparsers(dest="plugins_command")
+    plugins_list_parser = plugins_subparsers.add_parser("list", help="list discovered plugins")
+    plugins_list_parser.add_argument("--path", action="append", default=[], help="manifest file or directory to scan")
+    plugins_list_parser.add_argument("--no-installed", action="store_true", help="skip installed distribution scan")
+    plugins_list_parser.add_argument("--json", action="store_true", help="emit JSON")
+    plugins_inspect_parser = plugins_subparsers.add_parser("inspect", help="show one discovered plugin manifest")
+    plugins_inspect_parser.add_argument("plugin_id")
+    plugins_inspect_parser.add_argument("--path", action="append", default=[], help="manifest file or directory to scan")
+    plugins_inspect_parser.add_argument("--no-installed", action="store_true", help="skip installed distribution scan")
+    plugins_validate_parser = plugins_subparsers.add_parser("validate", help="validate one static plugin manifest")
+    plugins_validate_parser.add_argument("path", type=Path)
+    plugins_validate_parser.add_argument("--json", action="store_true", help="emit JSON")
+
+    packages_parser = subparsers.add_parser("packages", help="inspect the official package catalog")
+    packages_subparsers = packages_parser.add_subparsers(dest="packages_command")
+    packages_list_parser = packages_subparsers.add_parser("list", help="list package catalog entries")
+    packages_list_parser.add_argument("--catalog", type=Path, help="override package-catalog.yaml")
+    packages_list_parser.add_argument("--json", action="store_true", help="emit JSON")
 
     args = parser.parse_args(argv)
     if args.version:
@@ -105,6 +127,59 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "migrate":
         documents = [migrate_document(document) for document in load_documents(args.path)]
         print(yaml.safe_dump_all(documents, sort_keys=False, allow_unicode=True).rstrip())
+        return 0
+    if args.command == "plugins":
+        if args.plugins_command == "list":
+            registry = discover_plugins(args.path, include_installed=not args.no_installed)
+            payload = {"ok": registry.ok, "diagnostics": registry.diagnostics.to_list(), "plugins": registry.summaries()}
+            if args.json:
+                print(json.dumps(payload, indent=2, sort_keys=True))
+            else:
+                for plugin in payload["plugins"]:
+                    print(
+                        f"{plugin['pluginId']} {plugin['version']} "
+                        f"{plugin['maturity']} blocks={plugin['blocks']} source={plugin['source']}"
+                    )
+                for item in payload["diagnostics"]:
+                    print(f"{item['severity']} {item['code']} {item['path']}: {item['message']}")
+            return 0 if registry.ok else 1
+        if args.plugins_command == "inspect":
+            registry = discover_plugins(args.path, include_installed=not args.no_installed)
+            for manifest in registry.manifests:
+                if manifest.plugin_id == args.plugin_id:
+                    print(json.dumps(manifest.raw, indent=2, sort_keys=True))
+                    return 0 if registry.ok else 1
+            print(f"plugin not found: {args.plugin_id}")
+            return 1
+        if args.plugins_command == "validate":
+            manifest = load_plugin_manifest(args.path)
+            diagnostics = validate_plugin_manifest(manifest.raw)
+            payload = {"ok": diagnostics.ok, "diagnostics": diagnostics.to_list(), "plugin": manifest.summary()}
+            if args.json:
+                print(json.dumps(payload, indent=2, sort_keys=True))
+            else:
+                if diagnostics.diagnostics:
+                    for item in diagnostics.diagnostics:
+                        print(f"{item.severity} {item.code} {item.path}: {item.message}")
+                else:
+                    print("OK")
+            return 0 if diagnostics.ok else 1
+        plugins_parser.print_help()
+        return 0
+    if args.command == "packages":
+        if args.packages_command == "list":
+            rows = package_rows(load_package_catalog(args.catalog))
+            if args.json:
+                print(json.dumps({"packages": rows}, indent=2, sort_keys=True))
+            else:
+                for row in rows:
+                    default = "default" if row["default"] else "optional"
+                    print(
+                        f"{row['distribution']} {default} phase={row['implementationPhase']} "
+                        f"{row['kind']} {row['stability']}"
+                    )
+            return 0
+        packages_parser.print_help()
         return 0
     parser.print_help()
     return 0

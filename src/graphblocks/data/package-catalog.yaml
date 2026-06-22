@@ -1,0 +1,639 @@
+catalogVersion: 4
+specVersion: '1.0'
+defaultMetaPackage:
+  distribution: graphblocks
+  ownsImportPackage: false
+  dependencies:
+  - graphblocks-core~=1.0
+  - graphblocks-runtime~=1.0
+  - graphblocks-stdlib~=1.0
+  - graphblocks-documents~=1.0
+  - graphblocks-rag~=1.0
+  - graphblocks-conversation~=1.0
+  - graphblocks-policy~=1.0
+  - graphblocks-budget~=1.0
+  - graphblocks-usage~=1.0
+  - graphblocks-cli~=1.0
+  excludedCategories:
+  - model_provider
+  - cloud_sdk
+  - database_client
+  - document_parser
+  - ocr_engine
+  - web_server
+  - tui
+  - kubernetes
+  - terraform
+  - voice
+  - durable_stream
+  - external_policy_engine
+  - distributed_ledger_backend
+  notes:
+  - Policy, budget, and usage default packages provide only provider-neutral contracts
+    and local in-memory/SQLite development implementations.
+  - Distributed ledgers, external PDPs, providers, parsers, cloud SDKs, servers, voice,
+    and deployment adapters remain optional.
+releaseTrains:
+  foundation:
+    minorVersionCoordinated: true
+    packages:
+    - graphblocks-core
+    - graphblocks-runtime
+    - graphblocks-stdlib
+    - graphblocks-documents
+    - graphblocks-rag
+    - graphblocks-conversation
+    - graphblocks-policy
+    - graphblocks-budget
+    - graphblocks-usage
+    - graphblocks-testing
+  firstPartyExtensions:
+    minorVersionCoordinated: false
+    packages:
+    - graphblocks-agents
+    - graphblocks-evaluation
+    - graphblocks-orchestration
+    - graphblocks-review
+    - graphblocks-workspace
+    - graphblocks-client
+    - graphblocks-tui
+    - graphblocks-cli
+    - graphblocks-server
+    - graphblocks-worker
+    - graphblocks-deployment
+    - graphblocks-telemetry
+    - graphblocks-devtools
+    - graphblocks-oci
+    - graphblocks-kubernetes
+    - graphblocks-terraform
+    - graphblocks-gitops
+    - graphblocks-operator
+    - graphblocks-otel
+    - graphblocks-langfuse
+    - graphblocks-audit
+    - graphblocks-prometheus
+    - graphblocks-dashboards
+    compatibilityBy:
+    - requires_core
+    - requires_runtime_protocol
+    - plugin_api
+    - schema_api
+    - policy_api
+    - ledger_api
+  integrations:
+    minorVersionCoordinated: false
+    compatibilityBy:
+    - requires_core
+    - requires_runtime_protocol
+    - plugin_api
+    - schema_api
+    - policy_api
+    - ledger_api
+packages:
+- distribution: graphblocks
+  import: null
+  layer: metapackage
+  default: true
+  kind: metapackage
+  dependsOn:
+  - graphblocks-core
+  - graphblocks-runtime
+  - graphblocks-stdlib
+  - graphblocks-documents
+  - graphblocks-rag
+  - graphblocks-conversation
+  - graphblocks-policy
+  - graphblocks-budget
+  - graphblocks-usage
+  - graphblocks-cli
+  responsibility:
+  - provider-neutral default installation
+  - local policy/budget/usage development profile
+  implementationPhase: 3
+  stability: metapackage
+- distribution: graphblocks-core
+  import: graphblocks
+  layer: schema_authoring
+  default: true
+  kind: pure_python
+  dependsOn: []
+  responsibility:
+  - canonical AI and cross-domain work schemas
+  - GraphSpec/ApplicationSpec/BindingSpec/Release/Deployment schemas
+  - policy, evidence, snapshot, ChangeSet, Check/Gate/Review schemas
+  - BlockDescriptor SDK and static compiler frontend
+  - plugin manifest reader
+  implementationPhase: 0
+  stability: foundation
+- distribution: graphblocks-runtime
+  import: graphblocks_runtime
+  layer: native_runtime
+  default: true
+  kind: native_wheel
+  dependsOn:
+  - graphblocks-core
+  responsibility:
+  - Rust scheduler
+  - cancellation and bounded flow
+  - leases and BudgetPermit enforcement hooks
+  - Python worker protocol
+  implementationPhase: 1
+  stability: foundation
+- distribution: graphblocks-stdlib
+  import: graphblocks_stdlib
+  layer: stdlib
+  default: true
+  kind: pure_python
+  dependsOn:
+  - graphblocks-core
+  responsibility:
+  - value/schema/control/sequence/text/json blocks
+  - prompt lightweight blocks
+  - memory/local test connectors
+  implementationPhase: 0
+  stability: foundation
+- distribution: graphblocks-documents
+  import: graphblocks_documents
+  layer: domain
+  default: true
+  kind: pure_python
+  dependsOn:
+  - graphblocks-core
+  responsibility:
+  - document profile
+  - lineage
+  - manifests
+  - converter orchestration
+  forbiddenDependencies:
+  - parser SDKs
+  - OCR engines
+  implementationPhase: 1
+  stability: foundation
+- distribution: graphblocks-rag
+  import: graphblocks_rag
+  layer: domain
+  default: true
+  kind: pure_python
+  dependsOn:
+  - graphblocks-core
+  responsibility:
+  - Retriever contract
+  - federation/fusion/rerank
+  - context
+  - answer/citation
+  forbiddenDependencies:
+  - vector DB clients
+  implementationPhase: 1
+  stability: foundation
+- distribution: graphblocks-conversation
+  import: graphblocks_conversation
+  layer: domain
+  default: true
+  kind: pure_python
+  dependsOn:
+  - graphblocks-core
+  responsibility:
+  - conversation/turn transaction
+  - draft/commit/retract
+  - compaction/memory policy
+  forbiddenDependencies:
+  - server frameworks
+  - DB clients
+  implementationPhase: 1
+  stability: foundation
+- distribution: graphblocks-agents
+  import: graphblocks_agents
+  layer: domain
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-core
+  - graphblocks-conversation
+  - graphblocks-policy
+  responsibility:
+  - tool loop
+  - effect approval
+  - typed agent state
+  - completion reserve integration
+  implementationPhase: 2
+  stability: first-party-extension
+- distribution: graphblocks-evaluation
+  import: graphblocks_evaluation
+  layer: domain
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-core
+  responsibility:
+  - typed datasets
+  - Check/Metric/Gate/Trial
+  - result bundles
+  - quality gates
+  implementationPhase: 2
+  stability: first-party-extension
+- distribution: graphblocks-cli
+  import: graphblocks_cli
+  layer: tooling
+  default: true
+  kind: python_optional_native
+  dependsOn:
+  - graphblocks-core
+  responsibility:
+  - validate/plan/run/lock/doctor
+  - release/deploy/observe commands
+  implementationPhase: 0
+  stability: first-party-extension
+- distribution: graphblocks-client
+  import: graphblocks_client
+  layer: application
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-core
+  responsibility:
+  - local/remote client
+  - application command/event protocol
+  implementationPhase: 3
+  stability: first-party-extension
+- distribution: graphblocks-tui
+  import: graphblocks_tui
+  layer: application
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-client
+  responsibility:
+  - reference Textual TUI
+  implementationPhase: 5
+  stability: first-party-extension
+- distribution: graphblocks-workspace
+  import: graphblocks_workspace
+  layer: application
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-core
+  - graphblocks-policy
+  responsibility:
+  - workspace snapshot/fork
+  - ChangeSet and mutation policy
+  - file/git/test/process tools
+  - review and compare-and-swap commit
+  implementationPhase: 5
+  stability: first-party-extension
+- distribution: graphblocks-server
+  import: graphblocks_server
+  layer: application
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-core
+  - graphblocks-runtime
+  responsibility:
+  - HTTP/SSE/WebSocket
+  - auth hooks
+  - health endpoints
+  implementationPhase: 3
+  stability: first-party-extension
+- distribution: graphblocks-worker
+  import: graphblocks_worker
+  layer: runtime
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-core
+  - graphblocks-runtime
+  responsibility:
+  - isolated Python worker
+  - worker advertisement and draining
+  implementationPhase: 4
+  stability: first-party-extension
+- distribution: graphblocks-deployment
+  import: graphblocks_deployment
+  layer: deployment
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-core
+  responsibility:
+  - ReleaseBundle/GraphDeployment schemas
+  - DeploymentRevision
+  - physical planner
+  implementationPhase: 4
+  stability: first-party-extension
+- distribution: graphblocks-kubernetes
+  import: graphblocks_kubernetes
+  layer: deployment_adapter
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-deployment
+  responsibility:
+  - Kubernetes/Helm renderer
+  - cluster capability discovery
+  implementationPhase: 4
+  stability: first-party-extension
+- distribution: graphblocks-terraform
+  import: graphblocks_terraform
+  layer: deployment_adapter
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-deployment
+  responsibility:
+  - infrastructure requirements
+  - tfvars/output binding bridge
+  implementationPhase: 4
+  stability: first-party-extension
+- distribution: graphblocks-oci
+  import: graphblocks_oci
+  layer: release
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-deployment
+  responsibility:
+  - release bundle push/pull
+  - digest/signature/provenance
+  implementationPhase: 4
+  stability: first-party-extension
+- distribution: graphblocks-telemetry
+  import: graphblocks_telemetry
+  layer: observability
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-core
+  responsibility:
+  - canonical observation model
+  - capture/redaction
+  - semantic mapping
+  implementationPhase: 3
+  stability: first-party-extension
+- distribution: graphblocks-otel
+  import: graphblocks_otel
+  layer: observability_adapter
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-telemetry
+  responsibility:
+  - OTLP exporters
+  - collector templates
+  implementationPhase: 3
+  stability: first-party-extension
+- distribution: graphblocks-langfuse
+  import: graphblocks_langfuse
+  layer: observability_adapter
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-telemetry
+  responsibility:
+  - telemetry/prompt/evaluation/dataset adapters
+  implementationPhase: 3
+  stability: first-party-extension
+- distribution: graphblocks-audit
+  import: graphblocks_audit
+  layer: durability
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-core
+  responsibility:
+  - durable audit sink/outbox
+  implementationPhase: 3
+  stability: first-party-extension
+- distribution: graphblocks-usage
+  import: graphblocks_usage
+  layer: durability
+  default: true
+  kind: pure_python
+  dependsOn:
+  - graphblocks-core
+  responsibility:
+  - UsageLedger SPI
+  - immutable actual usage facts
+  - provider usage reconciliation
+  - local in-memory/SQLite implementation
+  implementationPhase: 2
+  stability: foundation
+- distribution: graphblocks-testing
+  import: graphblocks_testing
+  layer: tooling
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-core
+  responsibility:
+  - deterministic runtime
+  - test DSL
+  - TCK clients
+  implementationPhase: 0
+  stability: foundation
+- distribution: graphblocks-devtools
+  import: graphblocks_devtools
+  layer: tooling
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-core
+  - graphblocks-cli
+  responsibility:
+  - visualization
+  - migration
+  - profiling
+  - codegen
+  implementationPhase: 5
+  stability: first-party-extension
+- distribution: graphblocks-gitops
+  import: graphblocks_gitops
+  layer: platform_adapter
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-deployment
+  responsibility:
+  - gitops_manifest_generation
+  - argo_cd_flux_adapters
+  implementationPhase: 4
+  stability: first-party-extension
+- distribution: graphblocks-operator
+  import: null
+  layer: platform_controller
+  default: false
+  kind: oci_image_and_helm
+  dependsOn:
+  - graphblocks-deployment
+  responsibility:
+  - kubernetes_reconciliation
+  implementationPhase: 4
+  stability: first-party-extension
+- distribution: graphblocks-prometheus
+  import: graphblocks_prometheus
+  layer: observability_adapter
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-telemetry
+  responsibility:
+  - prometheus_metrics_export
+  - recording_and_alert_rules
+  implementationPhase: 3
+  stability: first-party-extension
+- distribution: graphblocks-dashboards
+  import: graphblocks_dashboards
+  layer: observability_assets
+  default: false
+  kind: data_package
+  dependsOn:
+  - graphblocks-telemetry
+  responsibility:
+  - dashboard_templates
+  - slo_rules
+  - runbook_templates
+  implementationPhase: 3
+  stability: first-party-extension
+- distribution: graphblocks-policy
+  import: graphblocks_policy
+  layer: governance
+  default: true
+  kind: pure_python
+  dependsOn:
+  - graphblocks-core
+  responsibility:
+  - policy composition
+  - typed obligations
+  - PEP middleware
+  - default declarative evaluator
+  - policy test DSL
+  forbiddenDependencies:
+  - OPA SDK
+  - Cedar SDK
+  implementationPhase: 2
+  stability: foundation
+- distribution: graphblocks-budget
+  import: graphblocks_budget
+  layer: governance
+  default: true
+  kind: pure_python
+  dependsOn:
+  - graphblocks-core
+  responsibility:
+  - BudgetLedger SPI
+  - atomic reservation and settlement
+  - BudgetPermit
+  - local in-memory/SQLite implementation
+  implementationPhase: 2
+  stability: foundation
+- distribution: graphblocks-orchestration
+  import: graphblocks_orchestration
+  layer: domain
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-core
+  - graphblocks-policy
+  - graphblocks-budget
+  responsibility:
+  - TaskPlan/TaskPlanPatch
+  - worker/model pools
+  - child-budget delegation
+  implementationPhase: 5
+  stability: first-party-extension
+- distribution: graphblocks-review
+  import: graphblocks_review
+  layer: domain
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-core
+  - graphblocks-policy
+  responsibility:
+  - immutable-subject review workflow
+  - reviewer credential provider SPI
+  implementationPhase: 5
+  stability: first-party-extension
+- distribution: graphblocks-policy-opa
+  import: graphblocks_policy_opa
+  layer: governance_adapter
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-policy
+  responsibility:
+  - OPA/Rego PDP adapter
+  - decision-log mapping
+  implementationPhase: integration-defined
+  stability: adapter
+- distribution: graphblocks-policy-cedar
+  import: graphblocks_policy_cedar
+  layer: governance_adapter
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-policy
+  responsibility:
+  - Cedar authorization PDP adapter
+  implementationPhase: integration-defined
+  stability: adapter
+- distribution: graphblocks-budget-postgres
+  import: graphblocks_budget_postgres
+  layer: durability_adapter
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-budget
+  responsibility:
+  - serializable distributed BudgetLedger
+  - hierarchical reservation and fencing
+  implementationPhase: integration-defined
+  stability: adapter
+- distribution: graphblocks-usage-postgres
+  import: graphblocks_usage_postgres
+  layer: durability_adapter
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-usage
+  responsibility:
+  - durable UsageLedger
+  - provider reconciliation
+  implementationPhase: integration-defined
+  stability: adapter
+integrationRules:
+  distributionPattern: graphblocks-<technology>
+  importPattern: graphblocks_<technology>
+  sharedGraphblocksNamespace: false
+  discovery: Python entry points plus static graphblocks-plugin.json
+  eagerProviderImport: false
+  mustNotDependOn:
+  - graphblocks metapackage
+  - unrelated integrations
+  policyDiscovery: entry points plus signed PolicyBundle manifest
+  externalPolicyEnginesOptional: true
+  distributedLedgersOptional: true
+extensionPackages:
+  voice:
+  - graphblocks-voice
+  - graphblocks-webrtc
+  - graphblocks-websocket-media
+  - graphblocks-openai-realtime
+  - graphblocks-silero-vad
+  durable:
+  - graphblocks-durable
+  - graphblocks-kafka
+  - graphblocks-nats
+  - graphblocks-sqs
+  - graphblocks-pubsub
+  operations:
+  - graphblocks-operator
+  - graphblocks-gitops
+  - graphblocks-prometheus
+  - graphblocks-dashboards
+  - graphblocks-policy-opa
+  - graphblocks-policy-cedar
+  - graphblocks-budget-postgres
+  - graphblocks-usage-postgres
+documentStatus: final-architecture-baseline
+apiMaturity: alpha-until-profile-tck
