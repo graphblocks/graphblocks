@@ -39,11 +39,16 @@ graphblocks/
 └─ docs/
 ```
 
-Rust crate 이름은 명세의 권장 workspace 이름을 기준으로 한다. 특히 `graphblocks-core`는 Python 배포 패키지 이름으로만 사용하고, Rust runtime core는 `graphblocks-runtime-core`로 부른다. 약칭 crate 이름(`gb-schema`, `gb-compiler`, `gb-runtime-core` 등)을 별도로 도입할 수 있지만, 문서와 release artifact의 기본 이름은 `graphblocks-*` 형식을 따른다.
+Rust crate 이름은 명세의 권장 workspace 이름을 기준으로 하며, v1에서는 `graphblocks-*` 형식을 canonical name으로 사용한다. `gb-schema`, `gb-compiler`, `gb-runtime-core`, `gb-runtime-seq`, `gb-python` 같은 `gb-*` 이름은 논의용 약칭일 뿐이고, 별도 rename 결정 전까지 crate name이나 release artifact name으로 사용하지 않는다.
 
-Rust crate는 `graphblocks-python`을 제외하고 PyO3에 의존하지 않는다. `crates/graphblocks-python/`은 실제 PyO3 crate와 async bridge를 소유하는 단일 binding 구현이다. `packages/graphblocks-runtime/`은 `pyproject.toml`, Python wrapper/stub, packaging metadata를 가지며, Cargo manifest는 workspace의 `crates/graphblocks-python`을 참조한다. 별도의 두 번째 binding 구현을 두지 않는다.
+이 계획에서 `core`라는 단어는 두 의미로만 사용한다. `graphblocks-core`는 Python authoring/schema 배포 패키지이고 Rust crate가 아니다. Rust runtime core는 `graphblocks-runtime-core` crate이며, `graphblocks-runtime`은 Python runtime wheel/source package 이름이다.
 
 Compiler authority는 Rust에 있다. `graphblocks-compiler` Rust crate가 normalized IR, canonical serialization, plan hashing의 normative reference implementation이다. Python `graphblocks-core`는 authoring/schema facade이며, 독립 validation 구현을 제공할 경우 Rust compiler와 동일한 TCK 결과 및 canonical hash를 생성해야 한다.
+
+Rust crate는 `graphblocks-python`을 제외하고 PyO3에 의존하지 않는다. binding 구현은 하나만 둔다.
+
+- `crates/graphblocks-python/`: 실제 PyO3 crate와 async bridge를 소유한다.
+- `packages/graphblocks-runtime/`: `pyproject.toml`, Python wrapper/stub, packaging metadata를 가진다. Cargo manifest가 필요할 경우 workspace의 `crates/graphblocks-python`을 참조하고, 별도의 두 번째 binding 구현은 두지 않는다.
 
 ## 3. Phase 0 — Contract Toolchain (`GB-C0-SCHEMA`)
 
