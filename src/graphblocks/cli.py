@@ -14,6 +14,17 @@ from .migration import migrate_document
 from .packages import load_package_catalog, package_rows
 from .plugins import discover_plugins, load_plugin_manifest, validate_plugin_manifest
 
+STRUCTURAL_KINDS = {
+    "Application",
+    "Binding",
+    "ConformanceProfileSet",
+    "GraphDeployment",
+    "GraphRelease",
+    "ObservabilityProfile",
+    "PluginManifest",
+    "PolicyProfile",
+}
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="graphblocks")
@@ -73,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
                     }
                     for item in plan.diagnostics.diagnostics
                 )
-            elif document.get("kind") in {"Binding", "Application", "PolicyProfile", "GraphDeployment", "PluginManifest"}:
+            elif document.get("kind") in STRUCTURAL_KINDS:
                 for field in ("apiVersion", "kind", "metadata", "spec"):
                     if field not in document:
                         ok = False
