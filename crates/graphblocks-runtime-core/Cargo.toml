@@ -1,0 +1,13 @@
+[package]
+name = "graphblocks-runtime-core"
+version = "0.1.0"
+description = "Runtime lifecycle and execution primitives for GraphBlocks"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde_json = "1.0"
+
+[lints]
+workspace = true
