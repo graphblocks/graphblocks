@@ -267,8 +267,38 @@ def stdlib_registry() -> RuntimeRegistry:
             }
         }
 
+    def control_map(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+        items = inputs.get("items", [])
+        if not isinstance(items, list):
+            raise TypeError("control.map@2 input 'items' must be a list")
+        block_id = config["block"]
+        input_name = str(config.get("inputName", "item"))
+        output_name = config.get("outputName")
+        block_config = config.get("config", {})
+        if not isinstance(block_config, dict):
+            raise TypeError("control.map@2 config.config must be a mapping")
+        block = registry.resolve(str(block_id))
+        outcomes: list[dict[str, Any]] = []
+        values: list[Any] = []
+        for index, item in enumerate(items):
+            try:
+                result = block({input_name: item}, block_config, {**context, "map_index": index})
+                if not isinstance(result, dict):
+                    raise TypeError("mapped block returned non-mapping output")
+                value = result if output_name is None else result[str(output_name)]
+                values.append(value)
+                outcomes.append({"status": "succeeded", "value": value})
+            except Exception as exc:
+                if config.get("onError") != "collect":
+                    raise
+                outcomes.append({"status": "failed", "error": str(exc)})
+        if config.get("onError") == "collect":
+            return {"outcomes": outcomes, "values": values}
+        return {"values": values}
+
     registry.register("conversation.begin_turn@1", begin_turn)
     registry.register("prompt.render@1", prompt_render)
     registry.register("model.generate@1", scripted_generate)
     registry.register("conversation.commit_turn@1", commit_turn)
+    registry.register("control.map@2", control_map)
     return registry
