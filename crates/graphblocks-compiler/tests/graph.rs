@@ -1,5 +1,5 @@
-use graphblocks_core::canonical::{canonical_hash, canonical_json};
-use graphblocks_core::graph::{GRAPH_API_VERSION, normalize_graph};
+use graphblocks_compiler::canonical::{canonical_hash, canonical_json};
+use graphblocks_compiler::graph::{GRAPH_API_VERSION, normalize_graph};
 use serde_json::json;
 
 #[test]

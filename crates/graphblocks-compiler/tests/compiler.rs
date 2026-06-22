@@ -1,6 +1,6 @@
-use graphblocks_core::compiler::compile_graph;
-use graphblocks_core::diagnostics::Severity;
-use graphblocks_core::graph::GRAPH_API_VERSION;
+use graphblocks_compiler::compiler::compile_graph;
+use graphblocks_compiler::diagnostics::Severity;
+use graphblocks_compiler::graph::GRAPH_API_VERSION;
 use serde_json::json;
 
 #[test]

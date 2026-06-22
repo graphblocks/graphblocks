@@ -63,7 +63,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "graphblocks-core"
+name = "graphblocks-compiler"
 version = "0.1.0"
 dependencies = [
  "serde_json",

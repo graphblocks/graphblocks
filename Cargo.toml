@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/graphblocks-core"]
+members = ["crates/graphblocks-compiler"]
 resolver = "3"
 
 [workspace.package]
