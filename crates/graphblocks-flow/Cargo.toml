@@ -1,0 +1,13 @@
+[package]
+name = "graphblocks-flow"
+version = "0.1.0"
+description = "Flow-control primitives for GraphBlocks"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde_json = "1.0"
+
+[lints]
+workspace = true
