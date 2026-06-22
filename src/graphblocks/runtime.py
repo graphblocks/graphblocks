@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 import json
 from pathlib import Path
 import sqlite3
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, Protocol
 
 from .compiler import compile_graph
 from .run_store import InMemoryRunStore
@@ -21,6 +21,25 @@ JournalKind = Literal[
     "run_cancelled",
 ]
 BlockCallable = Callable[[dict[str, Any], dict[str, Any], dict[str, Any]], dict[str, Any]]
+
+
+class JournalLike(Protocol):
+    @property
+    def records(self) -> list[JournalRecord]:
+        ...
+
+    @property
+    def terminal_kind(self) -> JournalKind | None:
+        ...
+
+    def append(self, kind: JournalKind, payload: dict[str, Any]) -> JournalRecord:
+        ...
+
+    def append_terminal(self, kind: JournalKind, payload: dict[str, Any]) -> JournalRecord:
+        ...
+
+
+JournalFactory = Callable[[str], JournalLike]
 
 
 class JournalStateError(RuntimeError):
@@ -163,7 +182,7 @@ class RunResult:
     run_id: str
     status: Literal["succeeded", "failed", "cancelled"]
     outputs: dict[str, Any]
-    journal: ExecutionJournal
+    journal: JournalLike
 
 
 @dataclass(slots=True)
@@ -182,6 +201,7 @@ class InProcessRuntime:
     registry: RuntimeRegistry
     run_store: InMemoryRunStore | None = None
     cancellation_token: CancellationToken | None = None
+    journal_factory: JournalFactory | None = None
 
     def run(self, graph: dict[str, Any], inputs: dict[str, Any], run_id: str = "run-000001") -> RunResult:
         plan = compile_graph(graph)
@@ -198,7 +218,7 @@ class InProcessRuntime:
         spec = normalized.get("spec", {})
         nodes = spec.get("nodes", {})
         edges = spec.get("edges", [])
-        journal = ExecutionJournal(run_id)
+        journal = self.journal_factory(run_id) if self.journal_factory is not None else ExecutionJournal(run_id)
         journal.append("run_started", {"graphHash": plan.graph_hash})
 
         node_inputs: dict[str, dict[str, Any]] = {name: {} for name in nodes}

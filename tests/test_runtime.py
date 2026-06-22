@@ -7,6 +7,7 @@ from graphblocks.runtime import (
     InProcessRuntime,
     JournalStateError,
     RuntimeRegistry,
+    SQLiteExecutionJournal,
     stdlib_registry,
 )
 from graphblocks.run_store import InMemoryRunStore, SQLiteRunStore
@@ -152,3 +153,37 @@ def test_runtime_updates_supplied_sqlite_run_store_status(tmp_path) -> None:
 
     assert result.run_id == "run-000001"
     assert store.get_run(result.run_id).status == "succeeded"
+
+
+def test_runtime_can_persist_execution_journal_with_factory(tmp_path) -> None:
+    database = tmp_path / "journal.sqlite3"
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "persisted-journal"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Journal {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+
+    result = InProcessRuntime(
+        stdlib_registry(),
+        journal_factory=lambda run_id: SQLiteExecutionJournal(database, run_id),
+    ).run(graph, {"message": {"text": "hello"}})
+    persisted = SQLiteExecutionJournal(database, result.run_id)
+
+    assert result.status == "succeeded"
+    assert persisted.terminal_kind == "run_succeeded"
+    assert [record.kind for record in persisted.records] == [
+        "run_started",
+        "node_started",
+        "node_succeeded",
+        "run_succeeded",
+    ]
