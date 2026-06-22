@@ -10,6 +10,7 @@ from .run_store import InMemoryRunStore
 JournalKind = Literal[
     "run_started",
     "node_started",
+    "node_retry",
     "node_succeeded",
     "node_failed",
     "run_succeeded",
@@ -164,24 +165,42 @@ class InProcessRuntime:
 
                 node = nodes[node_name]
                 block_id = str(node["block"])
-                journal.append("node_started", {"node": node_name, "block": block_id})
-                try:
-                    block = self.registry.resolve(block_id)
-                    merged_inputs = {**node_inputs[node_name], **resolved_inputs}
-                    result = block(merged_inputs, node.get("config", {}), {**context, "node": node_name})
-                except Exception as exc:
-                    journal.append("node_failed", {"node": node_name, "error": str(exc)})
-                    journal.append_terminal("run_failed", {"node": node_name, "error": str(exc)})
-                    if self.run_store is not None:
-                        self.run_store.set_status(run_id, "failed")
-                    return RunResult(run_id, "failed", output_values, journal)
-
-                if not isinstance(result, dict):
-                    journal.append("node_failed", {"node": node_name, "error": "block returned non-mapping output"})
-                    journal.append_terminal("run_failed", {"node": node_name, "error": "block returned non-mapping output"})
-                    if self.run_store is not None:
-                        self.run_store.set_status(run_id, "failed")
-                    return RunResult(run_id, "failed", output_values, journal)
+                flow = node.get("flow", {})
+                retry = flow.get("retry", {}) if isinstance(flow, dict) else {}
+                max_attempts = 1
+                if isinstance(retry, dict):
+                    max_attempts = int(retry.get("maxAttempts", 1))
+                elif isinstance(retry, int):
+                    max_attempts = retry
+                if max_attempts < 1:
+                    max_attempts = 1
+                result: dict[str, Any] | None = None
+                for attempt in range(1, max_attempts + 1):
+                    journal.append("node_started", {"node": node_name, "block": block_id, "attempt": attempt})
+                    try:
+                        block = self.registry.resolve(block_id)
+                        merged_inputs = {**node_inputs[node_name], **resolved_inputs}
+                        attempt_result = block(
+                            merged_inputs,
+                            node.get("config", {}),
+                            {**context, "node": node_name, "attempt": attempt},
+                        )
+                        if not isinstance(attempt_result, dict):
+                            raise TypeError("block returned non-mapping output")
+                        result = attempt_result
+                        break
+                    except Exception as exc:
+                        if attempt < max_attempts:
+                            journal.append(
+                                "node_retry",
+                                {"node": node_name, "block": block_id, "attempt": attempt, "error": str(exc)},
+                            )
+                            continue
+                        journal.append("node_failed", {"node": node_name, "error": str(exc), "attempt": attempt})
+                        journal.append_terminal("run_failed", {"node": node_name, "error": str(exc)})
+                        if self.run_store is not None:
+                            self.run_store.set_status(run_id, "failed")
+                        return RunResult(run_id, "failed", output_values, journal)
 
                 node_outputs[node_name] = result
                 for edge in edges:
