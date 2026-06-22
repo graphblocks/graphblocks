@@ -445,3 +445,52 @@ fn in_process_test_runtime_stops_retry_on_policy_decision() {
         vec!["run_started", "node_started", "node_failed", "run_failed"],
     );
 }
+
+struct RetryCancellingExecutor {
+    token: CancellationToken,
+    attempts: usize,
+}
+
+impl NodeExecutor for RetryCancellingExecutor {
+    fn execute(
+        &mut self,
+        _node: StartedNode,
+    ) -> Result<Vec<(PortRef, Outcome<Value>)>, BlockError> {
+        self.attempts += 1;
+        self.token.cancel(CancelReason::new(CancelCode::Shutdown));
+        Err(BlockError::new(
+            "model.timeout",
+            ErrorCategory::Timeout,
+            "timeout after cancellation",
+            true,
+        ))
+    }
+}
+
+#[test]
+fn in_process_test_runtime_cancels_before_retrying_failed_attempt() {
+    let token = CancellationToken::new(CancellationScope::Run, CancellationGuarantee::Cooperative);
+    let mut runtime = InProcessTestRuntime::new("run-000001", [ScheduledNode::new("model", [])])
+        .expect("runtime should be created")
+        .with_retry_policy("model", RetryPolicy::default_model_read());
+    let mut executor = RetryCancellingExecutor {
+        token: token.clone(),
+        attempts: 0,
+    };
+
+    let result = runtime
+        .run_with_cancellation(&token, &mut executor)
+        .expect("runtime should run");
+
+    assert_eq!(result.status, TestRunStatus::Cancelled);
+    assert_eq!(executor.attempts, 1);
+    assert_eq!(
+        result
+            .journal
+            .records()
+            .iter()
+            .map(|record| record.kind.as_str())
+            .collect::<Vec<_>>(),
+        vec!["run_started", "node_started", "run_cancelled"],
+    );
+}

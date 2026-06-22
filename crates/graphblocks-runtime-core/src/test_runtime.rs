@@ -172,6 +172,25 @@ impl InProcessTestRuntime {
                         break;
                     }
                     Err(error) => {
+                        if let Some(token) = cancellation_token
+                            && let Some(reason) = token.reason()
+                        {
+                            self.journal.append_terminal_with_metadata(
+                                "run_cancelled",
+                                JournalMetadata::new(),
+                                Some(json!({
+                                    "code": format!("{:?}", reason.code),
+                                    "message": reason.message,
+                                    "requestedBy": reason.requested_by,
+                                    "policyDecisionRef": reason.policy_decision_ref,
+                                })),
+                            )?;
+                            return Ok(TestRunResult {
+                                run_id: self.journal.run_id().to_owned(),
+                                status: TestRunStatus::Cancelled,
+                                journal: self.journal.clone(),
+                            });
+                        }
                         if let Some(policy) = self.retry_policies.get(&node_id) {
                             match policy.decide(&RetryRequest::new(attempt, error.clone())) {
                                 RetryDecision::Retry { delay_ms } => {
