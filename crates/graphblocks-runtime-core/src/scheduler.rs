@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
-use crate::outcome::Outcome;
+use crate::outcome::{CancelReason, Outcome};
 use crate::readiness::{InputDependency, PortRef, Readiness, ReadinessTracker};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -12,6 +12,7 @@ pub enum NodeExecutionState {
     Running,
     Completed,
     Blocked,
+    Cancelled,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -155,6 +156,42 @@ impl LocalScheduler {
         }
         self.states
             .insert(node_id.to_owned(), NodeExecutionState::Completed);
+        Ok(self.evaluate_readiness())
+    }
+
+    pub fn cancel_node<I>(
+        &mut self,
+        node_id: impl AsRef<str>,
+        output_ports: I,
+        reason: CancelReason,
+    ) -> Result<Vec<String>, SchedulerError>
+    where
+        I: IntoIterator<Item = PortRef>,
+    {
+        let node_id = node_id.as_ref();
+        let Some(state) = self.states.get(node_id).copied() else {
+            return Err(SchedulerError::UnknownNode {
+                node_id: node_id.to_owned(),
+            });
+        };
+        if matches!(
+            state,
+            NodeExecutionState::Completed
+                | NodeExecutionState::Blocked
+                | NodeExecutionState::Cancelled
+        ) {
+            return Ok(Vec::new());
+        }
+        if !self.admitted {
+            return Err(SchedulerError::RunNotAdmitted);
+        }
+
+        for port in output_ports {
+            self.readiness
+                .publish(port, Outcome::Cancelled(reason.clone()));
+        }
+        self.states
+            .insert(node_id.to_owned(), NodeExecutionState::Cancelled);
         Ok(self.evaluate_readiness())
     }
 

@@ -1,4 +1,6 @@
-use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory, Outcome};
+use graphblocks_runtime_core::outcome::{
+    BlockError, CancelCode, CancelReason, ErrorCategory, Outcome,
+};
 use graphblocks_runtime_core::readiness::{InputDependency, PortRef};
 use graphblocks_runtime_core::scheduler::{
     LocalScheduler, NodeExecutionState, ScheduledNode, SchedulerError,
@@ -125,5 +127,94 @@ fn scheduler_rejects_duplicate_and_unknown_nodes() -> Result<(), SchedulerError>
             node_id: "missing".to_owned(),
         }),
     );
+    Ok(())
+}
+
+#[test]
+fn scheduler_cancels_node_as_idempotent_terminal_state() -> Result<(), SchedulerError> {
+    let reason = CancelReason::new(CancelCode::UserCancel);
+    let mut scheduler = LocalScheduler::new([
+        ScheduledNode::new("render", []),
+        ScheduledNode::new(
+            "late_observer",
+            [InputDependency::outcome(
+                "outcome",
+                PortRef::new("render", "late"),
+            )],
+        ),
+    ])?;
+
+    scheduler.admit_run()?;
+    scheduler.start_node("render")?;
+    assert_eq!(
+        scheduler.cancel_node("render", [PortRef::new("render", "result")], reason.clone(),)?,
+        Vec::<String>::new(),
+    );
+
+    assert_eq!(
+        scheduler.node_state("render"),
+        Some(NodeExecutionState::Cancelled),
+    );
+    assert_eq!(
+        scheduler.cancel_node("render", [PortRef::new("render", "late")], reason)?,
+        Vec::<String>::new(),
+    );
+    assert_eq!(
+        scheduler.node_state("late_observer"),
+        Some(NodeExecutionState::Pending),
+    );
+    assert!(matches!(
+        scheduler.complete_node(
+            "render",
+            [(
+                PortRef::new("render", "late"),
+                Outcome::Value(json!("must not publish"))
+            )],
+        ),
+        Err(SchedulerError::NodeNotRunning {
+            state: NodeExecutionState::Cancelled,
+            ..
+        })
+    ));
+    Ok(())
+}
+
+#[test]
+fn scheduler_releases_or_blocks_dependents_after_cancellation() -> Result<(), SchedulerError> {
+    let reason = CancelReason::new(CancelCode::Timeout);
+    let mut scheduler = LocalScheduler::new([
+        ScheduledNode::new("worker", []),
+        ScheduledNode::new(
+            "answer",
+            [InputDependency::value(
+                "result",
+                PortRef::new("worker", "result"),
+            )],
+        ),
+        ScheduledNode::new(
+            "audit",
+            [InputDependency::outcome(
+                "result",
+                PortRef::new("worker", "result"),
+            )],
+        ),
+    ])?;
+
+    scheduler.admit_run()?;
+    scheduler.start_node("worker")?;
+
+    assert_eq!(
+        scheduler.cancel_node("worker", [PortRef::new("worker", "result")], reason.clone(),)?,
+        vec!["audit".to_owned()],
+    );
+    assert_eq!(
+        scheduler.node_state("answer"),
+        Some(NodeExecutionState::Blocked),
+    );
+    assert_eq!(
+        scheduler.node_state("audit"),
+        Some(NodeExecutionState::Ready),
+    );
+
     Ok(())
 }
