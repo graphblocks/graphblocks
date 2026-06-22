@@ -2,6 +2,18 @@
 
 from __future__ import annotations
 
+from .blob_store import (
+    BlobKey,
+    BlobListItem,
+    BlobMetadata,
+    BlobNotFoundError,
+    BlobStoreError,
+    ByteRange,
+    InvalidBlobKeyError,
+    ListPage,
+    LocalBlobStore,
+    PutOptions,
+)
 from .canonical import canonical_dumps, canonical_hash, normalize_graph
 from .compiler import Plan, compile_graph
 from .conversation import (
@@ -85,6 +97,12 @@ __all__ = [
     "BranchRequest",
     "BlockCatalog",
     "BlockDescriptor",
+    "BlobKey",
+    "BlobListItem",
+    "BlobMetadata",
+    "BlobNotFoundError",
+    "BlobStoreError",
+    "ByteRange",
     "Abstention",
     "Answer",
     "ArtifactRef",
@@ -121,6 +139,7 @@ __all__ = [
     "InMemoryConversationStore",
     "InMemoryLeasePool",
     "InMemoryChunkRetriever",
+    "InvalidBlobKeyError",
     "KnowledgeItemRef",
     "RunResult",
     "RunRecord",
@@ -130,9 +149,12 @@ __all__ = [
     "SearchHit",
     "Lease",
     "LeaseUnavailableError",
+    "ListPage",
+    "LocalBlobStore",
     "Message",
     "MessageNotFoundError",
     "StateConflictError",
+    "PutOptions",
     "Turn",
     "TurnConflictError",
     "TurnNotFoundError",
