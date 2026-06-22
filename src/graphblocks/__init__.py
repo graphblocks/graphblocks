@@ -14,6 +14,20 @@ from .blob_store import (
     LocalBlobStore,
     PutOptions,
 )
+from .budget import (
+    BudgetAccount,
+    BudgetBalance,
+    BudgetConflictError,
+    BudgetError,
+    BudgetExceededError,
+    BudgetNotFoundError,
+    BudgetReservation,
+    BudgetReservationNotFoundError,
+    BudgetReservationStateError,
+    BudgetSettlement,
+    InMemoryBudgetLedger,
+    UsageAmount,
+)
 from .canonical import canonical_dumps, canonical_hash, normalize_graph
 from .compiler import Plan, compile_graph
 from .conversation import (
@@ -124,6 +138,16 @@ __all__ = [
     "BlobMetadata",
     "BlobNotFoundError",
     "BlobStoreError",
+    "BudgetAccount",
+    "BudgetBalance",
+    "BudgetConflictError",
+    "BudgetError",
+    "BudgetExceededError",
+    "BudgetNotFoundError",
+    "BudgetReservation",
+    "BudgetReservationNotFoundError",
+    "BudgetReservationStateError",
+    "BudgetSettlement",
     "ByteRange",
     "Abstention",
     "Answer",
@@ -168,6 +192,7 @@ __all__ = [
     "InProcessRuntime",
     "JournalStateError",
     "__version__",
+    "InMemoryBudgetLedger",
     "InMemoryRunStore",
     "InMemoryConversationStore",
     "InMemoryLeasePool",
@@ -195,6 +220,7 @@ __all__ = [
     "Turn",
     "TurnConflictError",
     "TurnNotFoundError",
+    "UsageAmount",
     "canonical_dumps",
     "canonical_hash",
     "compile_graph",
