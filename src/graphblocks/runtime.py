@@ -15,12 +15,25 @@ JournalKind = Literal[
     "node_failed",
     "run_succeeded",
     "run_failed",
+    "run_cancelled",
 ]
 BlockCallable = Callable[[dict[str, Any], dict[str, Any], dict[str, Any]], dict[str, Any]]
 
 
 class JournalStateError(RuntimeError):
     pass
+
+
+@dataclass(slots=True)
+class CancellationToken:
+    cancelled: bool = False
+    reason: str | None = None
+
+    def cancel(self, reason: str = "cancelled") -> None:
+        if self.cancelled:
+            return
+        self.cancelled = True
+        self.reason = reason
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,7 +67,7 @@ class ExecutionJournal:
 @dataclass(frozen=True, slots=True)
 class RunResult:
     run_id: str
-    status: Literal["succeeded", "failed"]
+    status: Literal["succeeded", "failed", "cancelled"]
     outputs: dict[str, Any]
     journal: ExecutionJournal
 
@@ -74,6 +87,7 @@ class RuntimeRegistry:
 class InProcessRuntime:
     registry: RuntimeRegistry
     run_store: InMemoryRunStore | None = None
+    cancellation_token: CancellationToken | None = None
 
     def run(self, graph: dict[str, Any], inputs: dict[str, Any], run_id: str = "run-000001") -> RunResult:
         plan = compile_graph(graph)
@@ -101,9 +115,16 @@ class InProcessRuntime:
             "run_id": run_id,
             "turn_id": "turn-000001",
             "conversation_id": "conversation-default",
+            "cancellation_token": self.cancellation_token or CancellationToken(),
         }
 
         while remaining:
+            token = context["cancellation_token"]
+            if isinstance(token, CancellationToken) and token.cancelled:
+                journal.append_terminal("run_cancelled", {"reason": token.reason})
+                if self.run_store is not None:
+                    self.run_store.set_status(run_id, "cancelled")
+                return RunResult(run_id, "cancelled", {}, journal)
             progressed = False
             for node_name in sorted(remaining):
                 inbound = [

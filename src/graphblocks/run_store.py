@@ -20,7 +20,7 @@ class RunRecord:
     run_id: str
     graph_hash: str
     inputs: dict[str, Any]
-    status: Literal["created", "running", "succeeded", "failed"] = "created"
+    status: Literal["created", "running", "succeeded", "failed", "cancelled"] = "created"
     state: dict[str, Any] = field(default_factory=dict)
     state_revision: int = 0
 
@@ -68,7 +68,7 @@ class InMemoryRunStore:
         self.runs[run_id] = updated
         return deepcopy(updated)
 
-    def set_status(self, run_id: str, status: Literal["running", "succeeded", "failed"]) -> RunRecord:
+    def set_status(self, run_id: str, status: Literal["running", "succeeded", "failed", "cancelled"]) -> RunRecord:
         current = self.runs[run_id]
         updated = RunRecord(
             run_id=current.run_id,
@@ -80,4 +80,3 @@ class InMemoryRunStore:
         )
         self.runs[run_id] = updated
         return deepcopy(updated)
-
