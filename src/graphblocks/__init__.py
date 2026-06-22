@@ -83,6 +83,7 @@ from .rag import (
     RetrievalResult,
     SearchRequest,
     SearchHit,
+    build_context_pack,
     knowledge_item_from_chunk,
     validate_answer_citations,
 )
@@ -193,4 +194,5 @@ __all__ = [
     "stdlib_registry",
     "validate_plugin_manifest",
     "validate_answer_citations",
+    "build_context_pack",
 ]

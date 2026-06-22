@@ -113,6 +113,74 @@ class CitationValidationResult:
     abstention: Abstention | None = None
 
 
+def build_context_pack(
+    context_id: str,
+    hits: list[SearchHit],
+    *,
+    token_budget: int,
+    per_document_max_chunks: int | None = None,
+    deduplicate: bool = True,
+    metadata: dict[str, object] | None = None,
+) -> ContextPack:
+    if token_budget < 0:
+        raise ValueError("token_budget must be non-negative")
+    if per_document_max_chunks is not None and per_document_max_chunks < 1:
+        raise ValueError("per_document_max_chunks must be at least 1")
+
+    selected: list[SearchHit] = []
+    selected_hit_ids: list[str] = []
+    dropped_hit_ids: list[str] = []
+    drop_reasons: dict[str, str] = {}
+    selected_item_ids: set[str] = set()
+    chunks_per_document: dict[str, int] = {}
+    token_count = 0
+
+    for hit in sorted(hits, key=lambda item: (item.rank, item.hit_id)):
+        if deduplicate and hit.item.item_id in selected_item_ids:
+            dropped_hit_ids.append(hit.hit_id)
+            drop_reasons[hit.hit_id] = "duplicate"
+            continue
+
+        document_id = hit.item.metadata.get("document_id")
+        if not isinstance(document_id, str):
+            locator = hit.item.source.locator
+            document_id = locator.document_id if locator is not None else hit.item.item_id
+
+        current_document_chunks = chunks_per_document.get(document_id, 0)
+        if per_document_max_chunks is not None and current_document_chunks >= per_document_max_chunks:
+            dropped_hit_ids.append(hit.hit_id)
+            drop_reasons[hit.hit_id] = "per_document_max_chunks"
+            continue
+
+        estimated_tokens = sum(len(preview.split()) for preview in hit.item.preview)
+        if token_count + estimated_tokens > token_budget:
+            dropped_hit_ids.append(hit.hit_id)
+            drop_reasons[hit.hit_id] = "token_budget"
+            continue
+
+        selected.append(hit)
+        selected_hit_ids.append(hit.hit_id)
+        selected_item_ids.add(hit.item.item_id)
+        chunks_per_document[document_id] = current_document_chunks + 1
+        token_count += estimated_tokens
+
+    context_metadata = dict(metadata or {})
+    context_metadata.update(
+        {
+            "selected_hit_ids": selected_hit_ids,
+            "dropped_hit_ids": dropped_hit_ids,
+            "drop_reasons": drop_reasons,
+        }
+    )
+    return ContextPack(
+        context_id=context_id,
+        hits=selected,
+        token_budget=token_budget,
+        token_count=token_count,
+        metadata=context_metadata,
+    )
+
+
 def validate_answer_citations(
     answer: Answer,
     context: ContextPack,
