@@ -1,0 +1,160 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+from .canonical import PSEUDO_NODES, canonical_hash, normalize_graph
+from .diagnostics import Diagnostic, DiagnosticSet
+from .migration import GRAPH_API_VERSION, LEGACY_GRAPH_API_VERSIONS, migrate_document
+
+
+@dataclass(frozen=True, slots=True)
+class Plan:
+    normalized: dict[str, Any]
+    graph_hash: str
+    diagnostics: DiagnosticSet
+
+    @property
+    def ok(self) -> bool:
+        return self.diagnostics.ok
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "hash": self.graph_hash,
+            "ok": self.ok,
+            "diagnostics": self.diagnostics.to_list(),
+            "graph": self.normalized,
+        }
+
+
+def compile_graph(document: dict[str, Any]) -> Plan:
+    diagnostics: list[Diagnostic] = []
+    migrated = migrate_document(document)
+    if migrated.get("kind") != "Graph":
+        diagnostics.append(Diagnostic("GB0001", "document kind must be Graph", "$.kind"))
+        normalized = normalize_graph(migrated)
+        return Plan(normalized, canonical_hash(normalized), DiagnosticSet(tuple(diagnostics)))
+
+    api_version = document.get("apiVersion")
+    if api_version not in {GRAPH_API_VERSION, *LEGACY_GRAPH_API_VERSIONS}:
+        diagnostics.append(
+            Diagnostic("GB0002", f"unsupported Graph apiVersion {api_version!r}", "$.apiVersion")
+        )
+
+    metadata = migrated.get("metadata")
+    if not isinstance(metadata, dict) or not isinstance(metadata.get("name"), str) or not metadata["name"]:
+        diagnostics.append(Diagnostic("GB0003", "metadata.name is required", "$.metadata.name"))
+
+    spec = migrated.get("spec")
+    if not isinstance(spec, dict):
+        diagnostics.append(Diagnostic("GB0004", "spec must be a mapping", "$.spec"))
+        normalized = normalize_graph(migrated)
+        return Plan(normalized, canonical_hash(normalized), DiagnosticSet(tuple(diagnostics)))
+
+    nodes = spec.get("nodes", {})
+    if nodes is None:
+        nodes = {}
+    if not isinstance(nodes, dict):
+        diagnostics.append(Diagnostic("GB0005", "spec.nodes must be a mapping", "$.spec.nodes"))
+        nodes = {}
+
+    for node_name, node in nodes.items():
+        if not isinstance(node_name, str) or not node_name:
+            diagnostics.append(Diagnostic("GB0006", "node name must be a non-empty string", "$.spec.nodes"))
+            continue
+        if node_name.startswith("$"):
+            diagnostics.append(Diagnostic("GB0007", "node names cannot use pseudo-node prefix '$'", f"$.spec.nodes.{node_name}"))
+        if not isinstance(node, dict):
+            diagnostics.append(Diagnostic("GB0008", "node spec must be a mapping", f"$.spec.nodes.{node_name}"))
+            continue
+        block = node.get("block")
+        if not isinstance(block, str) or "@" not in block or block.endswith("@"):
+            diagnostics.append(Diagnostic("GB0009", "node.block must use '<type>@<major>'", f"$.spec.nodes.{node_name}.block"))
+        if "connection" in node and "bindings" in node:
+            diagnostics.append(
+                Diagnostic(
+                    "GB1006",
+                    "connection shorthand cannot be combined with explicit bindings",
+                    f"$.spec.nodes.{node_name}",
+                )
+            )
+
+    normalized = normalize_graph(migrated)
+    normalized_spec = normalized.get("spec", {})
+    normalized_nodes = normalized_spec.get("nodes", {}) if isinstance(normalized_spec, dict) else {}
+    edges = normalized_spec.get("edges", []) if isinstance(normalized_spec, dict) else []
+    produced_nodes: set[str] = set()
+    consumed_nodes: set[str] = set()
+
+    if isinstance(edges, list):
+        for index, edge in enumerate(edges):
+            if not isinstance(edge, dict):
+                diagnostics.append(Diagnostic("GB0010", "edge must be a mapping", f"$.spec.edges[{index}]"))
+                continue
+            source = edge.get("from")
+            target = edge.get("to")
+            if not isinstance(source, str) or not isinstance(target, str):
+                diagnostics.append(Diagnostic("GB0011", "edge.from and edge.to must be strings", f"$.spec.edges[{index}]"))
+                continue
+            for key, endpoint in (("from", source), ("to", target)):
+                owner = endpoint.split(".", 1)[0]
+                if owner in PSEUDO_NODES:
+                    continue
+                if owner not in normalized_nodes:
+                    diagnostics.append(
+                        Diagnostic(
+                            "GB1002",
+                            f"edge {key} endpoint references unknown node {owner!r}",
+                            f"$.spec.edges[{index}].{key}",
+                        )
+                    )
+                elif key == "from":
+                    produced_nodes.add(owner)
+                else:
+                    consumed_nodes.add(owner)
+
+    for node_name, node in normalized_nodes.items():
+        if isinstance(node, dict) and isinstance(node.get("when"), str):
+            owner = node["when"].split(".", 1)[0]
+            if owner not in PSEUDO_NODES and owner not in normalized_nodes:
+                diagnostics.append(
+                    Diagnostic("GB1002", f"when references unknown node {owner!r}", f"$.spec.nodes.{node_name}.when")
+                )
+            elif owner not in PSEUDO_NODES:
+                produced_nodes.add(owner)
+                consumed_nodes.add(node_name)
+
+    interface = normalized_spec.get("interface", {}) if isinstance(normalized_spec, dict) else {}
+    outputs = interface.get("outputs", {}) if isinstance(interface, dict) else {}
+    has_declared_output = isinstance(outputs, dict) and bool(outputs)
+    output_edges = [edge for edge in edges if isinstance(edge, dict) and isinstance(edge.get("to"), str) and edge["to"].startswith("$output.")]
+    if has_declared_output and not output_edges:
+        diagnostics.append(
+            Diagnostic(
+                "GB1003",
+                "graph declares outputs but no edge writes to $output",
+                "$.spec.interface.outputs",
+                "warning",
+            )
+        )
+
+    if output_edges:
+        reachable: set[str] = set()
+        stack = [edge["from"].split(".", 1)[0] for edge in output_edges if isinstance(edge.get("from"), str)]
+        reverse_edges: dict[str, list[str]] = {}
+        for edge in edges:
+            if isinstance(edge, dict) and isinstance(edge.get("from"), str) and isinstance(edge.get("to"), str):
+                source_owner = edge["from"].split(".", 1)[0]
+                target_owner = edge["to"].split(".", 1)[0]
+                reverse_edges.setdefault(target_owner, []).append(source_owner)
+        while stack:
+            owner = stack.pop()
+            if owner in reachable or owner in PSEUDO_NODES:
+                continue
+            reachable.add(owner)
+            stack.extend(reverse_edges.get(owner, []))
+        for node_name in sorted(normalized_nodes):
+            if node_name not in reachable and node_name not in produced_nodes and node_name not in consumed_nodes:
+                diagnostics.append(Diagnostic("GB1001", f"node {node_name!r} is not connected", f"$.spec.nodes.{node_name}", "warning"))
+
+    return Plan(normalized, canonical_hash(normalized), DiagnosticSet(tuple(diagnostics)))
