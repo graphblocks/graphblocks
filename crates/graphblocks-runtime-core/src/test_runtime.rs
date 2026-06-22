@@ -11,6 +11,7 @@ use crate::run_store::{InMemoryRunStore, RunStatus, RunStoreError};
 use crate::scheduler::{
     LocalScheduler, NodeExecutionState, ScheduledNode, SchedulerError, StartedNode,
 };
+use crate::timeout::{Deadline, TimeoutPolicy};
 
 pub trait NodeExecutor {
     fn execute(&mut self, node: StartedNode) -> Result<Vec<(PortRef, Outcome<Value>)>, BlockError>;
@@ -87,6 +88,9 @@ pub struct InProcessTestRuntime {
     scheduler: LocalScheduler,
     journal: ExecutionJournal,
     retry_boundaries: BTreeMap<String, NodeRetryBoundary>,
+    timeout_policies: BTreeMap<String, TimeoutPolicy>,
+    node_durations_ms: BTreeMap<String, u64>,
+    virtual_now_ms: u64,
 }
 
 impl InProcessTestRuntime {
@@ -98,6 +102,9 @@ impl InProcessTestRuntime {
             scheduler: LocalScheduler::new(nodes)?,
             journal: ExecutionJournal::new(run_id),
             retry_boundaries: BTreeMap::new(),
+            timeout_policies: BTreeMap::new(),
+            node_durations_ms: BTreeMap::new(),
+            virtual_now_ms: 0,
         })
     }
 
@@ -117,6 +124,20 @@ impl InProcessTestRuntime {
         boundary: NodeRetryBoundary,
     ) -> Self {
         self.retry_boundaries.insert(node_id.into(), boundary);
+        self
+    }
+
+    pub fn with_timeout_policy(
+        mut self,
+        node_id: impl Into<String>,
+        policy: TimeoutPolicy,
+    ) -> Self {
+        self.timeout_policies.insert(node_id.into(), policy);
+        self
+    }
+
+    pub fn with_node_duration_ms(mut self, node_id: impl Into<String>, duration_ms: u64) -> Self {
+        self.node_durations_ms.insert(node_id.into(), duration_ms);
         self
     }
 
@@ -198,7 +219,42 @@ impl InProcessTestRuntime {
                 self.journal
                     .append_with_metadata("node_started", metadata.clone(), None)?;
 
-                match executor.execute(started.clone()) {
+                let started_at_ms = self.virtual_now_ms;
+                let execution_result = executor.execute(started.clone());
+                let duration_ms = self.node_durations_ms.get(&node_id).copied().unwrap_or(0);
+                self.virtual_now_ms = self.virtual_now_ms.saturating_add(duration_ms);
+
+                if let Some(policy) = self.timeout_policies.get(&node_id)
+                    && let Ok(deadline) = Deadline::new(node_id.clone(), started_at_ms, *policy)
+                {
+                    let decision = deadline.check(self.virtual_now_ms);
+                    if self.virtual_now_ms >= deadline.deadline_ms() {
+                        let error = decision.block_error();
+                        let payload = json!({
+                            "code": error.code,
+                            "category": format!("{:?}", error.category),
+                            "message": error.message,
+                            "details": error.details,
+                        });
+                        self.journal.append_with_metadata(
+                            "node_failed",
+                            metadata.clone(),
+                            Some(payload.clone()),
+                        )?;
+                        self.journal.append_terminal_with_metadata(
+                            "run_failed",
+                            metadata,
+                            Some(payload),
+                        )?;
+                        return Ok(TestRunResult {
+                            run_id: self.journal.run_id().to_owned(),
+                            status: TestRunStatus::Failed,
+                            journal: self.journal.clone(),
+                        });
+                    }
+                }
+
+                match execution_result {
                     Ok(outputs) => {
                         let newly_ready = self.scheduler.complete_node(&node_id, outputs)?;
                         self.journal

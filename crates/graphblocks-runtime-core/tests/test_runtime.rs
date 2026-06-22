@@ -11,6 +11,7 @@ use graphblocks_runtime_core::scheduler::{ScheduledNode, StartedNode};
 use graphblocks_runtime_core::test_runtime::{
     InProcessTestRuntime, NodeExecutor, NodeRetryBoundary, TestRunStatus,
 };
+use graphblocks_runtime_core::timeout::TimeoutPolicy;
 use serde_json::{Value, json};
 
 #[derive(Default)]
@@ -582,4 +583,85 @@ fn in_process_test_runtime_retries_effect_with_idempotency_key() {
             "run_succeeded",
         ],
     );
+}
+
+struct TimeoutOutputExecutor {
+    starts: Vec<String>,
+}
+
+impl NodeExecutor for TimeoutOutputExecutor {
+    fn execute(&mut self, node: StartedNode) -> Result<Vec<(PortRef, Outcome<Value>)>, BlockError> {
+        self.starts.push(node.node_id.clone());
+        match node.node_id.as_str() {
+            "model" => Ok(vec![(
+                PortRef::new("model", "response"),
+                Outcome::Value(json!("late output")),
+            )]),
+            node_id => Err(BlockError::new(
+                format!("{node_id}.unexpected"),
+                ErrorCategory::Internal,
+                "unexpected node execution after timeout",
+                false,
+            )),
+        }
+    }
+}
+
+#[test]
+fn in_process_test_runtime_fails_timed_out_node_without_publishing_outputs() {
+    let mut runtime = InProcessTestRuntime::new(
+        "run-000001",
+        [
+            ScheduledNode::new("model", []),
+            ScheduledNode::new(
+                "answer",
+                [InputDependency::value(
+                    "response",
+                    PortRef::new("model", "response"),
+                )],
+            ),
+        ],
+    )
+    .expect("runtime should be created")
+    .with_timeout_policy("model", TimeoutPolicy::new(10).expect("valid timeout"))
+    .with_node_duration_ms("model", 11);
+    let mut executor = TimeoutOutputExecutor { starts: Vec::new() };
+
+    let result = runtime.run(&mut executor).expect("runtime should run");
+
+    assert_eq!(result.status, TestRunStatus::Failed);
+    assert_eq!(executor.starts, vec!["model".to_owned()]);
+    assert_eq!(
+        result
+            .journal
+            .records()
+            .last()
+            .and_then(|record| record.payload.as_ref())
+            .and_then(|payload| payload.get("code"))
+            .and_then(Value::as_str),
+        Some("runtime.timeout"),
+    );
+    assert_eq!(
+        result
+            .journal
+            .records()
+            .iter()
+            .map(|record| record.kind.as_str())
+            .collect::<Vec<_>>(),
+        vec!["run_started", "node_started", "node_failed", "run_failed"],
+    );
+}
+
+#[test]
+fn in_process_test_runtime_allows_node_before_timeout_deadline() {
+    let mut runtime = InProcessTestRuntime::new("run-000001", [ScheduledNode::new("model", [])])
+        .expect("runtime should be created")
+        .with_timeout_policy("model", TimeoutPolicy::new(10).expect("valid timeout"))
+        .with_node_duration_ms("model", 9);
+    let mut executor = TimeoutOutputExecutor { starts: Vec::new() };
+
+    let result = runtime.run(&mut executor).expect("runtime should run");
+
+    assert_eq!(result.status, TestRunStatus::Succeeded);
+    assert_eq!(executor.starts, vec!["model".to_owned()]);
 }
