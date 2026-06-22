@@ -1,0 +1,111 @@
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum RateLimitError {
+    InvalidLimit,
+    InvalidWindow,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RateLimitDecision {
+    Allowed,
+    Limited { retry_after_ms: u64 },
+    Rejected { reason: &'static str },
+}
+
+#[derive(Clone, Debug)]
+pub struct LocalRateLimiter {
+    inner: Arc<Mutex<Inner>>,
+}
+
+#[derive(Debug)]
+struct Inner {
+    id: String,
+    limit: u64,
+    window_ms: u64,
+    window_start_ms: u64,
+    used: u64,
+}
+
+impl LocalRateLimiter {
+    pub fn new(id: impl Into<String>, limit: u64, window_ms: u64) -> Result<Self, RateLimitError> {
+        if limit == 0 {
+            return Err(RateLimitError::InvalidLimit);
+        }
+        if window_ms == 0 {
+            return Err(RateLimitError::InvalidWindow);
+        }
+        Ok(Self {
+            inner: Arc::new(Mutex::new(Inner {
+                id: id.into(),
+                limit,
+                window_ms,
+                window_start_ms: 0,
+                used: 0,
+            })),
+        })
+    }
+
+    pub fn id(&self) -> String {
+        self.lock().id.clone()
+    }
+
+    pub fn limit(&self) -> u64 {
+        self.lock().limit
+    }
+
+    pub fn window_ms(&self) -> u64 {
+        self.lock().window_ms
+    }
+
+    pub fn available_at(&self, now_ms: u64) -> u64 {
+        let mut inner = self.lock();
+        if now_ms >= inner.window_start_ms.saturating_add(inner.window_ms) {
+            inner.window_start_ms = now_ms;
+            inner.used = 0;
+        }
+        inner.limit - inner.used
+    }
+
+    pub fn check_at(
+        &self,
+        _owner: impl Into<String>,
+        now_ms: u64,
+        units: u64,
+    ) -> RateLimitDecision {
+        if units == 0 {
+            return RateLimitDecision::Rejected {
+                reason: "invalid_units",
+            };
+        }
+
+        let mut inner = self.lock();
+        if now_ms >= inner.window_start_ms.saturating_add(inner.window_ms) {
+            inner.window_start_ms = now_ms;
+            inner.used = 0;
+        }
+        if units > inner.limit {
+            return RateLimitDecision::Limited {
+                retry_after_ms: inner
+                    .window_start_ms
+                    .saturating_add(inner.window_ms)
+                    .saturating_sub(now_ms),
+            };
+        }
+        if inner.used.saturating_add(units) > inner.limit {
+            return RateLimitDecision::Limited {
+                retry_after_ms: inner
+                    .window_start_ms
+                    .saturating_add(inner.window_ms)
+                    .saturating_sub(now_ms),
+            };
+        }
+
+        inner.used += units;
+        RateLimitDecision::Allowed
+    }
+
+    fn lock(&self) -> MutexGuard<'_, Inner> {
+        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
