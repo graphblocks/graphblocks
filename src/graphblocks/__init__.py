@@ -34,7 +34,20 @@ from .plugins import (
     load_plugin_manifest,
     validate_plugin_manifest,
 )
-from .rag import InMemoryChunkRetriever, KnowledgeItemRef, SearchHit, knowledge_item_from_chunk
+from .rag import (
+    Abstention,
+    Answer,
+    Citation,
+    CitationValidationIssue,
+    CitationValidationResult,
+    Claim,
+    ContextPack,
+    InMemoryChunkRetriever,
+    KnowledgeItemRef,
+    SearchHit,
+    knowledge_item_from_chunk,
+    validate_answer_citations,
+)
 from .runtime import (
     CancellationToken,
     ExecutionJournal,
@@ -55,8 +68,15 @@ __all__ = [
     "Plan",
     "BlockCatalog",
     "BlockDescriptor",
+    "Abstention",
+    "Answer",
     "ArtifactRef",
     "AssetRevision",
+    "Citation",
+    "CitationValidationIssue",
+    "CitationValidationResult",
+    "Claim",
+    "ContextPack",
     "DocumentChunk",
     "DocumentElement",
     "DocumentSpan",
@@ -102,4 +122,5 @@ __all__ = [
     "parse_plain_text_document",
     "stdlib_registry",
     "validate_plugin_manifest",
+    "validate_answer_citations",
 ]

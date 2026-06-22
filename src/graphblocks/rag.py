@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import re
+from typing import Literal
 
 from .documents import DocumentChunk, SourceRef
 
@@ -29,6 +30,187 @@ class SearchHit:
     score_kind: str | None = None
     highlights: list[SourceRef] = field(default_factory=list)
     metadata: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class ContextPack:
+    context_id: str
+    hits: list[SearchHit]
+    token_budget: int | None = None
+    token_count: int | None = None
+    metadata: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class Citation:
+    citation_id: str
+    source: SourceRef
+    claim_id: str | None = None
+    cited_text: str | None = None
+    confidence: float | None = None
+    metadata: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class Claim:
+    claim_id: str
+    text: str
+    citation_ids: list[str] = field(default_factory=list)
+    metadata: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class Abstention:
+    reason: str
+    user_message: str
+    diagnostics: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class Answer:
+    answer_id: str
+    text: str
+    claims: list[Claim] = field(default_factory=list)
+    citations: list[Citation] = field(default_factory=list)
+    abstention: Abstention | None = None
+    metadata: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class CitationValidationIssue:
+    code: str
+    message: str
+    citation_id: str | None = None
+    claim_id: str | None = None
+    severity: Literal["warning", "error"] = "error"
+    metadata: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class CitationValidationResult:
+    ok: bool
+    issues: list[CitationValidationIssue] = field(default_factory=list)
+    abstention: Abstention | None = None
+
+
+def validate_answer_citations(
+    answer: Answer,
+    context: ContextPack,
+    *,
+    require_citations: bool = True,
+    failure_policy: Literal["warn", "fail", "abstain"] = "fail",
+) -> CitationValidationResult:
+    if failure_policy not in {"warn", "fail", "abstain"}:
+        raise ValueError("failure_policy must be one of warn, fail, or abstain")
+
+    severity: Literal["warning", "error"] = "warning" if failure_policy == "warn" else "error"
+    issues: list[CitationValidationIssue] = []
+    citations_by_id: dict[str, Citation] = {}
+    context_source_texts: dict[tuple[str, str | None, str | None], str] = {}
+
+    for citation in answer.citations:
+        if citation.citation_id in citations_by_id:
+            issues.append(
+                CitationValidationIssue(
+                    code="citation_id.duplicate",
+                    message=f"citation {citation.citation_id!r} is defined more than once",
+                    citation_id=citation.citation_id,
+                    severity=severity,
+                )
+            )
+        else:
+            citations_by_id[citation.citation_id] = citation
+
+    for hit in context.hits:
+        preview_text = "\n".join(hit.item.preview)
+        for source_ref in [hit.item.source, *hit.highlights]:
+            context_source_texts.setdefault(
+                (source_ref.source_id, source_ref.revision, source_ref.digest),
+                preview_text,
+            )
+
+    for claim in answer.claims:
+        if require_citations and claim.text.strip() and not claim.citation_ids:
+            issues.append(
+                CitationValidationIssue(
+                    code="claim.missing_citation",
+                    message=f"claim {claim.claim_id!r} has no citation",
+                    claim_id=claim.claim_id,
+                    severity=severity,
+                )
+            )
+        for citation_id in claim.citation_ids:
+            citation = citations_by_id.get(citation_id)
+            if citation is None:
+                issues.append(
+                    CitationValidationIssue(
+                        code="citation_id.missing",
+                        message=f"claim {claim.claim_id!r} references missing citation {citation_id!r}",
+                        citation_id=citation_id,
+                        claim_id=claim.claim_id,
+                        severity=severity,
+                    )
+                )
+                continue
+            if citation.claim_id is not None and citation.claim_id != claim.claim_id:
+                issues.append(
+                    CitationValidationIssue(
+                        code="citation.claim_mismatch",
+                        message=(
+                            f"citation {citation.citation_id!r} is attached to claim "
+                            f"{citation.claim_id!r}, not {claim.claim_id!r}"
+                        ),
+                        citation_id=citation.citation_id,
+                        claim_id=claim.claim_id,
+                        severity=severity,
+                    )
+                )
+
+    for citation in answer.citations:
+        matching_texts = [
+            text
+            for (source_id, revision, digest), text in context_source_texts.items()
+            if source_id == citation.source.source_id
+            and (citation.source.revision is None or citation.source.revision == revision)
+            and (citation.source.digest is None or citation.source.digest == digest)
+        ]
+        if not matching_texts:
+            issues.append(
+                CitationValidationIssue(
+                    code="citation.source_not_in_context",
+                    message=f"citation {citation.citation_id!r} does not point to the current context",
+                    citation_id=citation.citation_id,
+                    severity=severity,
+                )
+            )
+            continue
+        if citation.cited_text is not None:
+            quoted_text = " ".join(citation.cited_text.split()).lower()
+            if quoted_text and not any(quoted_text in " ".join(text.split()).lower() for text in matching_texts):
+                issues.append(
+                    CitationValidationIssue(
+                        code="citation.text_mismatch",
+                        message=f"citation {citation.citation_id!r} cites text outside the source preview",
+                        citation_id=citation.citation_id,
+                        severity=severity,
+                    )
+                )
+
+    if not issues:
+        return CitationValidationResult(ok=True)
+    if failure_policy == "warn":
+        return CitationValidationResult(ok=True, issues=issues)
+    if failure_policy == "abstain":
+        return CitationValidationResult(
+            ok=False,
+            issues=issues,
+            abstention=Abstention(
+                reason="citation_validation_failed",
+                user_message="I do not have enough validated source support to answer.",
+                diagnostics={"issue_codes": [issue.code for issue in issues]},
+            ),
+        )
+    return CitationValidationResult(ok=False, issues=issues)
 
 
 def knowledge_item_from_chunk(chunk: DocumentChunk) -> KnowledgeItemRef:
@@ -81,4 +263,3 @@ class InMemoryChunkRetriever:
                 )
             )
         return hits
-
