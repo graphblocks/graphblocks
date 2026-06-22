@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 use crate::journal::{ExecutionJournal, JournalError, JournalMetadata};
 use crate::outcome::{BlockError, Outcome};
 use crate::readiness::PortRef;
+use crate::run_store::{InMemoryRunStore, RunStatus, RunStoreError};
 use crate::scheduler::{
     LocalScheduler, NodeExecutionState, ScheduledNode, SchedulerError, StartedNode,
 };
@@ -21,14 +22,16 @@ pub enum TestRunStatus {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TestRunResult {
+    pub run_id: String,
     pub status: TestRunStatus,
     pub journal: ExecutionJournal,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum TestRuntimeError {
     Scheduler(SchedulerError),
     Journal(JournalError),
+    RunStore(RunStoreError),
 }
 
 impl From<SchedulerError> for TestRuntimeError {
@@ -40,6 +43,12 @@ impl From<SchedulerError> for TestRuntimeError {
 impl From<JournalError> for TestRuntimeError {
     fn from(error: JournalError) -> Self {
         Self::Journal(error)
+    }
+}
+
+impl From<RunStoreError> for TestRuntimeError {
+    fn from(error: RunStoreError) -> Self {
+        Self::RunStore(error)
     }
 }
 
@@ -104,6 +113,7 @@ impl InProcessTestRuntime {
                         Some(payload),
                     )?;
                     return Ok(TestRunResult {
+                        run_id: self.journal.run_id().to_owned(),
                         status: TestRunStatus::Failed,
                         journal: self.journal.clone(),
                     });
@@ -124,6 +134,7 @@ impl InProcessTestRuntime {
                 None,
             )?;
             return Ok(TestRunResult {
+                run_id: self.journal.run_id().to_owned(),
                 status: TestRunStatus::Succeeded,
                 journal: self.journal.clone(),
             });
@@ -143,8 +154,31 @@ impl InProcessTestRuntime {
             })),
         )?;
         Ok(TestRunResult {
+            run_id: self.journal.run_id().to_owned(),
             status: TestRunStatus::Failed,
             journal: self.journal.clone(),
         })
+    }
+
+    pub fn run_with_store<E>(
+        &mut self,
+        store: &mut InMemoryRunStore,
+        graph_hash: impl Into<String>,
+        inputs: Value,
+        executor: &mut E,
+    ) -> Result<TestRunResult, TestRuntimeError>
+    where
+        E: NodeExecutor,
+    {
+        let run = store.create_run(graph_hash, inputs);
+        store.set_status(&run.run_id, RunStatus::Running)?;
+        self.journal = ExecutionJournal::new(run.run_id);
+        let result = self.run(executor)?;
+        let status = match result.status {
+            TestRunStatus::Succeeded => RunStatus::Completed,
+            TestRunStatus::Failed => RunStatus::Failed,
+        };
+        store.set_status(&result.run_id, status)?;
+        Ok(result)
     }
 }

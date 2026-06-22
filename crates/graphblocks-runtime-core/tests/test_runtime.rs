@@ -1,5 +1,6 @@
 use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory, Outcome};
 use graphblocks_runtime_core::readiness::{InputDependency, PortRef, ResolvedInput};
+use graphblocks_runtime_core::run_store::{InMemoryRunStore, RunStatus};
 use graphblocks_runtime_core::scheduler::{ScheduledNode, StartedNode};
 use graphblocks_runtime_core::test_runtime::{InProcessTestRuntime, NodeExecutor, TestRunStatus};
 use serde_json::{Value, json};
@@ -180,4 +181,41 @@ fn in_process_test_runtime_records_single_terminal_failure() {
             .map(|record| record.kind.as_str()),
         Some("run_failed"),
     );
+}
+
+#[test]
+fn in_process_test_runtime_admits_and_finalizes_run_store_record() {
+    let mut runtime = InProcessTestRuntime::new(
+        "placeholder",
+        [
+            ScheduledNode::new("render", []),
+            ScheduledNode::new(
+                "model",
+                [InputDependency::value(
+                    "prompt",
+                    PortRef::new("render", "prompt"),
+                )],
+            ),
+        ],
+    )
+    .expect("runtime should be created");
+    let mut executor = RecordingExecutor::default();
+    let mut store = InMemoryRunStore::new();
+
+    let result = runtime
+        .run_with_store(
+            &mut store,
+            "sha256:graph",
+            json!({"message": "hello"}),
+            &mut executor,
+        )
+        .expect("runtime should run");
+
+    assert_eq!(result.run_id, "run-000001");
+    assert_eq!(result.status, TestRunStatus::Succeeded);
+    assert_eq!(result.journal.run_id(), "run-000001");
+    let stored = store.get_run("run-000001").expect("run should be recorded");
+    assert_eq!(stored.graph_hash, "sha256:graph");
+    assert_eq!(stored.inputs, json!({"message": "hello"}));
+    assert_eq!(stored.status, RunStatus::Completed);
 }
