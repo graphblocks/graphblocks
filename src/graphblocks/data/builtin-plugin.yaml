@@ -1,0 +1,14 @@
+apiVersion: graphblocks.ai/v1alpha1
+kind: PluginManifest
+metadata:
+  name: io.graphblocks.stdlib
+  version: 0.1.0
+spec:
+  pluginId: io.graphblocks.stdlib
+  maturity: official
+  capabilities:
+    - graphblocks.schema
+  blocks: []
+  connectorFactories: []
+  adapters: []
+

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "graphblocks.ai/v1alpha1/plugin-manifest.schema.json",
+  "title": "GraphBlocks Plugin Manifest",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": { "const": "graphblocks.ai/v1alpha1" },
+    "kind": { "const": "PluginManifest" },
+    "metadata": { "type": "object" },
+    "spec": { "type": "object" }
+  },
+  "additionalProperties": true
+}
+

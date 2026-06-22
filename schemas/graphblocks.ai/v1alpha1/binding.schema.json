@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "graphblocks.ai/v1alpha1/binding.schema.json",
+  "title": "GraphBlocks BindingSpec",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": { "const": "graphblocks.ai/v1alpha1" },
+    "kind": { "const": "Binding" },
+    "metadata": { "type": "object" },
+    "spec": { "type": "object" }
+  },
+  "additionalProperties": true
+}
+

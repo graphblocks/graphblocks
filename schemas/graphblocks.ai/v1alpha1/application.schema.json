@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "graphblocks.ai/v1alpha1/application.schema.json",
+  "title": "GraphBlocks ApplicationSpec",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": { "const": "graphblocks.ai/v1alpha1" },
+    "kind": { "const": "Application" },
+    "metadata": { "type": "object" },
+    "spec": { "type": "object" }
+  },
+  "additionalProperties": true
+}
+
