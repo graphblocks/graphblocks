@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 
 use serde_json::{Value, json};
 
+use crate::cancellation::CancellationToken;
 use crate::journal::{ExecutionJournal, JournalError, JournalMetadata};
 use crate::outcome::{BlockError, Outcome};
 use crate::readiness::PortRef;
@@ -18,6 +19,7 @@ pub trait NodeExecutor {
 pub enum TestRunStatus {
     Succeeded,
     Failed,
+    Cancelled,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -77,11 +79,71 @@ impl InProcessTestRuntime {
     where
         E: NodeExecutor,
     {
+        self.run_with_cancellation_state(None, executor)
+    }
+
+    pub fn run_with_cancellation<E>(
+        &mut self,
+        cancellation_token: &CancellationToken,
+        executor: &mut E,
+    ) -> Result<TestRunResult, TestRuntimeError>
+    where
+        E: NodeExecutor,
+    {
+        self.run_with_cancellation_state(Some(cancellation_token), executor)
+    }
+
+    fn run_with_cancellation_state<E>(
+        &mut self,
+        cancellation_token: Option<&CancellationToken>,
+        executor: &mut E,
+    ) -> Result<TestRunResult, TestRuntimeError>
+    where
+        E: NodeExecutor,
+    {
         self.journal
             .append_with_metadata("run_started", JournalMetadata::new(), None)?;
+        if let Some(token) = cancellation_token
+            && let Some(reason) = token.reason()
+        {
+            self.journal.append_terminal_with_metadata(
+                "run_cancelled",
+                JournalMetadata::new(),
+                Some(json!({
+                    "code": format!("{:?}", reason.code),
+                    "message": reason.message,
+                    "requestedBy": reason.requested_by,
+                    "policyDecisionRef": reason.policy_decision_ref,
+                })),
+            )?;
+            return Ok(TestRunResult {
+                run_id: self.journal.run_id().to_owned(),
+                status: TestRunStatus::Cancelled,
+                journal: self.journal.clone(),
+            });
+        }
         let mut ready = VecDeque::from(self.scheduler.admit_run()?);
 
         while let Some(node_id) = ready.pop_front() {
+            if let Some(token) = cancellation_token
+                && let Some(reason) = token.reason()
+            {
+                self.journal.append_terminal_with_metadata(
+                    "run_cancelled",
+                    JournalMetadata::new(),
+                    Some(json!({
+                        "code": format!("{:?}", reason.code),
+                        "message": reason.message,
+                        "requestedBy": reason.requested_by,
+                        "policyDecisionRef": reason.policy_decision_ref,
+                    })),
+                )?;
+                return Ok(TestRunResult {
+                    run_id: self.journal.run_id().to_owned(),
+                    status: TestRunStatus::Cancelled,
+                    journal: self.journal.clone(),
+                });
+            }
             let started = self.scheduler.start_node(&node_id)?;
             let metadata = JournalMetadata::new().with_node_id(node_id.clone());
             self.journal
@@ -177,6 +239,7 @@ impl InProcessTestRuntime {
         let status = match result.status {
             TestRunStatus::Succeeded => RunStatus::Completed,
             TestRunStatus::Failed => RunStatus::Failed,
+            TestRunStatus::Cancelled => RunStatus::Cancelled,
         };
         store.set_status(&result.run_id, status)?;
         Ok(result)

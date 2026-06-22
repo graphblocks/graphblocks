@@ -1,4 +1,9 @@
-use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory, Outcome};
+use graphblocks_runtime_core::cancellation::{
+    CancellationGuarantee, CancellationScope, CancellationToken,
+};
+use graphblocks_runtime_core::outcome::{
+    BlockError, CancelCode, CancelReason, ErrorCategory, Outcome,
+};
 use graphblocks_runtime_core::readiness::{InputDependency, PortRef, ResolvedInput};
 use graphblocks_runtime_core::run_store::{InMemoryRunStore, RunStatus};
 use graphblocks_runtime_core::scheduler::{ScheduledNode, StartedNode};
@@ -218,4 +223,98 @@ fn in_process_test_runtime_admits_and_finalizes_run_store_record() {
     assert_eq!(stored.graph_hash, "sha256:graph");
     assert_eq!(stored.inputs, json!({"message": "hello"}));
     assert_eq!(stored.status, RunStatus::Completed);
+}
+
+#[test]
+fn in_process_test_runtime_honors_precancelled_token() {
+    let token = CancellationToken::new(CancellationScope::Run, CancellationGuarantee::Cooperative);
+    token.cancel(CancelReason::new(CancelCode::UserCancel));
+    let mut runtime = InProcessTestRuntime::new("run-000001", [ScheduledNode::new("render", [])])
+        .expect("runtime should be created");
+    let mut executor = RecordingExecutor::default();
+
+    let result = runtime
+        .run_with_cancellation(&token, &mut executor)
+        .expect("runtime should run");
+
+    assert_eq!(result.status, TestRunStatus::Cancelled);
+    assert!(executor.starts.is_empty());
+    assert_eq!(result.journal.terminal_kind(), Some("run_cancelled"));
+    assert_eq!(
+        result
+            .journal
+            .records()
+            .iter()
+            .map(|record| record.kind.as_str())
+            .collect::<Vec<_>>(),
+        vec!["run_started", "run_cancelled"],
+    );
+}
+
+struct CancellingExecutor {
+    token: CancellationToken,
+    starts: Vec<String>,
+}
+
+impl NodeExecutor for CancellingExecutor {
+    fn execute(&mut self, node: StartedNode) -> Result<Vec<(PortRef, Outcome<Value>)>, BlockError> {
+        self.starts.push(node.node_id.clone());
+        if node.node_id == "render" {
+            self.token.cancel(CancelReason::new(CancelCode::Shutdown));
+            return Ok(vec![(
+                PortRef::new("render", "prompt"),
+                Outcome::Value(json!("rendered")),
+            )]);
+        }
+        Err(BlockError::new(
+            "unexpected.node",
+            ErrorCategory::Internal,
+            "unexpected node execution after cancellation",
+            false,
+        ))
+    }
+}
+
+#[test]
+fn in_process_test_runtime_stops_before_dependent_work_after_cancellation() {
+    let token = CancellationToken::new(CancellationScope::Run, CancellationGuarantee::Cooperative);
+    let mut runtime = InProcessTestRuntime::new(
+        "run-000001",
+        [
+            ScheduledNode::new("render", []),
+            ScheduledNode::new(
+                "model",
+                [InputDependency::value(
+                    "prompt",
+                    PortRef::new("render", "prompt"),
+                )],
+            ),
+        ],
+    )
+    .expect("runtime should be created");
+    let mut executor = CancellingExecutor {
+        token: token.clone(),
+        starts: Vec::new(),
+    };
+
+    let result = runtime
+        .run_with_cancellation(&token, &mut executor)
+        .expect("runtime should run");
+
+    assert_eq!(result.status, TestRunStatus::Cancelled);
+    assert_eq!(executor.starts, vec!["render".to_owned()]);
+    assert_eq!(
+        result
+            .journal
+            .records()
+            .iter()
+            .map(|record| record.kind.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "run_started",
+            "node_started",
+            "node_completed",
+            "run_cancelled",
+        ],
+    );
 }
