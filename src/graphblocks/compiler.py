@@ -109,6 +109,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
     produced_nodes: set[str] = set()
     consumed_nodes: set[str] = set()
     invalid_input_port_nodes: set[str] = set()
+    invalid_resource_binding_nodes: set[str] = set()
 
     if isinstance(edges, list):
         for index, edge in enumerate(edges):
@@ -187,6 +188,35 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
             descriptor = block_catalog.get(str(node.get("block")))
             if descriptor is None:
                 continue
+            if descriptor.resource_slots:
+                bindings = node.get("bindings", {})
+                if bindings is None:
+                    bindings = {}
+                if not isinstance(bindings, dict):
+                    diagnostics.append(
+                        Diagnostic("GB1017", "node bindings must be a mapping", f"$.spec.nodes.{node_name}.bindings")
+                    )
+                    bindings = {}
+                slot_names = {slot.name for slot in descriptor.resource_slots}
+                for binding_name in bindings:
+                    if binding_name not in slot_names:
+                        invalid_resource_binding_nodes.add(node_name)
+                        diagnostics.append(
+                            Diagnostic(
+                                "GB1017",
+                                f"block {descriptor.block_id} has no resource slot {binding_name!r}",
+                                f"$.spec.nodes.{node_name}.bindings.{binding_name}",
+                            )
+                        )
+                for slot in descriptor.resource_slots:
+                    if node_name not in invalid_resource_binding_nodes and not slot.optional and slot.name not in bindings:
+                        diagnostics.append(
+                            Diagnostic(
+                                "GB1016",
+                                f"required resource slot {slot.name!r} is not bound for node {node_name!r}",
+                                f"$.spec.nodes.{node_name}.bindings",
+                            )
+                        )
             if node_name in invalid_input_port_nodes:
                 continue
             for port in descriptor.inputs:

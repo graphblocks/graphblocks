@@ -58,11 +58,19 @@ class PortDescriptor:
 
 
 @dataclass(frozen=True, slots=True)
+class ResourceSlotDescriptor:
+    name: str
+    type_ref: str | None = None
+    optional: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class BlockDescriptor:
     type_id: str
     version: int
     inputs: tuple[PortDescriptor, ...] = ()
     outputs: tuple[PortDescriptor, ...] = ()
+    resource_slots: tuple[ResourceSlotDescriptor, ...] = ()
 
     @property
     def block_id(self) -> str:
@@ -103,7 +111,29 @@ class BlockCatalog:
                             required=bool(port.get("required", True)),
                         )
                     )
-            descriptor = BlockDescriptor(str(block_type), int(version), tuple(inputs), tuple(outputs))
+            resource_slots: list[ResourceSlotDescriptor] = []
+            raw_slots = block.get("resourceSlots", [])
+            if isinstance(raw_slots, dict):
+                raw_slots = [
+                    {"name": name, **slot} if isinstance(slot, dict) else {"name": name}
+                    for name, slot in raw_slots.items()
+                ]
+            for slot in raw_slots:
+                if isinstance(slot, dict) and isinstance(slot.get("name"), str):
+                    resource_slots.append(
+                        ResourceSlotDescriptor(
+                            name=slot["name"],
+                            type_ref=slot.get("type"),
+                            optional=bool(slot.get("optional", False)),
+                        )
+                    )
+            descriptor = BlockDescriptor(
+                str(block_type),
+                int(version),
+                tuple(inputs),
+                tuple(outputs),
+                tuple(resource_slots),
+            )
             descriptors[descriptor.block_id] = descriptor
         return cls(descriptors)
 
