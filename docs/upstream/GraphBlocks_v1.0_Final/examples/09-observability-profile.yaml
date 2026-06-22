@@ -1,0 +1,53 @@
+apiVersion: graphblocks.ai/v1alpha1
+kind: ObservabilityProfile
+metadata:
+  name: rag-production
+spec:
+  traces:
+    rootUnit: turn
+    mapItems: linked_traces
+    sampling:
+      normal: 0.05
+      error: 1.0
+      slow: 1.0
+  capture:
+    messages: redacted
+    documentContent: reference_only
+    toolArguments: schema_only
+    toolResults: metadata
+    embeddings: none
+    rawFiles: none
+  metrics:
+    dimensions:
+      - environment
+      - release_channel
+      - graph_id
+      - block_type
+      - target_id
+      - provider
+      - outcome
+    forbiddenDimensions:
+      - run_id
+      - user_id
+      - conversation_id
+      - document_id
+      - chunk_id
+  exporters:
+    otlp: {endpoint: otel-gateway:4317}
+    langfuse:
+      mode: collector
+      project: company-ai
+  durableRecords:
+    executionJournal: run-postgres
+    auditLog:
+      sink: audit-postgres
+      delivery: transactional_outbox
+      retention: 7y
+    usageLedger:
+      sink: usage-postgres
+      deduplicateBy: [provider_response_id, node_attempt_id]
+    budgetLedger: budget-postgres
+  slos:
+    - {id: chat-availability, objective: 0.995, window: 30d}
+    - {id: chat-first-draft-p95, max: 1500ms}
+    - {id: citation-validity, objective: 0.99}

@@ -1,0 +1,77 @@
+# Domain-local legal schemas/blocks are illustrative. GraphBlocks core remains domain-neutral.
+apiVersion: graphblocks.ai/v1alpha3
+kind: Graph
+metadata:
+  name: authority-backed-advisory
+spec:
+  interface:
+    inputs:
+      matter: company.legal/MatterInput@1
+      auth: graphblocks.ai/AuthContext@1
+    outputs:
+      result: graphblocks.core/ResultBundle@1
+  nodes:
+    snapshot:
+      block: resource.snapshot@1
+      inputs:
+        resources:
+          - $input.matter.documents
+          - $input.matter.relevantDate
+    extractFacts:
+      block: company.legal.extract_facts@1
+    identifyIssues:
+      block: company.legal.identify_issues@1
+      inputs: {facts: extractFacts.facts}
+    plan:
+      block: orchestration.plan@1
+      inputs: {objective: identifyIssues.issues}
+      config:
+        outputSchema: graphblocks.orchestration/TaskPlan@1
+        limits: {maxTasks: 32, maxDepth: 3}
+    research:
+      block: orchestration.execute_task_plan@1
+      inputs: {plan: plan.value}
+      bindings:
+        sources:
+          statutes: korea-law-api
+          cases: korea-case-api
+          internal: firm-knowledge
+      config:
+        snapshotOnRead: true
+        requireSourceRef: true
+        checkpoint: each_task
+    synthesize:
+      block: company.legal.synthesize_memo@1
+      inputs:
+        facts: extractFacts.facts
+        evidence: research.evidence
+    verifySources:
+      block: check.run_suite@1
+      inputs: {subject: synthesize.memo}
+      config:
+        checks:
+          - official_source_resolves
+          - relevant_date_matches
+          - adverse_authority_considered
+    gate:
+      block: gate.evaluate@1
+      inputs: {checks: verifySources.results}
+      config:
+        hardConstraints:
+          - official_source_resolves
+          - relevant_date_matches
+    review:
+      block: review.request@1
+      when: gate.passed
+      inputs: {subject: synthesize.memo}
+      config:
+        scope: substantive
+        requiredCredential: application-defined-attorney-credential
+        invalidateOnSubjectChange: true
+    publish:
+      block: result.bundle@1
+      inputs:
+        outputs: [synthesize.memo]
+        evidence: research.evidence
+        checks: verifySources.results
+        reviews: [review.record]

@@ -1,0 +1,82 @@
+apiVersion: graphblocks.ai/v1alpha1
+kind: GraphRelease
+metadata:
+  name: enterprise-rag-2026-06-22-01
+spec:
+  application: enterprise-rag
+  bundle:
+    ref: registry.example.com/graphblocks/enterprise-rag@sha256:replace-with-digest
+    mediaType: application/vnd.graphblocks.bundle.v1
+    signaturePolicy: production-publishers
+  identity:
+    graphHash: sha256:replace
+    physicalPlanHash: sha256:replace
+    bindingLockHash: sha256:replace
+    packageLockHash: sha256:replace
+    promptLockHash: sha256:replace
+  compatibility:
+    checkpointSchema: company.ai/RagCheckpoint@3
+    conversationSchema: graphblocks.ai/Conversation@1
+---
+apiVersion: graphblocks.ai/v1alpha1
+kind: GraphDeployment
+metadata:
+  name: enterprise-rag-production
+spec:
+  releaseRef: {name: enterprise-rag-2026-06-22-01}
+  policyProfileRef: interactive-finish-current-turn
+  observabilityProfileRef: rag-production
+  admission:
+    maxConcurrentRuns: 500
+    overload: {strategy: reject, retryAfter: 2s}
+  targets:
+    control:
+      kind: service
+      executionHost: rust
+      minReplicas: 3
+      lifecycle: {startup: 120s, drain: 60s}
+    rag-cpu:
+      kind: workerPool
+      executionHost: python_worker
+      packageLock: locks/rag-cpu.pylock.toml
+      capabilities: [query.processing, retrieval.client, ranking.cpu]
+      scaling: {kind: queue, minReplicas: 2, maxReplicas: 30}
+    document-cpu:
+      kind: workerPool
+      executionHost: python_worker
+      packageLock: locks/document-cpu.pylock.toml
+      capabilities: [document.parse, document.normalize, document.split]
+      scaling: {kind: queue, minReplicas: 0, maxReplicas: 50}
+    sandbox:
+      kind: sandboxPool
+      executionHost: python_worker
+      capabilities: [workspace.read, workspace.patch, process.execute]
+      security:
+        trustLevel: untrusted
+        rootFilesystem: read_only
+        egressPolicy: restricted
+  placements:
+    - select: {blockNamespaces: [query, retrieve, rank]}
+      target: rag-cpu
+    - select: {blockNamespaces: [document]}
+      target: document-cpu
+    - select: {effects: [process_execution, workspace_write]}
+      target: sandbox
+    - select: {default: true}
+      target: control
+  rollout:
+    strategy: canary
+    affinity: conversation_id
+    steps:
+      - {traffic: 1, minimumSamples: 200}
+      - {traffic: 10, minimumDuration: 30m}
+      - {traffic: 50, minimumDuration: 1h}
+    gates:
+      - {metric: turn_success_rate, min: 0.995}
+      - {metric: citation_validation_rate, min: 0.98}
+      - {metric: average_cost_per_turn, maxRegression: 0.10}
+  upgrades:
+    existingRequests: finish_on_old
+    conversations: keep_affinity
+    durableJobs: checkpoint_and_migrate
+  recovery: {rto: 15m, rpo: 5m}

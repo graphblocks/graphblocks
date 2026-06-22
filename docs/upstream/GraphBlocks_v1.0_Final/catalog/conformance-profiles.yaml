@@ -1,0 +1,104 @@
+apiVersion: graphblocks.ai/v1alpha1
+kind: ConformanceProfileSet
+metadata:
+  name: graphblocks-standard-profiles
+  version: 1.0.0
+spec:
+  profiles:
+  - id: GB-C0-SCHEMA
+    status: normative
+    requires:
+    - canonical-schema-roundtrip
+    - graph-parse-normalize-hash
+    - plugin-manifest-validation
+    - migration-reader
+    tck:
+    - schema
+    - compiler
+  - id: GB-C1-LOCAL-RUNTIME
+    status: normative
+    extends:
+    - GB-C0-SCHEMA
+    requires:
+    - rust-scheduler
+    - typed-ports
+    - outcome
+    - cancellation
+    - journal
+    - local-flow
+    - python-binding
+    tck:
+    - runtime
+    - sequence
+  - id: GB-C2-AI-APPLICATION
+    status: normative-profile
+    extends:
+    - GB-C1-LOCAL-RUNTIME
+    requires:
+    - documents
+    - rag
+    - conversation
+    - application-protocol
+    acceptanceApplications:
+    - direct-file-analysis
+    - document-ingestion
+    - enterprise-rag
+    - multi-turn-chat
+  - id: GB-C3-GOVERNED-RUNTIME
+    status: normative-profile
+    extends:
+    - GB-C1-LOCAL-RUNTIME
+    requires:
+    - policy-pep
+    - usage-ledger
+    - budget-ledger
+    - budget-permit
+    - exhaustion-policy
+    - approval-review-gate
+    tck:
+    - policy
+    - budget-race
+    - exhaustion
+  - id: GB-C4-PRODUCTION
+    status: normative-profile
+    extends:
+    - GB-C2-AI-APPLICATION
+    - GB-C3-GOVERNED-RUNTIME
+    requires:
+    - immutable-release
+    - worker-protocol
+    - deployment-revision
+    - drain
+    - audit
+    - slo
+    - otel-projection
+    acceptanceApplications:
+    - kubernetes-canary
+    - telemetry-outage-correctness
+  - id: GB-X1-ORCHESTRATION
+    status: provisional-extension
+    extends:
+    - GB-C3-GOVERNED-RUNTIME
+    requires:
+    - task-plan
+    - task-plan-patch
+    - model-worker-pool
+    - task-budget-delegation
+  - id: GB-X2-VOICE
+    status: experimental-extension
+    extends:
+    - GB-C2-AI-APPLICATION
+    requires:
+    - duplex-session
+    - vad-authority
+    - interruption
+    - playback-ledger
+  - id: GB-X3-DURABLE-STREAM
+    status: experimental-extension
+    extends:
+    - GB-C1-LOCAL-RUNTIME
+    requires:
+    - offsets
+    - watermarks
+    - checkpoint-barriers
+    - sink-commit

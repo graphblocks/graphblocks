@@ -1,0 +1,119 @@
+apiVersion: graphblocks.ai/v1alpha3
+kind: Graph
+metadata:
+  name: enterprise-rag-turn
+spec:
+  interface:
+    inputs:
+      turn: graphblocks.ai/ConversationTurnInput@1
+      auth: graphblocks.ai/AuthContext@1
+    outputs:
+      result: graphblocks.ai/TurnCandidate@1
+    events:
+      - graphblocks.ai/AssistantDraftDelta@1
+  nodes:
+    begin:
+      block: conversation.begin_turn@1
+    rewrite:
+      block: query.rewrite@1
+      inputs:
+        message: $input.turn.message
+        history: begin.snapshot.messages
+    retrieve:
+      block: retrieve.execute_plan@1
+      inputs:
+        query: rewrite.query
+        auth: $input.auth
+      bindings:
+        retrievers:
+          dense: company-dense
+          keyword: company-keyword
+          tickets: support-tickets
+        embedding: query-embedding
+      config:
+        minimumSuccessfulSources: 1
+        sourceTimeout: 2s
+    fuse:
+      block: retrieve.fuse@1
+      inputs:
+        sources: retrieve.result.sources
+      config:
+        algorithm: reciprocal_rank_fusion
+        deduplicateBy: canonical_source
+    rerank:
+      block: rank.documents@1
+      inputs:
+        query: rewrite.query
+        hits: fuse.hits
+      bindings:
+        reranker: answer-reranker
+    context:
+      block: context.build@1
+      inputs:
+        history: begin.snapshot.messages
+        evidence: rerank.hits
+        currentMessage: $input.turn.message
+      config:
+        maxTokens: 48000
+        reserveOutputTokens: 8000
+    generate:
+      block: model.generate@1
+      inputs:
+        context: context.pack
+      bindings:
+        model: answer-model
+      projection:
+        text: graphblocks.ai/AssistantDraftDelta@1
+    validate:
+      block: answer.validate_grounding@1
+      inputs:
+        response: generate.response
+        context: context.pack
+      config:
+        requireCitation: true
+        onInsufficientEvidence: abstain
+    commit:
+      block: conversation.commit_turn@1
+      inputs:
+        transaction: begin.transaction
+        candidate: validate.candidate
+---
+apiVersion: graphblocks.ai/v1alpha1
+kind: Binding
+metadata:
+  name: enterprise-rag-production
+spec:
+  resources:
+    company-dense:
+      kind: Retriever
+      implementation: qdrant.dense
+      config:
+        collection: company-documents-v17
+        endpoint: https://qdrant.internal
+      credentials: {secretRef: secret://qdrant/production}
+    company-keyword:
+      kind: Retriever
+      implementation: opensearch.keyword
+      config:
+        index: company-documents-v17
+        endpoint: https://opensearch.internal
+      credentials: {secretRef: secret://opensearch/production}
+    support-tickets:
+      kind: Retriever
+      implementation: company.ticket-search
+      config: {endpoint: https://tickets.internal/search}
+      credentials: {secretRef: secret://tickets/production}
+    query-embedding:
+      kind: EmbeddingModel
+      implementation: provider.embeddings
+      config: {model: embedding-model-production}
+      credentials: {secretRef: secret://model-provider/production}
+    answer-reranker:
+      kind: Reranker
+      implementation: cross-encoder.remote
+      config: {endpoint: https://reranker.internal}
+    answer-model:
+      kind: ChatModel
+      implementation: provider.chat
+      config: {model: chat-model-production}
+      credentials: {secretRef: secret://model-provider/production}

@@ -1,0 +1,36 @@
+apiVersion: graphblocks.ai/v1alpha3
+kind: Graph
+metadata:
+  name: realtime-voice-agent
+spec:
+  extensions: [graphblocks.voice/v1alpha1]
+  execution:
+    lifetime: session
+    interaction: duplex
+    durability: checkpointed
+  voice:
+    pipeline: {kind: realtime}
+    turnDetection:
+      authority: provider
+      mode: semantic
+    localVad:
+      enabled: true
+      role: metrics_and_early_duck_only
+    interruption:
+      authority: provider
+      policy: adaptive
+      onPossible: duck
+      onConfirmed: [clear_playout, cancel_response, truncate_conversation]
+    playback:
+      acknowledgements: required
+      reportInterval: 100ms
+  nodes:
+    session:
+      block: realtime.session@1
+      bindings: {provider: realtime-provider}
+    tools:
+      block: tools.dispatch@1
+      inputs: {calls: session.toolCalls}
+      outputs: {results: session.toolResults}
+    telemetry:
+      block: telemetry.voice_session@1
