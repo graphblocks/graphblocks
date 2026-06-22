@@ -78,6 +78,28 @@ def compile_graph(document: dict[str, Any]) -> Plan:
                     f"$.spec.nodes.{node_name}",
                 )
             )
+        effects = node.get("effects", [])
+        if isinstance(effects, str):
+            effects = [effects]
+        effect_set = {str(effect) for effect in effects} if isinstance(effects, list) else set()
+        flow = node.get("flow", {})
+        retry = flow.get("retry", {}) if isinstance(flow, dict) else {}
+        max_attempts = 1
+        idempotency_key = None
+        if isinstance(retry, dict):
+            max_attempts = int(retry.get("maxAttempts", 1))
+            idempotency_key = retry.get("idempotencyKey") or retry.get("idempotency_key")
+        elif isinstance(retry, int):
+            max_attempts = retry
+        effect_retry_requires_key = bool(effect_set & {"external_write", "destructive", "process"})
+        if effect_retry_requires_key and max_attempts > 1 and not idempotency_key:
+            diagnostics.append(
+                Diagnostic(
+                    "GB1011",
+                    "retrying effectful nodes requires an idempotency key",
+                    f"$.spec.nodes.{node_name}.flow.retry",
+                )
+            )
 
     normalized = normalize_graph(migrated)
     normalized_spec = normalized.get("spec", {})
