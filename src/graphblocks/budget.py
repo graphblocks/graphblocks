@@ -95,6 +95,21 @@ class BudgetSettlement:
     revision: int = 0
 
 
+@dataclass(frozen=True, slots=True)
+class BudgetPermit:
+    permit_id: str
+    reservation_refs: tuple[str, ...]
+    owner: ResourceRef
+    atomic_unit: ResourceRef
+    admission_epoch: int
+    authorized_amounts: list[UsageAmount]
+    continuation_profile: str
+    policy_snapshot_digest: str
+    expires_at: str
+    low_watermark: list[UsageAmount] = field(default_factory=list)
+    fencing_tokens: dict[str, int] = field(default_factory=dict)
+
+
 def _amount_key(amount: UsageAmount) -> AmountKey:
     return (amount.kind, amount.unit, tuple(sorted(amount.dimensions.items())))
 
@@ -124,6 +139,7 @@ class InMemoryBudgetLedger:
     _committed: dict[str, dict[AmountKey, Decimal]] = field(default_factory=dict)
     _overdraft: dict[str, dict[AmountKey, Decimal]] = field(default_factory=dict)
     _reservations: dict[str, BudgetReservation] = field(default_factory=dict)
+    _permits: dict[str, BudgetPermit] = field(default_factory=dict)
     _reservation_counter: int = 0
     _fencing_counter: int = 0
 
@@ -249,6 +265,51 @@ class InMemoryBudgetLedger:
             status="released",
             revision=self._accounts[budget_id].revision,
         )
+
+    def issue_permit(
+        self,
+        permit_id: str,
+        *,
+        reservation_ids: list[str],
+        owner: ResourceRef,
+        atomic_unit: ResourceRef,
+        admission_epoch: int,
+        continuation_profile: str,
+        policy_snapshot_digest: str,
+        expires_at: str,
+        low_watermark: list[UsageAmount] | None = None,
+    ) -> BudgetPermit:
+        if permit_id in self._permits:
+            raise BudgetConflictError(f"permit {permit_id!r} already exists")
+        authorized: dict[AmountKey, Decimal] = {}
+        fencing_tokens: dict[str, int] = {}
+        for reservation_id in reservation_ids:
+            reservation = self._reservations.get(reservation_id)
+            if reservation is None:
+                raise BudgetReservationNotFoundError(f"reservation {reservation_id!r} does not exist")
+            if reservation.status != "reserved":
+                raise BudgetReservationStateError(f"reservation {reservation_id!r} is {reservation.status}")
+            for key, amount in _amounts_to_dict(reservation.amounts).items():
+                authorized[key] = authorized.get(key, Decimal("0")) + amount
+            fencing_tokens[reservation.budget_id] = max(
+                fencing_tokens.get(reservation.budget_id, 0),
+                reservation.fencing_token,
+            )
+        permit = BudgetPermit(
+            permit_id=permit_id,
+            reservation_refs=tuple(reservation_ids),
+            owner=owner,
+            atomic_unit=atomic_unit,
+            admission_epoch=admission_epoch,
+            authorized_amounts=_dict_to_amounts(authorized),
+            low_watermark=list(low_watermark or []),
+            continuation_profile=continuation_profile,
+            policy_snapshot_digest=policy_snapshot_digest,
+            expires_at=expires_at,
+            fencing_tokens=fencing_tokens,
+        )
+        self._permits[permit_id] = permit
+        return permit
 
     def balance(self, budget_id: str) -> BudgetBalance:
         account = self._accounts.get(budget_id)
