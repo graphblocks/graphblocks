@@ -1,0 +1,160 @@
+[
+  {
+    "name": "ordered_graph",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "ordered"
+      },
+      "spec": {
+        "nodes": {
+          "b": {
+            "block": "text.join@1",
+            "config": {
+              "second": 2,
+              "first": 1
+            }
+          },
+          "a": {
+            "block": "text.literal@1"
+          }
+        },
+        "edges": [
+          {
+            "to": "b.value",
+            "from": "a.value"
+          },
+          {
+            "to": "$output.result",
+            "from": "b.value"
+          }
+        ]
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:0b2636678ee1af1446500624da2f5db0dab238aceb858058a6f3b60f9e06f3a8",
+      "error_codes": []
+    }
+  },
+  {
+    "name": "input_output_shorthand",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "input-output-shorthand"
+      },
+      "spec": {
+        "interface": {
+          "inputs": {
+            "message": "graphblocks.ai/Text@1"
+          }
+        },
+        "nodes": {
+          "render": {
+            "block": "prompt.render@1",
+            "inputs": {
+              "message": "$input.message",
+              "context": {
+                "current": "lookup.value"
+              }
+            },
+            "outputs": {
+              "value": "$output.result"
+            }
+          },
+          "lookup": {
+            "block": "memory.lookup@1"
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:127f5ee478a61ecd1f8c101c65272ea12796b28ef159e5deb4c966171ab8392b",
+      "error_codes": []
+    }
+  },
+  {
+    "name": "unknown_edge_endpoint",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "bad-edge"
+      },
+      "spec": {
+        "nodes": {
+          "consumer": {
+            "block": "text.join@1"
+          }
+        },
+        "edges": [
+          {
+            "from": "missing.value",
+            "to": "consumer.value"
+          }
+        ]
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:691f4527811b77924d9f1aa63093f390c5e049e2089f6f5d484238812faf86e3",
+      "error_codes": ["GB1002"]
+    }
+  },
+  {
+    "name": "unsafe_retry",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "unsafe-retry"
+      },
+      "spec": {
+        "nodes": {
+          "write": {
+            "block": "storage.write@1",
+            "effects": ["external_write"],
+            "flow": {
+              "retry": {
+                "maxAttempts": 2
+              }
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:3ac2bbd205167963308892a0d4ce6bf148cb047de5935a8c006b84f9dc4bf683",
+      "error_codes": ["GB1011"]
+    }
+  },
+  {
+    "name": "safe_retry",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "safe-retry"
+      },
+      "spec": {
+        "nodes": {
+          "write": {
+            "block": "storage.write@1",
+            "effects": ["external_write"],
+            "flow": {
+              "retry": {
+                "maxAttempts": 2,
+                "idempotencyKey": "$input.request_id"
+              }
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:d6fd56a6e08adb2f4afc17733a84d211dca8a5834d161cd41af42a57a0341a2a",
+      "error_codes": []
+    }
+  }
+]
