@@ -13,7 +13,7 @@ from .diagnostics import Diagnostic
 from .loader import load_documents
 from .migration import migrate_document
 from .packages import load_package_catalog, package_rows
-from .plugins import discover_plugins, load_plugin_manifest, validate_plugin_manifest
+from .plugins import BlockCatalog, discover_plugins, load_plugin_manifest, validate_plugin_manifest
 from .runtime import InProcessRuntime, stdlib_registry
 
 STRUCTURAL_KINDS = {
@@ -36,9 +36,11 @@ def main(argv: list[str] | None = None) -> int:
     validate_parser = subparsers.add_parser("validate", help="validate GraphBlocks YAML documents")
     validate_parser.add_argument("path", type=Path)
     validate_parser.add_argument("--json", action="store_true", help="emit machine-readable diagnostics")
+    validate_parser.add_argument("--plugin-path", action="append", default=[], help="static plugin manifest file or directory")
 
     plan_parser = subparsers.add_parser("plan", help="compile a GraphSpec into normalized plan JSON")
     plan_parser.add_argument("path", type=Path)
+    plan_parser.add_argument("--plugin-path", action="append", default=[], help="static plugin manifest file or directory")
     plan_parser.add_argument("--expand", action="store_true", help="include normalized graph")
     plan_parser.add_argument("--show-bindings", action="store_true", help="include Binding documents from the same file")
     plan_parser.add_argument("--show-packages", action="store_true", help="include inferred semantic block requirements")
@@ -79,9 +81,15 @@ def main(argv: list[str] | None = None) -> int:
         documents = load_documents(args.path)
         diagnostics: list[dict[str, str]] = []
         ok = True
+        block_catalog = None
+        if args.plugin_path:
+            registry = discover_plugins(args.plugin_path, include_installed=True)
+            block_catalog = BlockCatalog.from_manifests(registry.manifests)
+            ok = ok and registry.ok
+            diagnostics.extend(item.to_dict() | {"document": "plugins"} for item in registry.diagnostics.diagnostics)
         for index, document in enumerate(documents):
             if document.get("kind") == "Graph":
-                plan = compile_graph(document)
+                plan = compile_graph(document, block_catalog=block_catalog)
                 ok = ok and plan.ok
                 diagnostics.extend(
                     {
@@ -119,7 +127,11 @@ def main(argv: list[str] | None = None) -> int:
         if not graph_documents:
             print(f"{args.path}: no Graph document found")
             return 1
-        plan = compile_graph(graph_documents[0])
+        block_catalog = None
+        if args.plugin_path:
+            registry = discover_plugins(args.plugin_path, include_installed=True)
+            block_catalog = BlockCatalog.from_manifests(registry.manifests)
+        plan = compile_graph(graph_documents[0], block_catalog=block_catalog)
         payload: dict[str, object] = {
             "target": args.target,
             "hash": plan.graph_hash,

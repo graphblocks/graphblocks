@@ -9,7 +9,16 @@ from .loader import load_documents
 from .leases import InMemoryLeasePool, Lease, LeaseUnavailableError
 from .migration import migrate_document
 from .packages import load_package_catalog, package_rows
-from .plugins import PluginManifest, PluginRegistry, discover_plugins, load_plugin_manifest, validate_plugin_manifest
+from .plugins import (
+    BlockCatalog,
+    BlockDescriptor,
+    PluginManifest,
+    PluginRegistry,
+    PortDescriptor,
+    discover_plugins,
+    load_plugin_manifest,
+    validate_plugin_manifest,
+)
 from .runtime import (
     CancellationToken,
     ExecutionJournal,
@@ -28,8 +37,11 @@ __all__ = [
     "Diagnostic",
     "DiagnosticSet",
     "Plan",
+    "BlockCatalog",
+    "BlockDescriptor",
     "PluginManifest",
     "PluginRegistry",
+    "PortDescriptor",
     "CancellationToken",
     "ExecutionJournal",
     "InProcessRuntime",

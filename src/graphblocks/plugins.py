@@ -51,6 +51,74 @@ class PluginManifest:
 
 
 @dataclass(frozen=True, slots=True)
+class PortDescriptor:
+    name: str
+    type_ref: str | None = None
+    required: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class BlockDescriptor:
+    type_id: str
+    version: int
+    inputs: tuple[PortDescriptor, ...] = ()
+    outputs: tuple[PortDescriptor, ...] = ()
+
+    @property
+    def block_id(self) -> str:
+        return f"{self.type_id}@{self.version}"
+
+
+@dataclass(frozen=True, slots=True)
+class BlockCatalog:
+    descriptors: dict[str, BlockDescriptor]
+
+    @classmethod
+    def from_blocks(cls, blocks: list[dict[str, Any]] | tuple[dict[str, Any], ...]) -> BlockCatalog:
+        descriptors: dict[str, BlockDescriptor] = {}
+        for block in blocks:
+            block_type = block.get("typeId") or block.get("type_id") or block.get("block")
+            version = block.get("version")
+            if isinstance(block_type, str) and "@" in block_type and version is None:
+                block_type, version = block_type.rsplit("@", 1)
+            if not isinstance(block_type, str) or version is None:
+                continue
+            inputs: list[PortDescriptor] = []
+            for port in block.get("inputs", []):
+                if isinstance(port, dict) and isinstance(port.get("name"), str):
+                    inputs.append(
+                        PortDescriptor(
+                            name=port["name"],
+                            type_ref=port.get("type"),
+                            required=bool(port.get("required", True)),
+                        )
+                    )
+            outputs: list[PortDescriptor] = []
+            for port in block.get("outputs", []):
+                if isinstance(port, dict) and isinstance(port.get("name"), str):
+                    outputs.append(
+                        PortDescriptor(
+                            name=port["name"],
+                            type_ref=port.get("type"),
+                            required=bool(port.get("required", True)),
+                        )
+                    )
+            descriptor = BlockDescriptor(str(block_type), int(version), tuple(inputs), tuple(outputs))
+            descriptors[descriptor.block_id] = descriptor
+        return cls(descriptors)
+
+    @classmethod
+    def from_manifests(cls, manifests: tuple[PluginManifest, ...] | list[PluginManifest]) -> BlockCatalog:
+        blocks: list[dict[str, Any]] = []
+        for manifest in manifests:
+            blocks.extend(manifest.blocks)
+        return cls.from_blocks(blocks)
+
+    def get(self, block_id: str) -> BlockDescriptor | None:
+        return self.descriptors.get(block_id)
+
+
+@dataclass(frozen=True, slots=True)
 class PluginRegistry:
     manifests: tuple[PluginManifest, ...]
     diagnostics: DiagnosticSet
@@ -215,4 +283,3 @@ def discover_plugins(paths: list[str | Path] | None = None, include_installed: b
         unique.append(manifest)
     unique.sort(key=lambda item: (item.plugin_id, item.version, item.source))
     return PluginRegistry(tuple(unique), DiagnosticSet(tuple(diagnostics)))
-

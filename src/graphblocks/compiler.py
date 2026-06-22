@@ -6,6 +6,7 @@ from typing import Any
 from .canonical import PSEUDO_NODES, canonical_hash, normalize_graph
 from .diagnostics import Diagnostic, DiagnosticSet
 from .migration import GRAPH_API_VERSION, LEGACY_GRAPH_API_VERSIONS, migrate_document
+from .plugins import BlockCatalog
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,7 +28,7 @@ class Plan:
         }
 
 
-def compile_graph(document: dict[str, Any]) -> Plan:
+def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None = None) -> Plan:
     diagnostics: list[Diagnostic] = []
     migrated = migrate_document(document)
     if migrated.get("kind") != "Graph":
@@ -107,6 +108,7 @@ def compile_graph(document: dict[str, Any]) -> Plan:
     edges = normalized_spec.get("edges", []) if isinstance(normalized_spec, dict) else []
     produced_nodes: set[str] = set()
     consumed_nodes: set[str] = set()
+    invalid_input_port_nodes: set[str] = set()
 
     if isinstance(edges, list):
         for index, edge in enumerate(edges):
@@ -134,6 +136,68 @@ def compile_graph(document: dict[str, Any]) -> Plan:
                     produced_nodes.add(owner)
                 else:
                     consumed_nodes.add(owner)
+
+            if block_catalog is not None:
+                source_owner, _, source_path = source.partition(".")
+                target_owner, _, target_path = target.partition(".")
+                if source_owner not in PSEUDO_NODES and source_owner in normalized_nodes and source_path:
+                    source_node = normalized_nodes[source_owner]
+                    if isinstance(source_node, dict):
+                        descriptor = block_catalog.get(str(source_node.get("block")))
+                        if descriptor is not None and descriptor.outputs:
+                            port_name = source_path.split(".", 1)[0]
+                            output_names = {port.name for port in descriptor.outputs}
+                            if port_name not in output_names:
+                                diagnostics.append(
+                                    Diagnostic(
+                                        "GB1014",
+                                        f"block {descriptor.block_id} has no output port {port_name!r}",
+                                        f"$.spec.edges[{index}].from",
+                                    )
+                                )
+                if target_owner not in PSEUDO_NODES and target_owner in normalized_nodes and target_path:
+                    target_node = normalized_nodes[target_owner]
+                    if isinstance(target_node, dict):
+                        descriptor = block_catalog.get(str(target_node.get("block")))
+                        if descriptor is not None and descriptor.inputs:
+                            port_name = target_path.split(".", 1)[0]
+                            input_names = {port.name for port in descriptor.inputs}
+                            if port_name not in input_names:
+                                invalid_input_port_nodes.add(target_owner)
+                                diagnostics.append(
+                                    Diagnostic(
+                                        "GB1013",
+                                        f"block {descriptor.block_id} has no input port {port_name!r}",
+                                        f"$.spec.edges[{index}].to",
+                                    )
+                                )
+
+    if block_catalog is not None:
+        inbound_by_node: dict[str, set[str]] = {name: set() for name in normalized_nodes}
+        if isinstance(edges, list):
+            for edge in edges:
+                if not isinstance(edge, dict) or not isinstance(edge.get("to"), str):
+                    continue
+                target_owner, _, target_path = edge["to"].partition(".")
+                if target_owner in inbound_by_node and target_path:
+                    inbound_by_node[target_owner].add(target_path.split(".", 1)[0])
+        for node_name, node in normalized_nodes.items():
+            if not isinstance(node, dict):
+                continue
+            descriptor = block_catalog.get(str(node.get("block")))
+            if descriptor is None:
+                continue
+            if node_name in invalid_input_port_nodes:
+                continue
+            for port in descriptor.inputs:
+                if port.required and port.name not in inbound_by_node[node_name]:
+                    diagnostics.append(
+                        Diagnostic(
+                            "GB1003",
+                            f"required input {port.name!r} is never produced for node {node_name!r}",
+                            f"$.spec.nodes.{node_name}",
+                        )
+                    )
 
     for node_name, node in normalized_nodes.items():
         if isinstance(node, dict) and isinstance(node.get("when"), str):

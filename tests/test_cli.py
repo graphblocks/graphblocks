@@ -63,3 +63,46 @@ def test_run_cli_executes_in_process_runtime(tmp_path, capsys) -> None:
 
     assert main(["run", str(path), "--input-json", '{"message":{"text":"hi"}}']) == 0
     assert '"prompt": "Echo hi"' in capsys.readouterr().out
+
+
+def test_validate_cli_uses_plugin_path_for_port_validation(tmp_path, capsys) -> None:
+    manifest = {
+        "apiVersion": "graphblocks.ai/v1alpha1",
+        "kind": "PluginManifest",
+        "metadata": {"name": "com.example.ports", "version": "1.0.0"},
+        "spec": {
+            "pluginId": "com.example.ports",
+            "version": "1.0.0",
+            "blocks": [
+                {
+                    "typeId": "text.source",
+                    "version": 1,
+                    "outputs": [{"name": "value", "type": "graphblocks.ai/Text@1"}],
+                },
+                {
+                    "typeId": "text.sink",
+                    "version": 1,
+                    "inputs": [{"name": "text", "type": "graphblocks.ai/Text@1"}],
+                },
+            ],
+        },
+    }
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "bad-port"},
+        "spec": {
+            "nodes": {
+                "source": {"block": "text.source@1"},
+                "sink": {"block": "text.sink@1"},
+            },
+            "edges": [{"from": "source.value", "to": "sink.missing"}],
+        },
+    }
+    manifest_path = tmp_path / "plugin.yaml"
+    graph_path = tmp_path / "graph.yaml"
+    manifest_path.write_text(yaml.safe_dump(manifest), encoding="utf-8")
+    graph_path.write_text(yaml.safe_dump(graph), encoding="utf-8")
+
+    assert main(["validate", str(graph_path), "--plugin-path", str(manifest_path), "--json"]) == 1
+    assert '"code": "GB1013"' in capsys.readouterr().out
