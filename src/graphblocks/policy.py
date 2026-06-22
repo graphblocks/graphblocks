@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, is_dataclass, replace
 from typing import Literal
 
 from .canonical import canonical_hash
@@ -55,6 +55,97 @@ class PolicyRule:
     principal_selectors: tuple[str, ...] = field(default_factory=tuple)
     obligations: tuple[PolicyObligation, ...] = field(default_factory=tuple)
     priority: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class PolicyBundle:
+    bundle_id: str
+    version: str
+    rule_language: str
+    rules: tuple[PolicyRule, ...] = field(default_factory=tuple)
+    external_evaluator_ref: str | None = None
+    obligation_schema_versions: tuple[str, ...] = field(default_factory=tuple)
+    default_fail_modes: dict[str, str] = field(default_factory=dict)
+    signature_ref: str | None = None
+
+    def content_digest(self) -> str:
+        return canonical_hash(
+            _policy_value(
+                {
+                    "version": self.version,
+                    "rule_language": self.rule_language,
+                    "rules": self.rules,
+                    "external_evaluator_ref": self.external_evaluator_ref,
+                    "obligation_schema_versions": self.obligation_schema_versions,
+                    "default_fail_modes": self.default_fail_modes,
+                }
+            )
+        )
+
+    @property
+    def ref(self) -> str:
+        return f"{self.bundle_id}@{self.version}"
+
+
+@dataclass(frozen=True, slots=True)
+class PolicyProfile:
+    profile_id: str
+    bundle_refs: tuple[str, ...]
+    scope_selectors: tuple[str, ...]
+    quota_accounts: dict[str, object] = field(default_factory=dict)
+    budgets: dict[str, object] = field(default_factory=dict)
+    thresholds: tuple[dict[str, object], ...] = field(default_factory=tuple)
+    exhaustion: dict[str, object] | None = None
+    affinity: Literal["pinned", "boundary_refresh", "live"] = "pinned"
+    capture: dict[str, object] = field(default_factory=dict)
+    required_reviews: tuple[str, ...] = field(default_factory=tuple)
+    required_gates: tuple[str, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True, slots=True)
+class EntitlementSnapshot:
+    snapshot_id: str
+    subject: PrincipalRef
+    scopes: tuple[ResourceRef, ...]
+    source_revision: str
+    resolved_at: str
+    plan_id: str | None = None
+    policy_profile_refs: tuple[str, ...] = field(default_factory=tuple)
+    grants: tuple[str, ...] = field(default_factory=tuple)
+    budget_grants: tuple[str, ...] = field(default_factory=tuple)
+    overrides: tuple[str, ...] = field(default_factory=tuple)
+    valid_until: str | None = None
+
+    def content_digest(self) -> str:
+        return canonical_hash(
+            _policy_value(
+                {
+                    "subject": self.subject,
+                    "scopes": self.scopes,
+                    "source_revision": self.source_revision,
+                    "plan_id": self.plan_id,
+                    "policy_profile_refs": self.policy_profile_refs,
+                    "grants": self.grants,
+                    "budget_grants": self.budget_grants,
+                    "overrides": self.overrides,
+                    "valid_until": self.valid_until,
+                }
+            )
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PolicySnapshot:
+    snapshot_id: str
+    effective_policy_digest: str
+    policy_bundle_refs: tuple[str, ...]
+    profile_ref: str
+    affinity: Literal["pinned", "boundary_refresh", "live"]
+    issued_at: str
+    entitlement_snapshot_ref: str | None = None
+    pricing_revision: str | None = None
+    quota_window_ids: tuple[str, ...] = field(default_factory=tuple)
+    valid_until: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,6 +244,13 @@ class PolicyEnforcementRecord:
 class StaticPolicyEvaluator:
     rules: list[PolicyRule] = field(default_factory=list)
 
+    @classmethod
+    def from_bundles(cls, bundles: list[PolicyBundle]) -> StaticPolicyEvaluator:
+        rules: list[PolicyRule] = []
+        for bundle in sorted(bundles, key=lambda item: item.ref):
+            rules.extend(bundle.rules)
+        return cls(rules)
+
     def evaluate(self, request: PolicyRequest, evaluated_at: str) -> PolicyDecision:
         digested_request = request.with_input_digest()
         matching_deny: list[PolicyRule] = []
@@ -224,3 +322,50 @@ class StaticPolicyEvaluator:
             evaluated_at=evaluated_at,
             input_digest=digested_request.input_digest,
         )
+
+
+def resolve_policy_snapshot(
+    *,
+    snapshot_id: str,
+    profile: PolicyProfile,
+    bundles: list[PolicyBundle],
+    issued_at: str,
+    entitlement: EntitlementSnapshot | None = None,
+    pricing_revision: str | None = None,
+    quota_window_ids: tuple[str, ...] = (),
+    valid_until: str | None = None,
+) -> PolicySnapshot:
+    ordered_bundles = sorted(bundles, key=lambda item: item.ref)
+    effective_policy_digest = canonical_hash(
+        _policy_value(
+            {
+                "profile": profile,
+                "bundles": [(bundle.ref, bundle.content_digest()) for bundle in ordered_bundles],
+                "entitlement": None if entitlement is None else entitlement.content_digest(),
+                "pricing_revision": pricing_revision,
+                "quota_window_ids": quota_window_ids,
+            }
+        )
+    )
+    return PolicySnapshot(
+        snapshot_id=snapshot_id,
+        effective_policy_digest=effective_policy_digest,
+        policy_bundle_refs=tuple(bundle.ref for bundle in ordered_bundles),
+        profile_ref=profile.profile_id,
+        entitlement_snapshot_ref=None if entitlement is None else entitlement.snapshot_id,
+        pricing_revision=pricing_revision,
+        quota_window_ids=quota_window_ids,
+        affinity=profile.affinity,
+        issued_at=issued_at,
+        valid_until=valid_until,
+    )
+
+
+def _policy_value(value: object) -> object:
+    if is_dataclass(value):
+        return _policy_value(asdict(value))
+    if isinstance(value, dict):
+        return {str(key): _policy_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_policy_value(item) for item in value]
+    return value
