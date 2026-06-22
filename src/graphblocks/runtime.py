@@ -9,6 +9,7 @@ import time
 from typing import Any, Callable, Literal, Protocol
 
 from .compiler import compile_graph
+from .leases import InMemoryLeasePool
 from .run_store import InMemoryRunStore
 
 JournalKind = Literal[
@@ -215,6 +216,7 @@ class InProcessRuntime:
     run_store: InMemoryRunStore | None = None
     cancellation_token: CancellationToken | None = None
     journal_factory: JournalFactory | None = None
+    lease_pool: InMemoryLeasePool | None = None
 
     def run(self, graph: dict[str, Any], inputs: dict[str, Any], run_id: str = "run-000001") -> RunResult:
         plan = compile_graph(graph)
@@ -243,6 +245,7 @@ class InProcessRuntime:
             "turn_id": "turn-000001",
             "conversation_id": "conversation-default",
             "cancellation_token": self.cancellation_token or CancellationToken(),
+            "lease_pool": self.lease_pool,
         }
 
         while remaining:
@@ -251,6 +254,8 @@ class InProcessRuntime:
                 journal.append_terminal("run_cancelled", {"reason": token.reason})
                 if self.run_store is not None:
                     self.run_store.set_status(run_id, "cancelled")
+                if self.lease_pool is not None:
+                    self.lease_pool.release_all(run_id)
                 return RunResult(run_id, "cancelled", {}, journal)
             progressed = False
             for node_name in sorted(remaining):
@@ -353,6 +358,8 @@ class InProcessRuntime:
                         journal.append_terminal("run_failed", {"node": node_name, "error": str(exc)})
                         if self.run_store is not None:
                             self.run_store.set_status(run_id, "failed")
+                        if self.lease_pool is not None:
+                            self.lease_pool.release_all(run_id)
                         return RunResult(run_id, "failed", output_values, journal)
 
                 node_outputs[node_name] = result
@@ -389,11 +396,15 @@ class InProcessRuntime:
                 journal.append_terminal("run_failed", {"error": f"unresolved dependencies: {unresolved}"})
                 if self.run_store is not None:
                     self.run_store.set_status(run_id, "failed")
+                if self.lease_pool is not None:
+                    self.lease_pool.release_all(run_id)
                 return RunResult(run_id, "failed", output_values, journal)
 
         journal.append_terminal("run_succeeded", {"outputs": output_values})
         if self.run_store is not None:
             self.run_store.set_status(run_id, "succeeded")
+        if self.lease_pool is not None:
+            self.lease_pool.release_all(run_id)
         return RunResult(run_id, "succeeded", output_values, journal)
 
 
