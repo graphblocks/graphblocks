@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use serde_json::Value;
 
 use crate::outcome::{CancelReason, Outcome};
-use crate::readiness::{InputDependency, PortRef, Readiness, ReadinessTracker};
+use crate::readiness::{InputDependency, PortRef, Readiness, ReadinessTracker, ResolvedInput};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NodeExecutionState {
@@ -33,6 +33,12 @@ impl ScheduledNode {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct StartedNode {
+    pub node_id: String,
+    pub inputs: BTreeMap<String, ResolvedInput>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SchedulerError {
     DuplicateNode {
@@ -57,6 +63,7 @@ pub struct LocalScheduler {
     admitted: bool,
     nodes: BTreeMap<String, ScheduledNode>,
     states: BTreeMap<String, NodeExecutionState>,
+    ready_inputs: BTreeMap<String, BTreeMap<String, ResolvedInput>>,
     readiness: ReadinessTracker,
 }
 
@@ -83,6 +90,7 @@ impl LocalScheduler {
             admitted: false,
             nodes: scheduled_nodes,
             states,
+            ready_inputs: BTreeMap::new(),
             readiness: ReadinessTracker::new(),
         })
     }
@@ -109,7 +117,7 @@ impl LocalScheduler {
         self.states.get(node_id.as_ref()).copied()
     }
 
-    pub fn start_node(&mut self, node_id: impl AsRef<str>) -> Result<(), SchedulerError> {
+    pub fn start_node(&mut self, node_id: impl AsRef<str>) -> Result<StartedNode, SchedulerError> {
         let node_id = node_id.as_ref();
         let Some(state) = self.states.get(node_id).copied() else {
             return Err(SchedulerError::UnknownNode {
@@ -127,7 +135,10 @@ impl LocalScheduler {
         }
         self.states
             .insert(node_id.to_owned(), NodeExecutionState::Running);
-        Ok(())
+        Ok(StartedNode {
+            node_id: node_id.to_owned(),
+            inputs: self.ready_inputs.remove(node_id).unwrap_or_default(),
+        })
     }
 
     pub fn complete_node<I>(
@@ -190,6 +201,7 @@ impl LocalScheduler {
             self.readiness
                 .publish(port, Outcome::Cancelled(reason.clone()));
         }
+        self.ready_inputs.remove(node_id);
         self.states
             .insert(node_id.to_owned(), NodeExecutionState::Cancelled);
         Ok(self.evaluate_readiness())
@@ -203,7 +215,8 @@ impl LocalScheduler {
             }
 
             match self.readiness.readiness(node.dependencies.clone()) {
-                Readiness::Ready(_) => {
+                Readiness::Ready(resolved) => {
+                    self.ready_inputs.insert(node_id.clone(), resolved);
                     self.states
                         .insert(node_id.clone(), NodeExecutionState::Ready);
                     newly_ready.push(node_id.clone());

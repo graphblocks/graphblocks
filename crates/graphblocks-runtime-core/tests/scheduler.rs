@@ -1,7 +1,9 @@
+use std::collections::BTreeMap;
+
 use graphblocks_runtime_core::outcome::{
     BlockError, CancelCode, CancelReason, ErrorCategory, Outcome,
 };
-use graphblocks_runtime_core::readiness::{InputDependency, PortRef};
+use graphblocks_runtime_core::readiness::{InputDependency, PortRef, ResolvedInput};
 use graphblocks_runtime_core::scheduler::{
     LocalScheduler, NodeExecutionState, ScheduledNode, SchedulerError,
 };
@@ -215,6 +217,57 @@ fn scheduler_releases_or_blocks_dependents_after_cancellation() -> Result<(), Sc
         scheduler.node_state("audit"),
         Some(NodeExecutionState::Ready),
     );
+
+    Ok(())
+}
+
+#[test]
+fn scheduler_hands_resolved_inputs_to_started_node() -> Result<(), SchedulerError> {
+    let mut scheduler = LocalScheduler::new([
+        ScheduledNode::new("source", []),
+        ScheduledNode::new(
+            "audit",
+            [InputDependency::outcome(
+                "published",
+                PortRef::new("source", "result"),
+            )],
+        ),
+        ScheduledNode::new(
+            "value_consumer",
+            [InputDependency::value(
+                "value",
+                PortRef::new("source", "result"),
+            )],
+        ),
+    ])?;
+
+    assert_eq!(scheduler.admit_run()?, vec!["source".to_owned()]);
+    assert_eq!(scheduler.start_node("source")?.inputs, BTreeMap::new());
+    assert_eq!(
+        scheduler.complete_node(
+            "source",
+            [(
+                PortRef::new("source", "result"),
+                Outcome::Value(json!("payload"))
+            )],
+        )?,
+        vec!["audit".to_owned(), "value_consumer".to_owned()],
+    );
+
+    let audit = scheduler.start_node("audit")?;
+    let mut expected_audit_inputs = BTreeMap::new();
+    expected_audit_inputs.insert(
+        "published".to_owned(),
+        ResolvedInput::Outcome(Outcome::Value(json!("payload"))),
+    );
+    assert_eq!(audit.node_id, "audit");
+    assert_eq!(audit.inputs, expected_audit_inputs);
+
+    let value_consumer = scheduler.start_node("value_consumer")?;
+    let mut expected_value_inputs = BTreeMap::new();
+    expected_value_inputs.insert("value".to_owned(), ResolvedInput::Value(json!("payload")));
+    assert_eq!(value_consumer.node_id, "value_consumer");
+    assert_eq!(value_consumer.inputs, expected_value_inputs);
 
     Ok(())
 }
