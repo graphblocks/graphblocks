@@ -1,12 +1,23 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 
 MessageRole = Literal["system", "developer", "user", "assistant", "tool"]
 MessageStatus = Literal["draft", "committed", "superseded", "retracted"]
 DeletePolicy = Literal["tombstone", "hard"]
+TurnStatus = Literal[
+    "created",
+    "context_building",
+    "model_running",
+    "tool_waiting",
+    "approval_waiting",
+    "finalizing",
+    "completed",
+    "failed",
+    "cancelled",
+]
 
 
 class ConversationError(RuntimeError):
@@ -26,6 +37,14 @@ class ConversationArchivedError(ConversationError):
 
 
 class MessageNotFoundError(ConversationError):
+    pass
+
+
+class TurnNotFoundError(ConversationError):
+    pass
+
+
+class TurnConflictError(ConversationError):
     pass
 
 
@@ -75,6 +94,18 @@ class BranchRequest:
     include_memory: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class Turn:
+    turn_id: str
+    conversation_id: str
+    base_revision: int
+    status: TurnStatus = "created"
+    messages: tuple[Message, ...] = field(default_factory=tuple)
+    committed_revision: int | None = None
+    committed_message_ids: tuple[str, ...] = field(default_factory=tuple)
+    metadata: dict[str, object] = field(default_factory=dict)
+
+
 def _copy_conversation(conversation: Conversation) -> Conversation:
     return Conversation(
         conversation_id=conversation.conversation_id,
@@ -87,9 +118,23 @@ def _copy_conversation(conversation: Conversation) -> Conversation:
     )
 
 
+def _copy_turn(turn: Turn) -> Turn:
+    return Turn(
+        turn_id=turn.turn_id,
+        conversation_id=turn.conversation_id,
+        base_revision=turn.base_revision,
+        status=turn.status,
+        messages=tuple(turn.messages),
+        committed_revision=turn.committed_revision,
+        committed_message_ids=tuple(turn.committed_message_ids),
+        metadata=dict(turn.metadata),
+    )
+
+
 @dataclass(slots=True)
 class InMemoryConversationStore:
     _conversations: dict[str, Conversation] = field(default_factory=dict)
+    _turns: dict[str, Turn] = field(default_factory=dict)
 
     def create(self, conversation: Conversation) -> None:
         if conversation.conversation_id in self._conversations:
@@ -101,6 +146,102 @@ class InMemoryConversationStore:
         if conversation is None:
             raise ConversationNotFoundError(f"conversation {conversation_id!r} does not exist")
         return ConversationSnapshot(conversation=_copy_conversation(conversation), revision=conversation.revision)
+
+    def begin_turn(self, conversation_id: str, expected_revision: int, turn_id: str) -> Turn:
+        conversation = self._conversations.get(conversation_id)
+        if conversation is None:
+            raise ConversationNotFoundError(f"conversation {conversation_id!r} does not exist")
+        if conversation.archived:
+            raise ConversationArchivedError(f"conversation {conversation_id!r} is archived")
+        if turn_id in self._turns:
+            raise TurnConflictError(f"turn {turn_id!r} already exists")
+        if conversation.revision != expected_revision:
+            raise ConversationConflictError(
+                f"conversation {conversation_id!r} is at revision {conversation.revision}, not {expected_revision}"
+            )
+        turn = Turn(turn_id=turn_id, conversation_id=conversation_id, base_revision=expected_revision)
+        self._turns[turn_id] = turn
+        return _copy_turn(turn)
+
+    def get_turn(self, turn_id: str) -> Turn:
+        turn = self._turns.get(turn_id)
+        if turn is None:
+            raise TurnNotFoundError(f"turn {turn_id!r} does not exist")
+        return _copy_turn(turn)
+
+    def append_turn_message(self, turn_id: str, message: Message) -> Turn:
+        turn = self._turns.get(turn_id)
+        if turn is None:
+            raise TurnNotFoundError(f"turn {turn_id!r} does not exist")
+        if turn.status in {"completed", "failed", "cancelled"}:
+            raise TurnConflictError(f"turn {turn_id!r} is already terminal")
+        draft_message = replace(message, status="draft")
+        updated = Turn(
+            turn_id=turn.turn_id,
+            conversation_id=turn.conversation_id,
+            base_revision=turn.base_revision,
+            status="model_running" if turn.status == "created" else turn.status,
+            messages=(*turn.messages, draft_message),
+            committed_revision=turn.committed_revision,
+            committed_message_ids=turn.committed_message_ids,
+            metadata=dict(turn.metadata),
+        )
+        self._turns[turn_id] = updated
+        return _copy_turn(updated)
+
+    def commit_turn(self, turn_id: str) -> Turn:
+        turn = self._turns.get(turn_id)
+        if turn is None:
+            raise TurnNotFoundError(f"turn {turn_id!r} does not exist")
+        if turn.status in {"completed", "failed", "cancelled"}:
+            raise TurnConflictError(f"turn {turn_id!r} is already terminal")
+        committed_messages = tuple(replace(message, status="committed") for message in turn.messages)
+        try:
+            new_revision = self.append_messages(turn.conversation_id, turn.base_revision, list(committed_messages))
+        except ConversationConflictError:
+            failed = Turn(
+                turn_id=turn.turn_id,
+                conversation_id=turn.conversation_id,
+                base_revision=turn.base_revision,
+                status="failed",
+                messages=turn.messages,
+                committed_revision=None,
+                committed_message_ids=(),
+                metadata=dict(turn.metadata),
+            )
+            self._turns[turn_id] = failed
+            raise
+        completed = Turn(
+            turn_id=turn.turn_id,
+            conversation_id=turn.conversation_id,
+            base_revision=turn.base_revision,
+            status="completed",
+            messages=committed_messages,
+            committed_revision=new_revision,
+            committed_message_ids=tuple(message.message_id for message in committed_messages),
+            metadata=dict(turn.metadata),
+        )
+        self._turns[turn_id] = completed
+        return _copy_turn(completed)
+
+    def abort_turn(self, turn_id: str) -> Turn:
+        turn = self._turns.get(turn_id)
+        if turn is None:
+            raise TurnNotFoundError(f"turn {turn_id!r} does not exist")
+        if turn.status in {"completed", "failed", "cancelled"}:
+            raise TurnConflictError(f"turn {turn_id!r} is already terminal")
+        cancelled = Turn(
+            turn_id=turn.turn_id,
+            conversation_id=turn.conversation_id,
+            base_revision=turn.base_revision,
+            status="cancelled",
+            messages=tuple(replace(message, status="retracted") for message in turn.messages),
+            committed_revision=None,
+            committed_message_ids=(),
+            metadata=dict(turn.metadata),
+        )
+        self._turns[turn_id] = cancelled
+        return _copy_turn(cancelled)
 
     def append_messages(self, conversation_id: str, expected_revision: int, messages: list[Message]) -> int:
         conversation = self._conversations.get(conversation_id)

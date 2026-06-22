@@ -16,6 +16,9 @@ from .conversation import (
     InMemoryConversationStore,
     Message,
     MessageNotFoundError,
+    Turn,
+    TurnConflictError,
+    TurnNotFoundError,
 )
 from .diagnostics import Diagnostic, DiagnosticSet
 from .documents import (
@@ -130,6 +133,9 @@ __all__ = [
     "Message",
     "MessageNotFoundError",
     "StateConflictError",
+    "Turn",
+    "TurnConflictError",
+    "TurnNotFoundError",
     "canonical_dumps",
     "canonical_hash",
     "compile_graph",
