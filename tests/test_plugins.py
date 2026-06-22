@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import yaml
 
-from graphblocks import discover_plugins, validate_plugin_manifest
+from graphblocks import BlockCatalog, discover_plugins, validate_plugin_manifest
 
 
 def test_builtin_plugin_discovery_does_not_need_installed_scan() -> None:
@@ -41,3 +41,44 @@ def test_duplicate_plugin_id_is_registry_error(tmp_path) -> None:
     assert not registry.ok
     assert any(item.code == "GB2013" for item in registry.diagnostics.diagnostics)
 
+
+def test_builtin_plugin_exposes_stdlib_port_descriptors() -> None:
+    registry = discover_plugins(include_installed=False)
+    catalog = BlockCatalog.from_manifests(registry.manifests)
+
+    prompt = catalog.get("prompt.render@1")
+    model = catalog.get("model.generate@1")
+    control_map = catalog.get("control.map@2")
+
+    assert prompt is not None
+    assert [port.name for port in prompt.inputs] == ["message"]
+    assert [port.name for port in prompt.outputs] == ["prompt"]
+    assert model is not None
+    assert [port.name for port in model.inputs] == ["prompt"]
+    assert [port.name for port in model.outputs] == ["response"]
+    assert control_map is not None
+    assert [port.name for port in control_map.inputs] == ["items"]
+    assert [port.name for port in control_map.outputs] == ["values", "outcomes"]
+
+
+def test_plugin_manifest_validation_rejects_port_without_name() -> None:
+    diagnostics = validate_plugin_manifest(
+        {
+            "apiVersion": "graphblocks.ai/v1alpha1",
+            "kind": "PluginManifest",
+            "metadata": {"name": "com.example.bad_ports"},
+            "spec": {
+                "pluginId": "com.example.bad_ports",
+                "blocks": [
+                    {
+                        "typeId": "bad.block",
+                        "version": 1,
+                        "inputs": [{"type": "graphblocks.ai/Text@1"}],
+                    }
+                ],
+            },
+        }
+    )
+
+    assert not diagnostics.ok
+    assert [item.code for item in diagnostics.diagnostics] == ["GB2015"]

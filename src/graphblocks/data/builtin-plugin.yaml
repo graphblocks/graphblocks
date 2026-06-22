@@ -15,33 +15,70 @@ spec:
       version: 1
       role: transform
       implementation: graphblocks.stdlib.prompt.render
+      inputs:
+        - {name: message, type: graphblocks.ai/Message@1}
+      outputs:
+        - {name: prompt, type: graphblocks.ai/Prompt@1}
     - typeId: model.generate
       version: 1
       role: model
       implementation: graphblocks.stdlib.scripted_model.generate
+      inputs:
+        - {name: prompt, type: graphblocks.ai/Prompt@1}
+      outputs:
+        - {name: response, type: graphblocks.ai/ModelResponse@1}
     - typeId: conversation.begin_turn
       version: 1
       role: transform
       implementation: graphblocks.stdlib.conversation.begin_turn
+      inputs:
+        - {name: conversationId, type: graphblocks.ai/ConversationId@1, required: false}
+      outputs:
+        - {name: transaction, type: graphblocks.ai/ConversationTransaction@1}
     - typeId: conversation.commit_turn
       version: 1
       role: effect
       implementation: graphblocks.stdlib.conversation.commit_turn
+      inputs:
+        - {name: transaction, type: graphblocks.ai/ConversationTransaction@1}
+        - {name: candidate, type: graphblocks.ai/TurnCandidate@1}
+      outputs:
+        - {name: answer, type: graphblocks.ai/Answer@1}
     - typeId: control.map
       version: 2
       role: control
       implementation: graphblocks.stdlib.control.map
+      inputs:
+        - {name: items, type: List<Any>}
+      outputs:
+        - {name: values, type: List<Any>}
+        - {name: outcomes, type: List<graphblocks.ai/Outcome@1>, required: false}
     - typeId: control.select
       version: 1
       role: control
       implementation: graphblocks.stdlib.control.select
+      inputs:
+        - {name: cases, type: Map<String,Any>}
+      outputs:
+        - {name: value, type: Any}
+        - {name: selected, type: String}
     - typeId: retrieve.fuse
       version: 1
       role: builder
       implementation: graphblocks.stdlib.retrieve.fuse
+      inputs:
+        - {name: sources, type: List<graphblocks.ai/SearchHit@1>}
+      outputs:
+        - {name: hits, type: List<graphblocks.ai/SearchHit@1>}
     - typeId: context.build
       version: 1
       role: builder
       implementation: graphblocks.stdlib.context.build
+      inputs:
+        - {name: history, type: List<graphblocks.ai/Message@1>, required: false}
+        - {name: evidence, type: List<graphblocks.ai/SearchHit@1>, required: false}
+        - {name: currentMessage, type: graphblocks.ai/Message@1, required: false}
+      outputs:
+        - {name: pack, type: graphblocks.ai/ContextPack@1}
   connectorFactories: []
   adapters: []

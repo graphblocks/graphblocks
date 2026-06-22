@@ -197,6 +197,20 @@ def validate_plugin_manifest(document: Any) -> DiagnosticSet:
             diagnostics.append(Diagnostic("GB2009", "block descriptor requires typeId", f"$.spec.blocks[{index}].typeId"))
         if version is None:
             diagnostics.append(Diagnostic("GB2010", "block descriptor requires version", f"$.spec.blocks[{index}].version"))
+        for direction in ("inputs", "outputs"):
+            ports = block.get(direction, [])
+            if not isinstance(ports, list):
+                diagnostics.append(Diagnostic("GB2015", f"block {direction} must be a list", f"$.spec.blocks[{index}].{direction}"))
+                continue
+            for port_index, port in enumerate(ports):
+                if not isinstance(port, dict) or not isinstance(port.get("name"), str) or not port["name"]:
+                    diagnostics.append(
+                        Diagnostic(
+                            "GB2015",
+                            f"block {direction} entries require a non-empty name",
+                            f"$.spec.blocks[{index}].{direction}[{port_index}].name",
+                        )
+                    )
         implementation = str(block.get("implementation") or block.get("implementationId") or "")
         key = (str(block_type), str(version), implementation)
         if key in seen_blocks:
