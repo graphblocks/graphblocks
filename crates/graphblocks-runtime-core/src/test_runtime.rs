@@ -90,6 +90,7 @@ pub struct InProcessTestRuntime {
     retry_boundaries: BTreeMap<String, NodeRetryBoundary>,
     timeout_policies: BTreeMap<String, TimeoutPolicy>,
     node_durations_ms: BTreeMap<String, u64>,
+    node_attempt_durations_ms: BTreeMap<String, Vec<u64>>,
     virtual_now_ms: u64,
 }
 
@@ -104,6 +105,7 @@ impl InProcessTestRuntime {
             retry_boundaries: BTreeMap::new(),
             timeout_policies: BTreeMap::new(),
             node_durations_ms: BTreeMap::new(),
+            node_attempt_durations_ms: BTreeMap::new(),
             virtual_now_ms: 0,
         })
     }
@@ -138,6 +140,19 @@ impl InProcessTestRuntime {
 
     pub fn with_node_duration_ms(mut self, node_id: impl Into<String>, duration_ms: u64) -> Self {
         self.node_durations_ms.insert(node_id.into(), duration_ms);
+        self
+    }
+
+    pub fn with_node_attempt_durations_ms<I>(
+        mut self,
+        node_id: impl Into<String>,
+        durations_ms: I,
+    ) -> Self
+    where
+        I: IntoIterator<Item = u64>,
+    {
+        self.node_attempt_durations_ms
+            .insert(node_id.into(), durations_ms.into_iter().collect());
         self
     }
 
@@ -211,7 +226,7 @@ impl InProcessTestRuntime {
                 });
             }
             let started = self.scheduler.start_node(&node_id)?;
-            let mut attempt = 1;
+            let mut attempt = 1_u32;
             loop {
                 let metadata = JournalMetadata::new()
                     .with_node_id(node_id.clone())
@@ -221,7 +236,13 @@ impl InProcessTestRuntime {
 
                 let started_at_ms = self.virtual_now_ms;
                 let execution_result = executor.execute(started.clone());
-                let duration_ms = self.node_durations_ms.get(&node_id).copied().unwrap_or(0);
+                let duration_ms = self
+                    .node_attempt_durations_ms
+                    .get(&node_id)
+                    .and_then(|durations| durations.get(attempt.saturating_sub(1) as usize))
+                    .copied()
+                    .or_else(|| self.node_durations_ms.get(&node_id).copied())
+                    .unwrap_or(0);
                 self.virtual_now_ms = self.virtual_now_ms.saturating_add(duration_ms);
 
                 if let Some(policy) = self.timeout_policies.get(&node_id)
@@ -229,7 +250,61 @@ impl InProcessTestRuntime {
                 {
                     let decision = deadline.check(self.virtual_now_ms);
                     if self.virtual_now_ms >= deadline.deadline_ms() {
-                        let error = decision.block_error();
+                        let mut error = decision.block_error();
+                        error.retryable = true;
+                        if let Some(boundary) = self.retry_boundaries.get(&node_id) {
+                            let mut request = RetryRequest::new(attempt, error.clone());
+                            if let Some(effect) = boundary.effect {
+                                request = request.with_effect(effect);
+                            }
+                            if let Some(idempotency_key) = &boundary.idempotency_key {
+                                request = request.with_idempotency_key(idempotency_key.clone());
+                            }
+
+                            match boundary.policy.decide(&request) {
+                                RetryDecision::Retry { delay_ms } => {
+                                    self.journal.append_with_metadata(
+                                        "node_retry",
+                                        metadata,
+                                        Some(json!({
+                                            "attempt": attempt,
+                                            "code": error.code,
+                                            "category": format!("{:?}", error.category),
+                                            "message": error.message,
+                                            "details": error.details,
+                                            "delayMs": delay_ms,
+                                        })),
+                                    )?;
+                                    attempt += 1;
+                                    continue;
+                                }
+                                RetryDecision::Stop { reason } => {
+                                    let payload = json!({
+                                        "code": error.code,
+                                        "category": format!("{:?}", error.category),
+                                        "message": error.message,
+                                        "details": error.details,
+                                        "retryStopReason": reason,
+                                    });
+                                    self.journal.append_with_metadata(
+                                        "node_failed",
+                                        metadata.clone(),
+                                        Some(payload.clone()),
+                                    )?;
+                                    self.journal.append_terminal_with_metadata(
+                                        "run_failed",
+                                        metadata,
+                                        Some(payload),
+                                    )?;
+                                    return Ok(TestRunResult {
+                                        run_id: self.journal.run_id().to_owned(),
+                                        status: TestRunStatus::Failed,
+                                        journal: self.journal.clone(),
+                                    });
+                                }
+                            }
+                        }
+
                         let payload = json!({
                             "code": error.code,
                             "category": format!("{:?}", error.category),

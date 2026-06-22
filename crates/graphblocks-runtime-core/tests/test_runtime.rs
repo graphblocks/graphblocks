@@ -597,6 +597,10 @@ impl NodeExecutor for TimeoutOutputExecutor {
                 PortRef::new("model", "response"),
                 Outcome::Value(json!("late output")),
             )]),
+            "answer" => Ok(vec![(
+                PortRef::new("answer", "value"),
+                Outcome::Value(json!("done")),
+            )]),
             node_id => Err(BlockError::new(
                 format!("{node_id}.unexpected"),
                 ErrorCategory::Internal,
@@ -664,4 +668,52 @@ fn in_process_test_runtime_allows_node_before_timeout_deadline() {
 
     assert_eq!(result.status, TestRunStatus::Succeeded);
     assert_eq!(executor.starts, vec!["model".to_owned()]);
+}
+
+#[test]
+fn in_process_test_runtime_retries_timeout_without_publishing_timed_out_outputs() {
+    let mut runtime = InProcessTestRuntime::new(
+        "run-000001",
+        [
+            ScheduledNode::new("model", []),
+            ScheduledNode::new(
+                "answer",
+                [InputDependency::value(
+                    "response",
+                    PortRef::new("model", "response"),
+                )],
+            ),
+        ],
+    )
+    .expect("runtime should be created")
+    .with_retry_policy("model", RetryPolicy::default_model_read())
+    .with_timeout_policy("model", TimeoutPolicy::new(10).expect("valid timeout"))
+    .with_node_attempt_durations_ms("model", [11, 1]);
+    let mut executor = TimeoutOutputExecutor { starts: Vec::new() };
+
+    let result = runtime.run(&mut executor).expect("runtime should run");
+
+    assert_eq!(result.status, TestRunStatus::Succeeded);
+    assert_eq!(
+        executor.starts,
+        vec!["model".to_owned(), "model".to_owned(), "answer".to_owned()]
+    );
+    assert_eq!(
+        result
+            .journal
+            .records()
+            .iter()
+            .map(|record| record.kind.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "run_started",
+            "node_started",
+            "node_retry",
+            "node_started",
+            "node_completed",
+            "node_started",
+            "node_completed",
+            "run_succeeded",
+        ],
+    );
 }
