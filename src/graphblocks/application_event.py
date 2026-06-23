@@ -431,3 +431,51 @@ class ApplicationEvent:
         if not tool_call_id.strip():
             raise ApplicationEventError("tool_call_id must not be empty")
         return cls(kind=kind, metadata=metadata, payload=dict(payload or {}), tool_call_id=tool_call_id)
+
+
+@dataclass(slots=True)
+class ApplicationEventStreamState:
+    cutoffs: dict[str, OutputCutoff] = field(default_factory=dict)
+    accepted_events: list[ApplicationEvent] = field(default_factory=list)
+
+    def accept(self, event: ApplicationEvent) -> ApplicationEvent | None:
+        if event.kind == "OutputCutoff":
+            payload = event.payload
+            response_id = str(payload.get("response_id", event.metadata.response_id))
+            if response_id in self.cutoffs:
+                return None
+            cutoff = OutputCutoff(
+                stream_id=str(payload["stream_id"]),
+                response_id=response_id,
+                turn_id=None if payload.get("turn_id") is None else str(payload.get("turn_id")),
+                last_generated_sequence=int(payload["last_generated_sequence"]),
+                last_policy_accepted_sequence=int(payload["last_policy_accepted_sequence"]),
+                last_client_delivered_sequence=int(payload["last_client_delivered_sequence"]),
+                terminal_reason=str(payload["terminal_reason"]),
+                draft_disposition=str(payload["draft_disposition"]),
+                durable_result=str(payload["durable_result"]),
+                policy_decision_id=(
+                    None
+                    if payload.get("policy_decision_id") is None
+                    else str(payload.get("policy_decision_id"))
+                ),
+                occurred_at=str(payload["occurred_at"]),
+            )
+            self.cutoffs[response_id] = cutoff
+            self.accepted_events.append(event)
+            return event
+
+        response_id = str(event.payload.get("response_id", event.metadata.response_id))
+        cutoff = self.cutoffs.get(response_id)
+        if cutoff is not None:
+            if event.kind in {"AssistantRetracted", "AssistantIncomplete"}:
+                self.accepted_events.append(event)
+                return event
+            chunk_sequence = event.payload.get("chunk_sequence")
+            if isinstance(chunk_sequence, int):
+                return None
+            if str(event.kind).startswith("OutputPolicy"):
+                return None
+
+        self.accepted_events.append(event)
+        return event

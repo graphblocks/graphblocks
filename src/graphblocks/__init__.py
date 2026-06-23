@@ -8,6 +8,7 @@ from .application_event import (
     ApplicationEvent,
     ApplicationEventError,
     ApplicationEventMetadata,
+    ApplicationEventStreamState,
 )
 from .approval import ApprovalRecord, ApprovalRequest
 from .blob_store import (
@@ -389,6 +390,7 @@ __all__ = [
     "ApplicationEvent",
     "ApplicationEventError",
     "ApplicationEventMetadata",
+    "ApplicationEventStreamState",
     "ApplicationProtocolCapabilities",
     "ApprovalRecord",
     "ApprovalRequest",

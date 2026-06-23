@@ -7,6 +7,7 @@ from graphblocks.application_event import (
     ApplicationEventError,
     ApplicationEventKind,
     ApplicationEventMetadata,
+    ApplicationEventStreamState,
 )
 
 
@@ -17,4 +18,5 @@ __all__ = [
     "ApplicationEventError",
     "ApplicationEventKind",
     "ApplicationEventMetadata",
+    "ApplicationEventStreamState",
 ]

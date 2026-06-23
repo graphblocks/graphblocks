@@ -6,6 +6,7 @@ from graphblocks import (
     ApplicationEvent,
     ApplicationEventError,
     ApplicationEventMetadata,
+    ApplicationEventStreamState,
     BlockToolImplementation,
     ContentPart,
     GenerationChunk,
@@ -392,6 +393,52 @@ def test_output_cutoff_events_include_cutoff_and_retraction_semantics() -> None:
         "last_client_delivered_sequence": 2,
         "policy_decision_id": "decision-abort",
     }
+
+
+def test_application_event_stream_state_discards_late_output_after_cutoff() -> None:
+    state = ApplicationEventStreamState()
+    cutoff = OutputCutoff(
+        stream_id="stream-1",
+        response_id="response-1",
+        turn_id="turn-1",
+        last_generated_sequence=3,
+        last_policy_accepted_sequence=1,
+        last_client_delivered_sequence=1,
+        terminal_reason="policy_denied",
+        draft_disposition="retract",
+        durable_result="none",
+        policy_decision_id="decision-abort",
+        occurred_at="2026-06-23T00:00:01Z",
+    )
+    cutoff_event, retraction_event = ApplicationEvent.output_cutoff(_metadata(), cutoff)
+    late_output = ApplicationEvent.output_policy_evaluation_started(
+        _metadata(),
+        GenerationChunk.text("stream-1", "response-1", 2, "blocked"),
+        input_digest="sha256:late",
+    )
+    replacement_response = ApplicationEvent.output_policy_evaluation_started(
+        _metadata(),
+        GenerationChunk.text("stream-1", "response-2", 1, "replacement"),
+        input_digest="sha256:replacement",
+    )
+    denied_tool = ApplicationEvent.tool(
+        "ToolCallDenied",
+        _metadata(),
+        tool_call_id="call-1",
+        payload={"status": "denied"},
+    )
+
+    assert state.accept(cutoff_event) == cutoff_event
+    assert state.accept(retraction_event) == retraction_event
+    assert state.accept(late_output) is None
+    assert state.accept(replacement_response) == replacement_response
+    assert state.accept(denied_tool) == denied_tool
+    assert [event.kind for event in state.accepted_events] == [
+        "OutputCutoff",
+        "AssistantRetracted",
+        "OutputPolicyEvaluationStarted",
+        "ToolCallDenied",
+    ]
 
 
 def test_tool_result_events_map_to_standard_tool_application_events() -> None:
