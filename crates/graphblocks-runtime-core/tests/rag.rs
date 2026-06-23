@@ -5,12 +5,13 @@ use graphblocks_runtime_core::documents::{
 };
 use graphblocks_runtime_core::rag::{
     Answer, AuthContext, Citation, Claim, ContextBuildOptions, FailurePolicy, FusionOptions,
-    FusionStrategy, InMemoryChunkRetriever, KnowledgeItemRef, RagError, RerankOptions, SearchHit,
-    SearchRequest, authorize_search_hits, build_context_pack, fuse_search_hits,
-    knowledge_item_from_chunk, rerank_search_hits, validate_answer_citation_authorization,
-    validate_answer_citations,
+    FusionStrategy, InMemoryChunkRetriever, InMemoryKnowledgeIndex, KnowledgeDeleteMode,
+    KnowledgeItemRef, KnowledgeRecordStatus, RagError, RerankOptions, SearchHit, SearchRequest,
+    authorize_search_hits, build_context_pack, fuse_search_hits, knowledge_item_from_chunk,
+    rerank_search_hits, validate_answer_citation_authorization, validate_answer_citations,
 };
 use serde_json::json;
+use std::collections::BTreeMap;
 
 fn hit(hit_id: &str, item_id: &str, document_id: &str, preview: &str, rank: usize) -> SearchHit {
     hit_from(hit_id, item_id, document_id, preview, rank, "local")
@@ -108,6 +109,133 @@ fn knowledge_item_from_chunk_preserves_acl_for_authorized_retrieval() {
     let item = knowledge_item_from_chunk(&chunk);
 
     assert_eq!(item.acl, revision.acl);
+}
+
+#[test]
+fn in_memory_knowledge_index_upserts_chunks_and_exposes_retriever_view() {
+    let (asset, mut revision) = create_local_text_revision(
+        "file:///tmp/index.txt",
+        "alpha beta\nrestricted beta\n",
+        "2026-06-22T00:00:00Z",
+        Some("index.txt"),
+    );
+    revision.acl = Some(json!({
+        "tenant_id": "acme",
+        "groups": ["support"],
+    }));
+    let document = parse_plain_text_document(&asset, &revision, "alpha beta\nrestricted beta\n");
+    let chunks = chunk_document_by_lines(&document, &revision, 1).expect("chunking succeeds");
+    let mut index = InMemoryKnowledgeIndex::new("knowledge-local");
+
+    let report = index.upsert_chunks(chunks.clone());
+    let result = index.retriever("knowledge-local-read").search("beta", 10);
+
+    assert_eq!(report.operation, "upsert");
+    assert_eq!(report.affected_count, 2);
+    assert_eq!(
+        result
+            .iter()
+            .map(|hit| hit.item.item_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![chunks[0].chunk_id.as_str(), chunks[1].chunk_id.as_str()]
+    );
+    assert_eq!(result[0].item.acl, revision.acl);
+}
+
+#[test]
+fn in_memory_knowledge_index_tombstones_without_returning_deleted_chunks() {
+    let (asset, revision) = create_local_text_revision(
+        "file:///tmp/delete.txt",
+        "alpha beta\nbeta gamma\n",
+        "2026-06-22T00:00:00Z",
+        Some("delete.txt"),
+    );
+    let document = parse_plain_text_document(&asset, &revision, "alpha beta\nbeta gamma\n");
+    let chunks = chunk_document_by_lines(&document, &revision, 1).expect("chunking succeeds");
+    let mut index = InMemoryKnowledgeIndex::new("knowledge-local");
+    index.upsert_chunks(chunks.clone());
+
+    let report = index
+        .delete_asset(&asset.asset_id, KnowledgeDeleteMode::Tombstone)
+        .expect("delete succeeds");
+    let result = index.retriever("knowledge-local-read").search("beta", 10);
+
+    assert_eq!(report.operation, "delete");
+    assert_eq!(report.affected_count, 2);
+    assert!(result.is_empty());
+    assert_eq!(
+        index
+            .record(&chunks[0].chunk_id)
+            .map(|record| &record.status),
+        Some(&KnowledgeRecordStatus::Tombstoned)
+    );
+    assert_eq!(index.health().tombstoned_chunks, 2);
+}
+
+#[test]
+fn in_memory_knowledge_index_hard_delete_removes_records() {
+    let (asset, revision) = create_local_text_revision(
+        "file:///tmp/hard-delete.txt",
+        "alpha beta\n",
+        "2026-06-22T00:00:00Z",
+        Some("hard-delete.txt"),
+    );
+    let document = parse_plain_text_document(&asset, &revision, "alpha beta\n");
+    let chunks = chunk_document_by_lines(&document, &revision, 1).expect("chunking succeeds");
+    let mut index = InMemoryKnowledgeIndex::new("knowledge-local");
+    index.upsert_chunks(chunks.clone());
+
+    let report = index
+        .delete_asset(&asset.asset_id, KnowledgeDeleteMode::Hard)
+        .expect("delete succeeds");
+
+    assert_eq!(report.affected_count, 1);
+    assert!(index.record(&chunks[0].chunk_id).is_none());
+    assert_eq!(index.health().indexed_chunks, 0);
+}
+
+#[test]
+fn in_memory_knowledge_index_updates_metadata_acl_and_publishes_revision()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (asset, revision) = create_local_text_revision(
+        "file:///tmp/publish.txt",
+        "alpha beta\n",
+        "2026-06-22T00:00:00Z",
+        Some("publish.txt"),
+    );
+    let document = parse_plain_text_document(&asset, &revision, "alpha beta\n");
+    let chunks = chunk_document_by_lines(&document, &revision, 1).expect("chunking succeeds");
+    let chunk_id = chunks[0].chunk_id.clone();
+    let mut index = InMemoryKnowledgeIndex::new("knowledge-local");
+    index.upsert_chunks(chunks);
+
+    let mut metadata = BTreeMap::new();
+    metadata.insert("classification".to_owned(), json!("internal"));
+    index.update_chunk_metadata(&chunk_id, metadata)?;
+    index.update_chunk_acl(
+        &chunk_id,
+        Some(json!({
+            "tenant_id": "acme",
+            "principals": ["user-1"],
+        })),
+    )?;
+    let publish = index.publish_revision(&asset.asset_id, &revision.revision_id)?;
+    let hit = index
+        .retriever("knowledge-local-read")
+        .search("beta", 1)
+        .remove(0);
+
+    assert_eq!(publish.asset_id, asset.asset_id);
+    assert_eq!(publish.revision_id, revision.revision_id);
+    assert_eq!(publish.published_chunk_ids, vec![chunk_id.clone()]);
+    assert!(index.is_revision_published(&asset.asset_id, &revision.revision_id));
+    assert!(index.capabilities().publish);
+    assert_eq!(hit.item.metadata["classification"], json!("internal"));
+    assert_eq!(
+        hit.item.acl.as_ref().expect("acl is present")["principals"],
+        json!(["user-1"])
+    );
+    Ok(())
 }
 
 #[test]

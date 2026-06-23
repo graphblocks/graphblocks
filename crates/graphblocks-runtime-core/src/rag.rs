@@ -344,6 +344,281 @@ pub struct RerankResult {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum KnowledgeDeleteMode {
+    Tombstone,
+    Hard,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum KnowledgeRecordStatus {
+    Active,
+    Tombstoned,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct KnowledgeIndexRecord {
+    pub chunk: DocumentChunk,
+    pub status: KnowledgeRecordStatus,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct KnowledgeWriteReport {
+    pub operation: String,
+    pub affected_count: usize,
+    pub chunk_ids: Vec<String>,
+    pub metadata: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct KnowledgePublishResult {
+    pub index_id: String,
+    pub asset_id: String,
+    pub revision_id: String,
+    pub published_chunk_ids: Vec<String>,
+    pub metadata: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct KnowledgeIndexCapabilities {
+    pub upsert: bool,
+    pub delete: bool,
+    pub metadata_update: bool,
+    pub acl_update: bool,
+    pub publish: bool,
+    pub hard_delete: bool,
+    pub tombstone: bool,
+    pub retriever_adapter: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct KnowledgeIndexHealth {
+    pub healthy: bool,
+    pub indexed_chunks: usize,
+    pub active_chunks: usize,
+    pub tombstoned_chunks: usize,
+    pub published_revisions: usize,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct InMemoryKnowledgeIndex {
+    pub index_id: String,
+    records: BTreeMap<String, KnowledgeIndexRecord>,
+    published_revisions: BTreeMap<String, String>,
+}
+
+impl InMemoryKnowledgeIndex {
+    pub fn new(index_id: impl Into<String>) -> Self {
+        Self {
+            index_id: index_id.into(),
+            records: BTreeMap::new(),
+            published_revisions: BTreeMap::new(),
+        }
+    }
+
+    pub fn upsert_chunks<I>(&mut self, chunks: I) -> KnowledgeWriteReport
+    where
+        I: IntoIterator<Item = DocumentChunk>,
+    {
+        let mut chunk_ids = Vec::new();
+        for chunk in chunks {
+            let chunk_id = chunk.chunk_id.clone();
+            chunk_ids.push(chunk_id.clone());
+            self.records.insert(
+                chunk_id,
+                KnowledgeIndexRecord {
+                    chunk,
+                    status: KnowledgeRecordStatus::Active,
+                },
+            );
+        }
+        let mut metadata = BTreeMap::new();
+        metadata.insert("index_id".to_owned(), json!(self.index_id.clone()));
+        KnowledgeWriteReport {
+            operation: "upsert".to_owned(),
+            affected_count: chunk_ids.len(),
+            chunk_ids,
+            metadata,
+        }
+    }
+
+    pub fn delete_asset(
+        &mut self,
+        asset_id: &str,
+        mode: KnowledgeDeleteMode,
+    ) -> Result<KnowledgeWriteReport, RagError> {
+        let chunk_ids = self
+            .records
+            .iter()
+            .filter(|(_chunk_id, record)| record.chunk.asset_id == asset_id)
+            .map(|(chunk_id, _record)| chunk_id.clone())
+            .collect::<Vec<_>>();
+        match mode {
+            KnowledgeDeleteMode::Hard => {
+                for chunk_id in &chunk_ids {
+                    self.records.remove(chunk_id);
+                }
+            }
+            KnowledgeDeleteMode::Tombstone => {
+                for chunk_id in &chunk_ids {
+                    if let Some(record) = self.records.get_mut(chunk_id) {
+                        record.status = KnowledgeRecordStatus::Tombstoned;
+                    }
+                }
+            }
+        }
+        self.published_revisions.remove(asset_id);
+        let mut metadata = BTreeMap::new();
+        metadata.insert("asset_id".to_owned(), json!(asset_id));
+        metadata.insert(
+            "delete_mode".to_owned(),
+            json!(match mode {
+                KnowledgeDeleteMode::Hard => "hard",
+                KnowledgeDeleteMode::Tombstone => "tombstone",
+            }),
+        );
+        Ok(KnowledgeWriteReport {
+            operation: "delete".to_owned(),
+            affected_count: chunk_ids.len(),
+            chunk_ids,
+            metadata,
+        })
+    }
+
+    pub fn update_chunk_metadata(
+        &mut self,
+        chunk_id: &str,
+        metadata: BTreeMap<String, Value>,
+    ) -> Result<KnowledgeWriteReport, RagError> {
+        let Some(record) = self.records.get_mut(chunk_id) else {
+            return Err(RagError::KnowledgeItemNotFound {
+                item_id: chunk_id.to_owned(),
+            });
+        };
+        let metadata_keys = metadata.keys().cloned().collect::<Vec<_>>();
+        for (key, value) in metadata {
+            record.chunk.metadata.insert(key, value);
+        }
+        let mut report_metadata = BTreeMap::new();
+        report_metadata.insert("metadata_keys".to_owned(), json!(metadata_keys));
+        Ok(KnowledgeWriteReport {
+            operation: "update_metadata".to_owned(),
+            affected_count: 1,
+            chunk_ids: vec![chunk_id.to_owned()],
+            metadata: report_metadata,
+        })
+    }
+
+    pub fn update_chunk_acl(
+        &mut self,
+        chunk_id: &str,
+        acl: Option<Value>,
+    ) -> Result<KnowledgeWriteReport, RagError> {
+        let Some(record) = self.records.get_mut(chunk_id) else {
+            return Err(RagError::KnowledgeItemNotFound {
+                item_id: chunk_id.to_owned(),
+            });
+        };
+        record.chunk.acl = acl;
+        Ok(KnowledgeWriteReport {
+            operation: "update_acl".to_owned(),
+            affected_count: 1,
+            chunk_ids: vec![chunk_id.to_owned()],
+            metadata: BTreeMap::new(),
+        })
+    }
+
+    pub fn publish_revision(
+        &mut self,
+        asset_id: &str,
+        revision_id: &str,
+    ) -> Result<KnowledgePublishResult, RagError> {
+        let published_chunk_ids = self
+            .records
+            .iter()
+            .filter(|(_chunk_id, record)| {
+                record.status == KnowledgeRecordStatus::Active
+                    && record.chunk.asset_id == asset_id
+                    && record.chunk.revision_id == revision_id
+            })
+            .map(|(chunk_id, _record)| chunk_id.clone())
+            .collect::<Vec<_>>();
+        if published_chunk_ids.is_empty() {
+            return Err(RagError::KnowledgeItemNotFound {
+                item_id: format!("{asset_id}:{revision_id}"),
+            });
+        }
+        self.published_revisions
+            .insert(asset_id.to_owned(), revision_id.to_owned());
+        let mut metadata = BTreeMap::new();
+        metadata.insert(
+            "active_chunk_count".to_owned(),
+            json!(published_chunk_ids.len()),
+        );
+        Ok(KnowledgePublishResult {
+            index_id: self.index_id.clone(),
+            asset_id: asset_id.to_owned(),
+            revision_id: revision_id.to_owned(),
+            published_chunk_ids,
+            metadata,
+        })
+    }
+
+    pub fn is_revision_published(&self, asset_id: &str, revision_id: &str) -> bool {
+        self.published_revisions
+            .get(asset_id)
+            .is_some_and(|published| published == revision_id)
+    }
+
+    pub fn capabilities(&self) -> KnowledgeIndexCapabilities {
+        KnowledgeIndexCapabilities {
+            upsert: true,
+            delete: true,
+            metadata_update: true,
+            acl_update: true,
+            publish: true,
+            hard_delete: true,
+            tombstone: true,
+            retriever_adapter: true,
+        }
+    }
+
+    pub fn health(&self) -> KnowledgeIndexHealth {
+        let tombstoned_chunks = self
+            .records
+            .values()
+            .filter(|record| record.status == KnowledgeRecordStatus::Tombstoned)
+            .count();
+        KnowledgeIndexHealth {
+            healthy: true,
+            indexed_chunks: self.records.len(),
+            active_chunks: self.records.len() - tombstoned_chunks,
+            tombstoned_chunks,
+            published_revisions: self.published_revisions.len(),
+        }
+    }
+
+    pub fn record(&self, chunk_id: &str) -> Option<&KnowledgeIndexRecord> {
+        self.records.get(chunk_id)
+    }
+
+    pub fn retriever(&self, retriever_id: impl Into<String>) -> InMemoryChunkRetriever {
+        let mut chunks = self
+            .records
+            .values()
+            .filter(|record| record.status == KnowledgeRecordStatus::Active)
+            .map(|record| record.chunk.clone())
+            .collect::<Vec<_>>();
+        chunks.sort_by(|left, right| {
+            left.asset_id
+                .cmp(&right.asset_id)
+                .then_with(|| left.revision_id.cmp(&right.revision_id))
+                .then_with(|| left.chunk_id.cmp(&right.chunk_id))
+        });
+        InMemoryChunkRetriever::new(chunks, retriever_id)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FailurePolicy {
     Warn,
     Fail,
@@ -512,6 +787,9 @@ pub enum RagError {
     InvalidFusionK,
     WeightCountMismatch,
     InvalidRerankInputLimit,
+    KnowledgeItemNotFound {
+        item_id: String,
+    },
     AuthContextRequired {
         resource_id: String,
     },
@@ -533,6 +811,9 @@ impl fmt::Display for RagError {
             }
             Self::InvalidRerankInputLimit => {
                 write!(formatter, "rerank input limit must be at least 1")
+            }
+            Self::KnowledgeItemNotFound { item_id } => {
+                write!(formatter, "knowledge item {item_id:?} was not found")
             }
             Self::AuthContextRequired { resource_id } => {
                 write!(
@@ -560,7 +841,7 @@ pub fn knowledge_item_from_chunk(chunk: &DocumentChunk) -> KnowledgeItemRef {
                 .with_chunk_id(&chunk.chunk_id),
         )
     });
-    let mut metadata = BTreeMap::new();
+    let mut metadata = chunk.metadata.clone();
     metadata.insert("document_id".to_owned(), json!(chunk.document_id));
     metadata.insert("asset_id".to_owned(), json!(chunk.asset_id));
     metadata.insert("revision_id".to_owned(), json!(chunk.revision_id));
