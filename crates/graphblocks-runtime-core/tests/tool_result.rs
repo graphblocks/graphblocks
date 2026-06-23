@@ -88,6 +88,39 @@ fn terminal_tool_result_events_preserve_partial_terminal_kind() {
 }
 
 #[test]
+fn failed_and_denied_tool_result_events_are_final_results() {
+    let failed = ToolResult::failed(
+        "call-1",
+        BlockError::new(
+            "tool.failed",
+            ErrorCategory::Permanent,
+            "tool execution failed",
+            true,
+        ),
+        1_000,
+        1_020,
+    );
+    let denied = ToolResult::denied(
+        "call-2",
+        BlockError::new(
+            "tool.denied",
+            ErrorCategory::Policy,
+            "tool execution was denied",
+            false,
+        ),
+        1_100,
+    );
+
+    let failed_event = ToolResultEvent::failed("call-1", 11, failed.clone());
+    let denied_event = ToolResultEvent::denied("call-2", 12, denied.clone());
+
+    assert!(failed_event.is_final_durable_result());
+    assert!(denied_event.is_final_durable_result());
+    assert_eq!(failed_event.into_result(), Some(failed));
+    assert_eq!(denied_event.into_result(), Some(denied));
+}
+
+#[test]
 fn policy_stopped_result_is_final_but_incomplete() {
     let result = ToolResult::policy_stopped(
         "call-1",
