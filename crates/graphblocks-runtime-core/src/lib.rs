@@ -7,6 +7,7 @@ pub mod document_parsers;
 pub mod documents;
 pub mod evaluation;
 pub mod exhaustion;
+pub mod ingestion;
 pub mod journal;
 pub mod lifecycle;
 pub mod outcome;
