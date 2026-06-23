@@ -3,6 +3,7 @@ pub mod application_event;
 pub mod blob_store;
 pub mod budget;
 pub mod cancellation;
+pub mod connectors;
 pub mod conversation;
 pub mod document_parsers;
 pub mod documents;
