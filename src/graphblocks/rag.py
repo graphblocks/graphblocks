@@ -124,6 +124,7 @@ class CitationSourceTrace:
     item_kind: str
     source: SourceRef
     locator: DocumentSpan | None
+    acl: dict[str, object] | None = None
     element_ids: list[str] = field(default_factory=list)
 
 
@@ -303,6 +304,7 @@ def resolve_citation_source_trace(answer: Answer, context: ContextPack, citation
                     item_kind=hit.item.item_kind,
                     source=source_ref,
                     locator=source_ref.locator,
+                    acl=hit.item.acl,
                     element_ids=element_ids,
                 )
 

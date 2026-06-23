@@ -792,6 +792,7 @@ pub struct CitationSourceTrace {
     pub item_kind: String,
     pub source: SourceRef,
     pub locator: Option<DocumentSpan>,
+    pub acl: Option<Value>,
     pub element_ids: Vec<String>,
 }
 
@@ -1334,6 +1335,7 @@ pub fn resolve_citation_source_trace(
                     item_kind: hit.item.item_kind.clone(),
                     source: source_ref.clone(),
                     locator: source_ref.locator.clone(),
+                    acl: hit.item.acl.clone(),
                     element_ids,
                 });
             }

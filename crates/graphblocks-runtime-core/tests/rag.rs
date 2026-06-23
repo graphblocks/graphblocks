@@ -557,19 +557,16 @@ fn resolve_citation_source_trace_links_citation_to_context_hit_and_document_span
     let mut metadata = BTreeMap::new();
     metadata.insert("document_id".to_owned(), json!("doc-1"));
     metadata.insert("element_ids".to_owned(), json!(["el-1"]));
+    let mut item = KnowledgeItemRef::new("chunk-1", "document_chunk", source.clone())
+        .with_preview(["Alpha policy requires audit logs."])
+        .with_metadata(metadata);
+    item.acl = Some(json!({
+        "tenant_id": "acme",
+        "groups": ["support"],
+    }));
     let context = ContextPack::new(
         "ctx-1",
-        vec![
-            SearchHit::new(
-                "hit-1",
-                KnowledgeItemRef::new("chunk-1", "document_chunk", source.clone())
-                    .with_preview(["Alpha policy requires audit logs."])
-                    .with_metadata(metadata),
-                1,
-                "local",
-            )
-            .with_highlights([source.clone()]),
-        ],
+        vec![SearchHit::new("hit-1", item, 1, "local").with_highlights([source.clone()])],
     );
     let citation = Citation::new("cite-1", source).with_cited_text("requires audit logs");
     let answer = Answer::new("answer-1", "Alpha policy requires audit logs.")
@@ -588,6 +585,10 @@ fn resolve_citation_source_trace_links_citation_to_context_hit_and_document_span
     assert_eq!(trace.retriever, "local");
     assert_eq!(trace.item_id, "chunk-1");
     assert_eq!(trace.element_ids, vec!["el-1"]);
+    assert_eq!(
+        trace.acl.as_ref().expect("trace includes ACL")["groups"],
+        json!(["support"])
+    );
     let locator = trace.locator.expect("trace includes document locator");
     assert_eq!(locator.asset_id, "asset-1");
     assert_eq!(locator.revision_id, "rev-1");

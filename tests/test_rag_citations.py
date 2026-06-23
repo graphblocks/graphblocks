@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from graphblocks.documents import create_local_text_revision, parse_plain_text_document, chunk_document_by_lines
 from graphblocks.rag import (
     Answer,
@@ -47,7 +49,11 @@ def test_validate_answer_citations_accepts_current_context_source() -> None:
 
 def test_resolve_citation_source_trace_links_citation_to_context_hit_and_document_span() -> None:
     context = _single_hit_context()
-    hit = context.hits[0]
+    hit = replace(
+        context.hits[0],
+        item=replace(context.hits[0].item, acl={"tenant_id": "acme", "groups": ["support"]}),
+    )
+    context = replace(context, hits=[hit])
     citation = Citation(
         citation_id="cite-1",
         source=hit.item.source,
@@ -69,6 +75,7 @@ def test_resolve_citation_source_trace_links_citation_to_context_hit_and_documen
     assert trace.retriever == "local-test"
     assert trace.item_id == hit.item.item_id
     assert trace.item_kind == "document_chunk"
+    assert trace.acl == {"tenant_id": "acme", "groups": ["support"]}
     assert trace.element_ids == hit.item.metadata["element_ids"]
     assert trace.locator is not None
     assert trace.locator.asset_id == hit.item.source.locator.asset_id
