@@ -3,8 +3,8 @@ use std::error::Error;
 use std::fmt;
 
 use crate::output_policy::{
-    DraftDisposition, DurableResult, OutputCutoff, OutputDisposition, OutputPolicyDecision,
-    TerminalReason,
+    DraftDisposition, DurableResult, GenerationChunk, OutputCutoff, OutputDisposition,
+    OutputPolicyDecision, TerminalReason,
 };
 use crate::policy::PolicyDecision;
 use crate::tool_approval::ToolApprovalRequest;
@@ -371,6 +371,24 @@ impl ApplicationEvent {
             ToolEffectOutcome::NotCommitted => "not_committed",
             ToolEffectOutcome::Unknown => "unknown",
         }
+    }
+
+    pub fn output_policy_evaluation_started(
+        metadata: ApplicationEventMetadata,
+        chunk: &GenerationChunk,
+        input_digest: impl AsRef<str>,
+    ) -> Result<Self, ApplicationEventError> {
+        Self::new(
+            ApplicationEventKind::OutputPolicyEvaluationStarted,
+            metadata,
+            json!({
+                "stream_id": &chunk.stream_id,
+                "response_id": &chunk.response_id,
+                "chunk_sequence": chunk.sequence,
+                "input_digest": input_digest.as_ref(),
+                "chunk_text_bytes": chunk.text.len(),
+            }),
+        )
     }
 
     pub fn output_cutoff(

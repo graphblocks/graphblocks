@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Literal
 
-from .output_policy import OutputCutoff, OutputPolicyDecision
+from .output_policy import GenerationChunk, OutputCutoff, OutputPolicyDecision
 from .policy import PolicyDecision
 from .tools import ToolApprovalRequest, ToolCall, ToolCallDraft, ToolResult, ToolResultEvent
 
@@ -297,6 +297,26 @@ class ApplicationEvent:
             "effect_outcome": result.effect_outcome,
             "error_code": error_code,
         }
+
+    @classmethod
+    def output_policy_evaluation_started(
+        cls,
+        metadata: ApplicationEventMetadata,
+        chunk: GenerationChunk,
+        *,
+        input_digest: str,
+    ) -> ApplicationEvent:
+        return cls.new(
+            "OutputPolicyEvaluationStarted",
+            metadata,
+            payload={
+                "stream_id": chunk.stream_id,
+                "response_id": chunk.response_id,
+                "chunk_sequence": chunk.sequence,
+                "input_digest": input_digest,
+                "chunk_text_bytes": len(chunk.text.encode("utf-8")),
+            },
+        )
 
     @classmethod
     def output_policy_decision(

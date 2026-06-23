@@ -378,6 +378,35 @@ fn tool_approval_request_maps_to_standard_application_event() {
 }
 
 #[test]
+fn output_policy_evaluation_start_event_identifies_chunk_without_text_payload() {
+    let chunk = GenerationChunk::text("stream-1", "response-1", 4, "sensitive text");
+
+    let event = ApplicationEvent::output_policy_evaluation_started(
+        metadata(),
+        &chunk,
+        "sha256:pending-window",
+    )
+    .expect("output policy evaluation started event is valid");
+
+    assert_eq!(
+        event.kind,
+        ApplicationEventKind::OutputPolicyEvaluationStarted
+    );
+    assert_eq!(event.tool_call_id, None);
+    assert_eq!(
+        event.payload,
+        json!({
+            "stream_id": "stream-1",
+            "response_id": "response-1",
+            "chunk_sequence": 4,
+            "input_digest": "sha256:pending-window",
+            "chunk_text_bytes": 14,
+        })
+    );
+    assert_eq!(event.payload.get("text"), None);
+}
+
+#[test]
 fn output_policy_decision_event_maps_disposition_and_metadata_payload() {
     let decision = OutputPolicyDecision::redact(
         "decision-redact",

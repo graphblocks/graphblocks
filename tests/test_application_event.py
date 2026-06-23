@@ -8,6 +8,7 @@ from graphblocks import (
     ApplicationEventMetadata,
     BlockToolImplementation,
     ContentPart,
+    GenerationChunk,
     OutputCutoff,
     OutputPolicyDecision,
     PolicyDecision,
@@ -297,6 +298,27 @@ def test_tool_approval_request_maps_to_standard_application_event() -> None:
         "requested_at": 1_100,
         "expires_at": 2_000,
     }
+
+
+def test_output_policy_evaluation_start_event_identifies_chunk_without_text_payload() -> None:
+    chunk = GenerationChunk.text("stream-1", "response-1", 4, "sensitive text")
+
+    event = ApplicationEvent.output_policy_evaluation_started(
+        _metadata(),
+        chunk,
+        input_digest="sha256:pending-window",
+    )
+
+    assert event.kind == "OutputPolicyEvaluationStarted"
+    assert event.tool_call_id is None
+    assert event.payload == {
+        "stream_id": "stream-1",
+        "response_id": "response-1",
+        "chunk_sequence": 4,
+        "input_digest": "sha256:pending-window",
+        "chunk_text_bytes": 14,
+    }
+    assert "text" not in event.payload
 
 
 def test_output_policy_decision_event_maps_disposition_and_metadata_payload() -> None:
