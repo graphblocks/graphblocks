@@ -1,6 +1,7 @@
 use graphblocks_runtime_core::policy::{
-    EnforcementPoint, PolicyEnforcementRecord, PolicyObligation, PolicyRequest, PolicyRule,
-    PrincipalRef, ResourceRef, RuleEffect, StaticPolicyEvaluator,
+    EnforcementPoint, EntitlementSnapshot, PolicyBundle, PolicyEnforcementRecord, PolicyObligation,
+    PolicyProfile, PolicyRequest, PolicyRule, PrincipalRef, ResourceRef, RuleEffect,
+    StaticPolicyEvaluator, resolve_policy_snapshot,
 };
 use serde_json::json;
 
@@ -177,4 +178,102 @@ fn static_policy_evaluator_defaults_to_deny_without_matching_rule() {
 
     assert_eq!(decision.effect.as_str(), "deny");
     assert_eq!(decision.reason_codes, vec!["default_deny"]);
+}
+
+#[test]
+fn policy_bundle_digest_is_stable_for_rule_content() {
+    let rule = PolicyRule::new(
+        "allow-model",
+        RuleEffect::Allow,
+        ["model.generate"],
+        ["model"],
+    );
+    let bundle = PolicyBundle::new(
+        "bundle-1",
+        "1.0.0",
+        "graphblocks.declarative@1",
+        [rule.clone()],
+    );
+    let same_rules = PolicyBundle::new("bundle-copy", "1.0.0", "graphblocks.declarative@1", [rule]);
+
+    assert!(bundle.content_digest().starts_with("sha256:"));
+    assert_eq!(same_rules.content_digest(), bundle.content_digest());
+    assert_eq!(bundle.reference(), "bundle-1@1.0.0");
+}
+
+#[test]
+fn resolve_policy_snapshot_pins_effective_policy_identity() {
+    let bundle = PolicyBundle::new(
+        "bundle-1",
+        "1.0.0",
+        "graphblocks.declarative@1",
+        [PolicyRule::new(
+            "allow-model",
+            RuleEffect::Allow,
+            ["model.generate"],
+            ["model"],
+        )],
+    );
+    let profile = PolicyProfile::new("profile-1", ["bundle-1"], ["tenant:acme"]);
+    let entitlement = EntitlementSnapshot::new(
+        "ent-1",
+        PrincipalRef::new("user-1").with_tenant_id("tenant-1"),
+        [ResourceRef::new("tenant:acme")],
+        "rev-1",
+        "2026-06-22T00:00:00Z",
+    );
+
+    let snapshot = resolve_policy_snapshot(
+        "policy-snapshot-1",
+        &profile,
+        &[bundle.clone()],
+        Some(&entitlement),
+        "2026-06-22T00:01:00Z",
+    );
+    let same_snapshot = resolve_policy_snapshot(
+        "policy-snapshot-2",
+        &profile,
+        &[bundle],
+        Some(&entitlement),
+        "2026-06-22T00:02:00Z",
+    );
+
+    assert_eq!(snapshot.profile_ref, "profile-1");
+    assert_eq!(snapshot.policy_bundle_refs, vec!["bundle-1@1.0.0"]);
+    assert_eq!(snapshot.entitlement_snapshot_ref.as_deref(), Some("ent-1"));
+    assert_eq!(snapshot.affinity, "pinned");
+    assert_eq!(
+        snapshot.effective_policy_digest,
+        same_snapshot.effective_policy_digest
+    );
+}
+
+#[test]
+fn static_policy_evaluator_can_be_built_from_policy_bundle() {
+    let obligation =
+        PolicyObligation::new("obl-1", "force_sandbox").with_parameter("level", json!("strict"));
+    let bundle = PolicyBundle::new(
+        "bundle-1",
+        "1.0.0",
+        "graphblocks.declarative@1",
+        [
+            PolicyRule::new("allow-tools", RuleEffect::Allow, ["tool.run"], ["*"]),
+            PolicyRule::new("sandbox-tools", RuleEffect::Obligate, ["tool.run"], ["*"])
+                .with_obligation(obligation.clone()),
+        ],
+    );
+    let request = PolicyRequest::new(
+        "req-1",
+        EnforcementPoint::BeforeToolOrEffect,
+        "tool.run",
+        ResourceRef::new("tool:exec").with_resource_kind("tool"),
+        "2026-06-22T00:00:00Z",
+    );
+
+    let decision =
+        StaticPolicyEvaluator::from_bundles([bundle]).evaluate(&request, "2026-06-22T00:00:01Z");
+
+    assert_eq!(decision.effect.as_str(), "allow_with_obligations");
+    assert_eq!(decision.policy_refs, vec!["allow-tools", "sandbox-tools"]);
+    assert_eq!(decision.obligations, vec![obligation]);
 }

@@ -160,6 +160,16 @@ pub enum RuleEffect {
     Obligate,
 }
 
+impl RuleEffect {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Allow => "allow",
+            Self::Deny => "deny",
+            Self::Obligate => "obligate",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct PolicyObligation {
     pub obligation_id: String,
@@ -179,6 +189,14 @@ impl PolicyObligation {
     pub fn with_parameter(mut self, key: impl Into<String>, value: Value) -> Self {
         self.parameters.insert(key.into(), value);
         self
+    }
+
+    fn digest_value(&self) -> Value {
+        json!({
+            "obligation_id": self.obligation_id,
+            "obligation_type": self.obligation_type,
+            "parameters": self.parameters,
+        })
     }
 }
 
@@ -230,6 +248,269 @@ impl PolicyRule {
     pub fn with_priority(mut self, priority: i32) -> Self {
         self.priority = priority;
         self
+    }
+
+    fn digest_value(&self) -> Value {
+        json!({
+            "rule_id": self.rule_id,
+            "effect": self.effect.as_str(),
+            "actions": self.actions,
+            "resource_selectors": self.resource_selectors,
+            "principal_selectors": self.principal_selectors,
+            "obligations": self
+                .obligations
+                .iter()
+                .map(PolicyObligation::digest_value)
+                .collect::<Vec<_>>(),
+            "priority": self.priority,
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PolicyBundle {
+    pub bundle_id: String,
+    pub version: String,
+    pub rule_language: String,
+    pub rules: Vec<PolicyRule>,
+    pub external_evaluator_ref: Option<String>,
+    pub obligation_schema_versions: Vec<String>,
+    pub default_fail_modes: BTreeMap<String, String>,
+    pub signature_ref: Option<String>,
+}
+
+impl PolicyBundle {
+    pub fn new<I>(
+        bundle_id: impl Into<String>,
+        version: impl Into<String>,
+        rule_language: impl Into<String>,
+        rules: I,
+    ) -> Self
+    where
+        I: IntoIterator<Item = PolicyRule>,
+    {
+        Self {
+            bundle_id: bundle_id.into(),
+            version: version.into(),
+            rule_language: rule_language.into(),
+            rules: rules.into_iter().collect(),
+            external_evaluator_ref: None,
+            obligation_schema_versions: Vec::new(),
+            default_fail_modes: BTreeMap::new(),
+            signature_ref: None,
+        }
+    }
+
+    pub fn reference(&self) -> String {
+        format!("{}@{}", self.bundle_id, self.version)
+    }
+
+    pub fn with_external_evaluator_ref(
+        mut self,
+        external_evaluator_ref: impl Into<String>,
+    ) -> Self {
+        self.external_evaluator_ref = Some(external_evaluator_ref.into());
+        self
+    }
+
+    pub fn with_obligation_schema_version(mut self, version: impl Into<String>) -> Self {
+        self.obligation_schema_versions.push(version.into());
+        self
+    }
+
+    pub fn with_default_fail_mode(
+        mut self,
+        point: impl Into<String>,
+        mode: impl Into<String>,
+    ) -> Self {
+        self.default_fail_modes.insert(point.into(), mode.into());
+        self
+    }
+
+    pub fn with_signature_ref(mut self, signature_ref: impl Into<String>) -> Self {
+        self.signature_ref = Some(signature_ref.into());
+        self
+    }
+
+    pub fn content_digest(&self) -> String {
+        canonical_hash(&json!({
+            "version": self.version,
+            "rule_language": self.rule_language,
+            "rules": self.rules.iter().map(PolicyRule::digest_value).collect::<Vec<_>>(),
+            "external_evaluator_ref": self.external_evaluator_ref,
+            "obligation_schema_versions": self.obligation_schema_versions,
+            "default_fail_modes": self.default_fail_modes,
+        }))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PolicyProfile {
+    pub profile_id: String,
+    pub bundle_refs: Vec<String>,
+    pub scope_selectors: Vec<String>,
+    pub quota_accounts: BTreeMap<String, Value>,
+    pub budgets: BTreeMap<String, Value>,
+    pub thresholds: Vec<Value>,
+    pub exhaustion: Option<Value>,
+    pub affinity: String,
+    pub capture: BTreeMap<String, Value>,
+    pub required_reviews: Vec<String>,
+    pub required_gates: Vec<String>,
+}
+
+impl PolicyProfile {
+    pub fn new<B, S>(profile_id: impl Into<String>, bundle_refs: B, scope_selectors: S) -> Self
+    where
+        B: IntoIterator,
+        B::Item: Into<String>,
+        S: IntoIterator,
+        S::Item: Into<String>,
+    {
+        Self {
+            profile_id: profile_id.into(),
+            bundle_refs: bundle_refs.into_iter().map(Into::into).collect(),
+            scope_selectors: scope_selectors.into_iter().map(Into::into).collect(),
+            quota_accounts: BTreeMap::new(),
+            budgets: BTreeMap::new(),
+            thresholds: Vec::new(),
+            exhaustion: None,
+            affinity: "pinned".to_string(),
+            capture: BTreeMap::new(),
+            required_reviews: Vec::new(),
+            required_gates: Vec::new(),
+        }
+    }
+
+    pub fn with_affinity(mut self, affinity: impl Into<String>) -> Self {
+        self.affinity = affinity.into();
+        self
+    }
+
+    fn digest_value(&self) -> Value {
+        json!({
+            "profile_id": self.profile_id,
+            "bundle_refs": self.bundle_refs,
+            "scope_selectors": self.scope_selectors,
+            "quota_accounts": self.quota_accounts,
+            "budgets": self.budgets,
+            "thresholds": self.thresholds,
+            "exhaustion": self.exhaustion,
+            "affinity": self.affinity,
+            "capture": self.capture,
+            "required_reviews": self.required_reviews,
+            "required_gates": self.required_gates,
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct EntitlementSnapshot {
+    pub snapshot_id: String,
+    pub subject: PrincipalRef,
+    pub scopes: Vec<ResourceRef>,
+    pub source_revision: String,
+    pub resolved_at: String,
+    pub plan_id: Option<String>,
+    pub policy_profile_refs: Vec<String>,
+    pub grants: Vec<String>,
+    pub budget_grants: Vec<String>,
+    pub overrides: Vec<String>,
+    pub valid_until: Option<String>,
+}
+
+impl EntitlementSnapshot {
+    pub fn new<I>(
+        snapshot_id: impl Into<String>,
+        subject: PrincipalRef,
+        scopes: I,
+        source_revision: impl Into<String>,
+        resolved_at: impl Into<String>,
+    ) -> Self
+    where
+        I: IntoIterator<Item = ResourceRef>,
+    {
+        Self {
+            snapshot_id: snapshot_id.into(),
+            subject,
+            scopes: scopes.into_iter().collect(),
+            source_revision: source_revision.into(),
+            resolved_at: resolved_at.into(),
+            plan_id: None,
+            policy_profile_refs: Vec::new(),
+            grants: Vec::new(),
+            budget_grants: Vec::new(),
+            overrides: Vec::new(),
+            valid_until: None,
+        }
+    }
+
+    pub fn content_digest(&self) -> String {
+        canonical_hash(&json!({
+            "subject": self.subject.digest_value(),
+            "scopes": self.scopes.iter().map(ResourceRef::digest_value).collect::<Vec<_>>(),
+            "source_revision": self.source_revision,
+            "plan_id": self.plan_id,
+            "policy_profile_refs": self.policy_profile_refs,
+            "grants": self.grants,
+            "budget_grants": self.budget_grants,
+            "overrides": self.overrides,
+            "valid_until": self.valid_until,
+        }))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PolicySnapshot {
+    pub snapshot_id: String,
+    pub effective_policy_digest: String,
+    pub policy_bundle_refs: Vec<String>,
+    pub profile_ref: String,
+    pub affinity: String,
+    pub issued_at: String,
+    pub entitlement_snapshot_ref: Option<String>,
+    pub pricing_revision: Option<String>,
+    pub quota_window_ids: Vec<String>,
+    pub valid_until: Option<String>,
+}
+
+pub fn resolve_policy_snapshot(
+    snapshot_id: impl Into<String>,
+    profile: &PolicyProfile,
+    bundles: &[PolicyBundle],
+    entitlement: Option<&EntitlementSnapshot>,
+    issued_at: impl Into<String>,
+) -> PolicySnapshot {
+    let mut ordered_bundles = bundles.iter().collect::<Vec<_>>();
+    ordered_bundles.sort_by_key(|bundle| bundle.reference());
+    let policy_bundle_refs = ordered_bundles
+        .iter()
+        .map(|bundle| bundle.reference())
+        .collect::<Vec<_>>();
+    let bundle_digests = ordered_bundles
+        .iter()
+        .map(|bundle| json!([bundle.reference(), bundle.content_digest()]))
+        .collect::<Vec<_>>();
+    let entitlement_digest = entitlement.map(EntitlementSnapshot::content_digest);
+    let effective_policy_digest = canonical_hash(&json!({
+        "profile": profile.digest_value(),
+        "bundles": bundle_digests,
+        "entitlement": entitlement_digest,
+        "pricing_revision": Value::Null,
+        "quota_window_ids": Vec::<String>::new(),
+    }));
+
+    PolicySnapshot {
+        snapshot_id: snapshot_id.into(),
+        effective_policy_digest,
+        policy_bundle_refs,
+        profile_ref: profile.profile_id.clone(),
+        affinity: profile.affinity.clone(),
+        issued_at: issued_at.into(),
+        entitlement_snapshot_ref: entitlement.map(|snapshot| snapshot.snapshot_id.clone()),
+        pricing_revision: None,
+        quota_window_ids: Vec::new(),
+        valid_until: None,
     }
 }
 
@@ -395,6 +676,20 @@ impl StaticPolicyEvaluator {
     {
         Self {
             rules: rules.into_iter().collect(),
+        }
+    }
+
+    pub fn from_bundles<I>(bundles: I) -> Self
+    where
+        I: IntoIterator<Item = PolicyBundle>,
+    {
+        let mut bundles = bundles.into_iter().collect::<Vec<_>>();
+        bundles.sort_by_key(PolicyBundle::reference);
+        Self {
+            rules: bundles
+                .into_iter()
+                .flat_map(|bundle| bundle.rules)
+                .collect(),
         }
     }
 
