@@ -27,6 +27,8 @@ def test_usage_package_exposes_immutable_usage_reconciliation_contract(monkeypat
         run_id="run-1",
         attempt_id="attempt-1",
         provider_response_id="resp-1",
+        quota_window_id="tenant-a:2026-06",
+        execution_scope="turn:turn-1",
     )
     ledger = graphblocks_usage.InMemoryUsageLedger()
 
@@ -40,6 +42,8 @@ def test_usage_package_exposes_immutable_usage_reconciliation_contract(monkeypat
 
     assert reconciled.source == "reconciled"
     assert reconciled.reconciliation_of == "usage-provisional"
+    assert reconciled.quota_window_id == "tenant-a:2026-06"
+    assert reconciled.execution_scope == "turn:turn-1"
     assert ledger.totals_for_run("run-1") == [
         graphblocks_usage.UsageAmount("model_output_tokens", Decimal("21"), "tokens")
     ]

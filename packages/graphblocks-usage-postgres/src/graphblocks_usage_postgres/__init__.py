@@ -59,6 +59,8 @@ CREATE TABLE IF NOT EXISTS {self.schema}.usage_records (
   attempt_id text NULL,
   provider_response_id text NULL,
   pricing_ref text NULL,
+  quota_window_id text NULL,
+  execution_scope text NULL,
   reconciliation_of text NULL,
   metadata_json jsonb NOT NULL,
   inserted_at timestamptz NOT NULL DEFAULT now()
@@ -83,6 +85,8 @@ def encode_usage_record(record: UsageRecord) -> dict[str, object]:
         "attempt_id": record.attempt_id,
         "provider_response_id": record.provider_response_id,
         "pricing_ref": record.pricing_ref,
+        "quota_window_id": record.quota_window_id,
+        "execution_scope": record.execution_scope,
         "reconciliation_of": record.reconciliation_of,
         "metadata_json": dict(sorted(record.metadata.items())),
     }
@@ -107,6 +111,8 @@ INSERT INTO {schema.schema}.usage_records (
   attempt_id,
   provider_response_id,
   pricing_ref,
+  quota_window_id,
+  execution_scope,
   reconciliation_of,
   metadata_json
 ) VALUES (
@@ -119,6 +125,8 @@ INSERT INTO {schema.schema}.usage_records (
   %(attempt_id)s,
   %(provider_response_id)s,
   %(pricing_ref)s,
+  %(quota_window_id)s,
+  %(execution_scope)s,
   %(reconciliation_of)s,
   %(metadata_json)s
 )

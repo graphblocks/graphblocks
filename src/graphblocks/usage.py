@@ -40,6 +40,8 @@ class UsageRecord:
     attempt_id: str | None = None
     provider_response_id: str | None = None
     pricing_ref: str | None = None
+    quota_window_id: str | None = None
+    execution_scope: str | None = None
     reconciliation_of: str | None = None
     metadata: dict[str, object] = field(default_factory=dict)
 
@@ -110,6 +112,8 @@ class InMemoryUsageLedger:
             attempt_id=original.attempt_id,
             provider_response_id=original.provider_response_id,
             pricing_ref=original.pricing_ref,
+            quota_window_id=original.quota_window_id,
+            execution_scope=original.execution_scope,
             reconciliation_of=original.record_id,
             metadata=dict(original.metadata),
         )

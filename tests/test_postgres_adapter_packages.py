@@ -90,11 +90,15 @@ def test_usage_postgres_schema_and_record_codec(monkeypatch) -> None:
         run_id="run-1",
         attempt_id="attempt-1",
         provider_response_id="response-1",
+        quota_window_id="tenant-a:2026-06",
+        execution_scope="turn:turn-1/model:generate",
         metadata={"provider": "openai-compatible"},
     )
 
     assert schema.migration_statements()[0].startswith("CREATE SCHEMA IF NOT EXISTS gb_usage")
     assert "CREATE TABLE IF NOT EXISTS gb_usage.usage_records" in "\n".join(schema.migration_statements())
+    assert "quota_window_id text NULL" in "\n".join(schema.migration_statements())
+    assert "execution_scope text NULL" in "\n".join(schema.migration_statements())
     assert graphblocks_usage_postgres.encode_usage_record(record) == {
         "record_id": "usage-1",
         "source": "provider_reported",
@@ -113,6 +117,8 @@ def test_usage_postgres_schema_and_record_codec(monkeypatch) -> None:
         "provider_response_id": "response-1",
         "pricing_ref": None,
         "reconciliation_of": None,
+        "quota_window_id": "tenant-a:2026-06",
+        "execution_scope": "turn:turn-1/model:generate",
         "metadata_json": {"provider": "openai-compatible"},
     }
 
@@ -120,3 +126,4 @@ def test_usage_postgres_schema_and_record_codec(monkeypatch) -> None:
     assert statement.name == "usage_record_append"
     assert "ON CONFLICT (record_id) DO NOTHING" in statement.sql
     assert statement.params["provider_response_id"] == "response-1"
+    assert statement.params["quota_window_id"] == "tenant-a:2026-06"
