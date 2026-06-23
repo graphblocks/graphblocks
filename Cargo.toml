@@ -5,6 +5,7 @@ members = [
   "crates/graphblocks-runtime-core",
   "crates/graphblocks-runtime-seq",
   "crates/graphblocks-python",
+  "crates/graphblocks-protocol",
 ]
 resolver = "3"
 
