@@ -1,10 +1,39 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from importlib import resources
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+
+@dataclass(frozen=True, slots=True)
+class PackageLockEntry:
+    distribution: str
+    version_constraint: str | None
+    import_package: str | None
+    default: bool
+    layer: str | None
+    kind: str | None
+    stability: str | None
+    dependencies: tuple[str, ...] = field(default_factory=tuple)
+    forbidden_dependencies: tuple[str, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True, slots=True)
+class PackageLock:
+    catalog_version: int
+    spec_version: str
+    requested: tuple[str, ...]
+    entries: tuple[PackageLockEntry, ...]
+    excluded_categories: tuple[str, ...] = field(default_factory=tuple)
+
+    def entry(self, distribution: str) -> PackageLockEntry | None:
+        for entry in self.entries:
+            if entry.distribution == distribution:
+                return entry
+        return None
 
 
 def load_package_catalog(path: str | Path | None = None) -> dict[str, Any]:
@@ -32,3 +61,106 @@ def package_rows(catalog: dict[str, Any]) -> list[dict[str, Any]]:
             )
     return sorted(rows, key=lambda item: str(item.get("distribution")))
 
+
+def build_package_lock(
+    catalog: dict[str, Any],
+    *,
+    requested: tuple[str, ...] = (),
+    include_default: bool = True,
+) -> PackageLock:
+    packages_by_distribution = {
+        package["distribution"]: package
+        for package in catalog.get("packages", [])
+        if isinstance(package, dict) and isinstance(package.get("distribution"), str)
+    }
+    default_metapackage = catalog.get("defaultMetaPackage")
+    default_metapackage = default_metapackage if isinstance(default_metapackage, dict) else {}
+    default_distribution = default_metapackage.get("distribution")
+
+    default_constraints: dict[str, str] = {}
+    for dependency in default_metapackage.get("dependencies", []):
+        if not isinstance(dependency, str) or not dependency.strip():
+            continue
+        distribution = dependency
+        constraint = None
+        for marker in ("~=", "==", ">=", "<=", "!=", ">", "<"):
+            marker_index = dependency.find(marker)
+            if marker_index > 0:
+                distribution = dependency[:marker_index]
+                constraint = dependency[marker_index:]
+                break
+        if constraint is not None:
+            default_constraints[distribution] = constraint
+
+    roots: list[str] = []
+    if include_default and isinstance(default_distribution, str) and default_distribution:
+        roots.append(default_distribution)
+    for distribution in requested:
+        if distribution not in roots:
+            roots.append(distribution)
+
+    selected: set[str] = set()
+    visiting: set[str] = set()
+
+    for distribution in roots:
+        stack: list[tuple[str, bool]] = [(distribution, False)]
+        while stack:
+            current, expanded = stack.pop()
+            if current in selected:
+                continue
+            package = packages_by_distribution.get(current)
+            if package is None:
+                raise ValueError(f"unknown package distribution {current}")
+            if expanded:
+                visiting.discard(current)
+                selected.add(current)
+                continue
+            if current in visiting:
+                raise ValueError(f"package dependency cycle includes {current}")
+            visiting.add(current)
+            stack.append((current, True))
+            dependencies = [
+                dependency
+                for dependency in package.get("dependsOn", [])
+                if isinstance(dependency, str) and dependency.strip() and dependency not in selected
+            ]
+            for dependency in reversed(dependencies):
+                stack.append((dependency, False))
+
+    entries: list[PackageLockEntry] = []
+    for distribution in sorted(selected):
+        package = packages_by_distribution[distribution]
+        dependencies = tuple(
+            dependency for dependency in package.get("dependsOn", []) if isinstance(dependency, str) and dependency
+        )
+        forbidden_dependencies = tuple(
+            dependency
+            for dependency in package.get("forbiddenDependencies", [])
+            if isinstance(dependency, str) and dependency
+        )
+        entries.append(
+            PackageLockEntry(
+                distribution=distribution,
+                version_constraint=default_constraints.get(distribution),
+                import_package=package.get("import") if isinstance(package.get("import"), str) else None,
+                default=bool(package.get("default", False)),
+                layer=package.get("layer") if isinstance(package.get("layer"), str) else None,
+                kind=package.get("kind") if isinstance(package.get("kind"), str) else None,
+                stability=package.get("stability") if isinstance(package.get("stability"), str) else None,
+                dependencies=dependencies,
+                forbidden_dependencies=forbidden_dependencies,
+            )
+        )
+
+    excluded_categories = tuple(
+        category
+        for category in default_metapackage.get("excludedCategories", [])
+        if isinstance(category, str) and category
+    )
+    return PackageLock(
+        catalog_version=int(catalog.get("catalogVersion", 0)),
+        spec_version=str(catalog.get("specVersion", "")),
+        requested=tuple(requested),
+        entries=tuple(entries),
+        excluded_categories=excluded_categories,
+    )

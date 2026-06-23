@@ -110,7 +110,7 @@ from .exhaustion import (
 from .loader import load_documents
 from .leases import InMemoryLeasePool, Lease, LeaseUnavailableError
 from .migration import migrate_document
-from .packages import load_package_catalog, package_rows
+from .packages import PackageLock, PackageLockEntry, build_package_lock, load_package_catalog, package_rows
 from .plugins import (
     BlockCatalog,
     BlockDescriptor,
@@ -378,6 +378,8 @@ __all__ = [
     "OutputGateUpdate",
     "OutputPolicyDecision",
     "Outcome",
+    "PackageLock",
+    "PackageLockEntry",
     "PartialOutputPolicy",
     "StateConflictError",
     "StaticPolicyEvaluator",
@@ -405,6 +407,7 @@ __all__ = [
     "ToolSchemaValidationError",
     "admit_tool_call",
     "build_before_tool_or_effect_policy_request",
+    "build_package_lock",
     "validate_tool_result_for_model",
     "Turn",
     "TrialResult",

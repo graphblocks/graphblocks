@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import tomllib
 
-from graphblocks.packages import load_package_catalog, package_rows
+from graphblocks.packages import build_package_lock, load_package_catalog, package_rows
 
 
 ROOT = Path(__file__).parents[1]
@@ -67,3 +67,42 @@ def test_tool_adapter_packages_are_cataloged_as_optional_integrations() -> None:
         "implementationPhase": 2,
         "stability": "integration",
     }
+
+
+def test_package_lock_resolves_default_metapackage_closure_without_optional_integrations() -> None:
+    lock = build_package_lock(load_package_catalog(), requested=("graphblocks",))
+
+    assert lock.catalog_version == 4
+    assert lock.spec_version == "1.0"
+    assert lock.requested == ("graphblocks",)
+    assert [entry.distribution for entry in lock.entries] == [
+        "graphblocks",
+        "graphblocks-budget",
+        "graphblocks-cli",
+        "graphblocks-conversation",
+        "graphblocks-core",
+        "graphblocks-documents",
+        "graphblocks-policy",
+        "graphblocks-rag",
+        "graphblocks-runtime",
+        "graphblocks-stdlib",
+        "graphblocks-usage",
+    ]
+    assert "graphblocks-mcp" not in {entry.distribution for entry in lock.entries}
+    assert "model_provider" in lock.excluded_categories
+    assert lock.entry("graphblocks-core").version_constraint == "~=1.0"
+    assert lock.entry("graphblocks-openapi") is None
+
+
+def test_package_lock_includes_requested_extension_and_transitive_dependencies() -> None:
+    lock = build_package_lock(load_package_catalog(), requested=("graphblocks-agents",), include_default=False)
+
+    assert [entry.distribution for entry in lock.entries] == [
+        "graphblocks-agents",
+        "graphblocks-conversation",
+        "graphblocks-core",
+        "graphblocks-policy",
+    ]
+    assert lock.entry("graphblocks-agents").default is False
+    assert lock.entry("graphblocks-core").dependencies == ()
+    assert lock.entry("graphblocks-conversation").dependencies == ("graphblocks-core",)
