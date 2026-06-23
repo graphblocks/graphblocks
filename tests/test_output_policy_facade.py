@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from graphblocks import (
+    ContentPart,
     GenerationChunk,
     OutputCutoff,
     OutputDeliveryPolicy,
@@ -20,6 +21,48 @@ def test_output_policy_decision_abort_response_sets_safe_defaults() -> None:
     assert decision.draft_disposition == "retract"
     assert decision.pending_tool_calls == "deny"
     assert decision.input_digest == "sha256:input"
+
+
+def test_output_policy_decision_replace_carries_replacement_parts() -> None:
+    replacement = [ContentPart(kind="text", text="policy-approved replacement")]
+
+    decision = OutputPolicyDecision.replace(
+        "decision-replace",
+        accepted_through_sequence=3,
+        replacement_parts=replacement,
+        input_digest="sha256:replace",
+    )
+
+    assert decision.disposition == "replace"
+    assert decision.accepted_through_sequence == 3
+    assert decision.replacement_parts == tuple(replacement)
+    assert decision.redactions == ()
+    assert decision.provider_cancellation == "request"
+    assert decision.draft_disposition == "keep"
+    assert decision.pending_tool_calls == "keep"
+    assert decision.input_digest == "sha256:replace"
+
+
+def test_output_policy_decision_redact_carries_redaction_instructions() -> None:
+    replacement = [ContentPart(kind="text", text="[redacted]")]
+    redactions = [{"path": "/parts/0/text", "start": 5, "end": 11, "replacement": "[redacted]"}]
+
+    decision = OutputPolicyDecision.redact(
+        "decision-redact",
+        accepted_through_sequence=4,
+        replacement_parts=replacement,
+        redactions=redactions,
+        input_digest="sha256:redact",
+    )
+
+    assert decision.disposition == "redact"
+    assert decision.accepted_through_sequence == 4
+    assert decision.replacement_parts == tuple(replacement)
+    assert decision.redactions == tuple(redactions)
+    assert decision.provider_cancellation == "request"
+    assert decision.draft_disposition == "keep"
+    assert decision.pending_tool_calls == "keep"
+    assert decision.input_digest == "sha256:redact"
 
 
 def test_bounded_holdback_requires_size_or_time_bound() -> None:

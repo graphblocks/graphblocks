@@ -67,6 +67,12 @@ class OutputPolicyDecision:
     evaluated_at: str | None = None
     input_digest: str = ""
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "replacement_parts", tuple(self.replacement_parts))
+        object.__setattr__(self, "redactions", tuple(self.redactions))
+        object.__setattr__(self, "reason_codes", tuple(self.reason_codes))
+        object.__setattr__(self, "policy_refs", tuple(self.policy_refs))
+
     @classmethod
     def allow(
         cls,
@@ -90,6 +96,48 @@ class OutputPolicyDecision:
         return cls(
             decision_id=decision_id,
             disposition="hold",
+            provider_cancellation="request",
+            draft_disposition="keep",
+            pending_tool_calls="keep",
+            input_digest=input_digest,
+        )
+
+    @classmethod
+    def redact(
+        cls,
+        decision_id: str,
+        *,
+        accepted_through_sequence: int | None,
+        replacement_parts: tuple[ContentPart, ...] = (),
+        redactions: tuple[dict[str, object], ...] = (),
+        input_digest: str,
+    ) -> OutputPolicyDecision:
+        return cls(
+            decision_id=decision_id,
+            disposition="redact",
+            accepted_through_sequence=accepted_through_sequence,
+            replacement_parts=tuple(replacement_parts),
+            redactions=tuple(redactions),
+            provider_cancellation="request",
+            draft_disposition="keep",
+            pending_tool_calls="keep",
+            input_digest=input_digest,
+        )
+
+    @classmethod
+    def replace(
+        cls,
+        decision_id: str,
+        *,
+        accepted_through_sequence: int | None,
+        replacement_parts: tuple[ContentPart, ...] = (),
+        input_digest: str,
+    ) -> OutputPolicyDecision:
+        return cls(
+            decision_id=decision_id,
+            disposition="replace",
+            accepted_through_sequence=accepted_through_sequence,
+            replacement_parts=tuple(replacement_parts),
             provider_cancellation="request",
             draft_disposition="keep",
             pending_tool_calls="keep",
