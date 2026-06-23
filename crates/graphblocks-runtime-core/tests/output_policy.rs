@@ -1,7 +1,7 @@
 use graphblocks_runtime_core::output_policy::{
     DraftDisposition, DurableResult, GenerationChunk, OutputCutoff, OutputDeliveryGate,
     OutputDeliveryPolicy, OutputDeliveryPolicyError, OutputGateError, OutputPolicyDecision,
-    PendingToolCallsDisposition, TerminalReason, ViolationAction,
+    PendingToolCallsDisposition, RedactionInstruction, TerminalReason, ViolationAction,
 };
 
 #[test]
@@ -124,6 +124,47 @@ fn bounded_holdback_policy_accepts_time_or_size_bounds() -> Result<(), OutputDel
     .with_holdback_max_bytes(4_096)
     .validate()?;
     Ok(())
+}
+
+#[test]
+fn output_policy_decision_preserves_metadata_and_redaction_instructions() {
+    let decision = OutputPolicyDecision::redact(
+        "decision-redact",
+        Some(4),
+        [GenerationChunk::text(
+            "stream-1",
+            "response-1",
+            4,
+            "[redacted]",
+        )],
+        "sha256:redact",
+    )
+    .with_reason_codes(["pii.detected", "secret.detected"])
+    .with_policy_refs(["policy/output-standard", "rule/pii"])
+    .with_redactions([RedactionInstruction::text_range(
+        "/chunks/4/text",
+        5,
+        17,
+        "[redacted]",
+    )]);
+
+    assert_eq!(
+        decision.reason_codes,
+        vec!["pii.detected", "secret.detected"]
+    );
+    assert_eq!(
+        decision.policy_refs,
+        vec!["policy/output-standard", "rule/pii"]
+    );
+    assert_eq!(
+        decision.redactions,
+        vec![RedactionInstruction::text_range(
+            "/chunks/4/text",
+            5,
+            17,
+            "[redacted]",
+        )]
+    );
 }
 
 #[test]

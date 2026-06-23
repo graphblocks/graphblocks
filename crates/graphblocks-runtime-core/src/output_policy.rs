@@ -197,11 +197,38 @@ impl OutputDeliveryPolicy {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RedactionInstruction {
+    pub path: String,
+    pub start: u64,
+    pub end: u64,
+    pub replacement: String,
+}
+
+impl RedactionInstruction {
+    pub fn text_range(
+        path: impl Into<String>,
+        start: u64,
+        end: u64,
+        replacement: impl Into<String>,
+    ) -> Self {
+        Self {
+            path: path.into(),
+            start,
+            end,
+            replacement: replacement.into(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OutputPolicyDecision {
     pub decision_id: String,
     pub disposition: OutputDisposition,
     pub accepted_through_sequence: Option<u64>,
     pub replacement_chunks: Vec<GenerationChunk>,
+    pub redactions: Vec<RedactionInstruction>,
+    pub reason_codes: Vec<String>,
+    pub policy_refs: Vec<String>,
     pub provider_cancellation: ProviderCancellation,
     pub draft_disposition: DraftDisposition,
     pub pending_tool_calls: PendingToolCallsDisposition,
@@ -220,6 +247,9 @@ impl OutputPolicyDecision {
             disposition: OutputDisposition::Allow,
             accepted_through_sequence,
             replacement_chunks: Vec::new(),
+            redactions: Vec::new(),
+            reason_codes: Vec::new(),
+            policy_refs: Vec::new(),
             provider_cancellation: ProviderCancellation::Request,
             draft_disposition: DraftDisposition::Keep,
             pending_tool_calls: PendingToolCallsDisposition::Keep,
@@ -234,6 +264,9 @@ impl OutputPolicyDecision {
             disposition: OutputDisposition::Hold,
             accepted_through_sequence: None,
             replacement_chunks: Vec::new(),
+            redactions: Vec::new(),
+            reason_codes: Vec::new(),
+            policy_refs: Vec::new(),
             provider_cancellation: ProviderCancellation::Request,
             draft_disposition: DraftDisposition::Keep,
             pending_tool_calls: PendingToolCallsDisposition::Keep,
@@ -253,6 +286,9 @@ impl OutputPolicyDecision {
             disposition: OutputDisposition::Redact,
             accepted_through_sequence,
             replacement_chunks: replacement_chunks.into_iter().collect(),
+            redactions: Vec::new(),
+            reason_codes: Vec::new(),
+            policy_refs: Vec::new(),
             provider_cancellation: ProviderCancellation::Request,
             draft_disposition: DraftDisposition::Keep,
             pending_tool_calls: PendingToolCallsDisposition::Keep,
@@ -272,6 +308,9 @@ impl OutputPolicyDecision {
             disposition: OutputDisposition::Replace,
             accepted_through_sequence,
             replacement_chunks: replacement_chunks.into_iter().collect(),
+            redactions: Vec::new(),
+            reason_codes: Vec::new(),
+            policy_refs: Vec::new(),
             provider_cancellation: ProviderCancellation::Request,
             draft_disposition: DraftDisposition::Keep,
             pending_tool_calls: PendingToolCallsDisposition::Keep,
@@ -286,6 +325,9 @@ impl OutputPolicyDecision {
             disposition: OutputDisposition::AbortResponse,
             accepted_through_sequence: None,
             replacement_chunks: Vec::new(),
+            redactions: Vec::new(),
+            reason_codes: Vec::new(),
+            policy_refs: Vec::new(),
             provider_cancellation: ProviderCancellation::Request,
             draft_disposition: DraftDisposition::Retract,
             pending_tool_calls: PendingToolCallsDisposition::Deny,
@@ -300,6 +342,9 @@ impl OutputPolicyDecision {
             disposition: OutputDisposition::AbortTurn,
             accepted_through_sequence: None,
             replacement_chunks: Vec::new(),
+            redactions: Vec::new(),
+            reason_codes: Vec::new(),
+            policy_refs: Vec::new(),
             provider_cancellation: ProviderCancellation::Request,
             draft_disposition: DraftDisposition::Retract,
             pending_tool_calls: PendingToolCallsDisposition::Deny,
@@ -314,6 +359,9 @@ impl OutputPolicyDecision {
             disposition: OutputDisposition::DenyCommit,
             accepted_through_sequence: None,
             replacement_chunks: Vec::new(),
+            redactions: Vec::new(),
+            reason_codes: Vec::new(),
+            policy_refs: Vec::new(),
             provider_cancellation: ProviderCancellation::Request,
             draft_disposition: DraftDisposition::Retract,
             pending_tool_calls: PendingToolCallsDisposition::Deny,
@@ -324,6 +372,32 @@ impl OutputPolicyDecision {
 
     pub fn with_provider_cancellation(mut self, cancellation: ProviderCancellation) -> Self {
         self.provider_cancellation = cancellation;
+        self
+    }
+
+    pub fn with_redactions<I>(mut self, redactions: I) -> Self
+    where
+        I: IntoIterator<Item = RedactionInstruction>,
+    {
+        self.redactions = redactions.into_iter().collect();
+        self
+    }
+
+    pub fn with_reason_codes<I, S>(mut self, reason_codes: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.reason_codes = reason_codes.into_iter().map(Into::into).collect();
+        self
+    }
+
+    pub fn with_policy_refs<I, S>(mut self, policy_refs: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.policy_refs = policy_refs.into_iter().map(Into::into).collect();
         self
     }
 
