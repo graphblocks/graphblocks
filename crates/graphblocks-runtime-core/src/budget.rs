@@ -302,7 +302,32 @@ impl InMemoryBudgetLedger {
         reservation_id: impl AsRef<str>,
         actual_amounts: impl IntoIterator<Item = UsageAmount>,
     ) -> Result<BudgetSettlement, BudgetError> {
-        let reservation_id = reservation_id.as_ref();
+        self.commit_inner(
+            reservation_id.as_ref(),
+            actual_amounts.into_iter().collect(),
+            None,
+        )
+    }
+
+    pub fn commit_with_overdraft_limit(
+        &mut self,
+        reservation_id: impl AsRef<str>,
+        actual_amounts: impl IntoIterator<Item = UsageAmount>,
+        max_overdraft: impl IntoIterator<Item = UsageAmount>,
+    ) -> Result<BudgetSettlement, BudgetError> {
+        self.commit_inner(
+            reservation_id.as_ref(),
+            actual_amounts.into_iter().collect(),
+            Some(max_overdraft.into_iter().collect()),
+        )
+    }
+
+    fn commit_inner(
+        &mut self,
+        reservation_id: &str,
+        actual_amounts: Vec<UsageAmount>,
+        max_overdraft: Option<Vec<UsageAmount>>,
+    ) -> Result<BudgetSettlement, BudgetError> {
         let reservation = self
             .reservations
             .get(reservation_id)
@@ -336,6 +361,18 @@ impl InMemoryBudgetLedger {
             let extra = amount - reserved.get(key).copied().unwrap_or(0);
             if extra > 0 {
                 overdraft.insert(key.clone(), extra);
+            }
+        }
+        if let Some(max_overdraft) = max_overdraft {
+            let overdraft_limit = amounts_to_map(max_overdraft);
+            for (key, amount) in &overdraft {
+                if *amount > overdraft_limit.get(key).copied().unwrap_or(0) {
+                    return Err(BudgetError::BudgetExceeded {
+                        budget_id: reservation.budget_id.clone(),
+                        kind: key.0.clone(),
+                        unit: key.1.clone(),
+                    });
+                }
             }
         }
 

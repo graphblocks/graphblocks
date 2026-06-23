@@ -137,6 +137,64 @@ fn budget_ledger_commit_over_reserved_records_overdraft() -> Result<(), BudgetEr
 }
 
 #[test]
+fn budget_ledger_commit_allows_overdraft_within_limit() -> Result<(), BudgetError> {
+    let mut ledger = InMemoryBudgetLedger::new();
+    ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+    let reservation = ledger.reserve(
+        "budget-1",
+        "run:1",
+        [tokens(40)],
+        ReservationPurpose::ProviderCall,
+        "later",
+        None,
+    )?;
+
+    let settlement = ledger.commit_with_overdraft_limit(
+        &reservation.reservation_id,
+        [tokens(45)],
+        [tokens(5)],
+    )?;
+
+    assert_eq!(settlement.overdraft, vec![tokens(5)]);
+    assert_eq!(ledger.balance("budget-1")?.committed, vec![tokens(45)]);
+    Ok(())
+}
+
+#[test]
+fn budget_ledger_rejects_commit_above_overdraft_limit_without_mutating_balance()
+-> Result<(), BudgetError> {
+    let mut ledger = InMemoryBudgetLedger::new();
+    ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+    let reservation = ledger.reserve(
+        "budget-1",
+        "run:1",
+        [tokens(40)],
+        ReservationPurpose::ProviderCall,
+        "later",
+        None,
+    )?;
+
+    let error = ledger
+        .commit_with_overdraft_limit(&reservation.reservation_id, [tokens(46)], [tokens(5)])
+        .expect_err("overdraft above the declared limit is rejected");
+
+    assert_eq!(
+        error,
+        BudgetError::BudgetExceeded {
+            budget_id: "budget-1".to_string(),
+            kind: "model_total_tokens".to_string(),
+            unit: "tokens".to_string(),
+        }
+    );
+    let balance = ledger.balance("budget-1")?;
+    assert_eq!(balance.reserved, vec![tokens(40)]);
+    assert_eq!(balance.committed, Vec::<UsageAmount>::new());
+    assert_eq!(balance.overdraft, Vec::<UsageAmount>::new());
+    assert_eq!(balance.available, vec![tokens(60)]);
+    Ok(())
+}
+
+#[test]
 fn hierarchical_budget_reservation_holds_child_and_parent_balance() -> Result<(), BudgetError> {
     let mut ledger = InMemoryBudgetLedger::new();
     ledger.allocate(
