@@ -125,6 +125,31 @@ def test_policy_adapter_packages_have_pure_python_layouts_without_sdk_dependenci
         assert (package_root / "src" / import_name / "py.typed").exists()
 
 
+def test_observability_projection_packages_have_pure_python_layouts_without_sdk_dependencies() -> None:
+    cases = (
+        ("graphblocks-telemetry", "graphblocks_telemetry", ["graphblocks-core~=1.0"]),
+        ("graphblocks-otel", "graphblocks_otel", ["graphblocks-telemetry~=1.0"]),
+        ("graphblocks-langfuse", "graphblocks_langfuse", ["graphblocks-telemetry~=1.0"]),
+    )
+    for distribution, import_name, expected_dependencies in cases:
+        package_root = ROOT / "packages" / distribution
+        pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
+        dependencies = pyproject["project"]["dependencies"]
+
+        assert pyproject["build-system"]["build-backend"] == "hatchling.build"
+        assert pyproject["project"]["name"] == distribution
+        assert dependencies == expected_dependencies
+        assert not any(
+            "opentelemetry" in dependency.lower() or "langfuse" in dependency.lower()
+            for dependency in dependencies
+        )
+        assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
+            f"src/{import_name}"
+        ]
+        assert (package_root / "src" / import_name / "__init__.py").exists()
+        assert (package_root / "src" / import_name / "py.typed").exists()
+
+
 def test_package_lock_resolves_default_metapackage_closure_without_optional_integrations() -> None:
     lock = build_package_lock(load_package_catalog(), requested=("graphblocks",))
 
