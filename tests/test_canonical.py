@@ -279,3 +279,183 @@ def test_compile_allows_safe_output_policy_settings() -> None:
         "PendingToolCallAfterAbort",
         "CommitAfterPolicyStop",
     } & set(_error_codes(graph))
+
+
+def test_compile_reports_tool_definition_without_binding_or_input_schema() -> None:
+    missing_binding = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "missing-tool-binding"},
+        "spec": {
+            "nodes": {"model": {"block": "model.generate@1"}},
+            "bindings": {
+                "tools": {
+                    "search": {
+                        "definition": {
+                            "name": "knowledge.search",
+                            "description": "Search documentation.",
+                            "inputSchema": "schemas/Search@1",
+                        }
+                    }
+                }
+            },
+        },
+    }
+    missing_schema = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "missing-tool-schema"},
+        "spec": {
+            "nodes": {"model": {"block": "model.generate@1"}},
+            "bindings": {
+                "tools": {
+                    "search": {
+                        "definition": {
+                            "name": "knowledge.search",
+                            "description": "Search documentation.",
+                        },
+                        "implementation": {"kind": "block", "block": "blocks.search"},
+                    }
+                }
+            },
+        },
+    }
+
+    assert _error_codes(missing_binding) == ["ToolBindingMissing"]
+    assert _error_codes(missing_schema) == ["ToolSchemaMissing"]
+
+
+def test_compile_rejects_parallel_state_changing_tools_without_effect_serialization() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "unsafe-parallel-tools"},
+        "spec": {
+            "nodes": {"agent": {"block": "agent.run@1"}},
+            "bindings": {
+                "tools": {
+                    "createTicket": {
+                        "definition": {
+                            "name": "ticket.create",
+                            "description": "Create a support ticket.",
+                            "inputSchema": "schemas/TicketCreateRequest@1",
+                        },
+                        "implementation": {
+                            "kind": "openapi",
+                            "connection": "ticket-system",
+                            "operationId": "createTicket",
+                        },
+                        "effects": ["external_write", "network"],
+                    }
+                }
+            },
+            "toolExecution": {"maximumParallelism": 4},
+        },
+    }
+
+    assert _error_codes(graph) == ["UnsafeParallelEffects"]
+
+
+def test_compile_rejects_retried_write_tool_without_required_idempotency() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "nonidempotent-tool-retry"},
+        "spec": {
+            "nodes": {"agent": {"block": "agent.run@1"}},
+            "bindings": {
+                "tools": {
+                    "createTicket": {
+                        "definition": {
+                            "name": "ticket.create",
+                            "description": "Create a support ticket.",
+                            "inputSchema": "schemas/TicketCreateRequest@1",
+                        },
+                        "implementation": {
+                            "kind": "openapi",
+                            "connection": "ticket-system",
+                            "operationId": "createTicket",
+                        },
+                        "effects": ["external_write", "network"],
+                        "retryPolicyRef": "retry/default",
+                    }
+                }
+            },
+        },
+    }
+
+    assert _error_codes(graph) == ["NonIdempotentRetry"]
+
+
+def test_compile_rejects_tool_approval_without_argument_digest_binding() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "approval-without-argument-digest"},
+        "spec": {
+            "nodes": {"agent": {"block": "agent.run@1"}},
+            "bindings": {
+                "tools": {
+                    "createTicket": {
+                        "definition": {
+                            "name": "ticket.create",
+                            "description": "Create a support ticket.",
+                            "inputSchema": "schemas/TicketCreateRequest@1",
+                        },
+                        "implementation": {
+                            "kind": "openapi",
+                            "connection": "ticket-system",
+                            "operationId": "createTicket",
+                        },
+                        "effects": ["external_write", "network"],
+                        "approval": {"mode": "always"},
+                    }
+                }
+            },
+        },
+    }
+
+    assert _error_codes(graph) == ["ApprovalWithoutArgumentDigest"]
+
+
+def test_compile_allows_safe_tool_execution_settings() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "safe-tool-settings"},
+        "spec": {
+            "nodes": {"agent": {"block": "agent.run@1"}},
+            "bindings": {
+                "tools": {
+                    "createTicket": {
+                        "definition": {
+                            "name": "ticket.create",
+                            "description": "Create a support ticket.",
+                            "inputSchema": "schemas/TicketCreateRequest@1",
+                        },
+                        "implementation": {
+                            "kind": "openapi",
+                            "connection": "ticket-system",
+                            "operationId": "createTicket",
+                        },
+                        "effects": ["external_write", "network"],
+                        "retryPolicyRef": "retry/default",
+                        "idempotency": "required",
+                        "approval": {"mode": "always", "bindArgumentsDigest": True},
+                    }
+                }
+            },
+            "toolExecution": {
+                "maximumParallelism": 4,
+                "effectSerialization": {"keyTemplate": "{tool.name}:{arguments.resource_id}"},
+            },
+        },
+    }
+
+    assert not {
+        "ToolBindingMissing",
+        "ToolSchemaMissing",
+        "UnsafeParallelEffects",
+        "NonIdempotentRetry",
+        "ApprovalWithoutArgumentDigest",
+    } & set(_error_codes(graph))

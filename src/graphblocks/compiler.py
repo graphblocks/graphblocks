@@ -218,6 +218,112 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                         )
                     )
 
+    bindings = spec.get("bindings")
+    bindings = bindings if isinstance(bindings, dict) else None
+    tools = bindings.get("tools") if bindings is not None else None
+    tools = tools if isinstance(tools, dict) else None
+    if tools is not None:
+        tool_execution = spec.get("toolExecution") or spec.get("tool_execution")
+        tool_execution = tool_execution if isinstance(tool_execution, dict) else None
+        maximum_parallelism = 1
+        parallel_tool_calls = False
+        has_effect_serialization_key = False
+        if tool_execution is not None:
+            configured_parallelism = tool_execution.get(
+                "maximumParallelism",
+                tool_execution.get("maximum_parallelism", 1),
+            )
+            if isinstance(configured_parallelism, int):
+                maximum_parallelism = configured_parallelism
+            parallel_tool_calls = bool(
+                tool_execution.get("parallelToolCalls", tool_execution.get("parallel_tool_calls", False))
+            )
+            effect_serialization = tool_execution.get("effectSerialization") or tool_execution.get(
+                "effect_serialization"
+            )
+            if isinstance(effect_serialization, dict):
+                key_template = effect_serialization.get("keyTemplate") or effect_serialization.get("key_template")
+                has_effect_serialization_key = isinstance(key_template, str) and bool(key_template.strip())
+
+        has_state_changing_tool = False
+        for tool_key, tool in tools.items():
+            if not isinstance(tool, dict):
+                continue
+            effects = tool.get("effects", [])
+            if isinstance(effects, str):
+                effects = [effects]
+            state_changing_tool = (
+                isinstance(effects, list)
+                and bool({"external_write", "filesystem_write", "process", "destructive"} & {str(effect) for effect in effects})
+            )
+            has_state_changing_tool = has_state_changing_tool or state_changing_tool
+
+            retry_policy_ref = tool.get("retryPolicyRef") or tool.get("retry_policy_ref")
+            has_retry_policy_ref = isinstance(retry_policy_ref, str) and bool(retry_policy_ref.strip())
+            if state_changing_tool and has_retry_policy_ref and tool.get("idempotency") != "required":
+                diagnostics.append(
+                    Diagnostic(
+                        "NonIdempotentRetry",
+                        "retrying state-changing tool effects requires required idempotency",
+                        f"$.spec.bindings.tools.{tool_key}.idempotency",
+                    )
+                )
+
+            approval = tool.get("approval")
+            if isinstance(approval, dict):
+                mode = approval.get("mode", "policy")
+                requires_approval = mode in {"policy", "always"}
+                bind_arguments_digest = approval.get(
+                    "bindArgumentsDigest",
+                    approval.get("bind_arguments_digest", False),
+                )
+                arguments_digest = (
+                    approval.get("argumentsDigest")
+                    or approval.get("arguments_digest")
+                    or approval.get("argumentsDigestRef")
+                    or approval.get("arguments_digest_ref")
+                )
+                binds_arguments_digest = bool(bind_arguments_digest) or (
+                    isinstance(arguments_digest, str) and bool(arguments_digest.strip())
+                )
+                if requires_approval and not binds_arguments_digest:
+                    diagnostics.append(
+                        Diagnostic(
+                            "ApprovalWithoutArgumentDigest",
+                            "explicit tool approval must be bound to immutable argument digest",
+                            f"$.spec.bindings.tools.{tool_key}.approval",
+                        )
+                    )
+
+            definition = tool.get("definition")
+            if isinstance(definition, dict):
+                input_schema = definition.get("inputSchema") or definition.get("input_schema")
+                if not isinstance(input_schema, str) or not input_schema.strip():
+                    diagnostics.append(
+                        Diagnostic(
+                            "ToolSchemaMissing",
+                            "model-visible tool definitions require an input schema",
+                            f"$.spec.bindings.tools.{tool_key}.definition.inputSchema",
+                        )
+                    )
+                if "implementation" not in tool:
+                    diagnostics.append(
+                        Diagnostic(
+                            "ToolBindingMissing",
+                            "model-visible tools require an executable binding implementation",
+                            f"$.spec.bindings.tools.{tool_key}.implementation",
+                        )
+                    )
+
+        if (maximum_parallelism > 1 or parallel_tool_calls) and has_state_changing_tool and not has_effect_serialization_key:
+            diagnostics.append(
+                Diagnostic(
+                    "UnsafeParallelEffects",
+                    "parallel state-changing tool execution requires an effect serialization key",
+                    "$.spec.toolExecution.effectSerialization",
+                )
+            )
+
     normalized = normalize_graph(migrated)
     normalized_spec = normalized.get("spec", {})
     normalized_nodes = normalized_spec.get("nodes", {}) if isinstance(normalized_spec, dict) else {}
