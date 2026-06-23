@@ -1,8 +1,8 @@
 use graphblocks_runtime_core::application_event::{
     ApplicationCommand, ApplicationCommandKind, ApplicationCommandMetadata, ApplicationEvent,
     ApplicationEventError, ApplicationEventKind, ApplicationEventMetadata,
-    ApplicationProtocolCapabilities, ApplicationProtocolEvent, ApplicationProtocolEventKind,
-    ApplicationProtocolEventMetadata, ApplicationProtocolLog,
+    ApplicationEventStreamState, ApplicationProtocolCapabilities, ApplicationProtocolEvent,
+    ApplicationProtocolEventKind, ApplicationProtocolEventMetadata, ApplicationProtocolLog,
 };
 use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory};
 use graphblocks_runtime_core::output_policy::{
@@ -563,6 +563,74 @@ fn output_cutoff_events_mark_incomplete_when_retraction_is_not_required() {
     assert_eq!(
         events[1].payload.get("last_client_delivered_sequence"),
         Some(&json!(1))
+    );
+}
+
+#[test]
+fn application_event_stream_state_discards_late_output_after_cutoff() {
+    let mut state = ApplicationEventStreamState::default();
+    let cutoff = OutputCutoff {
+        stream_id: "stream-1".to_owned(),
+        response_id: "response-1".to_owned(),
+        turn_id: Some("turn-1".to_owned()),
+        last_generated_sequence: 3,
+        last_policy_accepted_sequence: 1,
+        last_client_delivered_sequence: 1,
+        terminal_reason: TerminalReason::PolicyDenied,
+        draft_disposition: DraftDisposition::Retract,
+        durable_result: DurableResult::None,
+        policy_decision_id: Some("decision-abort".to_owned()),
+        occurred_at_unix_ms: 1_700_020,
+    };
+    let cutoff_events = ApplicationEvent::output_cutoff(metadata(), &cutoff)
+        .expect("output cutoff events are valid");
+    let late_output = ApplicationEvent::output_policy_evaluation_started(
+        metadata(),
+        &GenerationChunk::text("stream-1", "response-1", 2, "blocked"),
+        "sha256:late",
+    )
+    .expect("output policy evaluation event is valid");
+    let replacement_response = ApplicationEvent::output_policy_evaluation_started(
+        metadata(),
+        &GenerationChunk::text("stream-1", "response-2", 1, "replacement"),
+        "sha256:replacement",
+    )
+    .expect("replacement response event is valid");
+    let denied_tool = ApplicationEvent::tool(
+        ApplicationEventKind::ToolCallDenied,
+        metadata(),
+        "call-1",
+        json!({"status": "denied"}),
+    )
+    .expect("tool event is valid");
+
+    assert_eq!(
+        state.accept(cutoff_events[0].clone()),
+        Some(cutoff_events[0].clone())
+    );
+    assert_eq!(state.cutoff_for_response("response-1"), Some(&cutoff));
+    assert_eq!(
+        state.accept(cutoff_events[1].clone()),
+        Some(cutoff_events[1].clone())
+    );
+    assert_eq!(state.accept(late_output), None);
+    assert_eq!(
+        state.accept(replacement_response.clone()),
+        Some(replacement_response)
+    );
+    assert_eq!(state.accept(denied_tool.clone()), Some(denied_tool));
+    assert_eq!(
+        state
+            .accepted_events()
+            .iter()
+            .map(|event| event.kind)
+            .collect::<Vec<_>>(),
+        vec![
+            ApplicationEventKind::OutputCutoff,
+            ApplicationEventKind::AssistantRetracted,
+            ApplicationEventKind::OutputPolicyEvaluationStarted,
+            ApplicationEventKind::ToolCallDenied,
+        ]
     );
 }
 

@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
@@ -548,6 +548,121 @@ impl ApplicationEvent {
             tool_call_id: Some(tool_call_id),
             payload,
         })
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ApplicationEventStreamState {
+    cutoffs: BTreeMap<String, OutputCutoff>,
+    accepted_events: Vec<ApplicationEvent>,
+}
+
+impl ApplicationEventStreamState {
+    pub fn accept(&mut self, event: ApplicationEvent) -> Option<ApplicationEvent> {
+        if event.kind == ApplicationEventKind::OutputCutoff {
+            let cutoff = {
+                let payload = &event.payload;
+                let response_id = payload
+                    .get("response_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or(&event.metadata.response_id)
+                    .to_owned();
+                if self.cutoffs.contains_key(&response_id) {
+                    return None;
+                }
+                let terminal_reason = match payload.get("terminal_reason")?.as_str()? {
+                    "policy_denied" => TerminalReason::PolicyDenied,
+                    "budget_exhausted" => TerminalReason::BudgetExhausted,
+                    "cancelled" => TerminalReason::Cancelled,
+                    "client_disconnected" => TerminalReason::ClientDisconnected,
+                    _ => return None,
+                };
+                let draft_disposition = match payload.get("draft_disposition")?.as_str()? {
+                    "keep" => DraftDisposition::Keep,
+                    "mark_incomplete" => DraftDisposition::MarkIncomplete,
+                    "retract" => DraftDisposition::Retract,
+                    _ => return None,
+                };
+                let durable_result = match payload.get("durable_result")?.as_str()? {
+                    "none" => DurableResult::None,
+                    "incomplete" => DurableResult::Incomplete,
+                    "partial" => DurableResult::Partial,
+                    _ => return None,
+                };
+                OutputCutoff {
+                    stream_id: payload.get("stream_id")?.as_str()?.to_owned(),
+                    response_id,
+                    turn_id: payload
+                        .get("turn_id")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                    last_generated_sequence: payload.get("last_generated_sequence")?.as_u64()?,
+                    last_policy_accepted_sequence: payload
+                        .get("last_policy_accepted_sequence")?
+                        .as_u64()?,
+                    last_client_delivered_sequence: payload
+                        .get("last_client_delivered_sequence")?
+                        .as_u64()?,
+                    terminal_reason,
+                    draft_disposition,
+                    durable_result,
+                    policy_decision_id: payload
+                        .get("policy_decision_id")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                    occurred_at_unix_ms: payload.get("occurred_at_unix_ms")?.as_u64()?,
+                }
+            };
+            self.cutoffs.insert(cutoff.response_id.clone(), cutoff);
+            self.accepted_events.push(event.clone());
+            return Some(event);
+        }
+
+        let response_id = event
+            .payload
+            .get("response_id")
+            .and_then(Value::as_str)
+            .unwrap_or(&event.metadata.response_id);
+        if self.cutoffs.contains_key(response_id) {
+            if matches!(
+                event.kind,
+                ApplicationEventKind::AssistantRetracted
+                    | ApplicationEventKind::AssistantIncomplete
+            ) {
+                self.accepted_events.push(event.clone());
+                return Some(event);
+            }
+            if event
+                .payload
+                .get("chunk_sequence")
+                .and_then(Value::as_u64)
+                .is_some()
+            {
+                return None;
+            }
+            if matches!(
+                event.kind,
+                ApplicationEventKind::OutputPolicyEvaluationStarted
+                    | ApplicationEventKind::OutputPolicyAllowed
+                    | ApplicationEventKind::OutputPolicyHeld
+                    | ApplicationEventKind::OutputPolicyRedacted
+                    | ApplicationEventKind::OutputPolicyReplaced
+                    | ApplicationEventKind::OutputPolicyViolationDetected
+            ) {
+                return None;
+            }
+        }
+
+        self.accepted_events.push(event.clone());
+        Some(event)
+    }
+
+    pub fn accepted_events(&self) -> &[ApplicationEvent] {
+        &self.accepted_events
+    }
+
+    pub fn cutoff_for_response(&self, response_id: &str) -> Option<&OutputCutoff> {
+        self.cutoffs.get(response_id)
     }
 }
 
