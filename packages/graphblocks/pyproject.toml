@@ -3,16 +3,14 @@ requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [project]
-name = "graphblocks-core"
+name = "graphblocks"
 version = "0.1.0"
-description = "Provider-neutral GraphBlocks contract toolkit"
-readme = "README.md"
+description = "Provider-neutral default GraphBlocks metapackage"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 authors = [
   { name = "GraphBlocks contributors" },
 ]
-keywords = ["ai", "workflow", "rag", "graph", "runtime"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
@@ -20,23 +18,19 @@ classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
-  "Typing :: Typed",
 ]
 dependencies = [
-  "PyYAML>=6.0",
-]
-
-[project.optional-dependencies]
-test = [
-  "pytest>=8.0",
+  "graphblocks-core~=1.0",
+  "graphblocks-runtime~=1.0",
+  "graphblocks-stdlib~=1.0",
+  "graphblocks-documents~=1.0",
+  "graphblocks-rag~=1.0",
+  "graphblocks-conversation~=1.0",
+  "graphblocks-policy~=1.0",
+  "graphblocks-budget~=1.0",
+  "graphblocks-usage~=1.0",
+  "graphblocks-cli~=1.0",
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/graphblocks"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"schemas" = "schemas"
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = "-ra"
+only-include = ["METAPACKAGE.md"]

@@ -64,6 +64,39 @@ def test_graphblocks_runtime_package_delegates_to_workspace_binding() -> None:
     assert "validate_remote_payload_json" in wrapper
 
 
+def test_graphblocks_core_distribution_owns_graphblocks_import_package() -> None:
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+
+    assert pyproject["project"]["name"] == "graphblocks-core"
+    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == ["src/graphblocks"]
+    assert "scripts" not in pyproject["project"]
+
+
+def test_graphblocks_metapackage_is_dependency_only() -> None:
+    package_root = ROOT / "packages" / "graphblocks"
+    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
+
+    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
+    assert pyproject["project"]["name"] == "graphblocks"
+    assert pyproject["project"]["dependencies"] == [
+        "graphblocks-core~=1.0",
+        "graphblocks-runtime~=1.0",
+        "graphblocks-stdlib~=1.0",
+        "graphblocks-documents~=1.0",
+        "graphblocks-rag~=1.0",
+        "graphblocks-conversation~=1.0",
+        "graphblocks-policy~=1.0",
+        "graphblocks-budget~=1.0",
+        "graphblocks-usage~=1.0",
+        "graphblocks-cli~=1.0",
+    ]
+    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["only-include"] == [
+        "METAPACKAGE.md"
+    ]
+    assert (package_root / "METAPACKAGE.md").exists()
+    assert not (package_root / "src" / "graphblocks").exists()
+
+
 def test_tool_adapter_packages_are_cataloged_as_optional_integrations() -> None:
     rows = {row["distribution"]: row for row in package_rows(load_package_catalog())}
 
