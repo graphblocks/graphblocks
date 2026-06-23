@@ -347,6 +347,9 @@ def test_output_policy_decision_event_maps_disposition_and_metadata_payload() ->
         "input_digest": "sha256:redact",
         "replacement_part_count": 0,
         "redaction_count": 0,
+        "provider_cancellation": "request",
+        "draft_disposition": "keep",
+        "pending_tool_calls": "keep",
     }
 
 

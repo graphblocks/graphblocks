@@ -348,6 +348,9 @@ class ApplicationEvent:
                 "input_digest": decision.input_digest,
                 "replacement_part_count": len(decision.replacement_parts),
                 "redaction_count": len(decision.redactions),
+                "provider_cancellation": decision.provider_cancellation,
+                "draft_disposition": decision.draft_disposition,
+                "pending_tool_calls": decision.pending_tool_calls,
             },
         )
 

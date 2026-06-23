@@ -440,6 +440,9 @@ fn output_policy_decision_event_maps_disposition_and_metadata_payload() {
             "input_digest": "sha256:redact",
             "replacement_chunk_count": 1,
             "redaction_count": 0,
+            "provider_cancellation": "request",
+            "draft_disposition": "keep",
+            "pending_tool_calls": "keep",
         })
     );
 }
@@ -463,6 +466,18 @@ fn output_policy_termination_decision_maps_to_violation_event() {
     assert_eq!(
         event.payload.get("reason_codes"),
         Some(&json!(["policy.denied"]))
+    );
+    assert_eq!(
+        event.payload.get("provider_cancellation"),
+        Some(&json!("request"))
+    );
+    assert_eq!(
+        event.payload.get("draft_disposition"),
+        Some(&json!("retract"))
+    );
+    assert_eq!(
+        event.payload.get("pending_tool_calls"),
+        Some(&json!("deny"))
     );
 }
 

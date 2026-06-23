@@ -4,7 +4,7 @@ use std::fmt;
 
 use crate::output_policy::{
     DraftDisposition, DurableResult, GenerationChunk, OutputCutoff, OutputDisposition,
-    OutputPolicyDecision, TerminalReason,
+    OutputPolicyDecision, PendingToolCallsDisposition, ProviderCancellation, TerminalReason,
 };
 use crate::policy::PolicyDecision;
 use crate::tool_approval::ToolApprovalRequest;
@@ -401,11 +401,7 @@ impl ApplicationEvent {
             TerminalReason::Cancelled => "cancelled",
             TerminalReason::ClientDisconnected => "client_disconnected",
         };
-        let draft_disposition = match cutoff.draft_disposition {
-            DraftDisposition::Keep => "keep",
-            DraftDisposition::MarkIncomplete => "mark_incomplete",
-            DraftDisposition::Retract => "retract",
-        };
+        let draft_disposition = Self::draft_disposition(cutoff.draft_disposition);
         let durable_result = match cutoff.durable_result {
             DurableResult::None => "none",
             DurableResult::Incomplete => "incomplete",
@@ -474,6 +470,16 @@ impl ApplicationEvent {
                 "deny_commit",
             ),
         };
+        let provider_cancellation = match decision.provider_cancellation {
+            ProviderCancellation::None => "none",
+            ProviderCancellation::Request => "request",
+            ProviderCancellation::RequiredIfSupported => "required_if_supported",
+        };
+        let pending_tool_calls = match decision.pending_tool_calls {
+            PendingToolCallsDisposition::Keep => "keep",
+            PendingToolCallsDisposition::Deny => "deny",
+            PendingToolCallsDisposition::CancelAdmitted => "cancel_admitted",
+        };
         Self::new(
             kind,
             metadata,
@@ -487,8 +493,19 @@ impl ApplicationEvent {
                 "input_digest": decision.input_digest,
                 "replacement_chunk_count": decision.replacement_chunks.len(),
                 "redaction_count": decision.redactions.len(),
+                "provider_cancellation": provider_cancellation,
+                "draft_disposition": Self::draft_disposition(decision.draft_disposition),
+                "pending_tool_calls": pending_tool_calls,
             }),
         )
+    }
+
+    fn draft_disposition(disposition: DraftDisposition) -> &'static str {
+        match disposition {
+            DraftDisposition::Keep => "keep",
+            DraftDisposition::MarkIncomplete => "mark_incomplete",
+            DraftDisposition::Retract => "retract",
+        }
     }
 
     pub fn new(
