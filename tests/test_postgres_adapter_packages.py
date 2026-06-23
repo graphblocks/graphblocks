@@ -123,6 +123,69 @@ def test_budget_postgres_reservation_statement(monkeypatch) -> None:
     assert statement.params["fencing_token"] == 7
 
 
+def test_budget_postgres_settlement_statement(monkeypatch) -> None:
+    _add_budget_postgres_paths(monkeypatch)
+    graphblocks_budget = importlib.import_module("graphblocks_budget")
+    graphblocks_budget_postgres = importlib.import_module("graphblocks_budget_postgres")
+    schema = graphblocks_budget_postgres.PostgresBudgetSchema(schema="gb_budget")
+    settlement = graphblocks_budget.BudgetSettlement(
+        reservation_id="reservation-1",
+        budget_id="budget-1",
+        committed=[
+            graphblocks_budget.UsageAmount(
+                "model_total_tokens",
+                Decimal("25"),
+                "tokens",
+                {"model": "gpt-test"},
+            )
+        ],
+        released=[
+            graphblocks_budget.UsageAmount(
+                "model_total_tokens",
+                Decimal("15"),
+                "tokens",
+                {"model": "gpt-test"},
+            )
+        ],
+        status="committed",
+        revision=9,
+    )
+
+    migrations = "\n".join(schema.migration_statements())
+    assert "CREATE TABLE IF NOT EXISTS gb_budget.budget_settlements" in migrations
+    assert graphblocks_budget_postgres.encode_budget_settlement(settlement) == {
+        "reservation_id": "reservation-1",
+        "budget_id": "budget-1",
+        "committed_json": [
+            {
+                "kind": "model_total_tokens",
+                "amount": "25",
+                "unit": "tokens",
+                "dimensions": {"model": "gpt-test"},
+            }
+        ],
+        "released_json": [
+            {
+                "kind": "model_total_tokens",
+                "amount": "15",
+                "unit": "tokens",
+                "dimensions": {"model": "gpt-test"},
+            }
+        ],
+        "overdraft_json": [],
+        "status": "committed",
+        "revision": 9,
+    }
+
+    statement = graphblocks_budget_postgres.append_budget_settlement_statement(settlement, schema=schema)
+
+    assert statement.name == "budget_settlement_append"
+    assert "INSERT INTO gb_budget.budget_settlements" in statement.sql
+    assert "ON CONFLICT (reservation_id) DO NOTHING" in statement.sql
+    assert statement.params["committed_json"][0]["amount"] == "25"
+    assert statement.params["revision"] == 9
+
+
 def test_usage_postgres_schema_and_record_codec(monkeypatch) -> None:
     _add_usage_postgres_paths(monkeypatch)
     graphblocks_usage = importlib.import_module("graphblocks_usage")

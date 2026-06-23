@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-from graphblocks_budget import BudgetAccount, BudgetReservation, ResourceRef, UsageAmount
+from graphblocks_budget import BudgetAccount, BudgetReservation, BudgetSettlement, ResourceRef, UsageAmount
 
 
 class PostgresBudgetAdapterError(ValueError):
@@ -82,6 +82,18 @@ CREATE TABLE IF NOT EXISTS {self.schema}.budget_reservations (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 """.strip(),
+            f"""
+CREATE TABLE IF NOT EXISTS {self.schema}.budget_settlements (
+  reservation_id text PRIMARY KEY REFERENCES {self.schema}.budget_reservations(reservation_id),
+  budget_id text NOT NULL REFERENCES {self.schema}.budget_accounts(budget_id),
+  committed_json jsonb NOT NULL,
+  released_json jsonb NOT NULL,
+  overdraft_json jsonb NOT NULL,
+  status text NOT NULL,
+  revision bigint NOT NULL,
+  settled_at timestamptz NOT NULL DEFAULT now()
+);
+""".strip(),
         )
 
 
@@ -107,6 +119,18 @@ def encode_budget_reservation(reservation: BudgetReservation) -> dict[str, objec
         "expires_at": reservation.expires_at,
         "fencing_token": reservation.fencing_token,
         "status": reservation.status,
+    }
+
+
+def encode_budget_settlement(settlement: BudgetSettlement) -> dict[str, object]:
+    return {
+        "reservation_id": settlement.reservation_id,
+        "budget_id": settlement.budget_id,
+        "committed_json": [_amount_contract(amount) for amount in settlement.committed],
+        "released_json": [_amount_contract(amount) for amount in settlement.released],
+        "overdraft_json": [_amount_contract(amount) for amount in settlement.overdraft],
+        "status": settlement.status,
+        "revision": settlement.revision,
     }
 
 
@@ -192,12 +216,46 @@ ON CONFLICT (reservation_id) DO UPDATE SET
     )
 
 
+def append_budget_settlement_statement(
+    settlement: BudgetSettlement,
+    *,
+    schema: PostgresBudgetSchema | None = None,
+) -> PostgresStatement:
+    schema = schema or PostgresBudgetSchema()
+    return PostgresStatement(
+        name="budget_settlement_append",
+        sql=f"""
+INSERT INTO {schema.schema}.budget_settlements (
+  reservation_id,
+  budget_id,
+  committed_json,
+  released_json,
+  overdraft_json,
+  status,
+  revision
+) VALUES (
+  %(reservation_id)s,
+  %(budget_id)s,
+  %(committed_json)s,
+  %(released_json)s,
+  %(overdraft_json)s,
+  %(status)s,
+  %(revision)s
+)
+ON CONFLICT (reservation_id) DO NOTHING;
+""".strip(),
+        params=encode_budget_settlement(settlement),
+    )
+
+
 __all__ = [
+    "append_budget_settlement_statement",
     "PostgresBudgetAdapterError",
     "PostgresBudgetSchema",
     "PostgresStatement",
     "encode_budget_account",
     "encode_budget_reservation",
+    "encode_budget_settlement",
     "upsert_budget_account_statement",
     "upsert_budget_reservation_statement",
 ]
