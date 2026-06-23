@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import get_args
 
 from graphblocks.policy import (
+    EnforcementPoint,
     PolicyEnforcementRecord,
     PolicyObligation,
     PolicyRequest,
@@ -11,6 +13,14 @@ from graphblocks.policy import (
     ResourceRef,
     StaticPolicyEvaluator,
 )
+
+
+def test_policy_request_exposes_output_streaming_enforcement_points() -> None:
+    assert {
+        "on_generation_chunk",
+        "before_client_delivery",
+        "before_output_commit",
+    }.issubset(set(get_args(EnforcementPoint)))
 
 
 def test_policy_request_digest_is_stable_for_semantic_input() -> None:
