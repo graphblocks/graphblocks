@@ -14,7 +14,8 @@ use graphblocks_runtime_core::exhaustion::{
 use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory, Outcome};
 use graphblocks_runtime_core::output_policy::{
     DraftDisposition, FlushBoundary, GenerationChunk, OutputDeliveryGate, OutputDeliveryPolicy,
-    OutputPolicyDecision, PendingToolCallsDisposition, ProviderCancellation, ViolationAction,
+    OutputPolicyDecision, PendingToolCallsDisposition, ProviderCancellation, RedactionInstruction,
+    ViolationAction,
 };
 use graphblocks_runtime_core::readiness::{InputDependency, PortRef, ResolvedInput};
 use graphblocks_runtime_core::scheduler::{ScheduledNode, StartedNode};
@@ -1202,6 +1203,25 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
                         )));
                     }
                 };
+                if let Some(redactions) = operation.get("redactions") {
+                    let Some(redactions) = redactions.as_array() else {
+                        return Err(PyValueError::new_err(format!(
+                            "{label}.redactions must be an array"
+                        )));
+                    };
+                    let mut parsed_redactions = Vec::new();
+                    for (redaction_index, redaction) in redactions.iter().enumerate() {
+                        let redaction_label = format!("{label}.redactions[{redaction_index}]");
+                        let redaction = json_object(redaction, &redaction_label)?;
+                        parsed_redactions.push(RedactionInstruction::text_range(
+                            required_string(redaction, "path", &redaction_label)?,
+                            required_u64(redaction, "start", &redaction_label)?,
+                            required_u64(redaction, "end", &redaction_label)?,
+                            required_string(redaction, "replacement", &redaction_label)?,
+                        ));
+                    }
+                    decision = decision.with_redactions(parsed_redactions);
+                }
                 if let Some(value) = operation.get("providerCancellation") {
                     let Some(value) = value.as_str() else {
                         return Err(PyValueError::new_err(format!(
@@ -1772,6 +1792,65 @@ mod tests {
                 .get("lastClientDeliveredSequence")
                 .and_then(Value::as_u64),
             Some(1)
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_output_gate_json_applies_redaction_instructions() -> Result<(), String> {
+        let gate = json!({
+            "streamId": "stream-1",
+            "responseId": "response-1",
+            "deliveryPolicy": {
+                "mode": "bounded_holdback",
+                "holdbackMaxTokens": 8,
+                "onViolation": "abort_response"
+            }
+        });
+        let operations = json!([
+            {
+                "kind": "chunk",
+                "sequence": 1,
+                "text": "hello secret world"
+            },
+            {
+                "kind": "decision",
+                "decisionId": "decision-redact",
+                "disposition": "redact",
+                "acceptedThroughSequence": 1,
+                "inputDigest": "sha256:redact",
+                "redactions": [
+                    {
+                        "path": "/chunks/1/text",
+                        "start": 6,
+                        "end": 12,
+                        "replacement": "[redacted]"
+                    }
+                ],
+                "occurredAtUnixMs": 1_000
+            }
+        ]);
+        let gate_json = serde_json::to_string(&gate).map_err(|error| error.to_string())?;
+        let operations_json =
+            serde_json::to_string(&operations).map_err(|error| error.to_string())?;
+
+        let result_json = evaluate_output_gate_json(&gate_json, &operations_json)
+            .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            result
+                .get("deliveries")
+                .and_then(Value::as_array)
+                .and_then(|deliveries| deliveries.first())
+                .and_then(|delivery| delivery.get("chunks"))
+                .and_then(Value::as_array)
+                .and_then(|chunks| chunks.first())
+                .and_then(|chunk| chunk.get("text"))
+                .and_then(Value::as_str),
+            Some("hello [redacted] world")
         );
 
         Ok(())
