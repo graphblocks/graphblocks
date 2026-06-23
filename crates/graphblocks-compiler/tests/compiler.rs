@@ -166,7 +166,7 @@ fn compile_graph_rejects_unbounded_output_holdback() {
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec!["UnboundedPolicyHoldback"]
+        vec!["UnboundedPolicyHoldback", "OutputPolicyBypass"]
     );
 }
 
@@ -198,7 +198,10 @@ fn compile_graph_rejects_immediate_draft_without_retraction_support() {
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>(),
-        vec!["ImmediateDraftWithoutRetractionSupport"]
+        vec![
+            "ImmediateDraftWithoutRetractionSupport",
+            "OutputPolicyBypass"
+        ]
     );
 }
 

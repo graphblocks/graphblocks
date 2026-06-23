@@ -153,8 +153,11 @@ def test_compile_rejects_unbounded_output_holdback_and_unsafe_immediate_draft() 
         },
     }
 
-    assert _error_codes(unbounded) == ["UnboundedPolicyHoldback"]
-    assert _error_codes(immediate_draft) == ["ImmediateDraftWithoutRetractionSupport"]
+    assert _error_codes(unbounded) == ["UnboundedPolicyHoldback", "OutputPolicyBypass"]
+    assert _error_codes(immediate_draft) == [
+        "ImmediateDraftWithoutRetractionSupport",
+        "OutputPolicyBypass",
+    ]
 
 
 def test_compile_rejects_output_policy_bypass_and_gate_after_delivery() -> None:
@@ -171,6 +174,15 @@ def test_compile_rejects_output_policy_bypass_and_gate_after_delivery() -> None:
                     "onViolation": "abort_response",
                 },
                 "evaluation": {"enforcementPoints": ["on_generation_chunk", "before_output_commit"]},
+            },
+        },
+    }
+    missing_enforcement_points = {
+        **base,
+        "spec": {
+            **base["spec"],
+            "outputPolicy": {
+                "delivery": base["spec"]["outputPolicy"]["delivery"],
             },
         },
     }
@@ -192,6 +204,7 @@ def test_compile_rejects_output_policy_bypass_and_gate_after_delivery() -> None:
     }
 
     assert _error_codes(base) == ["OutputPolicyBypass"]
+    assert _error_codes(missing_enforcement_points) == ["OutputPolicyBypass"]
     assert _error_codes(late_gate) == ["PolicyGateAfterDelivery"]
 
 

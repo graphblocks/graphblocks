@@ -274,6 +274,12 @@ pub fn compile_graph(document: &Value) -> Plan {
                     "$.spec.outputPolicy.evaluation.enforcementPoints",
                 ));
             }
+        } else {
+            diagnostics.push(Diagnostic::error(
+                "OutputPolicyBypass",
+                "output policy enforcement must include the before_client_delivery gate",
+                "$.spec.outputPolicy.evaluation.enforcementPoints",
+            ));
         }
 
         if let Some(on_violation) = output_policy

@@ -188,6 +188,14 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                         "$.spec.outputPolicy.evaluation.enforcementPoints",
                     )
                 )
+        else:
+            diagnostics.append(
+                Diagnostic(
+                    "OutputPolicyBypass",
+                    "output policy enforcement must include the before_client_delivery gate",
+                    "$.spec.outputPolicy.evaluation.enforcementPoints",
+                )
+            )
 
         on_violation = output_policy.get("onViolation") or output_policy.get("on_violation")
         on_violation = on_violation if isinstance(on_violation, dict) else None
