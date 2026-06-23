@@ -1,0 +1,28 @@
+[build-system]
+requires = ["maturin>=1.8,<2"]
+build-backend = "maturin"
+
+[project]
+name = "graphblocks-runtime"
+version = "0.1.0"
+description = "Python wrapper for the GraphBlocks Rust runtime bindings"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [
+  { name = "GraphBlocks contributors" },
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Rust",
+  "Typing :: Typed",
+]
+
+[tool.maturin]
+manifest-path = "../../crates/graphblocks-python/Cargo.toml"
+module-name = "graphblocks_runtime._native"
+python-source = "src"

@@ -1,0 +1,18 @@
+[package]
+name = "graphblocks-python"
+version = "0.1.0"
+description = "PyO3 bindings for the GraphBlocks Rust runtime"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "graphblocks_python"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+graphblocks-runtime-core = { path = "../graphblocks-runtime-core" }
+pyo3 = { version = "0.29.0", features = ["abi3-py311", "extension-module"] }
+
+[lints]
+workspace = true
