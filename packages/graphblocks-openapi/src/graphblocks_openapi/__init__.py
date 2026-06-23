@@ -1,8 +1,44 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass
+import json
 
-from graphblocks import OpenApiToolImplementation, ToolBinding, ToolDefinition
+from graphblocks import (
+    AdmittedToolCall,
+    OpenApiToolImplementation,
+    ResolvedTool,
+    ToolBinding,
+    ToolDefinition,
+    canonical_dumps,
+)
+
+
+class OpenApiToolAdapterError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class OpenApiOperationInvocation:
+    binding_id: str
+    tool_call_id: str
+    connection: str
+    operation_id: str
+    arguments_json: str
+    arguments_digest: str
+    idempotency_key: str | None = None
+
+    def request_contract(self) -> dict[str, object]:
+        return {
+            "kind": "openapi",
+            "binding_id": self.binding_id,
+            "tool_call_id": self.tool_call_id,
+            "connection": self.connection,
+            "operation_id": self.operation_id,
+            "arguments": json.loads(self.arguments_json),
+            "arguments_digest": self.arguments_digest,
+            "idempotency_key": self.idempotency_key,
+        }
 
 
 def define_openapi_tool(
@@ -56,4 +92,40 @@ def bind_openapi_operation(
     )
 
 
-__all__ = ["bind_openapi_operation", "define_openapi_tool"]
+def prepare_openapi_operation_invocation(
+    admitted: AdmittedToolCall,
+    resolved_tool: ResolvedTool,
+) -> OpenApiOperationInvocation:
+    implementation = resolved_tool.binding.implementation
+    if not isinstance(implementation, OpenApiToolImplementation):
+        raise OpenApiToolAdapterError("OpenAPI tool invocation requires an OpenAPI tool binding")
+    if admitted.call.status != "admitted":
+        raise OpenApiToolAdapterError(f"tool call {admitted.call.tool_call_id} is not admitted")
+    if admitted.call.resolved_tool_id != resolved_tool.resolved_tool_id:
+        raise OpenApiToolAdapterError("tool call references a different resolved tool")
+    if admitted.call.name != resolved_tool.definition.name:
+        raise OpenApiToolAdapterError("tool call name does not match resolved tool")
+
+    try:
+        arguments_json = canonical_dumps(admitted.call.arguments)
+    except (TypeError, ValueError) as error:
+        raise OpenApiToolAdapterError("tool arguments must be canonical JSON") from error
+
+    return OpenApiOperationInvocation(
+        binding_id=resolved_tool.binding.binding_id,
+        tool_call_id=admitted.call.tool_call_id,
+        connection=implementation.connection,
+        operation_id=implementation.operation_id,
+        arguments_json=arguments_json,
+        arguments_digest=admitted.call.arguments_digest,
+        idempotency_key=admitted.idempotency_key,
+    )
+
+
+__all__ = [
+    "OpenApiOperationInvocation",
+    "OpenApiToolAdapterError",
+    "bind_openapi_operation",
+    "define_openapi_tool",
+    "prepare_openapi_operation_invocation",
+]
