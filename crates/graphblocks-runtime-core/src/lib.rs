@@ -1,3 +1,4 @@
+pub mod application_event;
 pub mod cancellation;
 pub mod journal;
 pub mod lifecycle;
