@@ -66,6 +66,23 @@ def test_resolve_policy_snapshot_pins_effective_policy_identity() -> None:
     assert snapshot.effective_policy_digest == same_snapshot.effective_policy_digest
 
 
+def test_entitlement_digest_is_stable_after_principal_attribute_mutation() -> None:
+    attributes = {"department": "support"}
+    entitlement = EntitlementSnapshot(
+        snapshot_id="ent-immutable",
+        subject=PrincipalRef("user-1", tenant_id="tenant-1", attributes=attributes),
+        scopes=(ResourceRef("tenant:acme"),),
+        source_revision="rev-1",
+        resolved_at="2026-06-23T00:00:00Z",
+    )
+    digest = entitlement.content_digest()
+
+    attributes["department"] = "mutated"
+
+    assert entitlement.subject.attributes == {"department": "support"}
+    assert entitlement.content_digest() == digest
+
+
 def test_static_policy_evaluator_can_be_built_from_policy_bundle() -> None:
     obligation = PolicyObligation("obl-1", "force_sandbox", {"level": "strict"})
     bundle = PolicyBundle(

@@ -45,6 +45,44 @@ def test_policy_request_digest_is_stable_for_semantic_input() -> None:
     assert changed_input.input_digest != request.input_digest
 
 
+def test_policy_request_mappings_are_copied_and_read_only() -> None:
+    principal_attributes = {"tier": "enterprise"}
+    resource_attributes = {"classification": "internal"}
+    requested_usage = [{"dimension": "tokens", "amount": 128}]
+    attributes = {"output_policy_state": "generating"}
+
+    request = PolicyRequest(
+        request_id="req-immutable",
+        enforcement_point="before_tool_or_effect",
+        action="tool.run",
+        principal=PrincipalRef("user-1", attributes=principal_attributes),
+        resource=ResourceRef("tool:search", resource_kind="tool", attributes=resource_attributes),
+        requested_usage=requested_usage,
+        attributes=attributes,
+        occurred_at="2026-06-23T00:00:00Z",
+    )
+
+    principal_attributes["tier"] = "mutated"
+    resource_attributes["classification"] = "mutated"
+    requested_usage[0]["amount"] = 999
+    attributes["output_policy_state"] = "mutated"
+
+    assert request.principal is not None
+    assert request.principal.attributes == {"tier": "enterprise"}
+    assert request.resource.attributes == {"classification": "internal"}
+    assert request.requested_usage == ({"dimension": "tokens", "amount": 128},)
+    assert request.attributes == {"output_policy_state": "generating"}
+    with pytest.raises(TypeError):
+        request.principal.attributes["tier"] = "direct-mutation"
+    with pytest.raises(TypeError):
+        request.resource.attributes["classification"] = "direct-mutation"
+    with pytest.raises(TypeError):
+        request.requested_usage[0]["amount"] = 256
+    with pytest.raises(TypeError):
+        request.attributes["output_policy_state"] = "direct-mutation"
+    assert request.with_input_digest().input_digest.startswith("sha256:")
+
+
 def test_static_policy_evaluator_gives_explicit_deny_precedence() -> None:
     evaluator = StaticPolicyEvaluator(
         rules=[

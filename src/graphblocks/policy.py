@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass, field, is_dataclass, replace
+from dataclasses import dataclass, field, fields, is_dataclass, replace
 from types import MappingProxyType
 from typing import Literal
 
@@ -33,7 +33,12 @@ class PrincipalRef:
     tenant_id: str | None = None
     groups: tuple[str, ...] = field(default_factory=tuple)
     roles: tuple[str, ...] = field(default_factory=tuple)
-    attributes: dict[str, object] = field(default_factory=dict)
+    attributes: Mapping[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "groups", tuple(self.groups))
+        object.__setattr__(self, "roles", tuple(self.roles))
+        object.__setattr__(self, "attributes", MappingProxyType(dict(self.attributes)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,7 +46,10 @@ class ResourceRef:
     resource_id: str
     resource_kind: str | None = None
     tenant_id: str | None = None
-    attributes: dict[str, object] = field(default_factory=dict)
+    attributes: Mapping[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "attributes", MappingProxyType(dict(self.attributes)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,10 +175,19 @@ class PolicyRequest:
     run_id: str | None = None
     atomic_unit: ResourceRef | None = None
     data_labels: tuple[str, ...] = field(default_factory=tuple)
-    requested_usage: tuple[dict[str, object], ...] = field(default_factory=tuple)
-    attributes: dict[str, object] = field(default_factory=dict)
+    requested_usage: tuple[Mapping[str, object], ...] = field(default_factory=tuple)
+    attributes: Mapping[str, object] = field(default_factory=dict)
     policy_snapshot_id: str | None = None
     input_digest: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "data_labels", tuple(self.data_labels))
+        object.__setattr__(
+            self,
+            "requested_usage",
+            tuple(MappingProxyType(dict(usage)) for usage in self.requested_usage),
+        )
+        object.__setattr__(self, "attributes", MappingProxyType(dict(self.attributes)))
 
     def with_input_digest(self) -> PolicyRequest:
         principal = None
@@ -218,7 +235,7 @@ class PolicyRequest:
             "attributes": self.attributes,
             "policy_snapshot_id": self.policy_snapshot_id,
         }
-        return replace(self, input_digest=canonical_hash(payload))
+        return replace(self, input_digest=canonical_hash(_policy_value(payload)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -402,8 +419,8 @@ def resolve_policy_snapshot(
 
 def _policy_value(value: object) -> object:
     if is_dataclass(value):
-        return _policy_value(asdict(value))
-    if isinstance(value, dict):
+        return {field.name: _policy_value(getattr(value, field.name)) for field in fields(value)}
+    if isinstance(value, Mapping):
         return {str(key): _policy_value(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_policy_value(item) for item in value]
