@@ -119,6 +119,22 @@ def test_stdlib_package_has_pure_python_layout() -> None:
     assert (package_root / "src" / "graphblocks_stdlib" / "py.typed").exists()
 
 
+def test_documents_package_has_pure_python_layout_without_parser_dependencies() -> None:
+    package_root = ROOT / "packages" / "graphblocks-documents"
+    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
+    dependencies = pyproject["project"]["dependencies"]
+
+    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
+    assert pyproject["project"]["name"] == "graphblocks-documents"
+    assert dependencies == ["graphblocks-core~=1.0"]
+    assert not any("pdf" in dependency.lower() or "ocr" in dependency.lower() for dependency in dependencies)
+    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
+        "src/graphblocks_documents"
+    ]
+    assert (package_root / "src" / "graphblocks_documents" / "__init__.py").exists()
+    assert (package_root / "src" / "graphblocks_documents" / "py.typed").exists()
+
+
 def test_policy_adapter_packages_have_pure_python_layouts_without_sdk_dependencies() -> None:
     for distribution, import_name in (
         ("graphblocks-policy-opa", "graphblocks_policy_opa"),
