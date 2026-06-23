@@ -167,6 +167,36 @@ impl BlockCatalog {
                     .collect::<Vec<_>>(),
                 _ => Vec::new(),
             };
+            for port in &inputs {
+                if let Some(type_ref) = &port.type_ref
+                    && let Err(error) = SchemaId::parse(type_ref)
+                {
+                    return Err(format!(
+                        "block catalog entry {index} input {} has invalid type {type_ref}: {error}",
+                        port.name
+                    ));
+                }
+            }
+            for port in &outputs {
+                if let Some(type_ref) = &port.type_ref
+                    && let Err(error) = SchemaId::parse(type_ref)
+                {
+                    return Err(format!(
+                        "block catalog entry {index} output {} has invalid type {type_ref}: {error}",
+                        port.name
+                    ));
+                }
+            }
+            for slot in &resource_slots {
+                if let Some(type_ref) = &slot.type_ref
+                    && let Err(error) = SchemaId::parse(type_ref)
+                {
+                    return Err(format!(
+                        "block catalog entry {index} resource slot {} has invalid type {type_ref}: {error}",
+                        slot.name
+                    ));
+                }
+            }
             let descriptor = BlockDescriptor {
                 type_id,
                 version,

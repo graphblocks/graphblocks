@@ -60,6 +60,23 @@ fn compile_graph_requires_metadata_name() {
 }
 
 #[test]
+fn block_catalog_rejects_invalid_descriptor_schema_ids() {
+    assert_eq!(
+        BlockCatalog::from_blocks(&json!([
+            {
+                "typeId": "text.source",
+                "version": 1,
+                "outputs": [{"name": "value", "type": "schemas/Text"}]
+            }
+        ])),
+        Err(
+            "block catalog entry 0 output value has invalid type schemas/Text: schema id must include a major version suffix"
+                .to_owned()
+        ),
+    );
+}
+
+#[test]
 fn compile_graph_migrates_legacy_graph_api_versions() {
     let graph = json!({
         "apiVersion": "graphblocks.ai/v1alpha2",

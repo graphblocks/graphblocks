@@ -10,6 +10,7 @@ from typing import Any
 import yaml
 
 from .diagnostics import Diagnostic, DiagnosticSet
+from .schema import SchemaId, SchemaIdError
 
 PLUGIN_API_VERSION = "graphblocks.ai/v1alpha1"
 STATIC_MANIFEST_NAMES = {
@@ -241,6 +242,33 @@ def validate_plugin_manifest(document: Any) -> DiagnosticSet:
                             f"$.spec.blocks[{index}].{direction}[{port_index}].name",
                         )
                     )
+                    continue
+                type_ref = port.get("type")
+                if isinstance(type_ref, str):
+                    try:
+                        SchemaId.parse(type_ref)
+                    except SchemaIdError as error:
+                        diagnostics.append(
+                            Diagnostic(
+                                "InvalidSchemaId",
+                                f"block {direction[:-1]} type schema id is invalid: {error}",
+                                f"$.spec.blocks[{index}].{direction}[{port_index}].type",
+                            )
+                        )
+        resource_slots = block.get("resourceSlots", [])
+        if isinstance(resource_slots, list):
+            for slot_index, slot in enumerate(resource_slots):
+                if isinstance(slot, dict) and isinstance(slot.get("type"), str):
+                    try:
+                        SchemaId.parse(slot["type"])
+                    except SchemaIdError as error:
+                        diagnostics.append(
+                            Diagnostic(
+                                "InvalidSchemaId",
+                                f"resource slot type schema id is invalid: {error}",
+                                f"$.spec.blocks[{index}].resourceSlots[{slot_index}].type",
+                            )
+                        )
         implementation = str(block.get("implementation") or block.get("implementationId") or "")
         key = (str(block_type), str(version), implementation)
         if key in seen_blocks:

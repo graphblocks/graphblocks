@@ -82,3 +82,33 @@ def test_plugin_manifest_validation_rejects_port_without_name() -> None:
 
     assert not diagnostics.ok
     assert [item.code for item in diagnostics.diagnostics] == ["GB2015"]
+
+
+def test_plugin_manifest_validation_rejects_invalid_descriptor_schema_ids() -> None:
+    diagnostics = validate_plugin_manifest(
+        {
+            "apiVersion": "graphblocks.ai/v1alpha1",
+            "kind": "PluginManifest",
+            "metadata": {"name": "com.example.bad_schema_refs"},
+            "spec": {
+                "pluginId": "com.example.bad_schema_refs",
+                "blocks": [
+                    {
+                        "typeId": "bad.block",
+                        "version": 1,
+                        "inputs": [{"name": "message", "type": "schemas/Message"}],
+                        "resourceSlots": [
+                            {"name": "store", "type": "resources/VectorStore"},
+                        ],
+                    }
+                ],
+            },
+        }
+    )
+
+    assert not diagnostics.ok
+    assert [item.code for item in diagnostics.diagnostics] == ["InvalidSchemaId", "InvalidSchemaId"]
+    assert [item.path for item in diagnostics.diagnostics] == [
+        "$.spec.blocks[0].inputs[0].type",
+        "$.spec.blocks[0].resourceSlots[0].type",
+    ]
