@@ -12,7 +12,15 @@ pub enum DeliveryGuarantee {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DurableError {
     InvalidDemand,
-    DemandExceeded { demand: usize, actual: usize },
+    DemandExceeded {
+        demand: usize,
+        actual: usize,
+    },
+    SourcePaused,
+    StaleCommit {
+        current: SourceCursor,
+        attempted: SourceCursor,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -117,6 +125,74 @@ impl SourceBatch {
 
     pub fn high_cursor(&self) -> Option<&SourceCursor> {
         self.events.iter().map(|event| &event.cursor).max()
+    }
+}
+
+pub struct InMemoryDurableSource {
+    guarantee: DeliveryGuarantee,
+    events: Vec<SourceEvent>,
+    committed_cursor: Option<SourceCursor>,
+    paused: bool,
+}
+
+impl InMemoryDurableSource {
+    pub fn new<I>(guarantee: DeliveryGuarantee, events: I) -> Self
+    where
+        I: IntoIterator<Item = SourceEvent>,
+    {
+        let mut events = events.into_iter().collect::<Vec<_>>();
+        events.sort_by(|left, right| left.cursor.cmp(&right.cursor));
+        Self {
+            guarantee,
+            events,
+            committed_cursor: None,
+            paused: false,
+        }
+    }
+
+    pub fn poll(
+        &self,
+        cursor: Option<SourceCursor>,
+        demand: usize,
+    ) -> Result<SourceBatch, DurableError> {
+        if self.paused {
+            return Err(DurableError::SourcePaused);
+        }
+        let replay_cursor = cursor.as_ref().or(self.committed_cursor.as_ref());
+        let events = self
+            .events
+            .iter()
+            .filter(|event| replay_cursor.is_none_or(|cursor| event.cursor > *cursor))
+            .take(demand)
+            .cloned()
+            .collect::<Vec<_>>();
+        let watermark = events
+            .iter()
+            .filter_map(|event| event.event_time_unix_ms)
+            .max()
+            .map(Watermark::event_time);
+        SourceBatch::new(self.guarantee, events, watermark, demand)
+    }
+
+    pub fn commit(&mut self, cursor: SourceCursor) -> Result<(), DurableError> {
+        if let Some(current) = &self.committed_cursor
+            && cursor < *current
+        {
+            return Err(DurableError::StaleCommit {
+                current: current.clone(),
+                attempted: cursor,
+            });
+        }
+        self.committed_cursor = Some(cursor);
+        Ok(())
+    }
+
+    pub fn pause(&mut self) {
+        self.paused = true;
+    }
+
+    pub fn resume(&mut self) {
+        self.paused = false;
     }
 }
 
