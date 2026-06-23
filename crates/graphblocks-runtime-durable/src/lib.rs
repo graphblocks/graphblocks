@@ -197,6 +197,125 @@ impl InMemoryDurableSource {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct SinkCommitRequest {
+    pub run_id: String,
+    pub node_id: String,
+    pub node_attempt_id: String,
+    pub idempotency_key: String,
+    pub payload: Value,
+}
+
+impl SinkCommitRequest {
+    pub fn new(
+        run_id: impl Into<String>,
+        node_id: impl Into<String>,
+        node_attempt_id: impl Into<String>,
+        idempotency_key: impl Into<String>,
+        payload: Value,
+    ) -> Self {
+        Self {
+            run_id: run_id.into(),
+            node_id: node_id.into(),
+            node_attempt_id: node_attempt_id.into(),
+            idempotency_key: idempotency_key.into(),
+            payload,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SinkCommitResult {
+    pub sink_id: String,
+    pub idempotency_key: String,
+    pub sequence: u64,
+    pub metadata: Value,
+    pub replayed: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SinkCommitError {
+    MissingRunId,
+    MissingNodeId,
+    MissingNodeAttemptId,
+    MissingIdempotencyKey,
+    IdempotencyConflict { idempotency_key: String },
+}
+
+struct SinkCommitRecord {
+    request: SinkCommitRequest,
+    result: SinkCommitResult,
+}
+
+#[derive(Default)]
+pub struct InMemoryDurableSink {
+    sink_id: String,
+    next_sequence: u64,
+    commits_by_idempotency_key: BTreeMap<String, SinkCommitRecord>,
+}
+
+impl InMemoryDurableSink {
+    pub fn new(sink_id: impl Into<String>) -> Self {
+        Self {
+            sink_id: sink_id.into(),
+            next_sequence: 1,
+            commits_by_idempotency_key: BTreeMap::new(),
+        }
+    }
+
+    pub fn commit(
+        &mut self,
+        request: SinkCommitRequest,
+    ) -> Result<SinkCommitResult, SinkCommitError> {
+        if request.run_id.is_empty() {
+            return Err(SinkCommitError::MissingRunId);
+        }
+        if request.node_id.is_empty() {
+            return Err(SinkCommitError::MissingNodeId);
+        }
+        if request.node_attempt_id.is_empty() {
+            return Err(SinkCommitError::MissingNodeAttemptId);
+        }
+        if request.idempotency_key.is_empty() {
+            return Err(SinkCommitError::MissingIdempotencyKey);
+        }
+        if let Some(record) = self
+            .commits_by_idempotency_key
+            .get(&request.idempotency_key)
+        {
+            if record.request != request {
+                return Err(SinkCommitError::IdempotencyConflict {
+                    idempotency_key: request.idempotency_key,
+                });
+            }
+            let mut result = record.result.clone();
+            result.replayed = true;
+            return Ok(result);
+        }
+
+        let result = SinkCommitResult {
+            sink_id: self.sink_id.clone(),
+            idempotency_key: request.idempotency_key.clone(),
+            sequence: self.next_sequence,
+            metadata: request.payload.clone(),
+            replayed: false,
+        };
+        self.next_sequence = self.next_sequence.saturating_add(1);
+        self.commits_by_idempotency_key.insert(
+            request.idempotency_key.clone(),
+            SinkCommitRecord {
+                request,
+                result: result.clone(),
+            },
+        );
+        Ok(result)
+    }
+
+    pub fn committed_count(&self) -> usize {
+        self.commits_by_idempotency_key.len()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct SchemaRef {
     pub schema_id: String,
     pub schema_version: u32,
