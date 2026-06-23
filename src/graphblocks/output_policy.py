@@ -356,6 +356,8 @@ class OutputDeliveryGate:
             return OutputGateUpdate(deliverable=[])
 
         if decision.disposition in {"redact", "replace"}:
+            if decision.disposition == "redact" and not decision.replacement_parts and not decision.redactions:
+                return OutputGateUpdate(deliverable=[])
             if decision.accepted_through_sequence is not None:
                 self.last_policy_accepted_sequence = max(
                     self.last_policy_accepted_sequence,

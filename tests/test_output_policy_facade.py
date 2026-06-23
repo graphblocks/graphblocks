@@ -191,6 +191,26 @@ def test_output_delivery_gate_applies_typed_redaction_instruction_before_deliver
     assert gate.last_client_delivered_sequence == 1
 
 
+def test_output_delivery_gate_redact_without_replacement_holds_original_pending_chunk() -> None:
+    gate = OutputDeliveryGate("stream-1", "response-1")
+    gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "secret value"))
+
+    redacted = gate.apply_decision(
+        OutputPolicyDecision.redact(
+            "decision-redact",
+            accepted_through_sequence=1,
+            input_digest="sha256:redact",
+        ),
+        occurred_at="2026-06-23T00:00:01Z",
+    )
+
+    assert redacted.deliverable == []
+    assert redacted.cutoff is None
+    assert gate.last_policy_accepted_sequence == 0
+    assert gate.last_client_delivered_sequence == 0
+    assert gate.commit_accepted_output() == []
+
+
 def test_output_delivery_gate_policy_abort_cuts_off_and_rejects_late_chunks() -> None:
     gate = OutputDeliveryGate("stream-1", "response-1", turn_id="turn-1")
     gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "safe "))
