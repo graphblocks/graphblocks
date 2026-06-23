@@ -32,6 +32,50 @@ impl SearchRequest {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct AuthContext {
+    pub tenant_id: String,
+    pub principal_id: String,
+    pub groups: BTreeSet<String>,
+    pub roles: BTreeSet<String>,
+    pub attributes: BTreeMap<String, Value>,
+}
+
+impl AuthContext {
+    pub fn new(tenant_id: impl Into<String>, principal_id: impl Into<String>) -> Self {
+        Self {
+            tenant_id: tenant_id.into(),
+            principal_id: principal_id.into(),
+            groups: BTreeSet::new(),
+            roles: BTreeSet::new(),
+            attributes: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_groups<I, S>(mut self, groups: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.groups = groups.into_iter().map(Into::into).collect();
+        self
+    }
+
+    pub fn with_roles<I, S>(mut self, roles: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.roles = roles.into_iter().map(Into::into).collect();
+        self
+    }
+
+    pub fn with_attribute(mut self, name: impl Into<String>, value: Value) -> Self {
+        self.attributes.insert(name.into(), value);
+        self
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct RetrievalResult {
     pub retrieval_id: String,
     pub request: SearchRequest,
@@ -413,6 +457,13 @@ pub enum RagError {
     InvalidPerDocumentMaxChunks,
     InvalidFusionK,
     WeightCountMismatch,
+    AuthContextRequired {
+        resource_id: String,
+    },
+    InvalidAcl {
+        resource_id: String,
+        message: String,
+    },
 }
 
 impl fmt::Display for RagError {
@@ -425,6 +476,16 @@ impl fmt::Display for RagError {
             Self::WeightCountMismatch => {
                 write!(formatter, "weights length must match hit_sets length")
             }
+            Self::AuthContextRequired { resource_id } => {
+                write!(
+                    formatter,
+                    "auth context is required to access {resource_id:?}"
+                )
+            }
+            Self::InvalidAcl {
+                resource_id,
+                message,
+            } => write!(formatter, "ACL for {resource_id:?} is invalid: {message}"),
         }
     }
 }
@@ -451,6 +512,19 @@ pub fn knowledge_item_from_chunk(chunk: &DocumentChunk) -> KnowledgeItemRef {
         .with_metadata(metadata);
     item.acl = chunk.acl.clone();
     item
+}
+
+pub fn authorize_search_hits(
+    hits: &[SearchHit],
+    auth: Option<&AuthContext>,
+) -> Result<Vec<SearchHit>, RagError> {
+    let mut authorized = Vec::new();
+    for hit in hits {
+        if acl_allows(&hit.hit_id, &hit.item.acl, auth)? {
+            authorized.push(hit.clone());
+        }
+    }
+    Ok(authorized)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -952,4 +1026,177 @@ pub fn validate_answer_citations(
         issues,
         abstention: None,
     })
+}
+
+pub fn validate_answer_citation_authorization(
+    answer: &Answer,
+    context: &ContextPack,
+    auth: Option<&AuthContext>,
+) -> Result<CitationValidationResult, RagError> {
+    let mut issues = Vec::new();
+    for citation in &answer.citations {
+        let mut matched_context_source = false;
+        let mut has_authorized_source = false;
+        for hit in &context.hits {
+            for source_ref in std::iter::once(&hit.item.source).chain(hit.highlights.iter()) {
+                if source_ref.source_id == citation.source.source_id
+                    && citation
+                        .source
+                        .revision
+                        .as_ref()
+                        .is_none_or(|expected| Some(expected) == source_ref.revision.as_ref())
+                    && citation
+                        .source
+                        .digest
+                        .as_ref()
+                        .is_none_or(|expected| Some(expected) == source_ref.digest.as_ref())
+                {
+                    matched_context_source = true;
+                    if acl_allows(&hit.hit_id, &hit.item.acl, auth)? {
+                        has_authorized_source = true;
+                    }
+                }
+            }
+        }
+        if !matched_context_source {
+            issues.push(
+                CitationValidationIssue::new(
+                    "citation.source_not_in_context",
+                    format!(
+                        "citation {:?} does not point to the current context",
+                        citation.citation_id
+                    ),
+                    CitationSeverity::Error,
+                )
+                .with_citation_id(&citation.citation_id),
+            );
+        } else if !has_authorized_source {
+            issues.push(
+                CitationValidationIssue::new(
+                    "citation.source_not_authorized",
+                    format!(
+                        "citation {:?} points to a source outside the principal authorization scope",
+                        citation.citation_id
+                    ),
+                    CitationSeverity::Error,
+                )
+                .with_citation_id(&citation.citation_id),
+            );
+        }
+    }
+    Ok(CitationValidationResult {
+        ok: issues.is_empty(),
+        issues,
+        abstention: None,
+    })
+}
+
+fn acl_allows(
+    resource_id: &str,
+    acl: &Option<Value>,
+    auth: Option<&AuthContext>,
+) -> Result<bool, RagError> {
+    let Some(acl) = acl else {
+        return Ok(true);
+    };
+    if acl.is_null() {
+        return Ok(true);
+    }
+    let Some(acl) = acl.as_object() else {
+        return Err(RagError::InvalidAcl {
+            resource_id: resource_id.to_owned(),
+            message: "ACL must be an object".to_owned(),
+        });
+    };
+    if acl.get("public").and_then(Value::as_bool) == Some(true) {
+        return Ok(true);
+    }
+    let Some(auth) = auth else {
+        return Err(RagError::AuthContextRequired {
+            resource_id: resource_id.to_owned(),
+        });
+    };
+    if let Some(tenant_id) = acl.get("tenant_id").and_then(Value::as_str)
+        && tenant_id != auth.tenant_id
+    {
+        return Ok(false);
+    }
+
+    let mut has_selector = false;
+    if let Some(principals) = acl.get("principals") {
+        let Some(principals) = principals.as_array() else {
+            return Err(RagError::InvalidAcl {
+                resource_id: resource_id.to_owned(),
+                message: "principals must be an array".to_owned(),
+            });
+        };
+        has_selector = true;
+        for principal in principals {
+            let Some(principal) = principal.as_str() else {
+                return Err(RagError::InvalidAcl {
+                    resource_id: resource_id.to_owned(),
+                    message: "principals entries must be strings".to_owned(),
+                });
+            };
+            if principal == auth.principal_id {
+                return Ok(true);
+            }
+        }
+    }
+    if let Some(groups) = acl.get("groups") {
+        let Some(groups) = groups.as_array() else {
+            return Err(RagError::InvalidAcl {
+                resource_id: resource_id.to_owned(),
+                message: "groups must be an array".to_owned(),
+            });
+        };
+        has_selector = true;
+        for group in groups {
+            let Some(group) = group.as_str() else {
+                return Err(RagError::InvalidAcl {
+                    resource_id: resource_id.to_owned(),
+                    message: "groups entries must be strings".to_owned(),
+                });
+            };
+            if auth.groups.contains(group) {
+                return Ok(true);
+            }
+        }
+    }
+    if let Some(roles) = acl.get("roles") {
+        let Some(roles) = roles.as_array() else {
+            return Err(RagError::InvalidAcl {
+                resource_id: resource_id.to_owned(),
+                message: "roles must be an array".to_owned(),
+            });
+        };
+        has_selector = true;
+        for role in roles {
+            let Some(role) = role.as_str() else {
+                return Err(RagError::InvalidAcl {
+                    resource_id: resource_id.to_owned(),
+                    message: "roles entries must be strings".to_owned(),
+                });
+            };
+            if auth.roles.contains(role) {
+                return Ok(true);
+            }
+        }
+    }
+    if let Some(attributes) = acl.get("attributes") {
+        let Some(attributes) = attributes.as_object() else {
+            return Err(RagError::InvalidAcl {
+                resource_id: resource_id.to_owned(),
+                message: "attributes must be an object".to_owned(),
+            });
+        };
+        has_selector = true;
+        if attributes
+            .iter()
+            .all(|(name, expected)| auth.attributes.get(name) == Some(expected))
+        {
+            return Ok(true);
+        }
+    }
+    Ok(!has_selector)
 }

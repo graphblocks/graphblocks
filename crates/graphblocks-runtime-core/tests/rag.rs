@@ -4,9 +4,10 @@ use graphblocks_runtime_core::documents::{
     parse_plain_text_document,
 };
 use graphblocks_runtime_core::rag::{
-    Answer, Citation, Claim, ContextBuildOptions, FailurePolicy, FusionOptions, FusionStrategy,
-    InMemoryChunkRetriever, KnowledgeItemRef, SearchHit, SearchRequest, build_context_pack,
-    fuse_search_hits, validate_answer_citations,
+    Answer, AuthContext, Citation, Claim, ContextBuildOptions, FailurePolicy, FusionOptions,
+    FusionStrategy, InMemoryChunkRetriever, KnowledgeItemRef, RagError, SearchHit, SearchRequest,
+    authorize_search_hits, build_context_pack, fuse_search_hits, knowledge_item_from_chunk,
+    validate_answer_citation_authorization, validate_answer_citations,
 };
 use serde_json::json;
 
@@ -84,6 +85,84 @@ fn in_memory_chunk_retriever_returns_ranked_hits_with_lineage() {
     assert_eq!(result.hits[0].raw_score, Some(2.0));
     assert_eq!(result.hits[1].normalized_score, Some(0.5));
     assert_eq!(result.hits[0].highlights[0], chunks[0].source_refs[0]);
+}
+
+#[test]
+fn knowledge_item_from_chunk_preserves_acl_for_authorized_retrieval() {
+    let (asset, mut revision) = create_local_text_revision(
+        "file:///tmp/policy.txt",
+        "alpha policy\n",
+        "2026-06-22T00:00:00Z",
+        Some("policy.txt"),
+    );
+    revision.acl = Some(json!({
+        "tenant_id": "acme",
+        "groups": ["support"],
+    }));
+    let document = parse_plain_text_document(&asset, &revision, "alpha policy\n");
+    let chunk = chunk_document_by_lines(&document, &revision, 1)
+        .expect("chunking succeeds")
+        .remove(0);
+
+    let item = knowledge_item_from_chunk(&chunk);
+
+    assert_eq!(item.acl, revision.acl);
+}
+
+#[test]
+fn authorize_search_hits_requires_auth_context_for_protected_hits() {
+    let mut protected = hit("hit-1", "chunk-1", "doc-1", "alpha", 1);
+    protected.item.acl = Some(json!({
+        "tenant_id": "acme",
+        "principals": ["user-1"],
+    }));
+
+    let error = authorize_search_hits(&[protected], None).expect_err("auth context is required");
+
+    assert!(matches!(error, RagError::AuthContextRequired { .. }));
+}
+
+#[test]
+fn authorize_search_hits_filters_by_principal_group_role_and_tenant()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut principal_hit = hit("hit-1", "chunk-1", "doc-1", "alpha", 1);
+    principal_hit.item.acl = Some(json!({
+        "tenant_id": "acme",
+        "principals": ["user-1"],
+    }));
+    let mut group_hit = hit("hit-2", "chunk-2", "doc-2", "beta", 2);
+    group_hit.item.acl = Some(json!({
+        "tenant_id": "acme",
+        "groups": ["support"],
+    }));
+    let mut role_hit = hit("hit-3", "chunk-3", "doc-3", "gamma", 3);
+    role_hit.item.acl = Some(json!({
+        "tenant_id": "acme",
+        "roles": ["admin"],
+    }));
+    let mut denied_hit = hit("hit-4", "chunk-4", "doc-4", "delta", 4);
+    denied_hit.item.acl = Some(json!({
+        "tenant_id": "acme",
+        "groups": ["finance"],
+    }));
+    let public_hit = hit("hit-5", "chunk-5", "doc-5", "epsilon", 5);
+    let auth = AuthContext::new("acme", "user-1")
+        .with_groups(["support"])
+        .with_roles(["admin"]);
+
+    let authorized = authorize_search_hits(
+        &[principal_hit, group_hit, role_hit, denied_hit, public_hit],
+        Some(&auth),
+    )?;
+
+    assert_eq!(
+        authorized
+            .iter()
+            .map(|hit| hit.hit_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["hit-1", "hit-2", "hit-3", "hit-5"]
+    );
+    Ok(())
 }
 
 #[test]
@@ -265,4 +344,45 @@ fn validate_answer_citations_accepts_current_context_source() {
     assert!(result.ok);
     assert!(result.issues.is_empty());
     assert!(result.abstention.is_none());
+}
+
+#[test]
+fn validate_answer_citation_authorization_rejects_citation_to_unauthorized_source()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut source_hit = hit(
+        "hit-1",
+        "chunk-1",
+        "doc-1",
+        "Alpha policy requires audit logs.",
+        1,
+    );
+    source_hit.item.acl = Some(json!({
+        "tenant_id": "acme",
+        "principals": ["user-2"],
+    }));
+    let context = build_context_pack("ctx-1", vec![source_hit], ContextBuildOptions::new(10))
+        .expect("context build succeeds");
+    let citation = Citation::new("cite-1", context.hits[0].item.source.clone())
+        .with_cited_text("requires audit logs");
+    let answer = Answer::new("answer-1", "Alpha policy requires audit logs.")
+        .with_claim(
+            Claim::new("claim-1", "Alpha policy requires audit logs.")
+                .with_citation_ids(["cite-1"]),
+        )
+        .with_citation(citation);
+    let auth = AuthContext::new("acme", "user-1");
+
+    let result = validate_answer_citation_authorization(&answer, &context, Some(&auth))?;
+
+    assert!(!result.ok);
+    assert_eq!(
+        result
+            .issues
+            .iter()
+            .map(|issue| issue.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["citation.source_not_authorized"]
+    );
+    assert_eq!(result.issues[0].citation_id.as_deref(), Some("cite-1"));
+    Ok(())
 }
