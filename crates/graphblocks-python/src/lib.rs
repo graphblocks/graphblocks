@@ -2,6 +2,10 @@ use std::collections::BTreeMap;
 
 use graphblocks_compiler::compiler::compile_graph;
 use graphblocks_compiler::diagnostics::Severity;
+use graphblocks_protocol::{
+    RemotePayload, RemotePayloadError, RemotePayloadLimits, WorkerAdmissionPolicy,
+    WorkerAdvertisement, WorkerProtocolError, admit_worker_with_policy, validate_remote_payload,
+};
 use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory, Outcome};
 use graphblocks_runtime_core::readiness::{InputDependency, PortRef, ResolvedInput};
 use graphblocks_runtime_core::scheduler::{ScheduledNode, StartedNode};
@@ -46,6 +50,92 @@ fn compile_graph_json(document_json: &str) -> PyResult<String> {
 
     serde_json::to_string(&payload).map_err(|error| {
         PyRuntimeError::new_err(format!("failed to serialize compiler result: {error}"))
+    })
+}
+
+#[pyfunction]
+fn validate_worker_advertisement_json(
+    advertisement_json: &str,
+    expected_package_lock_hash: Option<&str>,
+) -> PyResult<String> {
+    let advertisement =
+        serde_json::from_str::<WorkerAdvertisement>(advertisement_json).map_err(|error| {
+            PyValueError::new_err(format!("invalid worker advertisement JSON: {error}"))
+        })?;
+    let mut policy = WorkerAdmissionPolicy::current();
+    if let Some(package_lock_hash) = expected_package_lock_hash {
+        policy = policy.require_package_lock_hash(package_lock_hash);
+    }
+    let payload = match admit_worker_with_policy(&policy, &advertisement) {
+        Ok(()) => json!({"ok": true}),
+        Err(error) => {
+            let error_payload = match error {
+                WorkerProtocolError::IncompatibleVersion { expected, actual } => json!({
+                    "code": "worker.incompatible_protocol_version",
+                    "expected": expected,
+                    "actual": actual,
+                }),
+                WorkerProtocolError::IncompatiblePackageLock { expected, actual } => json!({
+                    "code": "worker.incompatible_package_lock",
+                    "expected": expected,
+                    "actual": actual,
+                }),
+                WorkerProtocolError::EmptyWorkerId => json!({"code": "worker.empty_worker_id"}),
+                WorkerProtocolError::EmptyTargetId => json!({"code": "worker.empty_target_id"}),
+                WorkerProtocolError::EmptyPackageLockHash => {
+                    json!({"code": "worker.empty_package_lock_hash"})
+                }
+                WorkerProtocolError::EmptyImageDigest => {
+                    json!({"code": "worker.empty_image_digest"})
+                }
+                WorkerProtocolError::EmptySupportedBlocks => {
+                    json!({"code": "worker.empty_supported_blocks"})
+                }
+            };
+            json!({"ok": false, "error": error_payload})
+        }
+    };
+
+    serde_json::to_string(&payload).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize worker protocol result: {error}"
+        ))
+    })
+}
+
+#[pyfunction]
+fn validate_remote_payload_json(payload_json: &str, max_inline_bytes: usize) -> PyResult<String> {
+    let payload = serde_json::from_str::<RemotePayload>(payload_json)
+        .map_err(|error| PyValueError::new_err(format!("invalid remote payload JSON: {error}")))?;
+    let limits = RemotePayloadLimits { max_inline_bytes };
+    let result_payload = match validate_remote_payload(&payload, &limits) {
+        Ok(()) => json!({"ok": true}),
+        Err(error) => {
+            let error_payload = match error {
+                RemotePayloadError::OversizedInlinePayload {
+                    max_inline_bytes,
+                    actual_inline_bytes,
+                } => json!({
+                    "code": "remote_payload.oversized_inline",
+                    "maxInlineBytes": max_inline_bytes,
+                    "actualInlineBytes": actual_inline_bytes,
+                }),
+                RemotePayloadError::InvalidArtifactRef { field } => json!({
+                    "code": "remote_payload.invalid_artifact_ref",
+                    "field": field,
+                }),
+                RemotePayloadError::InlineJsonEncoding => {
+                    json!({"code": "remote_payload.inline_json_encoding"})
+                }
+            };
+            json!({"ok": false, "error": error_payload})
+        }
+    };
+
+    serde_json::to_string(&result_payload).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize remote payload result: {error}"
+        ))
     })
 }
 
@@ -586,6 +676,11 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("__version__", env!("CARGO_PKG_VERSION"))?;
     module.add_function(wrap_pyfunction!(binding_version, module)?)?;
     module.add_function(wrap_pyfunction!(compile_graph_json, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        validate_worker_advertisement_json,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(validate_remote_payload_json, module)?)?;
     module.add_function(wrap_pyfunction!(run_test_graph_json, module)?)?;
     module.add_function(wrap_pyfunction!(run_stdlib_graph_json, module)?)?;
     Ok(())
@@ -595,7 +690,10 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
 mod tests {
     use serde_json::{Value, json};
 
-    use super::{compile_graph_json, run_stdlib_graph_json, run_test_graph_json};
+    use super::{
+        compile_graph_json, run_stdlib_graph_json, run_test_graph_json,
+        validate_remote_payload_json, validate_worker_advertisement_json,
+    };
 
     #[test]
     fn compile_graph_json_matches_shared_tck_cases() -> Result<(), String> {
@@ -669,6 +767,64 @@ mod tests {
             assert_eq!(actual_error_codes, expected_error_codes, "{name}");
         }
 
+        Ok(())
+    }
+
+    #[test]
+    fn validate_worker_advertisement_json_reports_package_lock_mismatch() -> Result<(), String> {
+        let advertisement = json!({
+            "protocolVersion": 1,
+            "workerId": "worker-local-1",
+            "targetId": "doc-cpu",
+            "packageLockHash": "sha256:actual",
+            "imageDigest": "sha256:image",
+            "supportedBlocks": [{"block": "prompt.render@1"}],
+            "state": "ready"
+        });
+        let advertisement_json =
+            serde_json::to_string(&advertisement).map_err(|error| error.to_string())?;
+        let result_json =
+            validate_worker_advertisement_json(&advertisement_json, Some("sha256:expected"))
+                .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(result.get("ok"), Some(&json!(false)));
+        assert_eq!(
+            result.pointer("/error/code").and_then(Value::as_str),
+            Some("worker.incompatible_package_lock"),
+        );
+        assert_eq!(
+            result.pointer("/error/expected").and_then(Value::as_str),
+            Some("sha256:expected"),
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn validate_remote_payload_json_rejects_oversized_inline_payload() -> Result<(), String> {
+        let payload = json!({
+            "mode": "inline",
+            "schema": "graphblocks.ai/Message@1",
+            "value": {"body": "this inline payload is too large"}
+        });
+        let payload_json = serde_json::to_string(&payload).map_err(|error| error.to_string())?;
+        let result_json =
+            validate_remote_payload_json(&payload_json, 8).map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(result.get("ok"), Some(&json!(false)));
+        assert_eq!(
+            result.pointer("/error/code").and_then(Value::as_str),
+            Some("remote_payload.oversized_inline"),
+        );
+        assert_eq!(
+            result
+                .pointer("/error/maxInlineBytes")
+                .and_then(Value::as_u64),
+            Some(8),
+        );
         Ok(())
     }
 

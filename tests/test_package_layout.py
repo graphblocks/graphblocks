@@ -19,6 +19,7 @@ def test_graphblocks_python_crate_is_workspace_member() -> None:
     assert crate["lib"]["name"] == "graphblocks_python"
     assert "cdylib" in crate["lib"]["crate-type"]
     assert crate["dependencies"]["graphblocks-runtime-core"]["path"] == "../graphblocks-runtime-core"
+    assert crate["dependencies"]["graphblocks-protocol"]["path"] == "../graphblocks-protocol"
     assert "pyo3" in crate["dependencies"]
 
 
@@ -36,3 +37,6 @@ def test_graphblocks_runtime_package_delegates_to_workspace_binding() -> None:
     package_root = ROOT / "packages" / "graphblocks-runtime" / "src" / "graphblocks_runtime"
     assert (package_root / "__init__.py").exists()
     assert (package_root / "py.typed").exists()
+    wrapper = (package_root / "__init__.py").read_text(encoding="utf-8")
+    assert "validate_worker_advertisement_json" in wrapper
+    assert "validate_remote_payload_json" in wrapper

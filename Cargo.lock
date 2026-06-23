@@ -130,6 +130,7 @@ name = "graphblocks-python"
 version = "0.1.0"
 dependencies = [
  "graphblocks-compiler",
+ "graphblocks-protocol",
  "graphblocks-runtime-core",
  "pyo3",
  "serde_json",
