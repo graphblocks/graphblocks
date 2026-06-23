@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 import tomllib
 
+from graphblocks.packages import load_package_catalog, package_rows
+
 
 ROOT = Path(__file__).parents[1]
 
@@ -42,3 +44,26 @@ def test_graphblocks_runtime_package_delegates_to_workspace_binding() -> None:
     assert "evaluate_output_gate_json" in wrapper
     assert "validate_worker_advertisement_json" in wrapper
     assert "validate_remote_payload_json" in wrapper
+
+
+def test_tool_adapter_packages_are_cataloged_as_optional_integrations() -> None:
+    rows = {row["distribution"]: row for row in package_rows(load_package_catalog())}
+
+    assert rows["graphblocks-mcp"] == {
+        "distribution": "graphblocks-mcp",
+        "import": "graphblocks_mcp",
+        "default": False,
+        "layer": "integration",
+        "kind": "pure_python",
+        "implementationPhase": 2,
+        "stability": "integration",
+    }
+    assert rows["graphblocks-openapi"] == {
+        "distribution": "graphblocks-openapi",
+        "import": "graphblocks_openapi",
+        "default": False,
+        "layer": "integration",
+        "kind": "pure_python",
+        "implementationPhase": 2,
+        "stability": "integration",
+    }

@@ -554,6 +554,32 @@ packages:
   - reviewer credential provider SPI
   implementationPhase: 5
   stability: first-party-extension
+- distribution: graphblocks-mcp
+  import: graphblocks_mcp
+  layer: integration
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-core
+  responsibility:
+  - MCP server tool adapter
+  - ToolDefinition discovery from MCP capabilities
+  - ToolBinding execution bridge for MCP calls
+  implementationPhase: 2
+  stability: integration
+- distribution: graphblocks-openapi
+  import: graphblocks_openapi
+  layer: integration
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-core
+  responsibility:
+  - OpenAPI operation tool adapter
+  - ToolDefinition generation from operation schemas
+  - ToolBinding execution bridge for OpenAPI calls
+  implementationPhase: 2
+  stability: integration
 - distribution: graphblocks-policy-opa
   import: graphblocks_policy_opa
   layer: governance_adapter
