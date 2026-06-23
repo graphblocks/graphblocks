@@ -135,3 +135,29 @@ def test_plugin_manifest_validation_allows_descriptor_type_expressions() -> None
     )
 
     assert diagnostics.ok
+
+
+def test_plugin_manifest_validation_rejects_invalid_dict_resource_slot_schema_ids() -> None:
+    diagnostics = validate_plugin_manifest(
+        {
+            "apiVersion": "graphblocks.ai/v1alpha1",
+            "kind": "PluginManifest",
+            "metadata": {"name": "com.example.bad_resource_slot_schema_ref"},
+            "spec": {
+                "pluginId": "com.example.bad_resource_slot_schema_ref",
+                "blocks": [
+                    {
+                        "typeId": "bad.block",
+                        "version": 1,
+                        "resourceSlots": {"store": {"type": "resources/VectorStore"}},
+                    }
+                ],
+            },
+        }
+    )
+
+    assert not diagnostics.ok
+    assert [item.code for item in diagnostics.diagnostics] == ["InvalidSchemaId"]
+    assert [item.path for item in diagnostics.diagnostics] == [
+        "$.spec.blocks[0].resourceSlots.store.type",
+    ]

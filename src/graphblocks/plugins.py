@@ -304,6 +304,23 @@ def validate_plugin_manifest(document: Any) -> DiagnosticSet:
                                 f"$.spec.blocks[{index}].resourceSlots[{slot_index}].type",
                             )
                         )
+        elif isinstance(resource_slots, dict):
+            for slot_name, slot in resource_slots.items():
+                if (
+                    isinstance(slot, dict)
+                    and isinstance(slot.get("type"), str)
+                    and _is_direct_schema_type_ref(slot["type"])
+                ):
+                    try:
+                        SchemaId.parse(slot["type"])
+                    except SchemaIdError as error:
+                        diagnostics.append(
+                            Diagnostic(
+                                "InvalidSchemaId",
+                                f"resource slot type schema id is invalid: {error}",
+                                f"$.spec.blocks[{index}].resourceSlots.{slot_name}.type",
+                            )
+                        )
         implementation = str(block.get("implementation") or block.get("implementationId") or "")
         key = (str(block_type), str(version), implementation)
         if key in seen_blocks:
