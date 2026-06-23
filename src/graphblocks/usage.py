@@ -92,5 +92,6 @@ class InMemoryUsageLedger:
             provider_response_id=original.provider_response_id,
             pricing_ref=original.pricing_ref,
             reconciliation_of=original.record_id,
+            metadata=dict(original.metadata),
         )
         return self.append(reconciled)

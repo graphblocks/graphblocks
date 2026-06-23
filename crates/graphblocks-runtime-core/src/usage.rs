@@ -246,7 +246,7 @@ impl InMemoryUsageLedger {
             provider_response_id: original.provider_response_id,
             pricing_ref: original.pricing_ref,
             reconciliation_of: Some(original.record_id),
-            metadata: BTreeMap::new(),
+            metadata: original.metadata,
         };
 
         self.append(reconciled)
@@ -455,7 +455,7 @@ impl SqliteUsageLedger {
             provider_response_id: original.provider_response_id,
             pricing_ref: original.pricing_ref,
             reconciliation_of: Some(original.record_id),
-            metadata: BTreeMap::new(),
+            metadata: original.metadata,
         };
 
         self.append(reconciled)

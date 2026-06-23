@@ -70,6 +70,7 @@ def test_usage_ledger_reconcile_writes_new_record_for_late_final_usage() -> None
             attempt_id="attempt-1",
             provider_response_id="resp-1",
             pricing_ref="pricing-2026-06",
+            metadata={"tool_call_id": "call-1", "tool_name": "knowledge.search"},
         )
     )
 
@@ -85,4 +86,5 @@ def test_usage_ledger_reconcile_writes_new_record_for_late_final_usage() -> None
     assert reconciled.reconciliation_of == "usage-provisional"
     assert reconciled.provider_response_id == "resp-1"
     assert reconciled.pricing_ref == "pricing-2026-06"
+    assert reconciled.metadata == {"tool_call_id": "call-1", "tool_name": "knowledge.search"}
     assert ledger.records_for_run("run-1") == [provisional, reconciled]

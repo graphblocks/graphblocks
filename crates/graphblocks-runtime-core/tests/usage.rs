@@ -88,7 +88,9 @@ fn usage_ledger_reconcile_writes_new_record_for_late_final_usage() -> Result<(),
         .with_run_id("run-1")
         .with_attempt_id("attempt-1")
         .with_provider_response_id("resp-1")
-        .with_pricing_ref("pricing-2026-06"),
+        .with_pricing_ref("pricing-2026-06")
+        .with_metadata("tool_call_id", "call-1")
+        .with_metadata("tool_name", "knowledge.search"),
     )?;
 
     let reconciled = ledger.reconcile(
@@ -108,6 +110,14 @@ fn usage_ledger_reconcile_writes_new_record_for_late_final_usage() -> Result<(),
     assert_eq!(reconciled.attempt_id.as_deref(), Some("attempt-1"));
     assert_eq!(reconciled.provider_response_id.as_deref(), Some("resp-1"));
     assert_eq!(reconciled.pricing_ref.as_deref(), Some("pricing-2026-06"));
+    assert_eq!(
+        reconciled.metadata.get("tool_call_id").map(String::as_str),
+        Some("call-1")
+    );
+    assert_eq!(
+        reconciled.metadata.get("tool_name").map(String::as_str),
+        Some("knowledge.search")
+    );
     assert_eq!(
         ledger.records_for_run("run-1"),
         vec![provisional, reconciled]
@@ -153,7 +163,9 @@ fn sqlite_usage_ledger_deduplicates_provider_response_and_reconciles_late_usage(
     )
     .with_run_id("run-1")
     .with_attempt_id("attempt-1")
-    .with_provider_response_id("resp-1");
+    .with_provider_response_id("resp-1")
+    .with_metadata("tool_call_id", "call-1")
+    .with_metadata("tool_name", "ticket.create");
     let duplicate = UsageRecord::new(
         "usage-duplicate",
         UsageSource::ProviderReported,
@@ -177,6 +189,14 @@ fn sqlite_usage_ledger_deduplicates_provider_response_and_reconciles_late_usage(
 
     assert_eq!(reconciled.source, UsageSource::Reconciled);
     assert_eq!(reconciled.reconciliation_of.as_deref(), Some("usage-1"));
+    assert_eq!(
+        reconciled.metadata.get("tool_call_id").map(String::as_str),
+        Some("call-1")
+    );
+    assert_eq!(
+        reconciled.metadata.get("tool_name").map(String::as_str),
+        Some("ticket.create")
+    );
     assert_eq!(ledger.records_for_run("run-1")?, vec![first, reconciled]);
     Ok(())
 }
