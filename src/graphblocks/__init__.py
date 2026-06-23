@@ -145,6 +145,9 @@ from .tools import (
     ToolCallDraft,
     ToolCallError,
     ToolDefinition,
+    ToolExecutionPlan,
+    ToolExecutionPlanError,
+    ToolPlanCall,
     ToolResult,
 )
 from .rag import (
@@ -318,6 +321,9 @@ __all__ = [
     "ToolCallDraft",
     "ToolCallError",
     "ToolDefinition",
+    "ToolExecutionPlan",
+    "ToolExecutionPlanError",
+    "ToolPlanCall",
     "ToolResult",
     "Turn",
     "TrialResult",

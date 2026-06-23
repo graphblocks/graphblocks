@@ -41,9 +41,17 @@ ToolCallStatus = Literal[
     "expired",
 ]
 ToolResultStatus = Literal["completed", "failed", "denied", "cancelled", "policy_stopped", "incomplete"]
+ToolExecutionFailurePolicy = Literal["fail_fast", "collect", "return_failures_to_model"]
+ToolExecutionCancellationPolicy = Literal["cancel_dependents", "cancel_all", "allow_independent_calls"]
+ToolExecutionState = Literal["pending", "running", "completed", "failed", "denied", "cancelled", "skipped"]
+PendingToolCallsDisposition = Literal["keep", "deny", "cancel_admitted"]
 
 
 class ToolCallError(RuntimeError):
+    pass
+
+
+class ToolExecutionPlanError(RuntimeError):
     pass
 
 
@@ -318,6 +326,132 @@ class ToolCall:
         completed_at: str | None = None,
     ) -> ToolCall:
         return replace(self, status=status, admitted_at=admitted_at, completed_at=completed_at)
+
+
+@dataclass(frozen=True, slots=True)
+class ToolPlanCall:
+    call: ToolCall
+    effect_key: str | None = None
+
+
+@dataclass(slots=True)
+class ToolExecutionPlan:
+    plan_id: str
+    response_id: str
+    calls: tuple[ToolPlanCall, ...]
+    maximum_parallelism: int
+    failure_policy: ToolExecutionFailurePolicy = "return_failures_to_model"
+    cancellation_policy: ToolExecutionCancellationPolicy = "cancel_dependents"
+    _states: dict[str, ToolExecutionState] = field(init=False, repr=False)
+    _calls_by_id: dict[str, ToolPlanCall] = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.maximum_parallelism <= 0:
+            raise ToolExecutionPlanError("maximum_parallelism must be positive")
+        self.calls = tuple(self.calls)
+        self._states = {}
+        self._calls_by_id = {}
+        for planned_call in self.calls:
+            tool_call_id = planned_call.call.tool_call_id
+            if tool_call_id in self._calls_by_id:
+                raise ToolExecutionPlanError(f"duplicate tool call {tool_call_id}")
+            self._calls_by_id[tool_call_id] = planned_call
+            self._states[tool_call_id] = "pending"
+
+    def state(self, tool_call_id: str) -> ToolExecutionState | None:
+        return self._states.get(tool_call_id)
+
+    def ready_call_ids(self) -> list[str]:
+        running_count = self._running_count()
+        if running_count >= self.maximum_parallelism:
+            return []
+
+        remaining_slots = self.maximum_parallelism - running_count
+        reserved_effect_keys = self._running_effect_keys()
+        ready: list[str] = []
+        for planned_call in self.calls:
+            if remaining_slots == 0:
+                break
+            tool_call_id = planned_call.call.tool_call_id
+            if self._states[tool_call_id] != "pending":
+                continue
+            if not self._dependencies_completed(planned_call.call):
+                continue
+            if planned_call.effect_key is not None:
+                if planned_call.effect_key in reserved_effect_keys:
+                    continue
+                reserved_effect_keys.add(planned_call.effect_key)
+
+            ready.append(tool_call_id)
+            remaining_slots -= 1
+        return ready
+
+    def record_started(self, tool_call_id: str) -> None:
+        current = self._states.get(tool_call_id)
+        if current is None:
+            raise ToolExecutionPlanError(f"unknown tool call {tool_call_id}")
+        if current != "pending":
+            raise ToolExecutionPlanError(f"tool call {tool_call_id} is {current}, not pending")
+
+        planned_call = self._calls_by_id[tool_call_id]
+        if not self._dependencies_completed(planned_call.call):
+            raise ToolExecutionPlanError(f"tool call {tool_call_id} dependencies are not ready")
+        if self._running_count() >= self.maximum_parallelism:
+            raise ToolExecutionPlanError("maximum parallelism is exhausted")
+        if planned_call.effect_key is not None and planned_call.effect_key in self._running_effect_keys():
+            raise ToolExecutionPlanError(f"effect key {planned_call.effect_key} is already running")
+
+        self._states[tool_call_id] = "running"
+
+    def record_completed(self, tool_call_id: str) -> None:
+        self._enter_terminal(tool_call_id, "completed")
+
+    def record_failed(self, tool_call_id: str) -> None:
+        self._enter_terminal(tool_call_id, "failed")
+
+    def apply_policy_stop(self, pending_tool_calls: PendingToolCallsDisposition) -> list[str]:
+        affected: list[str] = []
+        if pending_tool_calls == "keep":
+            return affected
+        if pending_tool_calls == "deny":
+            for planned_call in self.calls:
+                tool_call_id = planned_call.call.tool_call_id
+                if self._states[tool_call_id] == "pending":
+                    self._states[tool_call_id] = "denied"
+                    affected.append(tool_call_id)
+            return affected
+        if pending_tool_calls == "cancel_admitted":
+            for planned_call in self.calls:
+                tool_call_id = planned_call.call.tool_call_id
+                if self._states[tool_call_id] == "running":
+                    self._states[tool_call_id] = "cancelled"
+                    affected.append(tool_call_id)
+                elif self._states[tool_call_id] == "pending":
+                    self._states[tool_call_id] = "denied"
+                    affected.append(tool_call_id)
+            return affected
+        raise ToolExecutionPlanError(f"unknown pending tool call disposition {pending_tool_calls}")
+
+    def _enter_terminal(self, tool_call_id: str, terminal_state: ToolExecutionState) -> None:
+        current = self._states.get(tool_call_id)
+        if current is None:
+            raise ToolExecutionPlanError(f"unknown tool call {tool_call_id}")
+        if current != "running":
+            raise ToolExecutionPlanError(f"tool call {tool_call_id} is {current}, not running")
+        self._states[tool_call_id] = terminal_state
+
+    def _running_count(self) -> int:
+        return sum(1 for state in self._states.values() if state == "running")
+
+    def _running_effect_keys(self) -> set[str]:
+        return {
+            planned_call.effect_key
+            for planned_call in self.calls
+            if planned_call.effect_key is not None and self._states[planned_call.call.tool_call_id] == "running"
+        }
+
+    def _dependencies_completed(self, call: ToolCall) -> bool:
+        return all(self._states.get(dependency) == "completed" for dependency in call.depends_on)
 
 
 @dataclass(frozen=True, slots=True)

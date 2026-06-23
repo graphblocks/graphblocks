@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from graphblocks import (
     BlockToolImplementation,
     ContentPart,
@@ -10,6 +12,9 @@ from graphblocks import (
     ToolCallError,
     ToolResult,
     ToolDefinition,
+    ToolExecutionPlan,
+    ToolExecutionPlanError,
+    ToolPlanCall,
 )
 
 
@@ -201,3 +206,94 @@ def test_policy_stopped_tool_result_is_final_but_incomplete() -> None:
     assert result.status == "policy_stopped"
     assert result.output_digest is None
     assert result.error == {"code": "policy.denied", "message": "tool output was stopped by policy"}
+
+
+def _tool_call(tool_call_id: str, arguments: str = '{"resource_id":"a"}'):
+    return (
+        ToolCallDraft.proposed("response-1", tool_call_id, "ticket.create")
+        .append_argument_fragment(arguments)
+        .complete_arguments()
+        .into_tool_call("resolved-tool-1", created_at="2026-06-23T00:00:00Z")
+    )
+
+
+def test_tool_execution_plan_readies_independent_calls_up_to_parallelism() -> None:
+    plan = ToolExecutionPlan(
+        plan_id="plan-1",
+        response_id="response-1",
+        calls=(
+            ToolPlanCall(_tool_call("call-a")),
+            ToolPlanCall(_tool_call("call-b", '{"resource_id":"b"}')),
+        ),
+        maximum_parallelism=1,
+    )
+
+    assert plan.ready_call_ids() == ["call-a"]
+    plan.record_started("call-a")
+    assert plan.ready_call_ids() == []
+    plan.record_completed("call-a")
+    assert plan.ready_call_ids() == ["call-b"]
+
+
+def test_tool_execution_plan_waits_for_dependencies_and_serializes_effect_keys() -> None:
+    dependent = _tool_call("call-b", '{"resource_id":"ticket-1"}')
+    dependent = dependent.__class__(
+        tool_call_id=dependent.tool_call_id,
+        response_id=dependent.response_id,
+        resolved_tool_id=dependent.resolved_tool_id,
+        name=dependent.name,
+        arguments=dependent.arguments,
+        arguments_digest=dependent.arguments_digest,
+        revision=dependent.revision,
+        status=dependent.status,
+        depends_on=("call-a",),
+        created_at=dependent.created_at,
+    )
+    plan = ToolExecutionPlan(
+        plan_id="plan-1",
+        response_id="response-1",
+        calls=(
+            ToolPlanCall(_tool_call("call-a", '{"resource_id":"ticket-1"}'), effect_key="ticket:ticket-1"),
+            ToolPlanCall(dependent, effect_key="ticket:ticket-1"),
+            ToolPlanCall(_tool_call("call-c", '{"resource_id":"ticket-2"}'), effect_key="ticket:ticket-2"),
+        ),
+        maximum_parallelism=3,
+    )
+
+    assert plan.ready_call_ids() == ["call-a", "call-c"]
+    plan.record_started("call-a")
+    assert plan.ready_call_ids() == ["call-c"]
+    with pytest.raises(ToolExecutionPlanError) as error:
+        plan.record_started("call-b")
+    assert str(error.value) == "tool call call-b dependencies are not ready"
+    plan.record_completed("call-a")
+    assert plan.ready_call_ids() == ["call-b", "call-c"]
+
+
+def test_tool_execution_plan_policy_stop_denies_pending_and_can_cancel_running() -> None:
+    plan = ToolExecutionPlan(
+        plan_id="plan-1",
+        response_id="response-1",
+        calls=(ToolPlanCall(_tool_call("call-a")), ToolPlanCall(_tool_call("call-b"))),
+        maximum_parallelism=2,
+    )
+
+    plan.record_started("call-a")
+    assert plan.apply_policy_stop("deny") == ["call-b"]
+    assert plan.state("call-a") == "running"
+    assert plan.state("call-b") == "denied"
+    with pytest.raises(ToolExecutionPlanError) as error:
+        plan.record_started("call-b")
+    assert str(error.value) == "tool call call-b is denied, not pending"
+
+    cancel_plan = ToolExecutionPlan(
+        plan_id="plan-2",
+        response_id="response-1",
+        calls=(ToolPlanCall(_tool_call("call-a")), ToolPlanCall(_tool_call("call-b"))),
+        maximum_parallelism=2,
+    )
+    cancel_plan.record_started("call-a")
+
+    assert cancel_plan.apply_policy_stop("cancel_admitted") == ["call-a", "call-b"]
+    assert cancel_plan.state("call-a") == "cancelled"
+    assert cancel_plan.state("call-b") == "denied"
