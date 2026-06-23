@@ -68,6 +68,8 @@ def test_usage_ledger_reconcile_writes_new_record_for_late_final_usage() -> None
             occurred_at="2026-06-22T00:00:00Z",
             run_id="run-1",
             attempt_id="attempt-1",
+            provider_response_id="resp-1",
+            pricing_ref="pricing-2026-06",
         )
     )
 
@@ -81,4 +83,6 @@ def test_usage_ledger_reconcile_writes_new_record_for_late_final_usage() -> None
     assert reconciled.source == "reconciled"
     assert reconciled.confidence == "exact"
     assert reconciled.reconciliation_of == "usage-provisional"
+    assert reconciled.provider_response_id == "resp-1"
+    assert reconciled.pricing_ref == "pricing-2026-06"
     assert ledger.records_for_run("run-1") == [provisional, reconciled]

@@ -50,7 +50,7 @@ class InMemoryUsageLedger:
     _provider_dedupe: dict[tuple[str, str | None], str] = field(default_factory=dict)
 
     def append(self, record: UsageRecord) -> UsageRecord:
-        if record.provider_response_id is not None:
+        if record.provider_response_id is not None and record.reconciliation_of is None:
             dedupe_key = (record.provider_response_id, record.attempt_id)
             existing_id = self._provider_dedupe.get(dedupe_key)
             if existing_id is not None:
@@ -59,7 +59,7 @@ class InMemoryUsageLedger:
             raise UsageRecordConflictError(f"usage record {record.record_id!r} already exists")
         self._records[record.record_id] = record
         self._order.append(record.record_id)
-        if record.provider_response_id is not None:
+        if record.provider_response_id is not None and record.reconciliation_of is None:
             self._provider_dedupe[(record.provider_response_id, record.attempt_id)] = record.record_id
         return record
 
