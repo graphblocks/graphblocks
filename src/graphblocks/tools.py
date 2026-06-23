@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Literal
@@ -944,12 +945,27 @@ class ToolResult:
     status: ToolResultStatus
     output: tuple[ContentPart, ...] = field(default_factory=tuple)
     output_digest: str | None = None
-    artifacts: tuple[dict[str, object], ...] = field(default_factory=tuple)
-    diagnostics: tuple[dict[str, object], ...] = field(default_factory=tuple)
-    error: dict[str, object] | None = None
+    artifacts: tuple[Mapping[str, object], ...] = field(default_factory=tuple)
+    diagnostics: tuple[Mapping[str, object], ...] = field(default_factory=tuple)
+    error: Mapping[str, object] | None = None
     started_at: str | None = None
     completed_at: str | None = None
     effect_outcome: ToolEffectOutcome = "unknown"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "output", tuple(self.output))
+        object.__setattr__(
+            self,
+            "artifacts",
+            tuple(MappingProxyType(dict(artifact)) for artifact in self.artifacts),
+        )
+        object.__setattr__(
+            self,
+            "diagnostics",
+            tuple(MappingProxyType(dict(diagnostic)) for diagnostic in self.diagnostics),
+        )
+        if self.error is not None:
+            object.__setattr__(self, "error", MappingProxyType(dict(self.error)))
 
     @classmethod
     def completed(

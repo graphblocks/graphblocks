@@ -723,6 +723,41 @@ def test_completed_tool_result_rejects_non_canonical_json_values() -> None:
     assert str(error.value) == "tool result call-1 output is not canonical JSON"
 
 
+def test_tool_result_metadata_mappings_are_copied_and_read_only() -> None:
+    artifacts = [{"artifact_id": "artifact-1", "uri": "blob://artifact-1"}]
+    diagnostics = [{"code": "tool.warning", "message": "partial data"}]
+    error = {"code": "tool.failed", "message": "tool execution failed"}
+
+    result = ToolResult(
+        tool_call_id="call-1",
+        status="failed",
+        artifacts=artifacts,
+        diagnostics=diagnostics,
+        error=error,
+        started_at="2026-06-23T00:00:00Z",
+        completed_at="2026-06-23T00:00:01Z",
+    )
+
+    artifacts[0]["uri"] = "blob://mutated"
+    diagnostics[0]["message"] = "mutated"
+    error["message"] = "mutated"
+
+    assert result.artifacts == ({"artifact_id": "artifact-1", "uri": "blob://artifact-1"},)
+    assert result.diagnostics == ({"code": "tool.warning", "message": "partial data"},)
+    assert result.error == {"code": "tool.failed", "message": "tool execution failed"}
+    with pytest.raises(AttributeError):
+        result.artifacts.append({"artifact_id": "artifact-2"})
+    with pytest.raises(AttributeError):
+        result.diagnostics.append({"code": "tool.warning"})
+    with pytest.raises(TypeError):
+        result.artifacts[0]["uri"] = "blob://direct-mutation"
+    with pytest.raises(TypeError):
+        result.diagnostics[0]["message"] = "direct mutation"
+    assert result.error is not None
+    with pytest.raises(TypeError):
+        result.error["message"] = "direct mutation"
+
+
 def test_completed_tool_result_validates_output_schema_before_model_return() -> None:
     catalog = ToolCatalog(
         definitions=(
