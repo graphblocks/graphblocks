@@ -19,7 +19,11 @@ def test_python_compiler_matches_shared_tck_cases() -> None:
         error_codes = [
             diagnostic.code for diagnostic in plan.diagnostics.diagnostics if diagnostic.severity == "error"
         ]
+        warning_codes = [
+            diagnostic.code for diagnostic in plan.diagnostics.diagnostics if diagnostic.severity == "warning"
+        ]
 
         expected: dict[str, Any] = case["expected"]
         assert plan.graph_hash == expected["graph_hash"], case["name"]
         assert error_codes == expected["error_codes"], case["name"]
+        assert warning_codes == expected.get("warning_codes", []), case["name"]

@@ -693,6 +693,8 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
         .get("spec")
         .and_then(|spec| spec.get("nodes"))
         .and_then(Value::as_object);
+    let mut produced_nodes = BTreeSet::<String>::new();
+    let mut consumed_nodes = BTreeSet::<String>::new();
     if let Some(edges) = normalized
         .get("spec")
         .and_then(|spec| spec.get("edges"))
@@ -730,6 +732,10 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                         format!("edge {key} endpoint references unknown node {owner:?}"),
                         format!("$.spec.edges[{index}].{key}"),
                     ));
+                } else if key == "from" {
+                    produced_nodes.insert(owner.to_owned());
+                } else {
+                    consumed_nodes.insert(owner.to_owned());
                 }
             }
         }
@@ -923,6 +929,116 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                             "required input {:?} is never produced for node {:?}",
                             port.name, node_name
                         ),
+                        format!("$.spec.nodes.{node_name}"),
+                    ));
+                }
+            }
+        }
+    }
+
+    if let Some(normalized_nodes) = normalized_nodes {
+        for (node_name, node) in normalized_nodes {
+            if let Some(owner) = node
+                .as_object()
+                .and_then(|node| node.get("when"))
+                .and_then(Value::as_str)
+                .map(|when| when.split_once('.').map_or(when, |(owner, _)| owner))
+            {
+                if PSEUDO_NODES.contains(&owner) {
+                    continue;
+                }
+                if !normalized_nodes.contains_key(owner) {
+                    diagnostics.push(Diagnostic::error(
+                        "GB1002",
+                        format!("when references unknown node {owner:?}"),
+                        format!("$.spec.nodes.{node_name}.when"),
+                    ));
+                } else {
+                    produced_nodes.insert(owner.to_owned());
+                    consumed_nodes.insert(node_name.to_owned());
+                }
+            }
+        }
+
+        let interface_outputs = normalized
+            .get("spec")
+            .and_then(|spec| spec.get("interface"))
+            .and_then(|interface| interface.get("outputs"))
+            .and_then(Value::as_object);
+        let has_declared_output = interface_outputs.is_some_and(|outputs| !outputs.is_empty());
+        let output_edges = normalized
+            .get("spec")
+            .and_then(|spec| spec.get("edges"))
+            .and_then(Value::as_array)
+            .map(|edges| {
+                edges
+                    .iter()
+                    .filter(|edge| {
+                        edge.get("to")
+                            .and_then(Value::as_str)
+                            .is_some_and(|target| target.starts_with("$output."))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if has_declared_output && output_edges.is_empty() {
+            diagnostics.push(Diagnostic::warning(
+                "GB1003",
+                "graph declares outputs but no edge writes to $output",
+                "$.spec.interface.outputs",
+            ));
+        }
+
+        if !output_edges.is_empty() {
+            let mut reachable = BTreeSet::<String>::new();
+            let mut stack = output_edges
+                .iter()
+                .filter_map(|edge| edge.get("from").and_then(Value::as_str))
+                .map(|source| {
+                    source
+                        .split_once('.')
+                        .map_or(source, |(owner, _)| owner)
+                        .to_owned()
+                })
+                .collect::<Vec<_>>();
+            let mut reverse_edges = BTreeMap::<String, Vec<String>>::new();
+            if let Some(edges) = normalized
+                .get("spec")
+                .and_then(|spec| spec.get("edges"))
+                .and_then(Value::as_array)
+            {
+                for edge in edges {
+                    let Some(source) = edge.get("from").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    let Some(target) = edge.get("to").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    let source_owner = source.split_once('.').map_or(source, |(owner, _)| owner);
+                    let target_owner = target.split_once('.').map_or(target, |(owner, _)| owner);
+                    reverse_edges
+                        .entry(target_owner.to_owned())
+                        .or_default()
+                        .push(source_owner.to_owned());
+                }
+            }
+            while let Some(owner) = stack.pop() {
+                if reachable.contains(owner.as_str()) || PSEUDO_NODES.contains(&owner.as_str()) {
+                    continue;
+                }
+                reachable.insert(owner.clone());
+                if let Some(upstream) = reverse_edges.get(owner.as_str()) {
+                    stack.extend(upstream.iter().cloned());
+                }
+            }
+            for node_name in normalized_nodes.keys() {
+                if !reachable.contains(node_name.as_str())
+                    && !produced_nodes.contains(node_name.as_str())
+                    && !consumed_nodes.contains(node_name.as_str())
+                {
+                    diagnostics.push(Diagnostic::warning(
+                        "GB1001",
+                        format!("node {node_name:?} is not connected"),
                         format!("$.spec.nodes.{node_name}"),
                     ));
                 }

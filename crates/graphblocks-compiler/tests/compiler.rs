@@ -84,6 +84,34 @@ fn compile_graph_reports_unknown_edge_endpoint() {
 }
 
 #[test]
+fn compile_graph_warns_for_dead_nodes_when_outputs_are_declared() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "dead-node"},
+        "spec": {
+            "nodes": {
+                "produce": {"block": "text.literal@1"},
+                "orphan": {"block": "text.literal@1"}
+            },
+            "edges": [{"from": "produce.value", "to": "$output.result"}]
+        }
+    });
+
+    let plan = compile_graph(&graph);
+
+    assert!(plan.ok());
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Warning)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["GB1001"]
+    );
+}
+
+#[test]
 fn compile_graph_rejects_required_input_never_produced() -> Result<(), String> {
     let catalog = BlockCatalog::from_blocks(&json!([
         {

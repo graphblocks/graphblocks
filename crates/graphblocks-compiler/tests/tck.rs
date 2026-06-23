@@ -35,6 +35,21 @@ fn rust_compiler_matches_shared_tck_cases() -> Result<(), String> {
                     .ok_or_else(|| format!("compiler TCK case {name} has a non-string error code"))
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let expected_warning_codes = expected
+            .get("warning_codes")
+            .and_then(Value::as_array)
+            .map(|warning_codes| {
+                warning_codes
+                    .iter()
+                    .map(|code| {
+                        code.as_str().ok_or_else(|| {
+                            format!("compiler TCK case {name} has a non-string warning code")
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?
+            .unwrap_or_default();
 
         let plan = if let Some(block_catalog) = case.get("block_catalog") {
             let block_catalog = BlockCatalog::from_blocks(block_catalog)?;
@@ -48,9 +63,16 @@ fn rust_compiler_matches_shared_tck_cases() -> Result<(), String> {
             .filter(|diagnostic| diagnostic.severity == Severity::Error)
             .map(|diagnostic| diagnostic.code.as_str())
             .collect::<Vec<_>>();
+        let actual_warning_codes = plan
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Warning)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>();
 
         assert_eq!(plan.graph_hash, expected_hash, "{name}");
         assert_eq!(actual_error_codes, expected_error_codes, "{name}");
+        assert_eq!(actual_warning_codes, expected_warning_codes, "{name}");
     }
 
     Ok(())

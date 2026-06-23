@@ -26,4 +26,17 @@ impl Diagnostic {
             severity: Severity::Error,
         }
     }
+
+    pub fn warning(
+        code: impl Into<String>,
+        message: impl Into<String>,
+        path: impl Into<String>,
+    ) -> Self {
+        Self {
+            code: code.into(),
+            message: message.into(),
+            path: path.into(),
+            severity: Severity::Warning,
+        }
+    }
 }
