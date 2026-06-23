@@ -1,6 +1,7 @@
 pub mod application_event;
 pub mod budget;
 pub mod cancellation;
+pub mod evaluation;
 pub mod exhaustion;
 pub mod journal;
 pub mod lifecycle;
