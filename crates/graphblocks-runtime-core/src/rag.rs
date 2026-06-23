@@ -289,6 +289,60 @@ impl FusionOptions {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct RerankOptions {
+    pub reranker_id: String,
+    pub query_terms: Vec<String>,
+    pub input_limit: Option<usize>,
+}
+
+impl RerankOptions {
+    pub fn new(reranker_id: impl Into<String>) -> Self {
+        Self {
+            reranker_id: reranker_id.into(),
+            query_terms: Vec::new(),
+            input_limit: None,
+        }
+    }
+
+    pub fn with_query_terms<I, S>(mut self, query_terms: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.query_terms = query_terms
+            .into_iter()
+            .map(|term| term.into().to_ascii_lowercase())
+            .filter(|term| !term.is_empty())
+            .collect();
+        self
+    }
+
+    pub fn with_input_limit(mut self, input_limit: usize) -> Self {
+        self.input_limit = Some(input_limit);
+        self
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RankedHit {
+    pub hit: SearchHit,
+    pub rerank_score: Option<f64>,
+    pub reranker: Option<String>,
+    pub explanation: Option<String>,
+    pub metadata: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RerankResult {
+    pub ranked_hits: Vec<RankedHit>,
+    pub reranker: String,
+    pub input_count: usize,
+    pub evaluated_count: usize,
+    pub truncated_hit_ids: Vec<String>,
+    pub metadata: BTreeMap<String, Value>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FailurePolicy {
     Warn,
@@ -457,6 +511,7 @@ pub enum RagError {
     InvalidPerDocumentMaxChunks,
     InvalidFusionK,
     WeightCountMismatch,
+    InvalidRerankInputLimit,
     AuthContextRequired {
         resource_id: String,
     },
@@ -475,6 +530,9 @@ impl fmt::Display for RagError {
             Self::InvalidFusionK => write!(formatter, "fusion k must be at least 1"),
             Self::WeightCountMismatch => {
                 write!(formatter, "weights length must match hit_sets length")
+            }
+            Self::InvalidRerankInputLimit => {
+                write!(formatter, "rerank input limit must be at least 1")
             }
             Self::AuthContextRequired { resource_id } => {
                 write!(
@@ -832,6 +890,71 @@ pub fn fuse_search_hits(
         fused_hits.push(fused);
     }
     Ok(fused_hits)
+}
+
+pub fn rerank_search_hits(
+    mut hits: Vec<SearchHit>,
+    options: RerankOptions,
+) -> Result<RerankResult, RagError> {
+    if matches!(options.input_limit, Some(0)) {
+        return Err(RagError::InvalidRerankInputLimit);
+    }
+    let input_count = hits.len();
+    hits.sort_by(|left, right| {
+        left.rank
+            .cmp(&right.rank)
+            .then_with(|| left.hit_id.cmp(&right.hit_id))
+    });
+    let evaluated_count = options
+        .input_limit
+        .map_or(hits.len(), |limit| limit.min(hits.len()));
+    let truncated_hit_ids = hits
+        .iter()
+        .skip(evaluated_count)
+        .map(|hit| hit.hit_id.clone())
+        .collect::<Vec<_>>();
+    let mut ranked_hits = Vec::new();
+    for hit in hits.into_iter().take(evaluated_count) {
+        let preview_text = hit.item.preview.join("\n").to_ascii_lowercase();
+        let score = options
+            .query_terms
+            .iter()
+            .map(|term| preview_text.matches(term).count())
+            .sum::<usize>();
+        let mut metadata = BTreeMap::new();
+        metadata.insert("original_rank".to_owned(), json!(hit.rank));
+        metadata.insert("source_hit_id".to_owned(), json!(hit.hit_id));
+        metadata.insert("query_terms".to_owned(), json!(options.query_terms));
+        ranked_hits.push(RankedHit {
+            hit,
+            rerank_score: Some(score as f64),
+            reranker: Some(options.reranker_id.clone()),
+            explanation: Some(format!("matched {score} query term occurrence(s)")),
+            metadata,
+        });
+    }
+    ranked_hits.sort_by(|left, right| {
+        right
+            .rerank_score
+            .partial_cmp(&left.rerank_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.hit.rank.cmp(&right.hit.rank))
+            .then_with(|| left.hit.hit_id.cmp(&right.hit.hit_id))
+    });
+    for (rank, ranked_hit) in ranked_hits.iter_mut().enumerate() {
+        ranked_hit.hit.rank = rank + 1;
+    }
+    let mut metadata = BTreeMap::new();
+    metadata.insert("query_terms".to_owned(), json!(options.query_terms));
+    metadata.insert("truncated_hit_ids".to_owned(), json!(truncated_hit_ids));
+    Ok(RerankResult {
+        ranked_hits,
+        reranker: options.reranker_id,
+        input_count,
+        evaluated_count,
+        truncated_hit_ids,
+        metadata,
+    })
 }
 
 pub fn validate_answer_citations(

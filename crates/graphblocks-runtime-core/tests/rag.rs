@@ -5,9 +5,10 @@ use graphblocks_runtime_core::documents::{
 };
 use graphblocks_runtime_core::rag::{
     Answer, AuthContext, Citation, Claim, ContextBuildOptions, FailurePolicy, FusionOptions,
-    FusionStrategy, InMemoryChunkRetriever, KnowledgeItemRef, RagError, SearchHit, SearchRequest,
-    authorize_search_hits, build_context_pack, fuse_search_hits, knowledge_item_from_chunk,
-    validate_answer_citation_authorization, validate_answer_citations,
+    FusionStrategy, InMemoryChunkRetriever, KnowledgeItemRef, RagError, RerankOptions, SearchHit,
+    SearchRequest, authorize_search_hits, build_context_pack, fuse_search_hits,
+    knowledge_item_from_chunk, rerank_search_hits, validate_answer_citation_authorization,
+    validate_answer_citations,
 };
 use serde_json::json;
 
@@ -272,6 +273,72 @@ fn fuse_search_hits_uses_reciprocal_rank_fusion_and_preserves_source_ranks() {
         json!({"dense": 1, "keyword": 2})
     );
     assert_eq!(fused[0].normalized_score, Some(1.0));
+}
+
+#[test]
+fn rerank_search_hits_scores_query_terms_and_records_provenance()
+-> Result<(), Box<dyn std::error::Error>> {
+    let hits = vec![
+        hit("hit-a", "chunk-a", "doc-1", "alpha", 1),
+        hit("hit-b", "chunk-b", "doc-1", "beta beta alpha", 2),
+        hit("hit-c", "chunk-c", "doc-1", "beta", 3),
+    ];
+
+    let result = rerank_search_hits(
+        hits,
+        RerankOptions::new("rank.rule").with_query_terms(["beta"]),
+    )?;
+
+    assert_eq!(
+        result
+            .ranked_hits
+            .iter()
+            .map(|ranked| ranked.hit.hit_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["hit-b", "hit-c", "hit-a"]
+    );
+    assert_eq!(result.ranked_hits[0].rerank_score, Some(2.0));
+    assert_eq!(result.ranked_hits[0].reranker.as_deref(), Some("rank.rule"));
+    assert_eq!(
+        result.ranked_hits[0].explanation.as_deref(),
+        Some("matched 2 query term occurrence(s)")
+    );
+    assert_eq!(result.ranked_hits[0].metadata["original_rank"], json!(2));
+    assert_eq!(
+        result.ranked_hits[0].metadata["source_hit_id"],
+        json!("hit-b")
+    );
+    Ok(())
+}
+
+#[test]
+fn rerank_search_hits_applies_input_limit_and_reports_truncation()
+-> Result<(), Box<dyn std::error::Error>> {
+    let hits = vec![
+        hit("hit-a", "chunk-a", "doc-1", "alpha", 1),
+        hit("hit-b", "chunk-b", "doc-1", "beta", 2),
+        hit("hit-c", "chunk-c", "doc-1", "beta beta", 3),
+    ];
+
+    let result = rerank_search_hits(
+        hits,
+        RerankOptions::new("rank.rule")
+            .with_query_terms(["beta"])
+            .with_input_limit(2),
+    )?;
+
+    assert_eq!(result.input_count, 3);
+    assert_eq!(result.evaluated_count, 2);
+    assert_eq!(result.truncated_hit_ids, vec!["hit-c"]);
+    assert_eq!(
+        result
+            .ranked_hits
+            .iter()
+            .map(|ranked| ranked.hit.hit_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["hit-b", "hit-a"]
+    );
+    Ok(())
 }
 
 #[test]
