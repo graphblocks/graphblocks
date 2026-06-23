@@ -417,6 +417,24 @@ def test_tool_admission_denies_tool_no_longer_allowed_for_principal() -> None:
     assert str(error.value) == "resolved tool process.run is not allowed for principal user-1"
 
 
+def test_tool_admission_denies_expired_resolved_tool() -> None:
+    resolved = replace(_resolved_process_tool(), valid_until="2026-06-23T00:00:00Z")
+    call = _process_call(resolved)
+
+    with pytest.raises(ToolAdmissionError) as error:
+        admit_tool_call(
+            call,
+            resolved,
+            _process_schema_registry(),
+            principal_id="user-1",
+            idempotency_key="idem-1",
+            admitted_at="2026-06-23T00:00:01Z",
+            now=1_200,
+        )
+
+    assert str(error.value) == "resolved tool process.run expired at 2026-06-23T00:00:00Z"
+
+
 def test_tool_admission_requires_approval_and_idempotency_key() -> None:
     resolved = _resolved_process_tool()
     call = _process_call(resolved)

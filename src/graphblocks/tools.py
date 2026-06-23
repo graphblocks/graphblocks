@@ -711,6 +711,9 @@ def admit_tool_call(
             f"resolved tool {resolved_tool.definition.name} is not allowed for principal {principal_id}"
         )
 
+    if resolved_tool.valid_until is not None and admitted_at > resolved_tool.valid_until:
+        raise ToolAdmissionError(f"resolved tool {resolved_tool.definition.name} expired at {resolved_tool.valid_until}")
+
     if resolved_tool.binding.approval == "always":
         if approval is None:
             raise ToolAdmissionError(f"tool call {call.tool_call_id} requires approval")

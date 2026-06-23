@@ -63,6 +63,11 @@ pub enum ToolAdmissionError {
         resolved_tool_id: String,
         principal_id: String,
     },
+    ResolvedToolExpired {
+        resolved_tool_id: String,
+        valid_until_unix_ms: u64,
+        admitted_at_unix_ms: u64,
+    },
 }
 
 pub struct ToolAdmission;
@@ -125,6 +130,16 @@ impl ToolAdmission {
             return Err(ToolAdmissionError::ResolvedToolNotAllowed {
                 resolved_tool_id: request.resolved_tool.resolved_tool_id.clone(),
                 principal_id: request.principal_id.to_owned(),
+            });
+        }
+
+        if let Some(valid_until_unix_ms) = request.resolved_tool.valid_until_unix_ms
+            && request.admitted_at_unix_ms > valid_until_unix_ms
+        {
+            return Err(ToolAdmissionError::ResolvedToolExpired {
+                resolved_tool_id: request.resolved_tool.resolved_tool_id.clone(),
+                valid_until_unix_ms,
+                admitted_at_unix_ms: request.admitted_at_unix_ms,
             });
         }
 

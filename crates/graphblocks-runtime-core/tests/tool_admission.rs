@@ -200,6 +200,31 @@ fn admission_denies_tool_no_longer_allowed_for_principal() {
 }
 
 #[test]
+fn admission_denies_expired_resolved_tool() {
+    let mut resolved_tool = resolved_process_tool();
+    resolved_tool.valid_until_unix_ms = Some(1_199);
+    let call = process_call(&resolved_tool);
+    let schemas = process_schema_registry();
+
+    assert_eq!(
+        ToolAdmission::admit(ToolAdmissionRequest {
+            call,
+            resolved_tool: &resolved_tool,
+            schema_registry: &schemas,
+            approval: None,
+            principal_id: "user-1",
+            idempotency_key: Some("idem-1".to_owned()),
+            admitted_at_unix_ms: 1_200,
+        }),
+        Err(ToolAdmissionError::ResolvedToolExpired {
+            resolved_tool_id: resolved_tool.resolved_tool_id,
+            valid_until_unix_ms: 1_199,
+            admitted_at_unix_ms: 1_200
+        }),
+    );
+}
+
+#[test]
 fn admission_reports_missing_input_schema_before_effect_admission() {
     let resolved_tool = resolved_process_tool();
     let call = process_call(&resolved_tool);
