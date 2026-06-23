@@ -746,7 +746,94 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     format!("$.spec.bindings.tools.{tool_key}.definition.inputSchema"),
                 ));
             }
-            if !tool.contains_key("implementation") {
+            if let Some(implementation) = tool.get("implementation").and_then(Value::as_object) {
+                let implementation_kind = implementation.get("kind").and_then(Value::as_str);
+                let missing_implementation_field = match implementation_kind {
+                    Some("block") => implementation
+                        .get("block")
+                        .and_then(Value::as_str)
+                        .is_none_or(|value| value.trim().is_empty())
+                        .then_some("block"),
+                    Some("graph") => implementation
+                        .get("graph")
+                        .and_then(Value::as_str)
+                        .is_none_or(|value| value.trim().is_empty())
+                        .then_some("graph"),
+                    Some("remote") => {
+                        if implementation
+                            .get("connection")
+                            .and_then(Value::as_str)
+                            .is_none_or(|value| value.trim().is_empty())
+                        {
+                            Some("connection")
+                        } else if implementation
+                            .get("operation")
+                            .and_then(Value::as_str)
+                            .is_none_or(|value| value.trim().is_empty())
+                        {
+                            Some("operation")
+                        } else {
+                            None
+                        }
+                    }
+                    Some("mcp") => {
+                        if implementation
+                            .get("server")
+                            .and_then(Value::as_str)
+                            .is_none_or(|value| value.trim().is_empty())
+                        {
+                            Some("server")
+                        } else if implementation
+                            .get("remoteName")
+                            .or_else(|| implementation.get("remote_name"))
+                            .and_then(Value::as_str)
+                            .is_none_or(|value| value.trim().is_empty())
+                        {
+                            Some("remoteName")
+                        } else {
+                            None
+                        }
+                    }
+                    Some("openapi") => {
+                        if implementation
+                            .get("connection")
+                            .and_then(Value::as_str)
+                            .is_none_or(|value| value.trim().is_empty())
+                        {
+                            Some("connection")
+                        } else if implementation
+                            .get("operationId")
+                            .or_else(|| implementation.get("operation_id"))
+                            .and_then(Value::as_str)
+                            .is_none_or(|value| value.trim().is_empty())
+                        {
+                            Some("operationId")
+                        } else {
+                            None
+                        }
+                    }
+                    _ => {
+                        diagnostics.push(Diagnostic::error(
+                            "ToolBindingMissing",
+                            "tool implementation kind must be one of block, graph, remote, mcp, or openapi",
+                            format!("$.spec.bindings.tools.{tool_key}.implementation.kind"),
+                        ));
+                        None
+                    }
+                };
+                if let Some(missing_implementation_field) = missing_implementation_field {
+                    diagnostics.push(Diagnostic::error(
+                        "ToolBindingMissing",
+                        format!(
+                            "{} tool implementation requires {missing_implementation_field}",
+                            implementation_kind.unwrap_or("unknown")
+                        ),
+                        format!(
+                            "$.spec.bindings.tools.{tool_key}.implementation.{missing_implementation_field}"
+                        ),
+                    ));
+                }
+            } else {
                 diagnostics.push(Diagnostic::error(
                     "ToolBindingMissing",
                     "model-visible tools require an executable binding implementation",

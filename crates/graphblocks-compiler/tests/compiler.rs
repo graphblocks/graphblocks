@@ -960,6 +960,101 @@ fn compile_graph_reports_tool_definition_without_input_schema() {
 }
 
 #[test]
+fn compile_graph_reports_malformed_tool_implementation_bindings() {
+    let block_missing_target = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "malformed-block-tool"},
+        "spec": {
+            "bindings": {
+                "tools": {
+                    "search": {
+                        "definition": {
+                            "name": "knowledge.search",
+                            "description": "Search documentation.",
+                            "inputSchema": "schemas/Search@1"
+                        },
+                        "implementation": {
+                            "kind": "block"
+                        }
+                    }
+                }
+            },
+            "nodes": {
+                "model": {"block": "model.generate@1"}
+            }
+        }
+    });
+    let unknown_kind = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "unknown-tool-kind"},
+        "spec": {
+            "bindings": {
+                "tools": {
+                    "search": {
+                        "definition": {
+                            "name": "knowledge.search",
+                            "description": "Search documentation.",
+                            "inputSchema": "schemas/Search@1"
+                        },
+                        "implementation": {
+                            "kind": "lambda",
+                            "function": "search"
+                        }
+                    }
+                }
+            },
+            "nodes": {
+                "model": {"block": "model.generate@1"}
+            }
+        }
+    });
+    let missing_openapi_operation = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "openapi-tool-missing-operation"},
+        "spec": {
+            "bindings": {
+                "tools": {
+                    "search": {
+                        "definition": {
+                            "name": "knowledge.search",
+                            "description": "Search documentation.",
+                            "inputSchema": "schemas/Search@1"
+                        },
+                        "implementation": {
+                            "kind": "openapi",
+                            "connection": "ticket-system"
+                        }
+                    }
+                }
+            },
+            "nodes": {
+                "model": {"block": "model.generate@1"}
+            }
+        }
+    });
+
+    for graph in [
+        block_missing_target,
+        unknown_kind,
+        missing_openapi_operation,
+    ] {
+        let plan = compile_graph(&graph);
+
+        assert_eq!(
+            plan.diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.severity == Severity::Error)
+                .map(|diagnostic| diagnostic.code.as_str())
+                .collect::<Vec<_>>(),
+            vec!["ToolBindingMissing"]
+        );
+    }
+}
+
+#[test]
 fn compile_graph_reports_tool_definition_with_invalid_input_schema() {
     let graph = json!({
         "apiVersion": GRAPH_API_VERSION,

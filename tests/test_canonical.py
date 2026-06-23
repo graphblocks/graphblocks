@@ -405,6 +405,61 @@ def test_compile_reports_tool_definition_without_binding_or_input_schema() -> No
     assert _error_codes(invalid_schema) == ["InvalidSchemaId"]
 
 
+def test_compile_reports_malformed_tool_implementation_bindings() -> None:
+    base = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "malformed-tool-implementation"},
+        "spec": {
+            "nodes": {"model": {"block": "model.generate@1"}},
+            "bindings": {
+                "tools": {
+                    "search": {
+                        "definition": {
+                            "name": "knowledge.search",
+                            "description": "Search documentation.",
+                            "inputSchema": "schemas/Search@1",
+                        },
+                        "implementation": {"kind": "block"},
+                    }
+                }
+            },
+        },
+    }
+    unknown_kind = {
+        **base,
+        "spec": {
+            **base["spec"],
+            "bindings": {
+                "tools": {
+                    "search": {
+                        **base["spec"]["bindings"]["tools"]["search"],
+                        "implementation": {"kind": "lambda", "function": "search"},
+                    }
+                }
+            },
+        },
+    }
+    missing_openapi_operation = {
+        **base,
+        "spec": {
+            **base["spec"],
+            "bindings": {
+                "tools": {
+                    "search": {
+                        **base["spec"]["bindings"]["tools"]["search"],
+                        "implementation": {"kind": "openapi", "connection": "ticket-system"},
+                    }
+                }
+            },
+        },
+    }
+
+    assert _error_codes(base) == ["ToolBindingMissing"]
+    assert _error_codes(unknown_kind) == ["ToolBindingMissing"]
+    assert _error_codes(missing_openapi_operation) == ["ToolBindingMissing"]
+
+
 def test_compile_rejects_parallel_state_changing_tools_without_effect_serialization() -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",

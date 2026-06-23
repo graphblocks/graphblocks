@@ -381,7 +381,8 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                         f"$.spec.bindings.tools.{tool_key}.definition.inputSchema",
                     )
                 )
-            if "implementation" not in tool:
+            implementation = tool.get("implementation")
+            if not isinstance(implementation, dict):
                 diagnostics.append(
                     Diagnostic(
                         "ToolBindingMissing",
@@ -389,6 +390,55 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                         f"$.spec.bindings.tools.{tool_key}.implementation",
                     )
                 )
+            else:
+                implementation_kind = implementation.get("kind")
+                missing_implementation_field: str | None = None
+                if implementation_kind == "block":
+                    value = implementation.get("block")
+                    if not isinstance(value, str) or not value.strip():
+                        missing_implementation_field = "block"
+                elif implementation_kind == "graph":
+                    value = implementation.get("graph")
+                    if not isinstance(value, str) or not value.strip():
+                        missing_implementation_field = "graph"
+                elif implementation_kind == "remote":
+                    connection = implementation.get("connection")
+                    operation = implementation.get("operation")
+                    if not isinstance(connection, str) or not connection.strip():
+                        missing_implementation_field = "connection"
+                    elif not isinstance(operation, str) or not operation.strip():
+                        missing_implementation_field = "operation"
+                elif implementation_kind == "mcp":
+                    server = implementation.get("server")
+                    remote_name = implementation.get("remoteName") or implementation.get("remote_name")
+                    if not isinstance(server, str) or not server.strip():
+                        missing_implementation_field = "server"
+                    elif not isinstance(remote_name, str) or not remote_name.strip():
+                        missing_implementation_field = "remoteName"
+                elif implementation_kind == "openapi":
+                    connection = implementation.get("connection")
+                    operation_id = implementation.get("operationId") or implementation.get("operation_id")
+                    if not isinstance(connection, str) or not connection.strip():
+                        missing_implementation_field = "connection"
+                    elif not isinstance(operation_id, str) or not operation_id.strip():
+                        missing_implementation_field = "operationId"
+                else:
+                    diagnostics.append(
+                        Diagnostic(
+                            "ToolBindingMissing",
+                            "tool implementation kind must be one of block, graph, remote, mcp, or openapi",
+                            f"$.spec.bindings.tools.{tool_key}.implementation.kind",
+                        )
+                    )
+
+                if missing_implementation_field is not None:
+                    diagnostics.append(
+                        Diagnostic(
+                            "ToolBindingMissing",
+                            f"{implementation_kind} tool implementation requires {missing_implementation_field}",
+                            f"$.spec.bindings.tools.{tool_key}.implementation.{missing_implementation_field}",
+                        )
+                    )
 
         if (maximum_parallelism > 1 or parallel_tool_calls) and has_state_changing_tool and not has_effect_serialization_key:
             diagnostics.append(
