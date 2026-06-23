@@ -1,0 +1,13 @@
+[package]
+name = "graphblocks-schema"
+version = "0.1.0"
+description = "Schema identity and reference primitives for GraphBlocks"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+
+[lints]
+workspace = true

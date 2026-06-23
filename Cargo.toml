@@ -1,6 +1,8 @@
 [workspace]
 members = [
   "crates/graphblocks-flow",
+  "crates/graphblocks-schema",
+  "crates/graphblocks-types",
   "crates/graphblocks-compiler",
   "crates/graphblocks-runtime-core",
   "crates/graphblocks-runtime-seq",

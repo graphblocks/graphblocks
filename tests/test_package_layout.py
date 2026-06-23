@@ -25,6 +25,24 @@ def test_graphblocks_python_crate_is_workspace_member() -> None:
     assert "pyo3" in crate["dependencies"]
 
 
+def test_schema_and_types_crates_are_workspace_members() -> None:
+    workspace = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))
+
+    assert "crates/graphblocks-schema" in workspace["workspace"]["members"]
+    assert "crates/graphblocks-types" in workspace["workspace"]["members"]
+
+    schema_crate = tomllib.loads(
+        (ROOT / "crates" / "graphblocks-schema" / "Cargo.toml").read_text(encoding="utf-8")
+    )
+    assert schema_crate["package"]["name"] == "graphblocks-schema"
+
+    types_crate = tomllib.loads(
+        (ROOT / "crates" / "graphblocks-types" / "Cargo.toml").read_text(encoding="utf-8")
+    )
+    assert types_crate["package"]["name"] == "graphblocks-types"
+    assert types_crate["dependencies"]["graphblocks-schema"]["path"] == "../graphblocks-schema"
+
+
 def test_graphblocks_runtime_package_delegates_to_workspace_binding() -> None:
     pyproject = tomllib.loads(
         (ROOT / "packages" / "graphblocks-runtime" / "pyproject.toml").read_text(encoding="utf-8")
