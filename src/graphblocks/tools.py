@@ -6,6 +6,7 @@ from typing import Literal
 
 from .canonical import canonical_hash
 from .conversation import ContentPart
+from .documents import ArtifactRef
 
 
 JsonSchemaRef = str
@@ -41,6 +42,7 @@ ToolCallStatus = Literal[
     "expired",
 ]
 ToolResultStatus = Literal["completed", "failed", "denied", "cancelled", "policy_stopped", "incomplete"]
+ToolResultEventKind = Literal["started", "delta", "artifact_ready", "completed"]
 ToolExecutionFailurePolicy = Literal["fail_fast", "collect", "return_failures_to_model"]
 ToolExecutionCancellationPolicy = Literal["cancel_dependents", "cancel_all", "allow_independent_calls"]
 ToolExecutionState = Literal["pending", "running", "completed", "failed", "denied", "cancelled", "skipped"]
@@ -646,3 +648,36 @@ class ToolResult:
             started_at=started_at,
             completed_at=completed_at,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class ToolResultEvent:
+    kind: ToolResultEventKind
+    tool_call_id: str
+    sequence: int
+    started_at: str | None = None
+    output: tuple[ContentPart, ...] = field(default_factory=tuple)
+    artifact: ArtifactRef | None = None
+    result: ToolResult | None = None
+
+    @classmethod
+    def started(cls, tool_call_id: str, sequence: int, *, started_at: str) -> ToolResultEvent:
+        return cls(kind="started", tool_call_id=tool_call_id, sequence=sequence, started_at=started_at)
+
+    @classmethod
+    def delta(cls, tool_call_id: str, sequence: int, output: tuple[ContentPart, ...]) -> ToolResultEvent:
+        return cls(kind="delta", tool_call_id=tool_call_id, sequence=sequence, output=tuple(output))
+
+    @classmethod
+    def artifact_ready(cls, tool_call_id: str, sequence: int, artifact: ArtifactRef) -> ToolResultEvent:
+        return cls(kind="artifact_ready", tool_call_id=tool_call_id, sequence=sequence, artifact=artifact)
+
+    @classmethod
+    def completed(cls, tool_call_id: str, sequence: int, result: ToolResult) -> ToolResultEvent:
+        return cls(kind="completed", tool_call_id=tool_call_id, sequence=sequence, result=result)
+
+    def is_final_durable_result(self) -> bool:
+        return self.kind == "completed"
+
+    def into_result(self) -> ToolResult | None:
+        return self.result if self.kind == "completed" else None

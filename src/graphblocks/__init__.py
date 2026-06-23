@@ -159,6 +159,7 @@ from .tools import (
     ToolResolutionError,
     ToolResolutionScope,
     ToolResult,
+    ToolResultEvent,
 )
 from .rag import (
     Abstention,
@@ -343,6 +344,7 @@ __all__ = [
     "ToolResolutionError",
     "ToolResolutionScope",
     "ToolResult",
+    "ToolResultEvent",
     "Turn",
     "TrialResult",
     "TypedValueRef",

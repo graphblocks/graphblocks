@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from graphblocks import (
+    ArtifactRef,
     BlockToolImplementation,
     ContentPart,
     OpenApiToolImplementation,
@@ -18,6 +19,7 @@ from graphblocks import (
     ToolPlanCall,
     ToolResolutionError,
     ToolResolutionScope,
+    ToolResultEvent,
 )
 
 
@@ -269,6 +271,36 @@ def test_policy_stopped_tool_result_is_final_but_incomplete() -> None:
     assert result.status == "policy_stopped"
     assert result.output_digest is None
     assert result.error == {"code": "policy.denied", "message": "tool output was stopped by policy"}
+
+
+def test_streaming_tool_result_delta_is_not_a_durable_result() -> None:
+    event = ToolResultEvent.delta("call-1", 3, (ContentPart(kind="text", text="draft chunk"),))
+
+    assert event.kind == "delta"
+    assert event.tool_call_id == "call-1"
+    assert event.sequence == 3
+    assert event.output == (ContentPart(kind="text", text="draft chunk"),)
+    assert event.is_final_durable_result() is False
+    assert event.into_result() is None
+
+
+def test_tool_result_events_carry_artifacts_and_final_result() -> None:
+    artifact = ArtifactRef("artifact-1", "file:///tmp/out.txt", checksum="sha256:out")
+    artifact_event = ToolResultEvent.artifact_ready("call-1", 4, artifact)
+    result = ToolResult.completed(
+        "call-1",
+        (ContentPart(kind="text", text="done"),),
+        started_at="2026-06-23T00:00:00Z",
+        completed_at="2026-06-23T00:00:01Z",
+    )
+    completed = ToolResultEvent.completed("call-1", 7, result)
+
+    assert artifact_event.kind == "artifact_ready"
+    assert artifact_event.artifact == artifact
+    assert artifact_event.is_final_durable_result() is False
+    assert completed.kind == "completed"
+    assert completed.is_final_durable_result() is True
+    assert completed.into_result() == result
 
 
 def _tool_call(tool_call_id: str, arguments: str = '{"resource_id":"a"}'):
