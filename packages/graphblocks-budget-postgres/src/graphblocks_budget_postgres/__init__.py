@@ -3,7 +3,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-from graphblocks_budget import BudgetAccount, BudgetReservation, BudgetSettlement, ResourceRef, UsageAmount
+from graphblocks_budget import (
+    BudgetAccount,
+    BudgetPermit,
+    BudgetReservation,
+    BudgetSettlement,
+    ResourceRef,
+    UsageAmount,
+)
 
 
 class PostgresBudgetAdapterError(ValueError):
@@ -94,6 +101,22 @@ CREATE TABLE IF NOT EXISTS {self.schema}.budget_settlements (
   settled_at timestamptz NOT NULL DEFAULT now()
 );
 """.strip(),
+            f"""
+CREATE TABLE IF NOT EXISTS {self.schema}.budget_permits (
+  permit_id text PRIMARY KEY,
+  reservation_refs_json jsonb NOT NULL,
+  owner_json jsonb NOT NULL,
+  atomic_unit_json jsonb NOT NULL,
+  admission_epoch bigint NOT NULL,
+  authorized_amounts_json jsonb NOT NULL,
+  continuation_profile text NOT NULL,
+  policy_snapshot_digest text NOT NULL,
+  expires_at timestamptz NOT NULL,
+  low_watermark_json jsonb NOT NULL,
+  fencing_tokens_json jsonb NOT NULL,
+  issued_at timestamptz NOT NULL DEFAULT now()
+);
+""".strip(),
         )
 
 
@@ -131,6 +154,22 @@ def encode_budget_settlement(settlement: BudgetSettlement) -> dict[str, object]:
         "overdraft_json": [_amount_contract(amount) for amount in settlement.overdraft],
         "status": settlement.status,
         "revision": settlement.revision,
+    }
+
+
+def encode_budget_permit(permit: BudgetPermit) -> dict[str, object]:
+    return {
+        "permit_id": permit.permit_id,
+        "reservation_refs_json": list(permit.reservation_refs),
+        "owner_json": _resource_contract(permit.owner),
+        "atomic_unit_json": _resource_contract(permit.atomic_unit),
+        "admission_epoch": permit.admission_epoch,
+        "authorized_amounts_json": [_amount_contract(amount) for amount in permit.authorized_amounts],
+        "continuation_profile": permit.continuation_profile,
+        "policy_snapshot_digest": permit.policy_snapshot_digest,
+        "expires_at": permit.expires_at,
+        "low_watermark_json": [_amount_contract(amount) for amount in permit.low_watermark],
+        "fencing_tokens_json": dict(sorted(permit.fencing_tokens.items())),
     }
 
 
@@ -248,12 +287,54 @@ ON CONFLICT (reservation_id) DO NOTHING;
     )
 
 
+def append_budget_permit_statement(
+    permit: BudgetPermit,
+    *,
+    schema: PostgresBudgetSchema | None = None,
+) -> PostgresStatement:
+    schema = schema or PostgresBudgetSchema()
+    return PostgresStatement(
+        name="budget_permit_append",
+        sql=f"""
+INSERT INTO {schema.schema}.budget_permits (
+  permit_id,
+  reservation_refs_json,
+  owner_json,
+  atomic_unit_json,
+  admission_epoch,
+  authorized_amounts_json,
+  continuation_profile,
+  policy_snapshot_digest,
+  expires_at,
+  low_watermark_json,
+  fencing_tokens_json
+) VALUES (
+  %(permit_id)s,
+  %(reservation_refs_json)s,
+  %(owner_json)s,
+  %(atomic_unit_json)s,
+  %(admission_epoch)s,
+  %(authorized_amounts_json)s,
+  %(continuation_profile)s,
+  %(policy_snapshot_digest)s,
+  %(expires_at)s,
+  %(low_watermark_json)s,
+  %(fencing_tokens_json)s
+)
+ON CONFLICT (permit_id) DO NOTHING;
+""".strip(),
+        params=encode_budget_permit(permit),
+    )
+
+
 __all__ = [
+    "append_budget_permit_statement",
     "append_budget_settlement_statement",
     "PostgresBudgetAdapterError",
     "PostgresBudgetSchema",
     "PostgresStatement",
     "encode_budget_account",
+    "encode_budget_permit",
     "encode_budget_reservation",
     "encode_budget_settlement",
     "upsert_budget_account_statement",

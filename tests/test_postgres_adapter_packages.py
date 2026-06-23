@@ -186,6 +186,87 @@ def test_budget_postgres_settlement_statement(monkeypatch) -> None:
     assert statement.params["revision"] == 9
 
 
+def test_budget_postgres_permit_statement(monkeypatch) -> None:
+    _add_budget_postgres_paths(monkeypatch)
+    graphblocks_budget = importlib.import_module("graphblocks_budget")
+    graphblocks_budget_postgres = importlib.import_module("graphblocks_budget_postgres")
+    schema = graphblocks_budget_postgres.PostgresBudgetSchema(schema="gb_budget")
+    permit = graphblocks_budget.BudgetPermit(
+        permit_id="permit-1",
+        reservation_refs=("reservation-1", "reservation-2"),
+        owner=graphblocks_budget.ResourceRef("worker-1", "worker"),
+        atomic_unit=graphblocks_budget.ResourceRef("turn-1", "turn"),
+        admission_epoch=3,
+        authorized_amounts=[
+            graphblocks_budget.UsageAmount(
+                "model_total_tokens",
+                Decimal("40"),
+                "tokens",
+                {"model": "gpt-test"},
+            )
+        ],
+        continuation_profile="finish_current_turn",
+        policy_snapshot_digest="sha256:policy",
+        expires_at="2026-06-23T00:00:00Z",
+        low_watermark=[
+            graphblocks_budget.UsageAmount(
+                "model_total_tokens",
+                Decimal("10"),
+                "tokens",
+                {"model": "gpt-test"},
+            )
+        ],
+        fencing_tokens={"budget-2": 5, "budget-1": 4},
+    )
+
+    migrations = "\n".join(schema.migration_statements())
+    assert "CREATE TABLE IF NOT EXISTS gb_budget.budget_permits" in migrations
+    assert graphblocks_budget_postgres.encode_budget_permit(permit) == {
+        "permit_id": "permit-1",
+        "reservation_refs_json": ["reservation-1", "reservation-2"],
+        "owner_json": {
+            "resource_id": "worker-1",
+            "resource_kind": "worker",
+            "tenant_id": None,
+            "attributes": {},
+        },
+        "atomic_unit_json": {
+            "resource_id": "turn-1",
+            "resource_kind": "turn",
+            "tenant_id": None,
+            "attributes": {},
+        },
+        "admission_epoch": 3,
+        "authorized_amounts_json": [
+            {
+                "kind": "model_total_tokens",
+                "amount": "40",
+                "unit": "tokens",
+                "dimensions": {"model": "gpt-test"},
+            }
+        ],
+        "continuation_profile": "finish_current_turn",
+        "policy_snapshot_digest": "sha256:policy",
+        "expires_at": "2026-06-23T00:00:00Z",
+        "low_watermark_json": [
+            {
+                "kind": "model_total_tokens",
+                "amount": "10",
+                "unit": "tokens",
+                "dimensions": {"model": "gpt-test"},
+            }
+        ],
+        "fencing_tokens_json": {"budget-1": 4, "budget-2": 5},
+    }
+
+    statement = graphblocks_budget_postgres.append_budget_permit_statement(permit, schema=schema)
+
+    assert statement.name == "budget_permit_append"
+    assert "INSERT INTO gb_budget.budget_permits" in statement.sql
+    assert "ON CONFLICT (permit_id) DO NOTHING" in statement.sql
+    assert statement.params["fencing_tokens_json"] == {"budget-1": 4, "budget-2": 5}
+
+
 def test_usage_postgres_schema_and_record_codec(monkeypatch) -> None:
     _add_usage_postgres_paths(monkeypatch)
     graphblocks_usage = importlib.import_module("graphblocks_usage")
