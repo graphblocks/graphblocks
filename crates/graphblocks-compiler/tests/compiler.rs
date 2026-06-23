@@ -340,3 +340,96 @@ fn compile_graph_accepts_tool_definition_with_schema_and_binding() {
         "ToolBindingMissing" | "ToolSchemaMissing"
     )));
 }
+
+#[test]
+fn compile_graph_rejects_parallel_state_changing_tools_without_effect_serialization() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "unsafe-parallel-tools"},
+        "spec": {
+            "bindings": {
+                "tools": {
+                    "createTicket": {
+                        "definition": {
+                            "name": "ticket.create",
+                            "description": "Create a support ticket.",
+                            "inputSchema": "schemas/TicketCreateRequest@1"
+                        },
+                        "implementation": {
+                            "kind": "openapi",
+                            "connection": "ticket-system",
+                            "operationId": "createTicket"
+                        },
+                        "effects": ["external_write", "network"]
+                    }
+                }
+            },
+            "toolExecution": {
+                "maximumParallelism": 4,
+                "failurePolicy": "return_failures_to_model"
+            },
+            "nodes": {
+                "agent": {"block": "agent.run@1"}
+            }
+        }
+    });
+
+    let plan = compile_graph(&graph);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["UnsafeParallelEffects"]
+    );
+}
+
+#[test]
+fn compile_graph_allows_parallel_state_changing_tools_with_effect_serialization() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "safe-parallel-tools"},
+        "spec": {
+            "bindings": {
+                "tools": {
+                    "createTicket": {
+                        "definition": {
+                            "name": "ticket.create",
+                            "description": "Create a support ticket.",
+                            "inputSchema": "schemas/TicketCreateRequest@1"
+                        },
+                        "implementation": {
+                            "kind": "openapi",
+                            "connection": "ticket-system",
+                            "operationId": "createTicket"
+                        },
+                        "effects": ["external_write", "network"]
+                    }
+                }
+            },
+            "toolExecution": {
+                "maximumParallelism": 4,
+                "failurePolicy": "return_failures_to_model",
+                "effectSerialization": {
+                    "keyTemplate": "{tool.name}:{arguments.resource_id}"
+                }
+            },
+            "nodes": {
+                "agent": {"block": "agent.run@1"}
+            }
+        }
+    });
+
+    let plan = compile_graph(&graph);
+
+    assert!(
+        !plan
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "UnsafeParallelEffects")
+    );
+}

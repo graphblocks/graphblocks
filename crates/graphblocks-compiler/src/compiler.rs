@@ -233,10 +233,64 @@ pub fn compile_graph(document: &Value) -> Plan {
         .and_then(|bindings| bindings.get("tools"))
         .and_then(Value::as_object)
     {
+        let tool_execution = spec
+            .and_then(|spec| spec.get("toolExecution"))
+            .or_else(|| spec.and_then(|spec| spec.get("tool_execution")))
+            .and_then(Value::as_object);
+        let maximum_parallelism = tool_execution
+            .and_then(|tool_execution| {
+                tool_execution
+                    .get("maximumParallelism")
+                    .or_else(|| tool_execution.get("maximum_parallelism"))
+            })
+            .and_then(Value::as_u64)
+            .unwrap_or(1);
+        let parallel_tool_calls = tool_execution
+            .and_then(|tool_execution| {
+                tool_execution
+                    .get("parallelToolCalls")
+                    .or_else(|| tool_execution.get("parallel_tool_calls"))
+            })
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let has_effect_serialization_key = tool_execution
+            .and_then(|tool_execution| {
+                tool_execution
+                    .get("effectSerialization")
+                    .or_else(|| tool_execution.get("effect_serialization"))
+            })
+            .and_then(Value::as_object)
+            .and_then(|effect_serialization| {
+                effect_serialization
+                    .get("keyTemplate")
+                    .or_else(|| effect_serialization.get("key_template"))
+            })
+            .and_then(Value::as_str)
+            .is_some_and(|key_template| !key_template.trim().is_empty());
+        let mut has_state_changing_tool = false;
+
         for (tool_key, tool) in tools {
             let Some(tool) = tool.as_object() else {
                 continue;
             };
+            let state_changing_tool = match tool.get("effects") {
+                Some(Value::String(effect)) => {
+                    matches!(
+                        effect.as_str(),
+                        "external_write" | "filesystem_write" | "process" | "destructive"
+                    )
+                }
+                Some(Value::Array(effects)) => effects.iter().any(|effect| {
+                    effect.as_str().is_some_and(|effect| {
+                        matches!(
+                            effect,
+                            "external_write" | "filesystem_write" | "process" | "destructive"
+                        )
+                    })
+                }),
+                _ => false,
+            };
+            has_state_changing_tool |= state_changing_tool;
             if let Some(definition) = tool.get("definition").and_then(Value::as_object) {
                 let has_input_schema = definition
                     .get("inputSchema")
@@ -258,6 +312,17 @@ pub fn compile_graph(document: &Value) -> Plan {
                     ));
                 }
             }
+        }
+
+        if (maximum_parallelism > 1 || parallel_tool_calls)
+            && has_state_changing_tool
+            && !has_effect_serialization_key
+        {
+            diagnostics.push(Diagnostic::error(
+                "UnsafeParallelEffects",
+                "parallel state-changing tool execution requires an effect serialization key",
+                "$.spec.toolExecution.effectSerialization",
+            ));
         }
     }
 
