@@ -199,6 +199,7 @@ def test_output_delivery_gate_policy_abort_cuts_off_and_rejects_late_chunks() ->
     )
 
     assert stopped.deliverable == []
+    assert stopped.pending_tool_calls == "deny"
     assert stopped.cutoff is not None
     assert stopped.cutoff.turn_id == "turn-1"
     assert stopped.cutoff.last_generated_sequence == 2

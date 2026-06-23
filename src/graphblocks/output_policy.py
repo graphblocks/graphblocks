@@ -281,6 +281,7 @@ class OutputCutoff:
 class OutputGateUpdate:
     deliverable: list[GenerationChunk]
     cutoff: OutputCutoff | None = None
+    pending_tool_calls: PendingToolCallsDisposition | None = None
 
 
 @dataclass(slots=True)
@@ -424,6 +425,6 @@ class OutputDeliveryGate:
             )
             self.pending.clear()
             self.cutoff = cutoff
-            return OutputGateUpdate(deliverable=[], cutoff=cutoff)
+            return OutputGateUpdate(deliverable=[], cutoff=cutoff, pending_tool_calls=decision.pending_tool_calls)
 
         raise OutputGateError(f"unknown output policy disposition {decision.disposition}")

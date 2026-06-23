@@ -486,6 +486,7 @@ pub enum OutputGateError {
 pub struct OutputGateUpdate {
     pub deliverable: Vec<GenerationChunk>,
     pub cutoff: Option<OutputCutoff>,
+    pub pending_tool_calls: Option<PendingToolCallsDisposition>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -633,11 +634,13 @@ impl OutputDeliveryGate {
                 Ok(OutputGateUpdate {
                     deliverable,
                     cutoff: None,
+                    pending_tool_calls: None,
                 })
             }
             OutputDisposition::Hold => Ok(OutputGateUpdate {
                 deliverable: Vec::new(),
                 cutoff: None,
+                pending_tool_calls: None,
             }),
             OutputDisposition::Redact | OutputDisposition::Replace => {
                 if decision.disposition == OutputDisposition::Redact
@@ -647,6 +650,7 @@ impl OutputDeliveryGate {
                     return Ok(OutputGateUpdate {
                         deliverable: Vec::new(),
                         cutoff: None,
+                        pending_tool_calls: None,
                     });
                 }
 
@@ -757,6 +761,7 @@ impl OutputDeliveryGate {
                 Ok(OutputGateUpdate {
                     deliverable,
                     cutoff: None,
+                    pending_tool_calls: None,
                 })
             }
             OutputDisposition::AbortResponse
@@ -780,6 +785,7 @@ impl OutputDeliveryGate {
                 Ok(OutputGateUpdate {
                     deliverable: Vec::new(),
                     cutoff: Some(cutoff),
+                    pending_tool_calls: Some(decision.pending_tool_calls),
                 })
             }
         }

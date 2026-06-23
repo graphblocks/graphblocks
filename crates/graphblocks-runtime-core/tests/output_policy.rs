@@ -69,6 +69,10 @@ fn policy_abort_cuts_off_delivery_and_rejects_late_chunks() -> Result<(), Output
         1_100,
     )?;
     assert!(stopped.deliverable.is_empty());
+    assert_eq!(
+        stopped.pending_tool_calls,
+        Some(PendingToolCallsDisposition::Deny)
+    );
 
     let cutoff = stopped.cutoff.expect("policy abort records cutoff");
     assert_eq!(cutoff.stream_id, "stream-1");
