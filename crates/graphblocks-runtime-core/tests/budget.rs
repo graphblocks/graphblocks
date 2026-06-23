@@ -134,3 +134,155 @@ fn budget_ledger_commit_over_reserved_records_overdraft() -> Result<(), BudgetEr
     assert_eq!(balance.available, vec![tokens(50)]);
     Ok(())
 }
+
+#[test]
+fn hierarchical_budget_reservation_holds_child_and_parent_balance() -> Result<(), BudgetError> {
+    let mut ledger = InMemoryBudgetLedger::new();
+    ledger.allocate(
+        "tenant-budget",
+        "tenant:acme",
+        [tokens(100)],
+        "tenant-policy",
+        None,
+    )?;
+    ledger.allocate(
+        "run-budget",
+        "run:1",
+        [tokens(80)],
+        "run-policy",
+        Some("tenant-budget".to_string()),
+    )?;
+
+    ledger.reserve(
+        "run-budget",
+        "attempt:1",
+        [tokens(70)],
+        ReservationPurpose::ProviderCall,
+        "later",
+        None,
+    )?;
+
+    assert_eq!(ledger.balance("run-budget")?.available, vec![tokens(10)]);
+    assert_eq!(ledger.balance("tenant-budget")?.available, vec![tokens(30)]);
+    Ok(())
+}
+
+#[test]
+fn hierarchical_budget_reservation_rejects_when_parent_balance_is_insufficient()
+-> Result<(), BudgetError> {
+    let mut ledger = InMemoryBudgetLedger::new();
+    ledger.allocate(
+        "tenant-budget",
+        "tenant:acme",
+        [tokens(100)],
+        "tenant-policy",
+        None,
+    )?;
+    ledger.allocate(
+        "run-budget",
+        "run:1",
+        [tokens(120)],
+        "run-policy",
+        Some("tenant-budget".to_string()),
+    )?;
+    ledger.reserve(
+        "run-budget",
+        "attempt:1",
+        [tokens(80)],
+        ReservationPurpose::ProviderCall,
+        "later",
+        None,
+    )?;
+
+    let error = ledger
+        .reserve(
+            "run-budget",
+            "attempt:2",
+            [tokens(30)],
+            ReservationPurpose::ProviderCall,
+            "later",
+            None,
+        )
+        .expect_err("parent budget must reject oversubscription");
+
+    assert_eq!(
+        error,
+        BudgetError::BudgetExceeded {
+            budget_id: "tenant-budget".to_string(),
+            kind: "model_total_tokens".to_string(),
+            unit: "tokens".to_string(),
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn hierarchical_budget_release_restores_child_and_parent_balance() -> Result<(), BudgetError> {
+    let mut ledger = InMemoryBudgetLedger::new();
+    ledger.allocate(
+        "tenant-budget",
+        "tenant:acme",
+        [tokens(100)],
+        "tenant-policy",
+        None,
+    )?;
+    ledger.allocate(
+        "run-budget",
+        "run:1",
+        [tokens(80)],
+        "run-policy",
+        Some("tenant-budget".to_string()),
+    )?;
+    let reservation = ledger.reserve(
+        "run-budget",
+        "attempt:1",
+        [tokens(70)],
+        ReservationPurpose::ProviderCall,
+        "later",
+        None,
+    )?;
+
+    ledger.release(&reservation.reservation_id)?;
+
+    assert_eq!(ledger.balance("run-budget")?.available, vec![tokens(80)]);
+    assert_eq!(
+        ledger.balance("tenant-budget")?.available,
+        vec![tokens(100)]
+    );
+    Ok(())
+}
+
+#[test]
+fn hierarchical_budget_commit_settles_child_and_parent_balance() -> Result<(), BudgetError> {
+    let mut ledger = InMemoryBudgetLedger::new();
+    ledger.allocate(
+        "tenant-budget",
+        "tenant:acme",
+        [tokens(100)],
+        "tenant-policy",
+        None,
+    )?;
+    ledger.allocate(
+        "run-budget",
+        "run:1",
+        [tokens(80)],
+        "run-policy",
+        Some("tenant-budget".to_string()),
+    )?;
+    let reservation = ledger.reserve(
+        "run-budget",
+        "attempt:1",
+        [tokens(70)],
+        ReservationPurpose::ProviderCall,
+        "later",
+        None,
+    )?;
+
+    ledger.commit(&reservation.reservation_id, [tokens(55)])?;
+
+    assert_eq!(ledger.balance("run-budget")?.committed, vec![tokens(55)]);
+    assert_eq!(ledger.balance("tenant-budget")?.committed, vec![tokens(55)]);
+    assert_eq!(ledger.balance("run-budget")?.available, vec![tokens(25)]);
+    assert_eq!(ledger.balance("tenant-budget")?.available, vec![tokens(45)]);
+    Ok(())
+}

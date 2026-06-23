@@ -108,6 +108,7 @@ pub struct InMemoryBudgetLedger {
     committed: BTreeMap<String, BTreeMap<AmountKey, i64>>,
     overdraft: BTreeMap<String, BTreeMap<AmountKey, i64>>,
     reservations: BTreeMap<String, BudgetReservation>,
+    reservation_holds: BTreeMap<String, Vec<String>>,
     reservation_counter: u64,
     fencing_counter: u64,
 }
@@ -172,14 +173,17 @@ impl InMemoryBudgetLedger {
         }
 
         let requested = amounts_to_map(amounts);
-        let available = self.available_map(budget_id)?;
-        for (key, amount) in &requested {
-            if *amount > available.get(key).copied().unwrap_or(0) {
-                return Err(BudgetError::BudgetExceeded {
-                    budget_id: budget_id.to_string(),
-                    kind: key.0.clone(),
-                    unit: key.1.clone(),
-                });
+        let held_budget_ids = self.budget_chain(budget_id)?;
+        for held_budget_id in &held_budget_ids {
+            let available = self.available_map(held_budget_id)?;
+            for (key, amount) in &requested {
+                if *amount > available.get(key).copied().unwrap_or(0) {
+                    return Err(BudgetError::BudgetExceeded {
+                        budget_id: held_budget_id.clone(),
+                        kind: key.0.clone(),
+                        unit: key.1.clone(),
+                    });
+                }
             }
         }
 
@@ -191,13 +195,15 @@ impl InMemoryBudgetLedger {
             return Err(BudgetError::ReservationConflict { reservation_id });
         }
 
-        add_amounts(
-            self.reserved
-                .get_mut(budget_id)
-                .expect("budget has reserved balance map"),
-            &requested,
-        );
-        self.bump_revision(budget_id);
+        for held_budget_id in &held_budget_ids {
+            add_amounts(
+                self.reserved
+                    .get_mut(held_budget_id)
+                    .expect("budget has reserved balance map"),
+                &requested,
+            );
+            self.bump_revision(held_budget_id);
+        }
 
         let reservation = BudgetReservation {
             reservation_id: reservation_id.clone(),
@@ -210,7 +216,9 @@ impl InMemoryBudgetLedger {
             status: ReservationStatus::Reserved,
         };
         self.reservations
-            .insert(reservation_id, reservation.clone());
+            .insert(reservation_id.clone(), reservation.clone());
+        self.reservation_holds
+            .insert(reservation_id, held_budget_ids);
         Ok(reservation)
     }
 
@@ -236,13 +244,11 @@ impl InMemoryBudgetLedger {
 
         let reserved = amounts_to_map(reservation.amounts.clone());
         let actual = amounts_to_map(actual_amounts);
-        subtract_amounts(
-            self.reserved
-                .get_mut(&reservation.budget_id)
-                .expect("budget has reserved balance map"),
-            &reserved,
-        );
-
+        let held_budget_ids = self
+            .reservation_holds
+            .get(reservation_id)
+            .cloned()
+            .unwrap_or_else(|| vec![reservation.budget_id.clone()]);
         let mut released = BTreeMap::new();
         let mut overdraft = BTreeMap::new();
         for (key, amount) in &reserved {
@@ -258,19 +264,27 @@ impl InMemoryBudgetLedger {
             }
         }
 
-        add_amounts(
-            self.committed
-                .get_mut(&reservation.budget_id)
-                .expect("budget has committed balance map"),
-            &actual,
-        );
-        add_amounts(
-            self.overdraft
-                .get_mut(&reservation.budget_id)
-                .expect("budget has overdraft balance map"),
-            &overdraft,
-        );
-        self.bump_revision(&reservation.budget_id);
+        for held_budget_id in &held_budget_ids {
+            subtract_amounts(
+                self.reserved
+                    .get_mut(held_budget_id)
+                    .expect("budget has reserved balance map"),
+                &reserved,
+            );
+            add_amounts(
+                self.committed
+                    .get_mut(held_budget_id)
+                    .expect("budget has committed balance map"),
+                &actual,
+            );
+            add_amounts(
+                self.overdraft
+                    .get_mut(held_budget_id)
+                    .expect("budget has overdraft balance map"),
+                &overdraft,
+            );
+            self.bump_revision(held_budget_id);
+        }
 
         let updated = BudgetReservation {
             status: ReservationStatus::Committed,
@@ -313,13 +327,20 @@ impl InMemoryBudgetLedger {
         }
 
         let reserved = amounts_to_map(reservation.amounts.clone());
-        subtract_amounts(
-            self.reserved
-                .get_mut(&reservation.budget_id)
-                .expect("budget has reserved balance map"),
-            &reserved,
-        );
-        self.bump_revision(&reservation.budget_id);
+        let held_budget_ids = self
+            .reservation_holds
+            .get(reservation_id)
+            .cloned()
+            .unwrap_or_else(|| vec![reservation.budget_id.clone()]);
+        for held_budget_id in &held_budget_ids {
+            subtract_amounts(
+                self.reserved
+                    .get_mut(held_budget_id)
+                    .expect("budget has reserved balance map"),
+                &reserved,
+            );
+            self.bump_revision(held_budget_id);
+        }
 
         let updated = BudgetReservation {
             status: ReservationStatus::Released,
@@ -408,6 +429,26 @@ impl InMemoryBudgetLedger {
             }
         }
         Ok(available)
+    }
+
+    fn budget_chain(&self, budget_id: &str) -> Result<Vec<String>, BudgetError> {
+        let mut chain = Vec::new();
+        let mut seen = BTreeSet::new();
+        let mut current_id = Some(budget_id.to_string());
+        while let Some(id) = current_id {
+            if !seen.insert(id.clone()) {
+                return Err(BudgetError::BudgetConflict { budget_id: id });
+            }
+            let account = self
+                .accounts
+                .get(&id)
+                .ok_or_else(|| BudgetError::BudgetNotFound {
+                    budget_id: id.clone(),
+                })?;
+            chain.push(id);
+            current_id = account.parent_budget_id.clone();
+        }
+        Ok(chain)
     }
 
     fn bump_revision(&mut self, budget_id: &str) {
