@@ -46,6 +46,27 @@ fn bounded_holdback_releases_only_policy_accepted_chunks() -> Result<(), OutputG
 }
 
 #[test]
+fn policy_decision_cannot_accept_future_generation_sequences() -> Result<(), OutputGateError> {
+    let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
+
+    gate.record_chunk(GenerationChunk::text("stream-1", "response-1", 1, "hello"))?;
+
+    assert_eq!(
+        gate.apply_decision(
+            OutputPolicyDecision::allow("decision-1", Some(2), "sha256:future"),
+            1_000,
+        ),
+        Err(OutputGateError::AcceptedSequenceBeyondGenerated {
+            last_generated_sequence: 1,
+            accepted_through_sequence: 2,
+        }),
+    );
+    assert_eq!(gate.last_policy_accepted_sequence(), 0);
+    assert_eq!(gate.last_client_delivered_sequence(), 0);
+    Ok(())
+}
+
+#[test]
 fn policy_abort_cuts_off_delivery_and_rejects_late_chunks() -> Result<(), OutputGateError> {
     let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
 

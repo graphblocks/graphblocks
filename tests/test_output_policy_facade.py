@@ -179,6 +179,25 @@ def test_output_delivery_gate_releases_only_policy_accepted_chunks() -> None:
     assert gate.last_client_delivered_sequence == 2
 
 
+def test_output_delivery_gate_rejects_future_accepted_sequence() -> None:
+    gate = OutputDeliveryGate("stream-1", "response-1")
+    gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "hello"))
+
+    with pytest.raises(OutputGateError) as error:
+        gate.apply_decision(
+            OutputPolicyDecision.allow(
+                "decision-1",
+                accepted_through_sequence=2,
+                input_digest="sha256:future",
+            ),
+            occurred_at="2026-06-23T00:00:01Z",
+        )
+
+    assert str(error.value) == "accepted sequence 2 exceeds last generated sequence 1"
+    assert gate.last_policy_accepted_sequence == 0
+    assert gate.last_client_delivered_sequence == 0
+
+
 def test_output_delivery_gate_applies_typed_redaction_instruction_before_delivery() -> None:
     gate = OutputDeliveryGate("stream-1", "response-1")
     gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "hello secret world"))

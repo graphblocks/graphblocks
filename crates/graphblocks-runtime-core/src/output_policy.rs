@@ -476,6 +476,10 @@ pub enum OutputGateError {
         last_generated_sequence: u64,
         attempted_sequence: u64,
     },
+    AcceptedSequenceBeyondGenerated {
+        last_generated_sequence: u64,
+        accepted_through_sequence: u64,
+    },
     InvalidRedactionInstruction {
         path: String,
     },
@@ -619,6 +623,12 @@ impl OutputDeliveryGate {
         match decision.disposition {
             OutputDisposition::Allow => {
                 if let Some(accepted_through_sequence) = decision.accepted_through_sequence {
+                    if accepted_through_sequence > self.last_generated_sequence {
+                        return Err(OutputGateError::AcceptedSequenceBeyondGenerated {
+                            last_generated_sequence: self.last_generated_sequence,
+                            accepted_through_sequence,
+                        });
+                    }
                     if accepted_through_sequence > self.last_policy_accepted_sequence {
                         self.last_policy_accepted_sequence = accepted_through_sequence;
                     }
@@ -651,6 +661,15 @@ impl OutputDeliveryGate {
                         deliverable: Vec::new(),
                         cutoff: None,
                         pending_tool_calls: None,
+                    });
+                }
+
+                if let Some(accepted_through_sequence) = decision.accepted_through_sequence
+                    && accepted_through_sequence > self.last_generated_sequence
+                {
+                    return Err(OutputGateError::AcceptedSequenceBeyondGenerated {
+                        last_generated_sequence: self.last_generated_sequence,
+                        accepted_through_sequence,
                     });
                 }
 

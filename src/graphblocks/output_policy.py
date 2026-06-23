@@ -349,6 +349,12 @@ class OutputDeliveryGate:
 
         if decision.disposition == "allow":
             if decision.accepted_through_sequence is not None:
+                if decision.accepted_through_sequence > self.last_generated_sequence:
+                    raise OutputGateError(
+                        "accepted sequence "
+                        f"{decision.accepted_through_sequence} exceeds last generated sequence "
+                        f"{self.last_generated_sequence}"
+                    )
                 self.last_policy_accepted_sequence = max(
                     self.last_policy_accepted_sequence,
                     decision.accepted_through_sequence,
@@ -364,6 +370,12 @@ class OutputDeliveryGate:
             if decision.disposition == "redact" and not decision.replacement_parts and not decision.redactions:
                 return OutputGateUpdate(deliverable=[])
             if decision.accepted_through_sequence is not None:
+                if decision.accepted_through_sequence > self.last_generated_sequence:
+                    raise OutputGateError(
+                        "accepted sequence "
+                        f"{decision.accepted_through_sequence} exceeds last generated sequence "
+                        f"{self.last_generated_sequence}"
+                    )
                 self.last_policy_accepted_sequence = max(
                     self.last_policy_accepted_sequence,
                     decision.accepted_through_sequence,
