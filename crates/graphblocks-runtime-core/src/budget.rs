@@ -23,9 +23,36 @@ pub enum ReservationPurpose {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CompletionReservePurpose {
+    Finalization,
+    Checkpoint,
+    Cleanup,
+    Compensation,
+}
+
+impl CompletionReservePurpose {
+    fn reservation_purpose(self) -> ReservationPurpose {
+        match self {
+            Self::Finalization => ReservationPurpose::Finalization,
+            Self::Checkpoint => ReservationPurpose::Finalization,
+            Self::Cleanup => ReservationPurpose::Cleanup,
+            Self::Compensation => ReservationPurpose::Cleanup,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReservationStatus {
     Reserved,
     Committed,
+    Released,
+    Expired,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CompletionReserveStatus {
+    Available,
+    Spent,
     Released,
     Expired,
 }
@@ -46,6 +73,20 @@ pub enum BudgetError {
     },
     PermitConflict {
         permit_id: String,
+    },
+    CompletionReserveNotFound {
+        reserve_id: String,
+    },
+    CompletionReserveConflict {
+        reserve_id: String,
+    },
+    CompletionReserveUnauthorized {
+        reserve_id: String,
+        spender: String,
+    },
+    CompletionReserveState {
+        reserve_id: String,
+        status: CompletionReserveStatus,
     },
     ReservationState {
         reservation_id: String,
@@ -118,6 +159,19 @@ pub struct BudgetPermit {
     pub fencing_tokens: BTreeMap<String, u64>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CompletionReserve {
+    pub reserve_id: String,
+    pub budget_id: String,
+    pub purpose: CompletionReservePurpose,
+    pub amounts: Vec<UsageAmount>,
+    pub spendable_by: BTreeSet<String>,
+    pub expires_at: Option<String>,
+    pub status: CompletionReserveStatus,
+    pub reservation_id: Option<String>,
+    pub fencing_token: u64,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct InMemoryBudgetLedger {
     accounts: BTreeMap<String, BudgetAccount>,
@@ -128,6 +182,8 @@ pub struct InMemoryBudgetLedger {
     reservations: BTreeMap<String, BudgetReservation>,
     reservation_holds: BTreeMap<String, Vec<String>>,
     permits: BTreeMap<String, BudgetPermit>,
+    completion_reserves: BTreeMap<String, CompletionReserve>,
+    completion_reserve_holds: BTreeMap<String, Vec<String>>,
     reservation_counter: u64,
     fencing_counter: u64,
 }
@@ -482,6 +538,151 @@ impl InMemoryBudgetLedger {
         };
         self.permits.insert(permit_id, permit.clone());
         Ok(permit)
+    }
+
+    pub fn create_completion_reserve<I, S>(
+        &mut self,
+        reserve_id: impl Into<String>,
+        budget_id: impl AsRef<str>,
+        purpose: CompletionReservePurpose,
+        amounts: impl IntoIterator<Item = UsageAmount>,
+        spendable_by: I,
+        expires_at: Option<String>,
+    ) -> Result<CompletionReserve, BudgetError>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let reserve_id = reserve_id.into();
+        let budget_id = budget_id.as_ref();
+        if self.completion_reserves.contains_key(&reserve_id) {
+            return Err(BudgetError::CompletionReserveConflict { reserve_id });
+        }
+        if !self.accounts.contains_key(budget_id) {
+            return Err(BudgetError::BudgetNotFound {
+                budget_id: budget_id.to_string(),
+            });
+        }
+
+        let requested = amounts_to_map(amounts);
+        let held_budget_ids = self.budget_chain(budget_id)?;
+        for held_budget_id in &held_budget_ids {
+            let available = self.available_map(held_budget_id)?;
+            for (key, amount) in &requested {
+                if *amount > available.get(key).copied().unwrap_or(0) {
+                    return Err(BudgetError::BudgetExceeded {
+                        budget_id: held_budget_id.clone(),
+                        kind: key.0.clone(),
+                        unit: key.1.clone(),
+                    });
+                }
+            }
+        }
+
+        self.fencing_counter += 1;
+        for held_budget_id in &held_budget_ids {
+            add_amounts(
+                self.reserved
+                    .get_mut(held_budget_id)
+                    .expect("budget has reserved balance map"),
+                &requested,
+            );
+            self.bump_revision(held_budget_id);
+        }
+
+        let reserve = CompletionReserve {
+            reserve_id: reserve_id.clone(),
+            budget_id: budget_id.to_string(),
+            purpose,
+            amounts: map_to_amounts(&requested),
+            spendable_by: spendable_by.into_iter().map(Into::into).collect(),
+            expires_at,
+            status: CompletionReserveStatus::Available,
+            reservation_id: None,
+            fencing_token: self.fencing_counter,
+        };
+        self.completion_reserves
+            .insert(reserve_id.clone(), reserve.clone());
+        self.completion_reserve_holds
+            .insert(reserve_id, held_budget_ids);
+        Ok(reserve)
+    }
+
+    pub fn completion_reserve(
+        &self,
+        reserve_id: impl AsRef<str>,
+    ) -> Result<CompletionReserve, BudgetError> {
+        let reserve_id = reserve_id.as_ref();
+        self.completion_reserves
+            .get(reserve_id)
+            .cloned()
+            .ok_or_else(|| BudgetError::CompletionReserveNotFound {
+                reserve_id: reserve_id.to_string(),
+            })
+    }
+
+    pub fn spend_completion_reserve(
+        &mut self,
+        reserve_id: impl AsRef<str>,
+        spender: impl AsRef<str>,
+        expires_at: impl Into<String>,
+    ) -> Result<BudgetReservation, BudgetError> {
+        let reserve_id = reserve_id.as_ref();
+        let spender = spender.as_ref();
+        let reserve = self
+            .completion_reserves
+            .get(reserve_id)
+            .cloned()
+            .ok_or_else(|| BudgetError::CompletionReserveNotFound {
+                reserve_id: reserve_id.to_string(),
+            })?;
+        if reserve.status != CompletionReserveStatus::Available {
+            return Err(BudgetError::CompletionReserveState {
+                reserve_id: reserve_id.to_string(),
+                status: reserve.status,
+            });
+        }
+        if !reserve.spendable_by.contains(spender) {
+            return Err(BudgetError::CompletionReserveUnauthorized {
+                reserve_id: reserve_id.to_string(),
+                spender: spender.to_string(),
+            });
+        }
+
+        self.reservation_counter += 1;
+        let reservation_id = format!("reservation-{:06}", self.reservation_counter);
+        if self.reservations.contains_key(&reservation_id) {
+            return Err(BudgetError::ReservationConflict { reservation_id });
+        }
+
+        let reservation = BudgetReservation {
+            reservation_id: reservation_id.clone(),
+            budget_id: reserve.budget_id.clone(),
+            owner: spender.to_string(),
+            amounts: reserve.amounts.clone(),
+            purpose: reserve.purpose.reservation_purpose(),
+            expires_at: expires_at.into(),
+            fencing_token: reserve.fencing_token,
+            status: ReservationStatus::Reserved,
+        };
+        self.reservations
+            .insert(reservation_id.clone(), reservation.clone());
+        self.reservation_holds.insert(
+            reservation_id.clone(),
+            self.completion_reserve_holds
+                .get(reserve_id)
+                .cloned()
+                .unwrap_or_else(|| vec![reserve.budget_id.clone()]),
+        );
+        self.completion_reserves.insert(
+            reserve_id.to_string(),
+            CompletionReserve {
+                status: CompletionReserveStatus::Spent,
+                reservation_id: Some(reservation_id),
+                ..reserve
+            },
+        );
+        Ok(reservation)
     }
 
     fn available_map(&self, budget_id: &str) -> Result<BTreeMap<AmountKey, i64>, BudgetError> {

@@ -1,6 +1,6 @@
 use graphblocks_runtime_core::budget::{
-    BudgetError, BudgetStatus, InMemoryBudgetLedger, ReservationPurpose, ReservationStatus,
-    UsageAmount,
+    BudgetError, BudgetStatus, CompletionReservePurpose, CompletionReserveStatus,
+    InMemoryBudgetLedger, ReservationPurpose, ReservationStatus, UsageAmount,
 };
 use std::collections::BTreeMap;
 
@@ -499,6 +499,105 @@ fn budget_ledger_rejects_duplicate_permit_ids() -> Result<(), BudgetError> {
         BudgetError::PermitConflict {
             permit_id: "permit-1".to_string(),
         }
+    );
+    Ok(())
+}
+
+#[test]
+fn completion_reserve_holds_finalization_capacity_out_of_general_budget() -> Result<(), BudgetError>
+{
+    let mut ledger = InMemoryBudgetLedger::new();
+    ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+
+    let reserve = ledger.create_completion_reserve(
+        "finalization-reserve",
+        "budget-1",
+        CompletionReservePurpose::Finalization,
+        [tokens(20)],
+        ["agent.finalize"],
+        None,
+    )?;
+
+    assert_eq!(reserve.status, CompletionReserveStatus::Available);
+    assert_eq!(ledger.balance("budget-1")?.reserved, vec![tokens(20)]);
+    assert_eq!(ledger.balance("budget-1")?.available, vec![tokens(80)]);
+    assert_eq!(
+        ledger
+            .reserve(
+                "budget-1",
+                "planner",
+                [tokens(90)],
+                ReservationPurpose::Task,
+                "later",
+                None,
+            )
+            .expect_err("ordinary planning cannot consume the completion reserve"),
+        BudgetError::BudgetExceeded {
+            budget_id: "budget-1".to_owned(),
+            kind: "model_total_tokens".to_owned(),
+            unit: "tokens".to_owned(),
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn completion_reserve_can_be_spent_by_authorized_finalization_work() -> Result<(), BudgetError> {
+    let mut ledger = InMemoryBudgetLedger::new();
+    ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+    ledger.create_completion_reserve(
+        "finalization-reserve",
+        "budget-1",
+        CompletionReservePurpose::Finalization,
+        [tokens(20)],
+        ["agent.finalize"],
+        None,
+    )?;
+
+    let reservation =
+        ledger.spend_completion_reserve("finalization-reserve", "agent.finalize", "later")?;
+    let reserve = ledger.completion_reserve("finalization-reserve")?;
+
+    assert_eq!(reservation.purpose, ReservationPurpose::Finalization);
+    assert_eq!(reservation.amounts, vec![tokens(20)]);
+    assert_eq!(reserve.status, CompletionReserveStatus::Spent);
+
+    let settlement = ledger.commit(&reservation.reservation_id, [tokens(15)])?;
+    let balance = ledger.balance("budget-1")?;
+
+    assert_eq!(settlement.committed, vec![tokens(15)]);
+    assert_eq!(settlement.released, vec![tokens(5)]);
+    assert_eq!(balance.reserved, Vec::<UsageAmount>::new());
+    assert_eq!(balance.committed, vec![tokens(15)]);
+    assert_eq!(balance.available, vec![tokens(85)]);
+    Ok(())
+}
+
+#[test]
+fn completion_reserve_rejects_unauthorized_spender() -> Result<(), BudgetError> {
+    let mut ledger = InMemoryBudgetLedger::new();
+    ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+    ledger.create_completion_reserve(
+        "cleanup-reserve",
+        "budget-1",
+        CompletionReservePurpose::Cleanup,
+        [tokens(10)],
+        ["cleanup.worker"],
+        None,
+    )?;
+
+    assert_eq!(
+        ledger
+            .spend_completion_reserve("cleanup-reserve", "planner", "later")
+            .expect_err("only declared spenders may consume completion reserves"),
+        BudgetError::CompletionReserveUnauthorized {
+            reserve_id: "cleanup-reserve".to_owned(),
+            spender: "planner".to_owned(),
+        }
+    );
+    assert_eq!(
+        ledger.completion_reserve("cleanup-reserve")?.status,
+        CompletionReserveStatus::Available,
     );
     Ok(())
 }
