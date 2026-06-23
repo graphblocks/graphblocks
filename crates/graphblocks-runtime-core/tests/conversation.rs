@@ -1,8 +1,10 @@
 use graphblocks_runtime_core::conversation::{
-    BranchRequest, ContentPart, Conversation, ConversationError, DeletePolicy,
+    AttachmentIngestionStatus, AttachmentPurpose, AttachmentScope, BranchRequest, CompactionRecord,
+    ContentPart, Conversation, ConversationError, DeletePolicy, FileAttachment,
     InMemoryConversationStore, Message, MessageError, MessageRole, MessageStatus, TurnError,
     TurnStatus,
 };
+use graphblocks_runtime_core::documents::ArtifactRef;
 use serde_json::json;
 
 fn assistant_message(message_id: &str, text: &str) -> Message {
@@ -142,6 +144,165 @@ fn branch_preserves_lineage_and_copies_messages_through_source_message()
             message_id: "missing".to_owned()
         }),
     );
+    Ok(())
+}
+
+#[test]
+fn scoped_attachments_resolve_for_context_without_promoting_to_knowledge()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut store = InMemoryConversationStore::new();
+    store.create(Conversation::new("conv-1"))?;
+    store.append_messages("conv-1", 0, [Message::new("msg-user", MessageRole::User)])?;
+    store.add_attachment(
+        "conv-1",
+        FileAttachment::new(
+            "att-message",
+            ArtifactRef::new("artifact-message", "blob://attachments/message.pdf"),
+            AttachmentScope::Message,
+            AttachmentPurpose::Retrieval,
+        )
+        .with_message_id("msg-user")
+        .with_ingestion_status(AttachmentIngestionStatus::Ready),
+    )?;
+    store.add_attachment(
+        "conv-1",
+        FileAttachment::new(
+            "att-conversation",
+            ArtifactRef::new(
+                "artifact-conversation",
+                "blob://attachments/conversation.pdf",
+            ),
+            AttachmentScope::Conversation,
+            AttachmentPurpose::DirectInput,
+        )
+        .with_ingestion_status(AttachmentIngestionStatus::Ready),
+    )?;
+
+    let attachments = store.resolve_attachments("conv-1", &["msg-user".to_owned()], true)?;
+    let snapshot = store.get("conv-1")?;
+
+    assert_eq!(
+        attachments
+            .iter()
+            .map(|attachment| attachment.attachment_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["att-message", "att-conversation"]
+    );
+    assert!(
+        snapshot
+            .conversation
+            .metadata
+            .get("knowledge_index_id")
+            .is_none()
+    );
+    Ok(())
+}
+
+#[test]
+fn branch_respects_include_attachments_and_message_scope() -> Result<(), Box<dyn std::error::Error>>
+{
+    let mut store = InMemoryConversationStore::new();
+    store.create(Conversation::new("conv-1"))?;
+    store.append_messages(
+        "conv-1",
+        0,
+        [
+            Message::new("msg-1", MessageRole::User),
+            Message::new("msg-2", MessageRole::User),
+        ],
+    )?;
+    store.add_attachment(
+        "conv-1",
+        FileAttachment::new(
+            "att-1",
+            ArtifactRef::new("artifact-1", "blob://attachments/one.pdf"),
+            AttachmentScope::Message,
+            AttachmentPurpose::Retrieval,
+        )
+        .with_message_id("msg-1")
+        .with_ingestion_status(AttachmentIngestionStatus::Ready),
+    )?;
+    store.add_attachment(
+        "conv-1",
+        FileAttachment::new(
+            "att-2",
+            ArtifactRef::new("artifact-2", "blob://attachments/two.pdf"),
+            AttachmentScope::Message,
+            AttachmentPurpose::Retrieval,
+        )
+        .with_message_id("msg-2")
+        .with_ingestion_status(AttachmentIngestionStatus::Ready),
+    )?;
+    store.add_attachment(
+        "conv-1",
+        FileAttachment::new(
+            "att-conversation",
+            ArtifactRef::new(
+                "artifact-conversation",
+                "blob://attachments/conversation.pdf",
+            ),
+            AttachmentScope::Conversation,
+            AttachmentPurpose::Reference,
+        )
+        .with_ingestion_status(AttachmentIngestionStatus::Ready),
+    )?;
+
+    let branch_with_attachments = store
+        .branch(BranchRequest::new("conv-1", "msg-1").with_new_conversation_id("conv-branch-1"))?;
+    let mut request =
+        BranchRequest::new("conv-1", "msg-1").with_new_conversation_id("conv-branch-2");
+    request.include_attachments = false;
+    let branch_without_attachments = store.branch(request)?;
+
+    assert_eq!(
+        branch_with_attachments
+            .attachments
+            .iter()
+            .map(|attachment| attachment.attachment_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["att-1", "att-conversation"]
+    );
+    assert!(branch_without_attachments.attachments.is_empty());
+    Ok(())
+}
+
+#[test]
+fn compaction_record_preserves_source_messages_and_records_token_delta()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut store = InMemoryConversationStore::new();
+    store.create(Conversation::new("conv-1"))?;
+    store.append_messages(
+        "conv-1",
+        0,
+        [
+            Message::new("msg-1", MessageRole::User),
+            assistant_message("msg-2", "long answer"),
+            assistant_message("msg-summary", "compact summary"),
+        ],
+    )?;
+
+    let revision = store.record_compaction(
+        "conv-1",
+        CompactionRecord::new(
+            "compact-1",
+            ["msg-1", "msg-2"],
+            "msg-summary",
+            "summary_memory",
+            1200,
+            120,
+        )
+        .with_model("summary-model"),
+    )?;
+    let snapshot = store.get("conv-1")?;
+
+    assert_eq!(revision, 2);
+    assert_eq!(snapshot.conversation.messages.len(), 3);
+    assert_eq!(
+        snapshot.conversation.compactions[0].compaction_id,
+        "compact-1"
+    );
+    assert_eq!(snapshot.conversation.compactions[0].token_before, 1200);
+    assert_eq!(snapshot.conversation.compactions[0].token_after, 120);
     Ok(())
 }
 

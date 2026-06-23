@@ -1,9 +1,11 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
 use serde_json::Value;
 use serde_json::json;
+
+use crate::documents::ArtifactRef;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MessageRole {
@@ -57,6 +59,128 @@ impl ContentPart {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AttachmentScope {
+    Message,
+    Conversation,
+    User,
+    Project,
+    Tenant,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AttachmentPurpose {
+    DirectInput,
+    Retrieval,
+    CodeAnalysis,
+    Reference,
+    Output,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AttachmentIngestionStatus {
+    Pending,
+    Processing,
+    Ready,
+    Failed,
+    Expired,
+    Deleted,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FileAttachment {
+    pub attachment_id: String,
+    pub asset: ArtifactRef,
+    pub scope: AttachmentScope,
+    pub purpose: AttachmentPurpose,
+    pub ingestion_status: AttachmentIngestionStatus,
+    pub retention_policy: Option<String>,
+    pub message_id: Option<String>,
+    pub metadata: BTreeMap<String, Value>,
+}
+
+impl FileAttachment {
+    pub fn new(
+        attachment_id: impl Into<String>,
+        asset: ArtifactRef,
+        scope: AttachmentScope,
+        purpose: AttachmentPurpose,
+    ) -> Self {
+        Self {
+            attachment_id: attachment_id.into(),
+            asset,
+            scope,
+            purpose,
+            ingestion_status: AttachmentIngestionStatus::Pending,
+            retention_policy: None,
+            message_id: None,
+            metadata: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_message_id(mut self, message_id: impl Into<String>) -> Self {
+        self.message_id = Some(message_id.into());
+        self
+    }
+
+    pub fn with_ingestion_status(mut self, status: AttachmentIngestionStatus) -> Self {
+        self.ingestion_status = status;
+        self
+    }
+
+    pub fn with_retention_policy(mut self, retention_policy: impl Into<String>) -> Self {
+        self.retention_policy = Some(retention_policy.into());
+        self
+    }
+
+    pub fn is_ready(&self) -> bool {
+        self.ingestion_status == AttachmentIngestionStatus::Ready
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CompactionRecord {
+    pub compaction_id: String,
+    pub source_message_ids: Vec<String>,
+    pub output_message_id: String,
+    pub method: String,
+    pub model: Option<String>,
+    pub token_before: usize,
+    pub token_after: usize,
+    pub metadata: BTreeMap<String, Value>,
+}
+
+impl CompactionRecord {
+    pub fn new<I, S>(
+        compaction_id: impl Into<String>,
+        source_message_ids: I,
+        output_message_id: impl Into<String>,
+        method: impl Into<String>,
+        token_before: usize,
+        token_after: usize,
+    ) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        Self {
+            compaction_id: compaction_id.into(),
+            source_message_ids: source_message_ids.into_iter().map(Into::into).collect(),
+            output_message_id: output_message_id.into(),
+            method: method.into(),
+            model: None,
+            token_before,
+            token_after,
+            metadata: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_model(mut self, model: impl Into<String>) -> Self {
+        self.model = Some(model.into());
+        self
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Message {
     pub message_id: String,
@@ -98,6 +222,8 @@ impl Message {
 pub struct Conversation {
     pub conversation_id: String,
     pub messages: Vec<Message>,
+    pub attachments: Vec<FileAttachment>,
+    pub compactions: Vec<CompactionRecord>,
     pub revision: u64,
     pub archived: bool,
     pub branch_of: Option<String>,
@@ -110,6 +236,8 @@ impl Conversation {
         Self {
             conversation_id: conversation_id.into(),
             messages: Vec::new(),
+            attachments: Vec::new(),
+            compactions: Vec::new(),
             revision: 0,
             archived: false,
             branch_of: None,
@@ -578,9 +706,37 @@ impl InMemoryConversationStore {
             json!(request.include_attachments),
         );
         metadata.insert("include_memory".to_owned(), json!(request.include_memory));
+        let copied_message_ids = conversation.messages[..=source_index]
+            .iter()
+            .map(|message| message.message_id.clone())
+            .collect::<BTreeSet<_>>();
+        let attachments = if request.include_attachments {
+            conversation
+                .attachments
+                .iter()
+                .filter(|attachment| {
+                    attachment.scope == AttachmentScope::Conversation
+                        || (attachment.scope == AttachmentScope::Message
+                            && attachment
+                                .message_id
+                                .as_ref()
+                                .is_some_and(|message_id| copied_message_ids.contains(message_id)))
+                })
+                .cloned()
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let compactions = if request.include_memory {
+            conversation.compactions.clone()
+        } else {
+            Vec::new()
+        };
         let branch = Conversation {
             conversation_id: branch_id.clone(),
             messages: conversation.messages[..=source_index].to_vec(),
+            attachments,
+            compactions,
             revision: 0,
             archived: false,
             branch_of: Some(conversation.conversation_id.clone()),
@@ -589,6 +745,90 @@ impl InMemoryConversationStore {
         };
         self.conversations.insert(branch_id, branch.clone());
         Ok(branch)
+    }
+
+    pub fn add_attachment(
+        &mut self,
+        conversation_id: impl AsRef<str>,
+        attachment: FileAttachment,
+    ) -> Result<u64, ConversationError> {
+        let conversation_id = conversation_id.as_ref();
+        let conversation = self.conversations.get_mut(conversation_id).ok_or_else(|| {
+            ConversationError::NotFound {
+                conversation_id: conversation_id.to_owned(),
+            }
+        })?;
+        if conversation.archived {
+            return Err(ConversationError::Archived {
+                conversation_id: conversation_id.to_owned(),
+            });
+        }
+        conversation.attachments.push(attachment);
+        conversation.revision += 1;
+        Ok(conversation.revision)
+    }
+
+    pub fn resolve_attachments(
+        &self,
+        conversation_id: impl AsRef<str>,
+        message_ids: &[String],
+        include_conversation_scope: bool,
+    ) -> Result<Vec<FileAttachment>, ConversationError> {
+        let conversation_id = conversation_id.as_ref();
+        let conversation =
+            self.conversations
+                .get(conversation_id)
+                .ok_or_else(|| ConversationError::NotFound {
+                    conversation_id: conversation_id.to_owned(),
+                })?;
+        let message_ids = message_ids.iter().cloned().collect::<BTreeSet<_>>();
+        Ok(conversation
+            .attachments
+            .iter()
+            .filter(|attachment| attachment.is_ready())
+            .filter(|attachment| {
+                (include_conversation_scope && attachment.scope == AttachmentScope::Conversation)
+                    || (attachment.scope == AttachmentScope::Message
+                        && attachment
+                            .message_id
+                            .as_ref()
+                            .is_some_and(|message_id| message_ids.contains(message_id)))
+            })
+            .cloned()
+            .collect())
+    }
+
+    pub fn record_compaction(
+        &mut self,
+        conversation_id: impl AsRef<str>,
+        record: CompactionRecord,
+    ) -> Result<u64, MessageError> {
+        let conversation_id = conversation_id.as_ref();
+        let conversation = self.conversations.get_mut(conversation_id).ok_or_else(|| {
+            ConversationError::NotFound {
+                conversation_id: conversation_id.to_owned(),
+            }
+        })?;
+        let message_ids = conversation
+            .messages
+            .iter()
+            .map(|message| message.message_id.clone())
+            .collect::<BTreeSet<_>>();
+        for source_message_id in &record.source_message_ids {
+            if !message_ids.contains(source_message_id) {
+                return Err(MessageError::NotFound {
+                    message_id: source_message_id.clone(),
+                });
+            }
+        }
+        if !message_ids.contains(&record.output_message_id) {
+            return Err(MessageError::NotFound {
+                message_id: record.output_message_id,
+            });
+        }
+        conversation.compactions.push(record);
+        conversation.revision += 1;
+        Ok(conversation.revision)
     }
 
     pub fn archive(&mut self, conversation_id: impl AsRef<str>) -> Result<u64, ConversationError> {
@@ -626,6 +866,8 @@ impl InMemoryConversationStore {
                         }
                     })?;
                 conversation.messages.clear();
+                conversation.attachments.clear();
+                conversation.compactions.clear();
                 conversation.archived = true;
                 conversation.revision += 1;
                 conversation
