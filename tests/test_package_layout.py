@@ -135,6 +135,26 @@ def test_documents_package_has_pure_python_layout_without_parser_dependencies() 
     assert (package_root / "src" / "graphblocks_documents" / "py.typed").exists()
 
 
+def test_rag_package_has_pure_python_layout_without_vector_db_dependencies() -> None:
+    package_root = ROOT / "packages" / "graphblocks-rag"
+    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
+    dependencies = pyproject["project"]["dependencies"]
+
+    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
+    assert pyproject["project"]["name"] == "graphblocks-rag"
+    assert dependencies == ["graphblocks-core~=1.0"]
+    assert not any(
+        vector_client in dependency.lower()
+        for dependency in dependencies
+        for vector_client in ("qdrant", "pinecone", "weaviate", "opensearch")
+    )
+    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
+        "src/graphblocks_rag"
+    ]
+    assert (package_root / "src" / "graphblocks_rag" / "__init__.py").exists()
+    assert (package_root / "src" / "graphblocks_rag" / "py.typed").exists()
+
+
 def test_policy_adapter_packages_have_pure_python_layouts_without_sdk_dependencies() -> None:
     for distribution, import_name in (
         ("graphblocks-policy-opa", "graphblocks_policy_opa"),
