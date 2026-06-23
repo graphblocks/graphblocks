@@ -15,6 +15,7 @@ from graphblocks.conversation import (
     InMemoryConversationStore,
     Message,
     MessageNotFoundError,
+    RegenerateRequest,
 )
 
 
@@ -159,6 +160,83 @@ def test_branch_respects_include_attachments_and_message_scope() -> None:
         "att-conversation",
     ]
     assert without_attachments.attachments == ()
+
+
+def test_regenerate_supersedes_assistant_and_branches_from_parent_user() -> None:
+    store = InMemoryConversationStore()
+    user = Message(message_id="msg-user", role="user", parts=(ContentPart(kind="text", text="try again"),))
+    assistant = Message(
+        message_id="msg-assistant",
+        role="assistant",
+        parent_message_id="msg-user",
+        parts=(ContentPart(kind="text", text="first answer"),),
+    )
+    later = Message(message_id="msg-later", role="user", parts=(ContentPart(kind="text", text="later"),))
+    store.create(Conversation(conversation_id="conv-1"))
+    store.append_messages("conv-1", expected_revision=0, messages=[user, assistant, later])
+
+    branch = store.regenerate(
+        RegenerateRequest(
+            conversation_id="conv-1",
+            assistant_message_id="msg-assistant",
+            new_conversation_id="conv-regenerated",
+        )
+    )
+
+    snapshot = store.get("conv-1")
+    assert snapshot.revision == 2
+    assert [message.status for message in snapshot.conversation.messages] == [
+        "committed",
+        "superseded",
+        "committed",
+    ]
+    assert branch.conversation_id == "conv-regenerated"
+    assert branch.branch_of == "conv-1"
+    assert branch.branched_from_message_id == "msg-user"
+    assert branch.messages == (user,)
+    assert branch.metadata["source_revision"] == 1
+    assert branch.metadata["regenerated_from_message_id"] == "msg-assistant"
+
+
+def test_regenerate_uses_previous_user_message_when_parent_is_not_recorded() -> None:
+    store = InMemoryConversationStore()
+    first = Message(message_id="msg-1", role="user")
+    assistant = Message(message_id="msg-2", role="assistant")
+    store.create(Conversation(conversation_id="conv-1"))
+    store.append_messages("conv-1", expected_revision=0, messages=[first, assistant])
+
+    branch = store.regenerate(
+        RegenerateRequest(
+            conversation_id="conv-1",
+            assistant_message_id="msg-2",
+            new_conversation_id="conv-regenerated",
+        )
+    )
+
+    assert branch.branched_from_message_id == "msg-1"
+    assert branch.messages == (first,)
+
+
+def test_regenerate_branch_id_conflict_does_not_supersede_assistant() -> None:
+    store = InMemoryConversationStore()
+    user = Message(message_id="msg-1", role="user")
+    assistant = Message(message_id="msg-2", role="assistant", parent_message_id="msg-1")
+    store.create(Conversation(conversation_id="conv-1"))
+    store.create(Conversation(conversation_id="conv-regenerated"))
+    store.append_messages("conv-1", expected_revision=0, messages=[user, assistant])
+
+    with pytest.raises(ConversationConflictError):
+        store.regenerate(
+            RegenerateRequest(
+                conversation_id="conv-1",
+                assistant_message_id="msg-2",
+                new_conversation_id="conv-regenerated",
+            )
+        )
+
+    snapshot = store.get("conv-1")
+    assert snapshot.revision == 1
+    assert snapshot.conversation.messages[1].status == "committed"
 
 
 def test_compaction_record_preserves_source_messages_and_records_token_delta() -> None:

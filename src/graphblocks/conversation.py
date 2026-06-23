@@ -129,6 +129,15 @@ class BranchRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class RegenerateRequest:
+    conversation_id: str
+    assistant_message_id: str
+    new_conversation_id: str | None = None
+    include_attachments: bool = True
+    include_memory: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class Turn:
     turn_id: str
     conversation_id: str
@@ -333,6 +342,8 @@ class InMemoryConversationStore:
         conversation = self._conversations.get(request.conversation_id)
         if conversation is None:
             raise ConversationNotFoundError(f"conversation {request.conversation_id!r} does not exist")
+        if conversation.archived:
+            raise ConversationArchivedError(f"conversation {request.conversation_id!r} is archived")
         branch_id = request.new_conversation_id or f"{request.conversation_id}:branch:{request.from_message_id}"
         if branch_id in self._conversations:
             raise ConversationConflictError(f"conversation {branch_id!r} already exists")
@@ -366,6 +377,99 @@ class InMemoryConversationStore:
                 "include_attachments": request.include_attachments,
                 "include_memory": request.include_memory,
             },
+        )
+        self._conversations[branch_id] = branch
+        return _copy_conversation(branch)
+
+    def regenerate(self, request: RegenerateRequest) -> Conversation:
+        conversation = self._conversations.get(request.conversation_id)
+        if conversation is None:
+            raise ConversationNotFoundError(f"conversation {request.conversation_id!r} does not exist")
+        if conversation.archived:
+            raise ConversationArchivedError(f"conversation {request.conversation_id!r} is archived")
+        branch_id = request.new_conversation_id or f"{request.conversation_id}:regenerate:{request.assistant_message_id}"
+        if branch_id in self._conversations:
+            raise ConversationConflictError(f"conversation {branch_id!r} already exists")
+
+        assistant_index = None
+        for index, message in enumerate(conversation.messages):
+            if message.message_id == request.assistant_message_id:
+                assistant_index = index
+                break
+        if assistant_index is None:
+            raise MessageNotFoundError(f"message {request.assistant_message_id!r} does not exist")
+
+        assistant_message = conversation.messages[assistant_index]
+        if assistant_message.role != "assistant":
+            raise ConversationConflictError(f"message {request.assistant_message_id!r} is not an assistant message")
+        if assistant_message.status == "superseded":
+            raise ConversationConflictError(f"message {request.assistant_message_id!r} is already superseded")
+
+        parent_index = None
+        if assistant_message.parent_message_id is not None:
+            for index, message in enumerate(conversation.messages):
+                if message.message_id == assistant_message.parent_message_id:
+                    parent_index = index
+                    break
+            if parent_index is None:
+                raise MessageNotFoundError(f"message {assistant_message.parent_message_id!r} does not exist")
+            if conversation.messages[parent_index].role != "user":
+                raise ConversationConflictError(
+                    f"message {assistant_message.parent_message_id!r} is not a user message"
+                )
+            if parent_index >= assistant_index:
+                raise ConversationConflictError(
+                    f"parent message {assistant_message.parent_message_id!r} must precede assistant message"
+                )
+        else:
+            for index in range(assistant_index - 1, -1, -1):
+                if conversation.messages[index].role == "user":
+                    parent_index = index
+                    break
+            if parent_index is None:
+                raise MessageNotFoundError(
+                    f"parent user message for assistant message {request.assistant_message_id!r} does not exist"
+                )
+
+        branch_messages = conversation.messages[: parent_index + 1]
+        branch_message_ids = {message.message_id for message in branch_messages}
+        branch = Conversation(
+            conversation_id=branch_id,
+            messages=branch_messages,
+            attachments=tuple(
+                _copy_attachment(attachment)
+                for attachment in conversation.attachments
+                if request.include_attachments
+                and (
+                    attachment.scope == "conversation"
+                    or (attachment.scope == "message" and attachment.message_id in branch_message_ids)
+                )
+            ),
+            compactions=tuple(_copy_compaction(record) for record in conversation.compactions) if request.include_memory else (),
+            revision=0,
+            branch_of=conversation.conversation_id,
+            branched_from_message_id=conversation.messages[parent_index].message_id,
+            metadata={
+                "source_revision": conversation.revision,
+                "include_attachments": request.include_attachments,
+                "include_memory": request.include_memory,
+                "regenerated_from_message_id": request.assistant_message_id,
+            },
+        )
+        superseded_messages = tuple(
+            replace(message, status="superseded") if index == assistant_index else message
+            for index, message in enumerate(conversation.messages)
+        )
+        self._conversations[request.conversation_id] = Conversation(
+            conversation_id=conversation.conversation_id,
+            messages=superseded_messages,
+            attachments=conversation.attachments,
+            compactions=conversation.compactions,
+            revision=conversation.revision + 1,
+            archived=conversation.archived,
+            branch_of=conversation.branch_of,
+            branched_from_message_id=conversation.branched_from_message_id,
+            metadata=dict(conversation.metadata),
         )
         self._conversations[branch_id] = branch
         return _copy_conversation(branch)
