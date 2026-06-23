@@ -601,6 +601,20 @@ def test_policy_stopped_tool_result_is_final_but_incomplete() -> None:
     assert result.error == {"code": "policy.denied", "message": "tool output was stopped by policy"}
 
 
+def test_denied_tool_result_records_pre_execution_denial() -> None:
+    result = ToolResult.denied(
+        "call-1",
+        error={"code": "tool.denied", "message": "tool was denied before execution"},
+        completed_at="2026-06-23T00:00:01Z",
+    )
+
+    assert result.status == "denied"
+    assert result.output_digest is None
+    assert result.started_at is None
+    assert result.completed_at == "2026-06-23T00:00:01Z"
+    assert result.error == {"code": "tool.denied", "message": "tool was denied before execution"}
+
+
 def test_policy_stopped_tool_result_can_report_committed_effect_outcome() -> None:
     result = ToolResult.policy_stopped(
         "call-1",

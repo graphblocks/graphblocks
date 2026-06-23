@@ -112,6 +112,29 @@ fn policy_stopped_result_is_final_but_incomplete() {
 }
 
 #[test]
+fn denied_tool_result_records_pre_execution_denial() {
+    let result = ToolResult::denied(
+        "call-1",
+        BlockError::new(
+            "tool.denied",
+            ErrorCategory::Policy,
+            "tool was denied before execution",
+            false,
+        ),
+        1_000,
+    );
+
+    assert_eq!(result.status, ToolResultStatus::Denied);
+    assert_eq!(result.output_digest, None);
+    assert_eq!(result.started_at_unix_ms, None);
+    assert_eq!(result.completed_at_unix_ms, Some(1_000));
+    assert_eq!(
+        result.error.as_ref().map(|error| error.code.as_str()),
+        Some("tool.denied")
+    );
+}
+
+#[test]
 fn policy_stopped_result_can_report_committed_effect_outcome() {
     let result = ToolResult::policy_stopped(
         "call-1",

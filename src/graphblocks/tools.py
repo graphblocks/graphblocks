@@ -940,6 +940,22 @@ class ToolResult:
         )
 
     @classmethod
+    def denied(
+        cls,
+        tool_call_id: str,
+        *,
+        error: dict[str, object],
+        completed_at: str,
+    ) -> ToolResult:
+        return cls(
+            tool_call_id=tool_call_id,
+            status="denied",
+            error=error,
+            completed_at=completed_at,
+            effect_outcome="not_committed",
+        )
+
+    @classmethod
     def cancelled(
         cls,
         tool_call_id: str,

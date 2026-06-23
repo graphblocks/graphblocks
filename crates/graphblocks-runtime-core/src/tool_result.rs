@@ -227,6 +227,25 @@ impl ToolResult {
         }
     }
 
+    pub fn denied(
+        tool_call_id: impl Into<String>,
+        error: BlockError,
+        completed_at_unix_ms: u64,
+    ) -> Self {
+        Self {
+            tool_call_id: tool_call_id.into(),
+            status: ToolResultStatus::Denied,
+            output: Vec::new(),
+            output_digest: None,
+            artifacts: Vec::new(),
+            diagnostics: Vec::new(),
+            error: Some(error),
+            started_at_unix_ms: None,
+            completed_at_unix_ms: Some(completed_at_unix_ms),
+            effect_outcome: ToolEffectOutcome::NotCommitted,
+        }
+    }
+
     pub fn cancelled(
         tool_call_id: impl Into<String>,
         started_at_unix_ms: u64,
