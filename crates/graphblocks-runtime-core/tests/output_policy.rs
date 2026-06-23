@@ -320,6 +320,44 @@ fn replace_decision_delivers_policy_approved_replacement() -> Result<(), OutputG
 }
 
 #[test]
+fn replace_decision_delivers_all_policy_approved_replacements() -> Result<(), OutputGateError> {
+    let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
+
+    gate.record_chunk(GenerationChunk::text(
+        "stream-1",
+        "response-1",
+        1,
+        "blocked draft",
+    ))?;
+
+    let replaced = gate.apply_decision(
+        OutputPolicyDecision::replace(
+            "decision-replace",
+            Some(1),
+            [
+                GenerationChunk::text("stream-1", "response-1", 1, "policy-approved "),
+                GenerationChunk::text("stream-1", "response-1", 2, "replacement"),
+            ],
+            "sha256:replace",
+        ),
+        1_000,
+    )?;
+
+    assert_eq!(
+        replaced
+            .deliverable
+            .iter()
+            .map(|chunk| (chunk.sequence, chunk.text.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(1, "policy-approved "), (2, "replacement")]
+    );
+    assert_eq!(gate.last_policy_accepted_sequence(), 2);
+    assert_eq!(gate.last_client_delivered_sequence(), 2);
+    assert!(gate.commit_accepted_output().is_empty());
+    Ok(())
+}
+
+#[test]
 fn redact_decision_rewrites_pending_chunk_before_delivery() -> Result<(), OutputGateError> {
     let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
 

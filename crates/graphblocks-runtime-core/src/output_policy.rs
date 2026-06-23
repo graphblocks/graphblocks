@@ -727,7 +727,9 @@ impl OutputDeliveryGate {
                     }
                 }
 
+                let mut replacement_accepted_through = decision.accepted_through_sequence;
                 for chunk in decision.replacement_chunks {
+                    let chunk_sequence = chunk.sequence;
                     if chunk.stream_id != self.stream_id {
                         return Err(OutputGateError::StreamMismatch {
                             expected_stream_id: self.stream_id.clone(),
@@ -740,12 +742,18 @@ impl OutputDeliveryGate {
                             actual_response_id: chunk.response_id,
                         });
                     }
-                    if chunk.sequence > self.last_client_delivered_sequence {
-                        self.pending.insert(chunk.sequence, chunk);
+                    if chunk_sequence > self.last_client_delivered_sequence {
+                        replacement_accepted_through = Some(
+                            replacement_accepted_through
+                                .map_or(chunk_sequence, |accepted| accepted.max(chunk_sequence)),
+                        );
+                        self.last_generated_sequence =
+                            self.last_generated_sequence.max(chunk_sequence);
+                        self.pending.insert(chunk_sequence, chunk);
                     }
                 }
 
-                if let Some(accepted_through_sequence) = decision.accepted_through_sequence {
+                if let Some(accepted_through_sequence) = replacement_accepted_through {
                     if accepted_through_sequence > self.last_policy_accepted_sequence {
                         self.last_policy_accepted_sequence = accepted_through_sequence;
                     }

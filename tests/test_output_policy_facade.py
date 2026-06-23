@@ -218,6 +218,31 @@ def test_output_delivery_gate_redact_without_replacement_holds_original_pending_
     assert gate.commit_accepted_output() == []
 
 
+def test_output_delivery_gate_delivers_all_replacement_parts() -> None:
+    gate = OutputDeliveryGate("stream-1", "response-1")
+    gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "blocked draft"))
+
+    replaced = gate.apply_decision(
+        OutputPolicyDecision.replace(
+            "decision-replace",
+            accepted_through_sequence=1,
+            replacement_parts=(
+                ContentPart(kind="text", text="policy-approved "),
+                ContentPart(kind="text", text="replacement"),
+            ),
+            input_digest="sha256:replace",
+        ),
+        occurred_at="2026-06-23T00:00:01Z",
+    )
+
+    assert [(chunk.sequence, chunk.text) for chunk in replaced.deliverable] == [
+        (1, "policy-approved "),
+        (2, "replacement"),
+    ]
+    assert gate.last_policy_accepted_sequence == 2
+    assert gate.last_client_delivered_sequence == 2
+
+
 def test_output_delivery_gate_policy_abort_cuts_off_and_rejects_late_chunks() -> None:
     gate = OutputDeliveryGate("stream-1", "response-1", turn_id="turn-1")
     gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "safe "))

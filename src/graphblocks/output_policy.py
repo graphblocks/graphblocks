@@ -409,13 +409,29 @@ class OutputDeliveryGate:
                 for sequence in list(self.pending):
                     if self.last_client_delivered_sequence < sequence <= decision.accepted_through_sequence:
                         self.pending.pop(sequence, None)
+            replacement_end_sequence = None
+            replacement_base_sequence = (
+                decision.accepted_through_sequence
+                if decision.accepted_through_sequence is not None
+                else self.last_generated_sequence
+            )
             for index, part in enumerate(decision.replacement_parts):
-                sequence = (decision.accepted_through_sequence or self.last_generated_sequence) + index
+                sequence = replacement_base_sequence + index
                 self.pending[sequence] = GenerationChunk.text(
                     self.stream_id,
                     self.response_id,
                     sequence,
                     part.text or "",
+                )
+                replacement_end_sequence = sequence
+            if replacement_end_sequence is not None:
+                self.last_policy_accepted_sequence = max(
+                    self.last_policy_accepted_sequence,
+                    replacement_end_sequence,
+                )
+                self.last_generated_sequence = max(
+                    self.last_generated_sequence,
+                    replacement_end_sequence,
                 )
             if self.delivery_policy.mode == "buffer_until_commit":
                 return OutputGateUpdate(deliverable=[])
