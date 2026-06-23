@@ -2,9 +2,9 @@ use std::collections::BTreeMap;
 
 use graphblocks_protocol::{
     BlockCapability, RunOwnershipLease, WORKER_PROTOCOL_VERSION, WorkerAdmissionPolicy,
-    WorkerAdvertisement, WorkerInvokeRequest, WorkerInvokeResult, WorkerProtocolError,
-    WorkerResultError, WorkerSelectionError, WorkerState, admit_worker, admit_worker_with_policy,
-    select_worker_for_block, validate_worker_result,
+    WorkerAdvertisement, WorkerInvocationContext, WorkerInvokeRequest, WorkerInvokeResult,
+    WorkerProtocolError, WorkerResultError, WorkerSelectionError, WorkerState, admit_worker,
+    admit_worker_with_policy, select_worker_for_block, validate_worker_result,
 };
 use serde_json::json;
 
@@ -153,6 +153,7 @@ fn worker_invocation_envelopes_preserve_json_payloads() -> Result<(), serde_json
         node_attempt_id: "render-attempt-1".to_owned(),
         lease_epoch: 7,
         block: "prompt.render@1".to_owned(),
+        context: WorkerInvocationContext::new("release-1", "rev-1"),
         inputs: json!({"message": {"text": "Hello"}}),
         config: json!({"template": "Echo {message.text}"}),
     };
@@ -177,6 +178,44 @@ fn worker_invocation_envelopes_preserve_json_payloads() -> Result<(), serde_json
         result,
     );
     assert_eq!(validate_worker_result(&request, &result), Ok(()));
+    Ok(())
+}
+
+#[test]
+fn worker_invocation_context_round_trips_release_policy_budget_and_trace()
+-> Result<(), serde_json::Error> {
+    let request = WorkerInvokeRequest {
+        invocation_id: "invoke-000002".to_owned(),
+        run_id: "run-000002".to_owned(),
+        node_id: "generate".to_owned(),
+        node_attempt_id: "generate-attempt-1".to_owned(),
+        lease_epoch: 11,
+        block: "model.generate@1".to_owned(),
+        context: WorkerInvocationContext::new("release-1", "rev-1")
+            .with_trace("trace-1", "span-parent")
+            .with_policy_snapshot("policy-snapshot-1", "sha256:policy")
+            .with_budget_permit("permit-1", "sha256:budget-permit")
+            .with_attribute("tenant", "acme"),
+        inputs: json!({"prompt": "Hello"}),
+        config: json!({"model": "scripted"}),
+    };
+
+    let encoded = serde_json::to_value(&request)?;
+
+    assert_eq!(encoded["context"]["releaseId"], json!("release-1"));
+    assert_eq!(encoded["context"]["deploymentRevisionId"], json!("rev-1"));
+    assert_eq!(encoded["context"]["traceId"], json!("trace-1"));
+    assert_eq!(encoded["context"]["parentSpanId"], json!("span-parent"));
+    assert_eq!(
+        encoded["context"]["policySnapshotId"],
+        json!("policy-snapshot-1")
+    );
+    assert_eq!(encoded["context"]["budgetPermitId"], json!("permit-1"));
+    assert_eq!(encoded["context"]["attributes"]["tenant"], json!("acme"));
+    assert_eq!(
+        serde_json::from_value::<WorkerInvokeRequest>(encoded)?,
+        request,
+    );
     Ok(())
 }
 
@@ -207,6 +246,7 @@ fn worker_result_validation_rejects_mismatched_attempt_or_lease_epoch() {
         node_attempt_id: "render-attempt-2".to_owned(),
         lease_epoch: 9,
         block: "prompt.render@1".to_owned(),
+        context: WorkerInvocationContext::new("release-1", "rev-1"),
         inputs: json!({"message": {"text": "Hello"}}),
         config: json!({"template": "Echo {message.text}"}),
     };

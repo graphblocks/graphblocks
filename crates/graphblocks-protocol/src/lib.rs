@@ -266,6 +266,71 @@ pub fn validate_remote_payload(
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct WorkerInvocationContext {
+    pub release_id: String,
+    pub deployment_revision_id: String,
+    pub trace_id: Option<String>,
+    pub parent_span_id: Option<String>,
+    pub policy_snapshot_id: Option<String>,
+    pub policy_snapshot_digest: Option<String>,
+    pub budget_permit_id: Option<String>,
+    pub budget_permit_digest: Option<String>,
+    pub attributes: BTreeMap<String, String>,
+}
+
+impl WorkerInvocationContext {
+    pub fn new(release_id: impl Into<String>, deployment_revision_id: impl Into<String>) -> Self {
+        Self {
+            release_id: release_id.into(),
+            deployment_revision_id: deployment_revision_id.into(),
+            trace_id: None,
+            parent_span_id: None,
+            policy_snapshot_id: None,
+            policy_snapshot_digest: None,
+            budget_permit_id: None,
+            budget_permit_digest: None,
+            attributes: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_trace(
+        mut self,
+        trace_id: impl Into<String>,
+        parent_span_id: impl Into<String>,
+    ) -> Self {
+        self.trace_id = Some(trace_id.into());
+        self.parent_span_id = Some(parent_span_id.into());
+        self
+    }
+
+    pub fn with_policy_snapshot(
+        mut self,
+        policy_snapshot_id: impl Into<String>,
+        policy_snapshot_digest: impl Into<String>,
+    ) -> Self {
+        self.policy_snapshot_id = Some(policy_snapshot_id.into());
+        self.policy_snapshot_digest = Some(policy_snapshot_digest.into());
+        self
+    }
+
+    pub fn with_budget_permit(
+        mut self,
+        budget_permit_id: impl Into<String>,
+        budget_permit_digest: impl Into<String>,
+    ) -> Self {
+        self.budget_permit_id = Some(budget_permit_id.into());
+        self.budget_permit_digest = Some(budget_permit_digest.into());
+        self
+    }
+
+    pub fn with_attribute(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.attributes.insert(key.into(), value.into());
+        self
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WorkerInvokeRequest {
     pub invocation_id: String,
     pub run_id: String,
@@ -273,6 +338,7 @@ pub struct WorkerInvokeRequest {
     pub node_attempt_id: String,
     pub lease_epoch: u64,
     pub block: String,
+    pub context: WorkerInvocationContext,
     pub inputs: Value,
     pub config: Value,
 }
