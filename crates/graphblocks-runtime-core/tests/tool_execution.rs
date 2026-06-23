@@ -1,7 +1,8 @@
 use graphblocks_runtime_core::output_policy::PendingToolCallsDisposition;
 use graphblocks_runtime_core::tool_call::{ToolCall, ToolCallDraft};
 use graphblocks_runtime_core::tool_execution::{
-    ToolExecutionPlan, ToolExecutionPlanError, ToolExecutionState, ToolPlanCall,
+    ToolExecutionFailurePolicy, ToolExecutionPlan, ToolExecutionPlanError, ToolExecutionState,
+    ToolPlanCall,
 };
 
 fn tool_call(tool_call_id: &str, arguments: &str) -> ToolCall {
@@ -78,6 +79,31 @@ fn failed_dependencies_skip_dependent_calls() -> Result<(), ToolExecutionPlanErr
     assert_eq!(plan.state("call-a"), Some(ToolExecutionState::Failed));
     assert_eq!(plan.state("call-b"), Some(ToolExecutionState::Skipped));
     assert_eq!(plan.state("call-c"), Some(ToolExecutionState::Skipped));
+    assert_eq!(plan.ready_call_ids(), Vec::<String>::new());
+    Ok(())
+}
+
+#[test]
+fn fail_fast_policy_cancels_pending_calls_after_failure() -> Result<(), ToolExecutionPlanError> {
+    let mut plan = ToolExecutionPlan::new(
+        "plan-1",
+        "response-1",
+        [
+            ToolPlanCall::new(tool_call("call-a", "{\"resource_id\":\"a\"}")),
+            ToolPlanCall::new(tool_call("call-b", "{\"resource_id\":\"b\"}")),
+            ToolPlanCall::new(tool_call("call-c", "{\"resource_id\":\"c\"}")),
+        ],
+        3,
+    )?
+    .with_failure_policy(ToolExecutionFailurePolicy::FailFast);
+
+    plan.record_started("call-a")?;
+    plan.record_started("call-b")?;
+    plan.record_failed("call-a")?;
+
+    assert_eq!(plan.state("call-a"), Some(ToolExecutionState::Failed));
+    assert_eq!(plan.state("call-b"), Some(ToolExecutionState::Running));
+    assert_eq!(plan.state("call-c"), Some(ToolExecutionState::Cancelled));
     assert_eq!(plan.ready_call_ids(), Vec::<String>::new());
     Ok(())
 }

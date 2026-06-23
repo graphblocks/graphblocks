@@ -835,6 +835,10 @@ class ToolExecutionPlan:
                 break
             for skipped_id in skipped:
                 self._states[skipped_id] = "skipped"
+        if self.failure_policy == "fail_fast":
+            for candidate_id, state in list(self._states.items()):
+                if state == "pending":
+                    self._states[candidate_id] = "cancelled"
 
     def apply_policy_stop(self, pending_tool_calls: PendingToolCallsDisposition) -> list[str]:
         affected: list[str] = []

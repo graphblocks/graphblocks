@@ -255,6 +255,14 @@ impl ToolExecutionPlan {
             }
         }
 
+        if self.failure_policy == ToolExecutionFailurePolicy::FailFast {
+            for state in self.states.values_mut() {
+                if *state == ToolExecutionState::Pending {
+                    *state = ToolExecutionState::Cancelled;
+                }
+            }
+        }
+
         Ok(())
     }
 

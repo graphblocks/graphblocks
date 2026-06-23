@@ -766,6 +766,29 @@ def test_tool_execution_plan_skips_dependents_after_dependency_failure() -> None
     assert plan.ready_call_ids() == []
 
 
+def test_tool_execution_fail_fast_cancels_pending_calls_after_failure() -> None:
+    plan = ToolExecutionPlan(
+        plan_id="plan-1",
+        response_id="response-1",
+        calls=(
+            ToolPlanCall(_tool_call("call-a", '{"resource_id":"a"}')),
+            ToolPlanCall(_tool_call("call-b", '{"resource_id":"b"}')),
+            ToolPlanCall(_tool_call("call-c", '{"resource_id":"c"}')),
+        ),
+        maximum_parallelism=3,
+        failure_policy="fail_fast",
+    )
+
+    plan.record_started("call-a")
+    plan.record_started("call-b")
+    plan.record_failed("call-a")
+
+    assert plan.state("call-a") == "failed"
+    assert plan.state("call-b") == "running"
+    assert plan.state("call-c") == "cancelled"
+    assert plan.ready_call_ids() == []
+
+
 def test_tool_execution_plan_policy_stop_denies_pending_and_can_cancel_running() -> None:
     plan = ToolExecutionPlan(
         plan_id="plan-1",
