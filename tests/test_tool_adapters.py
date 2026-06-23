@@ -181,6 +181,32 @@ def test_mcp_adapter_converts_valid_response_to_tool_result(monkeypatch) -> None
     assert result.effect_outcome == "no_external_effect"
 
 
+def test_mcp_adapter_converts_error_to_failed_tool_result(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
+    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    admitted, resolved = _admitted_call_for(
+        McpToolImplementation(server="support-mcp", remote_name="search"),
+        tool_name="knowledge.search",
+        binding_id="binding-mcp-search",
+        arguments={"query": "billing"},
+    )
+    error = {"code": "mcp.timeout", "message": "MCP call timed out"}
+
+    result = graphblocks_mcp.mcp_tool_result_from_error(
+        admitted,
+        resolved,
+        error=error,
+        started_at="2026-06-23T00:00:01Z",
+        completed_at="2026-06-23T00:00:02Z",
+        effect_outcome="not_committed",
+    )
+    error["message"] = "mutated"
+
+    assert result.status == "failed"
+    assert result.error == {"code": "mcp.timeout", "message": "MCP call timed out"}
+    assert result.effect_outcome == "not_committed"
+
+
 def test_openapi_adapter_builds_tool_definition_and_binding(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
     graphblocks_openapi = importlib.import_module("graphblocks_openapi")
@@ -297,3 +323,29 @@ def test_openapi_adapter_rejects_response_that_fails_output_schema(monkeypatch) 
             started_at="2026-06-23T00:00:01Z",
             completed_at="2026-06-23T00:00:02Z",
         )
+
+
+def test_openapi_adapter_converts_error_to_failed_tool_result(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
+    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    admitted, resolved = _admitted_call_for(
+        OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
+        tool_name="ticket.create",
+        binding_id="binding-ticket-create",
+        arguments={"title": "Need help"},
+    )
+    error = {"code": "openapi.conflict", "message": "duplicate ticket"}
+
+    result = graphblocks_openapi.openapi_tool_result_from_error(
+        admitted,
+        resolved,
+        error=error,
+        started_at="2026-06-23T00:00:01Z",
+        completed_at="2026-06-23T00:00:02Z",
+        effect_outcome="unknown",
+    )
+    error["message"] = "mutated"
+
+    assert result.status == "failed"
+    assert result.error == {"code": "openapi.conflict", "message": "duplicate ticket"}
+    assert result.effect_outcome == "unknown"

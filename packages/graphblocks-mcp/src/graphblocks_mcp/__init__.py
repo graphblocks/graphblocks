@@ -169,11 +169,36 @@ def mcp_tool_result_from_response(
     return result
 
 
+def mcp_tool_result_from_error(
+    admitted: AdmittedToolCall,
+    resolved_tool: ResolvedTool,
+    *,
+    error: Mapping[str, object],
+    started_at: str,
+    completed_at: str,
+    effect_outcome: str = "unknown",
+) -> ToolResult:
+    prepare_mcp_tool_invocation(admitted, resolved_tool)
+    if not isinstance(error, Mapping):
+        raise McpToolAdapterError("MCP tool error must be an object")
+
+    try:
+        return ToolResult.failed(
+            admitted.call.tool_call_id,
+            error=dict(error),
+            started_at=started_at,
+            completed_at=completed_at,
+        ).with_effect_outcome(effect_outcome)
+    except ValueError as error:
+        raise McpToolAdapterError("MCP tool result has an invalid effect outcome") from error
+
+
 __all__ = [
     "McpToolAdapterError",
     "McpToolInvocation",
     "bind_mcp_tool",
     "define_mcp_tool",
+    "mcp_tool_result_from_error",
     "mcp_tool_result_from_response",
     "prepare_mcp_tool_invocation",
 ]
