@@ -2,6 +2,7 @@ pub mod cancellation;
 pub mod journal;
 pub mod lifecycle;
 pub mod outcome;
+pub mod output_policy;
 pub mod readiness;
 pub mod resource_scope;
 pub mod retry;
