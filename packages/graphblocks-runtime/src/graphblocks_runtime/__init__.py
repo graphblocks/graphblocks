@@ -3,6 +3,7 @@ from __future__ import annotations
 try:
     from ._native import (
         __version__,
+        admit_exhaustion_work_json,
         binding_version,
         compile_graph_json,
         run_stdlib_graph_json,
@@ -15,6 +16,9 @@ except ImportError:
 
     def binding_version() -> str:
         return __version__
+
+    def admit_exhaustion_work_json(policy_json: str, request_json: str) -> str:
+        raise RuntimeError("graphblocks_runtime native extension is not built")
 
     def compile_graph_json(document_json: str) -> str:
         raise RuntimeError("graphblocks_runtime native extension is not built")
@@ -37,6 +41,7 @@ except ImportError:
 
 __all__ = [
     "__version__",
+    "admit_exhaustion_work_json",
     "binding_version",
     "compile_graph_json",
     "run_stdlib_graph_json",

@@ -6,6 +6,11 @@ use graphblocks_protocol::{
     RemotePayload, RemotePayloadError, RemotePayloadLimits, WorkerAdmissionPolicy,
     WorkerAdvertisement, WorkerProtocolError, admit_worker_with_policy, validate_remote_payload,
 };
+use graphblocks_runtime_core::budget::{BudgetPermit, UsageAmount};
+use graphblocks_runtime_core::exhaustion::{
+    ContinuationEnvelope, ExhaustionController, ExhaustionPolicy, ExhaustionPreset, ExhaustionUnit,
+    WorkKind,
+};
 use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory, Outcome};
 use graphblocks_runtime_core::readiness::{InputDependency, PortRef, ResolvedInput};
 use graphblocks_runtime_core::scheduler::{ScheduledNode, StartedNode};
@@ -242,6 +247,235 @@ struct RuntimeBridgePlan {
 fn parse_json_argument(text: &str, label: &str) -> PyResult<Value> {
     serde_json::from_str::<Value>(text)
         .map_err(|error| PyValueError::new_err(format!("invalid {label} JSON: {error}")))
+}
+
+fn json_object<'a>(value: &'a Value, label: &str) -> PyResult<&'a serde_json::Map<String, Value>> {
+    value
+        .as_object()
+        .ok_or_else(|| PyValueError::new_err(format!("{label} must be an object")))
+}
+
+fn required_string<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    field: &str,
+    label: &str,
+) -> PyResult<&'a str> {
+    object
+        .get(field)
+        .and_then(Value::as_str)
+        .ok_or_else(|| PyValueError::new_err(format!("{label}.{field} must be a string")))
+}
+
+fn required_u64(
+    object: &serde_json::Map<String, Value>,
+    field: &str,
+    label: &str,
+) -> PyResult<u64> {
+    object.get(field).and_then(Value::as_u64).ok_or_else(|| {
+        PyValueError::new_err(format!("{label}.{field} must be an unsigned integer"))
+    })
+}
+
+fn parse_work_kind(value: &Value, label: &str) -> PyResult<WorkKind> {
+    let Some(value) = value.as_str() else {
+        return Err(PyValueError::new_err(format!("{label} must be a string")));
+    };
+    match value {
+        "current_provider_call" => Ok(WorkKind::CurrentProviderCall),
+        "already_admitted_child_work" => Ok(WorkKind::AlreadyAdmittedChildWork),
+        "declared_finalization" => Ok(WorkKind::DeclaredFinalization),
+        "checkpoint" => Ok(WorkKind::Checkpoint),
+        "cleanup" => Ok(WorkKind::Cleanup),
+        "read_only_tool" => Ok(WorkKind::ReadOnlyTool),
+        "new_turn" => Ok(WorkKind::NewTurn),
+        "plan_expansion" => Ok(WorkKind::PlanExpansion),
+        "optional_task" => Ok(WorkKind::OptionalTask),
+        "new_trial" => Ok(WorkKind::NewTrial),
+        "state_changing_effect" => Ok(WorkKind::StateChangingEffect),
+        "unreserved_provider_call" => Ok(WorkKind::UnreservedProviderCall),
+        _ => Err(PyValueError::new_err(format!(
+            "{label} has unknown work kind {value:?}"
+        ))),
+    }
+}
+
+fn parse_work_kind_list(
+    object: &serde_json::Map<String, Value>,
+    field: &str,
+    label: &str,
+) -> PyResult<Vec<WorkKind>> {
+    let Some(value) = object.get(field) else {
+        return Ok(Vec::new());
+    };
+    let Some(values) = value.as_array() else {
+        return Err(PyValueError::new_err(format!(
+            "{label}.{field} must be an array"
+        )));
+    };
+    values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| parse_work_kind(value, &format!("{label}.{field}[{index}]")))
+        .collect()
+}
+
+fn parse_usage_amount(value: &Value, label: &str) -> PyResult<UsageAmount> {
+    let object = json_object(value, label)?;
+    let kind = required_string(object, "kind", label)?;
+    let amount = object
+        .get("amount")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| PyValueError::new_err(format!("{label}.amount must be an integer")))?;
+    let unit = required_string(object, "unit", label)?;
+    let mut usage = UsageAmount::new(kind, amount, unit);
+    if let Some(dimensions) = object.get("dimensions") {
+        let dimensions = json_object(dimensions, &format!("{label}.dimensions"))?;
+        for (key, value) in dimensions {
+            let Some(value) = value.as_str() else {
+                return Err(PyValueError::new_err(format!(
+                    "{label}.dimensions.{key} must be a string"
+                )));
+            };
+            usage = usage.with_dimension(key.clone(), value);
+        }
+    }
+    Ok(usage)
+}
+
+fn parse_usage_amounts(
+    object: &serde_json::Map<String, Value>,
+    field: &str,
+    label: &str,
+) -> PyResult<Vec<UsageAmount>> {
+    let Some(value) = object.get(field) else {
+        return Ok(Vec::new());
+    };
+    let Some(values) = value.as_array() else {
+        return Err(PyValueError::new_err(format!(
+            "{label}.{field} must be an array"
+        )));
+    };
+    values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| parse_usage_amount(value, &format!("{label}.{field}[{index}]")))
+        .collect()
+}
+
+fn parse_budget_permit(value: &Value, label: &str) -> PyResult<BudgetPermit> {
+    let object = json_object(value, label)?;
+    let reservation_refs = object
+        .get("reservationRefs")
+        .and_then(Value::as_array)
+        .ok_or_else(|| PyValueError::new_err(format!("{label}.reservationRefs must be an array")))?
+        .iter()
+        .enumerate()
+        .map(|(index, value)| {
+            value.as_str().map(str::to_owned).ok_or_else(|| {
+                PyValueError::new_err(format!("{label}.reservationRefs[{index}] must be a string"))
+            })
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    let mut fencing_tokens = BTreeMap::new();
+    if let Some(tokens) = object.get("fencingTokens") {
+        let tokens = json_object(tokens, &format!("{label}.fencingTokens"))?;
+        for (budget_id, token) in tokens {
+            let Some(token) = token.as_u64() else {
+                return Err(PyValueError::new_err(format!(
+                    "{label}.fencingTokens.{budget_id} must be an unsigned integer"
+                )));
+            };
+            fencing_tokens.insert(budget_id.clone(), token);
+        }
+    }
+
+    Ok(BudgetPermit {
+        permit_id: required_string(object, "permitId", label)?.to_owned(),
+        reservation_refs,
+        owner: required_string(object, "owner", label)?.to_owned(),
+        atomic_unit: required_string(object, "atomicUnit", label)?.to_owned(),
+        admission_epoch: required_u64(object, "admissionEpoch", label)?,
+        authorized_amounts: parse_usage_amounts(object, "authorizedAmounts", label)?,
+        continuation_profile: required_string(object, "continuationProfile", label)?.to_owned(),
+        policy_snapshot_digest: required_string(object, "policySnapshotDigest", label)?.to_owned(),
+        expires_at: required_string(object, "expiresAt", label)?.to_owned(),
+        low_watermark: parse_usage_amounts(object, "lowWatermark", label)?,
+        fencing_tokens,
+    })
+}
+
+fn parse_continuation_envelope(value: &Value, label: &str) -> PyResult<ContinuationEnvelope> {
+    let object = json_object(value, label)?;
+    let max_steps = if let Some(value) = object.get("maxAdditionalSteps") {
+        let Some(value) = value.as_u64() else {
+            return Err(PyValueError::new_err(format!(
+                "{label}.maxAdditionalSteps must be an unsigned integer"
+            )));
+        };
+        Some(u32::try_from(value).map_err(|_| {
+            PyValueError::new_err(format!("{label}.maxAdditionalSteps exceeds u32"))
+        })?)
+    } else {
+        None
+    };
+    let deadline = object
+        .get("deadline")
+        .map(|value| {
+            value
+                .as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| PyValueError::new_err(format!("{label}.deadline must be a string")))
+        })
+        .transpose()?;
+    let mut envelope = ContinuationEnvelope::new()
+        .with_allowed_work(parse_work_kind_list(object, "allowedWork", label)?)
+        .with_forbidden_work(parse_work_kind_list(object, "forbiddenWork", label)?)
+        .with_max_additional_usage(parse_usage_amounts(object, "maxAdditionalUsage", label)?);
+    if let Some(max_steps) = max_steps {
+        envelope = envelope.with_max_additional_steps(max_steps);
+    }
+    if let Some(deadline) = deadline {
+        envelope = envelope.with_deadline(deadline);
+    }
+    Ok(envelope)
+}
+
+fn parse_exhaustion_policy(value: &Value) -> PyResult<ExhaustionPolicy> {
+    let object = json_object(value, "policy")?;
+    let preset = match required_string(object, "preset", "policy")? {
+        "finish_current_turn" => ExhaustionPreset::FinishCurrentTurn,
+        "finish_current_call" => ExhaustionPreset::FinishCurrentCall,
+        "finish_current_step" => ExhaustionPreset::FinishCurrentStep,
+        "checkpoint_and_pause" => ExhaustionPreset::CheckpointAndPause,
+        "hard_stop" => ExhaustionPreset::HardStop,
+        "degrade_then_finalize" => ExhaustionPreset::DegradeThenFinalize,
+        "request_extension" => ExhaustionPreset::RequestExtension,
+        preset => {
+            return Err(PyValueError::new_err(format!(
+                "policy.preset has unknown preset {preset:?}"
+            )));
+        }
+    };
+    let unit = match required_string(object, "unit", "policy")? {
+        "provider_call" => ExhaustionUnit::ProviderCall,
+        "node" => ExhaustionUnit::Node,
+        "agent_step" => ExhaustionUnit::AgentStep,
+        "turn" => ExhaustionUnit::Turn,
+        "map_item" => ExhaustionUnit::MapItem,
+        "task" => ExhaustionUnit::Task,
+        "trial" => ExhaustionUnit::Trial,
+        "run" => ExhaustionUnit::Run,
+        unit => {
+            return Err(PyValueError::new_err(format!(
+                "policy.unit has unknown unit {unit:?}"
+            )));
+        }
+    };
+    let continuation = object
+        .get("continuation")
+        .map(|value| parse_continuation_envelope(value, "policy.continuation"))
+        .transpose()?;
+    Ok(ExhaustionPolicy::from_preset(preset, unit, continuation))
 }
 
 fn build_runtime_bridge_plan(graph: &Value) -> PyResult<RuntimeBridgePlan> {
@@ -671,6 +905,47 @@ fn run_stdlib_graph_json(graph_json: &str, inputs_json: &str) -> PyResult<String
     serialize_runtime_result(result, bridge_plan.graph_hash, output_values)
 }
 
+#[pyfunction]
+fn admit_exhaustion_work_json(policy_json: &str, request_json: &str) -> PyResult<String> {
+    let policy_value = parse_json_argument(policy_json, "exhaustion policy")?;
+    let request_value = parse_json_argument(request_json, "exhaustion admission request")?;
+    let policy = parse_exhaustion_policy(&policy_value)?;
+    let request = json_object(&request_value, "request")?;
+    let atomic_unit_id = required_string(request, "atomicUnitId", "request")?;
+    let admission_epoch = required_u64(request, "admissionEpoch", "request")?;
+    let work_kind = parse_work_kind(
+        request
+            .get("workKind")
+            .ok_or_else(|| PyValueError::new_err("request.workKind is required"))?,
+        "request.workKind",
+    )?;
+    let work_epoch = required_u64(request, "workEpoch", "request")?;
+    let permit = request
+        .get("permit")
+        .map(|value| parse_budget_permit(value, "request.permit"))
+        .transpose()?;
+    let continuation_permit = request
+        .get("continuationPermit")
+        .map(|value| parse_budget_permit(value, "request.continuationPermit"))
+        .transpose()?;
+    let mut controller = ExhaustionController::new(policy, atomic_unit_id, admission_epoch);
+    if let Some(continuation_permit) = continuation_permit {
+        controller = controller.with_continuation_permit(continuation_permit);
+    }
+
+    let decision = controller.admit(work_kind, work_epoch, permit.as_ref());
+    let payload = json!({
+        "allowed": decision.allowed,
+        "reason": decision.reason,
+        "usedAdditionalSteps": controller.used_additional_steps,
+    });
+    serde_json::to_string(&payload).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize exhaustion admission result: {error}"
+        ))
+    })
+}
+
 #[pymodule]
 fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("__version__", env!("CARGO_PKG_VERSION"))?;
@@ -683,6 +958,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(validate_remote_payload_json, module)?)?;
     module.add_function(wrap_pyfunction!(run_test_graph_json, module)?)?;
     module.add_function(wrap_pyfunction!(run_stdlib_graph_json, module)?)?;
+    module.add_function(wrap_pyfunction!(admit_exhaustion_work_json, module)?)?;
     Ok(())
 }
 
@@ -691,7 +967,7 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{
-        compile_graph_json, run_stdlib_graph_json, run_test_graph_json,
+        admit_exhaustion_work_json, compile_graph_json, run_stdlib_graph_json, run_test_graph_json,
         validate_remote_payload_json, validate_worker_advertisement_json,
     };
 
@@ -824,6 +1100,105 @@ mod tests {
                 .pointer("/error/maxInlineBytes")
                 .and_then(Value::as_u64),
             Some(8),
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn admit_exhaustion_work_json_allows_bounded_finalization_with_matching_permit()
+    -> Result<(), String> {
+        let policy = json!({
+            "preset": "finish_current_turn",
+            "unit": "turn",
+            "continuation": {
+                "maxAdditionalUsage": [
+                    {"kind": "model_output_tokens", "amount": 100, "unit": "tokens"}
+                ],
+                "maxAdditionalSteps": 1
+            }
+        });
+        let request = json!({
+            "atomicUnitId": "turn:1",
+            "admissionEpoch": 7,
+            "workKind": "declared_finalization",
+            "workEpoch": 8,
+            "permit": {
+                "permitId": "permit-1",
+                "reservationRefs": ["reservation-1"],
+                "owner": "worker:1",
+                "atomicUnit": "turn:1",
+                "admissionEpoch": 7,
+                "authorizedAmounts": [
+                    {"kind": "model_output_tokens", "amount": 100, "unit": "tokens"}
+                ],
+                "continuationProfile": "finish_current_turn",
+                "policySnapshotDigest": "sha256:policy",
+                "expiresAt": "2026-06-22T01:00:00Z",
+                "fencingTokens": {"budget-1": 1}
+            }
+        });
+        let policy_json = serde_json::to_string(&policy).map_err(|error| error.to_string())?;
+        let request_json = serde_json::to_string(&request).map_err(|error| error.to_string())?;
+        let result_json = admit_exhaustion_work_json(&policy_json, &request_json)
+            .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(result.get("allowed"), Some(&json!(true)));
+        assert_eq!(
+            result.get("reason").and_then(Value::as_str),
+            Some("allowed")
+        );
+        assert_eq!(
+            result.get("usedAdditionalSteps").and_then(Value::as_u64),
+            Some(1),
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn admit_exhaustion_work_json_rejects_mismatched_permit() -> Result<(), String> {
+        let policy = json!({
+            "preset": "finish_current_turn",
+            "unit": "turn",
+            "continuation": {
+                "maxAdditionalUsage": [
+                    {"kind": "model_output_tokens", "amount": 100, "unit": "tokens"}
+                ],
+                "maxAdditionalSteps": 1
+            }
+        });
+        let request = json!({
+            "atomicUnitId": "turn:1",
+            "admissionEpoch": 7,
+            "workKind": "declared_finalization",
+            "workEpoch": 8,
+            "permit": {
+                "permitId": "permit-2",
+                "reservationRefs": ["reservation-1"],
+                "owner": "worker:1",
+                "atomicUnit": "turn:other",
+                "admissionEpoch": 7,
+                "authorizedAmounts": [
+                    {"kind": "model_output_tokens", "amount": 100, "unit": "tokens"}
+                ],
+                "continuationProfile": "finish_current_turn",
+                "policySnapshotDigest": "sha256:policy",
+                "expiresAt": "2026-06-22T01:00:00Z",
+                "fencingTokens": {"budget-1": 1}
+            }
+        });
+        let policy_json = serde_json::to_string(&policy).map_err(|error| error.to_string())?;
+        let request_json = serde_json::to_string(&request).map_err(|error| error.to_string())?;
+        let result_json = admit_exhaustion_work_json(&policy_json, &request_json)
+            .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(result.get("allowed"), Some(&json!(false)));
+        assert_eq!(
+            result.get("reason").and_then(Value::as_str),
+            Some("invalid_permit"),
         );
         Ok(())
     }

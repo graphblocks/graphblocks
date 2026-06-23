@@ -38,5 +38,6 @@ def test_graphblocks_runtime_package_delegates_to_workspace_binding() -> None:
     assert (package_root / "__init__.py").exists()
     assert (package_root / "py.typed").exists()
     wrapper = (package_root / "__init__.py").read_text(encoding="utf-8")
+    assert "admit_exhaustion_work_json" in wrapper
     assert "validate_worker_advertisement_json" in wrapper
     assert "validate_remote_payload_json" in wrapper
