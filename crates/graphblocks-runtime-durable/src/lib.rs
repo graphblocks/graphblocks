@@ -21,6 +21,12 @@ pub enum DurableError {
         current: SourceCursor,
         attempted: SourceCursor,
     },
+    InvalidWindowSize,
+    LateEvent {
+        event_time_unix_ms: u64,
+        watermark_unix_ms: u64,
+        allowed_lateness_ms: u64,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -193,6 +199,102 @@ impl InMemoryDurableSource {
 
     pub fn resume(&mut self) {
         self.paused = false;
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AccumulationMode {
+    Discarding,
+    Accumulating,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WindowPolicy {
+    pub size_ms: u64,
+    pub allowed_lateness_ms: u64,
+    pub accumulation_mode: AccumulationMode,
+}
+
+impl WindowPolicy {
+    pub fn tumbling_event_time(
+        size_ms: u64,
+        allowed_lateness_ms: u64,
+        accumulation_mode: AccumulationMode,
+    ) -> Result<Self, DurableError> {
+        if size_ms == 0 {
+            return Err(DurableError::InvalidWindowSize);
+        }
+        Ok(Self {
+            size_ms,
+            allowed_lateness_ms,
+            accumulation_mode,
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct WindowPane {
+    pub start_unix_ms: u64,
+    pub end_unix_ms: u64,
+    pub events: Vec<SourceEvent>,
+}
+
+pub struct WindowAccumulator {
+    policy: WindowPolicy,
+    watermark: Option<Watermark>,
+    windows: BTreeMap<u64, Vec<SourceEvent>>,
+}
+
+impl WindowAccumulator {
+    pub fn new(policy: WindowPolicy) -> Self {
+        Self {
+            policy,
+            watermark: None,
+            windows: BTreeMap::new(),
+        }
+    }
+
+    pub fn ingest(&mut self, event: SourceEvent) -> Result<(), DurableError> {
+        let event_time_unix_ms = event.event_time_unix_ms.unwrap_or(0);
+        if let Some(watermark) = self.watermark
+            && event_time_unix_ms.saturating_add(self.policy.allowed_lateness_ms)
+                < watermark.unix_ms
+        {
+            return Err(DurableError::LateEvent {
+                event_time_unix_ms,
+                watermark_unix_ms: watermark.unix_ms,
+                allowed_lateness_ms: self.policy.allowed_lateness_ms,
+            });
+        }
+        let start_unix_ms = event_time_unix_ms - (event_time_unix_ms % self.policy.size_ms);
+        self.windows.entry(start_unix_ms).or_default().push(event);
+        Ok(())
+    }
+
+    pub fn advance_watermark(&mut self, watermark: Watermark) -> Vec<WindowPane> {
+        self.watermark = Some(watermark);
+        let closable = self
+            .windows
+            .keys()
+            .copied()
+            .filter(|start_unix_ms| {
+                start_unix_ms
+                    .saturating_add(self.policy.size_ms)
+                    .saturating_add(self.policy.allowed_lateness_ms)
+                    <= watermark.unix_ms
+            })
+            .collect::<Vec<_>>();
+        let mut closed = Vec::new();
+        for start_unix_ms in closable {
+            if let Some(events) = self.windows.remove(&start_unix_ms) {
+                closed.push(WindowPane {
+                    start_unix_ms,
+                    end_unix_ms: start_unix_ms.saturating_add(self.policy.size_ms),
+                    events,
+                });
+            }
+        }
+        closed
     }
 }
 
