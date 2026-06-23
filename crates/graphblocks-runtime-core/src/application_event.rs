@@ -7,7 +7,7 @@ use crate::output_policy::{
     TerminalReason,
 };
 use crate::tool_approval::ToolApprovalRequest;
-use crate::tool_call::{ToolCallDraft, ToolCallDraftStatus};
+use crate::tool_call::{ToolCall, ToolCallDraft, ToolCallDraftStatus, ToolCallStatus};
 use crate::tool_result::{ToolEffectOutcome, ToolResult, ToolResultEvent, ToolResultStatus};
 use serde_json::{Value, json};
 
@@ -152,6 +152,59 @@ impl ApplicationEvent {
                     "fragment_count": draft.argument_fragments.len(),
                 }),
             ),
+        }
+    }
+
+    pub fn tool_call_state(
+        metadata: ApplicationEventMetadata,
+        call: &ToolCall,
+    ) -> Result<Option<Self>, ApplicationEventError> {
+        let kind = match call.status {
+            ToolCallStatus::Validated => ApplicationEventKind::ToolCallValidated,
+            ToolCallStatus::Admitted => ApplicationEventKind::ToolCallAdmitted,
+            ToolCallStatus::PolicyPending
+            | ToolCallStatus::ApprovalPending
+            | ToolCallStatus::Running
+            | ToolCallStatus::Completed
+            | ToolCallStatus::Failed
+            | ToolCallStatus::Denied
+            | ToolCallStatus::Cancelled
+            | ToolCallStatus::PolicyStopped
+            | ToolCallStatus::Expired => return Ok(None),
+        };
+
+        Self::tool(
+            kind,
+            metadata,
+            &call.tool_call_id,
+            json!({
+                "tool_name": &call.name,
+                "resolved_tool_id": &call.resolved_tool_id,
+                "status": Self::tool_call_status(call.status),
+                "arguments_digest": &call.arguments_digest,
+                "revision": call.revision,
+                "depends_on": &call.depends_on,
+                "created_at_unix_ms": call.created_at_unix_ms,
+                "admitted_at_unix_ms": call.admitted_at_unix_ms,
+                "completed_at_unix_ms": call.completed_at_unix_ms,
+            }),
+        )
+        .map(Some)
+    }
+
+    fn tool_call_status(status: ToolCallStatus) -> &'static str {
+        match status {
+            ToolCallStatus::Validated => "validated",
+            ToolCallStatus::PolicyPending => "policy_pending",
+            ToolCallStatus::ApprovalPending => "approval_pending",
+            ToolCallStatus::Admitted => "admitted",
+            ToolCallStatus::Running => "running",
+            ToolCallStatus::Completed => "completed",
+            ToolCallStatus::Failed => "failed",
+            ToolCallStatus::Denied => "denied",
+            ToolCallStatus::Cancelled => "cancelled",
+            ToolCallStatus::PolicyStopped => "policy_stopped",
+            ToolCallStatus::Expired => "expired",
         }
     }
 

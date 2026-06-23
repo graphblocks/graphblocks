@@ -14,7 +14,7 @@ use graphblocks_runtime_core::tool::{
     ToolResolutionScope,
 };
 use graphblocks_runtime_core::tool_approval::ToolApprovalRequest;
-use graphblocks_runtime_core::tool_call::ToolCallDraft;
+use graphblocks_runtime_core::tool_call::{ToolCallDraft, ToolCallStatus};
 use graphblocks_runtime_core::tool_result::{ContentPart, ToolResult, ToolResultEvent};
 use serde_json::json;
 
@@ -213,6 +213,66 @@ fn tool_call_drafts_map_to_argument_lifecycle_application_events() {
             "status": "arguments_complete",
             "draft_sequence": 2,
             "fragment_count": 2,
+        })
+    );
+}
+
+#[test]
+fn final_tool_calls_map_to_validated_and_admitted_application_events() {
+    let mut draft = ToolCallDraft::proposed("response-1", "call-1", "knowledge.search");
+    draft
+        .append_argument_fragment("{\"query\":\"runtime\"}")
+        .expect("argument fragment should append");
+    let call = draft
+        .into_completed_tool_call("resolved-tool-1", 1_000)
+        .expect("arguments should parse");
+    let validated = ApplicationEvent::tool_call_state(metadata(), &call)
+        .expect("validated call state should be valid")
+        .expect("validated calls should emit an event");
+
+    let mut admitted_call = call.clone();
+    admitted_call.status = ToolCallStatus::Admitted;
+    admitted_call.admitted_at_unix_ms = Some(1_100);
+    let admitted = ApplicationEvent::tool_call_state(
+        ApplicationEventMetadata {
+            event_id: "event-2".to_string(),
+            sequence: 8,
+            ..metadata()
+        },
+        &admitted_call,
+    )
+    .expect("admitted call state should be valid")
+    .expect("admitted calls should emit an event");
+
+    assert_eq!(validated.kind, ApplicationEventKind::ToolCallValidated);
+    assert_eq!(validated.tool_call_id.as_deref(), Some("call-1"));
+    assert_eq!(
+        validated.payload,
+        json!({
+            "tool_name": "knowledge.search",
+            "resolved_tool_id": "resolved-tool-1",
+            "status": "validated",
+            "arguments_digest": call.arguments_digest,
+            "revision": 1,
+            "depends_on": [],
+            "created_at_unix_ms": 1_000,
+            "admitted_at_unix_ms": null,
+            "completed_at_unix_ms": null,
+        })
+    );
+    assert_eq!(admitted.kind, ApplicationEventKind::ToolCallAdmitted);
+    assert_eq!(
+        admitted.payload,
+        json!({
+            "tool_name": "knowledge.search",
+            "resolved_tool_id": "resolved-tool-1",
+            "status": "admitted",
+            "arguments_digest": admitted_call.arguments_digest,
+            "revision": 1,
+            "depends_on": [],
+            "created_at_unix_ms": 1_000,
+            "admitted_at_unix_ms": 1_100,
+            "completed_at_unix_ms": null,
         })
     );
 }

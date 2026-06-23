@@ -162,6 +162,59 @@ def test_tool_call_drafts_map_to_argument_lifecycle_application_events() -> None
     }
 
 
+def test_final_tool_calls_map_to_validated_and_admitted_application_events() -> None:
+    call = (
+        ToolCallDraft.proposed("response-1", "call-1", "knowledge.search")
+        .append_argument_fragment('{"query":"runtime"}')
+        .complete_arguments()
+        .into_tool_call("resolved-tool-1", created_at="2026-06-23T00:00:00Z")
+    )
+    validated = ApplicationEvent.tool_call_state(_metadata(), call)
+
+    admitted_call = call.with_status("admitted", admitted_at="2026-06-23T00:00:01Z")
+    admitted = ApplicationEvent.tool_call_state(
+        ApplicationEventMetadata(
+            event_id="event-2",
+            run_id="run-1",
+            response_id="response-1",
+            turn_id="turn-1",
+            sequence=8,
+            release_id="release-1",
+            policy_snapshot_id="policy-1",
+            occurred_at="2026-06-23T00:00:01Z",
+        ),
+        admitted_call,
+    )
+
+    assert validated is not None
+    assert validated.kind == "ToolCallValidated"
+    assert validated.tool_call_id == "call-1"
+    assert validated.payload == {
+        "tool_name": "knowledge.search",
+        "resolved_tool_id": "resolved-tool-1",
+        "status": "validated",
+        "arguments_digest": call.arguments_digest,
+        "revision": 1,
+        "depends_on": [],
+        "created_at": "2026-06-23T00:00:00Z",
+        "admitted_at": None,
+        "completed_at": None,
+    }
+    assert admitted is not None
+    assert admitted.kind == "ToolCallAdmitted"
+    assert admitted.payload == {
+        "tool_name": "knowledge.search",
+        "resolved_tool_id": "resolved-tool-1",
+        "status": "admitted",
+        "arguments_digest": admitted_call.arguments_digest,
+        "revision": 1,
+        "depends_on": [],
+        "created_at": "2026-06-23T00:00:00Z",
+        "admitted_at": "2026-06-23T00:00:01Z",
+        "completed_at": None,
+    }
+
+
 def test_tool_approval_request_maps_to_standard_application_event() -> None:
     catalog = ToolCatalog(
         definitions=(

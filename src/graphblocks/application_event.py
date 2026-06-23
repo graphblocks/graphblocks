@@ -4,7 +4,7 @@ from dataclasses import dataclass, field, replace
 from typing import Literal
 
 from .output_policy import OutputCutoff, OutputPolicyDecision
-from .tools import ToolApprovalRequest, ToolCallDraft, ToolResult, ToolResultEvent
+from .tools import ToolApprovalRequest, ToolCall, ToolCallDraft, ToolResult, ToolResultEvent
 
 
 ApplicationEventKind = Literal[
@@ -140,6 +140,36 @@ class ApplicationEvent:
                 "status": "arguments_complete",
                 "draft_sequence": draft.sequence,
                 "fragment_count": len(draft.argument_fragments),
+            },
+        )
+
+    @classmethod
+    def tool_call_state(
+        cls,
+        metadata: ApplicationEventMetadata,
+        call: ToolCall,
+    ) -> ApplicationEvent | None:
+        if call.status == "validated":
+            kind: ApplicationEventKind = "ToolCallValidated"
+        elif call.status == "admitted":
+            kind = "ToolCallAdmitted"
+        else:
+            return None
+
+        return cls.tool(
+            kind,
+            metadata,
+            tool_call_id=call.tool_call_id,
+            payload={
+                "tool_name": call.name,
+                "resolved_tool_id": call.resolved_tool_id,
+                "status": call.status,
+                "arguments_digest": call.arguments_digest,
+                "revision": call.revision,
+                "depends_on": list(call.depends_on),
+                "created_at": call.created_at,
+                "admitted_at": call.admitted_at,
+                "completed_at": call.completed_at,
             },
         )
 
