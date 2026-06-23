@@ -33,6 +33,7 @@ from graphblocks import (
     ToolSchemaRegistryError,
     ToolSchemaValidationError,
     admit_tool_call,
+    validate_tool_result_for_model,
 )
 
 
@@ -586,6 +587,58 @@ def test_completed_tool_result_computes_stable_output_digest() -> None:
     assert left.output_digest is not None and left.output_digest.startswith("sha256:")
     assert left.started_at == "2026-06-23T00:00:00Z"
     assert left.completed_at == "2026-06-23T00:00:01Z"
+
+
+def test_completed_tool_result_validates_output_schema_before_model_return() -> None:
+    catalog = ToolCatalog(
+        definitions=(
+            ToolDefinition(
+                name="knowledge.search",
+                description="Search documentation.",
+                input_schema="schemas/SearchRequest@1",
+                output_schema="schemas/SearchResult@1",
+            ),
+        ),
+        bindings=(
+            ToolBinding(
+                binding_id="binding-search",
+                tool_name="knowledge.search",
+                implementation=BlockToolImplementation(block="blocks.search"),
+            ),
+        ),
+    )
+    resolved = catalog.resolve(ToolResolutionScope(), effective_policy_snapshot_id="policy-snapshot-1")[0]
+    call = (
+        ToolCallDraft.proposed("response-1", "call-1", "knowledge.search")
+        .append_argument_fragment("{}")
+        .complete_arguments()
+        .into_tool_call(resolved.resolved_tool_id, created_at="2026-06-23T00:00:00Z")
+    )
+    registry = ToolSchemaRegistry(
+        (
+            JsonSchema(
+                "schemas/SearchResult@1",
+                JsonSchemaNode.object().required_property("answer", JsonSchemaNode.string()),
+            ),
+        )
+    )
+    valid = ToolResult.completed(
+        "call-1",
+        (ContentPart(kind="json", data={"answer": "Use the runtime."}),),
+        started_at="2026-06-23T00:00:01Z",
+        completed_at="2026-06-23T00:00:02Z",
+    )
+    invalid = ToolResult.completed(
+        "call-1",
+        (ContentPart(kind="json", data={"answer": 7}),),
+        started_at="2026-06-23T00:00:01Z",
+        completed_at="2026-06-23T00:00:02Z",
+    )
+
+    validate_tool_result_for_model(call, valid, resolved, registry)
+    with pytest.raises(ToolSchemaValidationError) as error:
+        validate_tool_result_for_model(call, invalid, resolved, registry)
+    assert str(error.value) == "schemas/SearchResult@1 expected string at $.answer"
 
 
 def test_policy_stopped_tool_result_is_final_but_incomplete() -> None:

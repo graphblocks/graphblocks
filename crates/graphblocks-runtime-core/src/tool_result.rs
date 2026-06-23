@@ -4,6 +4,9 @@ use graphblocks_compiler::canonical::canonical_hash;
 use serde_json::{Value, json};
 
 use crate::outcome::BlockError;
+use crate::tool::ResolvedTool;
+use crate::tool_call::ToolCall;
+use crate::tool_schema::{ToolSchemaRegistry, ToolSchemaValidationError};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ContentPartKind {
@@ -327,6 +330,128 @@ impl ToolResult {
     {
         self.diagnostics = diagnostics.into_iter().collect();
         self
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ToolResultValidationRequest<'a> {
+    pub call: &'a ToolCall,
+    pub result: &'a ToolResult,
+    pub resolved_tool: &'a ResolvedTool,
+    pub schema_registry: &'a ToolSchemaRegistry,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ToolResultValidationError {
+    ToolCallMismatch {
+        expected: String,
+        actual: String,
+    },
+    ResolvedToolMismatch {
+        expected: String,
+        actual: String,
+    },
+    OutputSchemaMissing {
+        schema_id: String,
+    },
+    OutputContentMissing {
+        tool_call_id: String,
+    },
+    OutputContentAmbiguous {
+        tool_call_id: String,
+        count: usize,
+    },
+    OutputSchemaInvalid {
+        tool_call_id: String,
+        schema_id: String,
+        path: String,
+        expected: String,
+    },
+    RequiredOutputMissing {
+        tool_call_id: String,
+        schema_id: String,
+        path: String,
+        property: String,
+    },
+}
+
+pub struct ToolResultValidation;
+
+impl ToolResultValidation {
+    pub fn validate_for_model(
+        request: ToolResultValidationRequest<'_>,
+    ) -> Result<(), ToolResultValidationError> {
+        if request.result.tool_call_id != request.call.tool_call_id {
+            return Err(ToolResultValidationError::ToolCallMismatch {
+                expected: request.call.tool_call_id.clone(),
+                actual: request.result.tool_call_id.clone(),
+            });
+        }
+        if request.call.resolved_tool_id != request.resolved_tool.resolved_tool_id {
+            return Err(ToolResultValidationError::ResolvedToolMismatch {
+                expected: request.resolved_tool.resolved_tool_id.clone(),
+                actual: request.call.resolved_tool_id.clone(),
+            });
+        }
+        if request.result.status != ToolResultStatus::Completed {
+            return Ok(());
+        }
+
+        let Some(output_schema) = request.resolved_tool.definition.output_schema.as_ref() else {
+            return Ok(());
+        };
+        let json_outputs = request
+            .result
+            .output
+            .iter()
+            .filter(|part| part.kind == ContentPartKind::Json)
+            .collect::<Vec<_>>();
+        let [json_output] = json_outputs.as_slice() else {
+            return if json_outputs.is_empty() {
+                Err(ToolResultValidationError::OutputContentMissing {
+                    tool_call_id: request.result.tool_call_id.clone(),
+                })
+            } else {
+                Err(ToolResultValidationError::OutputContentAmbiguous {
+                    tool_call_id: request.result.tool_call_id.clone(),
+                    count: json_outputs.len(),
+                })
+            };
+        };
+        let Some(output_value) = json_output.data.as_ref() else {
+            return Err(ToolResultValidationError::OutputContentMissing {
+                tool_call_id: request.result.tool_call_id.clone(),
+            });
+        };
+
+        request
+            .schema_registry
+            .validate(output_schema, output_value)
+            .map_err(|error| match error {
+                ToolSchemaValidationError::SchemaMissing { schema_id } => {
+                    ToolResultValidationError::OutputSchemaMissing { schema_id }
+                }
+                ToolSchemaValidationError::TypeMismatch {
+                    schema_id,
+                    path,
+                    expected,
+                } => ToolResultValidationError::OutputSchemaInvalid {
+                    tool_call_id: request.result.tool_call_id.clone(),
+                    schema_id,
+                    path,
+                    expected,
+                },
+                ToolSchemaValidationError::RequiredPropertyMissing {
+                    schema_id,
+                    path,
+                    property,
+                } => ToolResultValidationError::RequiredOutputMissing {
+                    tool_call_id: request.result.tool_call_id.clone(),
+                    schema_id,
+                    path,
+                    property,
+                },
+            })
     }
 }
 

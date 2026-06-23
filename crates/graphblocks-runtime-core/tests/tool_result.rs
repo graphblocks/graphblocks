@@ -1,8 +1,14 @@
 use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory};
+use graphblocks_runtime_core::tool::{
+    BlockToolImplementation, ToolBinding, ToolCatalog, ToolDefinition, ToolImplementation,
+    ToolResolutionScope,
+};
+use graphblocks_runtime_core::tool_call::ToolCallDraft;
 use graphblocks_runtime_core::tool_result::{
     ArtifactRef, ContentPart, Diagnostic, ToolEffectOutcome, ToolResult, ToolResultEvent,
-    ToolResultStatus,
+    ToolResultStatus, ToolResultValidation, ToolResultValidationError, ToolResultValidationRequest,
 };
+use graphblocks_runtime_core::tool_schema::{JsonSchema, JsonSchemaNode, ToolSchemaRegistry};
 use serde_json::json;
 
 #[test]
@@ -35,6 +41,76 @@ fn completed_tool_result_computes_stable_output_digest() {
     );
     assert_eq!(left.started_at_unix_ms, Some(1_000));
     assert_eq!(left.completed_at_unix_ms, Some(1_050));
+}
+
+#[test]
+fn completed_tool_result_validates_output_schema_before_model_return() {
+    let catalog = ToolCatalog::new(
+        [ToolDefinition::new(
+            "knowledge.search",
+            "Search documentation.",
+            "schemas/SearchRequest@1",
+        )
+        .with_output_schema("schemas/SearchResult@1")],
+        [ToolBinding::new(
+            "binding-search",
+            "knowledge.search",
+            ToolImplementation::Block(BlockToolImplementation::new("blocks.search")),
+        )],
+    )
+    .expect("catalog should be valid");
+    let resolved = catalog
+        .resolve(ToolResolutionScope::new(), "policy-snapshot-1")
+        .expect("tool should resolve")
+        .remove(0);
+    let mut draft = ToolCallDraft::proposed("response-1", "call-1", "knowledge.search");
+    draft
+        .append_argument_fragment("{}")
+        .expect("argument fragment should append");
+    let call = draft
+        .into_completed_tool_call(resolved.resolved_tool_id.clone(), 1_000)
+        .expect("arguments should parse");
+    let registry = ToolSchemaRegistry::new([JsonSchema::new(
+        "schemas/SearchResult@1",
+        JsonSchemaNode::object().required_property("answer", JsonSchemaNode::string()),
+    )])
+    .expect("schema registry should be valid");
+    let valid = ToolResult::completed(
+        "call-1",
+        [ContentPart::json(json!({"answer": "Use the runtime."}))],
+        1_100,
+        1_200,
+    );
+    let invalid = ToolResult::completed(
+        "call-1",
+        [ContentPart::json(json!({"answer": 7}))],
+        1_100,
+        1_200,
+    );
+
+    assert_eq!(
+        ToolResultValidation::validate_for_model(ToolResultValidationRequest {
+            call: &call,
+            result: &valid,
+            resolved_tool: &resolved,
+            schema_registry: &registry,
+        }),
+        Ok(())
+    );
+    assert_eq!(
+        ToolResultValidation::validate_for_model(ToolResultValidationRequest {
+            call: &call,
+            result: &invalid,
+            resolved_tool: &resolved,
+            schema_registry: &registry,
+        }),
+        Err(ToolResultValidationError::OutputSchemaInvalid {
+            tool_call_id: "call-1".to_string(),
+            schema_id: "schemas/SearchResult@1".to_string(),
+            path: "$.answer".to_string(),
+            expected: "string".to_string(),
+        })
+    );
 }
 
 #[test]
