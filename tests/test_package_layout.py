@@ -673,6 +673,31 @@ def test_dashboards_package_has_data_package_layout_without_vendor_dependencies(
     assert (package_root / "src" / "graphblocks_dashboards" / "py.typed").exists()
 
 
+def test_postgres_adapter_packages_have_sql_contract_layouts_without_db_driver_dependencies() -> None:
+    cases = (
+        ("graphblocks-budget-postgres", "graphblocks_budget_postgres", ["graphblocks-budget~=1.0"]),
+        ("graphblocks-usage-postgres", "graphblocks_usage_postgres", ["graphblocks-usage~=1.0"]),
+    )
+    for distribution, import_name, expected_dependencies in cases:
+        package_root = ROOT / "packages" / distribution
+        pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
+        dependencies = pyproject["project"]["dependencies"]
+
+        assert pyproject["build-system"]["build-backend"] == "hatchling.build"
+        assert pyproject["project"]["name"] == distribution
+        assert dependencies == expected_dependencies
+        assert not any(
+            driver in dependency.lower()
+            for dependency in dependencies
+            for driver in ("psycopg", "asyncpg", "sqlalchemy", "postgres")
+        )
+        assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
+            f"src/{import_name}"
+        ]
+        assert (package_root / "src" / import_name / "__init__.py").exists()
+        assert (package_root / "src" / import_name / "py.typed").exists()
+
+
 def test_package_lock_resolves_default_metapackage_closure_without_optional_integrations() -> None:
     lock = build_package_lock(load_package_catalog(), requested=("graphblocks",))
 
