@@ -6,8 +6,10 @@ from graphblocks import (
     ContentPart,
     GenerationChunk,
     OutputCutoff,
+    OutputDeliveryGate,
     OutputDeliveryPolicy,
     OutputDeliveryPolicyError,
+    OutputGateError,
     OutputPolicyDecision,
 )
 
@@ -114,3 +116,82 @@ def test_output_cutoff_discards_delayed_output_after_terminal_cutoff() -> None:
 
     assert cutoff.accepts(accepted) is True
     assert cutoff.accepts(delayed) is False
+
+
+def test_output_delivery_gate_releases_only_policy_accepted_chunks() -> None:
+    gate = OutputDeliveryGate("stream-1", "response-1")
+
+    gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "hello "))
+    gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 2, "world"))
+
+    first = gate.apply_decision(
+        OutputPolicyDecision.allow(
+            "decision-1",
+            accepted_through_sequence=1,
+            input_digest="sha256:first",
+        ),
+        occurred_at="2026-06-23T00:00:01Z",
+    )
+    assert [(chunk.sequence, chunk.text) for chunk in first.deliverable] == [(1, "hello ")]
+    assert first.cutoff is None
+    assert gate.last_policy_accepted_sequence == 1
+    assert gate.last_client_delivered_sequence == 1
+
+    second = gate.apply_decision(
+        OutputPolicyDecision.allow(
+            "decision-2",
+            accepted_through_sequence=2,
+            input_digest="sha256:second",
+        ),
+        occurred_at="2026-06-23T00:00:02Z",
+    )
+    assert [(chunk.sequence, chunk.text) for chunk in second.deliverable] == [(2, "world")]
+    assert second.cutoff is None
+    assert gate.last_client_delivered_sequence == 2
+
+
+def test_output_delivery_gate_policy_abort_cuts_off_and_rejects_late_chunks() -> None:
+    gate = OutputDeliveryGate("stream-1", "response-1", turn_id="turn-1")
+    gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "safe "))
+    gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 2, "blocked"))
+    gate.apply_decision(
+        OutputPolicyDecision.allow("decision-1", accepted_through_sequence=1, input_digest="sha256:first"),
+        occurred_at="2026-06-23T00:00:01Z",
+    )
+
+    stopped = gate.apply_decision(
+        OutputPolicyDecision.abort_response("decision-abort", input_digest="sha256:abort"),
+        occurred_at="2026-06-23T00:00:02Z",
+    )
+
+    assert stopped.deliverable == []
+    assert stopped.cutoff is not None
+    assert stopped.cutoff.turn_id == "turn-1"
+    assert stopped.cutoff.last_generated_sequence == 2
+    assert stopped.cutoff.last_policy_accepted_sequence == 1
+    assert stopped.cutoff.last_client_delivered_sequence == 1
+    assert stopped.cutoff.policy_decision_id == "decision-abort"
+
+    with pytest.raises(OutputGateError) as error:
+        gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 3, "late"))
+    assert str(error.value) == "output gate is policy stopped"
+
+
+def test_output_delivery_gate_buffer_until_commit_holds_accepted_chunks() -> None:
+    gate = OutputDeliveryGate(
+        "stream-1",
+        "response-1",
+        delivery_policy=OutputDeliveryPolicy.buffer_until_commit(on_violation="abort_response"),
+    )
+    gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "hello "))
+    gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 2, "world"))
+
+    held = gate.apply_decision(
+        OutputPolicyDecision.allow("decision-1", accepted_through_sequence=2, input_digest="sha256:accepted"),
+        occurred_at="2026-06-23T00:00:01Z",
+    )
+
+    assert held.deliverable == []
+    assert gate.last_policy_accepted_sequence == 2
+    assert gate.last_client_delivered_sequence == 0
+    assert [(chunk.sequence, chunk.text) for chunk in gate.commit_accepted_output()] == [(1, "hello "), (2, "world")]

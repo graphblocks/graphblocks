@@ -121,8 +121,11 @@ from .plugins import (
 from .output_policy import (
     GenerationChunk,
     OutputCutoff,
+    OutputDeliveryGate,
     OutputDeliveryPolicy,
     OutputDeliveryPolicyError,
+    OutputGateError,
+    OutputGateUpdate,
     OutputPolicyDecision,
 )
 from .policy import (
@@ -339,8 +342,11 @@ __all__ = [
     "MissingExhaustionBoundaryError",
     "OpenApiToolImplementation",
     "OutputCutoff",
+    "OutputDeliveryGate",
     "OutputDeliveryPolicy",
     "OutputDeliveryPolicyError",
+    "OutputGateError",
+    "OutputGateUpdate",
     "OutputPolicyDecision",
     "PartialOutputPolicy",
     "StateConflictError",

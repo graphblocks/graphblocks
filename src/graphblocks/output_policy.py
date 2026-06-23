@@ -21,6 +21,10 @@ class OutputDeliveryPolicyError(ValueError):
     pass
 
 
+class OutputGateError(RuntimeError):
+    pass
+
+
 class GenerationChunk:
     def __init__(self, stream_id: str, response_id: str, sequence: int, text: str) -> None:
         self.stream_id = stream_id
@@ -259,3 +263,118 @@ class OutputCutoff:
             if output.stream_id != self.stream_id or output.response_id != self.response_id:
                 return False
         return sequence <= self.last_client_delivered_sequence
+
+
+@dataclass(frozen=True, slots=True)
+class OutputGateUpdate:
+    deliverable: list[GenerationChunk]
+    cutoff: OutputCutoff | None = None
+
+
+@dataclass(slots=True)
+class OutputDeliveryGate:
+    stream_id: str
+    response_id: str
+    turn_id: str | None = None
+    delivery_policy: OutputDeliveryPolicy = field(
+        default_factory=lambda: OutputDeliveryPolicy.bounded_holdback(
+            on_violation="abort_response",
+            holdback_max_tokens=1,
+        )
+    )
+    pending: dict[int, GenerationChunk] = field(default_factory=dict)
+    last_generated_sequence: int = 0
+    last_policy_accepted_sequence: int = 0
+    last_client_delivered_sequence: int = 0
+    cutoff: OutputCutoff | None = None
+
+    def __post_init__(self) -> None:
+        self.delivery_policy.validate()
+
+    def record_chunk(self, chunk: GenerationChunk) -> None:
+        if self.cutoff is not None:
+            raise OutputGateError("output gate is policy stopped")
+        if chunk.stream_id != self.stream_id:
+            raise OutputGateError(f"chunk stream_id {chunk.stream_id!r} does not match {self.stream_id!r}")
+        if chunk.response_id != self.response_id:
+            raise OutputGateError(f"chunk response_id {chunk.response_id!r} does not match {self.response_id!r}")
+        if chunk.sequence <= self.last_generated_sequence:
+            raise OutputGateError(
+                f"chunk sequence {chunk.sequence} must be greater than {self.last_generated_sequence}"
+            )
+        self.last_generated_sequence = chunk.sequence
+        self.pending[chunk.sequence] = chunk
+
+    def commit_accepted_output(self) -> list[GenerationChunk]:
+        if self.cutoff is not None:
+            return []
+        deliverable: list[GenerationChunk] = []
+        for sequence in sorted(self.pending):
+            if sequence <= self.last_client_delivered_sequence:
+                continue
+            if sequence > self.last_policy_accepted_sequence:
+                break
+            deliverable.append(self.pending[sequence])
+        for chunk in deliverable:
+            self.pending.pop(chunk.sequence, None)
+            self.last_client_delivered_sequence = chunk.sequence
+        return deliverable
+
+    def apply_decision(self, decision: OutputPolicyDecision, *, occurred_at: str) -> OutputGateUpdate:
+        if self.cutoff is not None:
+            raise OutputGateError("output gate is policy stopped")
+
+        if decision.disposition == "allow":
+            if decision.accepted_through_sequence is not None:
+                self.last_policy_accepted_sequence = max(
+                    self.last_policy_accepted_sequence,
+                    decision.accepted_through_sequence,
+                )
+            if self.delivery_policy.mode == "buffer_until_commit":
+                return OutputGateUpdate(deliverable=[])
+            return OutputGateUpdate(deliverable=self.commit_accepted_output())
+
+        if decision.disposition == "hold":
+            return OutputGateUpdate(deliverable=[])
+
+        if decision.disposition in {"redact", "replace"}:
+            if decision.accepted_through_sequence is not None:
+                self.last_policy_accepted_sequence = max(
+                    self.last_policy_accepted_sequence,
+                    decision.accepted_through_sequence,
+                )
+            if decision.disposition == "replace" and decision.accepted_through_sequence is not None:
+                for sequence in list(self.pending):
+                    if self.last_client_delivered_sequence < sequence <= decision.accepted_through_sequence:
+                        self.pending.pop(sequence, None)
+            for index, part in enumerate(decision.replacement_parts):
+                sequence = (decision.accepted_through_sequence or self.last_generated_sequence) + index
+                self.pending[sequence] = GenerationChunk.text(
+                    self.stream_id,
+                    self.response_id,
+                    sequence,
+                    part.text or "",
+                )
+            if self.delivery_policy.mode == "buffer_until_commit":
+                return OutputGateUpdate(deliverable=[])
+            return OutputGateUpdate(deliverable=self.commit_accepted_output())
+
+        if decision.disposition in {"abort_response", "abort_turn", "deny_commit"}:
+            cutoff = OutputCutoff(
+                stream_id=self.stream_id,
+                response_id=self.response_id,
+                turn_id=self.turn_id,
+                last_generated_sequence=self.last_generated_sequence,
+                last_policy_accepted_sequence=self.last_policy_accepted_sequence,
+                last_client_delivered_sequence=self.last_client_delivered_sequence,
+                terminal_reason="policy_denied",
+                draft_disposition=decision.draft_disposition,
+                durable_result="none",
+                policy_decision_id=decision.decision_id,
+                occurred_at=occurred_at,
+            )
+            self.pending.clear()
+            self.cutoff = cutoff
+            return OutputGateUpdate(deliverable=[], cutoff=cutoff)
+
+        raise OutputGateError(f"unknown output policy disposition {decision.disposition}")
