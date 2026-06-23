@@ -3,10 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Literal
 
+from .documents import ArtifactRef
 
 MessageRole = Literal["system", "developer", "user", "assistant", "tool"]
 MessageStatus = Literal["draft", "committed", "superseded", "retracted"]
 DeletePolicy = Literal["tombstone", "hard"]
+AttachmentScope = Literal["message", "conversation", "user", "project", "tenant"]
+AttachmentPurpose = Literal["direct_input", "retrieval", "code_analysis", "reference", "output"]
+AttachmentIngestionStatus = Literal["pending", "processing", "ready", "failed", "expired", "deleted"]
 TurnStatus = Literal[
     "created",
     "context_building",
@@ -69,9 +73,26 @@ class Message:
 
 
 @dataclass(frozen=True, slots=True)
+class FileAttachment:
+    attachment_id: str
+    asset: ArtifactRef
+    scope: AttachmentScope
+    purpose: AttachmentPurpose
+    ingestion_status: AttachmentIngestionStatus = "pending"
+    retention_policy: str | None = None
+    message_id: str | None = None
+    metadata: dict[str, object] = field(default_factory=dict)
+
+    @property
+    def is_ready(self) -> bool:
+        return self.ingestion_status == "ready"
+
+
+@dataclass(frozen=True, slots=True)
 class Conversation:
     conversation_id: str
     messages: tuple[Message, ...] = field(default_factory=tuple)
+    attachments: tuple[FileAttachment, ...] = field(default_factory=tuple)
     revision: int = 0
     archived: bool = False
     branch_of: str | None = None
@@ -110,11 +131,25 @@ def _copy_conversation(conversation: Conversation) -> Conversation:
     return Conversation(
         conversation_id=conversation.conversation_id,
         messages=tuple(conversation.messages),
+        attachments=tuple(_copy_attachment(attachment) for attachment in conversation.attachments),
         revision=conversation.revision,
         archived=conversation.archived,
         branch_of=conversation.branch_of,
         branched_from_message_id=conversation.branched_from_message_id,
         metadata=dict(conversation.metadata),
+    )
+
+
+def _copy_attachment(attachment: FileAttachment) -> FileAttachment:
+    return FileAttachment(
+        attachment_id=attachment.attachment_id,
+        asset=attachment.asset,
+        scope=attachment.scope,
+        purpose=attachment.purpose,
+        ingestion_status=attachment.ingestion_status,
+        retention_policy=attachment.retention_policy,
+        message_id=attachment.message_id,
+        metadata=dict(attachment.metadata),
     )
 
 
@@ -257,6 +292,7 @@ class InMemoryConversationStore:
         self._conversations[conversation_id] = Conversation(
             conversation_id=conversation.conversation_id,
             messages=(*conversation.messages, *messages),
+            attachments=conversation.attachments,
             revision=new_revision,
             archived=conversation.archived,
             branch_of=conversation.branch_of,
@@ -279,9 +315,20 @@ class InMemoryConversationStore:
                 break
         if source_index is None:
             raise MessageNotFoundError(f"message {request.from_message_id!r} does not exist")
+        branch_messages = conversation.messages[: source_index + 1]
+        branch_message_ids = {message.message_id for message in branch_messages}
         branch = Conversation(
             conversation_id=branch_id,
-            messages=conversation.messages[: source_index + 1],
+            messages=branch_messages,
+            attachments=tuple(
+                _copy_attachment(attachment)
+                for attachment in conversation.attachments
+                if request.include_attachments
+                and (
+                    attachment.scope == "conversation"
+                    or (attachment.scope == "message" and attachment.message_id in branch_message_ids)
+                )
+            ),
             revision=0,
             branch_of=conversation.conversation_id,
             branched_from_message_id=request.from_message_id,
@@ -294,6 +341,46 @@ class InMemoryConversationStore:
         self._conversations[branch_id] = branch
         return _copy_conversation(branch)
 
+    def add_attachment(self, conversation_id: str, attachment: FileAttachment) -> int:
+        conversation = self._conversations.get(conversation_id)
+        if conversation is None:
+            raise ConversationNotFoundError(f"conversation {conversation_id!r} does not exist")
+        if conversation.archived:
+            raise ConversationArchivedError(f"conversation {conversation_id!r} is archived")
+        new_revision = conversation.revision + 1
+        self._conversations[conversation_id] = Conversation(
+            conversation_id=conversation.conversation_id,
+            messages=conversation.messages,
+            attachments=(*conversation.attachments, _copy_attachment(attachment)),
+            revision=new_revision,
+            archived=conversation.archived,
+            branch_of=conversation.branch_of,
+            branched_from_message_id=conversation.branched_from_message_id,
+            metadata=dict(conversation.metadata),
+        )
+        return new_revision
+
+    def resolve_attachments(
+        self,
+        conversation_id: str,
+        message_ids: list[str],
+        *,
+        include_conversation_scope: bool,
+    ) -> tuple[FileAttachment, ...]:
+        conversation = self._conversations.get(conversation_id)
+        if conversation is None:
+            raise ConversationNotFoundError(f"conversation {conversation_id!r} does not exist")
+        message_id_set = set(message_ids)
+        return tuple(
+            _copy_attachment(attachment)
+            for attachment in conversation.attachments
+            if attachment.is_ready
+            and (
+                (include_conversation_scope and attachment.scope == "conversation")
+                or (attachment.scope == "message" and attachment.message_id in message_id_set)
+            )
+        )
+
     def archive(self, conversation_id: str) -> int:
         conversation = self._conversations.get(conversation_id)
         if conversation is None:
@@ -302,6 +389,7 @@ class InMemoryConversationStore:
         self._conversations[conversation_id] = Conversation(
             conversation_id=conversation.conversation_id,
             messages=conversation.messages,
+            attachments=conversation.attachments,
             revision=new_revision,
             archived=True,
             branch_of=conversation.branch_of,
@@ -325,6 +413,7 @@ class InMemoryConversationStore:
         self._conversations[conversation_id] = Conversation(
             conversation_id=conversation.conversation_id,
             messages=(),
+            attachments=(),
             revision=new_revision,
             archived=True,
             branch_of=conversation.branch_of,

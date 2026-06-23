@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from graphblocks.documents import ArtifactRef
 from graphblocks.conversation import (
     BranchRequest,
     ContentPart,
@@ -9,6 +10,7 @@ from graphblocks.conversation import (
     ConversationArchivedError,
     ConversationConflictError,
     ConversationNotFoundError,
+    FileAttachment,
     InMemoryConversationStore,
     Message,
 )
@@ -56,6 +58,105 @@ def test_branch_preserves_lineage_and_copies_messages_through_source_message() -
     assert branch.revision == 0
     assert branch.messages == (user_message,)
     assert branch.metadata["source_revision"] == 1
+
+
+def test_scoped_attachments_resolve_for_context() -> None:
+    store = InMemoryConversationStore()
+    store.create(Conversation(conversation_id="conv-1"))
+    store.add_attachment(
+        "conv-1",
+        FileAttachment(
+            attachment_id="att-message",
+            asset=ArtifactRef("artifact-message", "blob://attachments/message.pdf"),
+            scope="message",
+            purpose="retrieval",
+            ingestion_status="ready",
+            message_id="msg-user",
+        ),
+    )
+    store.add_attachment(
+        "conv-1",
+        FileAttachment(
+            attachment_id="att-conversation",
+            asset=ArtifactRef("artifact-conversation", "blob://attachments/conversation.pdf"),
+            scope="conversation",
+            purpose="direct_input",
+            ingestion_status="ready",
+        ),
+    )
+    store.add_attachment(
+        "conv-1",
+        FileAttachment(
+            attachment_id="att-pending",
+            asset=ArtifactRef("artifact-pending", "blob://attachments/pending.pdf"),
+            scope="message",
+            purpose="retrieval",
+            ingestion_status="pending",
+            message_id="msg-user",
+        ),
+    )
+
+    attachments = store.resolve_attachments("conv-1", ["msg-user"], include_conversation_scope=True)
+
+    assert [attachment.attachment_id for attachment in attachments] == ["att-message", "att-conversation"]
+
+
+def test_branch_respects_include_attachments_and_message_scope() -> None:
+    store = InMemoryConversationStore()
+    first = Message(message_id="msg-1", role="user")
+    second = Message(message_id="msg-2", role="user")
+    store.create(Conversation(conversation_id="conv-1"))
+    store.append_messages("conv-1", expected_revision=0, messages=[first, second])
+    store.add_attachment(
+        "conv-1",
+        FileAttachment(
+            attachment_id="att-1",
+            asset=ArtifactRef("artifact-1", "blob://attachments/one.pdf"),
+            scope="message",
+            purpose="retrieval",
+            ingestion_status="ready",
+            message_id="msg-1",
+        ),
+    )
+    store.add_attachment(
+        "conv-1",
+        FileAttachment(
+            attachment_id="att-2",
+            asset=ArtifactRef("artifact-2", "blob://attachments/two.pdf"),
+            scope="message",
+            purpose="retrieval",
+            ingestion_status="ready",
+            message_id="msg-2",
+        ),
+    )
+    store.add_attachment(
+        "conv-1",
+        FileAttachment(
+            attachment_id="att-conversation",
+            asset=ArtifactRef("artifact-conversation", "blob://attachments/conversation.pdf"),
+            scope="conversation",
+            purpose="reference",
+            ingestion_status="ready",
+        ),
+    )
+
+    with_attachments = store.branch(
+        BranchRequest(conversation_id="conv-1", from_message_id="msg-1", new_conversation_id="conv-branch-1")
+    )
+    without_attachments = store.branch(
+        BranchRequest(
+            conversation_id="conv-1",
+            from_message_id="msg-1",
+            new_conversation_id="conv-branch-2",
+            include_attachments=False,
+        )
+    )
+
+    assert [attachment.attachment_id for attachment in with_attachments.attachments] == [
+        "att-1",
+        "att-conversation",
+    ]
+    assert without_attachments.attachments == ()
 
 
 def test_archive_prevents_later_appends() -> None:
