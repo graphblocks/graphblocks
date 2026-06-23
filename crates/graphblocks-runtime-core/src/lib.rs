@@ -17,6 +17,7 @@ pub mod output_policy;
 pub mod policy;
 pub mod rag;
 pub mod readiness;
+pub mod record_store;
 pub mod resource_scope;
 pub mod retry;
 pub mod run_store;
