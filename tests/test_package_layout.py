@@ -247,6 +247,30 @@ def test_cli_package_has_python_entrypoint_layout_without_native_dependency() ->
     assert (package_root / "src" / "graphblocks_cli" / "py.typed").exists()
 
 
+def test_agents_package_has_pure_python_layout_without_provider_sdk_dependencies() -> None:
+    package_root = ROOT / "packages" / "graphblocks-agents"
+    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
+    dependencies = pyproject["project"]["dependencies"]
+
+    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
+    assert pyproject["project"]["name"] == "graphblocks-agents"
+    assert dependencies == [
+        "graphblocks-core~=1.0",
+        "graphblocks-conversation~=1.0",
+        "graphblocks-policy~=1.0",
+    ]
+    assert not any(
+        provider in dependency.lower()
+        for dependency in dependencies
+        for provider in ("openai", "anthropic", "boto3", "google")
+    )
+    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
+        "src/graphblocks_agents"
+    ]
+    assert (package_root / "src" / "graphblocks_agents" / "__init__.py").exists()
+    assert (package_root / "src" / "graphblocks_agents" / "py.typed").exists()
+
+
 def test_policy_adapter_packages_have_pure_python_layouts_without_sdk_dependencies() -> None:
     for distribution, import_name in (
         ("graphblocks-policy-opa", "graphblocks_policy_opa"),
