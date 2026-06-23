@@ -457,6 +457,51 @@ pub fn compile_graph(document: &Value) -> Plan {
         }
     }
 
+    if let Some(remote_payloads) = spec
+        .and_then(|spec| {
+            spec.get("remotePayloads")
+                .or_else(|| spec.get("remote_payloads"))
+        })
+        .and_then(Value::as_array)
+    {
+        let max_inline_bytes = spec
+            .and_then(|spec| {
+                spec.get("remotePayloadLimits")
+                    .or_else(|| spec.get("remote_payload_limits"))
+            })
+            .and_then(Value::as_object)
+            .and_then(|limits| {
+                limits
+                    .get("maxInlineBytes")
+                    .or_else(|| limits.get("max_inline_bytes"))
+            })
+            .and_then(Value::as_u64)
+            .unwrap_or(64 * 1024) as usize;
+
+        for (index, payload) in remote_payloads.iter().enumerate() {
+            let Some(payload) = payload.as_object() else {
+                continue;
+            };
+            let mode = payload.get("mode").and_then(Value::as_str);
+            if mode == Some("inline") {
+                let value = payload.get("value").unwrap_or(&Value::Null);
+                if let Ok(encoded) = serde_json::to_vec(value)
+                    && encoded.len() > max_inline_bytes
+                {
+                    diagnostics.push(Diagnostic::error(
+                        "RemoteInlinePayloadTooLarge",
+                        format!(
+                            "remote inline payload is {} bytes, exceeding maxInlineBytes {}",
+                            encoded.len(),
+                            max_inline_bytes
+                        ),
+                        format!("$.spec.remotePayloads[{index}].value"),
+                    ));
+                }
+            }
+        }
+    }
+
     let normalized = normalize_graph(document);
     let normalized_nodes = normalized
         .get("spec")

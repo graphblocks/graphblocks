@@ -861,3 +861,74 @@ fn compile_graph_allows_explicit_tool_approval_bound_to_argument_digest() {
             .any(|diagnostic| diagnostic.code == "ApprovalWithoutArgumentDigest")
     );
 }
+
+#[test]
+fn compile_graph_rejects_oversized_remote_inline_payload() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "oversized-remote-inline-payload"},
+        "spec": {
+            "remotePayloadLimits": {
+                "maxInlineBytes": 8
+            },
+            "remotePayloads": [
+                {
+                    "mode": "inline",
+                    "schema": "graphblocks.ai/Message@1",
+                    "value": {"body": "this payload is too large"}
+                }
+            ],
+            "nodes": {
+                "remote": {"block": "remote.invoke@1"}
+            }
+        }
+    });
+
+    let plan = compile_graph(&graph);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["RemoteInlinePayloadTooLarge"]
+    );
+}
+
+#[test]
+fn compile_graph_allows_large_remote_payload_by_artifact_reference() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "remote-artifact-payload"},
+        "spec": {
+            "remotePayloadLimits": {
+                "maxInlineBytes": 8
+            },
+            "remotePayloads": [
+                {
+                    "mode": "artifact_ref",
+                    "schema": "graphblocks.ai/ArtifactRef@1",
+                    "artifact": {
+                        "artifactId": "artifact-1",
+                        "uri": "s3://bucket/large.json"
+                    }
+                }
+            ],
+            "nodes": {
+                "remote": {"block": "remote.invoke@1"}
+            }
+        }
+    });
+
+    let plan = compile_graph(&graph);
+
+    assert!(
+        !plan
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RemoteInlinePayloadTooLarge")
+    );
+}
