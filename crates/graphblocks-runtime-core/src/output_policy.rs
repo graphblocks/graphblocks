@@ -92,13 +92,49 @@ pub struct OutputDeliveryPolicy {
     pub delivered_draft_disposition: DraftDisposition,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OutputDeliveryPolicyError {
+    UnboundedPolicyHoldback,
+    ImmediateDraftWithoutRetractionSupport,
+    InvalidHoldbackMaxTokens,
+    InvalidHoldbackMaxBytes,
+    InvalidHoldbackMaxDuration,
+}
+
 impl OutputDeliveryPolicy {
+    pub fn buffer_until_commit(on_violation: ViolationAction) -> Self {
+        Self {
+            mode: DeliveryMode::BufferUntilCommit,
+            holdback_max_tokens: None,
+            holdback_max_bytes: None,
+            holdback_max_duration_ms: None,
+            flush_boundaries: BTreeSet::new(),
+            on_violation,
+            delivered_draft_disposition: DraftDisposition::Retract,
+        }
+    }
+
     pub fn bounded_holdback(
         on_violation: ViolationAction,
         delivered_draft_disposition: DraftDisposition,
     ) -> Self {
         Self {
             mode: DeliveryMode::BoundedHoldback,
+            holdback_max_tokens: None,
+            holdback_max_bytes: None,
+            holdback_max_duration_ms: None,
+            flush_boundaries: BTreeSet::new(),
+            on_violation,
+            delivered_draft_disposition,
+        }
+    }
+
+    pub fn immediate_draft(
+        on_violation: ViolationAction,
+        delivered_draft_disposition: DraftDisposition,
+    ) -> Self {
+        Self {
+            mode: DeliveryMode::ImmediateDraft,
             holdback_max_tokens: None,
             holdback_max_bytes: None,
             holdback_max_duration_ms: None,
@@ -126,6 +162,37 @@ impl OutputDeliveryPolicy {
     pub fn flush_on(mut self, boundaries: impl IntoIterator<Item = FlushBoundary>) -> Self {
         self.flush_boundaries = boundaries.into_iter().collect();
         self
+    }
+
+    pub fn validate(&self) -> Result<(), OutputDeliveryPolicyError> {
+        if self.holdback_max_tokens == Some(0) {
+            return Err(OutputDeliveryPolicyError::InvalidHoldbackMaxTokens);
+        }
+        if self.holdback_max_bytes == Some(0) {
+            return Err(OutputDeliveryPolicyError::InvalidHoldbackMaxBytes);
+        }
+        if self.holdback_max_duration_ms == Some(0) {
+            return Err(OutputDeliveryPolicyError::InvalidHoldbackMaxDuration);
+        }
+
+        match self.mode {
+            DeliveryMode::BufferUntilCommit => Ok(()),
+            DeliveryMode::BoundedHoldback => {
+                if self.holdback_max_tokens.is_none()
+                    && self.holdback_max_bytes.is_none()
+                    && self.holdback_max_duration_ms.is_none()
+                {
+                    return Err(OutputDeliveryPolicyError::UnboundedPolicyHoldback);
+                }
+                Ok(())
+            }
+            DeliveryMode::ImmediateDraft => {
+                if self.delivered_draft_disposition == DraftDisposition::Keep {
+                    return Err(OutputDeliveryPolicyError::ImmediateDraftWithoutRetractionSupport);
+                }
+                Ok(())
+            }
+        }
     }
 }
 

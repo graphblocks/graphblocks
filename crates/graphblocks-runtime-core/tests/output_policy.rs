@@ -1,6 +1,7 @@
 use graphblocks_runtime_core::output_policy::{
-    DraftDisposition, DurableResult, GenerationChunk, OutputDeliveryGate, OutputGateError,
-    OutputPolicyDecision, PendingToolCallsDisposition, TerminalReason,
+    DraftDisposition, DurableResult, GenerationChunk, OutputDeliveryGate, OutputDeliveryPolicy,
+    OutputDeliveryPolicyError, OutputGateError, OutputPolicyDecision, PendingToolCallsDisposition,
+    TerminalReason, ViolationAction,
 };
 
 #[test]
@@ -93,4 +94,47 @@ fn policy_abort_cuts_off_delivery_and_rejects_late_chunks() -> Result<(), Output
         Err(OutputGateError::PolicyStopped),
     );
     Ok(())
+}
+
+#[test]
+fn bounded_holdback_policy_requires_a_bound() {
+    let policy = OutputDeliveryPolicy::bounded_holdback(
+        ViolationAction::AbortResponse,
+        DraftDisposition::Retract,
+    );
+
+    assert_eq!(
+        policy.validate(),
+        Err(OutputDeliveryPolicyError::UnboundedPolicyHoldback),
+    );
+}
+
+#[test]
+fn bounded_holdback_policy_accepts_time_or_size_bounds() -> Result<(), OutputDeliveryPolicyError> {
+    OutputDeliveryPolicy::bounded_holdback(
+        ViolationAction::AbortResponse,
+        DraftDisposition::Retract,
+    )
+    .with_holdback_max_duration_ms(250)
+    .validate()?;
+    OutputDeliveryPolicy::bounded_holdback(
+        ViolationAction::AbortResponse,
+        DraftDisposition::Retract,
+    )
+    .with_holdback_max_bytes(4_096)
+    .validate()?;
+    Ok(())
+}
+
+#[test]
+fn immediate_draft_requires_incomplete_or_retraction_semantics() {
+    let policy = OutputDeliveryPolicy::immediate_draft(
+        ViolationAction::AbortResponse,
+        DraftDisposition::Keep,
+    );
+
+    assert_eq!(
+        policy.validate(),
+        Err(OutputDeliveryPolicyError::ImmediateDraftWithoutRetractionSupport),
+    );
 }
