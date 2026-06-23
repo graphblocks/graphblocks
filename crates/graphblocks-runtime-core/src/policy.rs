@@ -134,6 +134,105 @@ impl ResourceRef {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PolicyEffect {
+    Allow,
+    Deny,
+    AllowWithObligations,
+    Defer,
+}
+
+impl PolicyEffect {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Allow => "allow",
+            Self::Deny => "deny",
+            Self::AllowWithObligations => "allow_with_obligations",
+            Self::Defer => "defer",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RuleEffect {
+    Allow,
+    Deny,
+    Obligate,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PolicyObligation {
+    pub obligation_id: String,
+    pub obligation_type: String,
+    pub parameters: BTreeMap<String, Value>,
+}
+
+impl PolicyObligation {
+    pub fn new(obligation_id: impl Into<String>, obligation_type: impl Into<String>) -> Self {
+        Self {
+            obligation_id: obligation_id.into(),
+            obligation_type: obligation_type.into(),
+            parameters: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_parameter(mut self, key: impl Into<String>, value: Value) -> Self {
+        self.parameters.insert(key.into(), value);
+        self
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PolicyRule {
+    pub rule_id: String,
+    pub effect: RuleEffect,
+    pub actions: Vec<String>,
+    pub resource_selectors: Vec<String>,
+    pub principal_selectors: Vec<String>,
+    pub obligations: Vec<PolicyObligation>,
+    pub priority: i32,
+}
+
+impl PolicyRule {
+    pub fn new<A, R>(
+        rule_id: impl Into<String>,
+        effect: RuleEffect,
+        actions: A,
+        resource_selectors: R,
+    ) -> Self
+    where
+        A: IntoIterator,
+        A::Item: Into<String>,
+        R: IntoIterator,
+        R::Item: Into<String>,
+    {
+        Self {
+            rule_id: rule_id.into(),
+            effect,
+            actions: actions.into_iter().map(Into::into).collect(),
+            resource_selectors: resource_selectors.into_iter().map(Into::into).collect(),
+            principal_selectors: Vec::new(),
+            obligations: Vec::new(),
+            priority: 0,
+        }
+    }
+
+    pub fn with_principal_selector(mut self, selector: impl Into<String>) -> Self {
+        self.principal_selectors.push(selector.into());
+        self
+    }
+
+    pub fn with_obligation(mut self, obligation: PolicyObligation) -> Self {
+        self.obligations.push(obligation);
+        self
+    }
+
+    pub fn with_priority(mut self, priority: i32) -> Self {
+        self.priority = priority;
+        self
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct PolicyRequest {
     pub request_id: String,
@@ -268,6 +367,182 @@ impl PolicyRequest {
         });
         self.input_digest = canonical_hash(&payload);
         self
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PolicyDecision {
+    pub decision_id: String,
+    pub effect: PolicyEffect,
+    pub reason_codes: Vec<String>,
+    pub policy_refs: Vec<String>,
+    pub obligations: Vec<PolicyObligation>,
+    pub advice: Vec<Value>,
+    pub evaluated_at: String,
+    pub valid_until: Option<String>,
+    pub input_digest: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct StaticPolicyEvaluator {
+    pub rules: Vec<PolicyRule>,
+}
+
+impl StaticPolicyEvaluator {
+    pub fn new<I>(rules: I) -> Self
+    where
+        I: IntoIterator<Item = PolicyRule>,
+    {
+        Self {
+            rules: rules.into_iter().collect(),
+        }
+    }
+
+    pub fn evaluate(
+        &self,
+        request: &PolicyRequest,
+        evaluated_at: impl Into<String>,
+    ) -> PolicyDecision {
+        let digested_request = request.clone().with_input_digest();
+        let mut matching_deny = Vec::new();
+        let mut matching_allow = Vec::new();
+        let mut matching_obligate = Vec::new();
+
+        for rule in &self.rules {
+            let action_matches = rule.actions.iter().any(|action| action == "*")
+                || rule.actions.iter().any(|action| action == &request.action);
+            let resource_kind_matches = request
+                .resource
+                .resource_kind
+                .as_ref()
+                .map(|kind| {
+                    rule.resource_selectors
+                        .iter()
+                        .any(|selector| selector == kind)
+                })
+                .unwrap_or(false);
+            let resource_matches = rule
+                .resource_selectors
+                .iter()
+                .any(|selector| selector == "*")
+                || rule
+                    .resource_selectors
+                    .iter()
+                    .any(|selector| selector == &request.resource.resource_id)
+                || resource_kind_matches;
+            let principal_matches = if rule.principal_selectors.is_empty()
+                || rule
+                    .principal_selectors
+                    .iter()
+                    .any(|selector| selector == "*")
+            {
+                true
+            } else if let Some(principal) = &request.principal {
+                rule.principal_selectors
+                    .iter()
+                    .any(|selector| selector == &principal.principal_id)
+                    || principal.groups.iter().any(|group| {
+                        rule.principal_selectors
+                            .iter()
+                            .any(|selector| selector == group)
+                    })
+                    || principal.roles.iter().any(|role| {
+                        rule.principal_selectors
+                            .iter()
+                            .any(|selector| selector == role)
+                    })
+            } else {
+                false
+            };
+
+            if !action_matches || !resource_matches || !principal_matches {
+                continue;
+            }
+
+            match rule.effect {
+                RuleEffect::Deny => matching_deny.push(rule.clone()),
+                RuleEffect::Allow => matching_allow.push(rule.clone()),
+                RuleEffect::Obligate => matching_obligate.push(rule.clone()),
+            }
+        }
+
+        if !matching_deny.is_empty() {
+            matching_deny.sort_by(|left, right| {
+                right
+                    .priority
+                    .cmp(&left.priority)
+                    .then_with(|| left.rule_id.cmp(&right.rule_id))
+            });
+            let policy_refs = matching_deny
+                .iter()
+                .map(|rule| rule.rule_id.clone())
+                .collect::<Vec<_>>();
+            return policy_decision(
+                PolicyEffect::Deny,
+                policy_refs,
+                Vec::new(),
+                evaluated_at.into(),
+                digested_request.input_digest,
+            );
+        }
+
+        if !matching_allow.is_empty() || !matching_obligate.is_empty() {
+            let mut policy_refs = matching_allow
+                .iter()
+                .map(|rule| rule.rule_id.clone())
+                .collect::<Vec<_>>();
+            policy_refs.extend(matching_obligate.iter().map(|rule| rule.rule_id.clone()));
+            let obligations = matching_obligate
+                .into_iter()
+                .flat_map(|rule| rule.obligations)
+                .collect::<Vec<_>>();
+            let effect = if obligations.is_empty() {
+                PolicyEffect::Allow
+            } else {
+                PolicyEffect::AllowWithObligations
+            };
+            return policy_decision(
+                effect,
+                policy_refs,
+                obligations,
+                evaluated_at.into(),
+                digested_request.input_digest,
+            );
+        }
+
+        policy_decision(
+            PolicyEffect::Deny,
+            vec!["default_deny".to_string()],
+            Vec::new(),
+            evaluated_at.into(),
+            digested_request.input_digest,
+        )
+    }
+}
+
+fn policy_decision(
+    effect: PolicyEffect,
+    policy_refs: Vec<String>,
+    obligations: Vec<PolicyObligation>,
+    evaluated_at: String,
+    input_digest: String,
+) -> PolicyDecision {
+    let decision_id = "decision:".to_string()
+        + &canonical_hash(&json!({
+            "input_digest": input_digest,
+            "effect": effect.as_str(),
+            "policy_refs": policy_refs,
+        }));
+    PolicyDecision {
+        decision_id,
+        effect,
+        reason_codes: policy_refs.clone(),
+        policy_refs,
+        obligations,
+        advice: Vec::new(),
+        evaluated_at,
+        valid_until: None,
+        input_digest,
     }
 }
 

@@ -1,5 +1,6 @@
 use graphblocks_runtime_core::policy::{
-    EnforcementPoint, PolicyEnforcementRecord, PolicyRequest, PrincipalRef, ResourceRef,
+    EnforcementPoint, PolicyEnforcementRecord, PolicyObligation, PolicyRequest, PolicyRule,
+    PrincipalRef, ResourceRef, RuleEffect, StaticPolicyEvaluator,
 };
 use serde_json::json;
 
@@ -89,4 +90,91 @@ fn policy_enforcement_record_is_separate_from_decision() {
     assert_eq!(record.decision_id, "decision-1");
     assert_eq!(record.status, "enforced");
     assert_eq!(record.enforced_obligation_ids, vec!["obl-1"]);
+}
+
+#[test]
+fn static_policy_evaluator_gives_explicit_deny_precedence() {
+    let evaluator = StaticPolicyEvaluator::new([
+        PolicyRule::new("allow-model", RuleEffect::Allow, ["model.generate"], ["*"]),
+        PolicyRule::new("deny-user", RuleEffect::Deny, ["*"], ["*"])
+            .with_principal_selector("user-1")
+            .with_priority(10),
+    ]);
+    let request = PolicyRequest::new(
+        "req-1",
+        EnforcementPoint::BeforeProviderCall,
+        "model.generate",
+        ResourceRef::new("model:gpt"),
+        "2026-06-22T00:00:00Z",
+    )
+    .with_principal(PrincipalRef::new("user-1"));
+
+    let decision = evaluator.evaluate(&request, "2026-06-22T00:00:01Z");
+
+    assert_eq!(decision.effect.as_str(), "deny");
+    assert_eq!(decision.reason_codes, vec!["deny-user"]);
+    assert_eq!(decision.policy_refs, vec!["deny-user"]);
+    assert!(decision.obligations.is_empty());
+    assert_eq!(
+        decision.input_digest,
+        request.with_input_digest().input_digest
+    );
+}
+
+#[test]
+fn static_policy_evaluator_returns_allow_with_obligations() {
+    let obligation = PolicyObligation::new("obl-1", "cap_model_input")
+        .with_parameter("max_tokens", json!(4_000));
+    let evaluator = StaticPolicyEvaluator::new([
+        PolicyRule::new(
+            "allow-model",
+            RuleEffect::Allow,
+            ["model.generate"],
+            ["model"],
+        ),
+        PolicyRule::new(
+            "cap-input",
+            RuleEffect::Obligate,
+            ["model.generate"],
+            ["model"],
+        )
+        .with_obligation(obligation.clone())
+        .with_priority(5),
+    ]);
+    let request = PolicyRequest::new(
+        "req-1",
+        EnforcementPoint::BeforeProviderCall,
+        "model.generate",
+        ResourceRef::new("model:gpt").with_resource_kind("model"),
+        "2026-06-22T00:00:00Z",
+    );
+
+    let decision = evaluator.evaluate(&request, "2026-06-22T00:00:01Z");
+
+    assert_eq!(decision.effect.as_str(), "allow_with_obligations");
+    assert_eq!(decision.reason_codes, vec!["allow-model", "cap-input"]);
+    assert_eq!(decision.obligations, vec![obligation]);
+    assert!(decision.decision_id.starts_with("decision:sha256:"));
+}
+
+#[test]
+fn static_policy_evaluator_defaults_to_deny_without_matching_rule() {
+    let evaluator = StaticPolicyEvaluator::new([PolicyRule::new(
+        "allow-other",
+        RuleEffect::Allow,
+        ["conversation.read"],
+        ["conversation"],
+    )]);
+    let request = PolicyRequest::new(
+        "req-1",
+        EnforcementPoint::BeforeToolOrEffect,
+        "ticket.create",
+        ResourceRef::new("ticket-system").with_resource_kind("ticket"),
+        "2026-06-22T00:00:00Z",
+    );
+
+    let decision = evaluator.evaluate(&request, "2026-06-22T00:00:01Z");
+
+    assert_eq!(decision.effect.as_str(), "deny");
+    assert_eq!(decision.reason_codes, vec!["default_deny"]);
 }
