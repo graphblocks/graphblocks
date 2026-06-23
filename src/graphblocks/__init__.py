@@ -183,6 +183,7 @@ from .rag import (
     Abstention,
     Answer,
     Citation,
+    CitationSourceTrace,
     CitationValidationIssue,
     CitationValidationResult,
     Claim,
@@ -195,6 +196,7 @@ from .rag import (
     build_context_pack,
     fuse_search_hits,
     knowledge_item_from_chunk,
+    resolve_citation_source_trace,
     validate_answer_citations,
 )
 from .runtime import (
@@ -257,6 +259,7 @@ __all__ = [
     "ArtifactRef",
     "AssetRevision",
     "Citation",
+    "CitationSourceTrace",
     "CitationValidationIssue",
     "CitationValidationResult",
     "Claim",
@@ -408,6 +411,7 @@ __all__ = [
     "parse_plain_text_document",
     "plain_text_parser_descriptor",
     "resolve_policy_snapshot",
+    "resolve_citation_source_trace",
     "stdlib_registry",
     "validate_plugin_manifest",
     "validate_answer_citations",

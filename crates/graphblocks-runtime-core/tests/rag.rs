@@ -4,11 +4,12 @@ use graphblocks_runtime_core::documents::{
     parse_plain_text_document,
 };
 use graphblocks_runtime_core::rag::{
-    Answer, AuthContext, Citation, Claim, ContextBuildOptions, FailurePolicy, FusionOptions,
-    FusionStrategy, InMemoryChunkRetriever, InMemoryKnowledgeIndex, KnowledgeDeleteMode,
-    KnowledgeItemRef, KnowledgeRecordStatus, RagError, RerankOptions, SearchHit, SearchRequest,
-    authorize_search_hits, build_context_pack, fuse_search_hits, knowledge_item_from_chunk,
-    rerank_search_hits, validate_answer_citation_authorization, validate_answer_citations,
+    Answer, AuthContext, Citation, Claim, ContextBuildOptions, ContextPack, FailurePolicy,
+    FusionOptions, FusionStrategy, InMemoryChunkRetriever, InMemoryKnowledgeIndex,
+    KnowledgeDeleteMode, KnowledgeItemRef, KnowledgeRecordStatus, RagError, RerankOptions,
+    SearchHit, SearchRequest, authorize_search_hits, build_context_pack, fuse_search_hits,
+    knowledge_item_from_chunk, rerank_search_hits, resolve_citation_source_trace,
+    validate_answer_citation_authorization, validate_answer_citations,
 };
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -539,6 +540,62 @@ fn validate_answer_citations_accepts_current_context_source() {
     assert!(result.ok);
     assert!(result.issues.is_empty());
     assert!(result.abstention.is_none());
+}
+
+#[test]
+fn resolve_citation_source_trace_links_citation_to_context_hit_and_document_span()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = SourceRef::document_chunk(
+        "chunk-1",
+        "rev-1",
+        "sha256:content",
+        DocumentSpan::new("asset-1", "rev-1", "doc-1")
+            .with_element_id("el-1")
+            .with_chunk_id("chunk-1")
+            .with_char_span(7, 31),
+    );
+    let mut metadata = BTreeMap::new();
+    metadata.insert("document_id".to_owned(), json!("doc-1"));
+    metadata.insert("element_ids".to_owned(), json!(["el-1"]));
+    let context = ContextPack::new(
+        "ctx-1",
+        vec![
+            SearchHit::new(
+                "hit-1",
+                KnowledgeItemRef::new("chunk-1", "document_chunk", source.clone())
+                    .with_preview(["Alpha policy requires audit logs."])
+                    .with_metadata(metadata),
+                1,
+                "local",
+            )
+            .with_highlights([source.clone()]),
+        ],
+    );
+    let citation = Citation::new("cite-1", source).with_cited_text("requires audit logs");
+    let answer = Answer::new("answer-1", "Alpha policy requires audit logs.")
+        .with_claim(
+            Claim::new("claim-1", "Alpha policy requires audit logs.")
+                .with_citation_ids(["cite-1"]),
+        )
+        .with_citation(citation);
+
+    let trace = resolve_citation_source_trace(&answer, &context, "cite-1")?;
+
+    assert_eq!(trace.citation_id, "cite-1");
+    assert_eq!(trace.claim_id.as_deref(), Some("claim-1"));
+    assert_eq!(trace.context_id, "ctx-1");
+    assert_eq!(trace.hit_id, "hit-1");
+    assert_eq!(trace.retriever, "local");
+    assert_eq!(trace.item_id, "chunk-1");
+    assert_eq!(trace.element_ids, vec!["el-1"]);
+    let locator = trace.locator.expect("trace includes document locator");
+    assert_eq!(locator.asset_id, "asset-1");
+    assert_eq!(locator.revision_id, "rev-1");
+    assert_eq!(locator.document_id, "doc-1");
+    assert_eq!(locator.element_id.as_deref(), Some("el-1"));
+    assert_eq!(locator.chunk_id.as_deref(), Some("chunk-1"));
+    assert_eq!((locator.char_start, locator.char_end), (Some(7), Some(31)));
+    Ok(())
 }
 
 #[test]

@@ -781,6 +781,20 @@ impl CitationValidationResult {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct CitationSourceTrace {
+    pub citation_id: String,
+    pub claim_id: Option<String>,
+    pub context_id: String,
+    pub hit_id: String,
+    pub retriever: String,
+    pub item_id: String,
+    pub item_kind: String,
+    pub source: SourceRef,
+    pub locator: Option<DocumentSpan>,
+    pub element_ids: Vec<String>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RagError {
     InvalidPerDocumentMaxChunks,
@@ -796,6 +810,12 @@ pub enum RagError {
     InvalidAcl {
         resource_id: String,
         message: String,
+    },
+    CitationNotFound {
+        citation_id: String,
+    },
+    CitationSourceNotInContext {
+        citation_id: String,
     },
 }
 
@@ -825,6 +845,15 @@ impl fmt::Display for RagError {
                 resource_id,
                 message,
             } => write!(formatter, "ACL for {resource_id:?} is invalid: {message}"),
+            Self::CitationNotFound { citation_id } => {
+                write!(formatter, "citation {citation_id:?} was not found")
+            }
+            Self::CitationSourceNotInContext { citation_id } => {
+                write!(
+                    formatter,
+                    "citation {citation_id:?} does not point to the current context"
+                )
+            }
         }
     }
 }
@@ -1235,6 +1264,84 @@ pub fn rerank_search_hits(
         evaluated_count,
         truncated_hit_ids,
         metadata,
+    })
+}
+
+pub fn resolve_citation_source_trace(
+    answer: &Answer,
+    context: &ContextPack,
+    citation_id: impl AsRef<str>,
+) -> Result<CitationSourceTrace, RagError> {
+    let citation_id = citation_id.as_ref();
+    let Some(citation) = answer
+        .citations
+        .iter()
+        .find(|citation| citation.citation_id == citation_id)
+    else {
+        return Err(RagError::CitationNotFound {
+            citation_id: citation_id.to_owned(),
+        });
+    };
+    let claim_id = answer
+        .claims
+        .iter()
+        .find(|claim| claim.citation_ids.iter().any(|id| id == citation_id))
+        .map(|claim| claim.claim_id.clone())
+        .or_else(|| citation.claim_id.clone());
+
+    for hit in &context.hits {
+        for source_ref in std::iter::once(&hit.item.source).chain(hit.highlights.iter()) {
+            if source_ref.source_id == citation.source.source_id
+                && citation
+                    .source
+                    .revision
+                    .as_ref()
+                    .is_none_or(|expected| Some(expected) == source_ref.revision.as_ref())
+                && citation
+                    .source
+                    .digest
+                    .as_ref()
+                    .is_none_or(|expected| Some(expected) == source_ref.digest.as_ref())
+            {
+                let mut element_ids = hit
+                    .item
+                    .metadata
+                    .get("element_ids")
+                    .and_then(Value::as_array)
+                    .map(|values| {
+                        values
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_owned)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                if element_ids.is_empty()
+                    && let Some(element_id) = source_ref
+                        .locator
+                        .as_ref()
+                        .and_then(|locator| locator.element_id.clone())
+                {
+                    element_ids.push(element_id);
+                }
+                return Ok(CitationSourceTrace {
+                    citation_id: citation.citation_id.clone(),
+                    claim_id,
+                    context_id: context.context_id.clone(),
+                    hit_id: hit.hit_id.clone(),
+                    retriever: hit.retriever.clone(),
+                    item_id: hit.item.item_id.clone(),
+                    item_kind: hit.item.item_kind.clone(),
+                    source: source_ref.clone(),
+                    locator: source_ref.locator.clone(),
+                    element_ids,
+                });
+            }
+        }
+    }
+
+    Err(RagError::CitationSourceNotInContext {
+        citation_id: citation.citation_id.clone(),
     })
 }
 

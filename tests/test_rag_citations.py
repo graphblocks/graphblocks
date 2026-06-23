@@ -7,6 +7,7 @@ from graphblocks.rag import (
     Claim,
     ContextPack,
     InMemoryChunkRetriever,
+    resolve_citation_source_trace,
     validate_answer_citations,
 )
 
@@ -42,6 +43,38 @@ def test_validate_answer_citations_accepts_current_context_source() -> None:
     assert result.ok is True
     assert result.issues == []
     assert result.abstention is None
+
+
+def test_resolve_citation_source_trace_links_citation_to_context_hit_and_document_span() -> None:
+    context = _single_hit_context()
+    hit = context.hits[0]
+    citation = Citation(
+        citation_id="cite-1",
+        source=hit.item.source,
+        cited_text="requires audit logs",
+    )
+    answer = Answer(
+        answer_id="answer-1",
+        text="Alpha policy requires audit logs.",
+        claims=[Claim(claim_id="claim-1", text="Alpha policy requires audit logs.", citation_ids=["cite-1"])],
+        citations=[citation],
+    )
+
+    trace = resolve_citation_source_trace(answer, context, "cite-1")
+
+    assert trace.citation_id == "cite-1"
+    assert trace.claim_id == "claim-1"
+    assert trace.context_id == "ctx-1"
+    assert trace.hit_id == hit.hit_id
+    assert trace.retriever == "local-test"
+    assert trace.item_id == hit.item.item_id
+    assert trace.item_kind == "document_chunk"
+    assert trace.element_ids == hit.item.metadata["element_ids"]
+    assert trace.locator is not None
+    assert trace.locator.asset_id == hit.item.source.locator.asset_id
+    assert trace.locator.revision_id == hit.item.source.locator.revision_id
+    assert trace.locator.document_id == hit.item.source.locator.document_id
+    assert trace.locator.chunk_id == hit.item.item_id
 
 
 def test_validate_answer_citations_rejects_uncited_claim_when_required() -> None:

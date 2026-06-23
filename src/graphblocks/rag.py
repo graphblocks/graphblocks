@@ -5,7 +5,7 @@ import re
 from typing import Literal
 
 from .canonical import canonical_hash
-from .documents import DocumentChunk, SourceRef
+from .documents import DocumentChunk, DocumentSpan, SourceRef
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,6 +111,20 @@ class CitationValidationResult:
     ok: bool
     issues: list[CitationValidationIssue] = field(default_factory=list)
     abstention: Abstention | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CitationSourceTrace:
+    citation_id: str
+    claim_id: str | None
+    context_id: str
+    hit_id: str
+    retriever: str
+    item_id: str
+    item_kind: str
+    source: SourceRef
+    locator: DocumentSpan | None
+    element_ids: list[str] = field(default_factory=list)
 
 
 def build_context_pack(
@@ -260,6 +274,39 @@ def fuse_search_hits(
             )
         )
     return fused_hits
+
+
+def resolve_citation_source_trace(answer: Answer, context: ContextPack, citation_id: str) -> CitationSourceTrace:
+    citation = next((item for item in answer.citations if item.citation_id == citation_id), None)
+    if citation is None:
+        raise ValueError(f"citation {citation_id!r} was not found")
+    claim_id = next((claim.claim_id for claim in answer.claims if citation_id in claim.citation_ids), citation.claim_id)
+
+    for hit in context.hits:
+        for source_ref in [hit.item.source, *hit.highlights]:
+            if (
+                source_ref.source_id == citation.source.source_id
+                and (citation.source.revision is None or citation.source.revision == source_ref.revision)
+                and (citation.source.digest is None or citation.source.digest == source_ref.digest)
+            ):
+                raw_element_ids = hit.item.metadata.get("element_ids")
+                element_ids = [item for item in raw_element_ids if isinstance(item, str)] if isinstance(raw_element_ids, list) else []
+                if not element_ids and source_ref.locator is not None and source_ref.locator.element_id is not None:
+                    element_ids = [source_ref.locator.element_id]
+                return CitationSourceTrace(
+                    citation_id=citation.citation_id,
+                    claim_id=claim_id,
+                    context_id=context.context_id,
+                    hit_id=hit.hit_id,
+                    retriever=hit.retriever,
+                    item_id=hit.item.item_id,
+                    item_kind=hit.item.item_kind,
+                    source=source_ref,
+                    locator=source_ref.locator,
+                    element_ids=element_ids,
+                )
+
+    raise ValueError(f"citation {citation.citation_id!r} does not point to the current context")
 
 
 def validate_answer_citations(
