@@ -7,6 +7,7 @@ from typing import Literal
 from .canonical import canonical_hash
 from .conversation import ContentPart
 from .documents import ArtifactRef
+from .policy import PolicyRequest, PrincipalRef, ResourceRef as PolicyResourceRef
 
 
 JsonSchemaRef = str
@@ -1061,6 +1062,44 @@ def validate_tool_result_for_model(
     if len(json_outputs) > 1:
         raise ToolResultValidationError(f"tool result {result.tool_call_id} has multiple JSON outputs")
     schema_registry.validate(output_schema, json_outputs[0].data)
+
+
+def build_before_tool_or_effect_policy_request(
+    *,
+    request_id: str,
+    call: ToolCall,
+    resolved_tool: ResolvedTool,
+    principal: PrincipalRef,
+    occurred_at: str,
+    run_id: str | None = None,
+    output_policy_state: dict[str, object] | None = None,
+) -> PolicyRequest:
+    if call.resolved_tool_id != resolved_tool.resolved_tool_id:
+        raise ToolAdmissionError("tool call references a different resolved tool")
+    attributes: dict[str, object] = {
+        "tool_call_id": call.tool_call_id,
+        "response_id": call.response_id,
+        "resolved_tool_id": resolved_tool.resolved_tool_id,
+        "tool_name": resolved_tool.definition.name,
+        "arguments": call.arguments,
+        "arguments_digest": call.arguments_digest,
+        "definition_digest": resolved_tool.definition_digest,
+        "binding_digest": resolved_tool.binding_digest,
+        "effects": sorted(resolved_tool.binding.effects),
+    }
+    if output_policy_state is not None:
+        attributes["output_policy_state"] = dict(output_policy_state)
+    return PolicyRequest(
+        request_id=request_id,
+        enforcement_point="before_tool_or_effect",
+        action="tool.run",
+        resource=PolicyResourceRef(f"tool:{resolved_tool.definition.name}", resource_kind="tool"),
+        principal=principal,
+        run_id=run_id,
+        attributes=attributes,
+        policy_snapshot_id=resolved_tool.effective_policy_snapshot_id,
+        occurred_at=occurred_at,
+    )
 
 
 @dataclass(frozen=True, slots=True)

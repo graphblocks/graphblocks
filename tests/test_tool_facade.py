@@ -12,6 +12,7 @@ from graphblocks import (
     JsonSchema,
     JsonSchemaNode,
     OpenApiToolImplementation,
+    PrincipalRef,
     ResolvedTool,
     ToolAdmissionError,
     ToolApprovalError,
@@ -33,6 +34,7 @@ from graphblocks import (
     ToolSchemaRegistryError,
     ToolSchemaValidationError,
     admit_tool_call,
+    build_before_tool_or_effect_policy_request,
     validate_tool_result_for_model,
 )
 
@@ -380,6 +382,35 @@ def _process_schema_registry() -> ToolSchemaRegistry:
             ),
         )
     )
+
+
+def test_before_tool_or_effect_policy_request_carries_tool_admission_context() -> None:
+    resolved = _resolved_process_tool()
+    call = _process_call(resolved)
+
+    request = build_before_tool_or_effect_policy_request(
+        request_id="policy-req-1",
+        call=call,
+        resolved_tool=resolved,
+        principal=PrincipalRef("user-1", tenant_id="tenant-1"),
+        occurred_at="2026-06-23T00:00:00Z",
+        run_id="run-1",
+        output_policy_state={"response_status": "generating"},
+    ).with_input_digest()
+
+    assert request.enforcement_point == "before_tool_or_effect"
+    assert request.action == "tool.run"
+    assert request.resource.resource_id == "tool:process.run"
+    assert request.resource.resource_kind == "tool"
+    assert request.principal is not None and request.principal.principal_id == "user-1"
+    assert request.run_id == "run-1"
+    assert request.policy_snapshot_id == "policy-snapshot-1"
+    assert request.attributes["arguments_digest"] == call.arguments_digest
+    assert request.attributes["definition_digest"] == resolved.definition_digest
+    assert request.attributes["binding_digest"] == resolved.binding_digest
+    assert request.attributes["effects"] == ["process"]
+    assert request.attributes["output_policy_state"] == {"response_status": "generating"}
+    assert request.input_digest.startswith("sha256:")
 
 
 def test_tool_admission_validates_arguments_before_approval() -> None:

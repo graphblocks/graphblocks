@@ -73,7 +73,7 @@ pub enum ToolEffect {
 }
 
 impl ToolEffect {
-    fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::None => "none",
             Self::ExternalRead => "external_read",

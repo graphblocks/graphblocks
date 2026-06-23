@@ -1,15 +1,17 @@
+use graphblocks_runtime_core::policy::{EnforcementPoint, PrincipalRef};
 use graphblocks_runtime_core::tool::{
     BlockToolImplementation, ResolvedTool, ToolApproval, ToolBinding, ToolCatalog, ToolDefinition,
     ToolEffect, ToolIdempotency, ToolImplementation, ToolResolutionScope,
 };
 use graphblocks_runtime_core::tool_admission::{
-    ToolAdmission, ToolAdmissionError, ToolAdmissionRequest,
+    ToolAdmission, ToolAdmissionError, ToolAdmissionRequest, ToolPolicyRequestContext,
 };
 use graphblocks_runtime_core::tool_approval::{ToolApprovalRecord, ToolApprovalRequest};
 use graphblocks_runtime_core::tool_call::{ToolCall, ToolCallDraft, ToolCallStatus};
 use graphblocks_runtime_core::tool_schema::{
     JsonSchema, JsonSchemaNode, ToolSchemaRegistry, ToolSchemaRegistryError,
 };
+use serde_json::json;
 
 fn resolved_process_tool() -> ResolvedTool {
     let catalog = ToolCatalog::new(
@@ -51,6 +53,61 @@ fn process_schema_registry() -> ToolSchemaRegistry {
             .required_property("cmd", JsonSchemaNode::array(JsonSchemaNode::string())),
     )])
     .expect("schema registry is valid")
+}
+
+#[test]
+fn before_tool_or_effect_policy_request_carries_tool_admission_context() {
+    let resolved_tool = resolved_process_tool();
+    let call = process_call(&resolved_tool);
+
+    let request = ToolAdmission::before_tool_or_effect_policy_request(ToolPolicyRequestContext {
+        request_id: "policy-req-1",
+        call: &call,
+        resolved_tool: &resolved_tool,
+        principal: PrincipalRef::new("user-1").with_tenant_id("tenant-1"),
+        occurred_at: "2026-06-23T00:00:00Z",
+        run_id: Some("run-1"),
+        output_policy_state: Some(json!({"response_status": "generating"})),
+    })
+    .with_input_digest();
+
+    assert_eq!(
+        request.enforcement_point,
+        EnforcementPoint::BeforeToolOrEffect
+    );
+    assert_eq!(request.action, "tool.run");
+    assert_eq!(request.resource.resource_id, "tool:process.run");
+    assert_eq!(request.resource.resource_kind.as_deref(), Some("tool"));
+    assert_eq!(
+        request
+            .principal
+            .as_ref()
+            .map(|principal| principal.principal_id.as_str()),
+        Some("user-1")
+    );
+    assert_eq!(request.run_id.as_deref(), Some("run-1"));
+    assert_eq!(
+        request.policy_snapshot_id.as_deref(),
+        Some("policy-snapshot-1")
+    );
+    assert_eq!(
+        request.attributes.get("arguments_digest"),
+        Some(&json!(call.arguments_digest))
+    );
+    assert_eq!(
+        request.attributes.get("definition_digest"),
+        Some(&json!(resolved_tool.definition_digest))
+    );
+    assert_eq!(
+        request.attributes.get("binding_digest"),
+        Some(&json!(resolved_tool.binding_digest))
+    );
+    assert_eq!(request.attributes.get("effects"), Some(&json!(["process"])));
+    assert_eq!(
+        request.attributes.get("output_policy_state"),
+        Some(&json!({"response_status": "generating"}))
+    );
+    assert!(request.input_digest.starts_with("sha256:"));
 }
 
 #[test]

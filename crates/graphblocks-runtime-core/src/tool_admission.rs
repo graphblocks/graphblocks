@@ -1,3 +1,6 @@
+use serde_json::{Value, json};
+
+use crate::policy::{EnforcementPoint, PolicyRequest, PrincipalRef, ResourceRef};
 use crate::tool::{ResolvedTool, ToolApproval, ToolIdempotency};
 use crate::tool_approval::ToolApprovalRecord;
 use crate::tool_call::{ToolCall, ToolCallStatus};
@@ -18,6 +21,17 @@ pub struct ToolAdmissionRequest<'a> {
 pub struct AdmittedToolCall {
     pub call: ToolCall,
     pub idempotency_key: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ToolPolicyRequestContext<'a> {
+    pub request_id: &'a str,
+    pub call: &'a ToolCall,
+    pub resolved_tool: &'a ResolvedTool,
+    pub principal: PrincipalRef,
+    pub occurred_at: &'a str,
+    pub run_id: Option<&'a str>,
+    pub output_policy_state: Option<Value>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -73,6 +87,58 @@ pub enum ToolAdmissionError {
 pub struct ToolAdmission;
 
 impl ToolAdmission {
+    pub fn before_tool_or_effect_policy_request(
+        context: ToolPolicyRequestContext<'_>,
+    ) -> PolicyRequest {
+        let mut request = PolicyRequest::new(
+            context.request_id,
+            EnforcementPoint::BeforeToolOrEffect,
+            "tool.run",
+            ResourceRef::new(format!("tool:{}", context.resolved_tool.definition.name))
+                .with_resource_kind("tool"),
+            context.occurred_at,
+        )
+        .with_principal(context.principal)
+        .with_policy_snapshot_id(context.resolved_tool.effective_policy_snapshot_id.clone())
+        .with_attribute("tool_call_id", json!(&context.call.tool_call_id))
+        .with_attribute("response_id", json!(&context.call.response_id))
+        .with_attribute(
+            "resolved_tool_id",
+            json!(&context.resolved_tool.resolved_tool_id),
+        )
+        .with_attribute("tool_name", json!(&context.resolved_tool.definition.name))
+        .with_attribute("arguments", context.call.arguments.clone())
+        .with_attribute("arguments_digest", json!(&context.call.arguments_digest))
+        .with_attribute(
+            "definition_digest",
+            json!(&context.resolved_tool.definition_digest),
+        )
+        .with_attribute(
+            "binding_digest",
+            json!(&context.resolved_tool.binding_digest),
+        )
+        .with_attribute(
+            "effects",
+            json!(
+                context
+                    .resolved_tool
+                    .binding
+                    .effects
+                    .iter()
+                    .map(|effect| effect.as_str())
+                    .collect::<Vec<_>>()
+            ),
+        );
+
+        if let Some(run_id) = context.run_id {
+            request = request.with_run_id(run_id);
+        }
+        if let Some(output_policy_state) = context.output_policy_state {
+            request = request.with_attribute("output_policy_state", output_policy_state);
+        }
+        request
+    }
+
     pub fn admit(
         request: ToolAdmissionRequest<'_>,
     ) -> Result<AdmittedToolCall, ToolAdmissionError> {

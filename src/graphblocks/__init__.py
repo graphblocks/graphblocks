@@ -176,6 +176,7 @@ from .tools import (
     ToolSchemaRegistryError,
     ToolSchemaValidationError,
     admit_tool_call,
+    build_before_tool_or_effect_policy_request,
     validate_tool_result_for_model,
 )
 from .rag import (
@@ -378,6 +379,7 @@ __all__ = [
     "ToolSchemaRegistryError",
     "ToolSchemaValidationError",
     "admit_tool_call",
+    "build_before_tool_or_effect_policy_request",
     "validate_tool_result_for_model",
     "Turn",
     "TrialResult",
