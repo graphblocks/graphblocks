@@ -609,6 +609,43 @@
     }
   },
   {
+    "name": "invalid_tool_schema_ids",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "invalid-tool-schema-ids"
+      },
+      "spec": {
+        "nodes": {
+          "model": {
+            "block": "model.generate@1"
+          }
+        },
+        "bindings": {
+          "tools": {
+            "search": {
+              "definition": {
+                "name": "knowledge.search",
+                "description": "Search documentation.",
+                "inputSchema": "schemas/Search",
+                "outputSchema": "schemas/SearchResult"
+              },
+              "implementation": {
+                "kind": "block",
+                "block": "blocks.search"
+              }
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:a03c49a47b8b130eaab0a22d30f4cf9ae813b2cdabc3d211003c3abe8b42a2c3",
+      "error_codes": ["InvalidSchemaId", "InvalidSchemaId"]
+    }
+  },
+  {
     "name": "invalid_interface_schema_id",
     "document": {
       "apiVersion": "graphblocks.ai/v1alpha3",
