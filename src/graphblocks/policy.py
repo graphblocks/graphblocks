@@ -56,7 +56,10 @@ class ResourceRef:
 class PolicyObligation:
     obligation_id: str
     obligation_type: str
-    parameters: dict[str, object] = field(default_factory=dict)
+    parameters: Mapping[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "parameters", MappingProxyType(dict(self.parameters)))
 
 
 @dataclass(frozen=True, slots=True)

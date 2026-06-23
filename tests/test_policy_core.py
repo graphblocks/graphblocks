@@ -83,6 +83,18 @@ def test_policy_request_mappings_are_copied_and_read_only() -> None:
     assert request.with_input_digest().input_digest.startswith("sha256:")
 
 
+def test_policy_obligation_parameters_are_copied_and_read_only() -> None:
+    parameters = {"max_tokens": 4000}
+
+    obligation = PolicyObligation("obl-immutable", "cap_model_input", parameters)
+
+    parameters["max_tokens"] = 8000
+
+    assert obligation.parameters == {"max_tokens": 4000}
+    with pytest.raises(TypeError):
+        obligation.parameters["max_tokens"] = 2000
+
+
 def test_static_policy_evaluator_gives_explicit_deny_precedence() -> None:
     evaluator = StaticPolicyEvaluator(
         rules=[

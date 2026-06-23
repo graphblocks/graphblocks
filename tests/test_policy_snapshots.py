@@ -23,6 +23,31 @@ def test_policy_bundle_digest_is_stable_for_rule_content() -> None:
     assert same_rules.content_digest() == bundle.content_digest()
 
 
+def test_policy_bundle_digest_is_stable_after_obligation_parameter_mutation() -> None:
+    parameters = {"level": "strict"}
+    obligation = PolicyObligation("obl-immutable", "force_sandbox", parameters)
+    bundle = PolicyBundle(
+        "bundle-immutable",
+        "1.0.0",
+        rule_language="graphblocks.declarative@1",
+        rules=(
+            PolicyRule(
+                "sandbox-tools",
+                "obligate",
+                actions=("tool.run",),
+                resource_selectors=("*",),
+                obligations=(obligation,),
+            ),
+        ),
+    )
+    digest = bundle.content_digest()
+
+    parameters["level"] = "mutated"
+
+    assert obligation.parameters == {"level": "strict"}
+    assert bundle.content_digest() == digest
+
+
 def test_resolve_policy_snapshot_pins_effective_policy_identity() -> None:
     bundle = PolicyBundle(
         "bundle-1",
