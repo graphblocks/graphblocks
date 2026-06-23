@@ -679,10 +679,14 @@ class ToolCall:
     def revise_arguments(self, arguments: object) -> ToolCall:
         if self.status != "validated":
             raise ToolCallError("tool arguments cannot be revised after validation")
+        try:
+            arguments_digest = canonical_hash(arguments)
+        except (TypeError, ValueError) as error:
+            raise ToolCallError("tool arguments are invalid JSON") from error
         return replace(
             self,
             arguments=arguments,
-            arguments_digest=canonical_hash(arguments),
+            arguments_digest=arguments_digest,
             revision=self.revision + 1,
             status="validated",
             admitted_at=None,

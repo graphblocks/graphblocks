@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from math import nan
 
 import pytest
 
@@ -605,6 +606,20 @@ def test_tool_call_argument_digest_is_stable_and_revision_resets_admission_state
     assert revised.admitted_at is None
     assert revised.completed_at is None
     assert revised.arguments_digest != left.arguments_digest
+
+
+def test_tool_call_revise_arguments_rejects_non_canonical_json_values() -> None:
+    call = (
+        ToolCallDraft.proposed("response-1", "call-1", "ticket.create")
+        .append_argument_fragment('{"score":1}')
+        .complete_arguments()
+        .into_tool_call("resolved-tool-1", created_at="2026-06-23T00:00:00Z")
+    )
+
+    with pytest.raises(ToolCallError) as error:
+        call.revise_arguments({"score": nan})
+
+    assert str(error.value) == "tool arguments are invalid JSON"
 
 
 def test_completed_tool_result_computes_stable_output_digest() -> None:
