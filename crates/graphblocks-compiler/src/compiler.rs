@@ -32,6 +32,7 @@ pub struct BlockDescriptor {
     pub type_id: String,
     pub version: u64,
     pub inputs: Vec<PortDescriptor>,
+    pub outputs: Vec<PortDescriptor>,
 }
 
 impl BlockDescriptor {
@@ -43,6 +44,7 @@ impl BlockDescriptor {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PortDescriptor {
     pub name: String,
+    pub type_ref: Option<String>,
     pub required: bool,
 }
 
@@ -84,6 +86,34 @@ impl BlockCatalog {
                             let name = port.get("name").and_then(Value::as_str)?;
                             Some(PortDescriptor {
                                 name: name.to_owned(),
+                                type_ref: port
+                                    .get("type")
+                                    .and_then(Value::as_str)
+                                    .map(str::to_owned),
+                                required: port
+                                    .get("required")
+                                    .and_then(Value::as_bool)
+                                    .unwrap_or(true),
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let outputs = block
+                .get("outputs")
+                .and_then(Value::as_array)
+                .map(|outputs| {
+                    outputs
+                        .iter()
+                        .filter_map(|port| {
+                            let port = port.as_object()?;
+                            let name = port.get("name").and_then(Value::as_str)?;
+                            Some(PortDescriptor {
+                                name: name.to_owned(),
+                                type_ref: port
+                                    .get("type")
+                                    .and_then(Value::as_str)
+                                    .map(str::to_owned),
                                 required: port
                                     .get("required")
                                     .and_then(Value::as_bool)
@@ -97,6 +127,7 @@ impl BlockCatalog {
                 type_id,
                 version,
                 inputs,
+                outputs,
             };
             descriptors.insert(descriptor.block_id(), descriptor);
         }
@@ -667,15 +698,63 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
             .keys()
             .map(|node_name| (node_name.as_str(), BTreeSet::<String>::new()))
             .collect::<BTreeMap<_, _>>();
+        let mut invalid_input_port_nodes = BTreeSet::<String>::new();
         if let Some(edges) = normalized
             .get("spec")
             .and_then(|spec| spec.get("edges"))
             .and_then(Value::as_array)
         {
-            for edge in edges {
+            for (index, edge) in edges.iter().enumerate() {
+                let Some(source) = edge.get("from").and_then(Value::as_str) else {
+                    continue;
+                };
                 let Some(target) = edge.get("to").and_then(Value::as_str) else {
                     continue;
                 };
+                let source_port = source.split_once('.').map(|(source_owner, source_path)| {
+                    let port_name = source_path
+                        .split_once('.')
+                        .map_or(source_path, |(port_name, _)| port_name);
+                    (source_owner, port_name)
+                });
+                let target_port = target.split_once('.').map(|(target_owner, target_path)| {
+                    let port_name = target_path
+                        .split_once('.')
+                        .map_or(target_path, |(port_name, _)| port_name);
+                    (target_owner, port_name)
+                });
+
+                let mut source_type = None;
+                let mut target_type = None;
+                if let Some((source_owner, port_name)) = source_port
+                    && !PSEUDO_NODES.contains(&source_owner)
+                    && let Some(source_node) = normalized_nodes.get(source_owner)
+                    && let Some(descriptor) = source_node
+                        .as_object()
+                        .and_then(|node| node.get("block"))
+                        .and_then(Value::as_str)
+                        .and_then(|block_id| block_catalog.get(block_id))
+                    && !descriptor.outputs.is_empty()
+                {
+                    if let Some(port) = descriptor
+                        .outputs
+                        .iter()
+                        .find(|port| port.name == port_name)
+                    {
+                        source_type = port.type_ref.as_deref();
+                    } else {
+                        diagnostics.push(Diagnostic::error(
+                            "GB1014",
+                            format!(
+                                "block {} has no output port {:?}",
+                                descriptor.block_id(),
+                                port_name
+                            ),
+                            format!("$.spec.edges[{index}].from"),
+                        ));
+                    }
+                }
+
                 let Some((target_owner, target_path)) = target.split_once('.') else {
                     continue;
                 };
@@ -684,6 +763,44 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     .map_or(target_path, |(port_name, _)| port_name);
                 if let Some(inbound_ports) = inbound_by_node.get_mut(target_owner) {
                     inbound_ports.insert(port_name.to_owned());
+                }
+                if let Some((target_owner, port_name)) = target_port
+                    && !PSEUDO_NODES.contains(&target_owner)
+                    && let Some(target_node) = normalized_nodes.get(target_owner)
+                    && let Some(descriptor) = target_node
+                        .as_object()
+                        .and_then(|node| node.get("block"))
+                        .and_then(Value::as_str)
+                        .and_then(|block_id| block_catalog.get(block_id))
+                    && !descriptor.inputs.is_empty()
+                {
+                    if let Some(port) = descriptor.inputs.iter().find(|port| port.name == port_name)
+                    {
+                        target_type = port.type_ref.as_deref();
+                    } else {
+                        invalid_input_port_nodes.insert(target_owner.to_owned());
+                        diagnostics.push(Diagnostic::error(
+                            "GB1013",
+                            format!(
+                                "block {} has no input port {:?}",
+                                descriptor.block_id(),
+                                port_name
+                            ),
+                            format!("$.spec.edges[{index}].to"),
+                        ));
+                    }
+                }
+
+                if let (Some(source_type), Some(target_type)) = (source_type, target_type)
+                    && source_type != "Any"
+                    && target_type != "Any"
+                    && source_type != target_type
+                {
+                    diagnostics.push(Diagnostic::error(
+                        "GB1018",
+                        format!("port type mismatch: {source_type} cannot feed {target_type}"),
+                        format!("$.spec.edges[{index}]"),
+                    ));
                 }
             }
         }
@@ -699,6 +816,9 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
             let Some(descriptor) = block_catalog.get(block_id) else {
                 continue;
             };
+            if invalid_input_port_nodes.contains(node_name.as_str()) {
+                continue;
+            }
             let produced_inputs = inbound_by_node.get(node_name.as_str());
             for port in &descriptor.inputs {
                 if port.required

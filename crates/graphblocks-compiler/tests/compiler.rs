@@ -117,6 +117,138 @@ fn compile_graph_rejects_required_input_never_produced() -> Result<(), String> {
 }
 
 #[test]
+fn compile_graph_rejects_unknown_input_port() -> Result<(), String> {
+    let catalog = BlockCatalog::from_blocks(&json!([
+        {
+            "typeId": "text.source",
+            "version": 1,
+            "outputs": [
+                {"name": "value", "type": "graphblocks.ai/Text@1"}
+            ]
+        },
+        {
+            "typeId": "text.sink",
+            "version": 1,
+            "inputs": [
+                {"name": "text", "type": "graphblocks.ai/Text@1"}
+            ]
+        }
+    ]))?;
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "unknown-input-port"},
+        "spec": {
+            "nodes": {
+                "source": {"block": "text.source@1"},
+                "sink": {"block": "text.sink@1"}
+            },
+            "edges": [{"from": "source.value", "to": "sink.missing"}]
+        }
+    });
+
+    let plan = compile_graph_with_catalog(&graph, &catalog);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["GB1013"]
+    );
+    Ok(())
+}
+
+#[test]
+fn compile_graph_rejects_unknown_output_port() -> Result<(), String> {
+    let catalog = BlockCatalog::from_blocks(&json!([
+        {
+            "typeId": "text.source",
+            "version": 1,
+            "outputs": [
+                {"name": "value", "type": "graphblocks.ai/Text@1"}
+            ]
+        },
+        {
+            "typeId": "text.sink",
+            "version": 1,
+            "inputs": [
+                {"name": "text", "type": "graphblocks.ai/Text@1"}
+            ]
+        }
+    ]))?;
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "unknown-output-port"},
+        "spec": {
+            "nodes": {
+                "source": {"block": "text.source@1"},
+                "sink": {"block": "text.sink@1"}
+            },
+            "edges": [{"from": "source.missing", "to": "sink.text"}]
+        }
+    });
+
+    let plan = compile_graph_with_catalog(&graph, &catalog);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["GB1014"]
+    );
+    Ok(())
+}
+
+#[test]
+fn compile_graph_rejects_catalog_port_type_mismatch() -> Result<(), String> {
+    let catalog = BlockCatalog::from_blocks(&json!([
+        {
+            "typeId": "text.source",
+            "version": 1,
+            "outputs": [
+                {"name": "value", "type": "graphblocks.ai/Text@1"}
+            ]
+        },
+        {
+            "typeId": "number.sink",
+            "version": 1,
+            "inputs": [
+                {"name": "value", "type": "graphblocks.ai/Number@1"}
+            ]
+        }
+    ]))?;
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "port-type-mismatch"},
+        "spec": {
+            "nodes": {
+                "source": {"block": "text.source@1"},
+                "sink": {"block": "number.sink@1"}
+            },
+            "edges": [{"from": "source.value", "to": "sink.value"}]
+        }
+    });
+
+    let plan = compile_graph_with_catalog(&graph, &catalog);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["GB1018"]
+    );
+    Ok(())
+}
+
+#[test]
 fn compile_graph_rejects_effect_retry_without_idempotency_key() {
     let graph = json!({
         "apiVersion": GRAPH_API_VERSION,
