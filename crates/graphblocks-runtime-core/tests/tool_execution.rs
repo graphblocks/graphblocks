@@ -1,3 +1,4 @@
+use graphblocks_runtime_core::output_policy::PendingToolCallsDisposition;
 use graphblocks_runtime_core::tool_call::{ToolCall, ToolCallDraft};
 use graphblocks_runtime_core::tool_execution::{
     ToolExecutionPlan, ToolExecutionPlanError, ToolExecutionState, ToolPlanCall,
@@ -74,5 +75,64 @@ fn conflicting_effect_keys_are_serialized() -> Result<(), ToolExecutionPlanError
 
     plan.record_completed("call-a")?;
     assert_eq!(plan.ready_call_ids(), vec!["call-b".to_owned()]);
+    Ok(())
+}
+
+#[test]
+fn policy_stop_denies_pending_tool_calls() -> Result<(), ToolExecutionPlanError> {
+    let mut plan = ToolExecutionPlan::new(
+        "plan-1",
+        "response-1",
+        [
+            ToolPlanCall::new(tool_call("call-a", "{\"resource_id\":\"a\"}")),
+            ToolPlanCall::new(tool_call("call-b", "{\"resource_id\":\"b\"}")),
+        ],
+        2,
+    )?;
+
+    plan.record_started("call-a")?;
+    assert_eq!(
+        plan.apply_policy_stop(PendingToolCallsDisposition::Deny),
+        vec!["call-b".to_owned()],
+    );
+    assert_eq!(plan.state("call-a"), Some(ToolExecutionState::Running));
+    assert_eq!(plan.state("call-b"), Some(ToolExecutionState::Denied));
+    assert_eq!(plan.ready_call_ids(), Vec::<String>::new());
+    assert_eq!(
+        plan.record_started("call-b"),
+        Err(ToolExecutionPlanError::ToolCallNotPending {
+            tool_call_id: "call-b".to_owned(),
+            current: ToolExecutionState::Denied
+        }),
+    );
+    Ok(())
+}
+
+#[test]
+fn policy_stop_can_cancel_admitted_tool_calls() -> Result<(), ToolExecutionPlanError> {
+    let mut plan = ToolExecutionPlan::new(
+        "plan-1",
+        "response-1",
+        [
+            ToolPlanCall::new(tool_call("call-a", "{\"resource_id\":\"a\"}")),
+            ToolPlanCall::new(tool_call("call-b", "{\"resource_id\":\"b\"}")),
+        ],
+        2,
+    )?;
+
+    plan.record_started("call-a")?;
+    assert_eq!(
+        plan.apply_policy_stop(PendingToolCallsDisposition::CancelAdmitted),
+        vec!["call-a".to_owned(), "call-b".to_owned()],
+    );
+    assert_eq!(plan.state("call-a"), Some(ToolExecutionState::Cancelled));
+    assert_eq!(plan.state("call-b"), Some(ToolExecutionState::Denied));
+    assert_eq!(
+        plan.record_completed("call-a"),
+        Err(ToolExecutionPlanError::ToolCallNotRunning {
+            tool_call_id: "call-a".to_owned(),
+            current: ToolExecutionState::Cancelled
+        }),
+    );
     Ok(())
 }

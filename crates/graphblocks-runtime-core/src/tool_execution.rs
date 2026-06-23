@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::output_policy::PendingToolCallsDisposition;
 use crate::tool_call::ToolCall;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -22,6 +23,8 @@ pub enum ToolExecutionState {
     Running,
     Completed,
     Failed,
+    Denied,
+    Cancelled,
     Skipped,
 }
 
@@ -221,6 +224,36 @@ impl ToolExecutionPlan {
         tool_call_id: impl AsRef<str>,
     ) -> Result<(), ToolExecutionPlanError> {
         self.enter_terminal(tool_call_id.as_ref(), ToolExecutionState::Failed)
+    }
+
+    pub fn apply_policy_stop(
+        &mut self,
+        pending_tool_calls: PendingToolCallsDisposition,
+    ) -> Vec<String> {
+        let mut affected = Vec::new();
+        match pending_tool_calls {
+            PendingToolCallsDisposition::Keep => {}
+            PendingToolCallsDisposition::Deny => {
+                for (tool_call_id, state) in &mut self.states {
+                    if *state == ToolExecutionState::Pending {
+                        *state = ToolExecutionState::Denied;
+                        affected.push(tool_call_id.clone());
+                    }
+                }
+            }
+            PendingToolCallsDisposition::CancelAdmitted => {
+                for (tool_call_id, state) in &mut self.states {
+                    if *state == ToolExecutionState::Running {
+                        *state = ToolExecutionState::Cancelled;
+                        affected.push(tool_call_id.clone());
+                    } else if *state == ToolExecutionState::Pending {
+                        *state = ToolExecutionState::Denied;
+                        affected.push(tool_call_id.clone());
+                    }
+                }
+            }
+        }
+        affected
     }
 
     fn enter_terminal(
