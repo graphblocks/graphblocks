@@ -5,11 +5,13 @@ from dataclasses import replace
 from graphblocks.documents import create_local_text_revision, parse_plain_text_document, chunk_document_by_lines
 from graphblocks.rag import (
     Answer,
+    AuthContext,
     Citation,
     Claim,
     ContextPack,
     InMemoryChunkRetriever,
     resolve_citation_source_trace,
+    validate_answer_citation_authorization,
     validate_answer_citations,
 )
 
@@ -160,3 +162,33 @@ def test_validate_answer_citations_can_abstain_on_invalid_citation() -> None:
     assert [issue.code for issue in result.issues] == ["citation.text_mismatch"]
     assert result.abstention is not None
     assert result.abstention.reason == "citation_validation_failed"
+
+
+def test_validate_answer_citation_authorization_rejects_unauthorized_source() -> None:
+    context = _single_hit_context()
+    hit = replace(
+        context.hits[0],
+        item=replace(context.hits[0].item, acl={"tenant_id": "acme", "principals": ["user-2"]}),
+    )
+    context = replace(context, hits=[hit])
+    citation = Citation(
+        citation_id="cite-1",
+        source=hit.item.source,
+        cited_text="requires audit logs",
+    )
+    answer = Answer(
+        answer_id="answer-1",
+        text="Alpha policy requires audit logs.",
+        claims=[Claim(claim_id="claim-1", text="Alpha policy requires audit logs.", citation_ids=["cite-1"])],
+        citations=[citation],
+    )
+
+    result = validate_answer_citation_authorization(
+        answer,
+        context,
+        AuthContext(tenant_id="acme", principal_id="user-1"),
+    )
+
+    assert result.ok is False
+    assert [issue.code for issue in result.issues] == ["citation.source_not_authorized"]
+    assert result.issues[0].citation_id == "cite-1"

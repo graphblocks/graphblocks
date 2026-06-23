@@ -17,6 +17,15 @@ class SearchRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class AuthContext:
+    tenant_id: str
+    principal_id: str
+    groups: set[str] = field(default_factory=set)
+    roles: set[str] = field(default_factory=set)
+    attributes: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
 class RetrievalResult:
     retrieval_id: str
     request: SearchRequest
@@ -311,6 +320,51 @@ def resolve_citation_source_trace(answer: Answer, context: ContextPack, citation
     raise ValueError(f"citation {citation.citation_id!r} does not point to the current context")
 
 
+def authorize_search_hits(hits: list[SearchHit], auth: AuthContext | None) -> list[SearchHit]:
+    return [hit for hit in hits if _acl_allows(hit.hit_id, hit.item.acl, auth)]
+
+
+def validate_answer_citation_authorization(
+    answer: Answer,
+    context: ContextPack,
+    auth: AuthContext | None,
+) -> CitationValidationResult:
+    issues: list[CitationValidationIssue] = []
+    for citation in answer.citations:
+        matched_context_source = False
+        has_authorized_source = False
+        for hit in context.hits:
+            for source_ref in [hit.item.source, *hit.highlights]:
+                if (
+                    source_ref.source_id == citation.source.source_id
+                    and (citation.source.revision is None or citation.source.revision == source_ref.revision)
+                    and (citation.source.digest is None or citation.source.digest == source_ref.digest)
+                ):
+                    matched_context_source = True
+                    if _acl_allows(hit.hit_id, hit.item.acl, auth):
+                        has_authorized_source = True
+        if not matched_context_source:
+            issues.append(
+                CitationValidationIssue(
+                    code="citation.source_not_in_context",
+                    message=f"citation {citation.citation_id!r} does not point to the current context",
+                    citation_id=citation.citation_id,
+                )
+            )
+        elif not has_authorized_source:
+            issues.append(
+                CitationValidationIssue(
+                    code="citation.source_not_authorized",
+                    message=(
+                        f"citation {citation.citation_id!r} points to a source outside "
+                        "the principal authorization scope"
+                    ),
+                    citation_id=citation.citation_id,
+                )
+            )
+    return CitationValidationResult(ok=not issues, issues=issues)
+
+
 def validate_answer_citations(
     answer: Answer,
     context: ContextPack,
@@ -429,6 +483,55 @@ def validate_answer_citations(
             ),
         )
     return CitationValidationResult(ok=False, issues=issues)
+
+
+def _acl_allows(resource_id: str, acl: dict[str, object] | None, auth: AuthContext | None) -> bool:
+    if acl is None:
+        return True
+    if not isinstance(acl, dict):
+        raise ValueError(f"ACL for {resource_id!r} must be an object")
+    if acl.get("public") is True:
+        return True
+    if auth is None:
+        raise PermissionError(f"authorization context required for {resource_id!r}")
+    tenant_id = acl.get("tenant_id")
+    if isinstance(tenant_id, str) and tenant_id != auth.tenant_id:
+        return False
+
+    has_selector = False
+    principals = acl.get("principals")
+    if principals is not None:
+        if not isinstance(principals, list):
+            raise ValueError("principals must be a list")
+        has_selector = True
+        if auth.principal_id in principals:
+            return True
+
+    groups = acl.get("groups")
+    if groups is not None:
+        if not isinstance(groups, list):
+            raise ValueError("groups must be a list")
+        has_selector = True
+        if any(isinstance(group, str) and group in auth.groups for group in groups):
+            return True
+
+    roles = acl.get("roles")
+    if roles is not None:
+        if not isinstance(roles, list):
+            raise ValueError("roles must be a list")
+        has_selector = True
+        if any(isinstance(role, str) and role in auth.roles for role in roles):
+            return True
+
+    attributes = acl.get("attributes")
+    if attributes is not None:
+        if not isinstance(attributes, dict):
+            raise ValueError("attributes must be an object")
+        has_selector = True
+        if all(auth.attributes.get(name) == expected for name, expected in attributes.items()):
+            return True
+
+    return not has_selector
 
 
 def knowledge_item_from_chunk(chunk: DocumentChunk) -> KnowledgeItemRef:
