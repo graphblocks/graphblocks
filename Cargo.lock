@@ -140,6 +140,7 @@ dependencies = [
 name = "graphblocks-runtime-core"
 version = "0.1.0"
 dependencies = [
+ "graphblocks-compiler",
  "rusqlite",
  "serde_json",
 ]

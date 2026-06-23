@@ -11,4 +11,5 @@ pub mod scheduler;
 pub mod task_group;
 pub mod test_runtime;
 pub mod timeout;
+pub mod tool_call;
 pub mod typed_value;
