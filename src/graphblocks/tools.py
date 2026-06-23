@@ -957,11 +957,15 @@ class ToolResult:
             }
             for part in output
         ]
+        try:
+            output_digest = canonical_hash(output_value)
+        except (TypeError, ValueError) as error:
+            raise ToolResultValidationError(f"tool result {tool_call_id} output is not canonical JSON") from error
         return cls(
             tool_call_id=tool_call_id,
             status="completed",
             output=output,
-            output_digest=canonical_hash(output_value),
+            output_digest=output_digest,
             started_at=started_at,
             completed_at=completed_at,
         )

@@ -649,6 +649,18 @@ def test_completed_tool_result_computes_stable_output_digest() -> None:
     assert left.completed_at == "2026-06-23T00:00:01Z"
 
 
+def test_completed_tool_result_rejects_non_canonical_json_values() -> None:
+    with pytest.raises(ToolResultValidationError) as error:
+        ToolResult.completed(
+            "call-1",
+            (ContentPart(kind="json", data={"score": nan}),),
+            started_at="2026-06-23T00:00:00Z",
+            completed_at="2026-06-23T00:00:01Z",
+        )
+
+    assert str(error.value) == "tool result call-1 output is not canonical JSON"
+
+
 def test_completed_tool_result_validates_output_schema_before_model_return() -> None:
     catalog = ToolCatalog(
         definitions=(
