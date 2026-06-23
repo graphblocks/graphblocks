@@ -812,6 +812,21 @@ class ToolExecutionPlan:
 
     def record_failed(self, tool_call_id: str) -> None:
         self._enter_terminal(tool_call_id, "failed")
+        while True:
+            skipped: list[str] = []
+            for planned_call in self.calls:
+                candidate_id = planned_call.call.tool_call_id
+                if self._states[candidate_id] != "pending":
+                    continue
+                if any(
+                    self._states.get(dependency) in {"failed", "denied", "cancelled", "skipped"}
+                    for dependency in planned_call.call.depends_on
+                ):
+                    skipped.append(candidate_id)
+            if not skipped:
+                break
+            for skipped_id in skipped:
+                self._states[skipped_id] = "skipped"
 
     def apply_policy_stop(self, pending_tool_calls: PendingToolCallsDisposition) -> list[str]:
         affected: list[str] = []

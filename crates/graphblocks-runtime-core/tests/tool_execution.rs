@@ -55,6 +55,34 @@ fn dependent_calls_wait_for_completed_dependencies() -> Result<(), ToolExecution
 }
 
 #[test]
+fn failed_dependencies_skip_dependent_calls() -> Result<(), ToolExecutionPlanError> {
+    let mut dependent = tool_call("call-b", "{\"resource_id\":\"b\"}");
+    dependent.depends_on = vec!["call-a".to_owned()];
+    let mut transitive = tool_call("call-c", "{\"resource_id\":\"c\"}");
+    transitive.depends_on = vec!["call-b".to_owned()];
+    let mut plan = ToolExecutionPlan::new(
+        "plan-1",
+        "response-1",
+        [
+            ToolPlanCall::new(tool_call("call-a", "{\"resource_id\":\"a\"}")),
+            ToolPlanCall::new(dependent),
+            ToolPlanCall::new(transitive),
+        ],
+        3,
+    )?;
+
+    assert_eq!(plan.ready_call_ids(), vec!["call-a".to_owned()]);
+    plan.record_started("call-a")?;
+    plan.record_failed("call-a")?;
+
+    assert_eq!(plan.state("call-a"), Some(ToolExecutionState::Failed));
+    assert_eq!(plan.state("call-b"), Some(ToolExecutionState::Skipped));
+    assert_eq!(plan.state("call-c"), Some(ToolExecutionState::Skipped));
+    assert_eq!(plan.ready_call_ids(), Vec::<String>::new());
+    Ok(())
+}
+
+#[test]
 fn conflicting_effect_keys_are_serialized() -> Result<(), ToolExecutionPlanError> {
     let mut plan = ToolExecutionPlan::new(
         "plan-1",

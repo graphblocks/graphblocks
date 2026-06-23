@@ -673,18 +673,7 @@ def test_tool_execution_plan_readies_independent_calls_up_to_parallelism() -> No
 
 def test_tool_execution_plan_waits_for_dependencies_and_serializes_effect_keys() -> None:
     dependent = _tool_call("call-b", '{"resource_id":"ticket-1"}')
-    dependent = dependent.__class__(
-        tool_call_id=dependent.tool_call_id,
-        response_id=dependent.response_id,
-        resolved_tool_id=dependent.resolved_tool_id,
-        name=dependent.name,
-        arguments=dependent.arguments,
-        arguments_digest=dependent.arguments_digest,
-        revision=dependent.revision,
-        status=dependent.status,
-        depends_on=("call-a",),
-        created_at=dependent.created_at,
-    )
+    dependent = replace(dependent, depends_on=("call-a",))
     plan = ToolExecutionPlan(
         plan_id="plan-1",
         response_id="response-1",
@@ -704,6 +693,30 @@ def test_tool_execution_plan_waits_for_dependencies_and_serializes_effect_keys()
     assert str(error.value) == "tool call call-b dependencies are not ready"
     plan.record_completed("call-a")
     assert plan.ready_call_ids() == ["call-b", "call-c"]
+
+
+def test_tool_execution_plan_skips_dependents_after_dependency_failure() -> None:
+    dependent = replace(_tool_call("call-b", '{"resource_id":"b"}'), depends_on=("call-a",))
+    transitive = replace(_tool_call("call-c", '{"resource_id":"c"}'), depends_on=("call-b",))
+    plan = ToolExecutionPlan(
+        plan_id="plan-1",
+        response_id="response-1",
+        calls=(
+            ToolPlanCall(_tool_call("call-a", '{"resource_id":"a"}')),
+            ToolPlanCall(dependent),
+            ToolPlanCall(transitive),
+        ),
+        maximum_parallelism=3,
+    )
+
+    assert plan.ready_call_ids() == ["call-a"]
+    plan.record_started("call-a")
+    plan.record_failed("call-a")
+
+    assert plan.state("call-a") == "failed"
+    assert plan.state("call-b") == "skipped"
+    assert plan.state("call-c") == "skipped"
+    assert plan.ready_call_ids() == []
 
 
 def test_tool_execution_plan_policy_stop_denies_pending_and_can_cancel_running() -> None:

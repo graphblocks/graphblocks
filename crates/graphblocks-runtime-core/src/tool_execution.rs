@@ -223,7 +223,39 @@ impl ToolExecutionPlan {
         &mut self,
         tool_call_id: impl AsRef<str>,
     ) -> Result<(), ToolExecutionPlanError> {
-        self.enter_terminal(tool_call_id.as_ref(), ToolExecutionState::Failed)
+        self.enter_terminal(tool_call_id.as_ref(), ToolExecutionState::Failed)?;
+
+        loop {
+            let skipped = self
+                .calls
+                .iter()
+                .filter_map(|(candidate_id, planned_call)| {
+                    if self.states.get(candidate_id) != Some(&ToolExecutionState::Pending) {
+                        return None;
+                    }
+                    let blocked = planned_call.call.depends_on.iter().any(|dependency| {
+                        matches!(
+                            self.states.get(dependency),
+                            Some(
+                                ToolExecutionState::Failed
+                                    | ToolExecutionState::Denied
+                                    | ToolExecutionState::Cancelled
+                                    | ToolExecutionState::Skipped
+                            )
+                        )
+                    });
+                    blocked.then(|| candidate_id.clone())
+                })
+                .collect::<Vec<_>>();
+            if skipped.is_empty() {
+                break;
+            }
+            for skipped_id in skipped {
+                self.states.insert(skipped_id, ToolExecutionState::Skipped);
+            }
+        }
+
+        Ok(())
     }
 
     pub fn apply_policy_stop(
