@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field, is_dataclass, replace
+from types import MappingProxyType
 from typing import Literal
 
 from .canonical import canonical_hash
@@ -223,13 +225,19 @@ class PolicyRequest:
 class PolicyDecision:
     decision_id: str
     effect: PolicyEffect
-    reason_codes: list[str]
-    policy_refs: list[str]
-    obligations: list[PolicyObligation] = field(default_factory=list)
-    advice: list[dict[str, object]] = field(default_factory=list)
+    reason_codes: tuple[str, ...]
+    policy_refs: tuple[str, ...]
+    obligations: tuple[PolicyObligation, ...] = field(default_factory=tuple)
+    advice: tuple[Mapping[str, object], ...] = field(default_factory=tuple)
     evaluated_at: str = ""
     valid_until: str | None = None
     input_digest: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "reason_codes", tuple(self.reason_codes))
+        object.__setattr__(self, "policy_refs", tuple(self.policy_refs))
+        object.__setattr__(self, "obligations", tuple(self.obligations))
+        object.__setattr__(self, "advice", tuple(MappingProxyType(dict(item)) for item in self.advice))
 
 
 @dataclass(frozen=True, slots=True)

@@ -64,9 +64,9 @@ def test_static_policy_evaluator_gives_explicit_deny_precedence() -> None:
     decision = evaluator.evaluate(request, evaluated_at="2026-06-22T00:00:01Z")
 
     assert decision.effect == "deny"
-    assert decision.reason_codes == ["deny-user"]
-    assert decision.policy_refs == ["deny-user"]
-    assert decision.obligations == []
+    assert decision.reason_codes == ("deny-user",)
+    assert decision.policy_refs == ("deny-user",)
+    assert decision.obligations == ()
 
 
 def test_static_policy_evaluator_returns_allow_with_obligations() -> None:
@@ -99,9 +99,45 @@ def test_static_policy_evaluator_returns_allow_with_obligations() -> None:
     decision = evaluator.evaluate(request, evaluated_at="2026-06-22T00:00:01Z")
 
     assert decision.effect == "allow_with_obligations"
-    assert decision.reason_codes == ["allow-model", "cap-input"]
-    assert decision.obligations == [obligation]
+    assert decision.reason_codes == ("allow-model", "cap-input")
+    assert decision.obligations == (obligation,)
     assert decision.input_digest == request.with_input_digest().input_digest
+
+
+def test_policy_decision_collections_are_immutable() -> None:
+    reason_codes = ["rule-denied"]
+    policy_refs = ["policy/tool-safety"]
+    obligations = [PolicyObligation("obl-1", "capture_audit", {"mode": "strict"})]
+    advice = [{"message": "manual review required"}]
+
+    decision = PolicyDecision(
+        decision_id="decision-immutable",
+        effect="deny",
+        reason_codes=reason_codes,
+        policy_refs=policy_refs,
+        obligations=obligations,
+        advice=advice,
+        evaluated_at="2026-06-23T00:00:00Z",
+        input_digest="sha256:input",
+    )
+
+    reason_codes.append("mutated")
+    policy_refs.append("policy/mutated")
+    obligations.append(PolicyObligation("obl-2", "mutated", {}))
+    advice[0]["message"] = "mutated"
+
+    assert decision.reason_codes == ("rule-denied",)
+    assert decision.policy_refs == ("policy/tool-safety",)
+    assert decision.obligations == (PolicyObligation("obl-1", "capture_audit", {"mode": "strict"}),)
+    assert decision.advice == ({"message": "manual review required"},)
+    with pytest.raises(AttributeError):
+        decision.reason_codes.append("direct-mutation")
+    with pytest.raises(AttributeError):
+        decision.policy_refs.append("direct-mutation")
+    with pytest.raises(AttributeError):
+        decision.obligations.append(PolicyObligation("obl-3", "direct_mutation", {}))
+    with pytest.raises(TypeError):
+        decision.advice[0]["message"] = "direct mutation"
 
 
 def test_policy_enforcement_record_is_separate_from_decision() -> None:

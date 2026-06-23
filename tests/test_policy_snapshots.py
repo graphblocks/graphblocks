@@ -88,5 +88,5 @@ def test_static_policy_evaluator_can_be_built_from_policy_bundle() -> None:
     decision = StaticPolicyEvaluator.from_bundles([bundle]).evaluate(request, evaluated_at="2026-06-22T00:00:01Z")
 
     assert decision.effect == "allow_with_obligations"
-    assert decision.policy_refs == ["allow-tools", "sandbox-tools"]
-    assert decision.obligations == [obligation]
+    assert decision.policy_refs == ("allow-tools", "sandbox-tools")
+    assert decision.obligations == (obligation,)
