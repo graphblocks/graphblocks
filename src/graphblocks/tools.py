@@ -1043,6 +1043,8 @@ def validate_tool_result_for_model(
     result: ToolResult,
     resolved_tool: ResolvedTool,
     schema_registry: ToolSchemaRegistry,
+    *,
+    max_output_bytes: int | None = None,
 ) -> tuple[ContentPart, ...]:
     if result.tool_call_id != call.tool_call_id:
         raise ToolResultValidationError(
@@ -1061,6 +1063,21 @@ def validate_tool_result_for_model(
         if len(json_outputs) > 1:
             raise ToolResultValidationError(f"tool result {result.tool_call_id} has multiple JSON outputs")
         schema_registry.validate(output_schema, json_outputs[0].data)
+
+    if max_output_bytes is not None:
+        actual_bytes = 0
+        for part in result.output:
+            if part.text is not None:
+                actual_bytes += len(part.text.encode("utf-8"))
+            if part.data is not None:
+                actual_bytes += len(
+                    json.dumps(part.data, sort_keys=True, separators=(",", ":")).encode("utf-8")
+                )
+        if actual_bytes > max_output_bytes:
+            raise ToolResultValidationError(
+                f"tool result {result.tool_call_id} model output exceeds "
+                f"{max_output_bytes} bytes (actual {actual_bytes} bytes)"
+            )
 
     model_output: list[ContentPart] = []
     for part in result.output:

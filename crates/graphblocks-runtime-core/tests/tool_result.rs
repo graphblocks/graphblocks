@@ -188,6 +188,54 @@ fn completed_tool_result_model_output_is_labeled_untrusted_by_default() {
 }
 
 #[test]
+fn completed_tool_result_model_output_enforces_byte_limit_before_model_return() {
+    let catalog = ToolCatalog::new(
+        [ToolDefinition::new(
+            "knowledge.search",
+            "Search documentation.",
+            "schemas/SearchRequest@1",
+        )],
+        [ToolBinding::new(
+            "binding-search",
+            "knowledge.search",
+            ToolImplementation::Block(BlockToolImplementation::new("blocks.search")),
+        )],
+    )
+    .expect("catalog should be valid");
+    let resolved = catalog
+        .resolve(ToolResolutionScope::new(), "policy-snapshot-1")
+        .expect("tool should resolve")
+        .remove(0);
+    let mut draft = ToolCallDraft::proposed("response-1", "call-1", "knowledge.search");
+    draft
+        .append_argument_fragment("{}")
+        .expect("argument fragment should append");
+    let call = draft
+        .into_completed_tool_call(resolved.resolved_tool_id.clone(), 1_000)
+        .expect("arguments should parse");
+    let registry =
+        ToolSchemaRegistry::new(Vec::<JsonSchema>::new()).expect("schema registry should be valid");
+    let result = ToolResult::completed("call-1", [ContentPart::text("too-large")], 1_100, 1_200);
+
+    assert_eq!(
+        ToolResultValidation::prepare_for_model_with_limits(
+            ToolResultValidationRequest {
+                call: &call,
+                result: &result,
+                resolved_tool: &resolved,
+                schema_registry: &registry,
+            },
+            Some(8),
+        ),
+        Err(ToolResultValidationError::ModelOutputTooLarge {
+            tool_call_id: "call-1".to_string(),
+            max_bytes: 8,
+            actual_bytes: 9,
+        })
+    );
+}
+
+#[test]
 fn streaming_tool_result_delta_is_not_a_durable_result() {
     let delta = ToolResultEvent::delta("call-1", 3, [ContentPart::text("draft chunk")]);
 

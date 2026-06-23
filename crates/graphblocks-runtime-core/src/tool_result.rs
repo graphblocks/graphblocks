@@ -373,6 +373,11 @@ pub enum ToolResultValidationError {
         path: String,
         property: String,
     },
+    ModelOutputTooLarge {
+        tool_call_id: String,
+        max_bytes: usize,
+        actual_bytes: usize,
+    },
 }
 
 pub struct ToolResultValidation;
@@ -457,6 +462,13 @@ impl ToolResultValidation {
     pub fn prepare_for_model(
         request: ToolResultValidationRequest<'_>,
     ) -> Result<Vec<ContentPart>, ToolResultValidationError> {
+        Self::prepare_for_model_with_limits(request, None)
+    }
+
+    pub fn prepare_for_model_with_limits(
+        request: ToolResultValidationRequest<'_>,
+        max_output_bytes: Option<usize>,
+    ) -> Result<Vec<ContentPart>, ToolResultValidationError> {
         Self::validate_for_model(ToolResultValidationRequest {
             call: request.call,
             result: request.result,
@@ -465,6 +477,26 @@ impl ToolResultValidation {
         })?;
         if request.result.status != ToolResultStatus::Completed {
             return Ok(Vec::new());
+        }
+
+        if let Some(max_bytes) = max_output_bytes {
+            let mut actual_bytes = 0usize;
+            for part in &request.result.output {
+                if let Some(text) = part.text.as_ref() {
+                    actual_bytes = actual_bytes.saturating_add(text.as_bytes().len());
+                }
+                if let Some(data) = part.data.as_ref() {
+                    actual_bytes = actual_bytes
+                        .saturating_add(serde_json::to_vec(data).unwrap_or_default().len());
+                }
+            }
+            if actual_bytes > max_bytes {
+                return Err(ToolResultValidationError::ModelOutputTooLarge {
+                    tool_call_id: request.result.tool_call_id.clone(),
+                    max_bytes,
+                    actual_bytes,
+                });
+            }
         }
 
         Ok(request
