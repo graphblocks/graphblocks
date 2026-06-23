@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
 
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde_json::{Map, Number, Value};
@@ -226,6 +229,10 @@ impl InMemoryUsageLedger {
             .collect()
     }
 
+    pub fn totals_for_run(&self, run_id: impl AsRef<str>) -> Vec<UsageAmount> {
+        usage_totals(&self.records_for_run(run_id))
+    }
+
     pub fn reconcile(
         &mut self,
         source_record_id: impl AsRef<str>,
@@ -435,6 +442,13 @@ impl SqliteUsageLedger {
         Ok(records)
     }
 
+    pub fn totals_for_run(
+        &self,
+        run_id: impl AsRef<str>,
+    ) -> Result<Vec<UsageAmount>, UsageLedgerError> {
+        Ok(usage_totals(&self.records_for_run(run_id)?))
+    }
+
     pub fn reconcile(
         &mut self,
         source_record_id: impl AsRef<str>,
@@ -508,6 +522,45 @@ impl SqliteUsageLedger {
             .map(usage_record_from_storage)
             .transpose()
     }
+}
+
+fn usage_totals(records: &[UsageRecord]) -> Vec<UsageAmount> {
+    let superseded_record_ids = records
+        .iter()
+        .filter_map(|record| record.reconciliation_of.clone())
+        .collect::<BTreeSet<_>>();
+    let mut totals: BTreeMap<(String, String, Vec<(String, String)>), i64> = BTreeMap::new();
+    for record in records {
+        if superseded_record_ids.contains(&record.record_id) {
+            continue;
+        }
+        for amount in &record.amounts {
+            let key = (
+                amount.kind.clone(),
+                amount.unit.clone(),
+                amount
+                    .dimensions
+                    .iter()
+                    .map(|(key, value)| (key.clone(), value.clone()))
+                    .collect::<Vec<_>>(),
+            );
+            *totals.entry(key).or_insert(0) += amount.amount;
+        }
+    }
+    totals
+        .into_iter()
+        .filter_map(|((kind, unit, dimensions), amount)| {
+            if amount == 0 {
+                return None;
+            }
+            Some(UsageAmount {
+                kind,
+                amount,
+                unit,
+                dimensions: dimensions.into_iter().collect(),
+            })
+        })
+        .collect()
 }
 
 struct StoredUsageRecord {

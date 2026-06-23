@@ -126,6 +126,43 @@ fn usage_ledger_reconcile_writes_new_record_for_late_final_usage() -> Result<(),
 }
 
 #[test]
+fn usage_ledger_totals_replace_provisional_with_reconciled_usage() -> Result<(), UsageLedgerError> {
+    let mut ledger = InMemoryUsageLedger::new();
+    ledger.append(
+        UsageRecord::new(
+            "usage-provisional",
+            UsageSource::TokenizerEstimated,
+            UsageConfidence::Estimated,
+            [tokens(18)],
+            1_000,
+        )
+        .with_run_id("run-1")
+        .with_attempt_id("attempt-1")
+        .with_provider_response_id("resp-1"),
+    )?;
+    ledger.append(
+        UsageRecord::new(
+            "usage-runtime",
+            UsageSource::RuntimeMeasured,
+            UsageConfidence::Estimated,
+            [tokens(2)],
+            1_010,
+        )
+        .with_run_id("run-1")
+        .with_attempt_id("attempt-2"),
+    )?;
+    ledger.reconcile(
+        "usage-provisional",
+        [tokens(21)],
+        1_500,
+        Some("usage-reconciled".to_string()),
+    )?;
+
+    assert_eq!(ledger.totals_for_run("run-1"), vec![tokens(23)]);
+    Ok(())
+}
+
+#[test]
 fn sqlite_usage_ledger_persists_records_across_reopen() -> Result<(), UsageLedgerError> {
     let path = sqlite_usage_path("usage-persist");
     let record = UsageRecord::new(
@@ -198,5 +235,43 @@ fn sqlite_usage_ledger_deduplicates_provider_response_and_reconciles_late_usage(
         Some("ticket.create")
     );
     assert_eq!(ledger.records_for_run("run-1")?, vec![first, reconciled]);
+    Ok(())
+}
+
+#[test]
+fn sqlite_usage_ledger_totals_replace_provisional_with_reconciled_usage()
+-> Result<(), UsageLedgerError> {
+    let mut ledger = SqliteUsageLedger::open_in_memory()?;
+    ledger.append(
+        UsageRecord::new(
+            "usage-provisional",
+            UsageSource::TokenizerEstimated,
+            UsageConfidence::Estimated,
+            [tokens(18)],
+            1_000,
+        )
+        .with_run_id("run-1")
+        .with_attempt_id("attempt-1")
+        .with_provider_response_id("resp-1"),
+    )?;
+    ledger.append(
+        UsageRecord::new(
+            "usage-runtime",
+            UsageSource::RuntimeMeasured,
+            UsageConfidence::Estimated,
+            [tokens(2)],
+            1_010,
+        )
+        .with_run_id("run-1")
+        .with_attempt_id("attempt-2"),
+    )?;
+    ledger.reconcile(
+        "usage-provisional",
+        [tokens(21)],
+        1_500,
+        Some("usage-reconciled".to_string()),
+    )?;
+
+    assert_eq!(ledger.totals_for_run("run-1")?, vec![tokens(23)]);
     Ok(())
 }
