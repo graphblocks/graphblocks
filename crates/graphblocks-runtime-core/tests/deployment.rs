@@ -1,8 +1,10 @@
 use graphblocks_runtime_core::deployment::{
-    DeploymentRevision, ExecutionTarget, ExecutionTargetKind, GraphRelease, GraphReleaseError,
-    GraphReleaseGraph, ImageRef, KnowledgeBinding, PhysicalExecutionPlan, PlacementError,
-    PlacementRule, PlacementSelector, PromptLock,
+    DeploymentEvent, DeploymentEventKind, DeploymentObservabilityContext, DeploymentRevision,
+    ExecutionTarget, ExecutionTargetKind, GraphRelease, GraphReleaseError, GraphReleaseGraph,
+    ImageRef, KnowledgeBinding, PhysicalExecutionPlan, PlacementError, PlacementRule,
+    PlacementSelector, PromptLock,
 };
+use serde_json::json;
 
 #[test]
 fn deployment_revision_digest_is_stable_without_record_identity() {
@@ -253,4 +255,72 @@ fn graph_release_validation_rejects_mutable_production_references() {
             ],
         })
     );
+}
+
+#[test]
+fn deployment_event_exports_release_revision_and_cohort_attributes() {
+    let context = DeploymentObservabilityContext::new("release-1", "rev-1")
+        .with_release_digest("sha256:release")
+        .with_rollout("rollout-1", "step-2", "canary");
+    let event = DeploymentEvent::new(
+        "event-1",
+        DeploymentEventKind::RolloutGateFailed,
+        context,
+        "2026-06-23T00:00:00Z",
+    )
+    .with_metadata("reason", json!("latency_regression"));
+
+    let attributes = event.telemetry_attributes();
+
+    assert_eq!(
+        DeploymentEventKind::RolloutGateFailed.as_str(),
+        "rollout.gate.failed"
+    );
+    assert_eq!(
+        attributes.get("deployment.event").map(String::as_str),
+        Some("rollout.gate.failed")
+    );
+    assert_eq!(
+        attributes.get("graphblocks.release.id").map(String::as_str),
+        Some("release-1")
+    );
+    assert_eq!(
+        attributes
+            .get("graphblocks.deployment.revision")
+            .map(String::as_str),
+        Some("rev-1")
+    );
+    assert_eq!(
+        attributes
+            .get("graphblocks.rollout.cohort")
+            .map(String::as_str),
+        Some("canary")
+    );
+    assert_eq!(
+        event.metadata.get("reason"),
+        Some(&json!("latency_regression"))
+    );
+}
+
+#[test]
+fn deployment_observability_context_compares_stable_and_canary_rollout_step() {
+    let stable = DeploymentObservabilityContext::new("release-stable", "rev-stable").with_rollout(
+        "rollout-1",
+        "step-2",
+        "stable",
+    );
+    let canary = DeploymentObservabilityContext::new("release-canary", "rev-canary").with_rollout(
+        "rollout-1",
+        "step-2",
+        "canary",
+    );
+    let later = DeploymentObservabilityContext::new("release-canary", "rev-canary").with_rollout(
+        "rollout-1",
+        "step-3",
+        "canary",
+    );
+
+    assert!(stable.same_rollout_step(&canary));
+    assert!(!stable.same_rollout_step(&later));
+    assert_ne!(stable.cohort.as_deref(), canary.cohort.as_deref());
 }

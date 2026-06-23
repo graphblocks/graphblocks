@@ -286,6 +286,150 @@ impl DeploymentRevision {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DeploymentEventKind {
+    DeploymentStarted,
+    ReleaseVerified,
+    RevisionCreated,
+    RolloutStepStarted,
+    RolloutGatePassed,
+    RolloutGateFailed,
+    ReleasePromoted,
+    ReleaseAborted,
+    RollbackStarted,
+    RollbackCompleted,
+    WorkerDraining,
+    MigrationStarted,
+    MigrationCompleted,
+}
+
+impl DeploymentEventKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::DeploymentStarted => "deployment.started",
+            Self::ReleaseVerified => "release.verified",
+            Self::RevisionCreated => "revision.created",
+            Self::RolloutStepStarted => "rollout.step.started",
+            Self::RolloutGatePassed => "rollout.gate.passed",
+            Self::RolloutGateFailed => "rollout.gate.failed",
+            Self::ReleasePromoted => "release.promoted",
+            Self::ReleaseAborted => "release.aborted",
+            Self::RollbackStarted => "rollback.started",
+            Self::RollbackCompleted => "rollback.completed",
+            Self::WorkerDraining => "worker.draining",
+            Self::MigrationStarted => "migration.started",
+            Self::MigrationCompleted => "migration.completed",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeploymentObservabilityContext {
+    pub release_id: String,
+    pub deployment_revision_id: String,
+    pub release_digest: Option<String>,
+    pub rollout_id: Option<String>,
+    pub rollout_step: Option<String>,
+    pub cohort: Option<String>,
+}
+
+impl DeploymentObservabilityContext {
+    pub fn new(release_id: impl Into<String>, deployment_revision_id: impl Into<String>) -> Self {
+        Self {
+            release_id: release_id.into(),
+            deployment_revision_id: deployment_revision_id.into(),
+            release_digest: None,
+            rollout_id: None,
+            rollout_step: None,
+            cohort: None,
+        }
+    }
+
+    pub fn with_release_digest(mut self, release_digest: impl Into<String>) -> Self {
+        self.release_digest = Some(release_digest.into());
+        self
+    }
+
+    pub fn with_rollout(
+        mut self,
+        rollout_id: impl Into<String>,
+        rollout_step: impl Into<String>,
+        cohort: impl Into<String>,
+    ) -> Self {
+        self.rollout_id = Some(rollout_id.into());
+        self.rollout_step = Some(rollout_step.into());
+        self.cohort = Some(cohort.into());
+        self
+    }
+
+    pub fn same_rollout_step(&self, other: &Self) -> bool {
+        self.rollout_id.is_some()
+            && self.rollout_id == other.rollout_id
+            && self.rollout_step == other.rollout_step
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct DeploymentEvent {
+    pub event_id: String,
+    pub kind: DeploymentEventKind,
+    pub context: DeploymentObservabilityContext,
+    pub occurred_at: String,
+    pub metadata: BTreeMap<String, Value>,
+}
+
+impl DeploymentEvent {
+    pub fn new(
+        event_id: impl Into<String>,
+        kind: DeploymentEventKind,
+        context: DeploymentObservabilityContext,
+        occurred_at: impl Into<String>,
+    ) -> Self {
+        Self {
+            event_id: event_id.into(),
+            kind,
+            context,
+            occurred_at: occurred_at.into(),
+            metadata: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_metadata(mut self, key: impl Into<String>, value: Value) -> Self {
+        self.metadata.insert(key.into(), value);
+        self
+    }
+
+    pub fn telemetry_attributes(&self) -> BTreeMap<String, String> {
+        let mut attributes = BTreeMap::from([
+            ("deployment.event".to_owned(), self.kind.as_str().to_owned()),
+            (
+                "graphblocks.release.id".to_owned(),
+                self.context.release_id.clone(),
+            ),
+            (
+                "graphblocks.deployment.revision".to_owned(),
+                self.context.deployment_revision_id.clone(),
+            ),
+        ]);
+        if let Some(release_digest) = &self.context.release_digest {
+            attributes.insert(
+                "graphblocks.release.digest".to_owned(),
+                release_digest.clone(),
+            );
+        }
+        if let Some(rollout_id) = &self.context.rollout_id {
+            attributes.insert("graphblocks.rollout.id".to_owned(), rollout_id.clone());
+        }
+        if let Some(rollout_step) = &self.context.rollout_step {
+            attributes.insert("graphblocks.rollout.step".to_owned(), rollout_step.clone());
+        }
+        if let Some(cohort) = &self.context.cohort {
+            attributes.insert("graphblocks.rollout.cohort".to_owned(), cohort.clone());
+        }
+        attributes
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub enum ExecutionTargetKind {
     Service,
