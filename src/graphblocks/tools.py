@@ -1055,6 +1055,12 @@ def validate_tool_result_for_model(
         raise ToolResultValidationError("tool call references a different resolved tool")
     if result.status != "completed":
         return ()
+    if resolved_tool.binding.result_mode == "artifact_reference" and any(
+        part.kind != "artifact_ref" for part in result.output
+    ):
+        raise ToolResultValidationError(
+            f"tool result {result.tool_call_id} uses artifact_reference mode but contains inline output"
+        )
 
     output_schema = resolved_tool.definition.output_schema
     if output_schema is not None:

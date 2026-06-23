@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 
 use crate::outcome::BlockError;
 use crate::output_policy::RedactionInstruction;
-use crate::tool::ResolvedTool;
+use crate::tool::{ResolvedTool, ToolResultMode};
 use crate::tool_call::ToolCall;
 use crate::tool_schema::{ToolSchemaRegistry, ToolSchemaValidationError};
 
@@ -408,6 +408,9 @@ pub enum ToolResultValidationError {
         tool_call_id: String,
         path: String,
     },
+    InlineOutputForbiddenForArtifactReference {
+        tool_call_id: String,
+    },
 }
 
 pub struct ToolResultValidation;
@@ -430,6 +433,20 @@ impl ToolResultValidation {
         }
         if request.result.status != ToolResultStatus::Completed {
             return Ok(());
+        }
+
+        if request.resolved_tool.binding.result_mode == ToolResultMode::ArtifactReference
+            && request
+                .result
+                .output
+                .iter()
+                .any(|part| part.kind != ContentPartKind::ArtifactRef)
+        {
+            return Err(
+                ToolResultValidationError::InlineOutputForbiddenForArtifactReference {
+                    tool_call_id: request.result.tool_call_id.clone(),
+                },
+            );
         }
 
         let Some(output_schema) = request.resolved_tool.definition.output_schema.as_ref() else {

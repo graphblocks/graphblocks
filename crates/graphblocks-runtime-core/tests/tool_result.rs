@@ -2,7 +2,7 @@ use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory};
 use graphblocks_runtime_core::output_policy::RedactionInstruction;
 use graphblocks_runtime_core::tool::{
     BlockToolImplementation, ToolBinding, ToolCatalog, ToolDefinition, ToolImplementation,
-    ToolResolutionScope,
+    ToolResolutionScope, ToolResultMode,
 };
 use graphblocks_runtime_core::tool_call::ToolCallDraft;
 use graphblocks_runtime_core::tool_result::{
@@ -295,6 +295,74 @@ fn completed_tool_result_model_output_applies_redactions_before_model_return() {
     assert_eq!(
         output[0].metadata.get("prompt_injection_label"),
         Some(&json!("untrusted_tool_output"))
+    );
+}
+
+#[test]
+fn artifact_reference_tool_result_mode_rejects_inline_model_output() {
+    let catalog = ToolCatalog::new(
+        [ToolDefinition::new(
+            "report.export",
+            "Export a report.",
+            "schemas/ReportRequest@1",
+        )],
+        [ToolBinding::new(
+            "binding-report",
+            "report.export",
+            ToolImplementation::Block(BlockToolImplementation::new("blocks.report")),
+        )
+        .with_result_mode(ToolResultMode::ArtifactReference)],
+    )
+    .expect("catalog should be valid");
+    let resolved = catalog
+        .resolve(ToolResolutionScope::new(), "policy-snapshot-1")
+        .expect("tool should resolve")
+        .remove(0);
+    let mut draft = ToolCallDraft::proposed("response-1", "call-1", "report.export");
+    draft
+        .append_argument_fragment("{}")
+        .expect("argument fragment should append");
+    let call = draft
+        .into_completed_tool_call(resolved.resolved_tool_id.clone(), 1_000)
+        .expect("arguments should parse");
+    let registry =
+        ToolSchemaRegistry::new(Vec::<JsonSchema>::new()).expect("schema registry should be valid");
+    let inline = ToolResult::completed(
+        "call-1",
+        [ContentPart::text("large report body")],
+        1_100,
+        1_200,
+    );
+    let referenced = ToolResult::completed(
+        "call-1",
+        [ContentPart::artifact_ref(
+            ArtifactRef::new("artifact-1", "blob://reports/1").with_media_type("application/pdf"),
+        )],
+        1_100,
+        1_200,
+    );
+
+    assert_eq!(
+        ToolResultValidation::validate_for_model(ToolResultValidationRequest {
+            call: &call,
+            result: &inline,
+            resolved_tool: &resolved,
+            schema_registry: &registry,
+        }),
+        Err(
+            ToolResultValidationError::InlineOutputForbiddenForArtifactReference {
+                tool_call_id: "call-1".to_string(),
+            }
+        )
+    );
+    assert_eq!(
+        ToolResultValidation::validate_for_model(ToolResultValidationRequest {
+            call: &call,
+            result: &referenced,
+            resolved_tool: &resolved,
+            schema_registry: &registry,
+        }),
+        Ok(())
     );
 }
 

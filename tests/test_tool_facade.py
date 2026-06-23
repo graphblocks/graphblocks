@@ -811,6 +811,60 @@ def test_completed_tool_result_model_output_applies_redactions_before_model_retu
     assert output[0].metadata["prompt_injection_label"] == "untrusted_tool_output"
 
 
+def test_artifact_reference_tool_result_mode_rejects_inline_model_output() -> None:
+    catalog = ToolCatalog(
+        definitions=(
+            ToolDefinition(
+                name="report.export",
+                description="Export a report.",
+                input_schema="schemas/ReportRequest@1",
+            ),
+        ),
+        bindings=(
+            ToolBinding(
+                binding_id="binding-report",
+                tool_name="report.export",
+                implementation=BlockToolImplementation(block="blocks.report"),
+                result_mode="artifact_reference",
+            ),
+        ),
+    )
+    resolved = catalog.resolve(ToolResolutionScope(), effective_policy_snapshot_id="policy-snapshot-1")[0]
+    call = (
+        ToolCallDraft.proposed("response-1", "call-1", "report.export")
+        .append_argument_fragment("{}")
+        .complete_arguments()
+        .into_tool_call(resolved.resolved_tool_id, created_at="2026-06-23T00:00:00Z")
+    )
+    registry = ToolSchemaRegistry(())
+    inline = ToolResult.completed(
+        "call-1",
+        (ContentPart(kind="text", text="large report body"),),
+        started_at="2026-06-23T00:00:01Z",
+        completed_at="2026-06-23T00:00:02Z",
+    )
+    referenced = ToolResult.completed(
+        "call-1",
+        (
+            ContentPart(
+                kind="artifact_ref",
+                data={
+                    "artifact_id": "artifact-1",
+                    "uri": "blob://reports/1",
+                    "media_type": "application/pdf",
+                },
+            ),
+        ),
+        started_at="2026-06-23T00:00:01Z",
+        completed_at="2026-06-23T00:00:02Z",
+    )
+
+    with pytest.raises(ToolResultValidationError) as error:
+        validate_tool_result_for_model(call, inline, resolved, registry)
+    assert str(error.value) == "tool result call-1 uses artifact_reference mode but contains inline output"
+    assert validate_tool_result_for_model(call, referenced, resolved, registry)[0].kind == "artifact_ref"
+
+
 def test_policy_stopped_tool_result_is_final_but_incomplete() -> None:
     result = ToolResult.policy_stopped(
         "call-1",
