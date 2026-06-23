@@ -7,12 +7,15 @@ import pytest
 
 from graphblocks import (
     AdmittedToolCall,
+    JsonSchema,
+    JsonSchemaNode,
     McpToolImplementation,
     OpenApiToolImplementation,
     ResolvedTool,
     ToolBinding,
     ToolCall,
     ToolDefinition,
+    ToolSchemaRegistry,
     canonical_hash,
 )
 
@@ -26,11 +29,13 @@ def _admitted_call_for(
     tool_name: str,
     binding_id: str,
     arguments: dict[str, object],
+    output_schema: str | None = None,
 ) -> tuple[AdmittedToolCall, ResolvedTool]:
     definition = ToolDefinition(
         name=tool_name,
         description="Execute the tool.",
         input_schema="schemas/ToolRequest@1",
+        output_schema=output_schema,
     )
     binding = ToolBinding(
         binding_id=binding_id,
@@ -56,6 +61,24 @@ def _admitted_call_for(
         admitted_at="2026-06-23T00:00:00Z",
     )
     return AdmittedToolCall(call=call, idempotency_key="idem-1"), resolved
+
+
+def _tool_output_registry() -> ToolSchemaRegistry:
+    return ToolSchemaRegistry(
+        (
+            JsonSchema(
+                "schemas/SearchResult@1",
+                JsonSchemaNode.object().required_property(
+                    "items",
+                    JsonSchemaNode.array(JsonSchemaNode.string()),
+                ),
+            ),
+            JsonSchema(
+                "schemas/Ticket@1",
+                JsonSchemaNode.object().required_property("ticket_id", JsonSchemaNode.string()),
+            ),
+        )
+    )
 
 
 def test_mcp_adapter_builds_tool_definition_and_binding(monkeypatch) -> None:
@@ -129,6 +152,35 @@ def test_mcp_adapter_rejects_non_mcp_binding(monkeypatch) -> None:
         graphblocks_mcp.prepare_mcp_tool_invocation(admitted, resolved)
 
 
+def test_mcp_adapter_converts_valid_response_to_tool_result(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
+    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    admitted, resolved = _admitted_call_for(
+        McpToolImplementation(server="support-mcp", remote_name="search"),
+        tool_name="knowledge.search",
+        binding_id="binding-mcp-search",
+        arguments={"query": "billing"},
+        output_schema="schemas/SearchResult@1",
+    )
+
+    result = graphblocks_mcp.mcp_tool_result_from_response(
+        admitted,
+        resolved,
+        _tool_output_registry(),
+        output={"items": ["billing"]},
+        started_at="2026-06-23T00:00:01Z",
+        completed_at="2026-06-23T00:00:02Z",
+        effect_outcome="no_external_effect",
+    )
+
+    assert result.tool_call_id == "call-1"
+    assert result.status == "completed"
+    assert result.output[0].kind == "json"
+    assert result.output[0].data == {"items": ["billing"]}
+    assert result.output_digest.startswith("sha256:")
+    assert result.effect_outcome == "no_external_effect"
+
+
 def test_openapi_adapter_builds_tool_definition_and_binding(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
     graphblocks_openapi = importlib.import_module("graphblocks_openapi")
@@ -197,3 +249,51 @@ def test_openapi_adapter_rejects_non_openapi_binding(monkeypatch) -> None:
 
     with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="requires an OpenAPI tool binding"):
         graphblocks_openapi.prepare_openapi_operation_invocation(admitted, resolved)
+
+
+def test_openapi_adapter_converts_valid_response_to_tool_result(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
+    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    admitted, resolved = _admitted_call_for(
+        OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
+        tool_name="ticket.create",
+        binding_id="binding-ticket-create",
+        arguments={"title": "Need help"},
+        output_schema="schemas/Ticket@1",
+    )
+
+    result = graphblocks_openapi.openapi_tool_result_from_response(
+        admitted,
+        resolved,
+        _tool_output_registry(),
+        output={"ticket_id": "ticket-1"},
+        started_at="2026-06-23T00:00:01Z",
+        completed_at="2026-06-23T00:00:02Z",
+        effect_outcome="committed",
+    )
+
+    assert result.status == "completed"
+    assert result.output[0].data == {"ticket_id": "ticket-1"}
+    assert result.effect_was_committed()
+
+
+def test_openapi_adapter_rejects_response_that_fails_output_schema(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
+    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    admitted, resolved = _admitted_call_for(
+        OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
+        tool_name="ticket.create",
+        binding_id="binding-ticket-create",
+        arguments={"title": "Need help"},
+        output_schema="schemas/Ticket@1",
+    )
+
+    with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="failed validation"):
+        graphblocks_openapi.openapi_tool_result_from_response(
+            admitted,
+            resolved,
+            _tool_output_registry(),
+            output={"id": "ticket-1"},
+            started_at="2026-06-23T00:00:01Z",
+            completed_at="2026-06-23T00:00:02Z",
+        )

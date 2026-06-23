@@ -1,16 +1,22 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 import json
 
 from graphblocks import (
     AdmittedToolCall,
+    ContentPart,
     OpenApiToolImplementation,
     ResolvedTool,
     ToolBinding,
     ToolDefinition,
+    ToolResult,
+    ToolResultValidationError,
+    ToolSchemaRegistry,
+    ToolSchemaValidationError,
     canonical_dumps,
+    validate_tool_result_for_model,
 )
 
 
@@ -122,10 +128,52 @@ def prepare_openapi_operation_invocation(
     )
 
 
+def openapi_tool_result_from_response(
+    admitted: AdmittedToolCall,
+    resolved_tool: ResolvedTool,
+    schema_registry: ToolSchemaRegistry,
+    *,
+    output: Mapping[str, object],
+    started_at: str,
+    completed_at: str,
+    effect_outcome: str = "unknown",
+) -> ToolResult:
+    prepare_openapi_operation_invocation(admitted, resolved_tool)
+    if not isinstance(output, Mapping):
+        raise OpenApiToolAdapterError("OpenAPI operation response output must be an object")
+
+    try:
+        result = ToolResult.completed(
+            admitted.call.tool_call_id,
+            (
+                ContentPart(
+                    kind="json",
+                    data=dict(output),
+                    metadata={"adapter": "openapi"},
+                ),
+            ),
+            started_at=started_at,
+            completed_at=completed_at,
+        ).with_effect_outcome(effect_outcome)
+        validate_tool_result_for_model(
+            admitted.call,
+            result,
+            resolved_tool,
+            schema_registry,
+        )
+    except (ToolResultValidationError, ToolSchemaValidationError) as error:
+        raise OpenApiToolAdapterError("OpenAPI tool result failed validation") from error
+    except ValueError as error:
+        raise OpenApiToolAdapterError("OpenAPI tool result has an invalid effect outcome") from error
+
+    return result
+
+
 __all__ = [
     "OpenApiOperationInvocation",
     "OpenApiToolAdapterError",
     "bind_openapi_operation",
     "define_openapi_tool",
+    "openapi_tool_result_from_response",
     "prepare_openapi_operation_invocation",
 ]
