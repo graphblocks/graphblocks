@@ -41,6 +41,7 @@ from .canonical import canonical_dumps, canonical_hash, normalize_graph
 from .compiler import Plan, compile_graph
 from .conversation import (
     BranchRequest,
+    CompactionRecord,
     ContentPart,
     Conversation,
     ConversationArchivedError,
@@ -273,6 +274,7 @@ __all__ = [
     "Claim",
     "ChangeSet",
     "CheckResult",
+    "CompactionRecord",
     "ContinuationEnvelope",
     "ContentPart",
     "Conversation",

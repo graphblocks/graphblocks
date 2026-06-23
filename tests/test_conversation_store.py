@@ -5,6 +5,7 @@ import pytest
 from graphblocks.documents import ArtifactRef
 from graphblocks.conversation import (
     BranchRequest,
+    CompactionRecord,
     ContentPart,
     Conversation,
     ConversationArchivedError,
@@ -13,6 +14,7 @@ from graphblocks.conversation import (
     FileAttachment,
     InMemoryConversationStore,
     Message,
+    MessageNotFoundError,
 )
 
 
@@ -157,6 +159,75 @@ def test_branch_respects_include_attachments_and_message_scope() -> None:
         "att-conversation",
     ]
     assert without_attachments.attachments == ()
+
+
+def test_compaction_record_preserves_source_messages_and_records_token_delta() -> None:
+    store = InMemoryConversationStore()
+    store.create(Conversation(conversation_id="conv-1"))
+    store.append_messages(
+        "conv-1",
+        expected_revision=0,
+        messages=[
+            Message(message_id="msg-1", role="user"),
+            Message(message_id="msg-2", role="assistant", parts=(ContentPart(kind="text", text="long answer"),)),
+            Message(message_id="msg-summary", role="assistant", parts=(ContentPart(kind="text", text="compact"),)),
+        ],
+    )
+
+    revision = store.record_compaction(
+        "conv-1",
+        CompactionRecord(
+            compaction_id="compact-1",
+            source_message_ids=("msg-1", "msg-2"),
+            output_message_id="msg-summary",
+            method="summary_memory",
+            token_before=1200,
+            token_after=120,
+            model="summary-model",
+        ),
+    )
+
+    snapshot = store.get("conv-1")
+    assert revision == 2
+    assert snapshot.conversation.messages[2].message_id == "msg-summary"
+    assert snapshot.conversation.compactions[0].compaction_id == "compact-1"
+    assert snapshot.conversation.compactions[0].source_message_ids == ("msg-1", "msg-2")
+    assert snapshot.conversation.compactions[0].output_message_id == "msg-summary"
+    assert snapshot.conversation.compactions[0].token_before == 1200
+    assert snapshot.conversation.compactions[0].token_after == 120
+    assert snapshot.conversation.compactions[0].model == "summary-model"
+
+
+def test_compaction_rejects_missing_source_or_output_message() -> None:
+    store = InMemoryConversationStore()
+    store.create(Conversation(conversation_id="conv-1"))
+    store.append_messages("conv-1", expected_revision=0, messages=[Message(message_id="msg-1", role="user")])
+
+    with pytest.raises(MessageNotFoundError):
+        store.record_compaction(
+            "conv-1",
+            CompactionRecord(
+                compaction_id="compact-1",
+                source_message_ids=("missing",),
+                output_message_id="msg-1",
+                method="summary_memory",
+                token_before=10,
+                token_after=5,
+            ),
+        )
+
+    with pytest.raises(MessageNotFoundError):
+        store.record_compaction(
+            "conv-1",
+            CompactionRecord(
+                compaction_id="compact-2",
+                source_message_ids=("msg-1",),
+                output_message_id="missing-summary",
+                method="summary_memory",
+                token_before=10,
+                token_after=5,
+            ),
+        )
 
 
 def test_archive_prevents_later_appends() -> None:

@@ -89,10 +89,23 @@ class FileAttachment:
 
 
 @dataclass(frozen=True, slots=True)
+class CompactionRecord:
+    compaction_id: str
+    source_message_ids: tuple[str, ...]
+    output_message_id: str
+    method: str
+    token_before: int
+    token_after: int
+    model: str | None = None
+    metadata: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
 class Conversation:
     conversation_id: str
     messages: tuple[Message, ...] = field(default_factory=tuple)
     attachments: tuple[FileAttachment, ...] = field(default_factory=tuple)
+    compactions: tuple[CompactionRecord, ...] = field(default_factory=tuple)
     revision: int = 0
     archived: bool = False
     branch_of: str | None = None
@@ -132,6 +145,7 @@ def _copy_conversation(conversation: Conversation) -> Conversation:
         conversation_id=conversation.conversation_id,
         messages=tuple(conversation.messages),
         attachments=tuple(_copy_attachment(attachment) for attachment in conversation.attachments),
+        compactions=tuple(_copy_compaction(record) for record in conversation.compactions),
         revision=conversation.revision,
         archived=conversation.archived,
         branch_of=conversation.branch_of,
@@ -150,6 +164,19 @@ def _copy_attachment(attachment: FileAttachment) -> FileAttachment:
         retention_policy=attachment.retention_policy,
         message_id=attachment.message_id,
         metadata=dict(attachment.metadata),
+    )
+
+
+def _copy_compaction(record: CompactionRecord) -> CompactionRecord:
+    return CompactionRecord(
+        compaction_id=record.compaction_id,
+        source_message_ids=tuple(record.source_message_ids),
+        output_message_id=record.output_message_id,
+        method=record.method,
+        token_before=record.token_before,
+        token_after=record.token_after,
+        model=record.model,
+        metadata=dict(record.metadata),
     )
 
 
@@ -293,6 +320,7 @@ class InMemoryConversationStore:
             conversation_id=conversation.conversation_id,
             messages=(*conversation.messages, *messages),
             attachments=conversation.attachments,
+            compactions=conversation.compactions,
             revision=new_revision,
             archived=conversation.archived,
             branch_of=conversation.branch_of,
@@ -329,6 +357,7 @@ class InMemoryConversationStore:
                     or (attachment.scope == "message" and attachment.message_id in branch_message_ids)
                 )
             ),
+            compactions=tuple(_copy_compaction(record) for record in conversation.compactions) if request.include_memory else (),
             revision=0,
             branch_of=conversation.conversation_id,
             branched_from_message_id=request.from_message_id,
@@ -352,6 +381,7 @@ class InMemoryConversationStore:
             conversation_id=conversation.conversation_id,
             messages=conversation.messages,
             attachments=(*conversation.attachments, _copy_attachment(attachment)),
+            compactions=conversation.compactions,
             revision=new_revision,
             archived=conversation.archived,
             branch_of=conversation.branch_of,
@@ -381,6 +411,30 @@ class InMemoryConversationStore:
             )
         )
 
+    def record_compaction(self, conversation_id: str, record: CompactionRecord) -> int:
+        conversation = self._conversations.get(conversation_id)
+        if conversation is None:
+            raise ConversationNotFoundError(f"conversation {conversation_id!r} does not exist")
+        message_ids = {message.message_id for message in conversation.messages}
+        for source_message_id in record.source_message_ids:
+            if source_message_id not in message_ids:
+                raise MessageNotFoundError(f"message {source_message_id!r} does not exist")
+        if record.output_message_id not in message_ids:
+            raise MessageNotFoundError(f"message {record.output_message_id!r} does not exist")
+        new_revision = conversation.revision + 1
+        self._conversations[conversation_id] = Conversation(
+            conversation_id=conversation.conversation_id,
+            messages=conversation.messages,
+            attachments=conversation.attachments,
+            compactions=(*conversation.compactions, _copy_compaction(record)),
+            revision=new_revision,
+            archived=conversation.archived,
+            branch_of=conversation.branch_of,
+            branched_from_message_id=conversation.branched_from_message_id,
+            metadata=dict(conversation.metadata),
+        )
+        return new_revision
+
     def archive(self, conversation_id: str) -> int:
         conversation = self._conversations.get(conversation_id)
         if conversation is None:
@@ -390,6 +444,7 @@ class InMemoryConversationStore:
             conversation_id=conversation.conversation_id,
             messages=conversation.messages,
             attachments=conversation.attachments,
+            compactions=conversation.compactions,
             revision=new_revision,
             archived=True,
             branch_of=conversation.branch_of,
@@ -414,6 +469,7 @@ class InMemoryConversationStore:
             conversation_id=conversation.conversation_id,
             messages=(),
             attachments=(),
+            compactions=(),
             revision=new_revision,
             archived=True,
             branch_of=conversation.branch_of,
