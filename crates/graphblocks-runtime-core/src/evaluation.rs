@@ -97,6 +97,10 @@ impl TypedValueRef {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunProvenance {
     pub graph_hash: String,
+    pub release_id: Option<String>,
+    pub deployment_revision_id: Option<String>,
+    pub physical_plan_hash: Option<String>,
+    pub release_signature_digest: Option<String>,
     pub started_at: String,
     pub completed_at: Option<String>,
     pub runner: BTreeMap<String, Value>,
@@ -107,6 +111,10 @@ impl RunProvenance {
     pub fn new(graph_hash: impl Into<String>, started_at: impl Into<String>) -> Self {
         Self {
             graph_hash: graph_hash.into(),
+            release_id: None,
+            deployment_revision_id: None,
+            physical_plan_hash: None,
+            release_signature_digest: None,
             started_at: started_at.into(),
             completed_at: None,
             runner: BTreeMap::new(),
@@ -114,9 +122,36 @@ impl RunProvenance {
         }
     }
 
+    pub fn with_release(
+        mut self,
+        release_id: impl Into<String>,
+        deployment_revision_id: impl Into<String>,
+    ) -> Self {
+        self.release_id = Some(release_id.into());
+        self.deployment_revision_id = Some(deployment_revision_id.into());
+        self
+    }
+
+    pub fn with_physical_plan_hash(mut self, physical_plan_hash: impl Into<String>) -> Self {
+        self.physical_plan_hash = Some(physical_plan_hash.into());
+        self
+    }
+
+    pub fn with_release_signature_digest(
+        mut self,
+        release_signature_digest: impl Into<String>,
+    ) -> Self {
+        self.release_signature_digest = Some(release_signature_digest.into());
+        self
+    }
+
     fn canonical_value(&self) -> Value {
         json!({
             "graph_hash": self.graph_hash,
+            "release_id": self.release_id,
+            "deployment_revision_id": self.deployment_revision_id,
+            "physical_plan_hash": self.physical_plan_hash,
+            "release_signature_digest": self.release_signature_digest,
             "started_at": self.started_at,
             "completed_at": self.completed_at,
             "runner": self.runner,

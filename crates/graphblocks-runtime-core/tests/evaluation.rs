@@ -256,6 +256,35 @@ fn result_bundle_digest_is_stable_without_record_identity() {
 }
 
 #[test]
+fn result_bundle_digest_includes_release_plan_and_signature_provenance() {
+    let base = RunProvenance::new("sha256:graph", "2026-06-22T00:00:00Z")
+        .with_release("release-1", "rev-1")
+        .with_physical_plan_hash("sha256:plan-1")
+        .with_release_signature_digest("sha256:signature-1");
+    let changed_signature = RunProvenance::new("sha256:graph", "2026-06-22T00:00:00Z")
+        .with_release("release-1", "rev-1")
+        .with_physical_plan_hash("sha256:plan-1")
+        .with_release_signature_digest("sha256:signature-2");
+    let changed_plan = RunProvenance::new("sha256:graph", "2026-06-22T00:00:00Z")
+        .with_release("release-1", "rev-1")
+        .with_physical_plan_hash("sha256:plan-2")
+        .with_release_signature_digest("sha256:signature-1");
+
+    let base_digest = ResultBundle::new("bundle-1", "run-1", "release-1")
+        .with_provenance(base)
+        .content_digest();
+    let changed_signature_digest = ResultBundle::new("bundle-2", "run-1", "release-1")
+        .with_provenance(changed_signature)
+        .content_digest();
+    let changed_plan_digest = ResultBundle::new("bundle-3", "run-1", "release-1")
+        .with_provenance(changed_plan)
+        .content_digest();
+
+    assert_ne!(base_digest, changed_signature_digest);
+    assert_ne!(base_digest, changed_plan_digest);
+}
+
+#[test]
 fn trial_result_carries_gate_and_outcome() {
     let base = ResourceSnapshotRef::new("base", "sha256:base");
     let candidate = ResourceSnapshotRef::new("candidate", "sha256:candidate");
