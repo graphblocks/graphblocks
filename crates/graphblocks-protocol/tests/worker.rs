@@ -4,7 +4,8 @@ use graphblocks_protocol::{
     BlockCapability, RunOwnershipLease, WORKER_PROTOCOL_VERSION, WorkerAdmissionPolicy,
     WorkerAdvertisement, WorkerInvocationContext, WorkerInvokeRequest, WorkerInvokeResult,
     WorkerProtocolError, WorkerResultError, WorkerSelectionError, WorkerState, admit_worker,
-    admit_worker_with_policy, select_worker_for_block, validate_worker_result,
+    admit_worker_with_policy, evaluate_worker_admission, select_worker_for_block,
+    validate_worker_result,
 };
 use serde_json::json;
 
@@ -74,6 +75,63 @@ fn worker_admission_rejects_incompatible_package_lock() {
             actual: "sha256:actual-package-lock".to_owned(),
         }),
     );
+}
+
+#[test]
+fn worker_admission_decision_reports_drain_and_missing_capability() -> Result<(), serde_json::Error>
+{
+    let advertisement = WorkerAdvertisement::new(
+        "worker-local-1",
+        "doc-cpu",
+        "sha256:package-lock",
+        "sha256:image",
+        [BlockCapability::new("prompt.render@1")],
+    )
+    .with_state(WorkerState::Draining);
+    let policy = WorkerAdmissionPolicy::current()
+        .require_package_lock_hash("sha256:package-lock")
+        .require_block("model.generate@1");
+
+    let decision = evaluate_worker_admission(&policy, &advertisement);
+
+    assert!(!decision.admitted);
+    assert_eq!(decision.worker_id, "worker-local-1");
+    assert_eq!(decision.target_id, "doc-cpu");
+    assert_eq!(decision.required_block.as_deref(), Some("model.generate@1"));
+    assert_eq!(
+        decision.reason_codes,
+        vec![
+            "worker.not_ready".to_owned(),
+            "worker.missing_required_block".to_owned(),
+        ],
+    );
+    let encoded = serde_json::to_value(&decision)?;
+    assert_eq!(
+        encoded["reasonCodes"],
+        json!(["worker.not_ready", "worker.missing_required_block"]),
+    );
+    assert_eq!(
+        serde_json::from_value::<graphblocks_protocol::WorkerAdmissionDecision>(encoded)?,
+        decision,
+    );
+    Ok(())
+}
+
+#[test]
+fn worker_admission_decision_allows_ready_matching_worker() {
+    let advertisement = WorkerAdvertisement::new(
+        "worker-local-1",
+        "doc-cpu",
+        "sha256:package-lock",
+        "sha256:image",
+        [BlockCapability::new("prompt.render@1")],
+    );
+    let policy = WorkerAdmissionPolicy::current().require_block("prompt.render@1");
+
+    let decision = evaluate_worker_admission(&policy, &advertisement);
+
+    assert!(decision.admitted);
+    assert!(decision.reason_codes.is_empty());
 }
 
 #[test]

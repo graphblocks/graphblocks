@@ -114,6 +114,10 @@ fn validate_worker_advertisement_json(
                 WorkerProtocolError::EmptySupportedBlocks => {
                     json!({"code": "worker.empty_supported_blocks"})
                 }
+                WorkerProtocolError::MissingRequiredBlock { required_block } => json!({
+                    "code": "worker.missing_required_block",
+                    "requiredBlock": required_block,
+                }),
             };
             json!({"ok": false, "error": error_payload})
         }

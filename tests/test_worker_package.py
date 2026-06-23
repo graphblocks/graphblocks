@@ -21,3 +21,10 @@ def test_worker_package_reexports_worker_protocol_contracts(monkeypatch) -> None
 
     assert graphblocks_worker.admit_worker(advertisement) is None
     assert graphblocks_worker.select_worker_for_block([advertisement], "prompt.render@1") == advertisement
+    assert (
+        graphblocks_worker.evaluate_worker_admission(
+            graphblocks_worker.WorkerAdmissionPolicy.current().require_block("prompt.render@1"),
+            advertisement,
+        ).admitted
+        is True
+    )

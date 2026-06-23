@@ -6,6 +6,7 @@ from graphblocks.worker import (
     WORKER_PROTOCOL_VERSION,
     BlockCapability,
     RunOwnershipLease,
+    WorkerAdmissionDecision,
     WorkerAdmissionPolicy,
     WorkerAdvertisement,
     WorkerIncompatiblePackageLockError,
@@ -18,6 +19,7 @@ from graphblocks.worker import (
     WorkerStaleLeaseEpochError,
     admit_worker,
     admit_worker_with_policy,
+    evaluate_worker_admission,
     select_worker_for_block,
     validate_worker_result,
 )
@@ -69,6 +71,50 @@ def test_worker_admission_rejects_version_and_package_lock_mismatch() -> None:
 
     assert package_error.value.expected == "sha256:expected-lock"
     assert package_error.value.actual == "sha256:actual-package-lock"
+
+
+def test_worker_admission_decision_reports_drain_and_missing_capability() -> None:
+    advertisement = WorkerAdvertisement.new(
+        "worker-local-1",
+        "doc-cpu",
+        "sha256:package-lock",
+        "sha256:image",
+        [BlockCapability("prompt.render@1")],
+    ).with_state("draining")
+    policy = (
+        WorkerAdmissionPolicy.current()
+        .require_package_lock_hash("sha256:package-lock")
+        .require_block("model.generate@1")
+    )
+
+    decision = evaluate_worker_admission(policy, advertisement)
+
+    assert decision.admitted is False
+    assert decision.worker_id == "worker-local-1"
+    assert decision.target_id == "doc-cpu"
+    assert decision.required_block == "model.generate@1"
+    assert decision.reason_codes == ("worker.not_ready", "worker.missing_required_block")
+    assert decision.to_wire()["reasonCodes"] == [
+        "worker.not_ready",
+        "worker.missing_required_block",
+    ]
+    assert WorkerAdmissionDecision.from_wire(decision.to_wire()) == decision
+
+
+def test_worker_admission_decision_allows_ready_matching_worker() -> None:
+    advertisement = WorkerAdvertisement.new(
+        "worker-local-1",
+        "doc-cpu",
+        "sha256:package-lock",
+        "sha256:image",
+        [BlockCapability("prompt.render@1")],
+    )
+    policy = WorkerAdmissionPolicy.current().require_block("prompt.render@1")
+
+    decision = evaluate_worker_admission(policy, advertisement)
+
+    assert decision.admitted is True
+    assert decision.reason_codes == ()
 
 
 def test_worker_selection_skips_draining_and_saturated_workers() -> None:

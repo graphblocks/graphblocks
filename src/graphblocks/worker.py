@@ -108,6 +108,7 @@ class WorkerAdvertisement:
 class WorkerAdmissionPolicy:
     protocol_version: int = WORKER_PROTOCOL_VERSION
     package_lock_hash: str | None = None
+    required_block: str | None = None
 
     @classmethod
     def current(cls) -> WorkerAdmissionPolicy:
@@ -115,6 +116,54 @@ class WorkerAdmissionPolicy:
 
     def require_package_lock_hash(self, package_lock_hash: str) -> WorkerAdmissionPolicy:
         return replace(self, package_lock_hash=package_lock_hash)
+
+    def require_block(self, block: str) -> WorkerAdmissionPolicy:
+        return replace(self, required_block=block)
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerAdmissionDecision:
+    admitted: bool
+    worker_id: str
+    target_id: str
+    protocol_version: int
+    package_lock_hash: str
+    state: WorkerState
+    reason_codes: tuple[str, ...] = ()
+    required_block: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "reason_codes", tuple(self.reason_codes))
+
+    def to_wire(self) -> dict[str, object]:
+        return {
+            "admitted": self.admitted,
+            "workerId": self.worker_id,
+            "targetId": self.target_id,
+            "protocolVersion": self.protocol_version,
+            "packageLockHash": self.package_lock_hash,
+            "state": self.state,
+            "reasonCodes": list(self.reason_codes),
+            "requiredBlock": self.required_block,
+        }
+
+    @classmethod
+    def from_wire(cls, payload: dict[str, object]) -> WorkerAdmissionDecision:
+        reason_codes = payload.get("reasonCodes", [])
+        if not isinstance(reason_codes, list):
+            reason_codes = []
+        return cls(
+            admitted=bool(payload["admitted"]),
+            worker_id=str(payload["workerId"]),
+            target_id=str(payload["targetId"]),
+            protocol_version=int(payload["protocolVersion"]),
+            package_lock_hash=str(payload["packageLockHash"]),
+            state=str(payload["state"]),
+            reason_codes=tuple(str(code) for code in reason_codes),
+            required_block=(
+                None if payload.get("requiredBlock") is None else str(payload.get("requiredBlock"))
+            ),
+        )
 
 
 class WorkerProtocolError(ValueError):
@@ -155,6 +204,12 @@ class WorkerEmptySupportedBlocksError(WorkerProtocolError):
     pass
 
 
+class WorkerMissingRequiredBlockError(WorkerProtocolError):
+    def __init__(self, required_block: str) -> None:
+        self.required_block = required_block
+        super().__init__(f"worker does not support required block {required_block!r}")
+
+
 def admit_worker(advertisement: WorkerAdvertisement) -> None:
     admit_worker_with_policy(WorkerAdmissionPolicy.current(), advertisement)
 
@@ -170,10 +225,57 @@ def admit_worker_with_policy(policy: WorkerAdmissionPolicy, advertisement: Worke
         raise WorkerEmptyPackageLockHashError("package_lock_hash must not be empty")
     if advertisement.image_digest == "":
         raise WorkerEmptyImageDigestError("image_digest must not be empty")
-    if policy.package_lock_hash is not None and advertisement.package_lock_hash != policy.package_lock_hash:
+    if (
+        policy.package_lock_hash is not None
+        and advertisement.package_lock_hash != policy.package_lock_hash
+    ):
         raise WorkerIncompatiblePackageLockError(policy.package_lock_hash, advertisement.package_lock_hash)
     if not advertisement.supported_blocks:
         raise WorkerEmptySupportedBlocksError("supported_blocks must not be empty")
+    if policy.required_block is not None and policy.required_block not in {
+        capability.block for capability in advertisement.supported_blocks
+    }:
+        raise WorkerMissingRequiredBlockError(policy.required_block)
+
+
+def evaluate_worker_admission(
+    policy: WorkerAdmissionPolicy,
+    advertisement: WorkerAdvertisement,
+) -> WorkerAdmissionDecision:
+    reason_codes: list[str] = []
+    if advertisement.protocol_version != policy.protocol_version:
+        reason_codes.append("worker.incompatible_protocol_version")
+    if advertisement.worker_id == "":
+        reason_codes.append("worker.empty_worker_id")
+    if advertisement.target_id == "":
+        reason_codes.append("worker.empty_target_id")
+    if advertisement.package_lock_hash == "":
+        reason_codes.append("worker.empty_package_lock_hash")
+    if advertisement.image_digest == "":
+        reason_codes.append("worker.empty_image_digest")
+    if (
+        policy.package_lock_hash is not None
+        and advertisement.package_lock_hash != policy.package_lock_hash
+    ):
+        reason_codes.append("worker.incompatible_package_lock")
+    if not advertisement.supported_blocks:
+        reason_codes.append("worker.empty_supported_blocks")
+    if advertisement.state != "ready":
+        reason_codes.append("worker.not_ready")
+    if policy.required_block is not None and policy.required_block not in {
+        capability.block for capability in advertisement.supported_blocks
+    }:
+        reason_codes.append("worker.missing_required_block")
+    return WorkerAdmissionDecision(
+        admitted=not reason_codes,
+        worker_id=advertisement.worker_id,
+        target_id=advertisement.target_id,
+        protocol_version=advertisement.protocol_version,
+        package_lock_hash=advertisement.package_lock_hash,
+        state=advertisement.state,
+        reason_codes=tuple(reason_codes),
+        required_block=policy.required_block,
+    )
 
 
 class WorkerSelectionError(ValueError):
@@ -407,6 +509,7 @@ __all__ = [
     "WORKER_PROTOCOL_VERSION",
     "BlockCapability",
     "RunOwnershipLease",
+    "WorkerAdmissionDecision",
     "WorkerAdmissionPolicy",
     "WorkerAdvertisement",
     "WorkerEmptyImageDigestError",
@@ -421,6 +524,7 @@ __all__ = [
     "WorkerInvokeResult",
     "WorkerMismatchedInvocationIdError",
     "WorkerMismatchedNodeAttemptError",
+    "WorkerMissingRequiredBlockError",
     "WorkerNoEligibleWorkerError",
     "WorkerProtocolError",
     "WorkerResultError",
@@ -429,6 +533,7 @@ __all__ = [
     "WorkerState",
     "admit_worker",
     "admit_worker_with_policy",
+    "evaluate_worker_admission",
     "select_worker_for_block",
     "validate_worker_result",
 ]

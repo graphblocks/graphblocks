@@ -90,6 +90,7 @@ pub enum WorkerState {
 pub struct WorkerAdmissionPolicy {
     pub protocol_version: u16,
     pub package_lock_hash: Option<String>,
+    pub required_block: Option<String>,
 }
 
 impl WorkerAdmissionPolicy {
@@ -97,6 +98,7 @@ impl WorkerAdmissionPolicy {
         Self {
             protocol_version: WORKER_PROTOCOL_VERSION,
             package_lock_hash: None,
+            required_block: None,
         }
     }
 
@@ -104,6 +106,24 @@ impl WorkerAdmissionPolicy {
         self.package_lock_hash = Some(package_lock_hash.into());
         self
     }
+
+    pub fn require_block(mut self, block: impl Into<String>) -> Self {
+        self.required_block = Some(block.into());
+        self
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkerAdmissionDecision {
+    pub admitted: bool,
+    pub worker_id: String,
+    pub target_id: String,
+    pub protocol_version: u16,
+    pub package_lock_hash: String,
+    pub state: WorkerState,
+    pub reason_codes: Vec<String>,
+    pub required_block: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -115,6 +135,7 @@ pub enum WorkerProtocolError {
     EmptyPackageLockHash,
     EmptyImageDigest,
     EmptySupportedBlocks,
+    MissingRequiredBlock { required_block: String },
 }
 
 pub fn admit_worker(advertisement: &WorkerAdvertisement) -> Result<(), WorkerProtocolError> {
@@ -154,7 +175,68 @@ pub fn admit_worker_with_policy(
     if advertisement.supported_blocks.is_empty() {
         return Err(WorkerProtocolError::EmptySupportedBlocks);
     }
+    if let Some(required_block) = &policy.required_block
+        && !advertisement
+            .supported_blocks
+            .iter()
+            .any(|capability| &capability.block == required_block)
+    {
+        return Err(WorkerProtocolError::MissingRequiredBlock {
+            required_block: required_block.clone(),
+        });
+    }
     Ok(())
+}
+
+pub fn evaluate_worker_admission(
+    policy: &WorkerAdmissionPolicy,
+    advertisement: &WorkerAdvertisement,
+) -> WorkerAdmissionDecision {
+    let mut reason_codes = Vec::new();
+    if advertisement.protocol_version != policy.protocol_version {
+        reason_codes.push("worker.incompatible_protocol_version".to_owned());
+    }
+    if advertisement.worker_id.is_empty() {
+        reason_codes.push("worker.empty_worker_id".to_owned());
+    }
+    if advertisement.target_id.is_empty() {
+        reason_codes.push("worker.empty_target_id".to_owned());
+    }
+    if advertisement.package_lock_hash.is_empty() {
+        reason_codes.push("worker.empty_package_lock_hash".to_owned());
+    }
+    if advertisement.image_digest.is_empty() {
+        reason_codes.push("worker.empty_image_digest".to_owned());
+    }
+    if let Some(expected_package_lock_hash) = &policy.package_lock_hash
+        && &advertisement.package_lock_hash != expected_package_lock_hash
+    {
+        reason_codes.push("worker.incompatible_package_lock".to_owned());
+    }
+    if advertisement.supported_blocks.is_empty() {
+        reason_codes.push("worker.empty_supported_blocks".to_owned());
+    }
+    if advertisement.state != WorkerState::Ready {
+        reason_codes.push("worker.not_ready".to_owned());
+    }
+    if let Some(required_block) = &policy.required_block
+        && !advertisement
+            .supported_blocks
+            .iter()
+            .any(|capability| &capability.block == required_block)
+    {
+        reason_codes.push("worker.missing_required_block".to_owned());
+    }
+    WorkerAdmissionDecision {
+        admitted: reason_codes.is_empty(),
+        worker_id: advertisement.worker_id.clone(),
+        target_id: advertisement.target_id.clone(),
+        protocol_version: advertisement.protocol_version,
+        package_lock_hash: advertisement.package_lock_hash.clone(),
+        state: advertisement.state,
+        reason_codes,
+        required_block: policy.required_block.clone(),
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
