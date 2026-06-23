@@ -124,3 +124,34 @@ def test_continuation_permit_must_match_atomic_unit_and_profile() -> None:
 
     assert controller.admit("declared_finalization", work_epoch=8, permit=wrong_profile).reason == "invalid_permit"
     assert controller.admit("declared_finalization", work_epoch=8, permit=wrong_unit).reason == "invalid_permit"
+
+
+def test_controller_level_continuation_permit_must_match_policy() -> None:
+    policy = ExhaustionPolicy.from_preset(
+        "finish_current_turn",
+        unit="turn",
+        continuation=ContinuationEnvelope(max_additional_usage=[_tokens("100")], max_additional_steps=1),
+    )
+    wrong_profile = BudgetPermit(
+        permit_id="permit-2",
+        reservation_refs=("reservation-1",),
+        owner=ResourceRef("worker:1"),
+        atomic_unit=ResourceRef("turn:1", resource_kind="turn"),
+        admission_epoch=7,
+        authorized_amounts=[_tokens("100")],
+        continuation_profile="hard_stop",
+        policy_snapshot_digest="sha256:policy",
+        expires_at="2026-06-22T01:00:00Z",
+        fencing_tokens={"budget-1": 1},
+    )
+    controller = ExhaustionController(
+        policy,
+        atomic_unit_id="turn:1",
+        admission_epoch=7,
+        continuation_permit=wrong_profile,
+    )
+
+    decision = controller.admit("declared_finalization", work_epoch=8)
+
+    assert decision.allowed is False
+    assert decision.reason == "invalid_permit"

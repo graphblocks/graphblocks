@@ -238,8 +238,12 @@ class ExhaustionController:
             return AdmissionDecision(False, "invalid_permit")
         if work_epoch > self.admission_epoch and work_kind not in {"declared_finalization", "checkpoint", "cleanup"}:
             return AdmissionDecision(False, "new_work_denied")
-        if work_epoch > self.admission_epoch and permit is None and self.continuation_permit is None:
-            return AdmissionDecision(False, "missing_continuation_permit")
+        if work_epoch > self.admission_epoch:
+            effective_permit = permit or self.continuation_permit
+            if effective_permit is None:
+                return AdmissionDecision(False, "missing_continuation_permit")
+            if not self._valid_permit(effective_permit):
+                return AdmissionDecision(False, "invalid_permit")
         if envelope.max_additional_steps is not None and self.used_additional_steps >= envelope.max_additional_steps:
             return AdmissionDecision(False, "max_additional_steps_exceeded")
         if work_epoch > self.admission_epoch:
