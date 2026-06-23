@@ -6,6 +6,7 @@ use crate::output_policy::{
     DraftDisposition, DurableResult, OutputCutoff, OutputDisposition, OutputPolicyDecision,
     TerminalReason,
 };
+use crate::tool_approval::ToolApprovalRequest;
 use crate::tool_result::{ToolEffectOutcome, ToolResult, ToolResultEvent, ToolResultStatus};
 use serde_json::{Value, json};
 
@@ -111,6 +112,29 @@ pub enum ApplicationEventError {
 }
 
 impl ApplicationEvent {
+    pub fn tool_approval_requested(
+        metadata: ApplicationEventMetadata,
+        request: &ToolApprovalRequest,
+    ) -> Result<Self, ApplicationEventError> {
+        Self::tool(
+            ApplicationEventKind::ToolCallApprovalRequested,
+            metadata,
+            &request.tool_call_id,
+            json!({
+                "approval_id": &request.approval_id,
+                "tool_name": &request.tool_name,
+                "revision": request.revision,
+                "definition_digest": &request.definition_digest,
+                "binding_digest": &request.binding_digest,
+                "arguments_digest": &request.arguments_digest,
+                "policy_snapshot_id": &request.policy_snapshot_id,
+                "principal_id": &request.principal_id,
+                "requested_at_unix_ms": request.requested_at_unix_ms,
+                "expires_at_unix_ms": request.expires_at_unix_ms,
+            }),
+        )
+    }
+
     pub fn tool_result_event(
         metadata: ApplicationEventMetadata,
         event: &ToolResultEvent,

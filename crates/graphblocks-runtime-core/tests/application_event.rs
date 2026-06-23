@@ -9,6 +9,12 @@ use graphblocks_runtime_core::output_policy::{
     DraftDisposition, DurableResult, GenerationChunk, OutputCutoff, OutputPolicyDecision,
     TerminalReason,
 };
+use graphblocks_runtime_core::tool::{
+    BlockToolImplementation, ToolBinding, ToolCatalog, ToolDefinition, ToolImplementation,
+    ToolResolutionScope,
+};
+use graphblocks_runtime_core::tool_approval::ToolApprovalRequest;
+use graphblocks_runtime_core::tool_call::ToolCallDraft;
 use graphblocks_runtime_core::tool_result::{ContentPart, ToolResult, ToolResultEvent};
 use serde_json::json;
 
@@ -136,6 +142,58 @@ fn non_tool_events_reject_tool_event_constructor() {
         ApplicationEventError::NotToolEvent {
             kind: ApplicationEventKind::OutputCutoff
         }
+    );
+}
+
+#[test]
+fn tool_approval_request_maps_to_standard_application_event() {
+    let catalog = ToolCatalog::new(
+        [ToolDefinition::new(
+            "ticket.create",
+            "Create a support ticket.",
+            "schemas/TicketCreate@1",
+        )],
+        [ToolBinding::new(
+            "binding-ticket",
+            "ticket.create",
+            ToolImplementation::Block(BlockToolImplementation::new("blocks.ticket.create")),
+        )],
+    )
+    .expect("catalog should be valid");
+    let resolved = catalog
+        .resolve(ToolResolutionScope::new(), "policy-snapshot-1")
+        .expect("tool should resolve")
+        .remove(0);
+    let mut draft = ToolCallDraft::proposed("response-1", "call-1", "ticket.create");
+    draft
+        .append_argument_fragment("{\"title\":\"Need help\"}")
+        .expect("argument fragment should append");
+    let call = draft
+        .into_completed_tool_call(resolved.resolved_tool_id.clone(), 1_000)
+        .expect("arguments should parse");
+    let approval =
+        ToolApprovalRequest::for_call("approval-1", &resolved, &call, "user-1", 1_100, 2_000)
+            .expect("approval request should be valid");
+
+    let event = ApplicationEvent::tool_approval_requested(metadata(), &approval)
+        .expect("approval request event should be valid");
+
+    assert_eq!(event.kind, ApplicationEventKind::ToolCallApprovalRequested);
+    assert_eq!(event.tool_call_id.as_deref(), Some("call-1"));
+    assert_eq!(
+        event.payload,
+        json!({
+            "approval_id": "approval-1",
+            "tool_name": "ticket.create",
+            "revision": 1,
+            "definition_digest": resolved.definition_digest,
+            "binding_digest": resolved.binding_digest,
+            "arguments_digest": call.arguments_digest,
+            "policy_snapshot_id": "policy-snapshot-1",
+            "principal_id": "user-1",
+            "requested_at_unix_ms": 1_100,
+            "expires_at_unix_ms": 2_000,
+        })
     );
 }
 

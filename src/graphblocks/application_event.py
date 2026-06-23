@@ -4,7 +4,7 @@ from dataclasses import dataclass, field, replace
 from typing import Literal
 
 from .output_policy import OutputCutoff, OutputPolicyDecision
-from .tools import ToolResult, ToolResultEvent
+from .tools import ToolApprovalRequest, ToolResult, ToolResultEvent
 
 
 ApplicationEventKind = Literal[
@@ -99,6 +99,30 @@ class ApplicationEvent:
     metadata: ApplicationEventMetadata
     payload: dict[str, object] = field(default_factory=dict)
     tool_call_id: str | None = None
+
+    @classmethod
+    def tool_approval_requested(
+        cls,
+        metadata: ApplicationEventMetadata,
+        request: ToolApprovalRequest,
+    ) -> ApplicationEvent:
+        return cls.tool(
+            "ToolCallApprovalRequested",
+            metadata,
+            tool_call_id=request.tool_call_id,
+            payload={
+                "approval_id": request.approval_id,
+                "tool_name": request.tool_name,
+                "revision": request.revision,
+                "definition_digest": request.definition_digest,
+                "binding_digest": request.binding_digest,
+                "arguments_digest": request.arguments_digest,
+                "policy_snapshot_id": request.policy_snapshot_id,
+                "principal_id": request.principal_id,
+                "requested_at": request.requested_at,
+                "expires_at": request.expires_at,
+            },
+        )
 
     @classmethod
     def tool_result_event(

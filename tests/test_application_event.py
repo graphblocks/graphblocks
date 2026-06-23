@@ -6,11 +6,18 @@ from graphblocks import (
     ApplicationEvent,
     ApplicationEventError,
     ApplicationEventMetadata,
+    BlockToolImplementation,
     ContentPart,
     OutputCutoff,
     OutputPolicyDecision,
     STANDARD_APPLICATION_EVENT_KINDS,
     TOOL_APPLICATION_EVENT_KINDS,
+    ToolApprovalRequest,
+    ToolBinding,
+    ToolCatalog,
+    ToolCallDraft,
+    ToolDefinition,
+    ToolResolutionScope,
     ToolResult,
     ToolResultEvent,
 )
@@ -95,6 +102,49 @@ def test_non_tool_events_reject_tool_event_constructor() -> None:
         )
 
     assert str(error.value) == "event OutputCutoff is not a tool event"
+
+
+def test_tool_approval_request_maps_to_standard_application_event() -> None:
+    catalog = ToolCatalog(
+        definitions=(
+            ToolDefinition("ticket.create", "Create a support ticket.", "schemas/TicketCreate@1"),
+        ),
+        bindings=(
+            ToolBinding("binding-ticket", "ticket.create", BlockToolImplementation("blocks.ticket.create")),
+        ),
+    )
+    resolved = catalog.resolve(ToolResolutionScope(), effective_policy_snapshot_id="policy-snapshot-1")[0]
+    call = (
+        ToolCallDraft.proposed("response-1", "call-1", "ticket.create")
+        .append_argument_fragment('{"title":"Need help"}')
+        .complete_arguments()
+        .into_tool_call(resolved.resolved_tool_id, created_at="2026-06-23T00:00:00Z")
+    )
+    approval = ToolApprovalRequest.for_call(
+        "approval-1",
+        resolved,
+        call,
+        principal_id="user-1",
+        requested_at=1_100,
+        expires_at=2_000,
+    )
+
+    event = ApplicationEvent.tool_approval_requested(_metadata(), approval)
+
+    assert event.kind == "ToolCallApprovalRequested"
+    assert event.tool_call_id == "call-1"
+    assert event.payload == {
+        "approval_id": "approval-1",
+        "tool_name": "ticket.create",
+        "revision": 1,
+        "definition_digest": resolved.definition_digest,
+        "binding_digest": resolved.binding_digest,
+        "arguments_digest": call.arguments_digest,
+        "policy_snapshot_id": "policy-snapshot-1",
+        "principal_id": "user-1",
+        "requested_at": 1_100,
+        "expires_at": 2_000,
+    }
 
 
 def test_output_policy_decision_event_maps_disposition_and_metadata_payload() -> None:
