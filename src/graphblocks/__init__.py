@@ -93,7 +93,6 @@ from .exhaustion import (
     ExhaustionPolicy,
     ExhaustionPolicyError,
     MissingExhaustionBoundaryError,
-    OutputCutoff,
     PartialOutputPolicy,
     validate_exhaustion_policy,
 )
@@ -111,6 +110,13 @@ from .plugins import (
     discover_plugins,
     load_plugin_manifest,
     validate_plugin_manifest,
+)
+from .output_policy import (
+    GenerationChunk,
+    OutputCutoff,
+    OutputDeliveryPolicy,
+    OutputDeliveryPolicyError,
+    OutputPolicyDecision,
 )
 from .policy import (
     EntitlementSnapshot,
@@ -261,6 +267,7 @@ __all__ = [
     "EvidenceRef",
     "GateConstraint",
     "GateResult",
+    "GenerationChunk",
     "GraphToolImplementation",
     "InProcessRuntime",
     "JournalStateError",
@@ -299,6 +306,9 @@ __all__ = [
     "MissingExhaustionBoundaryError",
     "OpenApiToolImplementation",
     "OutputCutoff",
+    "OutputDeliveryPolicy",
+    "OutputDeliveryPolicyError",
+    "OutputPolicyDecision",
     "PartialOutputPolicy",
     "StateConflictError",
     "StaticPolicyEvaluator",
