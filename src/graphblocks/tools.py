@@ -1043,7 +1043,7 @@ def validate_tool_result_for_model(
     result: ToolResult,
     resolved_tool: ResolvedTool,
     schema_registry: ToolSchemaRegistry,
-) -> None:
+) -> tuple[ContentPart, ...]:
     if result.tool_call_id != call.tool_call_id:
         raise ToolResultValidationError(
             f"tool result {result.tool_call_id} does not match tool call {call.tool_call_id}"
@@ -1051,17 +1051,24 @@ def validate_tool_result_for_model(
     if call.resolved_tool_id != resolved_tool.resolved_tool_id:
         raise ToolResultValidationError("tool call references a different resolved tool")
     if result.status != "completed":
-        return
+        return ()
 
     output_schema = resolved_tool.definition.output_schema
-    if output_schema is None:
-        return
-    json_outputs = tuple(part for part in result.output if part.kind == "json")
-    if not json_outputs:
-        raise ToolResultValidationError(f"tool result {result.tool_call_id} has no JSON output")
-    if len(json_outputs) > 1:
-        raise ToolResultValidationError(f"tool result {result.tool_call_id} has multiple JSON outputs")
-    schema_registry.validate(output_schema, json_outputs[0].data)
+    if output_schema is not None:
+        json_outputs = tuple(part for part in result.output if part.kind == "json")
+        if not json_outputs:
+            raise ToolResultValidationError(f"tool result {result.tool_call_id} has no JSON output")
+        if len(json_outputs) > 1:
+            raise ToolResultValidationError(f"tool result {result.tool_call_id} has multiple JSON outputs")
+        schema_registry.validate(output_schema, json_outputs[0].data)
+
+    model_output: list[ContentPart] = []
+    for part in result.output:
+        metadata = dict(part.metadata)
+        metadata.setdefault("trust_designation", "untrusted_external")
+        metadata.setdefault("prompt_injection_label", "untrusted_tool_output")
+        model_output.append(replace(part, metadata=metadata))
+    return tuple(model_output)
 
 
 def build_before_tool_or_effect_policy_request(

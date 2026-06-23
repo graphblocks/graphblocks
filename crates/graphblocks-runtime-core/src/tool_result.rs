@@ -453,6 +453,36 @@ impl ToolResultValidation {
                 },
             })
     }
+
+    pub fn prepare_for_model(
+        request: ToolResultValidationRequest<'_>,
+    ) -> Result<Vec<ContentPart>, ToolResultValidationError> {
+        Self::validate_for_model(ToolResultValidationRequest {
+            call: request.call,
+            result: request.result,
+            resolved_tool: request.resolved_tool,
+            schema_registry: request.schema_registry,
+        })?;
+        if request.result.status != ToolResultStatus::Completed {
+            return Ok(Vec::new());
+        }
+
+        Ok(request
+            .result
+            .output
+            .iter()
+            .cloned()
+            .map(|mut part| {
+                part.metadata
+                    .entry("trust_designation".to_string())
+                    .or_insert_with(|| json!("untrusted_external"));
+                part.metadata
+                    .entry("prompt_injection_label".to_string())
+                    .or_insert_with(|| json!("untrusted_tool_output"));
+                part
+            })
+            .collect())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
