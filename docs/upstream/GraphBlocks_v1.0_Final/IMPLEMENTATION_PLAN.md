@@ -120,6 +120,75 @@ Message
 - process shutdown 시 lease와 task가 남지 않는다.
 - Python callback이 존재해도 scheduler ownership은 Rust에 남는다.
 
+## 4.1 Amendment — Tool Execution and Policy-Governed Output Streaming (`GB-C1-TOOLS-OUTPUT`)
+
+이 amendment는 tool execution과 streaming output policy를 prompt, model behavior, application callback, optional graph node에 맡기지 않고 runtime semantics로 구현한다. Rust runtime 또는 우회 불가능한 trusted runtime adapter가 mandatory policy enforcement point를 소유한다.
+
+### 구현
+
+- `ToolDefinition`은 model-visible contract만 포함한다. credentials, transport config, provider SDK object, mutable implementation detail은 포함하지 않는다.
+- `ToolBinding`과 `ToolImplementation`은 block, graph, remote service, MCP server, OpenAPI operation 실행 방식을 분리해서 소유한다.
+- model invocation 전에 application/graph/principal/tenant/conversation/data-classification/deployment/budget intersection으로 `ResolvedTool` set을 생성하고 run provenance에 기록한다.
+- `ToolCallDraft`는 streaming argument fragment만 표현하며 side effect를 실행할 수 없다.
+- final `ToolCall`은 schema-valid immutable arguments와 `arguments_digest`를 가진다. argument mutation은 revision과 approval을 invalidation한다.
+- tool admission sequence는 resolve, JSON parse, input schema validation, `before_tool_or_effect` policy, budget/resource permit, approval, sandbox/target allocation, idempotency key, effect precondition, execution, result validation/redaction, usage/effect outcome 기록 순서로 고정한다.
+- `ToolResult`는 final durable result이고 incremental tool output은 draft projection으로만 취급한다.
+- `ToolExecutionPlan`은 parallelism, dependency failure policy, cancellation policy, effect serialization key를 명시한다. conflicting state-changing effects는 concurrently 실행하지 않는다.
+- `PolicyRequest.enforcement_point`에 `on_generation_chunk`, `before_client_delivery`, `before_output_commit`, `before_tool_or_effect`를 추가한다.
+- `OutputPolicyDecision`, `OutputDeliveryPolicy`, `OutputCutoff` schema와 terminal semantics를 canonical contract로 추가한다.
+- output delivery path는 `GenerationChunk` normalization → `on_generation_chunk` policy evaluation → policy holdback buffer → `before_client_delivery` → `ApplicationEventStream` → client 순서를 따른다.
+- `buffer_until_commit`, `bounded_holdback`, `immediate_draft` delivery mode를 지원한다. policy-sensitive streaming의 recommended default는 `bounded_holdback`이다.
+- `abort_response`는 local delivery cutoff를 즉시 수행하고 provider/worker cancellation은 cooperative request로 처리한다. local cutoff가 authoritative하다.
+- policy-aborted response는 assistant message나 tool result를 durable commit하지 않는다. safe replacement는 새 `response_id`를 사용한다.
+- pending tool call draft는 model output이므로 output policy pipeline을 통과해야 하며, aborted response의 non-admitted call은 denied 상태가 된다.
+- standard application events에 tool lifecycle events, output policy evaluation events, `OutputCutoff`, `AssistantIncomplete`, `AssistantRetracted`를 추가한다.
+
+### Package ownership
+
+- `graphblocks-core`: Python authoring/schema facade for `ToolDefinition`, `ToolCall`, `ToolResult`, `OutputPolicyDecision`, `OutputCutoff` schemas.
+- `graphblocks-runtime-core`: lifecycle state machines, policy holdback buffer, mandatory delivery cutoff, terminal-state enforcement, cancellation propagation.
+- `graphblocks-runtime-seq` and `graphblocks-runtime-durable`: sequential/durable execution of admitted tool calls, effect serialization, replay-safe terminal state.
+- `graphblocks-policy`: canonical policy requests, decisions, obligations, output-policy evaluator contract.
+- `graphblocks-agents`: `tools.resolve`, `agent.run`, `ToolExecutionPlan` orchestration semantics.
+- `graphblocks-mcp`: MCP tool adapter.
+- `graphblocks-openapi`: OpenAPI operation adapter.
+- `graphblocks-policy-opa` and `graphblocks-policy-cedar`: optional external PDP adapters.
+
+### 종료 기준
+
+- A tool cannot execute before arguments are complete and schema-valid.
+- Model output alone never authorizes a tool effect.
+- Approval is bound to immutable tool-call revision, definition digest, binding digest, argument digest, policy snapshot, principal, and expiration.
+- Retried state-changing tools preserve idempotency keys unless policy creates a new logical operation.
+- Tool output passes result validation and content policy before it is returned to a model.
+- Output policy enforcement occurs before mandatory client delivery.
+- Once a response reaches `POLICY_STOPPED`, no later delta can be delivered or committed.
+- Provider cancellation is cooperative; local delivery cutoff is authoritative.
+- Already-delivered draft is represented with `keep`, `mark_incomplete`, or `retract` semantics.
+- Aborted responses do not commit assistant messages.
+- Pending tool calls belonging to aborted responses are not admitted.
+- Running effects preserve atomicity, idempotency, audit, and compensation guarantees during cancellation.
+- Late provider/tool usage is reconciled in `UsageLedger`.
+- Mandatory policy enforcement cannot be bypassed by omitting a graph node.
+
+### Compiler and conformance diagnostics
+
+```text
+ToolBindingMissing
+ToolSchemaMissing
+ApprovalWithoutArgumentDigest
+UnsafeParallelEffects
+NonIdempotentRetry
+OutputPolicyBypass
+ImmediateDraftWithoutRetractionSupport
+PolicyGateAfterDelivery
+PendingToolCallAfterAbort
+CommitAfterPolicyStop
+UnboundedPolicyHoldback
+```
+
+Required TCK coverage includes incremental arguments not triggering execution, invalid arguments denied before admission, approval invalidated after argument mutation, independent reads running concurrently, conflicting writes serialized, policy abort denying pending tool calls, local delivery cutoff before late provider chunks, delayed chunks discarded after `OutputCutoff`, immediate draft producing incomplete/retracted events, `buffer_until_commit` exposing no rejected content, aborted responses not committing assistant messages, late usage reconciliation, and idempotency preservation across retry/cancellation.
+
 ## 5. Phase 2 — AI Core Profiles (`GB-C2-AI-APPLICATION`)
 
 ### Documents
