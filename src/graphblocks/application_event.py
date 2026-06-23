@@ -4,6 +4,7 @@ from dataclasses import dataclass, field, replace
 from typing import Literal
 
 from .output_policy import OutputCutoff, OutputPolicyDecision
+from .policy import PolicyDecision
 from .tools import ToolApprovalRequest, ToolCall, ToolCallDraft, ToolResult, ToolResultEvent
 
 
@@ -170,6 +171,35 @@ class ApplicationEvent:
                 "created_at": call.created_at,
                 "admitted_at": call.admitted_at,
                 "completed_at": call.completed_at,
+            },
+        )
+
+    @classmethod
+    def tool_call_policy_evaluated(
+        cls,
+        metadata: ApplicationEventMetadata,
+        call: ToolCall,
+        decision: PolicyDecision,
+    ) -> ApplicationEvent:
+        return cls.tool(
+            "ToolCallPolicyEvaluated",
+            metadata,
+            tool_call_id=call.tool_call_id,
+            payload={
+                "tool_name": call.name,
+                "resolved_tool_id": call.resolved_tool_id,
+                "status": call.status,
+                "arguments_digest": call.arguments_digest,
+                "revision": call.revision,
+                "decision_id": decision.decision_id,
+                "effect": decision.effect,
+                "reason_codes": list(decision.reason_codes),
+                "policy_refs": list(decision.policy_refs),
+                "obligation_count": len(decision.obligations),
+                "advice_count": len(decision.advice),
+                "evaluated_at": decision.evaluated_at,
+                "valid_until": decision.valid_until,
+                "input_digest": decision.input_digest,
             },
         )
 

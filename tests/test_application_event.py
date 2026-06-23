@@ -10,6 +10,7 @@ from graphblocks import (
     ContentPart,
     OutputCutoff,
     OutputPolicyDecision,
+    PolicyDecision,
     STANDARD_APPLICATION_EVENT_KINDS,
     TOOL_APPLICATION_EVENT_KINDS,
     ToolApprovalRequest,
@@ -212,6 +213,46 @@ def test_final_tool_calls_map_to_validated_and_admitted_application_events() -> 
         "created_at": "2026-06-23T00:00:00Z",
         "admitted_at": "2026-06-23T00:00:01Z",
         "completed_at": None,
+    }
+
+
+def test_tool_policy_decisions_map_to_policy_evaluated_application_events() -> None:
+    call = (
+        ToolCallDraft.proposed("response-1", "call-1", "knowledge.search")
+        .append_argument_fragment('{"query":"runtime"}')
+        .complete_arguments()
+        .into_tool_call("resolved-tool-1", created_at="2026-06-23T00:00:00Z")
+    )
+    decision = PolicyDecision(
+        decision_id="decision-1",
+        effect="deny",
+        reason_codes=["tool.denied"],
+        policy_refs=["policy/tool-safety"],
+        advice=[{"message": "tool denied"}],
+        evaluated_at="2026-06-23T00:00:01Z",
+        valid_until="2026-06-23T00:05:01Z",
+        input_digest="sha256:policy-input",
+    )
+
+    event = ApplicationEvent.tool_call_policy_evaluated(_metadata(), call, decision)
+
+    assert event.kind == "ToolCallPolicyEvaluated"
+    assert event.tool_call_id == "call-1"
+    assert event.payload == {
+        "tool_name": "knowledge.search",
+        "resolved_tool_id": "resolved-tool-1",
+        "status": "validated",
+        "arguments_digest": call.arguments_digest,
+        "revision": 1,
+        "decision_id": "decision-1",
+        "effect": "deny",
+        "reason_codes": ["tool.denied"],
+        "policy_refs": ["policy/tool-safety"],
+        "obligation_count": 0,
+        "advice_count": 1,
+        "evaluated_at": "2026-06-23T00:00:01Z",
+        "valid_until": "2026-06-23T00:05:01Z",
+        "input_digest": "sha256:policy-input",
     }
 
 

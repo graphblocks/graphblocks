@@ -9,6 +9,7 @@ use graphblocks_runtime_core::output_policy::{
     DraftDisposition, DurableResult, GenerationChunk, OutputCutoff, OutputPolicyDecision,
     TerminalReason,
 };
+use graphblocks_runtime_core::policy::{PolicyDecision, PolicyEffect};
 use graphblocks_runtime_core::tool::{
     BlockToolImplementation, ToolBinding, ToolCatalog, ToolDefinition, ToolImplementation,
     ToolResolutionScope,
@@ -273,6 +274,53 @@ fn final_tool_calls_map_to_validated_and_admitted_application_events() {
             "created_at_unix_ms": 1_000,
             "admitted_at_unix_ms": 1_100,
             "completed_at_unix_ms": null,
+        })
+    );
+}
+
+#[test]
+fn tool_policy_decisions_map_to_policy_evaluated_application_events() {
+    let mut draft = ToolCallDraft::proposed("response-1", "call-1", "knowledge.search");
+    draft
+        .append_argument_fragment("{\"query\":\"runtime\"}")
+        .expect("argument fragment should append");
+    let call = draft
+        .into_completed_tool_call("resolved-tool-1", 1_000)
+        .expect("arguments should parse");
+    let decision = PolicyDecision {
+        decision_id: "decision-1".to_string(),
+        effect: PolicyEffect::Deny,
+        reason_codes: vec!["tool.denied".to_string()],
+        policy_refs: vec!["policy/tool-safety".to_string()],
+        obligations: Vec::new(),
+        advice: vec![json!({"message": "tool denied"})],
+        evaluated_at: "2026-06-23T00:00:01Z".to_string(),
+        valid_until: Some("2026-06-23T00:05:01Z".to_string()),
+        input_digest: "sha256:policy-input".to_string(),
+    };
+
+    let event = ApplicationEvent::tool_call_policy_evaluated(metadata(), &call, &decision)
+        .expect("policy evaluation event should be valid");
+
+    assert_eq!(event.kind, ApplicationEventKind::ToolCallPolicyEvaluated);
+    assert_eq!(event.tool_call_id.as_deref(), Some("call-1"));
+    assert_eq!(
+        event.payload,
+        json!({
+            "tool_name": "knowledge.search",
+            "resolved_tool_id": "resolved-tool-1",
+            "status": "validated",
+            "arguments_digest": call.arguments_digest,
+            "revision": 1,
+            "decision_id": "decision-1",
+            "effect": "deny",
+            "reason_codes": ["tool.denied"],
+            "policy_refs": ["policy/tool-safety"],
+            "obligation_count": 0,
+            "advice_count": 1,
+            "evaluated_at": "2026-06-23T00:00:01Z",
+            "valid_until": "2026-06-23T00:05:01Z",
+            "input_digest": "sha256:policy-input",
         })
     );
 }

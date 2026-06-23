@@ -6,6 +6,7 @@ use crate::output_policy::{
     DraftDisposition, DurableResult, OutputCutoff, OutputDisposition, OutputPolicyDecision,
     TerminalReason,
 };
+use crate::policy::PolicyDecision;
 use crate::tool_approval::ToolApprovalRequest;
 use crate::tool_call::{ToolCall, ToolCallDraft, ToolCallDraftStatus, ToolCallStatus};
 use crate::tool_result::{ToolEffectOutcome, ToolResult, ToolResultEvent, ToolResultStatus};
@@ -206,6 +207,34 @@ impl ApplicationEvent {
             ToolCallStatus::PolicyStopped => "policy_stopped",
             ToolCallStatus::Expired => "expired",
         }
+    }
+
+    pub fn tool_call_policy_evaluated(
+        metadata: ApplicationEventMetadata,
+        call: &ToolCall,
+        decision: &PolicyDecision,
+    ) -> Result<Self, ApplicationEventError> {
+        Self::tool(
+            ApplicationEventKind::ToolCallPolicyEvaluated,
+            metadata,
+            &call.tool_call_id,
+            json!({
+                "tool_name": &call.name,
+                "resolved_tool_id": &call.resolved_tool_id,
+                "status": Self::tool_call_status(call.status),
+                "arguments_digest": &call.arguments_digest,
+                "revision": call.revision,
+                "decision_id": &decision.decision_id,
+                "effect": decision.effect.as_str(),
+                "reason_codes": &decision.reason_codes,
+                "policy_refs": &decision.policy_refs,
+                "obligation_count": decision.obligations.len(),
+                "advice_count": decision.advice.len(),
+                "evaluated_at": &decision.evaluated_at,
+                "valid_until": &decision.valid_until,
+                "input_digest": &decision.input_digest,
+            }),
+        )
     }
 
     pub fn tool_approval_requested(
