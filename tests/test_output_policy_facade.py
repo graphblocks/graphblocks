@@ -93,6 +93,9 @@ def test_output_policy_contract_rejects_unknown_literals() -> None:
     with pytest.raises(ValueError, match="invalid output disposition stream"):
         OutputPolicyDecision("decision-1", disposition="stream")
 
+    with pytest.raises(ValueError, match="output policy decisions require an input digest"):
+        OutputPolicyDecision("decision-1", disposition="allow")
+
     with pytest.raises(ValueError, match="invalid provider cancellation force"):
         OutputPolicyDecision.abort_response("decision-1", input_digest="sha256:input").with_provider_cancellation(
             "force"

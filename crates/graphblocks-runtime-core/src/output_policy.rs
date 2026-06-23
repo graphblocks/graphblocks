@@ -483,6 +483,9 @@ pub enum OutputGateError {
     InvalidRedactionInstruction {
         path: String,
     },
+    MissingInputDigest {
+        decision_id: String,
+    },
     PolicyStopped,
 }
 
@@ -618,6 +621,11 @@ impl OutputDeliveryGate {
     ) -> Result<OutputGateUpdate, OutputGateError> {
         if self.stopped.is_some() {
             return Err(OutputGateError::PolicyStopped);
+        }
+        if decision.input_digest.trim().is_empty() {
+            return Err(OutputGateError::MissingInputDigest {
+                decision_id: decision.decision_id,
+            });
         }
 
         match decision.disposition {

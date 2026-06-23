@@ -93,6 +93,8 @@ class OutputPolicyDecision:
             raise ValueError(f"invalid draft disposition {self.draft_disposition}")
         if self.pending_tool_calls not in VALID_PENDING_TOOL_CALLS_DISPOSITIONS:
             raise ValueError(f"invalid pending tool calls disposition {self.pending_tool_calls}")
+        if not self.input_digest.strip():
+            raise ValueError("output policy decisions require an input digest")
         object.__setattr__(self, "replacement_parts", tuple(self.replacement_parts))
         object.__setattr__(
             self,
