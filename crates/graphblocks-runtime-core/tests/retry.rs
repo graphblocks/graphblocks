@@ -1,6 +1,7 @@
 use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory};
 use graphblocks_runtime_core::retry::{
-    Backoff, EffectKind, PartialOutputPolicy, RetryDecision, RetryPolicy, RetryRequest,
+    Backoff, EffectKind, PartialOutputPolicy, ProviderLimitDecision, ProviderLimitIncident,
+    ProviderLimitKind, ProviderLimitPolicy, RetryDecision, RetryPolicy, RetryRequest,
 };
 
 fn error(category: ErrorCategory, retryable: bool) -> BlockError {
@@ -105,5 +106,61 @@ fn provider_quota_retry_respects_retry_after() {
     assert_eq!(
         policy.decide(&request),
         RetryDecision::Retry { delay_ms: 1_500 },
+    );
+}
+
+#[test]
+fn provider_limit_policy_does_not_retry_internal_graphblocks_quota_denial() {
+    let policy = ProviderLimitPolicy::new();
+    let incident = ProviderLimitIncident::new(ProviderLimitKind::GraphBlocksQuotaExceeded)
+        .with_retry_after_ms(1_000)
+        .with_fallback("openai-compatible:gpt-economy");
+
+    assert_eq!(
+        policy.decide(&incident),
+        ProviderLimitDecision::Fail {
+            reason: "graphblocks_quota_exceeded",
+        },
+    );
+}
+
+#[test]
+fn provider_limit_policy_honors_provider_retry_after_before_fallback() {
+    let policy = ProviderLimitPolicy::new().with_fallback_enabled(true);
+    let incident = ProviderLimitIncident::new(ProviderLimitKind::ProviderQuotaExceeded)
+        .with_retry_after_ms(2_500)
+        .with_fallback("openai-compatible:gpt-economy");
+
+    assert_eq!(
+        policy.decide(&incident),
+        ProviderLimitDecision::RetryAfter { delay_ms: 2_500 },
+    );
+}
+
+#[test]
+fn provider_limit_policy_selects_compatible_fallback_with_policy_recheck() {
+    let policy = ProviderLimitPolicy::new().with_fallback_enabled(true);
+    let incident = ProviderLimitIncident::new(ProviderLimitKind::ProviderQuotaExceeded)
+        .with_fallback("openai-compatible:gpt-economy");
+
+    assert_eq!(
+        policy.decide(&incident),
+        ProviderLimitDecision::Fallback {
+            target: "openai-compatible:gpt-economy".to_owned(),
+            requires_policy_recheck: true,
+        },
+    );
+}
+
+#[test]
+fn provider_limit_policy_pauses_for_capacity_when_queueing_is_allowed() {
+    let policy = ProviderLimitPolicy::new().with_queue_enabled(true);
+    let incident = ProviderLimitIncident::new(ProviderLimitKind::CapacityUnavailable);
+
+    assert_eq!(
+        policy.decide(&incident),
+        ProviderLimitDecision::Pause {
+            reason: "capacity_unavailable",
+        },
     );
 }

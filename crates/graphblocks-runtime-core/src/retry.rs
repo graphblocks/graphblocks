@@ -27,6 +27,141 @@ pub enum RetryDecision {
     Stop { reason: &'static str },
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProviderLimitKind {
+    GraphBlocksQuotaExceeded,
+    ProviderQuotaExceeded,
+    CapacityUnavailable,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProviderLimitIncident {
+    pub kind: ProviderLimitKind,
+    pub retry_after_ms: Option<u64>,
+    pub compatible_fallbacks: Vec<String>,
+    pub credential_or_topup_available: bool,
+}
+
+impl ProviderLimitIncident {
+    pub fn new(kind: ProviderLimitKind) -> Self {
+        Self {
+            kind,
+            retry_after_ms: None,
+            compatible_fallbacks: Vec::new(),
+            credential_or_topup_available: false,
+        }
+    }
+
+    pub fn with_retry_after_ms(mut self, retry_after_ms: u64) -> Self {
+        self.retry_after_ms = Some(retry_after_ms);
+        self
+    }
+
+    pub fn with_fallback(mut self, target: impl Into<String>) -> Self {
+        self.compatible_fallbacks.push(target.into());
+        self
+    }
+
+    pub fn with_credential_or_topup_available(mut self) -> Self {
+        self.credential_or_topup_available = true;
+        self
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProviderLimitDecision {
+    RetryAfter {
+        delay_ms: u64,
+    },
+    Fallback {
+        target: String,
+        requires_policy_recheck: bool,
+    },
+    Pause {
+        reason: &'static str,
+    },
+    RequestCredentialOrTopup,
+    Fail {
+        reason: &'static str,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProviderLimitPolicy {
+    fallback_enabled: bool,
+    queue_enabled: bool,
+    credential_or_topup_enabled: bool,
+}
+
+impl ProviderLimitPolicy {
+    pub fn new() -> Self {
+        Self {
+            fallback_enabled: false,
+            queue_enabled: false,
+            credential_or_topup_enabled: false,
+        }
+    }
+
+    pub fn with_fallback_enabled(mut self, enabled: bool) -> Self {
+        self.fallback_enabled = enabled;
+        self
+    }
+
+    pub fn with_queue_enabled(mut self, enabled: bool) -> Self {
+        self.queue_enabled = enabled;
+        self
+    }
+
+    pub fn with_credential_or_topup_enabled(mut self, enabled: bool) -> Self {
+        self.credential_or_topup_enabled = enabled;
+        self
+    }
+
+    pub fn decide(&self, incident: &ProviderLimitIncident) -> ProviderLimitDecision {
+        match incident.kind {
+            ProviderLimitKind::GraphBlocksQuotaExceeded => ProviderLimitDecision::Fail {
+                reason: "graphblocks_quota_exceeded",
+            },
+            ProviderLimitKind::ProviderQuotaExceeded => {
+                if let Some(delay_ms) = incident.retry_after_ms {
+                    return ProviderLimitDecision::RetryAfter { delay_ms };
+                }
+                if self.fallback_enabled
+                    && let Some(target) = incident.compatible_fallbacks.first()
+                {
+                    return ProviderLimitDecision::Fallback {
+                        target: target.clone(),
+                        requires_policy_recheck: true,
+                    };
+                }
+                if self.credential_or_topup_enabled && incident.credential_or_topup_available {
+                    return ProviderLimitDecision::RequestCredentialOrTopup;
+                }
+                ProviderLimitDecision::Fail {
+                    reason: "provider_quota_exceeded",
+                }
+            }
+            ProviderLimitKind::CapacityUnavailable => {
+                if self.queue_enabled {
+                    ProviderLimitDecision::Pause {
+                        reason: "capacity_unavailable",
+                    }
+                } else {
+                    ProviderLimitDecision::Fail {
+                        reason: "capacity_unavailable",
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl Default for ProviderLimitPolicy {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RetryPolicy {
     max_attempts: u32,
