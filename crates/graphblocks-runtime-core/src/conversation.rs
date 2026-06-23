@@ -3,6 +3,7 @@ use std::error::Error;
 use std::fmt;
 
 use serde_json::Value;
+use serde_json::json;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MessageRole {
@@ -124,6 +125,38 @@ pub struct ConversationSnapshot {
     pub revision: u64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BranchRequest {
+    pub conversation_id: String,
+    pub from_message_id: String,
+    pub new_conversation_id: Option<String>,
+    pub include_attachments: bool,
+    pub include_memory: bool,
+}
+
+impl BranchRequest {
+    pub fn new(conversation_id: impl Into<String>, from_message_id: impl Into<String>) -> Self {
+        Self {
+            conversation_id: conversation_id.into(),
+            from_message_id: from_message_id.into(),
+            new_conversation_id: None,
+            include_attachments: true,
+            include_memory: false,
+        }
+    }
+
+    pub fn with_new_conversation_id(mut self, conversation_id: impl Into<String>) -> Self {
+        self.new_conversation_id = Some(conversation_id.into());
+        self
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DeletePolicy {
+    Tombstone,
+    Hard,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TurnStatus {
     Created,
@@ -218,6 +251,38 @@ impl fmt::Display for ConversationError {
 }
 
 impl Error for ConversationError {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MessageError {
+    Conversation(ConversationError),
+    NotFound { message_id: String },
+}
+
+impl fmt::Display for MessageError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Conversation(error) => error.fmt(formatter),
+            Self::NotFound { message_id } => {
+                write!(formatter, "message {message_id:?} does not exist")
+            }
+        }
+    }
+}
+
+impl Error for MessageError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Conversation(error) => Some(error),
+            Self::NotFound { .. } => None,
+        }
+    }
+}
+
+impl From<ConversationError> for MessageError {
+    fn from(error: ConversationError) -> Self {
+        Self::Conversation(error)
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TurnError {
@@ -477,5 +542,97 @@ impl InMemoryConversationStore {
         turn.committed_revision = None;
         turn.committed_message_ids.clear();
         Ok(turn.clone())
+    }
+
+    pub fn branch(&mut self, request: BranchRequest) -> Result<Conversation, MessageError> {
+        let conversation = self
+            .conversations
+            .get(&request.conversation_id)
+            .ok_or_else(|| ConversationError::NotFound {
+                conversation_id: request.conversation_id.clone(),
+            })?;
+        let source_index = conversation
+            .messages
+            .iter()
+            .position(|message| message.message_id == request.from_message_id)
+            .ok_or_else(|| MessageError::NotFound {
+                message_id: request.from_message_id.clone(),
+            })?;
+        let branch_id = request.new_conversation_id.clone().unwrap_or_else(|| {
+            format!(
+                "{}:branch:{}",
+                request.conversation_id, request.from_message_id
+            )
+        });
+        if self.conversations.contains_key(&branch_id) {
+            return Err(ConversationError::AlreadyExists {
+                conversation_id: branch_id,
+            }
+            .into());
+        }
+
+        let mut metadata = BTreeMap::new();
+        metadata.insert("source_revision".to_owned(), json!(conversation.revision));
+        metadata.insert(
+            "include_attachments".to_owned(),
+            json!(request.include_attachments),
+        );
+        metadata.insert("include_memory".to_owned(), json!(request.include_memory));
+        let branch = Conversation {
+            conversation_id: branch_id.clone(),
+            messages: conversation.messages[..=source_index].to_vec(),
+            revision: 0,
+            archived: false,
+            branch_of: Some(conversation.conversation_id.clone()),
+            branched_from_message_id: Some(request.from_message_id),
+            metadata,
+        };
+        self.conversations.insert(branch_id, branch.clone());
+        Ok(branch)
+    }
+
+    pub fn archive(&mut self, conversation_id: impl AsRef<str>) -> Result<u64, ConversationError> {
+        let conversation_id = conversation_id.as_ref();
+        let conversation = self.conversations.get_mut(conversation_id).ok_or_else(|| {
+            ConversationError::NotFound {
+                conversation_id: conversation_id.to_owned(),
+            }
+        })?;
+        conversation.archived = true;
+        conversation.revision += 1;
+        Ok(conversation.revision)
+    }
+
+    pub fn delete(
+        &mut self,
+        conversation_id: impl AsRef<str>,
+        policy: DeletePolicy,
+    ) -> Result<Option<u64>, ConversationError> {
+        let conversation_id = conversation_id.as_ref();
+        match policy {
+            DeletePolicy::Hard => {
+                if self.conversations.remove(conversation_id).is_none() {
+                    return Err(ConversationError::NotFound {
+                        conversation_id: conversation_id.to_owned(),
+                    });
+                }
+                Ok(None)
+            }
+            DeletePolicy::Tombstone => {
+                let conversation =
+                    self.conversations.get_mut(conversation_id).ok_or_else(|| {
+                        ConversationError::NotFound {
+                            conversation_id: conversation_id.to_owned(),
+                        }
+                    })?;
+                conversation.messages.clear();
+                conversation.archived = true;
+                conversation.revision += 1;
+                conversation
+                    .metadata
+                    .insert("deleted".to_owned(), json!(true));
+                Ok(Some(conversation.revision))
+            }
+        }
     }
 }

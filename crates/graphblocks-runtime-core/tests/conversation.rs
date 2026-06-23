@@ -1,7 +1,9 @@
 use graphblocks_runtime_core::conversation::{
-    ContentPart, Conversation, ConversationError, InMemoryConversationStore, Message, MessageRole,
-    MessageStatus, TurnError, TurnStatus,
+    BranchRequest, ContentPart, Conversation, ConversationError, DeletePolicy,
+    InMemoryConversationStore, Message, MessageError, MessageRole, MessageStatus, TurnError,
+    TurnStatus,
 };
+use serde_json::json;
 
 fn assistant_message(message_id: &str, text: &str) -> Message {
     Message::new(message_id, MessageRole::Assistant).with_part(ContentPart::text(text))
@@ -105,6 +107,89 @@ fn begin_turn_rejects_stale_revision_and_duplicate_turn_id()
         Err(TurnError::AlreadyExists {
             turn_id: "turn-1".to_owned()
         }),
+    );
+    Ok(())
+}
+
+#[test]
+fn branch_preserves_lineage_and_copies_messages_through_source_message()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut store = InMemoryConversationStore::new();
+    store.create(Conversation::new("conv-1"))?;
+    store.append_messages(
+        "conv-1",
+        0,
+        [
+            Message::new("msg-user", MessageRole::User),
+            assistant_message("msg-assistant", "policy summary"),
+        ],
+    )?;
+
+    let branch = store
+        .branch(BranchRequest::new("conv-1", "msg-user").with_new_conversation_id("conv-2"))?;
+
+    assert_eq!(branch.conversation_id, "conv-2");
+    assert_eq!(branch.branch_of.as_deref(), Some("conv-1"));
+    assert_eq!(branch.branched_from_message_id.as_deref(), Some("msg-user"));
+    assert_eq!(branch.revision, 0);
+    assert_eq!(branch.messages.len(), 1);
+    assert_eq!(branch.messages[0].message_id, "msg-user");
+    assert_eq!(branch.metadata.get("source_revision"), Some(&json!(1)));
+
+    assert_eq!(
+        store.branch(BranchRequest::new("conv-1", "missing")),
+        Err(MessageError::NotFound {
+            message_id: "missing".to_owned()
+        }),
+    );
+    Ok(())
+}
+
+#[test]
+fn archive_prevents_later_appends() -> Result<(), Box<dyn std::error::Error>> {
+    let mut store = InMemoryConversationStore::new();
+    store.create(Conversation::new("conv-1"))?;
+
+    assert_eq!(store.archive("conv-1")?, 1);
+    assert!(store.get("conv-1")?.conversation.archived);
+    assert_eq!(
+        store.append_messages("conv-1", 1, [Message::new("msg-1", MessageRole::User)]),
+        Err(ConversationError::Archived {
+            conversation_id: "conv-1".to_owned(),
+        }),
+    );
+    Ok(())
+}
+
+#[test]
+fn delete_hard_removes_conversation() -> Result<(), Box<dyn std::error::Error>> {
+    let mut store = InMemoryConversationStore::new();
+    store.create(Conversation::new("conv-1"))?;
+
+    assert_eq!(store.delete("conv-1", DeletePolicy::Hard)?, None);
+    assert_eq!(
+        store.get("conv-1"),
+        Err(ConversationError::NotFound {
+            conversation_id: "conv-1".to_owned(),
+        }),
+    );
+    Ok(())
+}
+
+#[test]
+fn delete_tombstone_retains_empty_archived_conversation() -> Result<(), Box<dyn std::error::Error>>
+{
+    let mut store = InMemoryConversationStore::new();
+    store.create(Conversation::new("conv-1"))?;
+
+    assert_eq!(store.delete("conv-1", DeletePolicy::Tombstone)?, Some(1));
+    let snapshot = store.get("conv-1")?;
+
+    assert!(snapshot.conversation.archived);
+    assert!(snapshot.conversation.messages.is_empty());
+    assert_eq!(
+        snapshot.conversation.metadata.get("deleted"),
+        Some(&json!(true))
     );
     Ok(())
 }
