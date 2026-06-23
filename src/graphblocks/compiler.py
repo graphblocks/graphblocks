@@ -387,6 +387,8 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
             if block_catalog is not None:
                 source_type = None
                 target_type = None
+                source_required = None
+                target_required = None
                 source_owner, _, source_path = source.partition(".")
                 target_owner, _, target_path = target.partition(".")
                 if source_owner not in PSEUDO_NODES and source_owner in normalized_nodes and source_path:
@@ -405,7 +407,9 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                                     )
                                 )
                             else:
-                                source_type = output_ports[port_name].type_ref
+                                source_port = output_ports[port_name]
+                                source_type = source_port.type_ref
+                                source_required = source_port.required
                 if target_owner not in PSEUDO_NODES and target_owner in normalized_nodes and target_path:
                     target_node = normalized_nodes[target_owner]
                     if isinstance(target_node, dict):
@@ -423,12 +427,22 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                                     )
                                 )
                             else:
-                                target_type = input_ports[port_name].type_ref
+                                target_port = input_ports[port_name]
+                                target_type = target_port.type_ref
+                                target_required = target_port.required
                 if source_type and target_type and source_type != "Any" and target_type != "Any" and source_type != target_type:
                     diagnostics.append(
                         Diagnostic(
                             "GB1018",
                             f"port type mismatch: {source_type} cannot feed {target_type}",
+                            f"$.spec.edges[{index}]",
+                        )
+                    )
+                if source_required is False and target_required is True:
+                    diagnostics.append(
+                        Diagnostic(
+                            "GB1015",
+                            "optional branch output cannot feed required input",
                             f"$.spec.edges[{index}]",
                         )
                     )

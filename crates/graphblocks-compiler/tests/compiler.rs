@@ -301,6 +301,50 @@ fn compile_graph_rejects_catalog_port_type_mismatch() -> Result<(), String> {
 }
 
 #[test]
+fn compile_graph_rejects_optional_output_to_required_input() -> Result<(), String> {
+    let catalog = BlockCatalog::from_blocks(&json!([
+        {
+            "typeId": "branch.maybe_text",
+            "version": 1,
+            "outputs": [
+                {"name": "value", "type": "graphblocks.ai/Text@1", "required": false}
+            ]
+        },
+        {
+            "typeId": "text.sink",
+            "version": 1,
+            "inputs": [
+                {"name": "text", "type": "graphblocks.ai/Text@1", "required": true}
+            ]
+        }
+    ]))?;
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "optional-output-required-input"},
+        "spec": {
+            "nodes": {
+                "maybe": {"block": "branch.maybe_text@1"},
+                "sink": {"block": "text.sink@1"}
+            },
+            "edges": [{"from": "maybe.value", "to": "sink.text"}]
+        }
+    });
+
+    let plan = compile_graph_with_catalog(&graph, &catalog);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["GB1015"]
+    );
+    Ok(())
+}
+
+#[test]
 fn compile_graph_rejects_missing_required_resource_slot_binding() -> Result<(), String> {
     let catalog = BlockCatalog::from_blocks(&json!([
         {

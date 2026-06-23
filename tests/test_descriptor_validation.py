@@ -117,6 +117,42 @@ def test_compile_allows_optional_input_without_edge() -> None:
     assert "GB1003" not in [item.code for item in plan.diagnostics.diagnostics]
 
 
+def test_compile_rejects_optional_output_to_required_input() -> None:
+    catalog = BlockCatalog.from_blocks(
+        [
+            {
+                "typeId": "branch.maybe_text",
+                "version": 1,
+                "outputs": [
+                    {"name": "value", "type": "graphblocks.ai/Text@1", "required": False}
+                ],
+            },
+            {
+                "typeId": "text.sink",
+                "version": 1,
+                "inputs": [{"name": "text", "type": "graphblocks.ai/Text@1", "required": True}],
+            },
+        ]
+    )
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "optional-output-required-input"},
+        "spec": {
+            "nodes": {
+                "maybe": {"block": "branch.maybe_text@1"},
+                "sink": {"block": "text.sink@1"},
+            },
+            "edges": [{"from": "maybe.value", "to": "sink.text"}],
+        },
+    }
+
+    plan = compile_graph(graph, block_catalog=catalog)
+
+    assert not plan.ok
+    assert [item.code for item in plan.diagnostics.diagnostics if item.severity == "error"] == ["GB1015"]
+
+
 def test_compile_rejects_port_type_mismatch() -> None:
     catalog = BlockCatalog.from_blocks(
         [

@@ -806,6 +806,8 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
 
                 let mut source_type = None;
                 let mut target_type = None;
+                let mut source_required = None;
+                let mut target_required = None;
                 if let Some((source_owner, port_name)) = source_port
                     && !PSEUDO_NODES.contains(&source_owner)
                     && let Some(source_node) = normalized_nodes.get(source_owner)
@@ -822,6 +824,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                         .find(|port| port.name == port_name)
                     {
                         source_type = port.type_ref.as_deref();
+                        source_required = Some(port.required);
                     } else {
                         diagnostics.push(Diagnostic::error(
                             "GB1014",
@@ -857,6 +860,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     if let Some(port) = descriptor.inputs.iter().find(|port| port.name == port_name)
                     {
                         target_type = port.type_ref.as_deref();
+                        target_required = Some(port.required);
                     } else {
                         invalid_input_port_nodes.insert(target_owner.to_owned());
                         diagnostics.push(Diagnostic::error(
@@ -879,6 +883,14 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     diagnostics.push(Diagnostic::error(
                         "GB1018",
                         format!("port type mismatch: {source_type} cannot feed {target_type}"),
+                        format!("$.spec.edges[{index}]"),
+                    ));
+                }
+
+                if source_required == Some(false) && target_required == Some(true) {
+                    diagnostics.push(Diagnostic::error(
+                        "GB1015",
+                        "optional branch output cannot feed required input",
                         format!("$.spec.edges[{index}]"),
                     ));
                 }

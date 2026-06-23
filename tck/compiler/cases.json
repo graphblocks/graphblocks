@@ -341,6 +341,60 @@
     }
   },
   {
+    "name": "optional_output_to_required_input",
+    "block_catalog": [
+      {
+        "typeId": "branch.maybe_text",
+        "version": 1,
+        "outputs": [
+          {
+            "name": "value",
+            "type": "graphblocks.ai/Text@1",
+            "required": false
+          }
+        ]
+      },
+      {
+        "typeId": "text.sink",
+        "version": 1,
+        "inputs": [
+          {
+            "name": "text",
+            "type": "graphblocks.ai/Text@1",
+            "required": true
+          }
+        ]
+      }
+    ],
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "optional-output-required-input"
+      },
+      "spec": {
+        "nodes": {
+          "maybe": {
+            "block": "branch.maybe_text@1"
+          },
+          "sink": {
+            "block": "text.sink@1"
+          }
+        },
+        "edges": [
+          {
+            "from": "maybe.value",
+            "to": "sink.text"
+          }
+        ]
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:1ea67fd0eb9257dd4670f0fd4cc9523576ea9052e0c37f9f8460ad81ff67c367",
+      "error_codes": ["GB1015"]
+    }
+  },
+  {
     "name": "missing_resource_slot_binding",
     "block_catalog": [
       {
