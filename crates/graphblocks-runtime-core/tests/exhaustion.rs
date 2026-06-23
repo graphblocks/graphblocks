@@ -146,3 +146,56 @@ fn continuation_permit_must_match_atomic_unit_profile_and_epoch() {
         "invalid_permit"
     );
 }
+
+#[test]
+fn continuation_usage_must_fit_permit_authorized_amounts() {
+    let policy = ExhaustionPolicy::from_preset(
+        ExhaustionPreset::FinishCurrentTurn,
+        ExhaustionUnit::Turn,
+        Some(
+            ContinuationEnvelope::new()
+                .with_max_additional_usage([tokens(200)])
+                .with_max_additional_steps(2),
+        ),
+    );
+    let valid_permit = permit();
+    let mut controller = ExhaustionController::new(policy, "turn:1", 7)
+        .with_continuation_permit(valid_permit.clone());
+
+    let denied =
+        controller.admit_with_usage(WorkKind::DeclaredFinalization, 8, None, [tokens(101)]);
+    let allowed = controller.admit_with_usage(
+        WorkKind::DeclaredFinalization,
+        8,
+        Some(&valid_permit),
+        [tokens(100)],
+    );
+
+    assert!(!denied.allowed);
+    assert_eq!(denied.reason, "usage_exceeds_permit");
+    assert!(allowed.allowed);
+}
+
+#[test]
+fn continuation_usage_accumulates_against_envelope_bound() {
+    let policy = ExhaustionPolicy::from_preset(
+        ExhaustionPreset::FinishCurrentTurn,
+        ExhaustionUnit::Turn,
+        Some(
+            ContinuationEnvelope::new()
+                .with_max_additional_usage([tokens(100)])
+                .with_max_additional_steps(3),
+        ),
+    );
+    let mut controller =
+        ExhaustionController::new(policy, "turn:1", 7).with_continuation_permit(permit());
+
+    let first = controller.admit_with_usage(WorkKind::DeclaredFinalization, 8, None, [tokens(60)]);
+    let denied = controller.admit_with_usage(WorkKind::Checkpoint, 8, None, [tokens(41)]);
+    let second = controller.admit_with_usage(WorkKind::Cleanup, 8, None, [tokens(40)]);
+
+    assert!(first.allowed);
+    assert!(!denied.allowed);
+    assert_eq!(denied.reason, "max_additional_usage_exceeded");
+    assert!(second.allowed);
+}

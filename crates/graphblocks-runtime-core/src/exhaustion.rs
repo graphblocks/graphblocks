@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::budget::{BudgetPermit, UsageAmount};
 
@@ -363,6 +363,7 @@ pub struct ExhaustionController {
     pub admission_epoch: u64,
     pub continuation_permit: Option<BudgetPermit>,
     pub used_additional_steps: u32,
+    pub used_additional_usage: Vec<UsageAmount>,
 }
 
 impl ExhaustionController {
@@ -377,6 +378,7 @@ impl ExhaustionController {
             admission_epoch,
             continuation_permit: None,
             used_additional_steps: 0,
+            used_additional_usage: Vec::new(),
         }
     }
 
@@ -391,6 +393,17 @@ impl ExhaustionController {
         work_epoch: u64,
         permit: Option<&BudgetPermit>,
     ) -> AdmissionDecision {
+        self.admit_with_usage(work_kind, work_epoch, permit, Vec::new())
+    }
+
+    pub fn admit_with_usage(
+        &mut self,
+        work_kind: WorkKind,
+        work_epoch: u64,
+        permit: Option<&BudgetPermit>,
+        requested_usage: impl IntoIterator<Item = UsageAmount>,
+    ) -> AdmissionDecision {
+        let requested_usage = requested_usage.into_iter().collect::<Vec<_>>();
         let envelope = match &self.policy.continuation {
             Some(envelope) => envelope,
             None => {
@@ -461,6 +474,93 @@ impl ExhaustionController {
                 Some(_) => {}
             }
         }
+        if work_epoch > self.admission_epoch && !requested_usage.is_empty() {
+            let effective_permit = match permit.or(self.continuation_permit.as_ref()) {
+                Some(permit) => permit,
+                None => {
+                    return AdmissionDecision {
+                        allowed: false,
+                        reason: "missing_continuation_permit",
+                    };
+                }
+            };
+            let mut authorized_usage = BTreeMap::new();
+            for amount in &effective_permit.authorized_amounts {
+                let key = (
+                    amount.kind.clone(),
+                    amount.unit.clone(),
+                    amount
+                        .dimensions
+                        .iter()
+                        .map(|(key, value)| (key.clone(), value.clone()))
+                        .collect::<Vec<_>>(),
+                );
+                *authorized_usage.entry(key).or_insert(0) += amount.amount;
+            }
+            let mut requested_usage_map = BTreeMap::new();
+            for amount in &requested_usage {
+                let key = (
+                    amount.kind.clone(),
+                    amount.unit.clone(),
+                    amount
+                        .dimensions
+                        .iter()
+                        .map(|(key, value)| (key.clone(), value.clone()))
+                        .collect::<Vec<_>>(),
+                );
+                *requested_usage_map.entry(key).or_insert(0) += amount.amount;
+            }
+            if requested_usage_map
+                .iter()
+                .any(|(key, amount)| *amount > authorized_usage.get(key).copied().unwrap_or(0))
+            {
+                return AdmissionDecision {
+                    allowed: false,
+                    reason: "usage_exceeds_permit",
+                };
+            }
+            if !envelope.max_additional_usage.is_empty() {
+                let mut allowed_usage = BTreeMap::new();
+                for amount in &envelope.max_additional_usage {
+                    let key = (
+                        amount.kind.clone(),
+                        amount.unit.clone(),
+                        amount
+                            .dimensions
+                            .iter()
+                            .map(|(key, value)| (key.clone(), value.clone()))
+                            .collect::<Vec<_>>(),
+                    );
+                    *allowed_usage.entry(key).or_insert(0) += amount.amount;
+                }
+                let mut projected_usage = BTreeMap::new();
+                for amount in self
+                    .used_additional_usage
+                    .iter()
+                    .chain(requested_usage.iter())
+                {
+                    let key = (
+                        amount.kind.clone(),
+                        amount.unit.clone(),
+                        amount
+                            .dimensions
+                            .iter()
+                            .map(|(key, value)| (key.clone(), value.clone()))
+                            .collect::<Vec<_>>(),
+                    );
+                    *projected_usage.entry(key).or_insert(0) += amount.amount;
+                }
+                if projected_usage
+                    .iter()
+                    .any(|(key, amount)| *amount > allowed_usage.get(key).copied().unwrap_or(0))
+                {
+                    return AdmissionDecision {
+                        allowed: false,
+                        reason: "max_additional_usage_exceeded",
+                    };
+                }
+            }
+        }
         if let Some(max_steps) = envelope.max_additional_steps
             && self.used_additional_steps >= max_steps
         {
@@ -471,6 +571,7 @@ impl ExhaustionController {
         }
         if work_epoch > self.admission_epoch {
             self.used_additional_steps += 1;
+            self.used_additional_usage.extend(requested_usage);
         }
         AdmissionDecision {
             allowed: true,

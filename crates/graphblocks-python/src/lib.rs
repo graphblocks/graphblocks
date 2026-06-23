@@ -929,6 +929,7 @@ fn admit_exhaustion_work_json(policy_json: &str, request_json: &str) -> PyResult
         .get("permit")
         .map(|value| parse_budget_permit(value, "request.permit"))
         .transpose()?;
+    let requested_usage = parse_usage_amounts(request, "requestedUsage", "request")?;
     let continuation_permit = request
         .get("continuationPermit")
         .map(|value| parse_budget_permit(value, "request.continuationPermit"))
@@ -938,7 +939,8 @@ fn admit_exhaustion_work_json(policy_json: &str, request_json: &str) -> PyResult
         controller = controller.with_continuation_permit(continuation_permit);
     }
 
-    let decision = controller.admit(work_kind, work_epoch, permit.as_ref());
+    let decision =
+        controller.admit_with_usage(work_kind, work_epoch, permit.as_ref(), requested_usage);
     let payload = json!({
         "allowed": decision.allowed,
         "reason": decision.reason,
@@ -1706,6 +1708,56 @@ mod tests {
         assert_eq!(
             result.get("reason").and_then(Value::as_str),
             Some("invalid_permit"),
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn admit_exhaustion_work_json_rejects_requested_usage_above_permit() -> Result<(), String> {
+        let policy = json!({
+            "preset": "finish_current_turn",
+            "unit": "turn",
+            "continuation": {
+                "maxAdditionalUsage": [
+                    {"kind": "model_output_tokens", "amount": 200, "unit": "tokens"}
+                ],
+                "maxAdditionalSteps": 1
+            }
+        });
+        let request = json!({
+            "atomicUnitId": "turn:1",
+            "admissionEpoch": 7,
+            "workKind": "declared_finalization",
+            "workEpoch": 8,
+            "requestedUsage": [
+                {"kind": "model_output_tokens", "amount": 101, "unit": "tokens"}
+            ],
+            "permit": {
+                "permitId": "permit-1",
+                "reservationRefs": ["reservation-1"],
+                "owner": "worker:1",
+                "atomicUnit": "turn:1",
+                "admissionEpoch": 7,
+                "authorizedAmounts": [
+                    {"kind": "model_output_tokens", "amount": 100, "unit": "tokens"}
+                ],
+                "continuationProfile": "finish_current_turn",
+                "policySnapshotDigest": "sha256:policy",
+                "expiresAt": "2026-06-22T01:00:00Z",
+                "fencingTokens": {"budget-1": 1}
+            }
+        });
+        let policy_json = serde_json::to_string(&policy).map_err(|error| error.to_string())?;
+        let request_json = serde_json::to_string(&request).map_err(|error| error.to_string())?;
+        let result_json = admit_exhaustion_work_json(&policy_json, &request_json)
+            .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(result.get("allowed"), Some(&json!(false)));
+        assert_eq!(
+            result.get("reason").and_then(Value::as_str),
+            Some("usage_exceeds_permit"),
         );
         Ok(())
     }
