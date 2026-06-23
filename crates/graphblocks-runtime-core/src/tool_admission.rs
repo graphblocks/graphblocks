@@ -59,6 +59,10 @@ pub enum ToolAdmissionError {
         path: String,
         property: String,
     },
+    ResolvedToolNotAllowed {
+        resolved_tool_id: String,
+        principal_id: String,
+    },
 }
 
 pub struct ToolAdmission;
@@ -115,6 +119,13 @@ impl ToolAdmission {
                     property,
                 }),
             };
+        }
+
+        if !request.resolved_tool.allowed_for_principal {
+            return Err(ToolAdmissionError::ResolvedToolNotAllowed {
+                resolved_tool_id: request.resolved_tool.resolved_tool_id.clone(),
+                principal_id: request.principal_id.to_owned(),
+            });
         }
 
         if request.resolved_tool.binding.approval == ToolApproval::Always {

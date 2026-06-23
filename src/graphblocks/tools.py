@@ -706,6 +706,11 @@ def admit_tool_call(
     except ToolSchemaValidationError as error:
         raise ToolAdmissionError(f"tool call {call.tool_call_id} arguments invalid: {error}") from error
 
+    if not resolved_tool.allowed_for_principal:
+        raise ToolAdmissionError(
+            f"resolved tool {resolved_tool.definition.name} is not allowed for principal {principal_id}"
+        )
+
     if resolved_tool.binding.approval == "always":
         if approval is None:
             raise ToolAdmissionError(f"tool call {call.tool_call_id} requires approval")

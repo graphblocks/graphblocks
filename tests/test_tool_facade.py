@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from graphblocks import (
@@ -395,6 +397,24 @@ def test_tool_admission_validates_arguments_before_approval() -> None:
         )
 
     assert str(error.value) == "tool call call-1 arguments invalid: schemas/ProcessRun@1 expected array at $.cmd"
+
+
+def test_tool_admission_denies_tool_no_longer_allowed_for_principal() -> None:
+    resolved = replace(_resolved_process_tool(), allowed_for_principal=False)
+    call = _process_call(resolved)
+
+    with pytest.raises(ToolAdmissionError) as error:
+        admit_tool_call(
+            call,
+            resolved,
+            _process_schema_registry(),
+            principal_id="user-1",
+            idempotency_key="idem-1",
+            admitted_at="2026-06-23T00:00:01Z",
+            now=1_200,
+        )
+
+    assert str(error.value) == "resolved tool process.run is not allowed for principal user-1"
 
 
 def test_tool_admission_requires_approval_and_idempotency_key() -> None:

@@ -176,6 +176,30 @@ fn admission_rejects_arguments_that_do_not_match_input_schema_before_approval() 
 }
 
 #[test]
+fn admission_denies_tool_no_longer_allowed_for_principal() {
+    let mut resolved_tool = resolved_process_tool();
+    resolved_tool.allowed_for_principal = false;
+    let call = process_call(&resolved_tool);
+    let schemas = process_schema_registry();
+
+    assert_eq!(
+        ToolAdmission::admit(ToolAdmissionRequest {
+            call,
+            resolved_tool: &resolved_tool,
+            schema_registry: &schemas,
+            approval: None,
+            principal_id: "user-1",
+            idempotency_key: Some("idem-1".to_owned()),
+            admitted_at_unix_ms: 1_200,
+        }),
+        Err(ToolAdmissionError::ResolvedToolNotAllowed {
+            resolved_tool_id: resolved_tool.resolved_tool_id,
+            principal_id: "user-1".to_owned()
+        }),
+    );
+}
+
+#[test]
 fn admission_reports_missing_input_schema_before_effect_admission() {
     let resolved_tool = resolved_process_tool();
     let call = process_call(&resolved_tool);
