@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import pytest
 
+import graphblocks
 from graphblocks import (
     ApplicationEvent,
     ApplicationEventError,
+    ApplicationEventKind,
     ApplicationEventMetadata,
     ApplicationEventStreamState,
     BlockToolImplementation,
@@ -66,6 +68,10 @@ def test_standard_application_event_names_match_tool_and_output_policy_contract(
     )
     assert "ToolCallCompleted" in TOOL_APPLICATION_EVENT_KINDS
     assert "OutputCutoff" not in TOOL_APPLICATION_EVENT_KINDS
+
+
+def test_top_level_package_exports_application_event_kind() -> None:
+    assert graphblocks.ApplicationEventKind == ApplicationEventKind
 
 
 def test_tool_events_carry_tool_call_id_and_required_envelope_fields() -> None:

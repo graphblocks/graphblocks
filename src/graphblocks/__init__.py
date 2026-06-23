@@ -7,6 +7,7 @@ from .application_event import (
     TOOL_APPLICATION_EVENT_KINDS,
     ApplicationEvent,
     ApplicationEventError,
+    ApplicationEventKind,
     ApplicationEventMetadata,
     ApplicationEventStreamState,
 )
@@ -389,6 +390,7 @@ __all__ = [
     "AdmittedToolCall",
     "ApplicationEvent",
     "ApplicationEventError",
+    "ApplicationEventKind",
     "ApplicationEventMetadata",
     "ApplicationEventStreamState",
     "ApplicationProtocolCapabilities",
