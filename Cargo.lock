@@ -106,6 +106,7 @@ dependencies = [
 name = "graphblocks-compiler"
 version = "0.1.0"
 dependencies = [
+ "graphblocks-schema",
  "serde_json",
  "sha2",
 ]

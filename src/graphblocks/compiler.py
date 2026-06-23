@@ -7,6 +7,7 @@ from .canonical import PSEUDO_NODES, canonical_hash, normalize_graph
 from .diagnostics import Diagnostic, DiagnosticSet
 from .migration import GRAPH_API_VERSION, LEGACY_GRAPH_API_VERSIONS, migrate_document
 from .plugins import BlockCatalog
+from .schema import SchemaId, SchemaIdError
 
 
 @dataclass(frozen=True, slots=True)
@@ -322,6 +323,29 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                             f"$.spec.bindings.tools.{tool_key}.definition.inputSchema",
                         )
                     )
+                else:
+                    try:
+                        SchemaId.parse(input_schema)
+                    except SchemaIdError as error:
+                        diagnostics.append(
+                            Diagnostic(
+                                "InvalidSchemaId",
+                                f"tool input schema id is invalid: {error}",
+                                f"$.spec.bindings.tools.{tool_key}.definition.inputSchema",
+                            )
+                        )
+                output_schema = definition.get("outputSchema") or definition.get("output_schema")
+                if isinstance(output_schema, str) and output_schema.strip():
+                    try:
+                        SchemaId.parse(output_schema)
+                    except SchemaIdError as error:
+                        diagnostics.append(
+                            Diagnostic(
+                                "InvalidSchemaId",
+                                f"tool output schema id is invalid: {error}",
+                                f"$.spec.bindings.tools.{tool_key}.definition.outputSchema",
+                            )
+                        )
             else:
                 diagnostics.append(
                     Diagnostic(

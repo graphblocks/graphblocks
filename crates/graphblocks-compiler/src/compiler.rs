@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use graphblocks_schema::SchemaId;
 use serde_json::{Map, Value};
 
 use crate::canonical::canonical_hash;
@@ -633,16 +634,37 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 }
             }
             if let Some(definition) = tool.get("definition").and_then(Value::as_object) {
-                let has_input_schema = definition
+                let input_schema = definition
                     .get("inputSchema")
                     .or_else(|| definition.get("input_schema"))
-                    .and_then(Value::as_str)
-                    .is_some_and(|schema| !schema.trim().is_empty());
-                if !has_input_schema {
+                    .and_then(Value::as_str);
+                if !input_schema.is_some_and(|schema| !schema.trim().is_empty()) {
                     diagnostics.push(Diagnostic::error(
                         "ToolSchemaMissing",
                         "model-visible tool definitions require an input schema",
                         format!("$.spec.bindings.tools.{tool_key}.definition.inputSchema"),
+                    ));
+                } else if let Some(input_schema) = input_schema
+                    && let Err(error) = SchemaId::parse(input_schema)
+                {
+                    diagnostics.push(Diagnostic::error(
+                        "InvalidSchemaId",
+                        format!("tool input schema id is invalid: {error}"),
+                        format!("$.spec.bindings.tools.{tool_key}.definition.inputSchema"),
+                    ));
+                }
+
+                if let Some(output_schema) = definition
+                    .get("outputSchema")
+                    .or_else(|| definition.get("output_schema"))
+                    .and_then(Value::as_str)
+                    .filter(|schema| !schema.trim().is_empty())
+                    && let Err(error) = SchemaId::parse(output_schema)
+                {
+                    diagnostics.push(Diagnostic::error(
+                        "InvalidSchemaId",
+                        format!("tool output schema id is invalid: {error}"),
+                        format!("$.spec.bindings.tools.{tool_key}.definition.outputSchema"),
                     ));
                 }
             } else {

@@ -928,6 +928,46 @@ fn compile_graph_reports_tool_definition_without_input_schema() {
 }
 
 #[test]
+fn compile_graph_reports_tool_definition_with_invalid_input_schema() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "invalid-tool-schema"},
+        "spec": {
+            "bindings": {
+                "tools": {
+                    "search": {
+                        "definition": {
+                            "name": "knowledge.search",
+                            "description": "Search documentation.",
+                            "inputSchema": "schemas/Search"
+                        },
+                        "implementation": {
+                            "kind": "block",
+                            "block": "blocks.search"
+                        }
+                    }
+                }
+            },
+            "nodes": {
+                "model": {"block": "model.generate@1"}
+            }
+        }
+    });
+
+    let plan = compile_graph(&graph);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["InvalidSchemaId"]
+    );
+}
+
+#[test]
 fn compile_graph_accepts_tool_definition_with_schema_and_binding() {
     let graph = json!({
         "apiVersion": GRAPH_API_VERSION,
