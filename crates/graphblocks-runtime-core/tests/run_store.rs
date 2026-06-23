@@ -1,5 +1,5 @@
 use graphblocks_runtime_core::run_store::{
-    InMemoryRunStore, PatchOperation, RunStatus, RunStoreError, StatePatch,
+    InMemoryRunStore, PatchOperation, RunStatus, RunStoreError, SqliteRunStore, StatePatch,
 };
 use serde_json::json;
 
@@ -86,6 +86,118 @@ fn run_store_rejects_state_patch_and_status_after_terminal() -> Result<(), RunSt
     store.set_status(&record.run_id, RunStatus::Running)?;
     let terminal = store.set_status(&record.run_id, RunStatus::Completed)?;
     assert_eq!(terminal.status, RunStatus::Completed);
+
+    assert_eq!(
+        store.patch_state(
+            &record.run_id,
+            StatePatch::new(Some(0)).with(PatchOperation::set(["late"], json!(true))),
+        ),
+        Err(RunStoreError::StatePatchAfterTerminal {
+            run_id: record.run_id.clone(),
+            status: RunStatus::Completed,
+        }),
+    );
+    assert_eq!(
+        store.set_status(&record.run_id, RunStatus::Failed),
+        Err(RunStoreError::StatusAfterTerminal {
+            run_id: record.run_id,
+            status: RunStatus::Completed,
+        }),
+    );
+    Ok(())
+}
+
+#[test]
+fn sqlite_run_store_persists_runs_across_reopen() -> Result<(), String> {
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "graphblocks-sqlite-run-store-{}-persist.sqlite3",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+
+    {
+        let mut store = SqliteRunStore::open(&path).map_err(|error| format!("{error:?}"))?;
+        let first = store
+            .create_run("sha256:one", json!({"message": "hello"}))
+            .map_err(|error| format!("{error:?}"))?;
+        let second = store
+            .create_run("sha256:two", json!({}))
+            .map_err(|error| format!("{error:?}"))?;
+        store
+            .set_status(&first.run_id, RunStatus::Running)
+            .map_err(|error| format!("{error:?}"))?;
+
+        assert_eq!(first.run_id, "run-000001");
+        assert_eq!(second.run_id, "run-000002");
+    }
+
+    let store = SqliteRunStore::open(&path).map_err(|error| format!("{error:?}"))?;
+    let first = store
+        .get_run("run-000001")
+        .map_err(|error| format!("{error:?}"))?;
+    assert_eq!(first.sequence, 1);
+    assert_eq!(first.graph_hash, "sha256:one");
+    assert_eq!(first.inputs, json!({"message": "hello"}));
+    assert_eq!(first.status, RunStatus::Running);
+    assert_eq!(first.state, json!({}));
+    assert_eq!(first.state_revision, 0);
+
+    let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
+#[test]
+fn sqlite_run_store_applies_state_patch_with_revision_cas() -> Result<(), String> {
+    let mut store = SqliteRunStore::open_in_memory().map_err(|error| format!("{error:?}"))?;
+    let record = store
+        .create_run("sha256:test", json!({}))
+        .map_err(|error| format!("{error:?}"))?;
+
+    let updated = store
+        .patch_state(
+            &record.run_id,
+            StatePatch::new(Some(0))
+                .with(PatchOperation::set(["conversation", "turns"], json!(1)))
+                .with(PatchOperation::append(["messages"], json!("hello"))),
+        )
+        .map_err(|error| format!("{error:?}"))?;
+
+    assert_eq!(updated.state_revision, 1);
+    assert_eq!(
+        updated.state,
+        json!({
+            "conversation": {"turns": 1},
+            "messages": ["hello"],
+        }),
+    );
+    assert_eq!(
+        store.patch_state(
+            &record.run_id,
+            StatePatch::new(Some(0)).with(PatchOperation::set(["late"], json!(true))),
+        ),
+        Err(RunStoreError::StateConflict {
+            run_id: record.run_id,
+            expected_revision: 0,
+            current_revision: 1,
+        }),
+    );
+    Ok(())
+}
+
+#[test]
+fn sqlite_run_store_rejects_writes_after_terminal() -> Result<(), String> {
+    let mut store = SqliteRunStore::open_in_memory().map_err(|error| format!("{error:?}"))?;
+    let record = store
+        .create_run("sha256:test", json!({}))
+        .map_err(|error| format!("{error:?}"))?;
+
+    store
+        .set_status(&record.run_id, RunStatus::Running)
+        .map_err(|error| format!("{error:?}"))?;
+    store
+        .set_status(&record.run_id, RunStatus::Completed)
+        .map_err(|error| format!("{error:?}"))?;
 
     assert_eq!(
         store.patch_state(
