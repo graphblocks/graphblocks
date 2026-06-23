@@ -10,6 +10,7 @@ from .canonical import canonical_hash
 from .conversation import ContentPart
 from .documents import ArtifactRef
 from .policy import PolicyRequest, PrincipalRef, ResourceRef as PolicyResourceRef
+from .schema import SchemaId, SchemaIdError
 
 
 JsonSchemaRef = str
@@ -158,6 +159,10 @@ class ToolSchemaRegistry:
         object.__setattr__(self, "schemas", tuple(self.schemas))
         schemas_by_id: dict[str, JsonSchema] = {}
         for schema in self.schemas:
+            try:
+                SchemaId.parse(schema.schema_id)
+            except SchemaIdError as error:
+                raise ToolSchemaRegistryError(f"invalid schema id {schema.schema_id}: {error}") from error
             if schema.schema_id in schemas_by_id:
                 raise ToolSchemaRegistryError(f"duplicate schema {schema.schema_id}")
             schemas_by_id[schema.schema_id] = schema

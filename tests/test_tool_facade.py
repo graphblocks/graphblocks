@@ -290,6 +290,16 @@ def test_tool_schema_registry_reports_missing_and_duplicate_schemas() -> None:
         )
     assert str(duplicate.value) == "duplicate schema schemas/ProcessRun@1"
 
+    with pytest.raises(ToolSchemaRegistryError) as invalid:
+        ToolSchemaRegistry(
+            schemas=(
+                JsonSchema("schemas/ProcessRun", JsonSchemaNode.object()),
+            )
+        )
+    assert str(invalid.value) == (
+        "invalid schema id schemas/ProcessRun: schema id must include a major version suffix"
+    )
+
     registry = ToolSchemaRegistry(schemas=())
     with pytest.raises(ToolSchemaValidationError) as missing:
         registry.validate("schemas/Missing@1", {})
