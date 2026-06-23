@@ -21,6 +21,10 @@ VALID_TOOL_EFFECTS = frozenset(
         "destructive",
     }
 )
+VALID_TOOL_APPROVALS = frozenset({"never", "policy", "always"})
+VALID_TOOL_IDEMPOTENCIES = frozenset({"not_applicable", "optional", "required"})
+VALID_TOOL_CANCELLATIONS = frozenset({"unsupported", "cooperative", "force_terminable"})
+VALID_TOOL_RESULT_MODES = frozenset({"value", "incremental", "bounded_sequence", "artifact_reference"})
 STATE_CHANGING_TOOL_EFFECTS = frozenset({"external_write", "filesystem_write", "process", "destructive"})
 
 
@@ -352,21 +356,18 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
             state_changing_tool = bool(STATE_CHANGING_TOOL_EFFECTS & valid_effects)
             has_state_changing_tool = has_state_changing_tool or state_changing_tool
 
-            retry_policy_ref = tool.get("retryPolicyRef") or tool.get("retry_policy_ref")
-            has_retry_policy_ref = isinstance(retry_policy_ref, str) and bool(retry_policy_ref.strip())
-            if state_changing_tool and has_retry_policy_ref and tool.get("idempotency") != "required":
-                diagnostics.append(
-                    Diagnostic(
-                        "NonIdempotentRetry",
-                        "retrying state-changing tool effects requires required idempotency",
-                        f"$.spec.bindings.tools.{tool_key}.idempotency",
-                    )
-                )
-
             approval = tool.get("approval")
             if isinstance(approval, dict):
                 mode = approval.get("mode", "policy")
-                requires_approval = mode in {"policy", "always"}
+                valid_approval = isinstance(mode, str) and mode in VALID_TOOL_APPROVALS
+                if not valid_approval:
+                    diagnostics.append(
+                        Diagnostic(
+                            "InvalidToolApproval",
+                            f"invalid tool approval {mode}",
+                            f"$.spec.bindings.tools.{tool_key}.approval.mode",
+                        )
+                    )
                 bind_arguments_digest = approval.get(
                     "bindArgumentsDigest",
                     approval.get("bind_arguments_digest", False),
@@ -380,7 +381,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                 binds_arguments_digest = bool(bind_arguments_digest) or (
                     isinstance(arguments_digest, str) and bool(arguments_digest.strip())
                 )
-                if requires_approval and not binds_arguments_digest:
+                if valid_approval and mode in {"policy", "always"} and not binds_arguments_digest:
                     diagnostics.append(
                         Diagnostic(
                             "ApprovalWithoutArgumentDigest",
@@ -388,12 +389,69 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                             f"$.spec.bindings.tools.{tool_key}.approval",
                         )
                     )
-            elif approval == "always":
+            elif approval is not None:
+                if not isinstance(approval, str) or approval not in VALID_TOOL_APPROVALS:
+                    diagnostics.append(
+                        Diagnostic(
+                            "InvalidToolApproval",
+                            f"invalid tool approval {approval}",
+                            f"$.spec.bindings.tools.{tool_key}.approval",
+                        )
+                    )
+                elif approval == "always":
+                    diagnostics.append(
+                        Diagnostic(
+                            "ApprovalWithoutArgumentDigest",
+                            "explicit tool approval must be bound to immutable argument digest",
+                            f"$.spec.bindings.tools.{tool_key}.approval",
+                        )
+                    )
+
+            idempotency = tool.get("idempotency")
+            if idempotency is not None and (
+                not isinstance(idempotency, str) or idempotency not in VALID_TOOL_IDEMPOTENCIES
+            ):
                 diagnostics.append(
                     Diagnostic(
-                        "ApprovalWithoutArgumentDigest",
-                        "explicit tool approval must be bound to immutable argument digest",
-                        f"$.spec.bindings.tools.{tool_key}.approval",
+                        "InvalidToolIdempotency",
+                        f"invalid tool idempotency {idempotency}",
+                        f"$.spec.bindings.tools.{tool_key}.idempotency",
+                    )
+                )
+
+            cancellation = tool.get("cancellation")
+            if cancellation is not None and (
+                not isinstance(cancellation, str) or cancellation not in VALID_TOOL_CANCELLATIONS
+            ):
+                diagnostics.append(
+                    Diagnostic(
+                        "InvalidToolCancellation",
+                        f"invalid tool cancellation {cancellation}",
+                        f"$.spec.bindings.tools.{tool_key}.cancellation",
+                    )
+                )
+
+            result_mode_key = "resultMode" if "resultMode" in tool else "result_mode"
+            result_mode = tool.get(result_mode_key)
+            if result_mode is not None and (
+                not isinstance(result_mode, str) or result_mode not in VALID_TOOL_RESULT_MODES
+            ):
+                diagnostics.append(
+                    Diagnostic(
+                        "InvalidToolResultMode",
+                        f"invalid tool result mode {result_mode}",
+                        f"$.spec.bindings.tools.{tool_key}.{result_mode_key}",
+                    )
+                )
+
+            retry_policy_ref = tool.get("retryPolicyRef") or tool.get("retry_policy_ref")
+            has_retry_policy_ref = isinstance(retry_policy_ref, str) and bool(retry_policy_ref.strip())
+            if state_changing_tool and has_retry_policy_ref and tool.get("idempotency") != "required":
+                diagnostics.append(
+                    Diagnostic(
+                        "NonIdempotentRetry",
+                        "retrying state-changing tool effects requires required idempotency",
+                        f"$.spec.bindings.tools.{tool_key}.idempotency",
                     )
                 )
 

@@ -1238,6 +1238,57 @@ fn compile_graph_reports_invalid_tool_effect_literals() {
 }
 
 #[test]
+fn compile_graph_reports_invalid_tool_binding_literals() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "invalid-tool-binding-literals"},
+        "spec": {
+            "bindings": {
+                "tools": {
+                    "createTicket": {
+                        "definition": {
+                            "name": "ticket.create",
+                            "description": "Create a support ticket.",
+                            "inputSchema": "schemas/TicketCreateRequest@1"
+                        },
+                        "implementation": {
+                            "kind": "openapi",
+                            "connection": "ticket-system",
+                            "operationId": "createTicket"
+                        },
+                        "effects": ["external_write", "network"],
+                        "approval": {"mode": "sometimes"},
+                        "idempotency": "maybe",
+                        "cancellation": "eventually",
+                        "resultMode": "firehose"
+                    }
+                }
+            },
+            "nodes": {
+                "agent": {"block": "agent.run@1"}
+            }
+        }
+    });
+
+    let plan = compile_graph(&graph);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "InvalidToolApproval",
+            "InvalidToolIdempotency",
+            "InvalidToolCancellation",
+            "InvalidToolResultMode"
+        ]
+    );
+}
+
+#[test]
 fn compile_graph_rejects_parallel_state_changing_tools_without_effect_serialization() {
     let graph = json!({
         "apiVersion": GRAPH_API_VERSION,

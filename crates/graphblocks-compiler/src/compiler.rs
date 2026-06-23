@@ -720,6 +720,115 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 )
             });
             has_state_changing_tool |= state_changing_tool;
+            if let Some(approval) = tool.get("approval") {
+                if let Some(approval) = approval.as_object() {
+                    let mode_value = approval.get("mode");
+                    let mode = mode_value.and_then(Value::as_str).unwrap_or("policy");
+                    let valid_mode = mode_value.is_none_or(|mode| {
+                        mode.as_str()
+                            .is_some_and(|mode| matches!(mode, "never" | "policy" | "always"))
+                    });
+                    if !valid_mode {
+                        let invalid_mode = mode_value
+                            .and_then(Value::as_str)
+                            .map(str::to_owned)
+                            .unwrap_or_else(|| {
+                                mode_value.map(Value::to_string).unwrap_or_default()
+                            });
+                        diagnostics.push(Diagnostic::error(
+                            "InvalidToolApproval",
+                            format!("invalid tool approval {invalid_mode}"),
+                            format!("$.spec.bindings.tools.{tool_key}.approval.mode"),
+                        ));
+                    }
+                    let binds_arguments_digest = approval
+                        .get("bindArgumentsDigest")
+                        .or_else(|| approval.get("bind_arguments_digest"))
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                        || approval
+                            .get("argumentsDigest")
+                            .or_else(|| approval.get("arguments_digest"))
+                            .or_else(|| approval.get("argumentsDigestRef"))
+                            .or_else(|| approval.get("arguments_digest_ref"))
+                            .and_then(Value::as_str)
+                            .is_some_and(|arguments_digest| !arguments_digest.trim().is_empty());
+                    if valid_mode && matches!(mode, "policy" | "always") && !binds_arguments_digest
+                    {
+                        diagnostics.push(Diagnostic::error(
+                            "ApprovalWithoutArgumentDigest",
+                            "explicit tool approval must be bound to immutable argument digest",
+                            format!("$.spec.bindings.tools.{tool_key}.approval"),
+                        ));
+                    }
+                } else if let Some(approval) = approval.as_str() {
+                    if !matches!(approval, "never" | "policy" | "always") {
+                        diagnostics.push(Diagnostic::error(
+                            "InvalidToolApproval",
+                            format!("invalid tool approval {approval}"),
+                            format!("$.spec.bindings.tools.{tool_key}.approval"),
+                        ));
+                    } else if approval == "always" {
+                        diagnostics.push(Diagnostic::error(
+                            "ApprovalWithoutArgumentDigest",
+                            "explicit tool approval must be bound to immutable argument digest",
+                            format!("$.spec.bindings.tools.{tool_key}.approval"),
+                        ));
+                    }
+                } else {
+                    diagnostics.push(Diagnostic::error(
+                        "InvalidToolApproval",
+                        format!("invalid tool approval {approval}"),
+                        format!("$.spec.bindings.tools.{tool_key}.approval"),
+                    ));
+                }
+            }
+            if let Some(idempotency) = tool.get("idempotency")
+                && !idempotency.as_str().is_some_and(|idempotency| {
+                    matches!(idempotency, "not_applicable" | "optional" | "required")
+                })
+            {
+                diagnostics.push(Diagnostic::error(
+                    "InvalidToolIdempotency",
+                    format!("invalid tool idempotency {idempotency}"),
+                    format!("$.spec.bindings.tools.{tool_key}.idempotency"),
+                ));
+            }
+            if let Some(cancellation) = tool.get("cancellation")
+                && !cancellation.as_str().is_some_and(|cancellation| {
+                    matches!(
+                        cancellation,
+                        "unsupported" | "cooperative" | "force_terminable"
+                    )
+                })
+            {
+                diagnostics.push(Diagnostic::error(
+                    "InvalidToolCancellation",
+                    format!("invalid tool cancellation {cancellation}"),
+                    format!("$.spec.bindings.tools.{tool_key}.cancellation"),
+                ));
+            }
+            let result_mode = tool
+                .get("resultMode")
+                .map(|result_mode| ("resultMode", result_mode))
+                .or_else(|| {
+                    tool.get("result_mode")
+                        .map(|result_mode| ("result_mode", result_mode))
+                });
+            if let Some((result_mode_key, result_mode)) = result_mode
+                && !result_mode.as_str().is_some_and(|result_mode| {
+                    matches!(
+                        result_mode,
+                        "value" | "incremental" | "bounded_sequence" | "artifact_reference"
+                    )
+                })
+            {
+                diagnostics.push(Diagnostic::error(
+                    "InvalidToolResultMode",
+                    format!("invalid tool result mode {result_mode}"),
+                    format!("$.spec.bindings.tools.{tool_key}.{result_mode_key}"),
+                ));
+            }
             let has_retry_policy_ref = tool
                 .get("retryPolicyRef")
                 .or_else(|| tool.get("retry_policy_ref"))
@@ -731,38 +840,6 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     "NonIdempotentRetry",
                     "retrying state-changing tool effects requires required idempotency",
                     format!("$.spec.bindings.tools.{tool_key}.idempotency"),
-                ));
-            }
-            if let Some(approval) = tool.get("approval").and_then(Value::as_object) {
-                let mode = approval
-                    .get("mode")
-                    .and_then(Value::as_str)
-                    .unwrap_or("policy");
-                let requires_approval = matches!(mode, "policy" | "always");
-                let binds_arguments_digest = approval
-                    .get("bindArgumentsDigest")
-                    .or_else(|| approval.get("bind_arguments_digest"))
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false)
-                    || approval
-                        .get("argumentsDigest")
-                        .or_else(|| approval.get("arguments_digest"))
-                        .or_else(|| approval.get("argumentsDigestRef"))
-                        .or_else(|| approval.get("arguments_digest_ref"))
-                        .and_then(Value::as_str)
-                        .is_some_and(|arguments_digest| !arguments_digest.trim().is_empty());
-                if requires_approval && !binds_arguments_digest {
-                    diagnostics.push(Diagnostic::error(
-                        "ApprovalWithoutArgumentDigest",
-                        "explicit tool approval must be bound to immutable argument digest",
-                        format!("$.spec.bindings.tools.{tool_key}.approval"),
-                    ));
-                }
-            } else if tool.get("approval").and_then(Value::as_str) == Some("always") {
-                diagnostics.push(Diagnostic::error(
-                    "ApprovalWithoutArgumentDigest",
-                    "explicit tool approval must be bound to immutable argument digest",
-                    format!("$.spec.bindings.tools.{tool_key}.approval"),
                 ));
             }
             if let Some(definition) = tool.get("definition").and_then(Value::as_object) {

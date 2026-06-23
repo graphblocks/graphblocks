@@ -503,6 +503,45 @@ def test_compile_reports_invalid_tool_effect_literals() -> None:
     assert _error_codes(graph) == ["InvalidToolEffect"]
 
 
+def test_compile_reports_invalid_tool_binding_literals() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "invalid-tool-binding-literals"},
+        "spec": {
+            "nodes": {"agent": {"block": "agent.run@1"}},
+            "bindings": {
+                "tools": {
+                    "createTicket": {
+                        "definition": {
+                            "name": "ticket.create",
+                            "description": "Create a support ticket.",
+                            "inputSchema": "schemas/TicketCreateRequest@1",
+                        },
+                        "implementation": {
+                            "kind": "openapi",
+                            "connection": "ticket-system",
+                            "operationId": "createTicket",
+                        },
+                        "effects": ["external_write", "network"],
+                        "approval": {"mode": "sometimes"},
+                        "idempotency": "maybe",
+                        "cancellation": "eventually",
+                        "resultMode": "firehose",
+                    }
+                }
+            },
+        },
+    }
+
+    assert _error_codes(graph) == [
+        "InvalidToolApproval",
+        "InvalidToolIdempotency",
+        "InvalidToolCancellation",
+        "InvalidToolResultMode",
+    ]
+
+
 def test_compile_rejects_parallel_state_changing_tools_without_effect_serialization() -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
