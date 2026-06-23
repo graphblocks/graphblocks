@@ -336,6 +336,17 @@ from .worker import (
     select_worker_for_block,
     validate_worker_result,
 )
+from .workspace import (
+    InMemoryWorkspaceStore,
+    WorkspaceCommit,
+    WorkspaceError,
+    WorkspaceMutationDecision,
+    WorkspaceMutationDeniedError,
+    WorkspaceMutationPolicy,
+    WorkspaceNotFoundError,
+    WorkspaceSnapshot,
+    WorkspaceSnapshotConflictError,
+)
 
 __version__ = "0.1.0"
 
@@ -460,6 +471,7 @@ __all__ = [
     "InMemoryLeasePool",
     "InMemoryChunkRetriever",
     "InMemoryReviewerCredentialProvider",
+    "InMemoryWorkspaceStore",
     "InputDependency",
     "InvalidBlobKeyError",
     "KnowledgeBinding",
@@ -617,6 +629,14 @@ __all__ = [
     "WorkerSelectionError",
     "WorkerStaleLeaseEpochError",
     "WorkerState",
+    "WorkspaceCommit",
+    "WorkspaceError",
+    "WorkspaceMutationDecision",
+    "WorkspaceMutationDeniedError",
+    "WorkspaceMutationPolicy",
+    "WorkspaceNotFoundError",
+    "WorkspaceSnapshot",
+    "WorkspaceSnapshotConflictError",
     "WorkloadKind",
     "admit_worker",
     "admit_worker_with_policy",
