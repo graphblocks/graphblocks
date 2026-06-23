@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+from .application_event import (
+    STANDARD_APPLICATION_EVENT_KINDS,
+    TOOL_APPLICATION_EVENT_KINDS,
+    ApplicationEvent,
+    ApplicationEventError,
+    ApplicationEventMetadata,
+)
 from .approval import ApprovalRecord, ApprovalRequest
 from .blob_store import (
     BlobKey,
@@ -196,6 +203,8 @@ __all__ = [
     "Diagnostic",
     "DiagnosticSet",
     "Plan",
+    "STANDARD_APPLICATION_EVENT_KINDS",
+    "TOOL_APPLICATION_EVENT_KINDS",
     "BranchRequest",
     "BlockCatalog",
     "BlockDescriptor",
@@ -220,6 +229,9 @@ __all__ = [
     "Abstention",
     "AdmissionDecision",
     "Answer",
+    "ApplicationEvent",
+    "ApplicationEventError",
+    "ApplicationEventMetadata",
     "ApprovalRecord",
     "ApprovalRequest",
     "ArtifactRef",
