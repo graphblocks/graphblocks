@@ -22,6 +22,7 @@ pub struct ToolApprovalRequest {
     pub approval_id: String,
     pub tool_call_id: String,
     pub tool_name: String,
+    pub revision: u32,
     pub definition_digest: String,
     pub binding_digest: String,
     pub arguments_digest: String,
@@ -63,6 +64,7 @@ impl ToolApprovalRequest {
             approval_id: approval_id.into(),
             tool_call_id: call.tool_call_id.clone(),
             tool_name: call.name.clone(),
+            revision: call.revision,
             definition_digest: resolved_tool.definition_digest.clone(),
             binding_digest: resolved_tool.binding_digest.clone(),
             arguments_digest: call.arguments_digest.clone(),
@@ -156,6 +158,7 @@ impl ToolApprovalRecord {
             && now_unix_ms <= self.request.expires_at_unix_ms
             && self.request.tool_call_id == call.tool_call_id
             && self.request.tool_name == call.name
+            && self.request.revision == call.revision
             && self.request.definition_digest == resolved_tool.definition_digest
             && self.request.binding_digest == resolved_tool.binding_digest
             && self.request.arguments_digest == call.arguments_digest

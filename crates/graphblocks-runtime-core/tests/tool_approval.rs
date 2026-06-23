@@ -6,6 +6,7 @@ use graphblocks_runtime_core::tool_approval::{
     ToolApprovalRecord, ToolApprovalRequest, ToolApprovalStatus,
 };
 use graphblocks_runtime_core::tool_call::{ToolCall, ToolCallDraft, ToolCallError};
+use serde_json::json;
 
 fn resolved_search_tool()
 -> Result<graphblocks_runtime_core::tool::ResolvedTool, ToolResolutionError> {
@@ -44,6 +45,7 @@ fn approved_record_is_valid_only_for_same_tool_call_and_arguments() {
     let record = ToolApprovalRecord::approve(request.clone(), "admin-1", 1_100);
 
     assert_eq!(record.status, ToolApprovalStatus::Approved);
+    assert_eq!(record.request.revision, 1);
     assert!(record.is_valid_for(&resolved, &call, "user-1", 1_500));
 
     let mut changed_args = search_call("call-1", "changed").expect("changed tool call is valid");
@@ -51,6 +53,24 @@ fn approved_record_is_valid_only_for_same_tool_call_and_arguments() {
     assert!(!record.is_valid_for(&resolved, &changed_args, "user-1", 1_500));
     assert!(!record.is_valid_for(&resolved, &call, "user-2", 1_500));
     assert!(!record.is_valid_for(&resolved, &call, "user-1", 2_001));
+}
+
+#[test]
+fn approved_record_is_invalid_after_argument_revision() {
+    let resolved = resolved_search_tool().expect("resolved tool is valid");
+    let mut call = search_call("call-1", "runtime").expect("tool call is valid");
+    call.resolved_tool_id = resolved.resolved_tool_id.clone();
+    let request =
+        ToolApprovalRequest::for_call("approval-1", &resolved, &call, "user-1", 1_000, 2_000)
+            .expect("approval request is valid");
+    let record = ToolApprovalRecord::approve(request, "admin-1", 1_100);
+
+    let revised = call
+        .revise_arguments(json!({"query": "changed"}))
+        .expect("validated call can be revised");
+
+    assert_eq!(revised.revision, 2);
+    assert!(!record.is_valid_for(&resolved, &revised, "user-1", 1_500));
 }
 
 #[test]

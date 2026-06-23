@@ -28,6 +28,7 @@ pub enum ToolCallError {
     DraftAlreadyComplete,
     ArgumentsNotComplete { status: ToolCallDraftStatus },
     InvalidArgumentsJson,
+    CannotReviseArguments { status: ToolCallStatus },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -136,4 +137,23 @@ pub struct ToolCall {
     pub created_at_unix_ms: u64,
     pub admitted_at_unix_ms: Option<u64>,
     pub completed_at_unix_ms: Option<u64>,
+}
+
+impl ToolCall {
+    pub fn revise_arguments(&self, arguments: Value) -> Result<Self, ToolCallError> {
+        if self.status != ToolCallStatus::Validated {
+            return Err(ToolCallError::CannotReviseArguments {
+                status: self.status,
+            });
+        }
+
+        let mut revised = self.clone();
+        revised.arguments_digest = canonical_hash(&arguments);
+        revised.arguments = arguments;
+        revised.revision += 1;
+        revised.status = ToolCallStatus::Validated;
+        revised.admitted_at_unix_ms = None;
+        revised.completed_at_unix_ms = None;
+        Ok(revised)
+    }
 }

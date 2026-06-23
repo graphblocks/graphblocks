@@ -59,3 +59,37 @@ fn canonical_arguments_digest_is_stable_for_object_key_order() -> Result<(), Too
     assert_eq!(left.arguments_digest, right.arguments_digest);
     Ok(())
 }
+
+#[test]
+fn argument_revision_recomputes_digest_and_invalidates_admission_state() -> Result<(), ToolCallError>
+{
+    let mut draft = ToolCallDraft::proposed("response-1", "call-1", "ticket.create");
+    draft.append_argument_fragment("{\"title\":\"old\"}")?;
+    let call = draft.into_completed_tool_call("resolved-tool-1", 1_000)?;
+
+    let revised = call.revise_arguments(json!({"title": "new"}))?;
+
+    assert_eq!(revised.tool_call_id, "call-1");
+    assert_eq!(revised.revision, 2);
+    assert_eq!(revised.status, ToolCallStatus::Validated);
+    assert_ne!(revised.arguments_digest, call.arguments_digest);
+    assert_eq!(revised.admitted_at_unix_ms, None);
+    assert_eq!(revised.completed_at_unix_ms, None);
+    Ok(())
+}
+
+#[test]
+fn admitted_tool_call_arguments_cannot_be_revised() -> Result<(), ToolCallError> {
+    let mut draft = ToolCallDraft::proposed("response-1", "call-1", "ticket.create");
+    draft.append_argument_fragment("{\"title\":\"old\"}")?;
+    let mut call = draft.into_completed_tool_call("resolved-tool-1", 1_000)?;
+    call.status = ToolCallStatus::Admitted;
+
+    assert_eq!(
+        call.revise_arguments(json!({"title": "new"})),
+        Err(ToolCallError::CannotReviseArguments {
+            status: ToolCallStatus::Admitted
+        }),
+    );
+    Ok(())
+}
