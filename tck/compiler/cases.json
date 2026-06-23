@@ -682,6 +682,45 @@
     }
   },
   {
+    "name": "string_tool_approval_without_argument_digest",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "string-approval-without-argument-digest"
+      },
+      "spec": {
+        "nodes": {
+          "agent": {
+            "block": "agent.run@1"
+          }
+        },
+        "bindings": {
+          "tools": {
+            "createTicket": {
+              "definition": {
+                "name": "ticket.create",
+                "description": "Create a support ticket.",
+                "inputSchema": "schemas/TicketCreateRequest@1"
+              },
+              "implementation": {
+                "kind": "openapi",
+                "connection": "ticket-system",
+                "operationId": "createTicket"
+              },
+              "effects": ["external_write", "network"],
+              "approval": "always"
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:200a329bd8fed1468ff582110fe099d0083c31f820f5183f8abb2cc0ca77b507",
+      "error_codes": ["ApprovalWithoutArgumentDigest"]
+    }
+  },
+  {
     "name": "invalid_tool_schema_ids",
     "document": {
       "apiVersion": "graphblocks.ai/v1alpha3",

@@ -758,6 +758,12 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                         format!("$.spec.bindings.tools.{tool_key}.approval"),
                     ));
                 }
+            } else if tool.get("approval").and_then(Value::as_str) == Some("always") {
+                diagnostics.push(Diagnostic::error(
+                    "ApprovalWithoutArgumentDigest",
+                    "explicit tool approval must be bound to immutable argument digest",
+                    format!("$.spec.bindings.tools.{tool_key}.approval"),
+                ));
             }
             if let Some(definition) = tool.get("definition").and_then(Value::as_object) {
                 let input_schema = definition

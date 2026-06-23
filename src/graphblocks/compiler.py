@@ -388,6 +388,14 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                             f"$.spec.bindings.tools.{tool_key}.approval",
                         )
                     )
+            elif approval == "always":
+                diagnostics.append(
+                    Diagnostic(
+                        "ApprovalWithoutArgumentDigest",
+                        "explicit tool approval must be bound to immutable argument digest",
+                        f"$.spec.bindings.tools.{tool_key}.approval",
+                    )
+                )
 
             definition = tool.get("definition")
             if isinstance(definition, dict):

@@ -593,7 +593,24 @@ def test_compile_rejects_tool_approval_without_argument_digest_binding() -> None
         },
     }
 
+    string_approval = {
+        **graph,
+        "metadata": {"name": "string-approval-without-argument-digest"},
+        "spec": {
+            **graph["spec"],
+            "bindings": {
+                "tools": {
+                    "createTicket": {
+                        **graph["spec"]["bindings"]["tools"]["createTicket"],
+                        "approval": "always",
+                    }
+                }
+            },
+        },
+    }
+
     assert _error_codes(graph) == ["ApprovalWithoutArgumentDigest"]
+    assert _error_codes(string_approval) == ["ApprovalWithoutArgumentDigest"]
 
 
 def test_compile_allows_safe_tool_execution_settings() -> None:
