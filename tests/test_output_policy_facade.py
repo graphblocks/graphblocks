@@ -67,6 +67,21 @@ def test_output_policy_decision_redact_carries_redaction_instructions() -> None:
     assert decision.input_digest == "sha256:redact"
 
 
+def test_output_policy_decision_metadata_builders_are_chainable() -> None:
+    decision = (
+        OutputPolicyDecision.hold("decision-hold", input_digest="sha256:hold")
+        .with_reason_codes(("pii.detected", "secret.detected"))
+        .with_policy_refs(("policy/output-standard", "rule/pii"))
+        .with_redactions(({"path": "/parts/0/text", "replacement": "[redacted]"},))
+        .evaluated_at_time("2026-06-23T00:00:00Z")
+    )
+
+    assert decision.reason_codes == ("pii.detected", "secret.detected")
+    assert decision.policy_refs == ("policy/output-standard", "rule/pii")
+    assert decision.redactions == ({"path": "/parts/0/text", "replacement": "[redacted]"},)
+    assert decision.evaluated_at == "2026-06-23T00:00:00Z"
+
+
 def test_bounded_holdback_requires_size_or_time_bound() -> None:
     policy = OutputDeliveryPolicy.bounded_holdback(on_violation="abort_response")
 

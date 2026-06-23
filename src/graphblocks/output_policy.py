@@ -169,6 +169,18 @@ class OutputPolicyDecision:
     def with_pending_tool_calls(self, pending_tool_calls: PendingToolCallsDisposition) -> OutputPolicyDecision:
         return replace(self, pending_tool_calls=pending_tool_calls)
 
+    def with_reason_codes(self, reason_codes: tuple[str, ...]) -> OutputPolicyDecision:
+        return replace(self, reason_codes=tuple(reason_codes))
+
+    def with_policy_refs(self, policy_refs: tuple[str, ...]) -> OutputPolicyDecision:
+        return replace(self, policy_refs=tuple(policy_refs))
+
+    def with_redactions(self, redactions: tuple[dict[str, object], ...]) -> OutputPolicyDecision:
+        return replace(self, redactions=tuple(redactions))
+
+    def evaluated_at_time(self, evaluated_at: str) -> OutputPolicyDecision:
+        return replace(self, evaluated_at=evaluated_at)
+
 
 @dataclass(frozen=True, slots=True)
 class OutputDeliveryPolicy:
