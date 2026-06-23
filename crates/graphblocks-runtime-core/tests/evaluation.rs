@@ -1,7 +1,7 @@
 use graphblocks_runtime_core::evaluation::{
     CheckResult, CheckStatus, ConstraintOperator, GateConstraint, GateDecision, MetricDirection,
     MetricObservation, ResourceSnapshotRef, ResultBundle, ReviewDecision, ReviewRecord,
-    RunProvenance, TrialResult, evaluate_gate,
+    RunProvenance, SloMeasurement, SloObjective, SloReportStatus, TrialResult, evaluate_gate,
 };
 use graphblocks_runtime_core::policy::PrincipalRef;
 use graphblocks_runtime_core::tool_result::ArtifactRef;
@@ -150,6 +150,55 @@ fn evaluate_gate_supports_rollout_regression_for_maximized_metrics() {
         gate.violated_constraints,
         vec!["metric:citation_validation_rate"]
     );
+}
+
+#[test]
+fn slo_objective_passes_when_ratio_meets_objective() {
+    let objective = SloObjective::at_least(
+        "chat-availability",
+        "successful_committed_turns / admitted_turns",
+        0.995,
+        "30d",
+    );
+    let measurement =
+        SloMeasurement::new("successful_committed_turns / admitted_turns", 0.996, "30d")
+            .with_sample_count(10_000);
+
+    let report = objective.evaluate(&measurement);
+
+    assert_eq!(report.status, SloReportStatus::Pass);
+    assert_eq!(report.slo_id, "chat-availability");
+    assert_eq!(report.observed_value, Some(0.996));
+    assert_eq!(report.violated_by, None);
+}
+
+#[test]
+fn slo_objective_fails_when_latency_exceeds_maximum() {
+    let objective =
+        SloObjective::at_most("first-draft", "p95(turn_first_draft_ms)", 1_500.0, "30d")
+            .with_unit("ms");
+    let measurement = SloMeasurement::new("p95(turn_first_draft_ms)", 1_700.0, "30d")
+        .with_unit("ms")
+        .with_sample_count(500);
+
+    let report = objective.evaluate(&measurement);
+
+    assert_eq!(report.status, SloReportStatus::Fail);
+    assert_eq!(report.observed_value, Some(1_700.0));
+    assert_eq!(report.violated_by, Some(200.0));
+}
+
+#[test]
+fn slo_objective_is_no_data_for_mismatched_indicator_or_window() {
+    let objective =
+        SloObjective::at_least("citation-validity", "validated / returned", 0.99, "30d");
+    let measurement = SloMeasurement::new("validated / returned", 0.995, "7d");
+
+    let report = objective.evaluate(&measurement);
+
+    assert_eq!(report.status, SloReportStatus::NoData);
+    assert_eq!(report.observed_value, None);
+    assert_eq!(report.reason.as_deref(), Some("window_mismatch"));
 }
 
 #[test]

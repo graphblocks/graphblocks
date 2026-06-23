@@ -329,6 +329,169 @@ pub struct GateResult {
     pub policy_ref: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SloComparison {
+    AtLeast,
+    AtMost,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SloObjective {
+    pub slo_id: String,
+    pub indicator: String,
+    pub comparison: SloComparison,
+    pub objective: f64,
+    pub window: String,
+    pub unit: Option<String>,
+}
+
+impl SloObjective {
+    pub fn at_least(
+        slo_id: impl Into<String>,
+        indicator: impl Into<String>,
+        objective: f64,
+        window: impl Into<String>,
+    ) -> Self {
+        Self {
+            slo_id: slo_id.into(),
+            indicator: indicator.into(),
+            comparison: SloComparison::AtLeast,
+            objective,
+            window: window.into(),
+            unit: None,
+        }
+    }
+
+    pub fn at_most(
+        slo_id: impl Into<String>,
+        indicator: impl Into<String>,
+        objective: f64,
+        window: impl Into<String>,
+    ) -> Self {
+        Self {
+            slo_id: slo_id.into(),
+            indicator: indicator.into(),
+            comparison: SloComparison::AtMost,
+            objective,
+            window: window.into(),
+            unit: None,
+        }
+    }
+
+    pub fn with_unit(mut self, unit: impl Into<String>) -> Self {
+        self.unit = Some(unit.into());
+        self
+    }
+
+    pub fn evaluate(&self, measurement: &SloMeasurement) -> SloReport {
+        if self.indicator != measurement.indicator {
+            return SloReport::no_data(self, "indicator_mismatch");
+        }
+        if self.window != measurement.window {
+            return SloReport::no_data(self, "window_mismatch");
+        }
+        if self.unit != measurement.unit {
+            return SloReport::no_data(self, "unit_mismatch");
+        }
+
+        let passes = match self.comparison {
+            SloComparison::AtLeast => measurement.value >= self.objective,
+            SloComparison::AtMost => measurement.value <= self.objective,
+        };
+        let violated_by = if passes {
+            None
+        } else {
+            Some(match self.comparison {
+                SloComparison::AtLeast => self.objective - measurement.value,
+                SloComparison::AtMost => measurement.value - self.objective,
+            })
+        };
+
+        SloReport {
+            slo_id: self.slo_id.clone(),
+            indicator: self.indicator.clone(),
+            window: self.window.clone(),
+            status: if passes {
+                SloReportStatus::Pass
+            } else {
+                SloReportStatus::Fail
+            },
+            objective: self.objective,
+            observed_value: Some(measurement.value),
+            sample_count: measurement.sample_count,
+            violated_by,
+            reason: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SloMeasurement {
+    pub indicator: String,
+    pub value: f64,
+    pub window: String,
+    pub unit: Option<String>,
+    pub sample_count: Option<u64>,
+}
+
+impl SloMeasurement {
+    pub fn new(indicator: impl Into<String>, value: f64, window: impl Into<String>) -> Self {
+        Self {
+            indicator: indicator.into(),
+            value,
+            window: window.into(),
+            unit: None,
+            sample_count: None,
+        }
+    }
+
+    pub fn with_unit(mut self, unit: impl Into<String>) -> Self {
+        self.unit = Some(unit.into());
+        self
+    }
+
+    pub fn with_sample_count(mut self, sample_count: u64) -> Self {
+        self.sample_count = Some(sample_count);
+        self
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SloReportStatus {
+    Pass,
+    Fail,
+    NoData,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SloReport {
+    pub slo_id: String,
+    pub indicator: String,
+    pub window: String,
+    pub status: SloReportStatus,
+    pub objective: f64,
+    pub observed_value: Option<f64>,
+    pub sample_count: Option<u64>,
+    pub violated_by: Option<f64>,
+    pub reason: Option<String>,
+}
+
+impl SloReport {
+    fn no_data(objective: &SloObjective, reason: impl Into<String>) -> Self {
+        Self {
+            slo_id: objective.slo_id.clone(),
+            indicator: objective.indicator.clone(),
+            window: objective.window.clone(),
+            status: SloReportStatus::NoData,
+            objective: objective.objective,
+            observed_value: None,
+            sample_count: None,
+            violated_by: None,
+            reason: Some(reason.into()),
+        }
+    }
+}
+
 pub fn evaluate_gate<I, S>(
     gate_id: impl Into<String>,
     subject: ResourceSnapshotRef,
