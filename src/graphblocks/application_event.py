@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
+
+from .output_policy import OutputCutoff, OutputPolicyDecision
 
 
 ApplicationEventKind = Literal[
@@ -96,6 +98,86 @@ class ApplicationEvent:
     metadata: ApplicationEventMetadata
     payload: dict[str, object] = field(default_factory=dict)
     tool_call_id: str | None = None
+
+    @classmethod
+    def output_policy_decision(
+        cls,
+        metadata: ApplicationEventMetadata,
+        decision: OutputPolicyDecision,
+    ) -> ApplicationEvent:
+        kind: ApplicationEventKind
+        if decision.disposition == "allow":
+            kind = "OutputPolicyAllowed"
+        elif decision.disposition == "hold":
+            kind = "OutputPolicyHeld"
+        elif decision.disposition == "redact":
+            kind = "OutputPolicyRedacted"
+        elif decision.disposition == "replace":
+            kind = "OutputPolicyReplaced"
+        else:
+            kind = "OutputPolicyViolationDetected"
+        return cls.new(
+            kind,
+            metadata,
+            payload={
+                "decision_id": decision.decision_id,
+                "disposition": decision.disposition,
+                "accepted_through_sequence": decision.accepted_through_sequence,
+                "reason_codes": list(decision.reason_codes),
+                "policy_refs": list(decision.policy_refs),
+                "evaluated_at": decision.evaluated_at,
+                "input_digest": decision.input_digest,
+                "replacement_part_count": len(decision.replacement_parts),
+                "redaction_count": len(decision.redactions),
+            },
+        )
+
+    @classmethod
+    def output_cutoff(
+        cls,
+        metadata: ApplicationEventMetadata,
+        cutoff: OutputCutoff,
+    ) -> list[ApplicationEvent]:
+        events = [
+            cls.new(
+                "OutputCutoff",
+                metadata,
+                payload={
+                    "stream_id": cutoff.stream_id,
+                    "response_id": cutoff.response_id,
+                    "turn_id": cutoff.turn_id,
+                    "last_generated_sequence": cutoff.last_generated_sequence,
+                    "last_policy_accepted_sequence": cutoff.last_policy_accepted_sequence,
+                    "last_client_delivered_sequence": cutoff.last_client_delivered_sequence,
+                    "terminal_reason": cutoff.terminal_reason,
+                    "draft_disposition": cutoff.draft_disposition,
+                    "durable_result": cutoff.durable_result,
+                    "policy_decision_id": cutoff.policy_decision_id,
+                    "occurred_at": cutoff.occurred_at,
+                },
+            )
+        ]
+        if cutoff.draft_disposition != "keep":
+            if cutoff.draft_disposition == "retract":
+                draft_kind: ApplicationEventKind = "AssistantRetracted"
+            else:
+                draft_kind = "AssistantIncomplete"
+            events.append(
+                cls.new(
+                    draft_kind,
+                    replace(
+                        metadata,
+                        event_id=f"{metadata.event_id}:draft",
+                        sequence=metadata.sequence + 1,
+                    ),
+                    payload={
+                        "response_id": cutoff.response_id,
+                        "last_client_delivered_sequence": cutoff.last_client_delivered_sequence,
+                        "policy_decision_id": cutoff.policy_decision_id,
+                    },
+                )
+            )
+        return events
 
     @classmethod
     def new(

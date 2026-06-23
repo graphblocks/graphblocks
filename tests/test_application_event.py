@@ -6,6 +6,8 @@ from graphblocks import (
     ApplicationEvent,
     ApplicationEventError,
     ApplicationEventMetadata,
+    OutputCutoff,
+    OutputPolicyDecision,
     STANDARD_APPLICATION_EVENT_KINDS,
     TOOL_APPLICATION_EVENT_KINDS,
 )
@@ -90,3 +92,73 @@ def test_non_tool_events_reject_tool_event_constructor() -> None:
         )
 
     assert str(error.value) == "event OutputCutoff is not a tool event"
+
+
+def test_output_policy_decision_event_maps_disposition_and_metadata_payload() -> None:
+    decision = (
+        OutputPolicyDecision.redact(
+            "decision-redact",
+            accepted_through_sequence=4,
+            input_digest="sha256:redact",
+        )
+        .with_reason_codes(("pii.detected",))
+        .with_policy_refs(("policy/output-standard",))
+        .evaluated_at_time("2026-06-23T00:00:00Z")
+    )
+
+    event = ApplicationEvent.output_policy_decision(_metadata(), decision)
+
+    assert event.kind == "OutputPolicyRedacted"
+    assert event.tool_call_id is None
+    assert event.payload == {
+        "decision_id": "decision-redact",
+        "disposition": "redact",
+        "accepted_through_sequence": 4,
+        "reason_codes": ["pii.detected"],
+        "policy_refs": ["policy/output-standard"],
+        "evaluated_at": "2026-06-23T00:00:00Z",
+        "input_digest": "sha256:redact",
+        "replacement_part_count": 0,
+        "redaction_count": 0,
+    }
+
+
+def test_output_cutoff_events_include_cutoff_and_retraction_semantics() -> None:
+    cutoff = OutputCutoff(
+        stream_id="stream-1",
+        response_id="response-1",
+        turn_id="turn-1",
+        last_generated_sequence=4,
+        last_policy_accepted_sequence=2,
+        last_client_delivered_sequence=2,
+        terminal_reason="policy_denied",
+        draft_disposition="retract",
+        durable_result="none",
+        policy_decision_id="decision-abort",
+        occurred_at="2026-06-23T00:00:01Z",
+    )
+
+    events = ApplicationEvent.output_cutoff(_metadata(), cutoff)
+
+    assert [event.kind for event in events] == ["OutputCutoff", "AssistantRetracted"]
+    assert events[0].metadata.event_id == "event-1"
+    assert events[1].metadata.event_id == "event-1:draft"
+    assert events[1].metadata.sequence == events[0].metadata.sequence + 1
+    assert events[0].payload == {
+        "stream_id": "stream-1",
+        "response_id": "response-1",
+        "turn_id": "turn-1",
+        "last_generated_sequence": 4,
+        "last_policy_accepted_sequence": 2,
+        "last_client_delivered_sequence": 2,
+        "terminal_reason": "policy_denied",
+        "draft_disposition": "retract",
+        "durable_result": "none",
+        "policy_decision_id": "decision-abort",
+        "occurred_at": "2026-06-23T00:00:01Z",
+    }
+    assert events[1].payload == {
+        "response_id": "response-1",
+        "last_client_delivered_sequence": 2,
+        "policy_decision_id": "decision-abort",
+    }
