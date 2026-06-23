@@ -424,6 +424,26 @@ def test_worker_package_has_pure_python_layout_without_server_dependencies() -> 
     assert (package_root / "src" / "graphblocks_worker" / "py.typed").exists()
 
 
+def test_server_package_has_pure_python_layout_without_web_framework_dependencies() -> None:
+    package_root = ROOT / "packages" / "graphblocks-server"
+    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
+    dependencies = pyproject["project"]["dependencies"]
+
+    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
+    assert pyproject["project"]["name"] == "graphblocks-server"
+    assert dependencies == ["graphblocks-core~=1.0", "graphblocks-runtime~=1.0"]
+    assert not any(
+        framework in dependency.lower()
+        for dependency in dependencies
+        for framework in ("fastapi", "starlette", "django", "flask", "aiohttp", "uvicorn")
+    )
+    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
+        "src/graphblocks_server"
+    ]
+    assert (package_root / "src" / "graphblocks_server" / "__init__.py").exists()
+    assert (package_root / "src" / "graphblocks_server" / "py.typed").exists()
+
+
 def test_review_package_has_pure_python_layout_without_identity_provider_dependencies() -> None:
     package_root = ROOT / "packages" / "graphblocks-review"
     pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
