@@ -609,6 +609,39 @@
     }
   },
   {
+    "name": "invalid_interface_schema_id",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "invalid-interface-schema-id"
+      },
+      "spec": {
+        "interface": {
+          "inputs": {
+            "request": {
+              "schema": "schemas/Request"
+            }
+          },
+          "outputs": {
+            "result": "schemas/Result"
+          }
+        },
+        "nodes": {},
+        "edges": [
+          {
+            "from": "$input.request",
+            "to": "$output.result"
+          }
+        ]
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:b13978ab17865c0b9714988b01a7059873765e72432256917d1a7953caed8742",
+      "error_codes": ["InvalidSchemaId", "InvalidSchemaId"]
+    }
+  },
+  {
     "name": "output_policy_missing_enforcement_points",
     "document": {
       "apiVersion": "graphblocks.ai/v1alpha3",
