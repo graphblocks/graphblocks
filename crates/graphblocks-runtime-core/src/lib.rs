@@ -14,6 +14,7 @@ pub mod exhaustion;
 pub mod ingestion;
 pub mod journal;
 pub mod lifecycle;
+pub mod observability;
 pub mod outcome;
 pub mod output_policy;
 pub mod policy;
