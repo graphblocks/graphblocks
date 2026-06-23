@@ -1,6 +1,9 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::error::Error;
 use std::fmt;
+
+use graphblocks_compiler::canonical::canonical_hash;
+use serde_json::json;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SpanTiming {
@@ -183,6 +186,340 @@ impl fmt::Display for MetricLabelError {
 }
 
 impl Error for MetricLabelError {}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CaptureMode {
+    None,
+    HashOnly,
+    ReferenceOnly,
+    RedactedPreview,
+    Full,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CaptureDecision {
+    pub mode: CaptureMode,
+    pub retention_policy: String,
+    pub consent_ref: Option<String>,
+}
+
+impl CaptureDecision {
+    pub fn none(retention_policy: impl Into<String>) -> Self {
+        Self {
+            mode: CaptureMode::None,
+            retention_policy: retention_policy.into(),
+            consent_ref: None,
+        }
+    }
+
+    pub fn hash_only(retention_policy: impl Into<String>) -> Self {
+        Self {
+            mode: CaptureMode::HashOnly,
+            retention_policy: retention_policy.into(),
+            consent_ref: None,
+        }
+    }
+
+    pub fn reference_only(retention_policy: impl Into<String>) -> Self {
+        Self {
+            mode: CaptureMode::ReferenceOnly,
+            retention_policy: retention_policy.into(),
+            consent_ref: None,
+        }
+    }
+
+    pub fn redacted_preview(retention_policy: impl Into<String>) -> Self {
+        Self {
+            mode: CaptureMode::RedactedPreview,
+            retention_policy: retention_policy.into(),
+            consent_ref: None,
+        }
+    }
+
+    pub fn full(retention_policy: impl Into<String>) -> Self {
+        Self {
+            mode: CaptureMode::Full,
+            retention_policy: retention_policy.into(),
+            consent_ref: None,
+        }
+    }
+
+    pub fn with_consent_ref(mut self, consent_ref: impl Into<String>) -> Self {
+        self.consent_ref = Some(consent_ref.into());
+        self
+    }
+
+    pub fn capture_text(
+        &self,
+        content_kind: impl Into<String>,
+        text: impl AsRef<str>,
+        content_ref: Option<&str>,
+        redactions: impl IntoIterator<Item = RedactionRule>,
+    ) -> CapturedContent {
+        let text = text.as_ref();
+        let mut preview = text.to_owned();
+        let mut redaction_count = 0;
+        for redaction in redactions {
+            if redaction.pattern.is_empty() {
+                continue;
+            }
+            let count = preview.matches(&redaction.pattern).count();
+            if count > 0 {
+                preview = preview.replace(&redaction.pattern, &redaction.replacement);
+                redaction_count += count as u64;
+            }
+        }
+
+        CapturedContent {
+            mode: self.mode,
+            content_kind: content_kind.into(),
+            content_digest: canonical_hash(&json!(text)),
+            preview: match self.mode {
+                CaptureMode::RedactedPreview | CaptureMode::Full => Some(preview),
+                CaptureMode::None | CaptureMode::HashOnly | CaptureMode::ReferenceOnly => None,
+            },
+            content_ref: match self.mode {
+                CaptureMode::ReferenceOnly => content_ref.map(str::to_owned),
+                CaptureMode::None
+                | CaptureMode::HashOnly
+                | CaptureMode::RedactedPreview
+                | CaptureMode::Full => None,
+            },
+            retention_policy: self.retention_policy.clone(),
+            consent_ref: self.consent_ref.clone(),
+            redaction_count: match self.mode {
+                CaptureMode::RedactedPreview | CaptureMode::Full => redaction_count,
+                CaptureMode::None | CaptureMode::HashOnly | CaptureMode::ReferenceOnly => 0,
+            },
+            original_bytes: text.len() as u64,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RedactionRule {
+    pub pattern: String,
+    pub replacement: String,
+}
+
+impl RedactionRule {
+    pub fn literal(pattern: impl Into<String>, replacement: impl Into<String>) -> Self {
+        Self {
+            pattern: pattern.into(),
+            replacement: replacement.into(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CapturedContent {
+    pub mode: CaptureMode,
+    pub content_kind: String,
+    pub content_digest: String,
+    pub preview: Option<String>,
+    pub content_ref: Option<String>,
+    pub retention_policy: String,
+    pub consent_ref: Option<String>,
+    pub redaction_count: u64,
+    pub original_bytes: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TelemetryOnFull {
+    DropLowPriority,
+    DropNewest,
+    Reject,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum TelemetryPriority {
+    Low,
+    Normal,
+    High,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TelemetryRecordKind {
+    DebugSpan,
+    Progress,
+    TokenDebug,
+    Span,
+    Metric,
+    ExporterHealth,
+    RequiredAudit,
+    UsageLedger,
+    EffectTerminal,
+    RunTerminal,
+    RequiredEvaluationResult,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TelemetryQueuePolicy {
+    pub max_items: usize,
+    pub on_full: TelemetryOnFull,
+}
+
+impl TelemetryQueuePolicy {
+    pub fn new(max_items: usize, on_full: TelemetryOnFull) -> Self {
+        Self { max_items, on_full }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TelemetryRecord {
+    pub record_id: String,
+    pub kind: TelemetryRecordKind,
+    pub priority: TelemetryPriority,
+}
+
+impl TelemetryRecord {
+    pub fn new(
+        record_id: impl Into<String>,
+        kind: TelemetryRecordKind,
+        priority: TelemetryPriority,
+    ) -> Self {
+        Self {
+            record_id: record_id.into(),
+            kind,
+            priority,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TelemetryEnqueueOutcome {
+    pub accepted: bool,
+    pub dropped_record_ids: Vec<String>,
+}
+
+impl TelemetryEnqueueOutcome {
+    pub fn accepted() -> Self {
+        Self {
+            accepted: true,
+            dropped_record_ids: Vec::new(),
+        }
+    }
+
+    pub fn accepted_with_drop(records: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        Self {
+            accepted: true,
+            dropped_record_ids: records.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TelemetryBufferError {
+    QueueFull { record_id: String },
+    RequiredDurablePath { kind: TelemetryRecordKind },
+}
+
+impl fmt::Display for TelemetryBufferError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::QueueFull { record_id } => {
+                write!(
+                    formatter,
+                    "telemetry queue is full for record {record_id:?}"
+                )
+            }
+            Self::RequiredDurablePath { kind } => {
+                write!(
+                    formatter,
+                    "telemetry record kind {kind:?} requires a durable record path"
+                )
+            }
+        }
+    }
+}
+
+impl Error for TelemetryBufferError {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TelemetryBuffer {
+    policy: TelemetryQueuePolicy,
+    records: VecDeque<TelemetryRecord>,
+    dropped_count: u64,
+}
+
+impl TelemetryBuffer {
+    pub fn new(policy: TelemetryQueuePolicy) -> Self {
+        Self {
+            policy,
+            records: VecDeque::new(),
+            dropped_count: 0,
+        }
+    }
+
+    pub fn enqueue(
+        &mut self,
+        record: TelemetryRecord,
+    ) -> Result<TelemetryEnqueueOutcome, TelemetryBufferError> {
+        if matches!(
+            record.kind,
+            TelemetryRecordKind::RequiredAudit
+                | TelemetryRecordKind::UsageLedger
+                | TelemetryRecordKind::EffectTerminal
+                | TelemetryRecordKind::RunTerminal
+                | TelemetryRecordKind::RequiredEvaluationResult
+        ) {
+            return Err(TelemetryBufferError::RequiredDurablePath { kind: record.kind });
+        }
+
+        if self.records.len() < self.policy.max_items {
+            self.records.push_back(record);
+            return Ok(TelemetryEnqueueOutcome::accepted());
+        }
+
+        match self.policy.on_full {
+            TelemetryOnFull::DropLowPriority => {
+                let mut lowest_position = None;
+                let mut lowest_priority = record.priority;
+                for (position, queued) in self.records.iter().enumerate() {
+                    if queued.priority < lowest_priority {
+                        lowest_position = Some(position);
+                        lowest_priority = queued.priority;
+                    }
+                }
+
+                if let Some(position) = lowest_position {
+                    let dropped = self
+                        .records
+                        .remove(position)
+                        .expect("selected telemetry record position must exist");
+                    let dropped_record_id = dropped.record_id;
+                    self.dropped_count += 1;
+                    self.records.push_back(record);
+                    Ok(TelemetryEnqueueOutcome::accepted_with_drop([
+                        dropped_record_id,
+                    ]))
+                } else {
+                    Err(TelemetryBufferError::QueueFull {
+                        record_id: record.record_id,
+                    })
+                }
+            }
+            TelemetryOnFull::DropNewest => {
+                self.dropped_count += 1;
+                Ok(TelemetryEnqueueOutcome {
+                    accepted: false,
+                    dropped_record_ids: vec![record.record_id],
+                })
+            }
+            TelemetryOnFull::Reject => Err(TelemetryBufferError::QueueFull {
+                record_id: record.record_id,
+            }),
+        }
+    }
+
+    pub fn records(&self) -> &VecDeque<TelemetryRecord> {
+        &self.records
+    }
+
+    pub fn dropped_count(&self) -> u64 {
+        self.dropped_count
+    }
+}
 
 fn checked_duration(start: Option<u64>, end: Option<u64>) -> Option<u64> {
     end?.checked_sub(start?)
