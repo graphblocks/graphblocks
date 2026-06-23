@@ -373,6 +373,18 @@ pub struct OutputCutoff {
     pub occurred_at_unix_ms: u64,
 }
 
+impl OutputCutoff {
+    pub fn accepts(&self, chunk: &GenerationChunk) -> bool {
+        chunk.stream_id == self.stream_id
+            && chunk.response_id == self.response_id
+            && self.accepts_sequence(chunk.sequence)
+    }
+
+    pub fn accepts_sequence(&self, sequence: u64) -> bool {
+        sequence <= self.last_client_delivered_sequence
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OutputGateError {
     InvalidDeliveryPolicy {

@@ -1,7 +1,7 @@
 use graphblocks_runtime_core::output_policy::{
-    DraftDisposition, DurableResult, GenerationChunk, OutputDeliveryGate, OutputDeliveryPolicy,
-    OutputDeliveryPolicyError, OutputGateError, OutputPolicyDecision, PendingToolCallsDisposition,
-    TerminalReason, ViolationAction,
+    DraftDisposition, DurableResult, GenerationChunk, OutputCutoff, OutputDeliveryGate,
+    OutputDeliveryPolicy, OutputDeliveryPolicyError, OutputGateError, OutputPolicyDecision,
+    PendingToolCallsDisposition, TerminalReason, ViolationAction,
 };
 
 #[test]
@@ -137,6 +137,31 @@ fn immediate_draft_requires_incomplete_or_retraction_semantics() {
         policy.validate(),
         Err(OutputDeliveryPolicyError::ImmediateDraftWithoutRetractionSupport),
     );
+}
+
+#[test]
+fn output_cutoff_accepts_only_already_delivered_output_for_its_response() {
+    let cutoff = OutputCutoff {
+        stream_id: "stream-1".to_owned(),
+        response_id: "response-1".to_owned(),
+        turn_id: Some("turn-1".to_owned()),
+        last_generated_sequence: 3,
+        last_policy_accepted_sequence: 1,
+        last_client_delivered_sequence: 1,
+        terminal_reason: TerminalReason::PolicyDenied,
+        draft_disposition: DraftDisposition::Retract,
+        durable_result: DurableResult::None,
+        policy_decision_id: Some("decision-1".to_owned()),
+        occurred_at_unix_ms: 1_000,
+    };
+
+    let accepted = GenerationChunk::text("stream-1", "response-1", 1, "safe");
+    let delayed = GenerationChunk::text("stream-1", "response-1", 2, "blocked");
+    let other_response = GenerationChunk::text("stream-1", "response-2", 1, "replacement");
+
+    assert!(cutoff.accepts(&accepted));
+    assert!(!cutoff.accepts(&delayed));
+    assert!(!cutoff.accepts(&other_response));
 }
 
 #[test]
