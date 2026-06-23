@@ -88,3 +88,38 @@ def test_usage_ledger_reconcile_writes_new_record_for_late_final_usage() -> None
     assert reconciled.pricing_ref == "pricing-2026-06"
     assert reconciled.metadata == {"tool_call_id": "call-1", "tool_name": "knowledge.search"}
     assert ledger.records_for_run("run-1") == [provisional, reconciled]
+
+
+def test_usage_ledger_totals_replace_provisional_with_reconciled_usage() -> None:
+    ledger = InMemoryUsageLedger()
+    provisional = ledger.append(
+        UsageRecord(
+            record_id="usage-provisional",
+            source="tokenizer_estimated",
+            confidence="estimated",
+            amounts=[_tokens("18")],
+            occurred_at="2026-06-22T00:00:00Z",
+            run_id="run-1",
+            attempt_id="attempt-1",
+            provider_response_id="resp-1",
+        )
+    )
+    ledger.append(
+        UsageRecord(
+            record_id="usage-runtime",
+            source="runtime_measured",
+            confidence="estimated",
+            amounts=[_tokens("2")],
+            occurred_at="2026-06-22T00:00:01Z",
+            run_id="run-1",
+            attempt_id="attempt-2",
+        )
+    )
+    ledger.reconcile(
+        provisional.record_id,
+        amounts=[_tokens("21")],
+        occurred_at="2026-06-22T00:05:00Z",
+        record_id="usage-reconciled",
+    )
+
+    assert ledger.totals_for_run("run-1") == [_tokens("23")]

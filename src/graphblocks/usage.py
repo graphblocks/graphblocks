@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Literal
 
 from .budget import UsageAmount
@@ -71,6 +72,24 @@ class InMemoryUsageLedger:
 
     def records_for_run(self, run_id: str) -> list[UsageRecord]:
         return [self._records[record_id] for record_id in self._order if self._records[record_id].run_id == run_id]
+
+    def totals_for_run(self, run_id: str) -> list[UsageAmount]:
+        records = self.records_for_run(run_id)
+        superseded_record_ids = {
+            record.reconciliation_of for record in records if record.reconciliation_of is not None
+        }
+        totals: dict[tuple[str, str, tuple[tuple[str, str], ...]], Decimal] = {}
+        for record in records:
+            if record.record_id in superseded_record_ids:
+                continue
+            for amount in record.amounts:
+                key = (amount.kind, amount.unit, tuple(sorted(amount.dimensions.items())))
+                totals[key] = totals.get(key, Decimal("0")) + amount.amount
+        return [
+            UsageAmount(kind=kind, amount=totals[(kind, unit, dimensions)], unit=unit, dimensions=dict(dimensions))
+            for kind, unit, dimensions in sorted(totals)
+            if totals[(kind, unit, dimensions)] != 0
+        ]
 
     def reconcile(
         self,
