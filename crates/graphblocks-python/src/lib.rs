@@ -142,7 +142,10 @@ fn run_test_graph_json(
         };
         let (source_owner, source_path) = source.split_once('.').unwrap_or((source, ""));
         let (target_owner, target_path) = target.split_once('.').unwrap_or((target, ""));
-        if source_owner.starts_with('$') || target_owner.starts_with('$') {
+        if target_owner.starts_with('$') {
+            continue;
+        }
+        if source_owner.starts_with('$') && source_owner != "$input" {
             continue;
         }
         let Some(source_port) = source_path
@@ -182,6 +185,11 @@ fn run_test_graph_json(
         InProcessTestRuntime::new("run-000001", scheduled_nodes).map_err(|error| {
             PyValueError::new_err(format!("failed to create test runtime: {error:?}"))
         })?;
+    if let Some(input_object) = inputs.as_object() {
+        for (input_name, value) in input_object {
+            runtime = runtime.with_initial_value(PortRef::new("$input", input_name), value.clone());
+        }
+    }
     let mut executor = JsonNodeExecutor {
         outputs_by_node: node_outputs
             .iter()
@@ -397,7 +405,10 @@ mod tests {
                         "inputs": {"prompt": "render.prompt"},
                         "outputs": {"response": "$output.answer"}
                     },
-                    "render": {"block": "prompt.render@1"}
+                    "render": {
+                        "block": "prompt.render@1",
+                        "inputs": {"message": "$input.message"}
+                    }
                 }
             }
         });
@@ -409,8 +420,9 @@ mod tests {
         let graph_json = serde_json::to_string(&graph).map_err(|error| error.to_string())?;
         let node_outputs_json =
             serde_json::to_string(&node_outputs).map_err(|error| error.to_string())?;
-        let result_json = run_test_graph_json(&graph_json, "{}", &node_outputs_json)
-            .map_err(|error| error.to_string())?;
+        let result_json =
+            run_test_graph_json(&graph_json, r#"{"message":"hello"}"#, &node_outputs_json)
+                .map_err(|error| error.to_string())?;
         let result =
             serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
         let journal = result
@@ -440,6 +452,46 @@ mod tests {
             Some("generated")
         );
         assert_eq!(completed_nodes, vec!["render", "model"]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn run_test_graph_json_blocks_missing_external_inputs() -> Result<(), String> {
+        let graph = json!({
+            "apiVersion": "graphblocks.ai/v1alpha3",
+            "kind": "Graph",
+            "metadata": {"name": "native-runtime-missing-input"},
+            "spec": {
+                "nodes": {
+                    "render": {
+                        "block": "prompt.render@1",
+                        "inputs": {"message": "$input.message"},
+                        "outputs": {"prompt": "$output.prompt"}
+                    }
+                }
+            }
+        });
+        let node_outputs = json!({"render": {"prompt": "rendered"}});
+        let graph_json = serde_json::to_string(&graph).map_err(|error| error.to_string())?;
+        let node_outputs_json =
+            serde_json::to_string(&node_outputs).map_err(|error| error.to_string())?;
+
+        let result_json = run_test_graph_json(&graph_json, "{}", &node_outputs_json)
+            .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(result.get("status").and_then(Value::as_str), Some("failed"));
+        assert_eq!(
+            result
+                .get("journal")
+                .and_then(Value::as_array)
+                .and_then(|journal| journal.last())
+                .and_then(|record| record.get("kind"))
+                .and_then(Value::as_str),
+            Some("run_failed")
+        );
 
         Ok(())
     }

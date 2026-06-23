@@ -112,6 +112,31 @@ fn in_process_test_runtime_executes_nodes_in_dependency_order() {
     );
 }
 
+#[test]
+fn in_process_test_runtime_seeds_external_inputs() {
+    let mut runtime = InProcessTestRuntime::new(
+        "run-000001",
+        [ScheduledNode::new(
+            "render",
+            [InputDependency::value(
+                "message",
+                PortRef::new("$input", "message"),
+            )],
+        )],
+    )
+    .expect("runtime should be created")
+    .with_initial_value(PortRef::new("$input", "message"), json!("hello"));
+    let mut executor = RecordingExecutor::default();
+
+    let result = runtime.run(&mut executor).expect("runtime should run");
+
+    assert_eq!(result.status, TestRunStatus::Succeeded);
+    assert_eq!(
+        executor.starts[0].inputs.get("message"),
+        Some(&ResolvedInput::Value(json!("hello"))),
+    );
+}
+
 struct FailingExecutor {
     starts: Vec<String>,
 }

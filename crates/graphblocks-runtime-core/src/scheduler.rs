@@ -113,6 +113,15 @@ impl LocalScheduler {
             .collect()
     }
 
+    pub fn publish_signal(&mut self, port: PortRef, outcome: Outcome<Value>) -> Vec<String> {
+        self.readiness.publish(port, outcome);
+        if self.admitted {
+            self.evaluate_readiness()
+        } else {
+            Vec::new()
+        }
+    }
+
     pub fn node_state(&self, node_id: impl AsRef<str>) -> Option<NodeExecutionState> {
         self.states.get(node_id.as_ref()).copied()
     }

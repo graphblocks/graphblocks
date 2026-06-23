@@ -133,6 +133,33 @@ fn scheduler_rejects_duplicate_and_unknown_nodes() -> Result<(), SchedulerError>
 }
 
 #[test]
+fn scheduler_uses_seeded_external_input_signals() -> Result<(), SchedulerError> {
+    let mut scheduler = LocalScheduler::new([ScheduledNode::new(
+        "render",
+        [InputDependency::value(
+            "message",
+            PortRef::new("$input", "message"),
+        )],
+    )])?;
+
+    assert_eq!(
+        scheduler.publish_signal(
+            PortRef::new("$input", "message"),
+            Outcome::Value(json!("hello"))
+        ),
+        Vec::<String>::new(),
+    );
+    assert_eq!(scheduler.admit_run()?, vec!["render".to_owned()]);
+
+    let render = scheduler.start_node("render")?;
+    let mut expected_inputs = BTreeMap::new();
+    expected_inputs.insert("message".to_owned(), ResolvedInput::Value(json!("hello")));
+    assert_eq!(render.inputs, expected_inputs);
+
+    Ok(())
+}
+
+#[test]
 fn scheduler_cancels_node_as_idempotent_terminal_state() -> Result<(), SchedulerError> {
     let reason = CancelReason::new(CancelCode::UserCancel);
     let mut scheduler = LocalScheduler::new([

@@ -114,6 +114,11 @@ impl InProcessTestRuntime {
         &self.journal
     }
 
+    pub fn with_initial_value(mut self, port: PortRef, value: Value) -> Self {
+        self.scheduler.publish_signal(port, Outcome::Value(value));
+        self
+    }
+
     pub fn with_retry_policy(mut self, node_id: impl Into<String>, policy: RetryPolicy) -> Self {
         self.retry_boundaries
             .insert(node_id.into(), NodeRetryBoundary::new(policy));
