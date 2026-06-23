@@ -269,11 +269,16 @@ class OutputCutoff:
     policy_decision_id: str | None = None
     occurred_at: str = ""
 
-    def accepts(self, output: GenerationChunk | int) -> bool:
-        sequence = output if isinstance(output, int) else output.sequence
-        if isinstance(output, GenerationChunk):
-            if output.stream_id != self.stream_id or output.response_id != self.response_id:
-                return False
+    def accepts(self, output: GenerationChunk) -> bool:
+        if not isinstance(output, GenerationChunk):
+            raise TypeError("OutputCutoff.accepts requires a GenerationChunk")
+        return (
+            output.stream_id == self.stream_id
+            and output.response_id == self.response_id
+            and self.accepts_sequence(output.sequence)
+        )
+
+    def accepts_sequence(self, sequence: int) -> bool:
         return sequence <= self.last_client_delivered_sequence
 
 

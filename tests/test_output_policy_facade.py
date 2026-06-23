@@ -128,9 +128,16 @@ def test_output_cutoff_discards_delayed_output_after_terminal_cutoff() -> None:
 
     accepted = GenerationChunk.text("stream-1", "response-1", 1, "safe")
     delayed = GenerationChunk.text("stream-1", "response-1", 2, "blocked")
+    other_response = GenerationChunk.text("stream-1", "response-2", 1, "replacement")
 
     assert cutoff.accepts(accepted) is True
     assert cutoff.accepts(delayed) is False
+    assert cutoff.accepts(other_response) is False
+    assert cutoff.accepts_sequence(1) is True
+    with pytest.raises(TypeError) as error:
+        cutoff.accepts(1)  # type: ignore[arg-type]
+
+    assert str(error.value) == "OutputCutoff.accepts requires a GenerationChunk"
 
 
 def test_output_delivery_gate_releases_only_policy_accepted_chunks() -> None:
