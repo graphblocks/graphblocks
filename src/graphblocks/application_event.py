@@ -4,6 +4,7 @@ from dataclasses import dataclass, field, replace
 from typing import Literal
 
 from .output_policy import OutputCutoff, OutputPolicyDecision
+from .tools import ToolResult, ToolResultEvent
 
 
 ApplicationEventKind = Literal[
@@ -98,6 +99,77 @@ class ApplicationEvent:
     metadata: ApplicationEventMetadata
     payload: dict[str, object] = field(default_factory=dict)
     tool_call_id: str | None = None
+
+    @classmethod
+    def tool_result_event(
+        cls,
+        metadata: ApplicationEventMetadata,
+        event: ToolResultEvent,
+    ) -> ApplicationEvent | None:
+        if event.kind == "started":
+            return cls.tool(
+                "ToolCallStarted",
+                metadata,
+                tool_call_id=event.tool_call_id,
+                payload={
+                    "status": "running",
+                    "tool_result_sequence": event.sequence,
+                    "started_at": event.started_at,
+                },
+            )
+        if event.kind == "completed" and event.result is not None:
+            return cls.tool(
+                "ToolCallCompleted",
+                metadata,
+                tool_call_id=event.tool_call_id,
+                payload=cls._tool_result_payload(event.sequence, event.result),
+            )
+        if event.kind == "failed" and event.result is not None:
+            return cls.tool(
+                "ToolCallFailed",
+                metadata,
+                tool_call_id=event.tool_call_id,
+                payload=cls._tool_result_payload(event.sequence, event.result),
+            )
+        if event.kind == "denied" and event.result is not None:
+            return cls.tool(
+                "ToolCallDenied",
+                metadata,
+                tool_call_id=event.tool_call_id,
+                payload=cls._tool_result_payload(event.sequence, event.result),
+            )
+        if event.kind == "cancelled" and event.result is not None:
+            return cls.tool(
+                "ToolCallCancelled",
+                metadata,
+                tool_call_id=event.tool_call_id,
+                payload=cls._tool_result_payload(event.sequence, event.result),
+            )
+        if event.kind == "policy_stopped" and event.result is not None:
+            return cls.tool(
+                "ToolCallPolicyStopped",
+                metadata,
+                tool_call_id=event.tool_call_id,
+                payload=cls._tool_result_payload(event.sequence, event.result),
+            )
+        return None
+
+    @staticmethod
+    def _tool_result_payload(sequence: int, result: ToolResult) -> dict[str, object]:
+        error_code = None
+        if result.error is not None:
+            error_code_value = result.error.get("code")
+            if isinstance(error_code_value, str):
+                error_code = error_code_value
+        return {
+            "status": result.status,
+            "tool_result_sequence": sequence,
+            "started_at": result.started_at,
+            "completed_at": result.completed_at,
+            "output_digest": result.output_digest,
+            "effect_outcome": result.effect_outcome,
+            "error_code": error_code,
+        }
 
     @classmethod
     def output_policy_decision(

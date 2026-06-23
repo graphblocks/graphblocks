@@ -6,10 +6,13 @@ from graphblocks import (
     ApplicationEvent,
     ApplicationEventError,
     ApplicationEventMetadata,
+    ContentPart,
     OutputCutoff,
     OutputPolicyDecision,
     STANDARD_APPLICATION_EVENT_KINDS,
     TOOL_APPLICATION_EVENT_KINDS,
+    ToolResult,
+    ToolResultEvent,
 )
 
 
@@ -162,3 +165,65 @@ def test_output_cutoff_events_include_cutoff_and_retraction_semantics() -> None:
         "last_client_delivered_sequence": 2,
         "policy_decision_id": "decision-abort",
     }
+
+
+def test_tool_result_events_map_to_standard_tool_application_events() -> None:
+    completed = ToolResult.completed(
+        "call-1",
+        (ContentPart(kind="text", text="done"),),
+        started_at="2026-06-23T00:00:00Z",
+        completed_at="2026-06-23T00:00:01Z",
+    )
+    failed = ToolResult.failed(
+        "call-2",
+        error={"code": "tool.failed", "message": "tool execution failed"},
+        started_at="2026-06-23T00:00:02Z",
+        completed_at="2026-06-23T00:00:03Z",
+    )
+    denied = ToolResult.denied(
+        "call-3",
+        error={"code": "tool.denied", "message": "tool execution was denied"},
+        completed_at="2026-06-23T00:00:04Z",
+    )
+    cancelled = ToolResult.cancelled(
+        "call-4",
+        started_at="2026-06-23T00:00:05Z",
+        completed_at="2026-06-23T00:00:06Z",
+    )
+    policy_stopped = ToolResult.policy_stopped(
+        "call-5",
+        error={"code": "policy.denied", "message": "tool result was stopped by policy"},
+        started_at="2026-06-23T00:00:07Z",
+        completed_at="2026-06-23T00:00:08Z",
+    )
+
+    events = [
+        ToolResultEvent.started("call-0", 1, started_at="2026-06-23T00:00:00Z"),
+        ToolResultEvent.completed("call-1", 2, completed),
+        ToolResultEvent.failed("call-2", 3, failed),
+        ToolResultEvent.denied("call-3", 4, denied),
+        ToolResultEvent.cancelled("call-4", 5, cancelled),
+        ToolResultEvent.policy_stopped("call-5", 6, policy_stopped),
+    ]
+    converted = [ApplicationEvent.tool_result_event(_metadata(), event) for event in events]
+
+    assert [event.kind for event in converted] == [
+        "ToolCallStarted",
+        "ToolCallCompleted",
+        "ToolCallFailed",
+        "ToolCallDenied",
+        "ToolCallCancelled",
+        "ToolCallPolicyStopped",
+    ]
+    assert converted[0].tool_call_id == "call-0"
+    assert converted[1].payload["status"] == "completed"
+    assert converted[2].payload["status"] == "failed"
+    assert converted[3].payload["status"] == "denied"
+    assert converted[4].payload["status"] == "cancelled"
+    assert converted[5].payload["status"] == "policy_stopped"
+
+
+def test_tool_result_delta_does_not_become_application_event() -> None:
+    delta = ToolResultEvent.delta("call-1", 7, (ContentPart(kind="text", text="draft"),))
+
+    assert ApplicationEvent.tool_result_event(_metadata(), delta) is None
