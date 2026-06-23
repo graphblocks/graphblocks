@@ -275,6 +275,49 @@ pub fn compile_graph(document: &Value) -> Plan {
                 ));
             }
         }
+
+        if let Some(on_violation) = output_policy
+            .get("onViolation")
+            .or_else(|| output_policy.get("on_violation"))
+            .and_then(Value::as_object)
+        {
+            let disposition = on_violation
+                .get("disposition")
+                .and_then(Value::as_str)
+                .unwrap_or("abort_response");
+
+            if matches!(disposition, "abort_response" | "abort_turn") {
+                let pending_tool_calls_disposition = on_violation
+                    .get("pendingToolCalls")
+                    .or_else(|| on_violation.get("pending_tool_calls"))
+                    .and_then(Value::as_object)
+                    .and_then(|pending_tool_calls| pending_tool_calls.get("disposition"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("deny");
+                if pending_tool_calls_disposition == "keep" {
+                    diagnostics.push(Diagnostic::error(
+                        "PendingToolCallAfterAbort",
+                        "policy-aborted responses must deny or cancel pending tool calls",
+                        "$.spec.outputPolicy.onViolation.pendingToolCalls.disposition",
+                    ));
+                }
+
+                let durable_result_disposition = on_violation
+                    .get("durableResult")
+                    .or_else(|| on_violation.get("durable_result"))
+                    .and_then(Value::as_object)
+                    .and_then(|durable_result| durable_result.get("disposition"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("none");
+                if durable_result_disposition != "none" {
+                    diagnostics.push(Diagnostic::error(
+                        "CommitAfterPolicyStop",
+                        "policy-stopped responses must not commit a durable result",
+                        "$.spec.outputPolicy.onViolation.durableResult.disposition",
+                    ));
+                }
+            }
+        }
     }
 
     if let Some(tools) = spec

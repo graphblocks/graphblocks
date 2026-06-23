@@ -343,6 +343,146 @@ fn compile_graph_allows_output_policy_gate_before_delivery() {
 }
 
 #[test]
+fn compile_graph_rejects_pending_tool_calls_after_policy_abort() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "pending-tools-after-policy-abort"},
+        "spec": {
+            "outputPolicy": {
+                "delivery": {
+                    "mode": "bounded_holdback",
+                    "holdbackMaxTokens": 48,
+                    "onViolation": "abort_response"
+                },
+                "evaluation": {
+                    "enforcementPoints": [
+                        "on_generation_chunk",
+                        "before_client_delivery",
+                        "before_output_commit"
+                    ]
+                },
+                "onViolation": {
+                    "disposition": "abort_response",
+                    "pendingToolCalls": {
+                        "disposition": "keep"
+                    },
+                    "durableResult": {
+                        "disposition": "none"
+                    }
+                }
+            },
+            "nodes": {
+                "agent": {"block": "agent.run@1"}
+            }
+        }
+    });
+
+    let plan = compile_graph(&graph);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["PendingToolCallAfterAbort"]
+    );
+}
+
+#[test]
+fn compile_graph_rejects_durable_commit_after_policy_stop() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "commit-after-policy-stop"},
+        "spec": {
+            "outputPolicy": {
+                "delivery": {
+                    "mode": "bounded_holdback",
+                    "holdbackMaxTokens": 48,
+                    "onViolation": "abort_response"
+                },
+                "evaluation": {
+                    "enforcementPoints": [
+                        "on_generation_chunk",
+                        "before_client_delivery",
+                        "before_output_commit"
+                    ]
+                },
+                "onViolation": {
+                    "disposition": "abort_response",
+                    "pendingToolCalls": {
+                        "disposition": "deny"
+                    },
+                    "durableResult": {
+                        "disposition": "partial"
+                    }
+                }
+            },
+            "nodes": {
+                "agent": {"block": "agent.run@1"}
+            }
+        }
+    });
+
+    let plan = compile_graph(&graph);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["CommitAfterPolicyStop"]
+    );
+}
+
+#[test]
+fn compile_graph_allows_safe_policy_abort_cleanup_settings() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "safe-policy-abort-cleanup"},
+        "spec": {
+            "outputPolicy": {
+                "delivery": {
+                    "mode": "bounded_holdback",
+                    "holdbackMaxTokens": 48,
+                    "onViolation": "abort_response"
+                },
+                "evaluation": {
+                    "enforcementPoints": [
+                        "on_generation_chunk",
+                        "before_client_delivery",
+                        "before_output_commit"
+                    ]
+                },
+                "onViolation": {
+                    "disposition": "abort_response",
+                    "pendingToolCalls": {
+                        "disposition": "deny"
+                    },
+                    "durableResult": {
+                        "disposition": "none"
+                    }
+                }
+            },
+            "nodes": {
+                "agent": {"block": "agent.run@1"}
+            }
+        }
+    });
+
+    let plan = compile_graph(&graph);
+
+    assert!(!plan.diagnostics.iter().any(|diagnostic| matches!(
+        diagnostic.code.as_str(),
+        "PendingToolCallAfterAbort" | "CommitAfterPolicyStop"
+    )));
+}
+
+#[test]
 fn compile_graph_reports_model_visible_tool_without_binding() {
     let graph = json!({
         "apiVersion": GRAPH_API_VERSION,
