@@ -16,7 +16,9 @@ use graphblocks_runtime_core::tool::{
 };
 use graphblocks_runtime_core::tool_approval::ToolApprovalRequest;
 use graphblocks_runtime_core::tool_call::{ToolCallDraft, ToolCallStatus};
-use graphblocks_runtime_core::tool_result::{ContentPart, ToolResult, ToolResultEvent};
+use graphblocks_runtime_core::tool_result::{
+    ArtifactRef, ContentPart, ToolResult, ToolResultEvent,
+};
 use serde_json::json;
 
 fn metadata() -> ApplicationEventMetadata {
@@ -775,6 +777,93 @@ fn application_protocol_event_names_and_envelope_match_client_protocol() {
     assert_eq!(event.metadata.protocol_version, "graphblocks.app.v1");
     assert_eq!(event.metadata.cursor.as_deref(), Some("cursor-5"));
     assert_eq!(event.payload, json!({"revision": 2}));
+}
+
+#[test]
+fn protocol_events_represent_streaming_tool_result_deltas_and_artifacts() {
+    let delta = ToolResultEvent::delta(
+        "call-1",
+        7,
+        [
+            ContentPart::text("draft chunk")
+                .with_metadata("trust_designation", json!("untrusted_external")),
+            ContentPart::json(json!({"items": 2})),
+        ],
+    );
+    let artifact = ToolResultEvent::artifact_ready(
+        "call-1",
+        8,
+        ArtifactRef::new("artifact-1", "file:///tmp/result.json")
+            .with_checksum("sha256:artifact")
+            .with_media_type("application/json"),
+    );
+
+    let delta_event = ApplicationProtocolEvent::tool_result_stream(
+        protocol_event_metadata("event-delta", 7, "cursor-7"),
+        &delta,
+    )
+    .expect("delta protocol event should be valid")
+    .expect("delta should map to a protocol event");
+    let artifact_event = ApplicationProtocolEvent::tool_result_stream(
+        protocol_event_metadata("event-artifact", 8, "cursor-8"),
+        &artifact,
+    )
+    .expect("artifact protocol event should be valid")
+    .expect("artifact should map to a protocol event");
+
+    assert_eq!(delta_event.kind, ApplicationProtocolEventKind::JobProgress);
+    assert_eq!(
+        delta_event.payload,
+        json!({
+            "tool_call_id": "call-1",
+            "tool_result_sequence": 7,
+            "output": [
+                {
+                    "kind": "text",
+                    "text": "draft chunk",
+                    "data": null,
+                    "metadata": {"trust_designation": "untrusted_external"}
+                },
+                {
+                    "kind": "json",
+                    "text": null,
+                    "data": {"items": 2},
+                    "metadata": {}
+                }
+            ]
+        })
+    );
+    assert_eq!(
+        artifact_event.kind,
+        ApplicationProtocolEventKind::ArtifactReady
+    );
+    assert_eq!(
+        artifact_event.payload,
+        json!({
+            "tool_call_id": "call-1",
+            "tool_result_sequence": 8,
+            "artifact": {
+                "artifact_id": "artifact-1",
+                "uri": "file:///tmp/result.json",
+                "checksum": "sha256:artifact",
+                "media_type": "application/json"
+            }
+        })
+    );
+
+    let completed = ToolResultEvent::completed(
+        "call-1",
+        9,
+        ToolResult::completed("call-1", [ContentPart::text("done")], 1_000, 1_050),
+    );
+    assert_eq!(
+        ApplicationProtocolEvent::tool_result_stream(
+            protocol_event_metadata("event-complete", 9, "cursor-9"),
+            &completed,
+        )
+        .expect("completed conversion should be valid"),
+        None
+    );
 }
 
 #[test]

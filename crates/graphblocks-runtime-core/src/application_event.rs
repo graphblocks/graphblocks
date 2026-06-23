@@ -9,7 +9,9 @@ use crate::output_policy::{
 use crate::policy::PolicyDecision;
 use crate::tool_approval::ToolApprovalRequest;
 use crate::tool_call::{ToolCall, ToolCallDraft, ToolCallDraftStatus, ToolCallStatus};
-use crate::tool_result::{ToolEffectOutcome, ToolResult, ToolResultEvent, ToolResultStatus};
+use crate::tool_result::{
+    ContentPartKind, ToolEffectOutcome, ToolResult, ToolResultEvent, ToolResultStatus,
+};
 use serde_json::{Value, json};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -738,6 +740,69 @@ impl ApplicationProtocolEvent {
             metadata,
             payload,
         })
+    }
+
+    pub fn tool_result_stream(
+        metadata: ApplicationProtocolEventMetadata,
+        event: &ToolResultEvent,
+    ) -> Result<Option<Self>, ApplicationProtocolError> {
+        match event {
+            ToolResultEvent::Delta {
+                tool_call_id,
+                sequence,
+                output,
+            } => Self::new(
+                ApplicationProtocolEventKind::JobProgress,
+                metadata,
+                json!({
+                    "tool_call_id": tool_call_id,
+                    "tool_result_sequence": sequence,
+                    "output": output
+                        .iter()
+                        .map(|part| {
+                            let kind = match part.kind {
+                                ContentPartKind::Text => "text",
+                                ContentPartKind::Json => "json",
+                                ContentPartKind::ArtifactRef => "artifact_ref",
+                            };
+                            json!({
+                                "kind": kind,
+                                "text": part.text,
+                                "data": part.data,
+                                "metadata": part.metadata,
+                            })
+                        })
+                        .collect::<Vec<_>>(),
+                }),
+            )
+            .map(Some),
+            ToolResultEvent::ArtifactReady {
+                tool_call_id,
+                sequence,
+                artifact,
+            } => Self::new(
+                ApplicationProtocolEventKind::ArtifactReady,
+                metadata,
+                json!({
+                    "tool_call_id": tool_call_id,
+                    "tool_result_sequence": sequence,
+                    "artifact": {
+                        "artifact_id": &artifact.artifact_id,
+                        "uri": &artifact.uri,
+                        "checksum": &artifact.checksum,
+                        "media_type": &artifact.media_type,
+                    },
+                }),
+            )
+            .map(Some),
+            ToolResultEvent::Started { .. }
+            | ToolResultEvent::Completed { .. }
+            | ToolResultEvent::Failed { .. }
+            | ToolResultEvent::Denied { .. }
+            | ToolResultEvent::Cancelled { .. }
+            | ToolResultEvent::PolicyStopped { .. }
+            | ToolResultEvent::Incomplete { .. } => Ok(None),
+        }
     }
 }
 
