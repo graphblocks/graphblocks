@@ -1,11 +1,13 @@
 use crate::tool::{ResolvedTool, ToolApproval, ToolIdempotency};
 use crate::tool_approval::ToolApprovalRecord;
 use crate::tool_call::{ToolCall, ToolCallStatus};
+use crate::tool_schema::{ToolSchemaRegistry, ToolSchemaValidationError};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ToolAdmissionRequest<'a> {
     pub call: ToolCall,
     pub resolved_tool: &'a ResolvedTool,
+    pub schema_registry: &'a ToolSchemaRegistry,
     pub approval: Option<&'a ToolApprovalRecord>,
     pub principal_id: &'a str,
     pub idempotency_key: Option<String>,
@@ -42,6 +44,21 @@ pub enum ToolAdmissionError {
     IdempotencyKeyRequired {
         tool_call_id: String,
     },
+    InputSchemaMissing {
+        schema_id: String,
+    },
+    ArgumentsSchemaInvalid {
+        tool_call_id: String,
+        schema_id: String,
+        path: String,
+        expected: String,
+    },
+    RequiredArgumentMissing {
+        tool_call_id: String,
+        schema_id: String,
+        path: String,
+        property: String,
+    },
 }
 
 pub struct ToolAdmission;
@@ -68,6 +85,38 @@ impl ToolAdmission {
                 actual: request.call.name,
             });
         }
+
+        if let Err(error) = request.schema_registry.validate(
+            &request.resolved_tool.definition.input_schema,
+            &request.call.arguments,
+        ) {
+            return match error {
+                ToolSchemaValidationError::SchemaMissing { schema_id } => {
+                    Err(ToolAdmissionError::InputSchemaMissing { schema_id })
+                }
+                ToolSchemaValidationError::TypeMismatch {
+                    schema_id,
+                    path,
+                    expected,
+                } => Err(ToolAdmissionError::ArgumentsSchemaInvalid {
+                    tool_call_id: request.call.tool_call_id,
+                    schema_id,
+                    path,
+                    expected,
+                }),
+                ToolSchemaValidationError::RequiredPropertyMissing {
+                    schema_id,
+                    path,
+                    property,
+                } => Err(ToolAdmissionError::RequiredArgumentMissing {
+                    tool_call_id: request.call.tool_call_id,
+                    schema_id,
+                    path,
+                    property,
+                }),
+            };
+        }
+
         if request.resolved_tool.binding.approval == ToolApproval::Always {
             let Some(approval) = request.approval else {
                 return Err(ToolAdmissionError::ApprovalRequired {
