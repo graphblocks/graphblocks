@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod application_event;
+pub mod audit;
 pub mod blob_store;
 pub mod budget;
 pub mod cancellation;
