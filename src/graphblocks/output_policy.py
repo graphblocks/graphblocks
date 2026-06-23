@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from types import MappingProxyType
 from typing import Literal
 
 from .conversation import ContentPart
@@ -73,7 +74,11 @@ class OutputPolicyDecision:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "replacement_parts", tuple(self.replacement_parts))
-        object.__setattr__(self, "redactions", tuple(self.redactions))
+        object.__setattr__(
+            self,
+            "redactions",
+            tuple(MappingProxyType(dict(redaction)) for redaction in self.redactions),
+        )
         object.__setattr__(self, "reason_codes", tuple(self.reason_codes))
         object.__setattr__(self, "policy_refs", tuple(self.policy_refs))
 

@@ -66,6 +66,11 @@ def test_output_policy_decision_redact_carries_redaction_instructions() -> None:
     assert decision.pending_tool_calls == "keep"
     assert decision.input_digest == "sha256:redact"
 
+    redactions[0]["replacement"] = "[mutated]"
+    assert decision.redactions == ({"path": "/parts/0/text", "start": 5, "end": 11, "replacement": "[redacted]"},)
+    with pytest.raises(TypeError):
+        decision.redactions[0]["replacement"] = "[direct-mutation]"
+
 
 def test_output_policy_decision_metadata_builders_are_chainable() -> None:
     decision = (
@@ -80,6 +85,8 @@ def test_output_policy_decision_metadata_builders_are_chainable() -> None:
     assert decision.policy_refs == ("policy/output-standard", "rule/pii")
     assert decision.redactions == ({"path": "/parts/0/text", "replacement": "[redacted]"},)
     assert decision.evaluated_at == "2026-06-23T00:00:00Z"
+    with pytest.raises(TypeError):
+        decision.redactions[0]["replacement"] = "[mutated]"
 
 
 def test_bounded_holdback_requires_size_or_time_bound() -> None:
