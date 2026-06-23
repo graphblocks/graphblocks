@@ -1379,6 +1379,11 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
                             }))
                             .collect::<Vec<_>>(),
                         "cutoff": cutoff,
+                        "pendingToolCalls": update.pending_tool_calls.map(|disposition| match disposition {
+                            PendingToolCallsDisposition::Keep => "keep",
+                            PendingToolCallsDisposition::Deny => "deny",
+                            PendingToolCallsDisposition::CancelAdmitted => "cancel_admitted",
+                        }),
                     }));
                 }
             }
@@ -1843,6 +1848,15 @@ mod tests {
                 .and_then(|cutoff| cutoff.get("draftDisposition"))
                 .and_then(Value::as_str),
             Some("retract")
+        );
+        assert_eq!(
+            result
+                .get("deliveries")
+                .and_then(Value::as_array)
+                .and_then(|deliveries| deliveries.last())
+                .and_then(|delivery| delivery.get("pendingToolCalls"))
+                .and_then(Value::as_str),
+            Some("deny")
         );
         assert_eq!(
             result
