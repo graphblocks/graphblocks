@@ -267,6 +267,60 @@ def test_budget_postgres_permit_statement(monkeypatch) -> None:
     assert statement.params["fencing_tokens_json"] == {"budget-1": 4, "budget-2": 5}
 
 
+def test_budget_postgres_completion_reserve_statement(monkeypatch) -> None:
+    _add_budget_postgres_paths(monkeypatch)
+    graphblocks_budget = importlib.import_module("graphblocks_budget")
+    graphblocks_budget_postgres = importlib.import_module("graphblocks_budget_postgres")
+    schema = graphblocks_budget_postgres.PostgresBudgetSchema(schema="gb_budget")
+    reserve = graphblocks_budget.CompletionReserve(
+        reserve_id="reserve-1",
+        budget_id="budget-1",
+        purpose="checkpoint",
+        amounts=[
+            graphblocks_budget.UsageAmount(
+                "model_total_tokens",
+                Decimal("20"),
+                "tokens",
+                {"model": "gpt-test"},
+            )
+        ],
+        spendable_by=frozenset({"checkpoint.worker", "agent.finalize"}),
+        expires_at="2026-06-23T00:00:00Z",
+        status="spent",
+        reservation_id="reservation-1",
+        fencing_token=11,
+    )
+
+    migrations = "\n".join(schema.migration_statements())
+    assert "CREATE TABLE IF NOT EXISTS gb_budget.completion_reserves" in migrations
+    assert graphblocks_budget_postgres.encode_completion_reserve(reserve) == {
+        "reserve_id": "reserve-1",
+        "budget_id": "budget-1",
+        "purpose": "checkpoint",
+        "amounts_json": [
+            {
+                "kind": "model_total_tokens",
+                "amount": "20",
+                "unit": "tokens",
+                "dimensions": {"model": "gpt-test"},
+            }
+        ],
+        "spendable_by_json": ["agent.finalize", "checkpoint.worker"],
+        "expires_at": "2026-06-23T00:00:00Z",
+        "status": "spent",
+        "reservation_id": "reservation-1",
+        "fencing_token": 11,
+    }
+
+    statement = graphblocks_budget_postgres.upsert_completion_reserve_statement(reserve, schema=schema)
+
+    assert statement.name == "completion_reserve_upsert"
+    assert "INSERT INTO gb_budget.completion_reserves" in statement.sql
+    assert "ON CONFLICT (reserve_id) DO UPDATE" in statement.sql
+    assert "completion_reserves.fencing_token <= EXCLUDED.fencing_token" in statement.sql
+    assert statement.params["spendable_by_json"] == ["agent.finalize", "checkpoint.worker"]
+
+
 def test_usage_postgres_schema_and_record_codec(monkeypatch) -> None:
     _add_usage_postgres_paths(monkeypatch)
     graphblocks_usage = importlib.import_module("graphblocks_usage")

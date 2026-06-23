@@ -8,6 +8,7 @@ from graphblocks_budget import (
     BudgetPermit,
     BudgetReservation,
     BudgetSettlement,
+    CompletionReserve,
     ResourceRef,
     UsageAmount,
 )
@@ -117,6 +118,20 @@ CREATE TABLE IF NOT EXISTS {self.schema}.budget_permits (
   issued_at timestamptz NOT NULL DEFAULT now()
 );
 """.strip(),
+            f"""
+CREATE TABLE IF NOT EXISTS {self.schema}.completion_reserves (
+  reserve_id text PRIMARY KEY,
+  budget_id text NOT NULL REFERENCES {self.schema}.budget_accounts(budget_id),
+  purpose text NOT NULL,
+  amounts_json jsonb NOT NULL,
+  spendable_by_json jsonb NOT NULL,
+  expires_at timestamptz NULL,
+  status text NOT NULL,
+  reservation_id text NULL REFERENCES {self.schema}.budget_reservations(reservation_id),
+  fencing_token bigint NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+""".strip(),
         )
 
 
@@ -170,6 +185,20 @@ def encode_budget_permit(permit: BudgetPermit) -> dict[str, object]:
         "expires_at": permit.expires_at,
         "low_watermark_json": [_amount_contract(amount) for amount in permit.low_watermark],
         "fencing_tokens_json": dict(sorted(permit.fencing_tokens.items())),
+    }
+
+
+def encode_completion_reserve(reserve: CompletionReserve) -> dict[str, object]:
+    return {
+        "reserve_id": reserve.reserve_id,
+        "budget_id": reserve.budget_id,
+        "purpose": reserve.purpose,
+        "amounts_json": [_amount_contract(amount) for amount in reserve.amounts],
+        "spendable_by_json": sorted(reserve.spendable_by),
+        "expires_at": reserve.expires_at,
+        "status": reserve.status,
+        "reservation_id": reserve.reservation_id,
+        "fencing_token": reserve.fencing_token,
     }
 
 
@@ -327,6 +356,52 @@ ON CONFLICT (permit_id) DO NOTHING;
     )
 
 
+def upsert_completion_reserve_statement(
+    reserve: CompletionReserve,
+    *,
+    schema: PostgresBudgetSchema | None = None,
+) -> PostgresStatement:
+    schema = schema or PostgresBudgetSchema()
+    return PostgresStatement(
+        name="completion_reserve_upsert",
+        sql=f"""
+INSERT INTO {schema.schema}.completion_reserves (
+  reserve_id,
+  budget_id,
+  purpose,
+  amounts_json,
+  spendable_by_json,
+  expires_at,
+  status,
+  reservation_id,
+  fencing_token
+) VALUES (
+  %(reserve_id)s,
+  %(budget_id)s,
+  %(purpose)s,
+  %(amounts_json)s,
+  %(spendable_by_json)s,
+  %(expires_at)s,
+  %(status)s,
+  %(reservation_id)s,
+  %(fencing_token)s
+)
+ON CONFLICT (reserve_id) DO UPDATE SET
+  budget_id = EXCLUDED.budget_id,
+  purpose = EXCLUDED.purpose,
+  amounts_json = EXCLUDED.amounts_json,
+  spendable_by_json = EXCLUDED.spendable_by_json,
+  expires_at = EXCLUDED.expires_at,
+  status = EXCLUDED.status,
+  reservation_id = EXCLUDED.reservation_id,
+  fencing_token = EXCLUDED.fencing_token,
+  updated_at = now()
+WHERE {schema.schema}.completion_reserves.fencing_token <= EXCLUDED.fencing_token;
+""".strip(),
+        params=encode_completion_reserve(reserve),
+    )
+
+
 __all__ = [
     "append_budget_permit_statement",
     "append_budget_settlement_statement",
@@ -337,6 +412,8 @@ __all__ = [
     "encode_budget_permit",
     "encode_budget_reservation",
     "encode_budget_settlement",
+    "encode_completion_reserve",
     "upsert_budget_account_statement",
     "upsert_budget_reservation_statement",
+    "upsert_completion_reserve_statement",
 ]
