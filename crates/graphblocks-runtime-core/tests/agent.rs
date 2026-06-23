@@ -1,6 +1,7 @@
 use graphblocks_runtime_core::agent::{
     AgentLoopController, AgentLoopDecision, AgentSpec, AgentState, AgentStateError,
-    AgentStatePatch, AgentStateSchema, ToolFailurePolicy,
+    AgentStatePatch, AgentStateSchema, ModelPool, ModelProfile, ModelSelectionError,
+    ModelSelectionRequest, ToolFailurePolicy, WorkerProfile,
 };
 use serde_json::json;
 
@@ -110,6 +111,110 @@ fn agent_loop_continues_when_step_and_budget_boundaries_allow_work() {
         decision,
         AgentLoopDecision::Continue {
             reason: "admitted".to_owned()
+        }
+    );
+}
+
+#[test]
+fn model_pool_selects_first_profile_matching_worker_policy_and_request()
+-> Result<(), Box<dyn std::error::Error>> {
+    let pool = ModelPool::new("support-pool", "policy-1").with_models([
+        ModelProfile::new("public-only", "models.public")
+            .with_capabilities(["chat", "tool_use"])
+            .with_allowed_sensitivity(["public"])
+            .with_regions(["us-east-1"]),
+        ModelProfile::new("support-internal", "models.support")
+            .with_capabilities(["chat", "tool_use", "json"])
+            .with_allowed_sensitivity(["public", "internal"])
+            .with_regions(["us-east-1", "eu-west-1"])
+            .with_usage_report(true)
+            .with_cancellation(true),
+    ]);
+    let worker = WorkerProfile::new("support-worker")
+        .with_required_capabilities(["chat", "tool_use"])
+        .with_allowed_tools(["knowledge.search"])
+        .with_model_pool_ref("support-pool")
+        .with_sensitivity_ceiling("internal");
+    let request = ModelSelectionRequest::new(worker)
+        .with_required_tools(["knowledge.search"])
+        .with_sensitivity("internal")
+        .with_region("us-east-1");
+
+    let selected = pool.select_model(&request)?;
+
+    assert_eq!(selected.profile_id, "support-internal");
+    assert_eq!(selected.connection, "models.support");
+    assert!(selected.supports_usage_report);
+    assert!(selected.supports_cancellation);
+    Ok(())
+}
+
+#[test]
+fn model_pool_rejects_tool_not_allowed_by_worker_profile() {
+    let pool = ModelPool::new("support-pool", "policy-1").with_models([ModelProfile::new(
+        "support-internal",
+        "models.support",
+    )
+    .with_capabilities(["chat"])
+    .with_allowed_sensitivity(["internal"])
+    .with_regions(["us-east-1"])]);
+    let worker = WorkerProfile::new("support-worker")
+        .with_required_capabilities(["chat"])
+        .with_allowed_tools(["knowledge.search"])
+        .with_model_pool_ref("support-pool");
+    let request = ModelSelectionRequest::new(worker)
+        .with_required_tools(["ticket.create"])
+        .with_sensitivity("internal")
+        .with_region("us-east-1");
+
+    let error = pool
+        .select_model(&request)
+        .expect_err("worker policy denies ticket.create");
+
+    assert_eq!(
+        error,
+        ModelSelectionError::ToolNotAllowed {
+            tool_name: "ticket.create".to_owned()
+        }
+    );
+}
+
+#[test]
+fn model_pool_rejects_sensitivity_above_worker_ceiling() {
+    let pool = ModelPool::new("support-pool", "policy-1");
+    let worker = WorkerProfile::new("support-worker")
+        .with_model_pool_ref("support-pool")
+        .with_sensitivity_ceiling("internal");
+    let request = ModelSelectionRequest::new(worker).with_sensitivity("restricted");
+
+    let error = pool
+        .select_model(&request)
+        .expect_err("restricted data exceeds worker ceiling");
+
+    assert_eq!(
+        error,
+        ModelSelectionError::SensitivityAboveCeiling {
+            requested: "restricted".to_owned(),
+            ceiling: "internal".to_owned()
+        }
+    );
+}
+
+#[test]
+fn model_pool_rejects_mismatched_worker_pool_ref() {
+    let pool = ModelPool::new("support-pool", "policy-1");
+    let worker = WorkerProfile::new("support-worker").with_model_pool_ref("other-pool");
+    let request = ModelSelectionRequest::new(worker);
+
+    let error = pool
+        .select_model(&request)
+        .expect_err("worker points at a different pool");
+
+    assert_eq!(
+        error,
+        ModelSelectionError::PoolMismatch {
+            expected: "other-pool".to_owned(),
+            actual: "support-pool".to_owned()
         }
     );
 }
