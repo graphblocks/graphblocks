@@ -382,6 +382,44 @@ fn budget_ledger_issues_bounded_permit_from_reservations() -> Result<(), BudgetE
     assert_eq!(permit.atomic_unit, "turn:1");
     assert_eq!(permit.continuation_profile, "finish_current_turn");
     assert_eq!(permit.policy_snapshot_digest, "sha256:policy");
+    assert!(permit.allows([tokens(25)]));
+    assert!(!permit.allows([tokens(41)]));
+    Ok(())
+}
+
+#[test]
+fn budget_permit_requires_matching_usage_dimensions() -> Result<(), BudgetError> {
+    let mut ledger = InMemoryBudgetLedger::new();
+    ledger.allocate(
+        "budget-1",
+        "tenant:acme",
+        [tokens(100).with_dimension("model", "small")],
+        "policy-1",
+        None,
+    )?;
+    let reservation = ledger.reserve(
+        "budget-1",
+        "run:1",
+        [tokens(40).with_dimension("model", "small")],
+        ReservationPurpose::ProviderCall,
+        "later",
+        None,
+    )?;
+
+    let permit = ledger.issue_permit(
+        "permit-1",
+        vec![reservation.reservation_id],
+        "worker:1",
+        "turn:1",
+        1,
+        "finish_current_turn",
+        "sha256:policy",
+        "later",
+        Vec::new(),
+    )?;
+
+    assert!(permit.allows([tokens(20).with_dimension("model", "small")]));
+    assert!(!permit.allows([tokens(20).with_dimension("model", "large")]));
     Ok(())
 }
 

@@ -159,6 +159,19 @@ pub struct BudgetPermit {
     pub fencing_tokens: BTreeMap<String, u64>,
 }
 
+impl BudgetPermit {
+    pub fn allows<I>(&self, amounts: I) -> bool
+    where
+        I: IntoIterator<Item = UsageAmount>,
+    {
+        let authorized = amounts_to_map(self.authorized_amounts.clone());
+        let requested = amounts_to_map(amounts);
+        requested
+            .iter()
+            .all(|(key, amount)| *amount <= authorized.get(key).copied().unwrap_or(0))
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompletionReserve {
     pub reserve_id: String,

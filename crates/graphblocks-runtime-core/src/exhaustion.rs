@@ -484,36 +484,7 @@ impl ExhaustionController {
                     };
                 }
             };
-            let mut authorized_usage = BTreeMap::new();
-            for amount in &effective_permit.authorized_amounts {
-                let key = (
-                    amount.kind.clone(),
-                    amount.unit.clone(),
-                    amount
-                        .dimensions
-                        .iter()
-                        .map(|(key, value)| (key.clone(), value.clone()))
-                        .collect::<Vec<_>>(),
-                );
-                *authorized_usage.entry(key).or_insert(0) += amount.amount;
-            }
-            let mut requested_usage_map = BTreeMap::new();
-            for amount in &requested_usage {
-                let key = (
-                    amount.kind.clone(),
-                    amount.unit.clone(),
-                    amount
-                        .dimensions
-                        .iter()
-                        .map(|(key, value)| (key.clone(), value.clone()))
-                        .collect::<Vec<_>>(),
-                );
-                *requested_usage_map.entry(key).or_insert(0) += amount.amount;
-            }
-            if requested_usage_map
-                .iter()
-                .any(|(key, amount)| *amount > authorized_usage.get(key).copied().unwrap_or(0))
-            {
+            if !effective_permit.allows(requested_usage.clone()) {
                 return AdmissionDecision {
                     allowed: false,
                     reason: "usage_exceeds_permit",
