@@ -1,9 +1,10 @@
 use std::collections::BTreeMap;
 
 use graphblocks_protocol::{
-    BlockCapability, WORKER_PROTOCOL_VERSION, WorkerAdmissionPolicy, WorkerAdvertisement,
-    WorkerInvokeRequest, WorkerInvokeResult, WorkerProtocolError, WorkerSelectionError,
-    WorkerState, admit_worker, admit_worker_with_policy, select_worker_for_block,
+    BlockCapability, RunOwnershipLease, WORKER_PROTOCOL_VERSION, WorkerAdmissionPolicy,
+    WorkerAdvertisement, WorkerInvokeRequest, WorkerInvokeResult, WorkerProtocolError,
+    WorkerResultError, WorkerSelectionError, WorkerState, admit_worker, admit_worker_with_policy,
+    select_worker_for_block, validate_worker_result,
 };
 use serde_json::json;
 
@@ -149,6 +150,8 @@ fn worker_invocation_envelopes_preserve_json_payloads() -> Result<(), serde_json
         invocation_id: "invoke-000001".to_owned(),
         run_id: "run-000001".to_owned(),
         node_id: "render".to_owned(),
+        node_attempt_id: "render-attempt-1".to_owned(),
+        lease_epoch: 7,
         block: "prompt.render@1".to_owned(),
         inputs: json!({"message": {"text": "Hello"}}),
         config: json!({"template": "Echo {message.text}"}),
@@ -157,16 +160,79 @@ fn worker_invocation_envelopes_preserve_json_payloads() -> Result<(), serde_json
     outputs.insert("prompt".to_owned(), json!("Echo Hello"));
     let result = WorkerInvokeResult {
         invocation_id: request.invocation_id.clone(),
+        node_attempt_id: request.node_attempt_id.clone(),
+        lease_epoch: request.lease_epoch,
         outputs,
     };
 
+    let encoded_request = serde_json::to_value(&request)?;
+    assert_eq!(encoded_request["nodeAttemptId"], json!("render-attempt-1"));
+    assert_eq!(encoded_request["leaseEpoch"], json!(7));
     assert_eq!(
-        serde_json::from_str::<WorkerInvokeRequest>(&serde_json::to_string(&request)?)?,
+        serde_json::from_value::<WorkerInvokeRequest>(encoded_request)?,
         request,
     );
     assert_eq!(
         serde_json::from_str::<WorkerInvokeResult>(&serde_json::to_string(&result)?)?,
         result,
     );
+    assert_eq!(validate_worker_result(&request, &result), Ok(()));
     Ok(())
+}
+
+#[test]
+fn run_ownership_lease_round_trips_with_fencing_epoch() -> Result<(), serde_json::Error> {
+    let lease = RunOwnershipLease {
+        run_id: "run-000001".to_owned(),
+        owner_instance_id: "control-plane-a".to_owned(),
+        lease_epoch: 42,
+        expires_at_unix_ms: 1_820_000_000_000,
+        last_checkpoint: Some("checkpoint-000004".to_owned()),
+    };
+
+    let encoded = serde_json::to_value(&lease)?;
+    assert_eq!(encoded["leaseEpoch"], json!(42));
+    assert_eq!(encoded["expiresAtUnixMs"], json!(1_820_000_000_000u64));
+
+    assert_eq!(serde_json::from_value::<RunOwnershipLease>(encoded)?, lease);
+    Ok(())
+}
+
+#[test]
+fn worker_result_validation_rejects_mismatched_attempt_or_lease_epoch() {
+    let request = WorkerInvokeRequest {
+        invocation_id: "invoke-000001".to_owned(),
+        run_id: "run-000001".to_owned(),
+        node_id: "render".to_owned(),
+        node_attempt_id: "render-attempt-2".to_owned(),
+        lease_epoch: 9,
+        block: "prompt.render@1".to_owned(),
+        inputs: json!({"message": {"text": "Hello"}}),
+        config: json!({"template": "Echo {message.text}"}),
+    };
+    let mut mismatched_attempt = WorkerInvokeResult {
+        invocation_id: request.invocation_id.clone(),
+        node_attempt_id: "render-attempt-1".to_owned(),
+        lease_epoch: request.lease_epoch,
+        outputs: BTreeMap::new(),
+    };
+
+    assert_eq!(
+        validate_worker_result(&request, &mismatched_attempt),
+        Err(WorkerResultError::MismatchedNodeAttempt {
+            expected: "render-attempt-2".to_owned(),
+            actual: "render-attempt-1".to_owned(),
+        }),
+    );
+
+    mismatched_attempt.node_attempt_id = request.node_attempt_id.clone();
+    mismatched_attempt.lease_epoch = 8;
+
+    assert_eq!(
+        validate_worker_result(&request, &mismatched_attempt),
+        Err(WorkerResultError::StaleLeaseEpoch {
+            expected: 9,
+            actual: 8,
+        }),
+    );
 }

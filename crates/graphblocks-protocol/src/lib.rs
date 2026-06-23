@@ -177,12 +177,24 @@ where
     })
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunOwnershipLease {
+    pub run_id: String,
+    pub owner_instance_id: String,
+    pub lease_epoch: u64,
+    pub expires_at_unix_ms: u64,
+    pub last_checkpoint: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkerInvokeRequest {
     pub invocation_id: String,
     pub run_id: String,
     pub node_id: String,
+    pub node_attempt_id: String,
+    pub lease_epoch: u64,
     pub block: String,
     pub inputs: Value,
     pub config: Value,
@@ -192,5 +204,39 @@ pub struct WorkerInvokeRequest {
 #[serde(rename_all = "camelCase")]
 pub struct WorkerInvokeResult {
     pub invocation_id: String,
+    pub node_attempt_id: String,
+    pub lease_epoch: u64,
     pub outputs: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WorkerResultError {
+    MismatchedInvocationId { expected: String, actual: String },
+    MismatchedNodeAttempt { expected: String, actual: String },
+    StaleLeaseEpoch { expected: u64, actual: u64 },
+}
+
+pub fn validate_worker_result(
+    request: &WorkerInvokeRequest,
+    result: &WorkerInvokeResult,
+) -> Result<(), WorkerResultError> {
+    if request.invocation_id != result.invocation_id {
+        return Err(WorkerResultError::MismatchedInvocationId {
+            expected: request.invocation_id.clone(),
+            actual: result.invocation_id.clone(),
+        });
+    }
+    if request.node_attempt_id != result.node_attempt_id {
+        return Err(WorkerResultError::MismatchedNodeAttempt {
+            expected: request.node_attempt_id.clone(),
+            actual: result.node_attempt_id.clone(),
+        });
+    }
+    if request.lease_epoch != result.lease_epoch {
+        return Err(WorkerResultError::StaleLeaseEpoch {
+            expected: request.lease_epoch,
+            actual: result.lease_epoch,
+        });
+    }
+    Ok(())
 }
