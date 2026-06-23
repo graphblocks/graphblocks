@@ -424,6 +424,26 @@ def test_kubernetes_package_has_pure_python_layout_without_client_dependency() -
     assert (package_root / "src" / "graphblocks_kubernetes" / "py.typed").exists()
 
 
+def test_terraform_package_has_pure_python_layout_without_cli_or_hcl_dependencies() -> None:
+    package_root = ROOT / "packages" / "graphblocks-terraform"
+    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
+    dependencies = pyproject["project"]["dependencies"]
+
+    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
+    assert pyproject["project"]["name"] == "graphblocks-terraform"
+    assert dependencies == ["graphblocks-deployment~=1.0"]
+    assert not any(
+        tool in dependency.lower()
+        for dependency in dependencies
+        for tool in ("terraform", "hcl", "pulumi", "boto3", "google-cloud", "azure")
+    )
+    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
+        "src/graphblocks_terraform"
+    ]
+    assert (package_root / "src" / "graphblocks_terraform" / "__init__.py").exists()
+    assert (package_root / "src" / "graphblocks_terraform" / "py.typed").exists()
+
+
 def test_worker_package_has_pure_python_layout_without_server_dependencies() -> None:
     package_root = ROOT / "packages" / "graphblocks-worker"
     pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
