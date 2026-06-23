@@ -102,6 +102,8 @@ pub struct UsageRecord {
     pub attempt_id: Option<String>,
     pub provider_response_id: Option<String>,
     pub pricing_ref: Option<String>,
+    pub quota_window_id: Option<String>,
+    pub execution_scope: Option<String>,
     pub reconciliation_of: Option<String>,
     pub metadata: BTreeMap<String, String>,
 }
@@ -124,6 +126,8 @@ impl UsageRecord {
             attempt_id: None,
             provider_response_id: None,
             pricing_ref: None,
+            quota_window_id: None,
+            execution_scope: None,
             reconciliation_of: None,
             metadata: BTreeMap::new(),
         }
@@ -146,6 +150,16 @@ impl UsageRecord {
 
     pub fn with_pricing_ref(mut self, pricing_ref: impl Into<String>) -> Self {
         self.pricing_ref = Some(pricing_ref.into());
+        self
+    }
+
+    pub fn with_quota_window_id(mut self, quota_window_id: impl Into<String>) -> Self {
+        self.quota_window_id = Some(quota_window_id.into());
+        self
+    }
+
+    pub fn with_execution_scope(mut self, execution_scope: impl Into<String>) -> Self {
+        self.execution_scope = Some(execution_scope.into());
         self
     }
 
@@ -252,6 +266,8 @@ impl InMemoryUsageLedger {
             attempt_id: original.attempt_id,
             provider_response_id: original.provider_response_id,
             pricing_ref: original.pricing_ref,
+            quota_window_id: original.quota_window_id,
+            execution_scope: original.execution_scope,
             reconciliation_of: Some(original.record_id),
             metadata: original.metadata,
         };
@@ -294,6 +310,8 @@ impl SqliteUsageLedger {
                     attempt_id TEXT,
                     provider_response_id TEXT,
                     pricing_ref TEXT,
+                    quota_window_id TEXT,
+                    execution_scope TEXT,
                     reconciliation_of TEXT,
                     metadata_json TEXT NOT NULL
                 );
@@ -304,6 +322,37 @@ impl SqliteUsageLedger {
                     WHERE provider_response_id IS NOT NULL AND reconciliation_of IS NULL;
                 ",
             )
+            .map_err(usage_storage_error)?;
+        self.ensure_usage_record_column("quota_window_id")?;
+        self.ensure_usage_record_column("execution_scope")?;
+        Ok(())
+    }
+
+    fn ensure_usage_record_column(&self, column: &'static str) -> Result<(), UsageLedgerError> {
+        let mut statement = self
+            .connection
+            .prepare("PRAGMA table_info(usage_records)")
+            .map_err(usage_storage_error)?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(usage_storage_error)?;
+        for row in rows {
+            if row.map_err(usage_storage_error)? == column {
+                return Ok(());
+            }
+        }
+
+        let alter_sql = match column {
+            "quota_window_id" => "ALTER TABLE usage_records ADD COLUMN quota_window_id TEXT",
+            "execution_scope" => "ALTER TABLE usage_records ADD COLUMN execution_scope TEXT",
+            _ => {
+                return Err(UsageLedgerError::Storage {
+                    message: format!("unsupported usage record column migration {column:?}"),
+                });
+            }
+        };
+        self.connection
+            .execute(alter_sql, [])
             .map_err(usage_storage_error)?;
         Ok(())
     }
@@ -347,10 +396,12 @@ impl SqliteUsageLedger {
                     attempt_id,
                     provider_response_id,
                     pricing_ref,
+                    quota_window_id,
+                    execution_scope,
                     reconciliation_of,
                     metadata_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ",
                 params![
                     next_sequence,
@@ -363,6 +414,8 @@ impl SqliteUsageLedger {
                     &record.attempt_id,
                     &record.provider_response_id,
                     &record.pricing_ref,
+                    &record.quota_window_id,
+                    &record.execution_scope,
                     &record.reconciliation_of,
                     string_map_json(&record.metadata)?,
                 ],
@@ -387,6 +440,8 @@ impl SqliteUsageLedger {
                     attempt_id,
                     provider_response_id,
                     pricing_ref,
+                    quota_window_id,
+                    execution_scope,
                     reconciliation_of,
                     metadata_json
                 FROM usage_records
@@ -422,6 +477,8 @@ impl SqliteUsageLedger {
                     attempt_id,
                     provider_response_id,
                     pricing_ref,
+                    quota_window_id,
+                    execution_scope,
                     reconciliation_of,
                     metadata_json
                 FROM usage_records
@@ -468,6 +525,8 @@ impl SqliteUsageLedger {
             attempt_id: original.attempt_id,
             provider_response_id: original.provider_response_id,
             pricing_ref: original.pricing_ref,
+            quota_window_id: original.quota_window_id,
+            execution_scope: original.execution_scope,
             reconciliation_of: Some(original.record_id),
             metadata: original.metadata,
         };
@@ -505,6 +564,8 @@ impl SqliteUsageLedger {
                     attempt_id,
                     provider_response_id,
                     pricing_ref,
+                    quota_window_id,
+                    execution_scope,
                     reconciliation_of,
                     metadata_json
                 FROM usage_records
@@ -573,6 +634,8 @@ struct StoredUsageRecord {
     attempt_id: Option<String>,
     provider_response_id: Option<String>,
     pricing_ref: Option<String>,
+    quota_window_id: Option<String>,
+    execution_scope: Option<String>,
     reconciliation_of: Option<String>,
     metadata_json: String,
 }
@@ -588,8 +651,10 @@ fn stored_usage_record_from_row(row: &Row<'_>) -> rusqlite::Result<StoredUsageRe
         attempt_id: row.get(6)?,
         provider_response_id: row.get(7)?,
         pricing_ref: row.get(8)?,
-        reconciliation_of: row.get(9)?,
-        metadata_json: row.get(10)?,
+        quota_window_id: row.get(9)?,
+        execution_scope: row.get(10)?,
+        reconciliation_of: row.get(11)?,
+        metadata_json: row.get(12)?,
     })
 }
 
@@ -613,6 +678,8 @@ fn usage_record_from_storage(stored: StoredUsageRecord) -> Result<UsageRecord, U
         attempt_id: stored.attempt_id,
         provider_response_id: stored.provider_response_id,
         pricing_ref: stored.pricing_ref,
+        quota_window_id: stored.quota_window_id,
+        execution_scope: stored.execution_scope,
         reconciliation_of: stored.reconciliation_of,
         metadata: string_map_from_json(&stored.metadata_json)?,
     })

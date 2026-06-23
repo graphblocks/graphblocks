@@ -89,6 +89,8 @@ fn usage_ledger_reconcile_writes_new_record_for_late_final_usage() -> Result<(),
         .with_attempt_id("attempt-1")
         .with_provider_response_id("resp-1")
         .with_pricing_ref("pricing-2026-06")
+        .with_quota_window_id("tenant-a:2026-06")
+        .with_execution_scope("turn:turn-1/tool:call-1")
         .with_metadata("tool_call_id", "call-1")
         .with_metadata("tool_name", "knowledge.search"),
     )?;
@@ -110,6 +112,14 @@ fn usage_ledger_reconcile_writes_new_record_for_late_final_usage() -> Result<(),
     assert_eq!(reconciled.attempt_id.as_deref(), Some("attempt-1"));
     assert_eq!(reconciled.provider_response_id.as_deref(), Some("resp-1"));
     assert_eq!(reconciled.pricing_ref.as_deref(), Some("pricing-2026-06"));
+    assert_eq!(
+        reconciled.quota_window_id.as_deref(),
+        Some("tenant-a:2026-06")
+    );
+    assert_eq!(
+        reconciled.execution_scope.as_deref(),
+        Some("turn:turn-1/tool:call-1")
+    );
     assert_eq!(
         reconciled.metadata.get("tool_call_id").map(String::as_str),
         Some("call-1")
@@ -174,6 +184,8 @@ fn sqlite_usage_ledger_persists_records_across_reopen() -> Result<(), UsageLedge
     )
     .with_run_id("run-1")
     .with_attempt_id("attempt-1")
+    .with_quota_window_id("tenant-a:2026-06")
+    .with_execution_scope("turn:turn-1/model:generate")
     .with_metadata("phase", "generation");
 
     {
@@ -183,6 +195,87 @@ fn sqlite_usage_ledger_persists_records_across_reopen() -> Result<(), UsageLedge
 
     let ledger = SqliteUsageLedger::open(&path)?;
     assert_eq!(ledger.records_for_run("run-1")?, vec![record]);
+    fs::remove_file(path).ok();
+    Ok(())
+}
+
+#[test]
+fn sqlite_usage_ledger_migrates_existing_usage_tables_for_lineage() -> Result<(), UsageLedgerError>
+{
+    let path = sqlite_usage_path("usage-lineage-migration");
+    {
+        let connection =
+            rusqlite::Connection::open(&path).expect("old usage ledger database opens");
+        connection
+            .execute_batch(
+                r#"
+                CREATE TABLE usage_records (
+                    sequence INTEGER PRIMARY KEY,
+                    record_id TEXT NOT NULL UNIQUE,
+                    source TEXT NOT NULL,
+                    confidence TEXT NOT NULL,
+                    amounts_json TEXT NOT NULL,
+                    occurred_at_unix_ms INTEGER NOT NULL,
+                    run_id TEXT,
+                    attempt_id TEXT,
+                    provider_response_id TEXT,
+                    pricing_ref TEXT,
+                    reconciliation_of TEXT,
+                    metadata_json TEXT NOT NULL
+                );
+                INSERT INTO usage_records (
+                    sequence,
+                    record_id,
+                    source,
+                    confidence,
+                    amounts_json,
+                    occurred_at_unix_ms,
+                    run_id,
+                    attempt_id,
+                    provider_response_id,
+                    pricing_ref,
+                    reconciliation_of,
+                    metadata_json
+                )
+                VALUES (
+                    1,
+                    'usage-old',
+                    'runtime_measured',
+                    'estimated',
+                    '[{"kind":"model_output_tokens","amount":12,"unit":"tokens","dimensions":{}}]',
+                    1000,
+                    'run-1',
+                    'attempt-1',
+                    NULL,
+                    NULL,
+                    NULL,
+                    '{}'
+                );
+                "#,
+            )
+            .expect("old usage ledger schema is created");
+    }
+
+    let mut ledger = SqliteUsageLedger::open(&path)?;
+    let old = ledger.get("usage-old")?;
+
+    assert_eq!(old.quota_window_id, None);
+    assert_eq!(old.execution_scope, None);
+
+    let new = UsageRecord::new(
+        "usage-new",
+        UsageSource::RuntimeMeasured,
+        UsageConfidence::Estimated,
+        [tokens(7)],
+        1_010,
+    )
+    .with_run_id("run-1")
+    .with_attempt_id("attempt-2")
+    .with_quota_window_id("tenant-a:2026-06")
+    .with_execution_scope("turn:turn-1/model:generate");
+
+    assert_eq!(ledger.append(new.clone())?, new);
+    assert_eq!(ledger.records_for_run("run-1")?, vec![old, new]);
     fs::remove_file(path).ok();
     Ok(())
 }
@@ -201,6 +294,8 @@ fn sqlite_usage_ledger_deduplicates_provider_response_and_reconciles_late_usage(
     .with_run_id("run-1")
     .with_attempt_id("attempt-1")
     .with_provider_response_id("resp-1")
+    .with_quota_window_id("tenant-a:2026-06")
+    .with_execution_scope("turn:turn-1/tool:call-1")
     .with_metadata("tool_call_id", "call-1")
     .with_metadata("tool_name", "ticket.create");
     let duplicate = UsageRecord::new(
@@ -226,6 +321,14 @@ fn sqlite_usage_ledger_deduplicates_provider_response_and_reconciles_late_usage(
 
     assert_eq!(reconciled.source, UsageSource::Reconciled);
     assert_eq!(reconciled.reconciliation_of.as_deref(), Some("usage-1"));
+    assert_eq!(
+        reconciled.quota_window_id.as_deref(),
+        Some("tenant-a:2026-06")
+    );
+    assert_eq!(
+        reconciled.execution_scope.as_deref(),
+        Some("turn:turn-1/tool:call-1")
+    );
     assert_eq!(
         reconciled.metadata.get("tool_call_id").map(String::as_str),
         Some("call-1")
