@@ -1,0 +1,955 @@
+use std::collections::{BTreeMap, BTreeSet};
+use std::error::Error;
+use std::fmt;
+
+use graphblocks_compiler::canonical::canonical_hash;
+use serde_json::{Map, Value, json};
+
+use crate::documents::{DocumentChunk, DocumentSpan, SourceRef};
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SearchRequest {
+    pub query_text: String,
+    pub top_k: usize,
+    pub filters: BTreeMap<String, Value>,
+    pub metadata: BTreeMap<String, Value>,
+}
+
+impl SearchRequest {
+    pub fn new(query_text: impl Into<String>) -> Self {
+        Self {
+            query_text: query_text.into(),
+            top_k: 10,
+            filters: BTreeMap::new(),
+            metadata: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_top_k(mut self, top_k: usize) -> Self {
+        self.top_k = top_k;
+        self
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RetrievalResult {
+    pub retrieval_id: String,
+    pub request: SearchRequest,
+    pub hits: Vec<SearchHit>,
+    pub total_candidates: Option<usize>,
+    pub latency_ms: Option<f64>,
+    pub warnings: Vec<String>,
+    pub metadata: BTreeMap<String, Value>,
+}
+
+impl RetrievalResult {
+    pub fn new(
+        retrieval_id: impl Into<String>,
+        request: SearchRequest,
+        hits: Vec<SearchHit>,
+    ) -> Self {
+        Self {
+            retrieval_id: retrieval_id.into(),
+            request,
+            hits,
+            total_candidates: None,
+            latency_ms: None,
+            warnings: Vec::new(),
+            metadata: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct KnowledgeItemRef {
+    pub item_id: String,
+    pub item_kind: String,
+    pub source: SourceRef,
+    pub schema_ref: Option<String>,
+    pub payload_ref: Option<String>,
+    pub preview: Vec<String>,
+    pub acl: Option<Value>,
+    pub metadata: BTreeMap<String, Value>,
+}
+
+impl KnowledgeItemRef {
+    pub fn new(
+        item_id: impl Into<String>,
+        item_kind: impl Into<String>,
+        source: SourceRef,
+    ) -> Self {
+        Self {
+            item_id: item_id.into(),
+            item_kind: item_kind.into(),
+            source,
+            schema_ref: None,
+            payload_ref: None,
+            preview: Vec::new(),
+            acl: None,
+            metadata: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_preview<I, S>(mut self, preview: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.preview = preview.into_iter().map(Into::into).collect();
+        self
+    }
+
+    pub fn with_metadata(mut self, metadata: BTreeMap<String, Value>) -> Self {
+        self.metadata = metadata;
+        self
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SearchHit {
+    pub hit_id: String,
+    pub item: KnowledgeItemRef,
+    pub rank: usize,
+    pub retriever: String,
+    pub raw_score: Option<f64>,
+    pub normalized_score: Option<f64>,
+    pub score_kind: Option<String>,
+    pub highlights: Vec<SourceRef>,
+    pub metadata: BTreeMap<String, Value>,
+}
+
+impl SearchHit {
+    pub fn new(
+        hit_id: impl Into<String>,
+        item: KnowledgeItemRef,
+        rank: usize,
+        retriever: impl Into<String>,
+    ) -> Self {
+        Self {
+            hit_id: hit_id.into(),
+            item,
+            rank,
+            retriever: retriever.into(),
+            raw_score: None,
+            normalized_score: None,
+            score_kind: None,
+            highlights: Vec::new(),
+            metadata: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_raw_score(mut self, raw_score: f64) -> Self {
+        self.raw_score = Some(raw_score);
+        self
+    }
+
+    pub fn with_normalized_score(mut self, normalized_score: f64) -> Self {
+        self.normalized_score = Some(normalized_score);
+        self
+    }
+
+    pub fn with_score_kind(mut self, score_kind: impl Into<String>) -> Self {
+        self.score_kind = Some(score_kind.into());
+        self
+    }
+
+    pub fn with_highlights<I>(mut self, highlights: I) -> Self
+    where
+        I: IntoIterator<Item = SourceRef>,
+    {
+        self.highlights = highlights.into_iter().collect();
+        self
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ContextPack {
+    pub context_id: String,
+    pub hits: Vec<SearchHit>,
+    pub token_budget: Option<usize>,
+    pub token_count: Option<usize>,
+    pub metadata: BTreeMap<String, Value>,
+}
+
+impl ContextPack {
+    pub fn new(context_id: impl Into<String>, hits: Vec<SearchHit>) -> Self {
+        Self {
+            context_id: context_id.into(),
+            hits,
+            token_budget: None,
+            token_count: None,
+            metadata: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContextBuildOptions {
+    pub token_budget: usize,
+    pub per_document_max_chunks: Option<usize>,
+    pub deduplicate: bool,
+}
+
+impl ContextBuildOptions {
+    pub fn new(token_budget: usize) -> Self {
+        Self {
+            token_budget,
+            per_document_max_chunks: None,
+            deduplicate: true,
+        }
+    }
+
+    pub fn with_per_document_max_chunks(mut self, per_document_max_chunks: usize) -> Self {
+        self.per_document_max_chunks = Some(per_document_max_chunks);
+        self
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FusionStrategy {
+    Concatenate,
+    ReciprocalRankFusion,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FusionOptions {
+    pub strategy: FusionStrategy,
+    pub k: usize,
+    pub weights: Option<Vec<f64>>,
+    pub retriever_id: String,
+}
+
+impl FusionOptions {
+    pub fn new() -> Self {
+        Self {
+            strategy: FusionStrategy::ReciprocalRankFusion,
+            k: 60,
+            weights: None,
+            retriever_id: "fused".to_owned(),
+        }
+    }
+
+    pub fn with_strategy(mut self, strategy: FusionStrategy) -> Self {
+        self.strategy = strategy;
+        self
+    }
+
+    pub fn with_k(mut self, k: usize) -> Self {
+        self.k = k;
+        self
+    }
+
+    pub fn with_retriever_id(mut self, retriever_id: impl Into<String>) -> Self {
+        self.retriever_id = retriever_id.into();
+        self
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FailurePolicy {
+    Warn,
+    Fail,
+    Abstain,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Citation {
+    pub citation_id: String,
+    pub source: SourceRef,
+    pub claim_id: Option<String>,
+    pub cited_text: Option<String>,
+    pub confidence: Option<f64>,
+    pub metadata: BTreeMap<String, Value>,
+}
+
+impl Citation {
+    pub fn new(citation_id: impl Into<String>, source: SourceRef) -> Self {
+        Self {
+            citation_id: citation_id.into(),
+            source,
+            claim_id: None,
+            cited_text: None,
+            confidence: None,
+            metadata: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_cited_text(mut self, cited_text: impl Into<String>) -> Self {
+        self.cited_text = Some(cited_text.into());
+        self
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Claim {
+    pub claim_id: String,
+    pub text: String,
+    pub citation_ids: Vec<String>,
+    pub metadata: BTreeMap<String, Value>,
+}
+
+impl Claim {
+    pub fn new(claim_id: impl Into<String>, text: impl Into<String>) -> Self {
+        Self {
+            claim_id: claim_id.into(),
+            text: text.into(),
+            citation_ids: Vec::new(),
+            metadata: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_citation_ids<I, S>(mut self, citation_ids: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.citation_ids = citation_ids.into_iter().map(Into::into).collect();
+        self
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Abstention {
+    pub reason: String,
+    pub user_message: String,
+    pub diagnostics: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Answer {
+    pub answer_id: String,
+    pub text: String,
+    pub claims: Vec<Claim>,
+    pub citations: Vec<Citation>,
+    pub abstention: Option<Abstention>,
+    pub metadata: BTreeMap<String, Value>,
+}
+
+impl Answer {
+    pub fn new(answer_id: impl Into<String>, text: impl Into<String>) -> Self {
+        Self {
+            answer_id: answer_id.into(),
+            text: text.into(),
+            claims: Vec::new(),
+            citations: Vec::new(),
+            abstention: None,
+            metadata: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_claim(mut self, claim: Claim) -> Self {
+        self.claims.push(claim);
+        self
+    }
+
+    pub fn with_citation(mut self, citation: Citation) -> Self {
+        self.citations.push(citation);
+        self
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CitationSeverity {
+    Warning,
+    Error,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CitationValidationIssue {
+    pub code: String,
+    pub message: String,
+    pub citation_id: Option<String>,
+    pub claim_id: Option<String>,
+    pub severity: CitationSeverity,
+    pub metadata: BTreeMap<String, Value>,
+}
+
+impl CitationValidationIssue {
+    pub fn new(
+        code: impl Into<String>,
+        message: impl Into<String>,
+        severity: CitationSeverity,
+    ) -> Self {
+        Self {
+            code: code.into(),
+            message: message.into(),
+            citation_id: None,
+            claim_id: None,
+            severity,
+            metadata: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_citation_id(mut self, citation_id: impl Into<String>) -> Self {
+        self.citation_id = Some(citation_id.into());
+        self
+    }
+
+    pub fn with_claim_id(mut self, claim_id: impl Into<String>) -> Self {
+        self.claim_id = Some(claim_id.into());
+        self
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CitationValidationResult {
+    pub ok: bool,
+    pub issues: Vec<CitationValidationIssue>,
+    pub abstention: Option<Abstention>,
+}
+
+impl CitationValidationResult {
+    pub fn ok() -> Self {
+        Self {
+            ok: true,
+            issues: Vec::new(),
+            abstention: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RagError {
+    InvalidPerDocumentMaxChunks,
+    InvalidFusionK,
+    WeightCountMismatch,
+}
+
+impl fmt::Display for RagError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidPerDocumentMaxChunks => {
+                write!(formatter, "per_document_max_chunks must be at least 1")
+            }
+            Self::InvalidFusionK => write!(formatter, "fusion k must be at least 1"),
+            Self::WeightCountMismatch => {
+                write!(formatter, "weights length must match hit_sets length")
+            }
+        }
+    }
+}
+
+impl Error for RagError {}
+
+pub fn knowledge_item_from_chunk(chunk: &DocumentChunk) -> KnowledgeItemRef {
+    let source = chunk.source_refs.first().cloned().unwrap_or_else(|| {
+        SourceRef::document_chunk(
+            &chunk.chunk_id,
+            &chunk.revision_id,
+            "",
+            DocumentSpan::new(&chunk.asset_id, &chunk.revision_id, &chunk.document_id)
+                .with_chunk_id(&chunk.chunk_id),
+        )
+    });
+    let mut metadata = BTreeMap::new();
+    metadata.insert("document_id".to_owned(), json!(chunk.document_id));
+    metadata.insert("asset_id".to_owned(), json!(chunk.asset_id));
+    metadata.insert("revision_id".to_owned(), json!(chunk.revision_id));
+    metadata.insert("element_ids".to_owned(), json!(chunk.element_ids));
+    let mut item = KnowledgeItemRef::new(&chunk.chunk_id, "document_chunk", source)
+        .with_preview([chunk.text.as_str()])
+        .with_metadata(metadata);
+    item.acl = chunk.acl.clone();
+    item
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct InMemoryChunkRetriever {
+    pub chunks: Vec<DocumentChunk>,
+    pub retriever_id: String,
+}
+
+impl InMemoryChunkRetriever {
+    pub fn new<I>(chunks: I, retriever_id: impl Into<String>) -> Self
+    where
+        I: IntoIterator<Item = DocumentChunk>,
+    {
+        Self {
+            chunks: chunks.into_iter().collect(),
+            retriever_id: retriever_id.into(),
+        }
+    }
+
+    pub fn search(&self, query_text: impl Into<String>, top_k: usize) -> Vec<SearchHit> {
+        self.retrieve(SearchRequest::new(query_text).with_top_k(top_k))
+            .hits
+    }
+
+    pub fn retrieve(&self, request: SearchRequest) -> RetrievalResult {
+        let request_hash = canonical_hash(&json!({
+            "query_text": &request.query_text,
+            "top_k": request.top_k,
+            "filters": &request.filters,
+        }));
+        let retrieval_id = format!("{}:{request_hash}", self.retriever_id);
+        let mut terms = Vec::new();
+        let mut current = String::new();
+        for character in request.query_text.chars() {
+            if character.is_ascii_alphanumeric() || character == '_' {
+                current.push(character.to_ascii_lowercase());
+            } else if !current.is_empty() {
+                terms.push(std::mem::take(&mut current));
+            }
+        }
+        if !current.is_empty() {
+            terms.push(current);
+        }
+        if terms.is_empty() {
+            let mut result = RetrievalResult::new(retrieval_id, request, Vec::new());
+            result.total_candidates = Some(0);
+            return result;
+        }
+        let mut scored = Vec::new();
+        for (index, chunk) in self.chunks.iter().enumerate() {
+            let haystack = chunk.text.to_ascii_lowercase();
+            let score = terms
+                .iter()
+                .map(|term| haystack.matches(term).count())
+                .sum::<usize>();
+            if score > 0 {
+                scored.push((score, index, chunk));
+            }
+        }
+        scored.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+        if scored.is_empty() {
+            let mut result = RetrievalResult::new(retrieval_id, request, Vec::new());
+            result.total_candidates = Some(0);
+            return result;
+        }
+        let max_score = scored[0].0 as f64;
+        let mut hits = Vec::new();
+        for (rank, (score, _index, chunk)) in scored.iter().take(request.top_k).enumerate() {
+            hits.push(
+                SearchHit::new(
+                    format!("{}:{}", self.retriever_id, chunk.chunk_id),
+                    knowledge_item_from_chunk(chunk),
+                    rank + 1,
+                    &self.retriever_id,
+                )
+                .with_raw_score(*score as f64)
+                .with_normalized_score(*score as f64 / max_score)
+                .with_score_kind("term_frequency")
+                .with_highlights(chunk.source_refs.clone()),
+            );
+        }
+        let mut result = RetrievalResult::new(retrieval_id, request, hits);
+        result.total_candidates = Some(scored.len());
+        result
+    }
+}
+
+pub fn build_context_pack(
+    context_id: impl Into<String>,
+    mut hits: Vec<SearchHit>,
+    options: ContextBuildOptions,
+) -> Result<ContextPack, RagError> {
+    if matches!(options.per_document_max_chunks, Some(0)) {
+        return Err(RagError::InvalidPerDocumentMaxChunks);
+    }
+    hits.sort_by(|left, right| {
+        left.rank
+            .cmp(&right.rank)
+            .then_with(|| left.hit_id.cmp(&right.hit_id))
+    });
+    let mut selected = Vec::new();
+    let mut selected_hit_ids = Vec::new();
+    let mut dropped_hit_ids = Vec::new();
+    let mut drop_reasons = Map::new();
+    let mut selected_item_ids = BTreeSet::new();
+    let mut chunks_per_document: BTreeMap<String, usize> = BTreeMap::new();
+    let mut token_count = 0;
+
+    for hit in hits {
+        if options.deduplicate && selected_item_ids.contains(&hit.item.item_id) {
+            dropped_hit_ids.push(hit.hit_id.clone());
+            drop_reasons.insert(hit.hit_id.clone(), json!("duplicate"));
+            continue;
+        }
+        let document_id = hit
+            .item
+            .metadata
+            .get("document_id")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .or_else(|| {
+                hit.item
+                    .source
+                    .locator
+                    .as_ref()
+                    .map(|locator| locator.document_id.clone())
+            })
+            .unwrap_or_else(|| hit.item.item_id.clone());
+        let current_document_chunks = chunks_per_document.get(&document_id).copied().unwrap_or(0);
+        if options
+            .per_document_max_chunks
+            .is_some_and(|limit| current_document_chunks >= limit)
+        {
+            dropped_hit_ids.push(hit.hit_id.clone());
+            drop_reasons.insert(hit.hit_id.clone(), json!("per_document_max_chunks"));
+            continue;
+        }
+        let estimated_tokens = hit
+            .item
+            .preview
+            .iter()
+            .map(|preview| preview.split_whitespace().count())
+            .sum::<usize>();
+        if token_count + estimated_tokens > options.token_budget {
+            dropped_hit_ids.push(hit.hit_id.clone());
+            drop_reasons.insert(hit.hit_id.clone(), json!("token_budget"));
+            continue;
+        }
+        selected_hit_ids.push(hit.hit_id.clone());
+        selected_item_ids.insert(hit.item.item_id.clone());
+        chunks_per_document.insert(document_id, current_document_chunks + 1);
+        token_count += estimated_tokens;
+        selected.push(hit);
+    }
+
+    let mut context = ContextPack::new(context_id, selected);
+    context.token_budget = Some(options.token_budget);
+    context.token_count = Some(token_count);
+    context
+        .metadata
+        .insert("selected_hit_ids".to_owned(), json!(selected_hit_ids));
+    context
+        .metadata
+        .insert("dropped_hit_ids".to_owned(), json!(dropped_hit_ids));
+    context
+        .metadata
+        .insert("drop_reasons".to_owned(), Value::Object(drop_reasons));
+    Ok(context)
+}
+
+pub fn fuse_search_hits(
+    hit_sets: &[Vec<SearchHit>],
+    options: FusionOptions,
+) -> Result<Vec<SearchHit>, RagError> {
+    if options.k < 1 {
+        return Err(RagError::InvalidFusionK);
+    }
+    if options
+        .weights
+        .as_ref()
+        .is_some_and(|weights| weights.len() != hit_sets.len())
+    {
+        return Err(RagError::WeightCountMismatch);
+    }
+
+    let mut grouped_hits: BTreeMap<String, Vec<SearchHit>> = BTreeMap::new();
+    let mut first_seen_item_ids = Vec::new();
+    let mut rrf_scores: BTreeMap<String, f64> = BTreeMap::new();
+    for (set_index, hit_set) in hit_sets.iter().enumerate() {
+        let weight = options
+            .weights
+            .as_ref()
+            .and_then(|weights| weights.get(set_index))
+            .copied()
+            .unwrap_or(1.0);
+        for hit in hit_set {
+            if !grouped_hits.contains_key(&hit.item.item_id) {
+                first_seen_item_ids.push(hit.item.item_id.clone());
+            }
+            grouped_hits
+                .entry(hit.item.item_id.clone())
+                .or_default()
+                .push(hit.clone());
+            if options.strategy == FusionStrategy::ReciprocalRankFusion {
+                *rrf_scores.entry(hit.item.item_id.clone()).or_insert(0.0) +=
+                    weight / (options.k + hit.rank) as f64;
+            }
+        }
+    }
+
+    let (ordered_item_ids, score_kind, max_score) = match options.strategy {
+        FusionStrategy::Concatenate => (first_seen_item_ids, "concatenate", None),
+        FusionStrategy::ReciprocalRankFusion => {
+            let mut item_ids = grouped_hits.keys().cloned().collect::<Vec<_>>();
+            item_ids.sort_by(|left, right| {
+                let left_score = rrf_scores.get(left).copied().unwrap_or(0.0);
+                let right_score = rrf_scores.get(right).copied().unwrap_or(0.0);
+                right_score
+                    .partial_cmp(&left_score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| {
+                        let left_rank = grouped_hits[left]
+                            .iter()
+                            .map(|hit| hit.rank)
+                            .min()
+                            .unwrap_or(usize::MAX);
+                        let right_rank = grouped_hits[right]
+                            .iter()
+                            .map(|hit| hit.rank)
+                            .min()
+                            .unwrap_or(usize::MAX);
+                        left_rank.cmp(&right_rank)
+                    })
+                    .then_with(|| left.cmp(right))
+            });
+            let max_score = item_ids
+                .first()
+                .and_then(|item_id| rrf_scores.get(item_id))
+                .copied();
+            (item_ids, "reciprocal_rank_fusion", max_score)
+        }
+    };
+
+    let mut fused_hits = Vec::new();
+    for (rank, item_id) in ordered_item_ids.iter().enumerate() {
+        let source_hits = &grouped_hits[item_id];
+        let representative = &source_hits[0];
+        let mut metadata = representative.metadata.clone();
+        metadata.insert(
+            "source_hit_ids".to_owned(),
+            json!(
+                source_hits
+                    .iter()
+                    .map(|hit| hit.hit_id.clone())
+                    .collect::<Vec<_>>()
+            ),
+        );
+        let mut source_ranks = Map::new();
+        for hit in source_hits {
+            source_ranks.insert(hit.retriever.clone(), json!(hit.rank));
+        }
+        metadata.insert("source_ranks".to_owned(), Value::Object(source_ranks));
+        metadata.insert(
+            "fusion_strategy".to_owned(),
+            json!(match options.strategy {
+                FusionStrategy::Concatenate => "concatenate",
+                FusionStrategy::ReciprocalRankFusion => "reciprocal_rank_fusion",
+            }),
+        );
+        let raw_score = if options.strategy == FusionStrategy::ReciprocalRankFusion {
+            rrf_scores.get(item_id).copied()
+        } else {
+            None
+        };
+        metadata.insert(
+            "fusion_score".to_owned(),
+            raw_score.map_or(Value::Null, Value::from),
+        );
+        let mut highlights = Vec::new();
+        let mut seen_source_ids = BTreeSet::new();
+        for hit in source_hits {
+            if hit.highlights.is_empty() {
+                if seen_source_ids.insert(hit.item.source.source_id.clone()) {
+                    highlights.push(hit.item.source.clone());
+                }
+            } else {
+                for source_ref in &hit.highlights {
+                    if seen_source_ids.insert(source_ref.source_id.clone()) {
+                        highlights.push(source_ref.clone());
+                    }
+                }
+            }
+        }
+        let mut fused = SearchHit::new(
+            format!("{}:{item_id}", options.retriever_id),
+            representative.item.clone(),
+            rank + 1,
+            &options.retriever_id,
+        )
+        .with_score_kind(score_kind)
+        .with_highlights(highlights);
+        fused.raw_score = raw_score;
+        fused.normalized_score = raw_score.and_then(|score| max_score.map(|max| score / max));
+        fused.metadata = metadata;
+        fused_hits.push(fused);
+    }
+    Ok(fused_hits)
+}
+
+pub fn validate_answer_citations(
+    answer: &Answer,
+    context: &ContextPack,
+    require_citations: bool,
+    failure_policy: FailurePolicy,
+) -> Result<CitationValidationResult, RagError> {
+    let severity = if failure_policy == FailurePolicy::Warn {
+        CitationSeverity::Warning
+    } else {
+        CitationSeverity::Error
+    };
+    let mut issues = Vec::new();
+    let mut citations_by_id: BTreeMap<String, &Citation> = BTreeMap::new();
+    let mut context_source_texts: BTreeMap<(String, Option<String>, Option<String>), String> =
+        BTreeMap::new();
+
+    for citation in &answer.citations {
+        if citations_by_id.contains_key(&citation.citation_id) {
+            issues.push(
+                CitationValidationIssue::new(
+                    "citation_id.duplicate",
+                    format!(
+                        "citation {:?} is defined more than once",
+                        citation.citation_id
+                    ),
+                    severity.clone(),
+                )
+                .with_citation_id(&citation.citation_id),
+            );
+        } else {
+            citations_by_id.insert(citation.citation_id.clone(), citation);
+        }
+    }
+
+    for hit in &context.hits {
+        let preview_text = hit.item.preview.join("\n");
+        for source_ref in std::iter::once(&hit.item.source).chain(hit.highlights.iter()) {
+            context_source_texts
+                .entry((
+                    source_ref.source_id.clone(),
+                    source_ref.revision.clone(),
+                    source_ref.digest.clone(),
+                ))
+                .or_insert_with(|| preview_text.clone());
+        }
+    }
+
+    for claim in &answer.claims {
+        if require_citations && !claim.text.trim().is_empty() && claim.citation_ids.is_empty() {
+            issues.push(
+                CitationValidationIssue::new(
+                    "claim.missing_citation",
+                    format!("claim {:?} has no citation", claim.claim_id),
+                    severity.clone(),
+                )
+                .with_claim_id(&claim.claim_id),
+            );
+        }
+        for citation_id in &claim.citation_ids {
+            let Some(citation) = citations_by_id.get(citation_id).copied() else {
+                issues.push(
+                    CitationValidationIssue::new(
+                        "citation_id.missing",
+                        format!(
+                            "claim {:?} references missing citation {:?}",
+                            claim.claim_id, citation_id
+                        ),
+                        severity.clone(),
+                    )
+                    .with_citation_id(citation_id)
+                    .with_claim_id(&claim.claim_id),
+                );
+                continue;
+            };
+            if citation
+                .claim_id
+                .as_ref()
+                .is_some_and(|claim_id| claim_id != &claim.claim_id)
+            {
+                issues.push(
+                    CitationValidationIssue::new(
+                        "citation.claim_mismatch",
+                        format!(
+                            "citation {:?} is attached to a different claim",
+                            citation.citation_id
+                        ),
+                        severity.clone(),
+                    )
+                    .with_citation_id(&citation.citation_id)
+                    .with_claim_id(&claim.claim_id),
+                );
+            }
+        }
+    }
+
+    for citation in &answer.citations {
+        let matching_texts = context_source_texts
+            .iter()
+            .filter_map(|((source_id, revision, digest), text)| {
+                if source_id == &citation.source.source_id
+                    && citation
+                        .source
+                        .revision
+                        .as_ref()
+                        .is_none_or(|expected| Some(expected) == revision.as_ref())
+                    && citation
+                        .source
+                        .digest
+                        .as_ref()
+                        .is_none_or(|expected| Some(expected) == digest.as_ref())
+                {
+                    Some(text.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        if matching_texts.is_empty() {
+            issues.push(
+                CitationValidationIssue::new(
+                    "citation.source_not_in_context",
+                    format!(
+                        "citation {:?} does not point to the current context",
+                        citation.citation_id
+                    ),
+                    severity.clone(),
+                )
+                .with_citation_id(&citation.citation_id),
+            );
+            continue;
+        }
+        if let Some(cited_text) = &citation.cited_text {
+            let quoted_text = cited_text
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_ascii_lowercase();
+            if !quoted_text.is_empty()
+                && !matching_texts.iter().any(|text| {
+                    text.split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                        .to_ascii_lowercase()
+                        .contains(&quoted_text)
+                })
+            {
+                issues.push(
+                    CitationValidationIssue::new(
+                        "citation.text_mismatch",
+                        format!(
+                            "citation {:?} cites text outside the source preview",
+                            citation.citation_id
+                        ),
+                        severity.clone(),
+                    )
+                    .with_citation_id(&citation.citation_id),
+                );
+            }
+        }
+    }
+
+    if issues.is_empty() {
+        return Ok(CitationValidationResult::ok());
+    }
+    if failure_policy == FailurePolicy::Warn {
+        return Ok(CitationValidationResult {
+            ok: true,
+            issues,
+            abstention: None,
+        });
+    }
+    if failure_policy == FailurePolicy::Abstain {
+        let mut diagnostics = BTreeMap::new();
+        diagnostics.insert(
+            "issue_codes".to_owned(),
+            json!(issues.iter().map(|issue| &issue.code).collect::<Vec<_>>()),
+        );
+        return Ok(CitationValidationResult {
+            ok: false,
+            issues,
+            abstention: Some(Abstention {
+                reason: "citation_validation_failed".to_owned(),
+                user_message: "I do not have enough validated source support to answer.".to_owned(),
+                diagnostics,
+            }),
+        });
+    }
+    Ok(CitationValidationResult {
+        ok: false,
+        issues,
+        abstention: None,
+    })
+}
