@@ -12,7 +12,7 @@ from .compiler import compile_graph
 from .diagnostics import Diagnostic
 from .loader import load_documents
 from .migration import migrate_document
-from .packages import load_package_catalog, package_rows
+from .packages import build_package_lock, load_package_catalog, package_rows
 from .plugins import BlockCatalog, discover_plugins, load_plugin_manifest, validate_plugin_manifest
 from .runtime import InProcessRuntime, stdlib_registry
 
@@ -72,6 +72,13 @@ def main(argv: list[str] | None = None) -> int:
     packages_list_parser = packages_subparsers.add_parser("list", help="list package catalog entries")
     packages_list_parser.add_argument("--catalog", type=Path, help="override package-catalog.yaml")
     packages_list_parser.add_argument("--json", action="store_true", help="emit JSON")
+
+    lock_parser = subparsers.add_parser("lock", help="create a semantic graph lockfile")
+    lock_parser.add_argument("path", type=Path)
+    lock_parser.add_argument("--output", type=Path, help="write lock JSON to this path instead of stdout")
+    lock_parser.add_argument("--catalog", type=Path, help="override package-catalog.yaml")
+    lock_parser.add_argument("--package", action="append", default=[], help="additional package distribution to lock")
+    lock_parser.add_argument("--no-default", action="store_true", help="do not include the default metapackage closure")
 
     args = parser.parse_args(argv)
     if args.version:
@@ -181,6 +188,56 @@ def main(argv: list[str] | None = None) -> int:
         documents = [migrate_document(document) for document in load_documents(args.path)]
         print(yaml.safe_dump_all(documents, sort_keys=False, allow_unicode=True).rstrip())
         return 0
+    if args.command == "lock":
+        documents = load_documents(args.path)
+        graph_documents = [document for document in documents if document.get("kind") == "Graph"]
+        if not graph_documents:
+            print(f"{args.path}: no Graph document found")
+            return 1
+        graph = graph_documents[0]
+        plan = compile_graph(graph)
+        package_lock = build_package_lock(
+            load_package_catalog(args.catalog),
+            requested=tuple(args.package),
+            include_default=not args.no_default,
+        )
+        metadata = graph.get("metadata", {})
+        graph_id = metadata.get("name") if isinstance(metadata, dict) else None
+        payload = {
+            "lockVersion": 1,
+            "graph": {
+                "id": graph_id,
+                "graphHash": plan.graph_hash,
+                "schemaVersion": graph.get("apiVersion"),
+            },
+            "runtime": {
+                "protocol": 1,
+                "distribution": "graphblocks-runtime",
+                "version": None,
+            },
+            "packages": [
+                {
+                    "name": entry.distribution,
+                    "versionConstraint": entry.version_constraint,
+                    "import": entry.import_package,
+                    "default": entry.default,
+                    "layer": entry.layer,
+                    "kind": entry.kind,
+                    "stability": entry.stability,
+                    "dependencies": list(entry.dependencies),
+                    "forbiddenDependencies": list(entry.forbidden_dependencies),
+                }
+                for entry in package_lock.entries
+            ],
+            "excludedCategories": list(package_lock.excluded_categories),
+            "diagnostics": plan.diagnostics.to_list(),
+        }
+        text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+        if args.output is not None:
+            args.output.write_text(text, encoding="utf-8")
+        else:
+            print(text, end="")
+        return 0 if plan.ok else 1
     if args.command == "plugins":
         if args.plugins_command == "list":
             registry = discover_plugins(args.path, include_installed=not args.no_installed)

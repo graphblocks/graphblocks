@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import yaml
 
 from graphblocks.cli import main
@@ -40,6 +41,45 @@ def test_plan_cli_prints_hash(tmp_path, capsys) -> None:
 def test_packages_cli_lists_catalog(capsys) -> None:
     assert main(["packages", "list"]) == 0
     assert "graphblocks-core" in capsys.readouterr().out
+
+
+def test_lock_cli_emits_graph_hash_and_default_package_closure(tmp_path, capsys) -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "cli-lock"},
+        "spec": {"nodes": {"value": {"block": "text.literal@1"}}},
+    }
+    path = tmp_path / "graph.yaml"
+    path.write_text(yaml.safe_dump(graph), encoding="utf-8")
+
+    assert main(["lock", str(path)]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["lockVersion"] == 1
+    assert payload["graph"]["id"] == "cli-lock"
+    assert payload["graph"]["graphHash"].startswith("sha256:")
+    assert payload["graph"]["schemaVersion"] == "graphblocks.ai/v1alpha3"
+    assert "graphblocks-core" in {package["name"] for package in payload["packages"]}
+
+
+def test_lock_cli_writes_output_file(tmp_path, capsys) -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "cli-lock-file"},
+        "spec": {"nodes": {"value": {"block": "text.literal@1"}}},
+    }
+    path = tmp_path / "graph.yaml"
+    output = tmp_path / "graphblocks.lock.json"
+    path.write_text(yaml.safe_dump(graph), encoding="utf-8")
+
+    assert main(["lock", str(path), "--output", str(output)]) == 0
+
+    assert capsys.readouterr().out == ""
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["graph"]["id"] == "cli-lock-file"
+    assert payload["packages"][0]["name"] == "graphblocks"
 
 
 def test_run_cli_executes_in_process_runtime(tmp_path, capsys) -> None:
