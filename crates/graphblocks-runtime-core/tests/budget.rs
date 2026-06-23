@@ -2,6 +2,7 @@ use graphblocks_runtime_core::budget::{
     BudgetError, BudgetStatus, InMemoryBudgetLedger, ReservationPurpose, ReservationStatus,
     UsageAmount,
 };
+use std::collections::BTreeMap;
 
 fn tokens(amount: i64) -> UsageAmount {
     UsageAmount::new("model_total_tokens", amount, "tokens")
@@ -284,5 +285,220 @@ fn hierarchical_budget_commit_settles_child_and_parent_balance() -> Result<(), B
     assert_eq!(ledger.balance("tenant-budget")?.committed, vec![tokens(55)]);
     assert_eq!(ledger.balance("run-budget")?.available, vec![tokens(25)]);
     assert_eq!(ledger.balance("tenant-budget")?.available, vec![tokens(45)]);
+    Ok(())
+}
+
+#[test]
+fn budget_ledger_issues_bounded_permit_from_reservations() -> Result<(), BudgetError> {
+    let mut ledger = InMemoryBudgetLedger::new();
+    ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+    let reservation = ledger.reserve(
+        "budget-1",
+        "run:1",
+        [tokens(40)],
+        ReservationPurpose::ProviderCall,
+        "later",
+        None,
+    )?;
+
+    let permit = ledger.issue_permit(
+        "permit-1",
+        vec![reservation.reservation_id.clone()],
+        "worker:1",
+        "turn:1",
+        3,
+        "finish_current_turn",
+        "sha256:policy",
+        "2026-06-22T01:00:00Z",
+        Vec::new(),
+    )?;
+
+    assert_eq!(permit.permit_id, "permit-1");
+    assert_eq!(permit.reservation_refs, vec![reservation.reservation_id]);
+    assert_eq!(permit.authorized_amounts, vec![tokens(40)]);
+    assert_eq!(
+        permit.fencing_tokens,
+        BTreeMap::from([("budget-1".to_string(), reservation.fencing_token)])
+    );
+    assert_eq!(permit.owner, "worker:1");
+    assert_eq!(permit.atomic_unit, "turn:1");
+    assert_eq!(permit.continuation_profile, "finish_current_turn");
+    assert_eq!(permit.policy_snapshot_digest, "sha256:policy");
+    Ok(())
+}
+
+#[test]
+fn budget_ledger_permit_combines_multiple_reservations() -> Result<(), BudgetError> {
+    let mut ledger = InMemoryBudgetLedger::new();
+    ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+    let first = ledger.reserve(
+        "budget-1",
+        "run:1",
+        [tokens(25)],
+        ReservationPurpose::Task,
+        "later",
+        None,
+    )?;
+    let second = ledger.reserve(
+        "budget-1",
+        "run:1",
+        [tokens(15)],
+        ReservationPurpose::Finalization,
+        "later",
+        None,
+    )?;
+
+    let permit = ledger.issue_permit(
+        "permit-1",
+        vec![first.reservation_id.clone(), second.reservation_id.clone()],
+        "worker:1",
+        "turn:1",
+        1,
+        "hard_stop",
+        "sha256:policy",
+        "later",
+        Vec::new(),
+    )?;
+
+    assert_eq!(permit.authorized_amounts, vec![tokens(40)]);
+    assert_eq!(
+        permit.fencing_tokens,
+        BTreeMap::from([("budget-1".to_string(), second.fencing_token)])
+    );
+    Ok(())
+}
+
+#[test]
+fn budget_ledger_permit_includes_parent_fencing_tokens() -> Result<(), BudgetError> {
+    let mut ledger = InMemoryBudgetLedger::new();
+    ledger.allocate(
+        "tenant-budget",
+        "tenant:acme",
+        [tokens(100)],
+        "tenant-policy",
+        None,
+    )?;
+    ledger.allocate(
+        "run-budget",
+        "run:1",
+        [tokens(80)],
+        "run-policy",
+        Some("tenant-budget".to_string()),
+    )?;
+    let reservation = ledger.reserve(
+        "run-budget",
+        "attempt:1",
+        [tokens(40)],
+        ReservationPurpose::ProviderCall,
+        "later",
+        None,
+    )?;
+
+    let permit = ledger.issue_permit(
+        "permit-1",
+        vec![reservation.reservation_id],
+        "worker:1",
+        "turn:1",
+        1,
+        "finish_current_turn",
+        "sha256:policy",
+        "later",
+        vec![tokens(10)],
+    )?;
+
+    assert_eq!(permit.low_watermark, vec![tokens(10)]);
+    assert_eq!(
+        permit.fencing_tokens,
+        BTreeMap::from([
+            ("run-budget".to_string(), 1),
+            ("tenant-budget".to_string(), 1),
+        ])
+    );
+    Ok(())
+}
+
+#[test]
+fn budget_ledger_rejects_permit_for_released_reservation() -> Result<(), BudgetError> {
+    let mut ledger = InMemoryBudgetLedger::new();
+    ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+    let reservation = ledger.reserve(
+        "budget-1",
+        "run:1",
+        [tokens(40)],
+        ReservationPurpose::ProviderCall,
+        "later",
+        None,
+    )?;
+    ledger.release(&reservation.reservation_id)?;
+
+    let error = ledger
+        .issue_permit(
+            "permit-1",
+            vec![reservation.reservation_id.clone()],
+            "worker:1",
+            "turn:1",
+            1,
+            "hard_stop",
+            "sha256:policy",
+            "later",
+            Vec::new(),
+        )
+        .expect_err("released reservation cannot authorize a permit");
+
+    assert_eq!(
+        error,
+        BudgetError::ReservationState {
+            reservation_id: reservation.reservation_id,
+            status: ReservationStatus::Released,
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn budget_ledger_rejects_duplicate_permit_ids() -> Result<(), BudgetError> {
+    let mut ledger = InMemoryBudgetLedger::new();
+    ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+    let reservation = ledger.reserve(
+        "budget-1",
+        "run:1",
+        [tokens(40)],
+        ReservationPurpose::ProviderCall,
+        "later",
+        None,
+    )?;
+    let first = ledger.issue_permit(
+        "permit-1",
+        vec![reservation.reservation_id.clone()],
+        "worker:1",
+        "turn:1",
+        1,
+        "hard_stop",
+        "sha256:policy",
+        "later",
+        Vec::new(),
+    )?;
+    assert_eq!(first.permit_id, "permit-1");
+
+    let error = ledger
+        .issue_permit(
+            "permit-1",
+            vec![reservation.reservation_id],
+            "worker:2",
+            "turn:2",
+            2,
+            "hard_stop",
+            "sha256:policy",
+            "later",
+            Vec::<UsageAmount>::new(),
+        )
+        .expect_err("duplicate permit id is rejected");
+
+    assert_eq!(
+        error,
+        BudgetError::PermitConflict {
+            permit_id: "permit-1".to_string(),
+        }
+    );
     Ok(())
 }

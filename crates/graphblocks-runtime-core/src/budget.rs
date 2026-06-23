@@ -44,6 +44,9 @@ pub enum BudgetError {
     ReservationConflict {
         reservation_id: String,
     },
+    PermitConflict {
+        permit_id: String,
+    },
     ReservationState {
         reservation_id: String,
         status: ReservationStatus,
@@ -100,6 +103,21 @@ pub struct BudgetSettlement {
     pub revision: u64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BudgetPermit {
+    pub permit_id: String,
+    pub reservation_refs: Vec<String>,
+    pub owner: String,
+    pub atomic_unit: String,
+    pub admission_epoch: u64,
+    pub authorized_amounts: Vec<UsageAmount>,
+    pub continuation_profile: String,
+    pub policy_snapshot_digest: String,
+    pub expires_at: String,
+    pub low_watermark: Vec<UsageAmount>,
+    pub fencing_tokens: BTreeMap<String, u64>,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct InMemoryBudgetLedger {
     accounts: BTreeMap<String, BudgetAccount>,
@@ -109,6 +127,7 @@ pub struct InMemoryBudgetLedger {
     overdraft: BTreeMap<String, BTreeMap<AmountKey, i64>>,
     reservations: BTreeMap<String, BudgetReservation>,
     reservation_holds: BTreeMap<String, Vec<String>>,
+    permits: BTreeMap<String, BudgetPermit>,
     reservation_counter: u64,
     fencing_counter: u64,
 }
@@ -398,6 +417,71 @@ impl InMemoryBudgetLedger {
             overdraft: map_to_amounts(overdraft),
             revision: account.revision,
         })
+    }
+
+    pub fn issue_permit(
+        &mut self,
+        permit_id: impl Into<String>,
+        reservation_ids: Vec<String>,
+        owner: impl Into<String>,
+        atomic_unit: impl Into<String>,
+        admission_epoch: u64,
+        continuation_profile: impl Into<String>,
+        policy_snapshot_digest: impl Into<String>,
+        expires_at: impl Into<String>,
+        low_watermark: Vec<UsageAmount>,
+    ) -> Result<BudgetPermit, BudgetError> {
+        let permit_id = permit_id.into();
+        if self.permits.contains_key(&permit_id) {
+            return Err(BudgetError::PermitConflict { permit_id });
+        }
+
+        let mut authorized = BTreeMap::new();
+        let mut fencing_tokens = BTreeMap::new();
+        for reservation_id in &reservation_ids {
+            let reservation = self.reservations.get(reservation_id).ok_or_else(|| {
+                BudgetError::ReservationNotFound {
+                    reservation_id: reservation_id.clone(),
+                }
+            })?;
+            if reservation.status != ReservationStatus::Reserved {
+                return Err(BudgetError::ReservationState {
+                    reservation_id: reservation_id.clone(),
+                    status: reservation.status,
+                });
+            }
+            add_amounts(
+                &mut authorized,
+                &amounts_to_map(reservation.amounts.clone()),
+            );
+            let held_budget_ids = self
+                .reservation_holds
+                .get(reservation_id)
+                .cloned()
+                .unwrap_or_else(|| vec![reservation.budget_id.clone()]);
+            for held_budget_id in held_budget_ids {
+                let current = fencing_tokens.get(&held_budget_id).copied().unwrap_or(0);
+                if reservation.fencing_token > current {
+                    fencing_tokens.insert(held_budget_id, reservation.fencing_token);
+                }
+            }
+        }
+
+        let permit = BudgetPermit {
+            permit_id: permit_id.clone(),
+            reservation_refs: reservation_ids,
+            owner: owner.into(),
+            atomic_unit: atomic_unit.into(),
+            admission_epoch,
+            authorized_amounts: map_to_amounts(&authorized),
+            continuation_profile: continuation_profile.into(),
+            policy_snapshot_digest: policy_snapshot_digest.into(),
+            expires_at: expires_at.into(),
+            low_watermark,
+            fencing_tokens,
+        };
+        self.permits.insert(permit_id, permit.clone());
+        Ok(permit)
     }
 
     fn available_map(&self, budget_id: &str) -> Result<BTreeMap<AmountKey, i64>, BudgetError> {
