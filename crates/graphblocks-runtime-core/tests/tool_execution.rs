@@ -1,8 +1,8 @@
 use graphblocks_runtime_core::output_policy::PendingToolCallsDisposition;
 use graphblocks_runtime_core::tool_call::{ToolCall, ToolCallDraft};
 use graphblocks_runtime_core::tool_execution::{
-    ToolExecutionFailurePolicy, ToolExecutionPlan, ToolExecutionPlanError, ToolExecutionState,
-    ToolPlanCall,
+    ToolExecutionCancellationPolicy, ToolExecutionFailurePolicy, ToolExecutionPlan,
+    ToolExecutionPlanError, ToolExecutionState, ToolPlanCall,
 };
 
 fn tool_call(tool_call_id: &str, arguments: &str) -> ToolCall {
@@ -188,5 +188,83 @@ fn policy_stop_can_cancel_admitted_tool_calls() -> Result<(), ToolExecutionPlanE
             current: ToolExecutionState::Cancelled
         }),
     );
+    Ok(())
+}
+
+#[test]
+fn cancelled_call_cancels_dependents_by_default() -> Result<(), ToolExecutionPlanError> {
+    let mut dependent = tool_call("call-b", "{\"resource_id\":\"b\"}");
+    dependent.depends_on = vec!["call-a".to_owned()];
+    let mut plan = ToolExecutionPlan::new(
+        "plan-1",
+        "response-1",
+        [
+            ToolPlanCall::new(tool_call("call-a", "{\"resource_id\":\"a\"}")),
+            ToolPlanCall::new(dependent),
+            ToolPlanCall::new(tool_call("call-c", "{\"resource_id\":\"c\"}")),
+        ],
+        3,
+    )?;
+
+    plan.record_started("call-a")?;
+    plan.record_cancelled("call-a")?;
+
+    assert_eq!(plan.state("call-a"), Some(ToolExecutionState::Cancelled));
+    assert_eq!(plan.state("call-b"), Some(ToolExecutionState::Cancelled));
+    assert_eq!(plan.state("call-c"), Some(ToolExecutionState::Pending));
+    assert_eq!(plan.ready_call_ids(), vec!["call-c".to_owned()]);
+    Ok(())
+}
+
+#[test]
+fn cancelled_call_can_skip_dependents_while_allowing_independent_calls()
+-> Result<(), ToolExecutionPlanError> {
+    let mut dependent = tool_call("call-b", "{\"resource_id\":\"b\"}");
+    dependent.depends_on = vec!["call-a".to_owned()];
+    let mut plan = ToolExecutionPlan::new(
+        "plan-1",
+        "response-1",
+        [
+            ToolPlanCall::new(tool_call("call-a", "{\"resource_id\":\"a\"}")),
+            ToolPlanCall::new(dependent),
+            ToolPlanCall::new(tool_call("call-c", "{\"resource_id\":\"c\"}")),
+        ],
+        3,
+    )?
+    .with_cancellation_policy(ToolExecutionCancellationPolicy::AllowIndependentCalls);
+
+    plan.record_started("call-a")?;
+    plan.record_cancelled("call-a")?;
+
+    assert_eq!(plan.state("call-a"), Some(ToolExecutionState::Cancelled));
+    assert_eq!(plan.state("call-b"), Some(ToolExecutionState::Skipped));
+    assert_eq!(plan.state("call-c"), Some(ToolExecutionState::Pending));
+    assert_eq!(plan.ready_call_ids(), vec!["call-c".to_owned()]);
+    Ok(())
+}
+
+#[test]
+fn cancel_all_policy_cancels_every_nonterminal_call() -> Result<(), ToolExecutionPlanError> {
+    let mut plan = ToolExecutionPlan::new(
+        "plan-1",
+        "response-1",
+        [
+            ToolPlanCall::new(tool_call("call-a", "{\"resource_id\":\"a\"}")),
+            ToolPlanCall::new(tool_call("call-b", "{\"resource_id\":\"b\"}")),
+            ToolPlanCall::new(tool_call("call-c", "{\"resource_id\":\"c\"}")),
+        ],
+        3,
+    )?
+    .with_cancellation_policy(ToolExecutionCancellationPolicy::CancelAll);
+
+    plan.record_started("call-a")?;
+    plan.record_started("call-c")?;
+    plan.record_completed("call-c")?;
+    plan.record_cancelled("call-a")?;
+
+    assert_eq!(plan.state("call-a"), Some(ToolExecutionState::Cancelled));
+    assert_eq!(plan.state("call-b"), Some(ToolExecutionState::Cancelled));
+    assert_eq!(plan.state("call-c"), Some(ToolExecutionState::Completed));
+    assert_eq!(plan.ready_call_ids(), Vec::<String>::new());
     Ok(())
 }

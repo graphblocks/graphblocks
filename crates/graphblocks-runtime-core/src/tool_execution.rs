@@ -224,42 +224,41 @@ impl ToolExecutionPlan {
         tool_call_id: impl AsRef<str>,
     ) -> Result<(), ToolExecutionPlanError> {
         self.enter_terminal(tool_call_id.as_ref(), ToolExecutionState::Failed)?;
-
-        loop {
-            let skipped = self
-                .calls
-                .iter()
-                .filter_map(|(candidate_id, planned_call)| {
-                    if self.states.get(candidate_id) != Some(&ToolExecutionState::Pending) {
-                        return None;
-                    }
-                    let blocked = planned_call.call.depends_on.iter().any(|dependency| {
-                        matches!(
-                            self.states.get(dependency),
-                            Some(
-                                ToolExecutionState::Failed
-                                    | ToolExecutionState::Denied
-                                    | ToolExecutionState::Cancelled
-                                    | ToolExecutionState::Skipped
-                            )
-                        )
-                    });
-                    blocked.then(|| candidate_id.clone())
-                })
-                .collect::<Vec<_>>();
-            if skipped.is_empty() {
-                break;
-            }
-            for skipped_id in skipped {
-                self.states.insert(skipped_id, ToolExecutionState::Skipped);
-            }
-        }
+        self.mark_blocked_dependents(ToolExecutionState::Skipped);
 
         if self.failure_policy == ToolExecutionFailurePolicy::FailFast {
             for state in self.states.values_mut() {
                 if *state == ToolExecutionState::Pending {
                     *state = ToolExecutionState::Cancelled;
                 }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn record_cancelled(
+        &mut self,
+        tool_call_id: impl AsRef<str>,
+    ) -> Result<(), ToolExecutionPlanError> {
+        self.enter_terminal(tool_call_id.as_ref(), ToolExecutionState::Cancelled)?;
+
+        match self.cancellation_policy {
+            ToolExecutionCancellationPolicy::CancelDependents => {
+                self.mark_blocked_dependents(ToolExecutionState::Cancelled);
+            }
+            ToolExecutionCancellationPolicy::CancelAll => {
+                for state in self.states.values_mut() {
+                    if matches!(
+                        state,
+                        ToolExecutionState::Pending | ToolExecutionState::Running
+                    ) {
+                        *state = ToolExecutionState::Cancelled;
+                    }
+                }
+            }
+            ToolExecutionCancellationPolicy::AllowIndependentCalls => {
+                self.mark_blocked_dependents(ToolExecutionState::Skipped);
             }
         }
 
@@ -314,6 +313,38 @@ impl ToolExecutionPlan {
         }
         self.states.insert(tool_call_id.to_owned(), terminal_state);
         Ok(())
+    }
+
+    fn mark_blocked_dependents(&mut self, blocked_state: ToolExecutionState) {
+        loop {
+            let blocked = self
+                .calls
+                .iter()
+                .filter_map(|(candidate_id, planned_call)| {
+                    if self.states.get(candidate_id) != Some(&ToolExecutionState::Pending) {
+                        return None;
+                    }
+                    let blocked = planned_call.call.depends_on.iter().any(|dependency| {
+                        matches!(
+                            self.states.get(dependency),
+                            Some(
+                                ToolExecutionState::Failed
+                                    | ToolExecutionState::Denied
+                                    | ToolExecutionState::Cancelled
+                                    | ToolExecutionState::Skipped
+                            )
+                        )
+                    });
+                    blocked.then(|| candidate_id.clone())
+                })
+                .collect::<Vec<_>>();
+            if blocked.is_empty() {
+                break;
+            }
+            for blocked_id in blocked {
+                self.states.insert(blocked_id, blocked_state);
+            }
+        }
     }
 
     fn running_count(&self) -> usize {
