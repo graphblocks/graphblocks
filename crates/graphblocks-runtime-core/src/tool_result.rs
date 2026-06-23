@@ -227,6 +227,25 @@ impl ToolResult {
         }
     }
 
+    pub fn cancelled(
+        tool_call_id: impl Into<String>,
+        started_at_unix_ms: u64,
+        completed_at_unix_ms: u64,
+    ) -> Self {
+        Self {
+            tool_call_id: tool_call_id.into(),
+            status: ToolResultStatus::Cancelled,
+            output: Vec::new(),
+            output_digest: None,
+            artifacts: Vec::new(),
+            diagnostics: Vec::new(),
+            error: None,
+            started_at_unix_ms: Some(started_at_unix_ms),
+            completed_at_unix_ms: Some(completed_at_unix_ms),
+            effect_outcome: ToolEffectOutcome::Unknown,
+        }
+    }
+
     pub fn policy_stopped(
         tool_call_id: impl Into<String>,
         error: BlockError,
@@ -241,6 +260,25 @@ impl ToolResult {
             artifacts: Vec::new(),
             diagnostics: Vec::new(),
             error: Some(error),
+            started_at_unix_ms: Some(started_at_unix_ms),
+            completed_at_unix_ms: Some(completed_at_unix_ms),
+            effect_outcome: ToolEffectOutcome::Unknown,
+        }
+    }
+
+    pub fn incomplete(
+        tool_call_id: impl Into<String>,
+        started_at_unix_ms: u64,
+        completed_at_unix_ms: u64,
+    ) -> Self {
+        Self {
+            tool_call_id: tool_call_id.into(),
+            status: ToolResultStatus::Incomplete,
+            output: Vec::new(),
+            output_digest: None,
+            artifacts: Vec::new(),
+            diagnostics: Vec::new(),
+            error: None,
             started_at_unix_ms: Some(started_at_unix_ms),
             completed_at_unix_ms: Some(completed_at_unix_ms),
             effect_outcome: ToolEffectOutcome::Unknown,
@@ -295,6 +333,21 @@ pub enum ToolResultEvent {
         sequence: u64,
         result: ToolResult,
     },
+    Cancelled {
+        tool_call_id: String,
+        sequence: u64,
+        result: ToolResult,
+    },
+    PolicyStopped {
+        tool_call_id: String,
+        sequence: u64,
+        result: ToolResult,
+    },
+    Incomplete {
+        tool_call_id: String,
+        sequence: u64,
+        result: ToolResult,
+    },
 }
 
 impl ToolResultEvent {
@@ -341,22 +394,62 @@ impl ToolResultEvent {
         }
     }
 
+    pub fn cancelled(tool_call_id: impl Into<String>, sequence: u64, result: ToolResult) -> Self {
+        Self::Cancelled {
+            tool_call_id: tool_call_id.into(),
+            sequence,
+            result,
+        }
+    }
+
+    pub fn policy_stopped(
+        tool_call_id: impl Into<String>,
+        sequence: u64,
+        result: ToolResult,
+    ) -> Self {
+        Self::PolicyStopped {
+            tool_call_id: tool_call_id.into(),
+            sequence,
+            result,
+        }
+    }
+
+    pub fn incomplete(tool_call_id: impl Into<String>, sequence: u64, result: ToolResult) -> Self {
+        Self::Incomplete {
+            tool_call_id: tool_call_id.into(),
+            sequence,
+            result,
+        }
+    }
+
     pub fn tool_call_id(&self) -> &str {
         match self {
             Self::Started { tool_call_id, .. }
             | Self::Delta { tool_call_id, .. }
             | Self::ArtifactReady { tool_call_id, .. }
-            | Self::Completed { tool_call_id, .. } => tool_call_id,
+            | Self::Completed { tool_call_id, .. }
+            | Self::Cancelled { tool_call_id, .. }
+            | Self::PolicyStopped { tool_call_id, .. }
+            | Self::Incomplete { tool_call_id, .. } => tool_call_id,
         }
     }
 
     pub fn is_final_durable_result(&self) -> bool {
-        matches!(self, Self::Completed { .. })
+        matches!(
+            self,
+            Self::Completed { .. }
+                | Self::Cancelled { .. }
+                | Self::PolicyStopped { .. }
+                | Self::Incomplete { .. }
+        )
     }
 
     pub fn into_result(self) -> Option<ToolResult> {
         match self {
-            Self::Completed { result, .. } => Some(result),
+            Self::Completed { result, .. }
+            | Self::Cancelled { result, .. }
+            | Self::PolicyStopped { result, .. }
+            | Self::Incomplete { result, .. } => Some(result),
             Self::Started { .. } | Self::Delta { .. } | Self::ArtifactReady { .. } => None,
         }
     }

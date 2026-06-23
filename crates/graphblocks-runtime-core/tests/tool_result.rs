@@ -60,6 +60,34 @@ fn completed_event_carries_the_final_durable_result() {
 }
 
 #[test]
+fn terminal_tool_result_events_preserve_partial_terminal_kind() {
+    let policy_stopped = ToolResult::policy_stopped(
+        "call-1",
+        BlockError::new(
+            "policy.denied",
+            ErrorCategory::Policy,
+            "tool output was stopped by policy",
+            false,
+        ),
+        1_000,
+        1_020,
+    );
+    let cancelled = ToolResult::cancelled("call-2", 1_100, 1_120);
+    let incomplete = ToolResult::incomplete("call-3", 1_200, 1_230);
+
+    let policy_event = ToolResultEvent::policy_stopped("call-1", 8, policy_stopped.clone());
+    let cancelled_event = ToolResultEvent::cancelled("call-2", 9, cancelled.clone());
+    let incomplete_event = ToolResultEvent::incomplete("call-3", 10, incomplete.clone());
+
+    assert!(policy_event.is_final_durable_result());
+    assert!(cancelled_event.is_final_durable_result());
+    assert!(incomplete_event.is_final_durable_result());
+    assert_eq!(policy_event.into_result(), Some(policy_stopped));
+    assert_eq!(cancelled_event.into_result(), Some(cancelled));
+    assert_eq!(incomplete_event.into_result(), Some(incomplete));
+}
+
+#[test]
 fn policy_stopped_result_is_final_but_incomplete() {
     let result = ToolResult::policy_stopped(
         "call-1",

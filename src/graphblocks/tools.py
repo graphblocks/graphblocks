@@ -42,7 +42,15 @@ ToolCallStatus = Literal[
     "expired",
 ]
 ToolResultStatus = Literal["completed", "failed", "denied", "cancelled", "policy_stopped", "incomplete"]
-ToolResultEventKind = Literal["started", "delta", "artifact_ready", "completed"]
+ToolResultEventKind = Literal[
+    "started",
+    "delta",
+    "artifact_ready",
+    "completed",
+    "cancelled",
+    "policy_stopped",
+    "incomplete",
+]
 ToolEffectOutcome = Literal["no_external_effect", "committed", "not_committed", "unknown"]
 ToolExecutionFailurePolicy = Literal["fail_fast", "collect", "return_failures_to_model"]
 ToolExecutionCancellationPolicy = Literal["cancel_dependents", "cancel_all", "allow_independent_calls"]
@@ -932,6 +940,21 @@ class ToolResult:
         )
 
     @classmethod
+    def cancelled(
+        cls,
+        tool_call_id: str,
+        *,
+        started_at: str,
+        completed_at: str,
+    ) -> ToolResult:
+        return cls(
+            tool_call_id=tool_call_id,
+            status="cancelled",
+            started_at=started_at,
+            completed_at=completed_at,
+        )
+
+    @classmethod
     def policy_stopped(
         cls,
         tool_call_id: str,
@@ -944,6 +967,21 @@ class ToolResult:
             tool_call_id=tool_call_id,
             status="policy_stopped",
             error=error,
+            started_at=started_at,
+            completed_at=completed_at,
+        )
+
+    @classmethod
+    def incomplete(
+        cls,
+        tool_call_id: str,
+        *,
+        started_at: str,
+        completed_at: str,
+    ) -> ToolResult:
+        return cls(
+            tool_call_id=tool_call_id,
+            status="incomplete",
             started_at=started_at,
             completed_at=completed_at,
         )
@@ -981,8 +1019,20 @@ class ToolResultEvent:
     def completed(cls, tool_call_id: str, sequence: int, result: ToolResult) -> ToolResultEvent:
         return cls(kind="completed", tool_call_id=tool_call_id, sequence=sequence, result=result)
 
+    @classmethod
+    def cancelled(cls, tool_call_id: str, sequence: int, result: ToolResult) -> ToolResultEvent:
+        return cls(kind="cancelled", tool_call_id=tool_call_id, sequence=sequence, result=result)
+
+    @classmethod
+    def policy_stopped(cls, tool_call_id: str, sequence: int, result: ToolResult) -> ToolResultEvent:
+        return cls(kind="policy_stopped", tool_call_id=tool_call_id, sequence=sequence, result=result)
+
+    @classmethod
+    def incomplete(cls, tool_call_id: str, sequence: int, result: ToolResult) -> ToolResultEvent:
+        return cls(kind="incomplete", tool_call_id=tool_call_id, sequence=sequence, result=result)
+
     def is_final_durable_result(self) -> bool:
-        return self.kind == "completed"
+        return self.kind in {"completed", "cancelled", "policy_stopped", "incomplete"}
 
     def into_result(self) -> ToolResult | None:
-        return self.result if self.kind == "completed" else None
+        return self.result if self.is_final_durable_result() else None

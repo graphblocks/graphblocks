@@ -644,6 +644,39 @@ def test_tool_result_events_carry_artifacts_and_final_result() -> None:
     assert completed.into_result() == result
 
 
+def test_terminal_tool_result_events_preserve_partial_terminal_kind() -> None:
+    policy_stopped = ToolResult.policy_stopped(
+        "call-1",
+        error={"code": "policy.denied", "message": "tool output was stopped by policy"},
+        started_at="2026-06-23T00:00:00Z",
+        completed_at="2026-06-23T00:00:01Z",
+    )
+    cancelled = ToolResult.cancelled(
+        "call-2",
+        started_at="2026-06-23T00:00:02Z",
+        completed_at="2026-06-23T00:00:03Z",
+    )
+    incomplete = ToolResult.incomplete(
+        "call-3",
+        started_at="2026-06-23T00:00:04Z",
+        completed_at="2026-06-23T00:00:05Z",
+    )
+
+    policy_event = ToolResultEvent.policy_stopped("call-1", 8, policy_stopped)
+    cancelled_event = ToolResultEvent.cancelled("call-2", 9, cancelled)
+    incomplete_event = ToolResultEvent.incomplete("call-3", 10, incomplete)
+
+    assert policy_event.kind == "policy_stopped"
+    assert cancelled_event.kind == "cancelled"
+    assert incomplete_event.kind == "incomplete"
+    assert policy_event.is_final_durable_result() is True
+    assert cancelled_event.is_final_durable_result() is True
+    assert incomplete_event.is_final_durable_result() is True
+    assert policy_event.into_result() == policy_stopped
+    assert cancelled_event.into_result() == cancelled
+    assert incomplete_event.into_result() == incomplete
+
+
 def _tool_call(tool_call_id: str, arguments: str = '{"resource_id":"a"}'):
     return (
         ToolCallDraft.proposed("response-1", tool_call_id, "ticket.create")
