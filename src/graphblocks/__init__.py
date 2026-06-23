@@ -141,6 +141,7 @@ from .policy import (
     resolve_policy_snapshot,
 )
 from .tools import (
+    AdmittedToolCall,
     BlockToolImplementation,
     GraphToolImplementation,
     JsonSchema,
@@ -149,6 +150,7 @@ from .tools import (
     OpenApiToolImplementation,
     RemoteToolImplementation,
     ResolvedTool,
+    ToolAdmissionError,
     ToolApprovalError,
     ToolApprovalRecord,
     ToolApprovalRequest,
@@ -168,6 +170,7 @@ from .tools import (
     ToolSchemaRegistry,
     ToolSchemaRegistryError,
     ToolSchemaValidationError,
+    admit_tool_call,
 )
 from .rag import (
     Abstention,
@@ -238,6 +241,7 @@ __all__ = [
     "Abstention",
     "AdmissionDecision",
     "Answer",
+    "AdmittedToolCall",
     "ApplicationEvent",
     "ApplicationEventError",
     "ApplicationEventMetadata",
@@ -346,6 +350,7 @@ __all__ = [
     "ToolApprovalError",
     "ToolApprovalRecord",
     "ToolApprovalRequest",
+    "ToolAdmissionError",
     "ToolCatalog",
     "ToolCall",
     "ToolCallDraft",
@@ -361,6 +366,7 @@ __all__ = [
     "ToolSchemaRegistry",
     "ToolSchemaRegistryError",
     "ToolSchemaValidationError",
+    "admit_tool_call",
     "Turn",
     "TrialResult",
     "TypedValueRef",

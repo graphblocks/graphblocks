@@ -4,12 +4,14 @@ import pytest
 
 from graphblocks import (
     ArtifactRef,
+    AdmittedToolCall,
     BlockToolImplementation,
     ContentPart,
     JsonSchema,
     JsonSchemaNode,
     OpenApiToolImplementation,
     ResolvedTool,
+    ToolAdmissionError,
     ToolApprovalError,
     ToolApprovalRecord,
     ToolApprovalRequest,
@@ -28,6 +30,7 @@ from graphblocks import (
     ToolSchemaRegistry,
     ToolSchemaRegistryError,
     ToolSchemaValidationError,
+    admit_tool_call,
 )
 
 
@@ -331,6 +334,136 @@ def test_tool_approval_request_rejects_mismatch_and_invalid_expiration() -> None
             expires_at=2_000,
         )
     assert str(mismatch.value) == "tool call references a different resolved tool"
+
+
+def _resolved_process_tool() -> ResolvedTool:
+    catalog = ToolCatalog(
+        definitions=(
+            ToolDefinition(
+                name="process.run",
+                description="Run an approved process.",
+                input_schema="schemas/ProcessRun@1",
+            ),
+        ),
+        bindings=(
+            ToolBinding(
+                binding_id="binding-process",
+                tool_name="process.run",
+                implementation=BlockToolImplementation(block="blocks.process"),
+                effects=frozenset({"process"}),
+                approval="always",
+                idempotency="required",
+            ),
+        ),
+    )
+    return catalog.resolve(ToolResolutionScope(), effective_policy_snapshot_id="policy-snapshot-1")[0]
+
+
+def _process_call(resolved: ResolvedTool, arguments: str = '{"cmd":["echo","hello"]}'):
+    return (
+        ToolCallDraft.proposed("response-1", "call-1", "process.run")
+        .append_argument_fragment(arguments)
+        .complete_arguments()
+        .into_tool_call(resolved.resolved_tool_id, created_at="2026-06-23T00:00:00Z")
+    )
+
+
+def _process_schema_registry() -> ToolSchemaRegistry:
+    return ToolSchemaRegistry(
+        schemas=(
+            JsonSchema(
+                "schemas/ProcessRun@1",
+                JsonSchemaNode.object().required_property("cmd", JsonSchemaNode.array(JsonSchemaNode.string())),
+            ),
+        )
+    )
+
+
+def test_tool_admission_validates_arguments_before_approval() -> None:
+    resolved = _resolved_process_tool()
+    call = _process_call(resolved, arguments='{"cmd":"echo hello"}')
+
+    with pytest.raises(ToolAdmissionError) as error:
+        admit_tool_call(
+            call,
+            resolved,
+            _process_schema_registry(),
+            principal_id="user-1",
+            idempotency_key="idem-1",
+            admitted_at="2026-06-23T00:00:01Z",
+            now=1_200,
+        )
+
+    assert str(error.value) == "tool call call-1 arguments invalid: schemas/ProcessRun@1 expected array at $.cmd"
+
+
+def test_tool_admission_requires_approval_and_idempotency_key() -> None:
+    resolved = _resolved_process_tool()
+    call = _process_call(resolved)
+
+    with pytest.raises(ToolAdmissionError) as approval_error:
+        admit_tool_call(
+            call,
+            resolved,
+            _process_schema_registry(),
+            principal_id="user-1",
+            idempotency_key="idem-1",
+            admitted_at="2026-06-23T00:00:01Z",
+            now=1_200,
+        )
+    assert str(approval_error.value) == "tool call call-1 requires approval"
+
+    request = ToolApprovalRequest.for_call(
+        "approval-1",
+        resolved,
+        call,
+        principal_id="user-1",
+        requested_at=1_100,
+        expires_at=2_000,
+    )
+    approval = ToolApprovalRecord.approve(request, approver_id="admin-1", decided_at=1_150)
+
+    with pytest.raises(ToolAdmissionError) as idempotency_error:
+        admit_tool_call(
+            call,
+            resolved,
+            _process_schema_registry(),
+            approval=approval,
+            principal_id="user-1",
+            admitted_at="2026-06-23T00:00:01Z",
+            now=1_200,
+        )
+    assert str(idempotency_error.value) == "tool call call-1 requires an idempotency key"
+
+
+def test_tool_admission_returns_admitted_call_with_idempotency_key() -> None:
+    resolved = _resolved_process_tool()
+    call = _process_call(resolved)
+    request = ToolApprovalRequest.for_call(
+        "approval-1",
+        resolved,
+        call,
+        principal_id="user-1",
+        requested_at=1_100,
+        expires_at=2_000,
+    )
+    approval = ToolApprovalRecord.approve(request, approver_id="admin-1", decided_at=1_150)
+
+    admitted = admit_tool_call(
+        call,
+        resolved,
+        _process_schema_registry(),
+        approval=approval,
+        principal_id="user-1",
+        idempotency_key="idem-1",
+        admitted_at="2026-06-23T00:00:01Z",
+        now=1_200,
+    )
+
+    assert isinstance(admitted, AdmittedToolCall)
+    assert admitted.call.status == "admitted"
+    assert admitted.call.admitted_at == "2026-06-23T00:00:01Z"
+    assert admitted.idempotency_key == "idem-1"
 
 
 def test_tool_call_draft_requires_complete_json_arguments_before_final_call() -> None:

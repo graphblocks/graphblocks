@@ -55,6 +55,10 @@ class ToolCallError(RuntimeError):
     pass
 
 
+class ToolAdmissionError(RuntimeError):
+    pass
+
+
 class ToolExecutionPlanError(RuntimeError):
     pass
 
@@ -671,6 +675,52 @@ class ToolCall:
         completed_at: str | None = None,
     ) -> ToolCall:
         return replace(self, status=status, admitted_at=admitted_at, completed_at=completed_at)
+
+
+@dataclass(frozen=True, slots=True)
+class AdmittedToolCall:
+    call: ToolCall
+    idempotency_key: str | None = None
+
+
+def admit_tool_call(
+    call: ToolCall,
+    resolved_tool: ResolvedTool,
+    schema_registry: ToolSchemaRegistry,
+    *,
+    approval: ToolApprovalRecord | None = None,
+    principal_id: str,
+    idempotency_key: str | None = None,
+    admitted_at: str,
+    now: int,
+) -> AdmittedToolCall:
+    if call.status != "validated":
+        raise ToolAdmissionError(f"tool call {call.tool_call_id} is {call.status}, not validated")
+    if call.resolved_tool_id != resolved_tool.resolved_tool_id:
+        raise ToolAdmissionError("tool call references a different resolved tool")
+    if call.name != resolved_tool.definition.name:
+        raise ToolAdmissionError("tool call name does not match resolved tool")
+
+    try:
+        schema_registry.validate(resolved_tool.definition.input_schema, call.arguments)
+    except ToolSchemaValidationError as error:
+        raise ToolAdmissionError(f"tool call {call.tool_call_id} arguments invalid: {error}") from error
+
+    if resolved_tool.binding.approval == "always":
+        if approval is None:
+            raise ToolAdmissionError(f"tool call {call.tool_call_id} requires approval")
+        if not approval.is_valid_for(resolved_tool, call, principal_id=principal_id, now=now):
+            raise ToolAdmissionError(f"approval {approval.approval_id} is not valid for tool call {call.tool_call_id}")
+    elif approval is not None and not approval.is_valid_for(resolved_tool, call, principal_id=principal_id, now=now):
+        raise ToolAdmissionError(f"approval {approval.approval_id} is not valid for tool call {call.tool_call_id}")
+
+    if resolved_tool.binding.idempotency == "required" and idempotency_key is None:
+        raise ToolAdmissionError(f"tool call {call.tool_call_id} requires an idempotency key")
+
+    return AdmittedToolCall(
+        call=call.with_status("admitted", admitted_at=admitted_at),
+        idempotency_key=idempotency_key,
+    )
 
 
 @dataclass(frozen=True, slots=True)
