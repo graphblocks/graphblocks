@@ -155,3 +155,37 @@ def test_controller_level_continuation_permit_must_match_policy() -> None:
 
     assert decision.allowed is False
     assert decision.reason == "invalid_permit"
+
+
+def test_continuation_usage_must_fit_permit_authorized_amounts() -> None:
+    policy = ExhaustionPolicy.from_preset(
+        "finish_current_turn",
+        unit="turn",
+        continuation=ContinuationEnvelope(max_additional_usage=[_tokens("200")], max_additional_steps=2),
+    )
+    controller = ExhaustionController(policy, atomic_unit_id="turn:1", admission_epoch=7, continuation_permit=_permit())
+
+    denied = controller.admit("declared_finalization", work_epoch=8, requested_usage=[_tokens("101")])
+    allowed = controller.admit("declared_finalization", work_epoch=8, requested_usage=[_tokens("100")])
+
+    assert denied.allowed is False
+    assert denied.reason == "usage_exceeds_permit"
+    assert allowed.allowed is True
+
+
+def test_continuation_usage_accumulates_against_envelope_bound() -> None:
+    policy = ExhaustionPolicy.from_preset(
+        "finish_current_turn",
+        unit="turn",
+        continuation=ContinuationEnvelope(max_additional_usage=[_tokens("100")], max_additional_steps=3),
+    )
+    controller = ExhaustionController(policy, atomic_unit_id="turn:1", admission_epoch=7, continuation_permit=_permit())
+
+    first = controller.admit("declared_finalization", work_epoch=8, requested_usage=[_tokens("60")])
+    denied = controller.admit("checkpoint", work_epoch=8, requested_usage=[_tokens("41")])
+    second = controller.admit("cleanup", work_epoch=8, requested_usage=[_tokens("40")])
+
+    assert first.allowed is True
+    assert denied.allowed is False
+    assert denied.reason == "max_additional_usage_exceeded"
+    assert second.allowed is True

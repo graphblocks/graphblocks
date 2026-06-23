@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Literal
 
 from .budget import BudgetPermit, UsageAmount
@@ -221,9 +222,18 @@ class ExhaustionController:
     admission_epoch: int
     continuation_permit: BudgetPermit | None = None
     used_additional_steps: int = 0
+    used_additional_usage: list[UsageAmount] = field(default_factory=list)
 
-    def admit(self, work_kind: WorkKind, *, work_epoch: int, permit: BudgetPermit | None = None) -> AdmissionDecision:
+    def admit(
+        self,
+        work_kind: WorkKind,
+        *,
+        work_epoch: int,
+        permit: BudgetPermit | None = None,
+        requested_usage: list[UsageAmount] | None = None,
+    ) -> AdmissionDecision:
         envelope = self.policy.continuation
+        requested_usage_list = list(requested_usage or [])
         if envelope is None:
             return AdmissionDecision(False, "missing_continuation")
         if work_kind in envelope.forbidden_work:
@@ -244,10 +254,24 @@ class ExhaustionController:
                 return AdmissionDecision(False, "missing_continuation_permit")
             if not self._valid_permit(effective_permit):
                 return AdmissionDecision(False, "invalid_permit")
+            if requested_usage_list and not effective_permit.allows(requested_usage_list):
+                return AdmissionDecision(False, "usage_exceeds_permit")
+            if requested_usage_list and envelope.max_additional_usage:
+                allowed_usage: dict[tuple[str, str, tuple[tuple[str, str], ...]], Decimal] = {}
+                for amount in envelope.max_additional_usage:
+                    key = (amount.kind, amount.unit, tuple(sorted(amount.dimensions.items())))
+                    allowed_usage[key] = allowed_usage.get(key, Decimal("0")) + amount.amount
+                projected_usage: dict[tuple[str, str, tuple[tuple[str, str], ...]], Decimal] = {}
+                for amount in [*self.used_additional_usage, *requested_usage_list]:
+                    key = (amount.kind, amount.unit, tuple(sorted(amount.dimensions.items())))
+                    projected_usage[key] = projected_usage.get(key, Decimal("0")) + amount.amount
+                if any(amount > allowed_usage.get(key, Decimal("0")) for key, amount in projected_usage.items()):
+                    return AdmissionDecision(False, "max_additional_usage_exceeded")
         if envelope.max_additional_steps is not None and self.used_additional_steps >= envelope.max_additional_steps:
             return AdmissionDecision(False, "max_additional_steps_exceeded")
         if work_epoch > self.admission_epoch:
             self.used_additional_steps += 1
+            self.used_additional_usage.extend(requested_usage_list)
         return AdmissionDecision(True, "allowed")
 
     def _valid_permit(self, permit: BudgetPermit) -> bool:
