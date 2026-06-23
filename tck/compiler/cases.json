@@ -156,5 +156,36 @@
       "graph_hash": "sha256:d6fd56a6e08adb2f4afc17733a84d211dca8a5834d161cd41af42a57a0341a2a",
       "error_codes": []
     }
+  },
+  {
+    "name": "tool_missing_definition",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "missing-tool-definition"
+      },
+      "spec": {
+        "nodes": {
+          "model": {
+            "block": "model.generate@1"
+          }
+        },
+        "bindings": {
+          "tools": {
+            "search": {
+              "implementation": {
+                "kind": "block",
+                "block": "blocks.search"
+              }
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:48dfd588f480f4a07b4007f9bae5f7ba4f87f2ae1996812f067759b25830c12b",
+      "error_codes": ["ToolSchemaMissing"]
+    }
   }
 ]

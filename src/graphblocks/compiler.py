@@ -306,14 +306,22 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                             f"$.spec.bindings.tools.{tool_key}.definition.inputSchema",
                         )
                     )
-                if "implementation" not in tool:
-                    diagnostics.append(
-                        Diagnostic(
-                            "ToolBindingMissing",
-                            "model-visible tools require an executable binding implementation",
-                            f"$.spec.bindings.tools.{tool_key}.implementation",
-                        )
+            else:
+                diagnostics.append(
+                    Diagnostic(
+                        "ToolSchemaMissing",
+                        "model-visible tool definitions require an input schema",
+                        f"$.spec.bindings.tools.{tool_key}.definition.inputSchema",
                     )
+                )
+            if "implementation" not in tool:
+                diagnostics.append(
+                    Diagnostic(
+                        "ToolBindingMissing",
+                        "model-visible tools require an executable binding implementation",
+                        f"$.spec.bindings.tools.{tool_key}.implementation",
+                    )
+                )
 
         if (maximum_parallelism > 1 or parallel_tool_calls) and has_state_changing_tool and not has_effect_serialization_key:
             diagnostics.append(

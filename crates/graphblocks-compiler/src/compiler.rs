@@ -435,13 +435,19 @@ pub fn compile_graph(document: &Value) -> Plan {
                         format!("$.spec.bindings.tools.{tool_key}.definition.inputSchema"),
                     ));
                 }
-                if !tool.contains_key("implementation") {
-                    diagnostics.push(Diagnostic::error(
-                        "ToolBindingMissing",
-                        "model-visible tools require an executable binding implementation",
-                        format!("$.spec.bindings.tools.{tool_key}.implementation"),
-                    ));
-                }
+            } else {
+                diagnostics.push(Diagnostic::error(
+                    "ToolSchemaMissing",
+                    "model-visible tool definitions require an input schema",
+                    format!("$.spec.bindings.tools.{tool_key}.definition.inputSchema"),
+                ));
+            }
+            if !tool.contains_key("implementation") {
+                diagnostics.push(Diagnostic::error(
+                    "ToolBindingMissing",
+                    "model-visible tools require an executable binding implementation",
+                    format!("$.spec.bindings.tools.{tool_key}.implementation"),
+                ));
             }
         }
 

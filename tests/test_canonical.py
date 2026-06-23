@@ -320,9 +320,25 @@ def test_compile_reports_tool_definition_without_binding_or_input_schema() -> No
             },
         },
     }
+    missing_definition = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "missing-tool-definition"},
+        "spec": {
+            "nodes": {"model": {"block": "model.generate@1"}},
+            "bindings": {
+                "tools": {
+                    "search": {
+                        "implementation": {"kind": "block", "block": "blocks.search"},
+                    }
+                }
+            },
+        },
+    }
 
     assert _error_codes(missing_binding) == ["ToolBindingMissing"]
     assert _error_codes(missing_schema) == ["ToolSchemaMissing"]
+    assert _error_codes(missing_definition) == ["ToolSchemaMissing"]
 
 
 def test_compile_rejects_parallel_state_changing_tools_without_effect_serialization() -> None:
