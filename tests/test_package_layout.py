@@ -105,6 +105,20 @@ def test_tool_adapter_packages_have_pure_python_layouts() -> None:
         assert (package_root / "src" / import_name / "py.typed").exists()
 
 
+def test_stdlib_package_has_pure_python_layout() -> None:
+    package_root = ROOT / "packages" / "graphblocks-stdlib"
+    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
+
+    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
+    assert pyproject["project"]["name"] == "graphblocks-stdlib"
+    assert pyproject["project"]["dependencies"] == ["graphblocks-core~=1.0"]
+    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
+        "src/graphblocks_stdlib"
+    ]
+    assert (package_root / "src" / "graphblocks_stdlib" / "__init__.py").exists()
+    assert (package_root / "src" / "graphblocks_stdlib" / "py.typed").exists()
+
+
 def test_policy_adapter_packages_have_pure_python_layouts_without_sdk_dependencies() -> None:
     for distribution, import_name in (
         ("graphblocks-policy-opa", "graphblocks_policy_opa"),
