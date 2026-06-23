@@ -1076,6 +1076,7 @@ def validate_tool_result_for_model(
         metadata = dict(part.metadata)
         metadata.setdefault("trust_designation", "untrusted_external")
         metadata.setdefault("prompt_injection_label", "untrusted_tool_output")
+        metadata.setdefault("content_classification", "external_tool_output")
         model_output.append(replace(part, metadata=metadata))
 
     if redactions:

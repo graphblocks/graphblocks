@@ -713,7 +713,7 @@ def test_completed_tool_result_model_output_is_labeled_untrusted_by_default() ->
             ContentPart(
                 kind="json",
                 data={"answer": "Use the runtime."},
-                metadata={"trust_designation": "trusted_internal"},
+                metadata={"trust_designation": "trusted_internal", "content_classification": "support_docs"},
             ),
         ),
         started_at="2026-06-23T00:00:01Z",
@@ -724,9 +724,12 @@ def test_completed_tool_result_model_output_is_labeled_untrusted_by_default() ->
 
     assert output[0].metadata["trust_designation"] == "untrusted_external"
     assert output[0].metadata["prompt_injection_label"] == "untrusted_tool_output"
+    assert output[0].metadata["content_classification"] == "external_tool_output"
     assert output[1].metadata["trust_designation"] == "trusted_internal"
     assert output[1].metadata["prompt_injection_label"] == "untrusted_tool_output"
+    assert output[1].metadata["content_classification"] == "support_docs"
     assert "trust_designation" not in result.output[0].metadata
+    assert "content_classification" not in result.output[0].metadata
 
 
 def test_completed_tool_result_model_output_enforces_byte_limit_before_model_return() -> None:

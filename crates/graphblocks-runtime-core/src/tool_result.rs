@@ -549,6 +549,9 @@ impl ToolResultValidation {
                 part.metadata
                     .entry("prompt_injection_label".to_string())
                     .or_insert_with(|| json!("untrusted_tool_output"));
+                part.metadata
+                    .entry("content_classification".to_string())
+                    .or_insert_with(|| json!("external_tool_output"));
                 part
             })
             .collect::<Vec<_>>();
