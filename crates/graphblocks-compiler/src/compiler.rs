@@ -291,6 +291,19 @@ pub fn compile_graph(document: &Value) -> Plan {
                 _ => false,
             };
             has_state_changing_tool |= state_changing_tool;
+            let has_retry_policy_ref = tool
+                .get("retryPolicyRef")
+                .or_else(|| tool.get("retry_policy_ref"))
+                .and_then(Value::as_str)
+                .is_some_and(|retry_policy_ref| !retry_policy_ref.trim().is_empty());
+            let idempotency = tool.get("idempotency").and_then(Value::as_str);
+            if state_changing_tool && has_retry_policy_ref && idempotency != Some("required") {
+                diagnostics.push(Diagnostic::error(
+                    "NonIdempotentRetry",
+                    "retrying state-changing tool effects requires required idempotency",
+                    format!("$.spec.bindings.tools.{tool_key}.idempotency"),
+                ));
+            }
             if let Some(definition) = tool.get("definition").and_then(Value::as_object) {
                 let has_input_schema = definition
                     .get("inputSchema")

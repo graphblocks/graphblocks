@@ -433,3 +433,88 @@ fn compile_graph_allows_parallel_state_changing_tools_with_effect_serialization(
             .any(|diagnostic| diagnostic.code == "UnsafeParallelEffects")
     );
 }
+
+#[test]
+fn compile_graph_rejects_retried_write_tool_without_required_idempotency() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "nonidempotent-retry-tool"},
+        "spec": {
+            "bindings": {
+                "tools": {
+                    "createTicket": {
+                        "definition": {
+                            "name": "ticket.create",
+                            "description": "Create a support ticket.",
+                            "inputSchema": "schemas/TicketCreateRequest@1"
+                        },
+                        "implementation": {
+                            "kind": "openapi",
+                            "connection": "ticket-system",
+                            "operationId": "createTicket"
+                        },
+                        "effects": ["external_write", "network"],
+                        "retryPolicyRef": "retry/default"
+                    }
+                }
+            },
+            "nodes": {
+                "agent": {"block": "agent.run@1"}
+            }
+        }
+    });
+
+    let plan = compile_graph(&graph);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["NonIdempotentRetry"]
+    );
+}
+
+#[test]
+fn compile_graph_allows_retried_write_tool_with_required_idempotency() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "idempotent-retry-tool"},
+        "spec": {
+            "bindings": {
+                "tools": {
+                    "createTicket": {
+                        "definition": {
+                            "name": "ticket.create",
+                            "description": "Create a support ticket.",
+                            "inputSchema": "schemas/TicketCreateRequest@1"
+                        },
+                        "implementation": {
+                            "kind": "openapi",
+                            "connection": "ticket-system",
+                            "operationId": "createTicket"
+                        },
+                        "effects": ["external_write", "network"],
+                        "retryPolicyRef": "retry/default",
+                        "idempotency": "required"
+                    }
+                }
+            },
+            "nodes": {
+                "agent": {"block": "agent.run@1"}
+            }
+        }
+    });
+
+    let plan = compile_graph(&graph);
+
+    assert!(
+        !plan
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "NonIdempotentRetry")
+    );
+}
