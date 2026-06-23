@@ -289,6 +289,40 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
         ));
     }
 
+    if let Some(interface) = spec
+        .and_then(|spec| spec.get("interface"))
+        .and_then(Value::as_object)
+    {
+        for direction in ["inputs", "outputs"] {
+            if let Some(ports) = interface.get(direction).and_then(Value::as_object) {
+                for (port_name, schema_id) in ports {
+                    let path = format!("$.spec.interface.{direction}.{port_name}");
+                    let Some(schema_id) = schema_id.as_str() else {
+                        diagnostics.push(Diagnostic::error(
+                            "InvalidSchemaId",
+                            format!(
+                                "graph interface {} schema id must be a string",
+                                direction.trim_end_matches('s')
+                            ),
+                            path,
+                        ));
+                        continue;
+                    };
+                    if let Err(error) = SchemaId::parse(schema_id) {
+                        diagnostics.push(Diagnostic::error(
+                            "InvalidSchemaId",
+                            format!(
+                                "graph interface {} schema id is invalid: {error}",
+                                direction.trim_end_matches('s')
+                            ),
+                            path,
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
     if let Some(nodes) = nodes {
         for (node_name, node) in nodes {
             if node_name.is_empty() {

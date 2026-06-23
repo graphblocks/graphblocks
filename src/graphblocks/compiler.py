@@ -60,6 +60,33 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
         diagnostics.append(Diagnostic("GB0005", "spec.nodes must be a mapping", "$.spec.nodes"))
         nodes = {}
 
+    interface = spec.get("interface")
+    if isinstance(interface, dict):
+        for direction in ("inputs", "outputs"):
+            ports = interface.get(direction)
+            if isinstance(ports, dict):
+                for port_name, schema_id in ports.items():
+                    path = f"$.spec.interface.{direction}.{port_name}"
+                    if not isinstance(schema_id, str):
+                        diagnostics.append(
+                            Diagnostic(
+                                "InvalidSchemaId",
+                                f"graph interface {direction[:-1]} schema id must be a string",
+                                path,
+                            )
+                        )
+                        continue
+                    try:
+                        SchemaId.parse(schema_id)
+                    except SchemaIdError as error:
+                        diagnostics.append(
+                            Diagnostic(
+                                "InvalidSchemaId",
+                                f"graph interface {direction[:-1]} schema id is invalid: {error}",
+                                path,
+                            )
+                        )
+
     for node_name, node in nodes.items():
         if not isinstance(node_name, str) or not node_name:
             diagnostics.append(Diagnostic("GB0006", "node name must be a non-empty string", "$.spec.nodes"))

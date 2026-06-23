@@ -968,6 +968,33 @@ fn compile_graph_reports_tool_definition_with_invalid_input_schema() {
 }
 
 #[test]
+fn compile_graph_reports_invalid_interface_schema_ids() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "invalid-interface-schema"},
+        "spec": {
+            "interface": {
+                "inputs": {"request": "schemas/Request"},
+                "outputs": {"result": "schemas/Result"}
+            },
+            "nodes": {}
+        }
+    });
+
+    let plan = compile_graph(&graph);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["InvalidSchemaId", "InvalidSchemaId"]
+    );
+}
+
+#[test]
 fn compile_graph_accepts_tool_definition_with_schema_and_binding() {
     let graph = json!({
         "apiVersion": GRAPH_API_VERSION,

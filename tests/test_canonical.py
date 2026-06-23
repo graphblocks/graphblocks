@@ -62,6 +62,23 @@ def test_node_inputs_are_normalized_to_edges() -> None:
     assert {"from": "lookup.value", "to": "render.context.current"} in normalized["spec"]["edges"]
 
 
+def test_compile_reports_invalid_interface_schema_ids() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "invalid-interface-schema"},
+        "spec": {
+            "interface": {
+                "inputs": {"request": "schemas/Request"},
+                "outputs": {"result": "schemas/Result"},
+            },
+            "nodes": {},
+        },
+    }
+
+    assert _error_codes(graph) == ["InvalidSchemaId", "InvalidSchemaId"]
+
+
 def test_compile_reports_unknown_edge_endpoint() -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
