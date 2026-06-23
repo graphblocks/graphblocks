@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field, replace, is_dataclass
 from decimal import Decimal
 from typing import Literal
@@ -8,6 +9,7 @@ from .canonical import canonical_hash
 from .diagnostics import Diagnostic
 from .documents import ArtifactRef
 from .policy import PrincipalRef
+from .tools import ResolvedTool
 
 
 CheckStatus = Literal["passed", "failed", "error", "timeout", "inconclusive", "skipped"]
@@ -44,13 +46,45 @@ class TypedValueRef:
     artifact: ArtifactRef | None = None
 
 
+@dataclass(frozen=True, slots=True, order=True)
+class ModelVisibleToolRef:
+    tool_name: str
+    resolved_tool_id: str
+    definition_digest: str
+    binding_digest: str
+    effective_policy_snapshot_id: str
+    allowed_for_principal: bool
+    valid_until: str | None = None
+
+
 @dataclass(frozen=True, slots=True)
 class RunProvenance:
     graph_hash: str
     started_at: str
     completed_at: str | None = None
+    model_visible_tools: tuple[ModelVisibleToolRef, ...] = field(default_factory=tuple)
     runner: dict[str, object] = field(default_factory=dict)
     metadata: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "model_visible_tools", tuple(sorted(self.model_visible_tools)))
+
+    def with_model_visible_tools(self, tools: Iterable[ResolvedTool]) -> RunProvenance:
+        return replace(
+            self,
+            model_visible_tools=tuple(
+                ModelVisibleToolRef(
+                    tool_name=tool.definition.name,
+                    resolved_tool_id=tool.resolved_tool_id,
+                    definition_digest=tool.definition_digest,
+                    binding_digest=tool.binding_digest,
+                    effective_policy_snapshot_id=tool.effective_policy_snapshot_id,
+                    allowed_for_principal=tool.allowed_for_principal,
+                    valid_until=tool.valid_until,
+                )
+                for tool in tools
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)

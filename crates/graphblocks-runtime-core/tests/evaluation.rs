@@ -4,6 +4,10 @@ use graphblocks_runtime_core::evaluation::{
     RunProvenance, SloMeasurement, SloObjective, SloReportStatus, TrialResult, evaluate_gate,
 };
 use graphblocks_runtime_core::policy::PrincipalRef;
+use graphblocks_runtime_core::tool::{
+    BlockToolImplementation, ToolBinding, ToolCatalog, ToolDefinition, ToolImplementation,
+    ToolResolutionScope,
+};
 use graphblocks_runtime_core::tool_result::ArtifactRef;
 use serde_json::json;
 
@@ -282,6 +286,70 @@ fn result_bundle_digest_includes_release_plan_and_signature_provenance() {
 
     assert_ne!(base_digest, changed_signature_digest);
     assert_ne!(base_digest, changed_plan_digest);
+}
+
+#[test]
+fn result_bundle_digest_records_model_visible_tool_set_deterministically() {
+    let catalog = ToolCatalog::new(
+        [
+            ToolDefinition::new(
+                "knowledge.search",
+                "Search support articles.",
+                "schemas/Search@1",
+            ),
+            ToolDefinition::new("ticket.create", "Create a ticket.", "schemas/Ticket@1"),
+        ],
+        [
+            ToolBinding::new(
+                "binding-search",
+                "knowledge.search",
+                ToolImplementation::Block(BlockToolImplementation::new("blocks.search")),
+            ),
+            ToolBinding::new(
+                "binding-ticket",
+                "ticket.create",
+                ToolImplementation::Block(BlockToolImplementation::new("blocks.ticket.create")),
+            ),
+        ],
+    )
+    .expect("catalog should be valid");
+    let resolved = catalog
+        .resolve(ToolResolutionScope::new(), "policy-snapshot-1")
+        .expect("tools should resolve");
+    let reversed = resolved.iter().rev().collect::<Vec<_>>();
+
+    let stable = RunProvenance::new("sha256:graph", "2026-06-22T00:00:00Z")
+        .with_model_visible_tools(&resolved);
+    let same_tools_reversed = RunProvenance::new("sha256:graph", "2026-06-22T00:00:00Z")
+        .with_model_visible_tools(reversed);
+    let missing_tool = RunProvenance::new("sha256:graph", "2026-06-22T00:00:00Z")
+        .with_model_visible_tools(resolved.iter().take(1).collect::<Vec<_>>());
+
+    assert_eq!(stable.model_visible_tools.len(), 2);
+    assert_eq!(stable.model_visible_tools[0].tool_name, "knowledge.search");
+    assert_eq!(
+        stable.model_visible_tools[0].definition_digest,
+        resolved[0].definition_digest
+    );
+    assert_eq!(
+        ResultBundle::new("bundle-1", "run-1", "release-1")
+            .with_provenance(stable)
+            .content_digest(),
+        ResultBundle::new("bundle-2", "run-1", "release-1")
+            .with_provenance(same_tools_reversed)
+            .content_digest()
+    );
+    assert_ne!(
+        ResultBundle::new("bundle-3", "run-1", "release-1")
+            .with_provenance(missing_tool)
+            .content_digest(),
+        ResultBundle::new("bundle-4", "run-1", "release-1")
+            .with_provenance(
+                RunProvenance::new("sha256:graph", "2026-06-22T00:00:00Z")
+                    .with_model_visible_tools(&resolved)
+            )
+            .content_digest()
+    );
 }
 
 #[test]

@@ -4,6 +4,7 @@ use graphblocks_compiler::canonical::canonical_hash;
 use serde_json::{Value, json};
 
 use crate::policy::PrincipalRef;
+use crate::tool::ResolvedTool;
 use crate::tool_result::ArtifactRef;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -94,6 +95,31 @@ impl TypedValueRef {
     }
 }
 
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct ModelVisibleToolRef {
+    pub tool_name: String,
+    pub resolved_tool_id: String,
+    pub definition_digest: String,
+    pub binding_digest: String,
+    pub effective_policy_snapshot_id: String,
+    pub allowed_for_principal: bool,
+    pub valid_until_unix_ms: Option<u64>,
+}
+
+impl ModelVisibleToolRef {
+    fn canonical_value(&self) -> Value {
+        json!({
+            "tool_name": self.tool_name,
+            "resolved_tool_id": self.resolved_tool_id,
+            "definition_digest": self.definition_digest,
+            "binding_digest": self.binding_digest,
+            "effective_policy_snapshot_id": self.effective_policy_snapshot_id,
+            "allowed_for_principal": self.allowed_for_principal,
+            "valid_until_unix_ms": self.valid_until_unix_ms,
+        })
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunProvenance {
     pub graph_hash: String,
@@ -101,6 +127,7 @@ pub struct RunProvenance {
     pub deployment_revision_id: Option<String>,
     pub physical_plan_hash: Option<String>,
     pub release_signature_digest: Option<String>,
+    pub model_visible_tools: Vec<ModelVisibleToolRef>,
     pub started_at: String,
     pub completed_at: Option<String>,
     pub runner: BTreeMap<String, Value>,
@@ -115,6 +142,7 @@ impl RunProvenance {
             deployment_revision_id: None,
             physical_plan_hash: None,
             release_signature_digest: None,
+            model_visible_tools: Vec::new(),
             started_at: started_at.into(),
             completed_at: None,
             runner: BTreeMap::new(),
@@ -145,6 +173,26 @@ impl RunProvenance {
         self
     }
 
+    pub fn with_model_visible_tools<'a, I>(mut self, tools: I) -> Self
+    where
+        I: IntoIterator<Item = &'a ResolvedTool>,
+    {
+        self.model_visible_tools = tools
+            .into_iter()
+            .map(|tool| ModelVisibleToolRef {
+                tool_name: tool.definition.name.clone(),
+                resolved_tool_id: tool.resolved_tool_id.clone(),
+                definition_digest: tool.definition_digest.clone(),
+                binding_digest: tool.binding_digest.clone(),
+                effective_policy_snapshot_id: tool.effective_policy_snapshot_id.clone(),
+                allowed_for_principal: tool.allowed_for_principal,
+                valid_until_unix_ms: tool.valid_until_unix_ms,
+            })
+            .collect();
+        self.model_visible_tools.sort();
+        self
+    }
+
     fn canonical_value(&self) -> Value {
         json!({
             "graph_hash": self.graph_hash,
@@ -152,6 +200,7 @@ impl RunProvenance {
             "deployment_revision_id": self.deployment_revision_id,
             "physical_plan_hash": self.physical_plan_hash,
             "release_signature_digest": self.release_signature_digest,
+            "model_visible_tools": self.model_visible_tools.iter().map(ModelVisibleToolRef::canonical_value).collect::<Vec<_>>(),
             "started_at": self.started_at,
             "completed_at": self.completed_at,
             "runner": self.runner,

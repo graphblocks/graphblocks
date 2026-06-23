@@ -16,6 +16,13 @@ from graphblocks.evaluation import (
     evaluate_gate,
 )
 from graphblocks.policy import PrincipalRef
+from graphblocks.tools import (
+    BlockToolImplementation,
+    ToolBinding,
+    ToolCatalog,
+    ToolDefinition,
+    ToolResolutionScope,
+)
 
 
 def test_evaluate_gate_fails_when_required_check_failed() -> None:
@@ -120,6 +127,77 @@ def test_result_bundle_digest_is_stable_without_record_identity() -> None:
 
     assert gate.subject == subject
     assert bundle.content_digest() == same_payload.content_digest()
+
+
+def test_result_bundle_digest_records_model_visible_tool_set_deterministically() -> None:
+    catalog = ToolCatalog(
+        definitions=(
+            ToolDefinition("knowledge.search", "Search support articles.", "schemas/Search@1"),
+            ToolDefinition("ticket.create", "Create a ticket.", "schemas/Ticket@1"),
+        ),
+        bindings=(
+            ToolBinding(
+                "binding-search",
+                "knowledge.search",
+                BlockToolImplementation("blocks.search"),
+            ),
+            ToolBinding(
+                "binding-ticket",
+                "ticket.create",
+                BlockToolImplementation("blocks.ticket.create"),
+            ),
+        ),
+    )
+    resolved = catalog.resolve(ToolResolutionScope(), effective_policy_snapshot_id="policy-snapshot-1")
+    stable = RunProvenance(
+        graph_hash="sha256:graph",
+        started_at="2026-06-22T00:00:00Z",
+    ).with_model_visible_tools(resolved)
+    same_tools_reversed = RunProvenance(
+        graph_hash="sha256:graph",
+        started_at="2026-06-22T00:00:00Z",
+    ).with_model_visible_tools(reversed(resolved))
+    missing_tool = RunProvenance(
+        graph_hash="sha256:graph",
+        started_at="2026-06-22T00:00:00Z",
+    ).with_model_visible_tools(resolved[:1])
+
+    assert len(stable.model_visible_tools) == 2
+    assert stable.model_visible_tools[0].tool_name == "knowledge.search"
+    assert stable.model_visible_tools[0].definition_digest == resolved[0].definition_digest
+    assert ResultBundle(
+        bundle_id="bundle-1",
+        run_id="run-1",
+        release_id="release-1",
+        inputs=[],
+        outputs=[],
+        provenance=stable,
+    ).content_digest() == ResultBundle(
+        bundle_id="bundle-2",
+        run_id="run-1",
+        release_id="release-1",
+        inputs=[],
+        outputs=[],
+        provenance=same_tools_reversed,
+    ).content_digest()
+    assert ResultBundle(
+        bundle_id="bundle-3",
+        run_id="run-1",
+        release_id="release-1",
+        inputs=[],
+        outputs=[],
+        provenance=missing_tool,
+    ).content_digest() != ResultBundle(
+        bundle_id="bundle-4",
+        run_id="run-1",
+        release_id="release-1",
+        inputs=[],
+        outputs=[],
+        provenance=RunProvenance(
+            graph_hash="sha256:graph",
+            started_at="2026-06-22T00:00:00Z",
+        ).with_model_visible_tools(resolved),
+    ).content_digest()
 
 
 def test_trial_result_carries_gate_and_outcome() -> None:
