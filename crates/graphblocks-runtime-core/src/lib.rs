@@ -6,6 +6,7 @@ pub mod budget;
 pub mod cancellation;
 pub mod connectors;
 pub mod conversation;
+pub mod deployment;
 pub mod document_parsers;
 pub mod documents;
 pub mod evaluation;
