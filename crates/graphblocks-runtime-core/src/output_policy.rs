@@ -331,6 +331,9 @@ pub struct OutputCutoff {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OutputGateError {
+    InvalidDeliveryPolicy {
+        source: OutputDeliveryPolicyError,
+    },
     StreamMismatch {
         expected_stream_id: String,
         actual_stream_id: String,
@@ -357,6 +360,7 @@ pub struct OutputDeliveryGate {
     stream_id: String,
     response_id: String,
     turn_id: Option<String>,
+    delivery_policy: OutputDeliveryPolicy,
     pending: BTreeMap<u64, GenerationChunk>,
     last_generated_sequence: u64,
     last_policy_accepted_sequence: u64,
@@ -370,6 +374,11 @@ impl OutputDeliveryGate {
             stream_id: stream_id.into(),
             response_id: response_id.into(),
             turn_id: None,
+            delivery_policy: OutputDeliveryPolicy::bounded_holdback(
+                ViolationAction::AbortResponse,
+                DraftDisposition::Retract,
+            )
+            .with_holdback_max_tokens(1),
             pending: BTreeMap::new(),
             last_generated_sequence: 0,
             last_policy_accepted_sequence: 0,
@@ -381,6 +390,17 @@ impl OutputDeliveryGate {
     pub fn with_turn_id(mut self, turn_id: impl Into<String>) -> Self {
         self.turn_id = Some(turn_id.into());
         self
+    }
+
+    pub fn with_delivery_policy(
+        mut self,
+        delivery_policy: OutputDeliveryPolicy,
+    ) -> Result<Self, OutputGateError> {
+        delivery_policy
+            .validate()
+            .map_err(|source| OutputGateError::InvalidDeliveryPolicy { source })?;
+        self.delivery_policy = delivery_policy;
+        Ok(self)
     }
 
     pub fn last_generated_sequence(&self) -> u64 {
@@ -397,6 +417,28 @@ impl OutputDeliveryGate {
 
     pub fn cutoff(&self) -> Option<&OutputCutoff> {
         self.stopped.as_ref()
+    }
+
+    pub fn commit_accepted_output(&mut self) -> Vec<GenerationChunk> {
+        if self.stopped.is_some() {
+            return Vec::new();
+        }
+
+        let delivered_after = self.last_client_delivered_sequence + 1;
+        let accepted_through = self.last_policy_accepted_sequence;
+        let ready_sequences = self
+            .pending
+            .range(delivered_after..=accepted_through)
+            .map(|(sequence, _)| *sequence)
+            .collect::<Vec<_>>();
+        let mut deliverable = Vec::new();
+        for sequence in ready_sequences {
+            if let Some(chunk) = self.pending.remove(&sequence) {
+                self.last_client_delivered_sequence = sequence;
+                deliverable.push(chunk);
+            }
+        }
+        deliverable
     }
 
     pub fn record_chunk(&mut self, chunk: GenerationChunk) -> Result<(), OutputGateError> {
@@ -444,20 +486,12 @@ impl OutputDeliveryGate {
                     }
                 }
 
-                let mut deliverable = Vec::new();
-                let delivered_after = self.last_client_delivered_sequence + 1;
-                let accepted_through = self.last_policy_accepted_sequence;
-                let ready_sequences = self
-                    .pending
-                    .range(delivered_after..=accepted_through)
-                    .map(|(sequence, _)| *sequence)
-                    .collect::<Vec<_>>();
-                for sequence in ready_sequences {
-                    if let Some(chunk) = self.pending.remove(&sequence) {
-                        self.last_client_delivered_sequence = sequence;
-                        deliverable.push(chunk);
+                let deliverable = match self.delivery_policy.mode {
+                    DeliveryMode::BufferUntilCommit => Vec::new(),
+                    DeliveryMode::BoundedHoldback | DeliveryMode::ImmediateDraft => {
+                        self.commit_accepted_output()
                     }
-                }
+                };
 
                 Ok(OutputGateUpdate {
                     deliverable,

@@ -138,3 +138,72 @@ fn immediate_draft_requires_incomplete_or_retraction_semantics() {
         Err(OutputDeliveryPolicyError::ImmediateDraftWithoutRetractionSupport),
     );
 }
+
+#[test]
+fn buffer_until_commit_holds_accepted_chunks_until_output_commit() -> Result<(), OutputGateError> {
+    let mut gate = OutputDeliveryGate::new("stream-1", "response-1").with_delivery_policy(
+        OutputDeliveryPolicy::buffer_until_commit(ViolationAction::AbortResponse),
+    )?;
+
+    gate.record_chunk(GenerationChunk::text("stream-1", "response-1", 1, "hello "))?;
+    gate.record_chunk(GenerationChunk::text("stream-1", "response-1", 2, "world"))?;
+
+    let held = gate.apply_decision(
+        OutputPolicyDecision::allow("decision-1", Some(2), "sha256:accepted"),
+        1_000,
+    )?;
+
+    assert!(held.deliverable.is_empty());
+    assert_eq!(gate.last_policy_accepted_sequence(), 2);
+    assert_eq!(gate.last_client_delivered_sequence(), 0);
+
+    let committed = gate.commit_accepted_output();
+
+    assert_eq!(
+        committed
+            .iter()
+            .map(|chunk| (chunk.sequence, chunk.text.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(1, "hello "), (2, "world")]
+    );
+    assert_eq!(gate.last_client_delivered_sequence(), 2);
+    Ok(())
+}
+
+#[test]
+fn buffer_until_commit_exposes_no_rejected_content() -> Result<(), OutputGateError> {
+    let mut gate = OutputDeliveryGate::new("stream-1", "response-1").with_delivery_policy(
+        OutputDeliveryPolicy::buffer_until_commit(ViolationAction::AbortResponse),
+    )?;
+
+    gate.record_chunk(GenerationChunk::text(
+        "stream-1",
+        "response-1",
+        1,
+        "safe draft",
+    ))?;
+    let held = gate.apply_decision(
+        OutputPolicyDecision::allow("decision-1", Some(1), "sha256:accepted"),
+        1_000,
+    )?;
+    assert!(held.deliverable.is_empty());
+
+    gate.record_chunk(GenerationChunk::text(
+        "stream-1",
+        "response-1",
+        2,
+        "blocked draft",
+    ))?;
+    let stopped = gate.apply_decision(
+        OutputPolicyDecision::abort_response("decision-abort", "sha256:blocked"),
+        1_050,
+    )?;
+
+    assert!(stopped.deliverable.is_empty());
+    let cutoff = stopped.cutoff.expect("policy abort records cutoff");
+    assert_eq!(cutoff.last_generated_sequence, 2);
+    assert_eq!(cutoff.last_policy_accepted_sequence, 1);
+    assert_eq!(cutoff.last_client_delivered_sequence, 0);
+    assert!(gate.commit_accepted_output().is_empty());
+    Ok(())
+}
