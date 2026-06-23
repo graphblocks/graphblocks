@@ -6,6 +6,7 @@ use crate::output_policy::{
     DraftDisposition, DurableResult, OutputCutoff, OutputDisposition, OutputPolicyDecision,
     TerminalReason,
 };
+use crate::tool_result::{ToolEffectOutcome, ToolResult, ToolResultEvent, ToolResultStatus};
 use serde_json::{Value, json};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -110,6 +111,119 @@ pub enum ApplicationEventError {
 }
 
 impl ApplicationEvent {
+    pub fn tool_result_event(
+        metadata: ApplicationEventMetadata,
+        event: &ToolResultEvent,
+    ) -> Result<Option<Self>, ApplicationEventError> {
+        match event {
+            ToolResultEvent::Started {
+                tool_call_id,
+                sequence,
+                started_at_unix_ms,
+            } => Self::tool(
+                ApplicationEventKind::ToolCallStarted,
+                metadata,
+                tool_call_id,
+                json!({
+                    "status": "running",
+                    "tool_result_sequence": sequence,
+                    "started_at_unix_ms": started_at_unix_ms,
+                }),
+            )
+            .map(Some),
+            ToolResultEvent::Completed {
+                tool_call_id,
+                sequence,
+                result,
+            } => Self::tool(
+                ApplicationEventKind::ToolCallCompleted,
+                metadata,
+                tool_call_id,
+                Self::tool_result_payload(*sequence, result),
+            )
+            .map(Some),
+            ToolResultEvent::Failed {
+                tool_call_id,
+                sequence,
+                result,
+            } => Self::tool(
+                ApplicationEventKind::ToolCallFailed,
+                metadata,
+                tool_call_id,
+                Self::tool_result_payload(*sequence, result),
+            )
+            .map(Some),
+            ToolResultEvent::Denied {
+                tool_call_id,
+                sequence,
+                result,
+            } => Self::tool(
+                ApplicationEventKind::ToolCallDenied,
+                metadata,
+                tool_call_id,
+                Self::tool_result_payload(*sequence, result),
+            )
+            .map(Some),
+            ToolResultEvent::Cancelled {
+                tool_call_id,
+                sequence,
+                result,
+            } => Self::tool(
+                ApplicationEventKind::ToolCallCancelled,
+                metadata,
+                tool_call_id,
+                Self::tool_result_payload(*sequence, result),
+            )
+            .map(Some),
+            ToolResultEvent::PolicyStopped {
+                tool_call_id,
+                sequence,
+                result,
+            } => Self::tool(
+                ApplicationEventKind::ToolCallPolicyStopped,
+                metadata,
+                tool_call_id,
+                Self::tool_result_payload(*sequence, result),
+            )
+            .map(Some),
+            ToolResultEvent::Delta { .. }
+            | ToolResultEvent::ArtifactReady { .. }
+            | ToolResultEvent::Incomplete { .. } => Ok(None),
+        }
+    }
+
+    fn tool_result_payload(sequence: u64, result: &ToolResult) -> Value {
+        json!({
+            "status": Self::tool_result_status(result.status),
+            "tool_result_sequence": sequence,
+            "started_at_unix_ms": result.started_at_unix_ms,
+            "completed_at_unix_ms": result.completed_at_unix_ms,
+            "output_digest": result.output_digest,
+            "effect_outcome": Self::tool_effect_outcome(result.effect_outcome),
+            "error_code": result.error.as_ref().map(|error| error.code.as_str()),
+        })
+    }
+
+    fn tool_result_status(status: ToolResultStatus) -> &'static str {
+        match status {
+            ToolResultStatus::Completed => "completed",
+            ToolResultStatus::Failed => "failed",
+            ToolResultStatus::Denied => "denied",
+            ToolResultStatus::Cancelled => "cancelled",
+            ToolResultStatus::PolicyStopped => "policy_stopped",
+            ToolResultStatus::Incomplete => "incomplete",
+        }
+    }
+
+    fn tool_effect_outcome(effect_outcome: ToolEffectOutcome) -> &'static str {
+        match effect_outcome {
+            ToolEffectOutcome::NoExternalEffect => "no_external_effect",
+            ToolEffectOutcome::Committed => "committed",
+            ToolEffectOutcome::NotCommitted => "not_committed",
+            ToolEffectOutcome::Unknown => "unknown",
+        }
+    }
+
     pub fn output_cutoff(
         metadata: ApplicationEventMetadata,
         cutoff: &OutputCutoff,

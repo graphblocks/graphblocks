@@ -4,10 +4,12 @@ use graphblocks_runtime_core::application_event::{
     ApplicationProtocolCapabilities, ApplicationProtocolEvent, ApplicationProtocolEventKind,
     ApplicationProtocolEventMetadata, ApplicationProtocolLog,
 };
+use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory};
 use graphblocks_runtime_core::output_policy::{
     DraftDisposition, DurableResult, GenerationChunk, OutputCutoff, OutputPolicyDecision,
     TerminalReason,
 };
+use graphblocks_runtime_core::tool_result::{ContentPart, ToolResult, ToolResultEvent};
 use serde_json::json;
 
 fn metadata() -> ApplicationEventMetadata {
@@ -277,6 +279,91 @@ fn output_cutoff_events_mark_incomplete_when_retraction_is_not_required() {
     assert_eq!(
         events[1].payload.get("last_client_delivered_sequence"),
         Some(&json!(1))
+    );
+}
+
+#[test]
+fn tool_result_events_map_to_standard_tool_application_events() {
+    let completed = ToolResult::completed("call-1", [ContentPart::text("done")], 1_000, 1_050);
+    let failed = ToolResult::failed(
+        "call-2",
+        BlockError::new(
+            "tool.failed",
+            ErrorCategory::Permanent,
+            "tool execution failed",
+            true,
+        ),
+        1_100,
+        1_120,
+    );
+    let denied = ToolResult::denied(
+        "call-3",
+        BlockError::new(
+            "tool.denied",
+            ErrorCategory::Policy,
+            "tool execution was denied",
+            false,
+        ),
+        1_200,
+    );
+    let cancelled = ToolResult::cancelled("call-4", 1_300, 1_330);
+    let policy_stopped = ToolResult::policy_stopped(
+        "call-5",
+        BlockError::new(
+            "policy.denied",
+            ErrorCategory::Policy,
+            "tool result was stopped by policy",
+            false,
+        ),
+        1_400,
+        1_430,
+    );
+
+    let events = [
+        ToolResultEvent::started("call-0", 1, 990),
+        ToolResultEvent::completed("call-1", 2, completed),
+        ToolResultEvent::failed("call-2", 3, failed),
+        ToolResultEvent::denied("call-3", 4, denied),
+        ToolResultEvent::cancelled("call-4", 5, cancelled),
+        ToolResultEvent::policy_stopped("call-5", 6, policy_stopped),
+    ]
+    .into_iter()
+    .map(|event| {
+        ApplicationEvent::tool_result_event(metadata(), &event)
+            .expect("tool result event can be converted")
+            .expect("lifecycle event maps to application event")
+    })
+    .collect::<Vec<_>>();
+
+    assert_eq!(
+        events.iter().map(|event| event.kind).collect::<Vec<_>>(),
+        vec![
+            ApplicationEventKind::ToolCallStarted,
+            ApplicationEventKind::ToolCallCompleted,
+            ApplicationEventKind::ToolCallFailed,
+            ApplicationEventKind::ToolCallDenied,
+            ApplicationEventKind::ToolCallCancelled,
+            ApplicationEventKind::ToolCallPolicyStopped,
+        ]
+    );
+    assert_eq!(events[0].tool_call_id.as_deref(), Some("call-0"));
+    assert_eq!(events[1].payload.get("status"), Some(&json!("completed")));
+    assert_eq!(events[2].payload.get("status"), Some(&json!("failed")));
+    assert_eq!(events[3].payload.get("status"), Some(&json!("denied")));
+    assert_eq!(events[4].payload.get("status"), Some(&json!("cancelled")));
+    assert_eq!(
+        events[5].payload.get("status"),
+        Some(&json!("policy_stopped"))
+    );
+}
+
+#[test]
+fn tool_result_delta_does_not_become_application_event() {
+    let delta = ToolResultEvent::delta("call-1", 7, [ContentPart::text("draft")]);
+
+    assert_eq!(
+        ApplicationEvent::tool_result_event(metadata(), &delta).expect("delta conversion is valid"),
+        None
     );
 }
 
