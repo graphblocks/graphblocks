@@ -10,6 +10,7 @@ from graphblocks import (
     AdmittedToolCall,
     BlockToolImplementation,
     ContentPart,
+    GraphToolImplementation,
     JsonSchema,
     JsonSchemaNode,
     OpenApiToolImplementation,
@@ -104,6 +105,41 @@ def test_tool_binding_digest_includes_execution_contract_not_definition_text() -
     assert canonical["effects"] == ["external_write", "network"]
     assert "description" not in canonical
     assert binding.digest().startswith("sha256:")
+
+
+def test_tool_implementation_mapping_mutation_cannot_change_binding_digest() -> None:
+    input_mapping = {"query": "$args.query"}
+    output_mapping = {"items": "$result.items"}
+    implementation = BlockToolImplementation(
+        block="knowledge.search@1",
+        input_mapping=input_mapping,
+        output_mapping=output_mapping,
+    )
+    binding = ToolBinding(
+        binding_id="binding-search",
+        tool_name="knowledge.search",
+        implementation=implementation,
+    )
+    original_digest = binding.digest()
+
+    input_mapping["query"] = "$args.rewritten"
+    output_mapping["items"] = "$result.rewritten"
+
+    assert binding.digest() == original_digest
+    assert implementation.canonical_value()["input_mapping"] == {"query": "$args.query"}
+    with pytest.raises(TypeError):
+        implementation.input_mapping["query"] = "$args.mutated"
+
+
+def test_graph_tool_implementation_mapping_is_immutable() -> None:
+    implementation = GraphToolImplementation(
+        graph="graphs/knowledge-search",
+        input_mapping={"query": "$args.query"},
+        output_mapping={"items": "$result.items"},
+    )
+
+    with pytest.raises(TypeError):
+        implementation.output_mapping["items"] = "$result.mutated"
 
 
 def test_resolved_tool_records_definition_binding_and_policy_identity() -> None:

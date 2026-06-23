@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field, replace
+from types import MappingProxyType
 from typing import Literal
 
 from .canonical import canonical_hash
@@ -231,6 +232,10 @@ class BlockToolImplementation:
     output_mapping: dict[str, str] = field(default_factory=dict)
     kind: Literal["block"] = field(default="block", init=False)
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "input_mapping", MappingProxyType(dict(self.input_mapping)))
+        object.__setattr__(self, "output_mapping", MappingProxyType(dict(self.output_mapping)))
+
     def canonical_value(self) -> dict[str, object]:
         return {
             "kind": self.kind,
@@ -246,6 +251,10 @@ class GraphToolImplementation:
     input_mapping: dict[str, str] = field(default_factory=dict)
     output_mapping: dict[str, str] = field(default_factory=dict)
     kind: Literal["graph"] = field(default="graph", init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "input_mapping", MappingProxyType(dict(self.input_mapping)))
+        object.__setattr__(self, "output_mapping", MappingProxyType(dict(self.output_mapping)))
 
     def canonical_value(self) -> dict[str, object]:
         return {
