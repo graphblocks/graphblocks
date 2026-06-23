@@ -47,6 +47,8 @@ ToolResultEventKind = Literal[
     "delta",
     "artifact_ready",
     "completed",
+    "failed",
+    "denied",
     "cancelled",
     "policy_stopped",
     "incomplete",
@@ -1058,6 +1060,14 @@ class ToolResultEvent:
         return cls(kind="completed", tool_call_id=tool_call_id, sequence=sequence, result=result)
 
     @classmethod
+    def failed(cls, tool_call_id: str, sequence: int, result: ToolResult) -> ToolResultEvent:
+        return cls(kind="failed", tool_call_id=tool_call_id, sequence=sequence, result=result)
+
+    @classmethod
+    def denied(cls, tool_call_id: str, sequence: int, result: ToolResult) -> ToolResultEvent:
+        return cls(kind="denied", tool_call_id=tool_call_id, sequence=sequence, result=result)
+
+    @classmethod
     def cancelled(cls, tool_call_id: str, sequence: int, result: ToolResult) -> ToolResultEvent:
         return cls(kind="cancelled", tool_call_id=tool_call_id, sequence=sequence, result=result)
 
@@ -1070,7 +1080,7 @@ class ToolResultEvent:
         return cls(kind="incomplete", tool_call_id=tool_call_id, sequence=sequence, result=result)
 
     def is_final_durable_result(self) -> bool:
-        return self.kind in {"completed", "cancelled", "policy_stopped", "incomplete"}
+        return self.kind in {"completed", "failed", "denied", "cancelled", "policy_stopped", "incomplete"}
 
     def into_result(self) -> ToolResult | None:
         return self.result if self.is_final_durable_result() else None

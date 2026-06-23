@@ -691,6 +691,28 @@ def test_terminal_tool_result_events_preserve_partial_terminal_kind() -> None:
     assert incomplete_event.into_result() == incomplete
 
 
+def test_failed_and_denied_tool_result_events_are_final_results() -> None:
+    failed = ToolResult.failed(
+        "call-1",
+        error={"code": "tool.failed", "message": "tool execution failed"},
+        started_at="2026-06-23T00:00:00Z",
+        completed_at="2026-06-23T00:00:01Z",
+    )
+    denied = ToolResult.denied(
+        "call-2",
+        error={"code": "tool.denied", "message": "tool execution was denied"},
+        completed_at="2026-06-23T00:00:02Z",
+    )
+
+    failed_event = ToolResultEvent.failed("call-1", 11, failed)
+    denied_event = ToolResultEvent.denied("call-2", 12, denied)
+
+    assert failed_event.is_final_durable_result() is True
+    assert denied_event.is_final_durable_result() is True
+    assert failed_event.into_result() == failed
+    assert denied_event.into_result() == denied
+
+
 def _tool_call(tool_call_id: str, arguments: str = '{"resource_id":"a"}'):
     return (
         ToolCallDraft.proposed("response-1", tool_call_id, "ticket.create")
