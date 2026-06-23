@@ -79,3 +79,29 @@ def test_budget_ledger_commit_over_reserved_records_overdraft() -> None:
     assert balance.committed == [_tokens("50")]
     assert balance.overdraft == [_tokens("10")]
     assert balance.available == [_tokens("50")]
+
+
+def test_budget_ledger_commit_allows_overdraft_within_limit() -> None:
+    ledger = InMemoryBudgetLedger()
+    ledger.allocate("budget-1", ResourceRef("tenant:acme"), [_tokens("100")], policy_ref="policy-1")
+    reservation = ledger.reserve("budget-1", ResourceRef("run:1"), [_tokens("40")], purpose="provider_call", expires_at="later")
+
+    settlement = ledger.commit(reservation.reservation_id, [_tokens("45")], max_overdraft=[_tokens("5")])
+
+    assert settlement.overdraft == [_tokens("5")]
+    assert ledger.balance("budget-1").committed == [_tokens("45")]
+
+
+def test_budget_ledger_rejects_commit_above_overdraft_limit_without_mutating_balance() -> None:
+    ledger = InMemoryBudgetLedger()
+    ledger.allocate("budget-1", ResourceRef("tenant:acme"), [_tokens("100")], policy_ref="policy-1")
+    reservation = ledger.reserve("budget-1", ResourceRef("run:1"), [_tokens("40")], purpose="provider_call", expires_at="later")
+
+    with pytest.raises(BudgetExceededError):
+        ledger.commit(reservation.reservation_id, [_tokens("46")], max_overdraft=[_tokens("5")])
+
+    balance = ledger.balance("budget-1")
+    assert balance.reserved == [_tokens("40")]
+    assert balance.committed == []
+    assert balance.overdraft == []
+    assert balance.available == [_tokens("60")]

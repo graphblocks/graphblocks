@@ -224,7 +224,13 @@ class InMemoryBudgetLedger:
         self._reservation_holds[actual_reservation_id] = held_budget_ids
         return reservation
 
-    def commit(self, reservation_id: str, actual_amounts: list[UsageAmount]) -> BudgetSettlement:
+    def commit(
+        self,
+        reservation_id: str,
+        actual_amounts: list[UsageAmount],
+        *,
+        max_overdraft: list[UsageAmount] | None = None,
+    ) -> BudgetSettlement:
         reservation = self._reservations.get(reservation_id)
         if reservation is None:
             raise BudgetReservationNotFoundError(f"reservation {reservation_id!r} does not exist")
@@ -234,6 +240,14 @@ class InMemoryBudgetLedger:
         held_budget_ids = self._reservation_holds.get(reservation_id, (budget_id,))
         reserved = _amounts_to_dict(reservation.amounts)
         actual = _amounts_to_dict(actual_amounts)
+        if max_overdraft is not None:
+            overdraft_limit = _amounts_to_dict(max_overdraft)
+            for key, amount in actual.items():
+                extra = amount - reserved.get(key, Decimal("0"))
+                if extra > overdraft_limit.get(key, Decimal("0")):
+                    raise BudgetExceededError(
+                        f"reservation {reservation_id!r} overdraft exceeds allowed {key[0]} {key[1]}"
+                    )
         released: dict[AmountKey, Decimal] = {}
         overdraft: dict[AmountKey, Decimal] = {}
         for held_budget_id in held_budget_ids:
