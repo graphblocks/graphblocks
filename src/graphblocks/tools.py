@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import json
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 from .canonical import canonical_hash
+from .conversation import ContentPart
 
 
 JsonSchemaRef = str
@@ -24,6 +26,25 @@ ToolApproval = Literal["never", "policy", "always"]
 ToolIdempotency = Literal["not_applicable", "optional", "required"]
 ToolCancellation = Literal["unsupported", "cooperative", "force_terminable"]
 ToolResultMode = Literal["value", "incremental", "bounded_sequence", "artifact_reference"]
+ToolCallDraftStatus = Literal["proposed", "arguments_streaming", "arguments_complete"]
+ToolCallStatus = Literal[
+    "validated",
+    "policy_pending",
+    "approval_pending",
+    "admitted",
+    "running",
+    "completed",
+    "failed",
+    "denied",
+    "cancelled",
+    "policy_stopped",
+    "expired",
+]
+ToolResultStatus = Literal["completed", "failed", "denied", "cancelled", "policy_stopped", "incomplete"]
+
+
+class ToolCallError(RuntimeError):
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,4 +225,171 @@ class ResolvedTool:
             effective_policy_snapshot_id=effective_policy_snapshot_id,
             allowed_for_principal=allowed_for_principal,
             valid_until=valid_until,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ToolCallDraft:
+    response_id: str
+    tool_call_id: str
+    tool_name: str
+    argument_fragments: tuple[str, ...] = field(default_factory=tuple)
+    sequence: int = 0
+    status: ToolCallDraftStatus = "proposed"
+
+    @classmethod
+    def proposed(cls, response_id: str, tool_call_id: str, tool_name: str) -> ToolCallDraft:
+        return cls(response_id=response_id, tool_call_id=tool_call_id, tool_name=tool_name)
+
+    def append_argument_fragment(self, fragment: str) -> ToolCallDraft:
+        if self.status == "arguments_complete":
+            raise ToolCallError("tool arguments are already complete")
+        return replace(
+            self,
+            argument_fragments=(*self.argument_fragments, fragment),
+            sequence=self.sequence + 1,
+            status="arguments_streaming",
+        )
+
+    def complete_arguments(self) -> ToolCallDraft:
+        if self.status == "arguments_complete":
+            raise ToolCallError("tool arguments are already complete")
+        return replace(self, status="arguments_complete")
+
+    def into_tool_call(self, resolved_tool_id: str, *, created_at: str) -> ToolCall:
+        if self.status != "arguments_complete":
+            raise ToolCallError("tool arguments are not complete")
+
+        try:
+            arguments = json.loads("".join(self.argument_fragments))
+        except json.JSONDecodeError as error:
+            raise ToolCallError("tool arguments are invalid JSON") from error
+
+        return ToolCall(
+            tool_call_id=self.tool_call_id,
+            response_id=self.response_id,
+            resolved_tool_id=resolved_tool_id,
+            name=self.tool_name,
+            arguments=arguments,
+            arguments_digest=canonical_hash(arguments),
+            revision=1,
+            status="validated",
+            depends_on=(),
+            created_at=created_at,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ToolCall:
+    tool_call_id: str
+    response_id: str
+    resolved_tool_id: str
+    name: str
+    arguments: object
+    arguments_digest: str
+    revision: int = 1
+    status: ToolCallStatus = "validated"
+    depends_on: tuple[str, ...] = field(default_factory=tuple)
+    created_at: str | None = None
+    admitted_at: str | None = None
+    completed_at: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "depends_on", tuple(self.depends_on))
+
+    def revise_arguments(self, arguments: object) -> ToolCall:
+        if self.status != "validated":
+            raise ToolCallError("tool arguments cannot be revised after validation")
+        return replace(
+            self,
+            arguments=arguments,
+            arguments_digest=canonical_hash(arguments),
+            revision=self.revision + 1,
+            status="validated",
+            admitted_at=None,
+            completed_at=None,
+        )
+
+    def with_status(
+        self,
+        status: ToolCallStatus,
+        *,
+        admitted_at: str | None = None,
+        completed_at: str | None = None,
+    ) -> ToolCall:
+        return replace(self, status=status, admitted_at=admitted_at, completed_at=completed_at)
+
+
+@dataclass(frozen=True, slots=True)
+class ToolResult:
+    tool_call_id: str
+    status: ToolResultStatus
+    output: tuple[ContentPart, ...] = field(default_factory=tuple)
+    output_digest: str | None = None
+    artifacts: tuple[dict[str, object], ...] = field(default_factory=tuple)
+    diagnostics: tuple[dict[str, object], ...] = field(default_factory=tuple)
+    error: dict[str, object] | None = None
+    started_at: str | None = None
+    completed_at: str | None = None
+
+    @classmethod
+    def completed(
+        cls,
+        tool_call_id: str,
+        output: tuple[ContentPart, ...],
+        *,
+        started_at: str,
+        completed_at: str,
+    ) -> ToolResult:
+        output = tuple(output)
+        output_value = [
+            {
+                "kind": part.kind,
+                "text": part.text,
+                "data": part.data,
+                "metadata": part.metadata,
+            }
+            for part in output
+        ]
+        return cls(
+            tool_call_id=tool_call_id,
+            status="completed",
+            output=output,
+            output_digest=canonical_hash(output_value),
+            started_at=started_at,
+            completed_at=completed_at,
+        )
+
+    @classmethod
+    def failed(
+        cls,
+        tool_call_id: str,
+        *,
+        error: dict[str, object],
+        started_at: str,
+        completed_at: str,
+    ) -> ToolResult:
+        return cls(
+            tool_call_id=tool_call_id,
+            status="failed",
+            error=error,
+            started_at=started_at,
+            completed_at=completed_at,
+        )
+
+    @classmethod
+    def policy_stopped(
+        cls,
+        tool_call_id: str,
+        *,
+        error: dict[str, object],
+        started_at: str,
+        completed_at: str,
+    ) -> ToolResult:
+        return cls(
+            tool_call_id=tool_call_id,
+            status="policy_stopped",
+            error=error,
+            started_at=started_at,
+            completed_at=completed_at,
         )

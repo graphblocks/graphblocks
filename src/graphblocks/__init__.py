@@ -135,7 +135,11 @@ from .tools import (
     RemoteToolImplementation,
     ResolvedTool,
     ToolBinding,
+    ToolCall,
+    ToolCallDraft,
+    ToolCallError,
     ToolDefinition,
+    ToolResult,
 )
 from .rag import (
     Abstention,
@@ -300,7 +304,11 @@ __all__ = [
     "StaticPolicyEvaluator",
     "PutOptions",
     "ToolBinding",
+    "ToolCall",
+    "ToolCallDraft",
+    "ToolCallError",
     "ToolDefinition",
+    "ToolResult",
     "Turn",
     "TrialResult",
     "TypedValueRef",
