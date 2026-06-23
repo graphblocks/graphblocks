@@ -13,7 +13,8 @@ use graphblocks_runtime_core::exhaustion::{
 };
 use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory, Outcome};
 use graphblocks_runtime_core::output_policy::{
-    DraftDisposition, FlushBoundary, GenerationChunk, OutputDeliveryGate, OutputDeliveryPolicy,
+    DeclarativeOutputPolicyEvaluator, DeclarativeOutputPolicyRule, DraftDisposition, FlushBoundary,
+    GenerationChunk, OutputDeliveryGate, OutputDeliveryPolicy, OutputDisposition,
     OutputPolicyDecision, PendingToolCallsDisposition, ProviderCancellation, RedactionInstruction,
     ViolationAction,
 };
@@ -1470,6 +1471,160 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
     })
 }
 
+#[pyfunction]
+fn evaluate_declarative_output_policy_json(
+    rules_json: &str,
+    chunk_json: &str,
+    evaluated_at_unix_ms: u64,
+) -> PyResult<String> {
+    let rules_value = parse_json_argument(rules_json, "declarative output policy rules")?;
+    let chunk_value = parse_json_argument(chunk_json, "generation chunk")?;
+    let rules_array = rules_value.as_array().ok_or_else(|| {
+        PyValueError::new_err("declarative output policy rules JSON must be an array")
+    })?;
+    let parse_string_list = |value: Option<&Value>, label: &str| -> PyResult<Vec<String>> {
+        let Some(value) = value else {
+            return Ok(Vec::new());
+        };
+        let Some(values) = value.as_array() else {
+            return Err(PyValueError::new_err(format!("{label} must be an array")));
+        };
+        let mut parsed = Vec::new();
+        for (index, value) in values.iter().enumerate() {
+            let Some(value) = value.as_str() else {
+                return Err(PyValueError::new_err(format!(
+                    "{label}[{index}] must be a string"
+                )));
+            };
+            parsed.push(value.to_owned());
+        }
+        Ok(parsed)
+    };
+
+    let mut rules = Vec::new();
+    for (rule_index, rule) in rules_array.iter().enumerate() {
+        let label = format!("rules[{rule_index}]");
+        let rule = json_object(rule, &label)?;
+        let rule_id = rule
+            .get("ruleId")
+            .or_else(|| rule.get("rule_id"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| PyValueError::new_err(format!("{label}.ruleId is required")))?;
+        let literal = required_string(rule, "literal", &label)?;
+        let disposition = match required_string(rule, "disposition", &label)? {
+            "allow" => OutputDisposition::Allow,
+            "hold" => OutputDisposition::Hold,
+            "redact" => OutputDisposition::Redact,
+            "replace" => OutputDisposition::Replace,
+            "abort_response" => OutputDisposition::AbortResponse,
+            "abort_turn" => OutputDisposition::AbortTurn,
+            "deny_commit" => OutputDisposition::DenyCommit,
+            value => {
+                return Err(PyValueError::new_err(format!(
+                    "{label}.disposition has unknown disposition {value:?}"
+                )));
+            }
+        };
+        let mut parsed_rule = DeclarativeOutputPolicyRule::new(rule_id, literal, disposition);
+        if let Some(replacement) = rule.get("replacement") {
+            let Some(replacement) = replacement.as_str() else {
+                return Err(PyValueError::new_err(format!(
+                    "{label}.replacement must be a string"
+                )));
+            };
+            parsed_rule = parsed_rule.with_replacement(replacement);
+        }
+        parsed_rule = parsed_rule.with_reason_codes(parse_string_list(
+            rule.get("reasonCodes"),
+            &format!("{label}.reasonCodes"),
+        )?);
+        parsed_rule = parsed_rule.with_policy_refs(parse_string_list(
+            rule.get("policyRefs"),
+            &format!("{label}.policyRefs"),
+        )?);
+        if let Some(priority) = rule.get("priority") {
+            let Some(priority) = priority.as_i64() else {
+                return Err(PyValueError::new_err(format!(
+                    "{label}.priority must be an integer"
+                )));
+            };
+            parsed_rule = parsed_rule.with_priority(priority);
+        }
+        rules.push(parsed_rule);
+    }
+
+    let chunk = json_object(&chunk_value, "chunk")?;
+    let chunk = GenerationChunk::text(
+        required_string(chunk, "streamId", "chunk")?,
+        required_string(chunk, "responseId", "chunk")?,
+        required_u64(chunk, "sequence", "chunk")?,
+        required_string(chunk, "text", "chunk")?,
+    );
+    let decision =
+        DeclarativeOutputPolicyEvaluator::new(rules).evaluate_chunk(&chunk, evaluated_at_unix_ms);
+    let disposition = match decision.disposition {
+        OutputDisposition::Allow => "allow",
+        OutputDisposition::Hold => "hold",
+        OutputDisposition::Redact => "redact",
+        OutputDisposition::Replace => "replace",
+        OutputDisposition::AbortResponse => "abort_response",
+        OutputDisposition::AbortTurn => "abort_turn",
+        OutputDisposition::DenyCommit => "deny_commit",
+    };
+    let provider_cancellation = match decision.provider_cancellation {
+        ProviderCancellation::None => "none",
+        ProviderCancellation::Request => "request",
+        ProviderCancellation::RequiredIfSupported => "required_if_supported",
+    };
+    let draft_disposition = match decision.draft_disposition {
+        DraftDisposition::Keep => "keep",
+        DraftDisposition::MarkIncomplete => "mark_incomplete",
+        DraftDisposition::Retract => "retract",
+    };
+    let pending_tool_calls = match decision.pending_tool_calls {
+        PendingToolCallsDisposition::Keep => "keep",
+        PendingToolCallsDisposition::Deny => "deny",
+        PendingToolCallsDisposition::CancelAdmitted => "cancel_admitted",
+    };
+    let payload = json!({
+        "decisionId": decision.decision_id,
+        "disposition": disposition,
+        "acceptedThroughSequence": decision.accepted_through_sequence,
+        "replacementChunks": decision
+            .replacement_chunks
+            .iter()
+            .map(|chunk| json!({
+                "streamId": chunk.stream_id,
+                "responseId": chunk.response_id,
+                "sequence": chunk.sequence,
+                "text": chunk.text,
+            }))
+            .collect::<Vec<_>>(),
+        "redactions": decision
+            .redactions
+            .iter()
+            .map(|redaction| json!({
+                "path": redaction.path,
+                "start": redaction.start,
+                "end": redaction.end,
+                "replacement": redaction.replacement,
+            }))
+            .collect::<Vec<_>>(),
+        "reasonCodes": decision.reason_codes,
+        "policyRefs": decision.policy_refs,
+        "providerCancellation": provider_cancellation,
+        "draftDisposition": draft_disposition,
+        "pendingToolCalls": pending_tool_calls,
+        "evaluatedAtUnixMs": decision.evaluated_at_unix_ms,
+        "inputDigest": decision.input_digest,
+    });
+    serde_json::to_string(&payload).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize declarative output policy decision: {error}"
+        ))
+    })
+}
+
 #[pymodule]
 fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("__version__", env!("CARGO_PKG_VERSION"))?;
@@ -1484,6 +1639,10 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(run_stdlib_graph_json, module)?)?;
     module.add_function(wrap_pyfunction!(admit_exhaustion_work_json, module)?)?;
     module.add_function(wrap_pyfunction!(evaluate_output_gate_json, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        evaluate_declarative_output_policy_json,
+        module
+    )?)?;
     Ok(())
 }
 
@@ -1492,9 +1651,9 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{
-        admit_exhaustion_work_json, compile_graph_json, evaluate_output_gate_json,
-        run_stdlib_graph_json, run_test_graph_json, validate_remote_payload_json,
-        validate_worker_advertisement_json,
+        admit_exhaustion_work_json, compile_graph_json, evaluate_declarative_output_policy_json,
+        evaluate_output_gate_json, run_stdlib_graph_json, run_test_graph_json,
+        validate_remote_payload_json, validate_worker_advertisement_json,
     };
 
     #[test]
@@ -2086,6 +2245,80 @@ mod tests {
         assert_eq!(
             decision.get("pendingToolCalls").and_then(Value::as_str),
             Some("cancel_admitted")
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_declarative_output_policy_json_returns_redaction_decision() -> Result<(), String> {
+        let rules = json!([
+            {
+                "ruleId": "redact-secret",
+                "literal": "secret",
+                "disposition": "redact",
+                "replacement": "[redacted]",
+                "reasonCodes": ["pii.secret"],
+                "policyRefs": ["policy/output-standard#redact-secret"],
+                "priority": 10
+            }
+        ]);
+        let chunk = json!({
+            "streamId": "stream-1",
+            "responseId": "response-1",
+            "sequence": 7,
+            "text": "hello secret"
+        });
+        let rules_json = serde_json::to_string(&rules).map_err(|error| error.to_string())?;
+        let chunk_json = serde_json::to_string(&chunk).map_err(|error| error.to_string())?;
+
+        let result_json = evaluate_declarative_output_policy_json(&rules_json, &chunk_json, 1_000)
+            .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            result.get("disposition").and_then(Value::as_str),
+            Some("redact")
+        );
+        assert_eq!(
+            result
+                .get("acceptedThroughSequence")
+                .and_then(Value::as_u64),
+            Some(7)
+        );
+        assert_eq!(result.get("reasonCodes"), Some(&json!(["pii.secret"])));
+        assert_eq!(
+            result.get("policyRefs"),
+            Some(&json!(["policy/output-standard#redact-secret"]))
+        );
+        assert_eq!(
+            result
+                .get("redactions")
+                .and_then(Value::as_array)
+                .and_then(|redactions| redactions.first()),
+            Some(&json!({
+                "path": "/chunks/7/text",
+                "start": 6,
+                "end": 12,
+                "replacement": "[redacted]"
+            }))
+        );
+        assert!(
+            result
+                .get("decisionId")
+                .and_then(Value::as_str)
+                .is_some_and(|decision_id| decision_id.starts_with("output-decision:sha256:"))
+        );
+        assert!(
+            result
+                .get("inputDigest")
+                .and_then(Value::as_str)
+                .is_some_and(|digest| digest.starts_with("sha256:"))
+        );
+        assert_eq!(
+            result.get("evaluatedAtUnixMs").and_then(Value::as_u64),
+            Some(1_000)
         );
 
         Ok(())
