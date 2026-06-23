@@ -26,3 +26,4 @@ classifiers = [
 manifest-path = "../../crates/graphblocks-python/Cargo.toml"
 module-name = "graphblocks_runtime._native"
 python-source = "src"
+features = ["extension-module"]

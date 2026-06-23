@@ -32,6 +32,7 @@ def test_graphblocks_runtime_package_delegates_to_workspace_binding() -> None:
     assert pyproject["tool"]["maturin"]["manifest-path"] == "../../crates/graphblocks-python/Cargo.toml"
     assert pyproject["tool"]["maturin"]["module-name"] == "graphblocks_runtime._native"
     assert pyproject["tool"]["maturin"]["python-source"] == "src"
+    assert pyproject["tool"]["maturin"]["features"] == ["extension-module"]
     package_root = ROOT / "packages" / "graphblocks-runtime" / "src" / "graphblocks_runtime"
     assert (package_root / "__init__.py").exists()
     assert (package_root / "py.typed").exists()
