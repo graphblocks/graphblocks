@@ -2,7 +2,8 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
-use serde_json::Value;
+use crate::output_policy::{OutputDisposition, OutputPolicyDecision};
+use serde_json::{Value, json};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ApplicationEventKind {
@@ -106,6 +107,45 @@ pub enum ApplicationEventError {
 }
 
 impl ApplicationEvent {
+    pub fn output_policy_decision(
+        metadata: ApplicationEventMetadata,
+        decision: &OutputPolicyDecision,
+    ) -> Result<Self, ApplicationEventError> {
+        let (kind, disposition) = match decision.disposition {
+            OutputDisposition::Allow => (ApplicationEventKind::OutputPolicyAllowed, "allow"),
+            OutputDisposition::Hold => (ApplicationEventKind::OutputPolicyHeld, "hold"),
+            OutputDisposition::Redact => (ApplicationEventKind::OutputPolicyRedacted, "redact"),
+            OutputDisposition::Replace => (ApplicationEventKind::OutputPolicyReplaced, "replace"),
+            OutputDisposition::AbortResponse => (
+                ApplicationEventKind::OutputPolicyViolationDetected,
+                "abort_response",
+            ),
+            OutputDisposition::AbortTurn => (
+                ApplicationEventKind::OutputPolicyViolationDetected,
+                "abort_turn",
+            ),
+            OutputDisposition::DenyCommit => (
+                ApplicationEventKind::OutputPolicyViolationDetected,
+                "deny_commit",
+            ),
+        };
+        Self::new(
+            kind,
+            metadata,
+            json!({
+                "decision_id": decision.decision_id,
+                "disposition": disposition,
+                "accepted_through_sequence": decision.accepted_through_sequence,
+                "reason_codes": decision.reason_codes,
+                "policy_refs": decision.policy_refs,
+                "evaluated_at_unix_ms": decision.evaluated_at_unix_ms,
+                "input_digest": decision.input_digest,
+                "replacement_chunk_count": decision.replacement_chunks.len(),
+                "redaction_count": decision.redactions.len(),
+            }),
+        )
+    }
+
     pub fn new(
         kind: ApplicationEventKind,
         metadata: ApplicationEventMetadata,

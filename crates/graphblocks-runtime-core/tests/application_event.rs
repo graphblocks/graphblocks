@@ -4,6 +4,7 @@ use graphblocks_runtime_core::application_event::{
     ApplicationProtocolCapabilities, ApplicationProtocolEvent, ApplicationProtocolEventKind,
     ApplicationProtocolEventMetadata, ApplicationProtocolLog,
 };
+use graphblocks_runtime_core::output_policy::{GenerationChunk, OutputPolicyDecision};
 use serde_json::json;
 
 fn metadata() -> ApplicationEventMetadata {
@@ -130,6 +131,66 @@ fn non_tool_events_reject_tool_event_constructor() {
         ApplicationEventError::NotToolEvent {
             kind: ApplicationEventKind::OutputCutoff
         }
+    );
+}
+
+#[test]
+fn output_policy_decision_event_maps_disposition_and_metadata_payload() {
+    let decision = OutputPolicyDecision::redact(
+        "decision-redact",
+        Some(4),
+        [GenerationChunk::text(
+            "stream-1",
+            "response-1",
+            4,
+            "[redacted]",
+        )],
+        "sha256:redact",
+    )
+    .with_reason_codes(["pii.detected"])
+    .with_policy_refs(["policy/output-standard"])
+    .evaluated_at_unix_ms(1_699_995);
+
+    let event = ApplicationEvent::output_policy_decision(metadata(), &decision)
+        .expect("output policy decision event is valid");
+
+    assert_eq!(event.kind, ApplicationEventKind::OutputPolicyRedacted);
+    assert_eq!(event.tool_call_id, None);
+    assert_eq!(
+        event.payload,
+        json!({
+            "decision_id": "decision-redact",
+            "disposition": "redact",
+            "accepted_through_sequence": 4,
+            "reason_codes": ["pii.detected"],
+            "policy_refs": ["policy/output-standard"],
+            "evaluated_at_unix_ms": 1_699_995,
+            "input_digest": "sha256:redact",
+            "replacement_chunk_count": 1,
+            "redaction_count": 0,
+        })
+    );
+}
+
+#[test]
+fn output_policy_termination_decision_maps_to_violation_event() {
+    let decision = OutputPolicyDecision::abort_response("decision-abort", "sha256:abort")
+        .with_reason_codes(["policy.denied"]);
+
+    let event = ApplicationEvent::output_policy_decision(metadata(), &decision)
+        .expect("output policy violation event is valid");
+
+    assert_eq!(
+        event.kind,
+        ApplicationEventKind::OutputPolicyViolationDetected
+    );
+    assert_eq!(
+        event.payload.get("disposition"),
+        Some(&json!("abort_response"))
+    );
+    assert_eq!(
+        event.payload.get("reason_codes"),
+        Some(&json!(["policy.denied"]))
     );
 }
 
