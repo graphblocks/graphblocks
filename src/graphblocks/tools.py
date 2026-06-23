@@ -772,6 +772,11 @@ class ToolExecutionPlan:
         self._calls_by_id = {}
         for planned_call in self.calls:
             tool_call_id = planned_call.call.tool_call_id
+            if planned_call.call.response_id != self.response_id:
+                raise ToolExecutionPlanError(
+                    f"tool call {tool_call_id} belongs to response "
+                    f"{planned_call.call.response_id}, not {self.response_id}"
+                )
             if tool_call_id in self._calls_by_id:
                 raise ToolExecutionPlanError(f"duplicate tool call {tool_call_id}")
             self._calls_by_id[tool_call_id] = planned_call

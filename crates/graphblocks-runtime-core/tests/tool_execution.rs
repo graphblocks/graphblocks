@@ -35,6 +35,29 @@ fn independent_calls_are_ready_up_to_maximum_parallelism() -> Result<(), ToolExe
 }
 
 #[test]
+fn plan_rejects_tool_calls_from_different_response() {
+    let mut mismatched = tool_call("call-b", "{\"resource_id\":\"b\"}");
+    mismatched.response_id = "response-2".to_owned();
+
+    assert_eq!(
+        ToolExecutionPlan::new(
+            "plan-1",
+            "response-1",
+            [
+                ToolPlanCall::new(tool_call("call-a", "{\"resource_id\":\"a\"}")),
+                ToolPlanCall::new(mismatched),
+            ],
+            2,
+        ),
+        Err(ToolExecutionPlanError::ResponseMismatch {
+            tool_call_id: "call-b".to_owned(),
+            expected_response_id: "response-1".to_owned(),
+            actual_response_id: "response-2".to_owned(),
+        }),
+    );
+}
+
+#[test]
 fn dependent_calls_wait_for_completed_dependencies() -> Result<(), ToolExecutionPlanError> {
     let mut dependent = tool_call("call-b", "{\"resource_id\":\"b\"}");
     dependent.depends_on = vec!["call-a".to_owned()];

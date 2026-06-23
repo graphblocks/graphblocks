@@ -1075,6 +1075,20 @@ def test_tool_execution_plan_readies_independent_calls_up_to_parallelism() -> No
     assert plan.ready_call_ids() == ["call-b"]
 
 
+def test_tool_execution_plan_rejects_calls_from_different_response() -> None:
+    mismatched = replace(_tool_call("call-b"), response_id="response-2")
+
+    with pytest.raises(ToolExecutionPlanError) as error:
+        ToolExecutionPlan(
+            plan_id="plan-1",
+            response_id="response-1",
+            calls=(ToolPlanCall(_tool_call("call-a")), ToolPlanCall(mismatched)),
+            maximum_parallelism=2,
+        )
+
+    assert str(error.value) == "tool call call-b belongs to response response-2, not response-1"
+
+
 def test_tool_execution_plan_waits_for_dependencies_and_serializes_effect_keys() -> None:
     dependent = _tool_call("call-b", '{"resource_id":"ticket-1"}')
     dependent = replace(dependent, depends_on=("call-a",))

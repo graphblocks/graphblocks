@@ -34,6 +34,11 @@ pub enum ToolExecutionPlanError {
     DuplicateToolCall {
         tool_call_id: String,
     },
+    ResponseMismatch {
+        tool_call_id: String,
+        expected_response_id: String,
+        actual_response_id: String,
+    },
     UnknownToolCall {
         tool_call_id: String,
     },
@@ -99,10 +104,18 @@ impl ToolExecutionPlan {
             return Err(ToolExecutionPlanError::InvalidMaximumParallelism);
         }
 
+        let response_id = response_id.into();
         let mut indexed_calls = BTreeMap::new();
         let mut states = BTreeMap::new();
         for planned_call in calls {
             let tool_call_id = planned_call.call.tool_call_id.clone();
+            if planned_call.call.response_id != response_id {
+                return Err(ToolExecutionPlanError::ResponseMismatch {
+                    tool_call_id,
+                    expected_response_id: response_id,
+                    actual_response_id: planned_call.call.response_id,
+                });
+            }
             if indexed_calls
                 .insert(tool_call_id.clone(), planned_call)
                 .is_some()
@@ -114,7 +127,7 @@ impl ToolExecutionPlan {
 
         Ok(Self {
             plan_id: plan_id.into(),
-            response_id: response_id.into(),
+            response_id,
             maximum_parallelism,
             failure_policy: ToolExecutionFailurePolicy::ReturnFailuresToModel,
             cancellation_policy: ToolExecutionCancellationPolicy::CancelDependents,
