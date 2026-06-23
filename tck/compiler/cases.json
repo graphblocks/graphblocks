@@ -76,6 +76,23 @@
     }
   },
   {
+    "name": "legacy_graph_v1alpha2_migration",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha2",
+      "kind": "Graph",
+      "metadata": {
+        "name": "legacy"
+      },
+      "spec": {
+        "nodes": {}
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:938ea0b58b94b431fef6780b98eb8434575a699a74a417688072dbefff3ae324",
+      "error_codes": []
+    }
+  },
+  {
     "name": "unknown_edge_endpoint",
     "document": {
       "apiVersion": "graphblocks.ai/v1alpha3",

@@ -60,6 +60,30 @@ fn compile_graph_requires_metadata_name() {
 }
 
 #[test]
+fn compile_graph_migrates_legacy_graph_api_versions() {
+    let graph = json!({
+        "apiVersion": "graphblocks.ai/v1alpha2",
+        "kind": "Graph",
+        "metadata": {"name": "legacy"},
+        "spec": {"nodes": {}}
+    });
+
+    let plan = compile_graph(&graph);
+
+    assert!(plan.ok());
+    assert_eq!(
+        plan.graph_hash,
+        "sha256:938ea0b58b94b431fef6780b98eb8434575a699a74a417688072dbefff3ae324"
+    );
+    assert_eq!(
+        plan.normalized
+            .pointer("/metadata/annotations/graphblocks.ai~1migratedFrom")
+            .and_then(serde_json::Value::as_str),
+        Some("graphblocks.ai/v1alpha2")
+    );
+}
+
+#[test]
 fn compile_graph_reports_unknown_edge_endpoint() {
     let graph = json!({
         "apiVersion": GRAPH_API_VERSION,

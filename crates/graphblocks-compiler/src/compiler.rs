@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use crate::canonical::canonical_hash;
 use crate::diagnostics::{Diagnostic, Severity};
@@ -190,6 +190,36 @@ pub fn compile_graph(document: &Value) -> Plan {
 
 pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog) -> Plan {
     let mut diagnostics = Vec::new();
+    let mut migrated = document.clone();
+    if migrated.get("kind").and_then(Value::as_str) == Some("Graph")
+        && let Some(api_version @ ("graphblocks.ai/v1alpha1" | "graphblocks.ai/v1alpha2")) =
+            migrated.get("apiVersion").and_then(Value::as_str)
+    {
+        let previous = api_version.to_owned();
+        if let Some(root) = migrated.as_object_mut() {
+            root.insert(
+                "apiVersion".to_owned(),
+                Value::String(GRAPH_API_VERSION.to_owned()),
+            );
+            if !root.contains_key("metadata") {
+                root.insert("metadata".to_owned(), Value::Object(Map::new()));
+            }
+            if let Some(metadata) = root.get_mut("metadata").and_then(Value::as_object_mut) {
+                if !metadata.contains_key("annotations") {
+                    metadata.insert("annotations".to_owned(), Value::Object(Map::new()));
+                }
+                if let Some(annotations) = metadata
+                    .get_mut("annotations")
+                    .and_then(Value::as_object_mut)
+                {
+                    annotations
+                        .entry("graphblocks.ai/migratedFrom")
+                        .or_insert(Value::String(previous));
+                }
+            }
+        }
+    }
+    let document = &migrated;
 
     if document.get("kind").and_then(Value::as_str) != Some("Graph") {
         let normalized = normalize_graph(document);
