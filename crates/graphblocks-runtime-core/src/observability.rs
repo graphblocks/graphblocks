@@ -3,7 +3,7 @@ use std::error::Error;
 use std::fmt;
 
 use graphblocks_compiler::canonical::canonical_hash;
-use serde_json::json;
+use serde_json::{Value, json};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SpanTiming {
@@ -435,6 +435,250 @@ impl fmt::Display for TelemetryBufferError {
 
 impl Error for TelemetryBufferError {}
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DiagnosticBundleRedaction {
+    ContentFree,
+    Redacted,
+    Full,
+}
+
+impl DiagnosticBundleRedaction {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::ContentFree => "content_free",
+            Self::Redacted => "redacted",
+            Self::Full => "full",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DiagnosticExcerptKind {
+    Trace,
+    Log,
+    Metric,
+    WorkerStatus,
+    RunSummary,
+}
+
+impl DiagnosticExcerptKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Trace => "trace",
+            Self::Log => "log",
+            Self::Metric => "metric",
+            Self::WorkerStatus => "worker_status",
+            Self::RunSummary => "run_summary",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct DiagnosticExcerpt {
+    pub excerpt_id: String,
+    pub kind: DiagnosticExcerptKind,
+    pub content_mode: CaptureMode,
+    pub payload: Value,
+}
+
+impl DiagnosticExcerpt {
+    pub fn new(excerpt_id: impl Into<String>, kind: DiagnosticExcerptKind) -> Self {
+        Self {
+            excerpt_id: excerpt_id.into(),
+            kind,
+            content_mode: CaptureMode::HashOnly,
+            payload: json!({}),
+        }
+    }
+
+    pub fn with_content_mode(mut self, content_mode: CaptureMode) -> Self {
+        self.content_mode = content_mode;
+        self
+    }
+
+    pub fn with_payload(mut self, payload: Value) -> Self {
+        self.payload = payload;
+        self
+    }
+
+    fn canonical_value(&self) -> Value {
+        json!({
+            "excerpt_id": self.excerpt_id,
+            "kind": self.kind.as_str(),
+            "content_mode": capture_mode_str(self.content_mode),
+            "payload": self.payload,
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct DiagnosticBundle {
+    pub bundle_id: String,
+    pub run_id: String,
+    pub redaction: DiagnosticBundleRedaction,
+    pub release_id: Option<String>,
+    pub deployment_revision_id: Option<String>,
+    pub normalized_graph_hash: Option<String>,
+    pub physical_plan_hash: Option<String>,
+    pub package_inventory: BTreeMap<String, String>,
+    pub configuration_hashes: BTreeMap<String, String>,
+    pub run_terminal_summary: Option<Value>,
+    pub node_terminal_summaries: BTreeMap<String, Value>,
+    pub excerpts: Vec<DiagnosticExcerpt>,
+    pub redaction_report: Option<String>,
+}
+
+impl DiagnosticBundle {
+    pub fn content_free(bundle_id: impl Into<String>, run_id: impl Into<String>) -> Self {
+        Self::new(bundle_id, run_id, DiagnosticBundleRedaction::ContentFree)
+    }
+
+    pub fn redacted(bundle_id: impl Into<String>, run_id: impl Into<String>) -> Self {
+        Self::new(bundle_id, run_id, DiagnosticBundleRedaction::Redacted)
+    }
+
+    pub fn full(bundle_id: impl Into<String>, run_id: impl Into<String>) -> Self {
+        Self::new(bundle_id, run_id, DiagnosticBundleRedaction::Full)
+    }
+
+    fn new(
+        bundle_id: impl Into<String>,
+        run_id: impl Into<String>,
+        redaction: DiagnosticBundleRedaction,
+    ) -> Self {
+        Self {
+            bundle_id: bundle_id.into(),
+            run_id: run_id.into(),
+            redaction,
+            release_id: None,
+            deployment_revision_id: None,
+            normalized_graph_hash: None,
+            physical_plan_hash: None,
+            package_inventory: BTreeMap::new(),
+            configuration_hashes: BTreeMap::new(),
+            run_terminal_summary: None,
+            node_terminal_summaries: BTreeMap::new(),
+            excerpts: Vec::new(),
+            redaction_report: None,
+        }
+    }
+
+    pub fn with_release(
+        mut self,
+        release_id: impl Into<String>,
+        deployment_revision_id: impl Into<String>,
+    ) -> Self {
+        self.release_id = Some(release_id.into());
+        self.deployment_revision_id = Some(deployment_revision_id.into());
+        self
+    }
+
+    pub fn with_plan_hashes(
+        mut self,
+        normalized_graph_hash: impl Into<String>,
+        physical_plan_hash: impl Into<String>,
+    ) -> Self {
+        self.normalized_graph_hash = Some(normalized_graph_hash.into());
+        self.physical_plan_hash = Some(physical_plan_hash.into());
+        self
+    }
+
+    pub fn with_package(mut self, package: impl Into<String>, version: impl Into<String>) -> Self {
+        self.package_inventory
+            .insert(package.into(), version.into());
+        self
+    }
+
+    pub fn with_configuration_hash(
+        mut self,
+        name: impl Into<String>,
+        digest: impl Into<String>,
+    ) -> Self {
+        self.configuration_hashes.insert(name.into(), digest.into());
+        self
+    }
+
+    pub fn with_run_terminal_summary(mut self, summary: Value) -> Self {
+        self.run_terminal_summary = Some(summary);
+        self
+    }
+
+    pub fn with_node_terminal_summary(
+        mut self,
+        node_id: impl Into<String>,
+        summary: Value,
+    ) -> Self {
+        self.node_terminal_summaries.insert(node_id.into(), summary);
+        self
+    }
+
+    pub fn with_excerpt(mut self, excerpt: DiagnosticExcerpt) -> Self {
+        self.excerpts.push(excerpt);
+        self
+    }
+
+    pub fn with_redaction_report(mut self, redaction_report: impl Into<String>) -> Self {
+        self.redaction_report = Some(redaction_report.into());
+        self
+    }
+
+    pub fn validate_redaction(&self) -> Result<(), DiagnosticBundleError> {
+        for excerpt in &self.excerpts {
+            let unredacted = match self.redaction {
+                DiagnosticBundleRedaction::ContentFree => matches!(
+                    excerpt.content_mode,
+                    CaptureMode::RedactedPreview | CaptureMode::Full
+                ),
+                DiagnosticBundleRedaction::Redacted => excerpt.content_mode == CaptureMode::Full,
+                DiagnosticBundleRedaction::Full => false,
+            };
+            if unredacted {
+                return Err(DiagnosticBundleError::UnredactedContent {
+                    excerpt_id: excerpt.excerpt_id.clone(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    pub fn content_digest(&self) -> String {
+        canonical_hash(&json!({
+            "run_id": self.run_id,
+            "redaction": self.redaction.as_str(),
+            "release_id": self.release_id,
+            "deployment_revision_id": self.deployment_revision_id,
+            "normalized_graph_hash": self.normalized_graph_hash,
+            "physical_plan_hash": self.physical_plan_hash,
+            "package_inventory": self.package_inventory,
+            "configuration_hashes": self.configuration_hashes,
+            "run_terminal_summary": self.run_terminal_summary,
+            "node_terminal_summaries": self.node_terminal_summaries,
+            "excerpts": self.excerpts.iter().map(DiagnosticExcerpt::canonical_value).collect::<Vec<_>>(),
+            "redaction_report": self.redaction_report,
+        }))
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DiagnosticBundleError {
+    UnredactedContent { excerpt_id: String },
+}
+
+impl fmt::Display for DiagnosticBundleError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnredactedContent { excerpt_id } => {
+                write!(
+                    formatter,
+                    "diagnostic excerpt {excerpt_id:?} contains content disallowed by bundle redaction"
+                )
+            }
+        }
+    }
+}
+
+impl Error for DiagnosticBundleError {}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TelemetryBuffer {
     policy: TelemetryQueuePolicy,
@@ -518,6 +762,16 @@ impl TelemetryBuffer {
 
     pub fn dropped_count(&self) -> u64 {
         self.dropped_count
+    }
+}
+
+fn capture_mode_str(mode: CaptureMode) -> &'static str {
+    match mode {
+        CaptureMode::None => "none",
+        CaptureMode::HashOnly => "hash_only",
+        CaptureMode::ReferenceOnly => "reference_only",
+        CaptureMode::RedactedPreview => "redacted_preview",
+        CaptureMode::Full => "full",
     }
 }
 

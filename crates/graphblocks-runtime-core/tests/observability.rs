@@ -1,8 +1,11 @@
 use graphblocks_runtime_core::observability::{
-    CaptureDecision, CaptureMode, GenerationObservation, MetricLabelError, MetricLabelSet,
-    RedactionRule, SpanTiming, TelemetryBuffer, TelemetryBufferError, TelemetryEnqueueOutcome,
-    TelemetryOnFull, TelemetryPriority, TelemetryQueuePolicy, TelemetryRecord, TelemetryRecordKind,
+    CaptureDecision, CaptureMode, DiagnosticBundle, DiagnosticBundleError,
+    DiagnosticBundleRedaction, DiagnosticExcerpt, DiagnosticExcerptKind, GenerationObservation,
+    MetricLabelError, MetricLabelSet, RedactionRule, SpanTiming, TelemetryBuffer,
+    TelemetryBufferError, TelemetryEnqueueOutcome, TelemetryOnFull, TelemetryPriority,
+    TelemetryQueuePolicy, TelemetryRecord, TelemetryRecordKind,
 };
+use serde_json::json;
 
 #[test]
 fn span_timing_separates_queue_wait_flow_wait_first_output_and_streaming() {
@@ -185,4 +188,56 @@ fn telemetry_buffer_rejects_required_durable_records() {
             kind: TelemetryRecordKind::RequiredAudit,
         })
     );
+}
+
+#[test]
+fn diagnostic_bundle_digest_is_stable_without_bundle_identity_or_inventory_order() {
+    let left = DiagnosticBundle::redacted("bundle-1", "run-1")
+        .with_release("release-1", "rev-1")
+        .with_plan_hashes("sha256:graph", "sha256:plan")
+        .with_package("graphblocks-runtime-core", "0.1.0")
+        .with_package("graphblocks-compiler", "0.1.0")
+        .with_configuration_hash("policy", "sha256:policy")
+        .with_configuration_hash("bindings", "sha256:bindings")
+        .with_run_terminal_summary(json!({"outcome": "completed"}))
+        .with_redaction_report("redacted 2 previews");
+    let right = DiagnosticBundle::redacted("bundle-2", "run-1")
+        .with_release("release-1", "rev-1")
+        .with_plan_hashes("sha256:graph", "sha256:plan")
+        .with_package("graphblocks-compiler", "0.1.0")
+        .with_package("graphblocks-runtime-core", "0.1.0")
+        .with_configuration_hash("bindings", "sha256:bindings")
+        .with_configuration_hash("policy", "sha256:policy")
+        .with_run_terminal_summary(json!({"outcome": "completed"}))
+        .with_redaction_report("redacted 2 previews");
+
+    assert_eq!(left.redaction, DiagnosticBundleRedaction::Redacted);
+    assert_eq!(left.content_digest(), right.content_digest());
+}
+
+#[test]
+fn redacted_diagnostic_bundle_rejects_unredacted_content_excerpts() {
+    let bundle = DiagnosticBundle::redacted("bundle-1", "run-1").with_excerpt(
+        DiagnosticExcerpt::new("trace-1", DiagnosticExcerptKind::Trace)
+            .with_content_mode(CaptureMode::Full)
+            .with_payload(json!({"message": "raw customer content"})),
+    );
+
+    assert_eq!(
+        bundle.validate_redaction(),
+        Err(DiagnosticBundleError::UnredactedContent {
+            excerpt_id: "trace-1".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn content_free_diagnostic_bundle_allows_hash_only_excerpts() -> Result<(), DiagnosticBundleError> {
+    let bundle = DiagnosticBundle::content_free("bundle-1", "run-1").with_excerpt(
+        DiagnosticExcerpt::new("metric-1", DiagnosticExcerptKind::Metric)
+            .with_content_mode(CaptureMode::HashOnly)
+            .with_payload(json!({"digest": "sha256:metric"})),
+    );
+
+    bundle.validate_redaction()
 }
