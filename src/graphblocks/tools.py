@@ -43,6 +43,7 @@ ToolCallStatus = Literal[
 ]
 ToolResultStatus = Literal["completed", "failed", "denied", "cancelled", "policy_stopped", "incomplete"]
 ToolResultEventKind = Literal["started", "delta", "artifact_ready", "completed"]
+ToolEffectOutcome = Literal["no_external_effect", "committed", "not_committed", "unknown"]
 ToolExecutionFailurePolicy = Literal["fail_fast", "collect", "return_failures_to_model"]
 ToolExecutionCancellationPolicy = Literal["cancel_dependents", "cancel_all", "allow_independent_calls"]
 ToolExecutionState = Literal["pending", "running", "completed", "failed", "denied", "cancelled", "skipped"]
@@ -868,6 +869,7 @@ class ToolResult:
     error: dict[str, object] | None = None
     started_at: str | None = None
     completed_at: str | None = None
+    effect_outcome: ToolEffectOutcome = "unknown"
 
     @classmethod
     def completed(
@@ -930,6 +932,12 @@ class ToolResult:
             started_at=started_at,
             completed_at=completed_at,
         )
+
+    def with_effect_outcome(self, effect_outcome: ToolEffectOutcome) -> ToolResult:
+        return replace(self, effect_outcome=effect_outcome)
+
+    def effect_was_committed(self) -> bool:
+        return self.effect_outcome == "committed"
 
 
 @dataclass(frozen=True, slots=True)

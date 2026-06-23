@@ -147,6 +147,14 @@ pub enum ToolResultStatus {
     Incomplete,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ToolEffectOutcome {
+    NoExternalEffect,
+    Committed,
+    NotCommitted,
+    Unknown,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ToolResult {
     pub tool_call_id: String,
@@ -158,6 +166,7 @@ pub struct ToolResult {
     pub error: Option<BlockError>,
     pub started_at_unix_ms: Option<u64>,
     pub completed_at_unix_ms: Option<u64>,
+    pub effect_outcome: ToolEffectOutcome,
 }
 
 impl ToolResult {
@@ -194,6 +203,7 @@ impl ToolResult {
             error: None,
             started_at_unix_ms: Some(started_at_unix_ms),
             completed_at_unix_ms: Some(completed_at_unix_ms),
+            effect_outcome: ToolEffectOutcome::Unknown,
         }
     }
 
@@ -213,6 +223,7 @@ impl ToolResult {
             error: Some(error),
             started_at_unix_ms: Some(started_at_unix_ms),
             completed_at_unix_ms: Some(completed_at_unix_ms),
+            effect_outcome: ToolEffectOutcome::Unknown,
         }
     }
 
@@ -232,7 +243,17 @@ impl ToolResult {
             error: Some(error),
             started_at_unix_ms: Some(started_at_unix_ms),
             completed_at_unix_ms: Some(completed_at_unix_ms),
+            effect_outcome: ToolEffectOutcome::Unknown,
         }
+    }
+
+    pub fn with_effect_outcome(mut self, effect_outcome: ToolEffectOutcome) -> Self {
+        self.effect_outcome = effect_outcome;
+        self
+    }
+
+    pub fn effect_was_committed(&self) -> bool {
+        self.effect_outcome == ToolEffectOutcome::Committed
     }
 
     pub fn with_artifacts<I>(mut self, artifacts: I) -> Self

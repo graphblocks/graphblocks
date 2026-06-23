@@ -601,6 +601,19 @@ def test_policy_stopped_tool_result_is_final_but_incomplete() -> None:
     assert result.error == {"code": "policy.denied", "message": "tool output was stopped by policy"}
 
 
+def test_policy_stopped_tool_result_can_report_committed_effect_outcome() -> None:
+    result = ToolResult.policy_stopped(
+        "call-1",
+        error={"code": "policy.denied", "message": "tool output was stopped after a write committed"},
+        started_at="2026-06-23T00:00:00Z",
+        completed_at="2026-06-23T00:00:01Z",
+    ).with_effect_outcome("committed")
+
+    assert result.status == "policy_stopped"
+    assert result.effect_outcome == "committed"
+    assert result.effect_was_committed() is True
+
+
 def test_streaming_tool_result_delta_is_not_a_durable_result() -> None:
     event = ToolResultEvent.delta("call-1", 3, (ContentPart(kind="text", text="draft chunk"),))
 

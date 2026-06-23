@@ -1,6 +1,7 @@
 use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory};
 use graphblocks_runtime_core::tool_result::{
-    ArtifactRef, ContentPart, Diagnostic, ToolResult, ToolResultEvent, ToolResultStatus,
+    ArtifactRef, ContentPart, Diagnostic, ToolEffectOutcome, ToolResult, ToolResultEvent,
+    ToolResultStatus,
 };
 use serde_json::json;
 
@@ -80,4 +81,24 @@ fn policy_stopped_result_is_final_but_incomplete() {
     );
     assert_eq!(result.started_at_unix_ms, Some(1_000));
     assert_eq!(result.completed_at_unix_ms, Some(1_020));
+}
+
+#[test]
+fn policy_stopped_result_can_report_committed_effect_outcome() {
+    let result = ToolResult::policy_stopped(
+        "call-1",
+        BlockError::new(
+            "policy.denied",
+            ErrorCategory::Policy,
+            "tool output was stopped after a write committed",
+            false,
+        ),
+        1_000,
+        1_020,
+    )
+    .with_effect_outcome(ToolEffectOutcome::Committed);
+
+    assert_eq!(result.status, ToolResultStatus::PolicyStopped);
+    assert_eq!(result.effect_outcome, ToolEffectOutcome::Committed);
+    assert!(result.effect_was_committed());
 }
