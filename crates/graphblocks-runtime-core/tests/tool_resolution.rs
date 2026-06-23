@@ -83,6 +83,32 @@ fn model_visible_tool_without_binding_is_reported() {
 }
 
 #[test]
+fn resolved_tool_rejects_definition_binding_name_mismatch() {
+    assert_eq!(
+        graphblocks_runtime_core::tool::ResolvedTool::from_definition_and_binding(
+            "resolved-1",
+            search_definition(),
+            ToolBinding::new(
+                "binding-ticket",
+                "ticket.create",
+                ToolImplementation::OpenApi(OpenApiToolImplementation::new(
+                    "ticket-system",
+                    "createTicket",
+                )),
+            ),
+            "policy-snapshot-1",
+            true,
+            None,
+        ),
+        Err(ToolResolutionError::BindingToolNameMismatch {
+            binding_id: "binding-ticket".to_owned(),
+            definition_name: "knowledge.search".to_owned(),
+            binding_tool_name: "ticket.create".to_owned(),
+        }),
+    );
+}
+
+#[test]
 fn tool_digests_are_stable_for_set_insertion_order() -> Result<(), ToolResolutionError> {
     let left_definition = ToolDefinition::new("knowledge.search", "Search.", "schemas/Search@1")
         .with_tags(["b", "a"]);

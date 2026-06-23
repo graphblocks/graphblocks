@@ -134,6 +134,32 @@ def test_resolved_tool_records_definition_binding_and_policy_identity() -> None:
     assert resolved.allowed_for_principal is True
 
 
+def test_resolved_tool_rejects_definition_binding_name_mismatch() -> None:
+    definition = ToolDefinition(
+        name="knowledge.search",
+        description="Search support documentation.",
+        input_schema="schemas/SearchRequest@1",
+    )
+    binding = ToolBinding(
+        binding_id="binding-ticket-create",
+        tool_name="ticket.create",
+        implementation=BlockToolImplementation(block="ticket.create@1"),
+    )
+
+    with pytest.raises(ToolResolutionError) as error:
+        ResolvedTool.from_definition_and_binding(
+            resolved_tool_id="resolved-1",
+            definition=definition,
+            binding=binding,
+            effective_policy_snapshot_id="policy-snapshot-1",
+            allowed_for_principal=True,
+        )
+
+    assert str(error.value) == (
+        "tool binding binding-ticket-create references ticket.create, not knowledge.search"
+    )
+
+
 def test_tool_catalog_resolution_intersects_scoped_capabilities() -> None:
     knowledge = ToolDefinition(
         name="knowledge.search",

@@ -380,6 +380,37 @@ pub struct ResolvedTool {
     pub valid_until_unix_ms: Option<u64>,
 }
 
+impl ResolvedTool {
+    pub fn from_definition_and_binding(
+        resolved_tool_id: impl Into<String>,
+        definition: ToolDefinition,
+        binding: ToolBinding,
+        effective_policy_snapshot_id: impl Into<String>,
+        allowed_for_principal: bool,
+        valid_until_unix_ms: Option<u64>,
+    ) -> Result<Self, ToolResolutionError> {
+        if definition.name != binding.tool_name {
+            return Err(ToolResolutionError::BindingToolNameMismatch {
+                binding_id: binding.binding_id,
+                definition_name: definition.name,
+                binding_tool_name: binding.tool_name,
+            });
+        }
+        let definition_digest = definition.digest();
+        let binding_digest = binding.digest();
+        Ok(Self {
+            resolved_tool_id: resolved_tool_id.into(),
+            definition,
+            binding,
+            definition_digest,
+            binding_digest,
+            effective_policy_snapshot_id: effective_policy_snapshot_id.into(),
+            allowed_for_principal,
+            valid_until_unix_ms,
+        })
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ToolResolutionError {
     DuplicateToolDefinition {
@@ -394,6 +425,11 @@ pub enum ToolResolutionError {
     BindingWithoutDefinition {
         binding_id: String,
         tool_name: String,
+    },
+    BindingToolNameMismatch {
+        binding_id: String,
+        definition_name: String,
+        binding_tool_name: String,
     },
     ToolBindingMissing {
         tool_name: String,

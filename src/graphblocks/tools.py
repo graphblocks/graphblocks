@@ -367,6 +367,10 @@ class ResolvedTool:
         allowed_for_principal: bool,
         valid_until: str | None = None,
     ) -> ResolvedTool:
+        if binding.tool_name != definition.name:
+            raise ToolResolutionError(
+                f"tool binding {binding.binding_id} references {binding.tool_name}, not {definition.name}"
+            )
         return cls(
             resolved_tool_id=resolved_tool_id,
             definition=definition,
