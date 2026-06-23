@@ -47,3 +47,31 @@ def test_budget_package_exposes_reservation_settlement_and_permit_contract(monke
     assert ledger.balance("budget-1").available == [
         graphblocks_budget.UsageAmount("model_total_tokens", Decimal("75"), "tokens")
     ]
+
+
+def test_budget_package_exposes_completion_reserve_contract(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-budget" / "src"))
+    graphblocks_budget = importlib.import_module("graphblocks_budget")
+    ledger = graphblocks_budget.InMemoryBudgetLedger()
+    amount = graphblocks_budget.UsageAmount("model_total_tokens", Decimal("20"), "tokens")
+    ledger.allocate(
+        "budget-1",
+        graphblocks_budget.ResourceRef("tenant:acme"),
+        [graphblocks_budget.UsageAmount("model_total_tokens", Decimal("100"), "tokens")],
+        policy_ref="policy-1",
+    )
+
+    reserve = ledger.create_completion_reserve(
+        "reserve-1",
+        "budget-1",
+        purpose="checkpoint",
+        amounts=[amount],
+        spendable_by=("checkpoint.worker",),
+    )
+    reservation = ledger.spend_completion_reserve("reserve-1", "checkpoint.worker", expires_at="later")
+
+    assert reserve.status == "available"
+    assert ledger.completion_reserve("reserve-1").status == "spent"
+    assert reservation.purpose == "finalization"
+    assert reservation.amounts == [amount]
+    assert "CompletionReserve" in graphblocks_budget.__all__

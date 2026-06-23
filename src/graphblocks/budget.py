@@ -11,6 +11,8 @@ AmountKey = tuple[str, str, tuple[tuple[str, str], ...]]
 BudgetStatus = Literal["active", "exhausted", "paused", "closed"]
 ReservationPurpose = Literal["provider_call", "task", "trial", "tool", "finalization", "cleanup"]
 ReservationStatus = Literal["reserved", "committed", "released", "expired"]
+CompletionReservePurpose = Literal["finalization", "checkpoint", "cleanup", "compensation"]
+CompletionReserveStatus = Literal["available", "spent", "released", "expired"]
 
 
 class BudgetError(RuntimeError):
@@ -34,6 +36,25 @@ class BudgetReservationNotFoundError(BudgetError):
 
 
 class BudgetReservationStateError(BudgetError):
+    pass
+
+
+class BudgetCompletionReserveNotFoundError(BudgetError):
+    pass
+
+
+class BudgetCompletionReserveConflictError(BudgetError):
+    pass
+
+
+class BudgetCompletionReserveUnauthorizedError(BudgetError):
+    def __init__(self, reserve_id: str, spender: str) -> None:
+        super().__init__(f"completion reserve {reserve_id!r} cannot be spent by {spender!r}")
+        self.reserve_id = reserve_id
+        self.spender = spender
+
+
+class BudgetCompletionReserveStateError(BudgetError):
     pass
 
 
@@ -115,6 +136,28 @@ class BudgetPermit:
         return all(amount <= authorized.get(key, Decimal("0")) for key, amount in requested.items())
 
 
+@dataclass(frozen=True, slots=True)
+class CompletionReserve:
+    reserve_id: str
+    budget_id: str
+    purpose: CompletionReservePurpose
+    amounts: list[UsageAmount]
+    spendable_by: frozenset[str]
+    expires_at: str | None = None
+    status: CompletionReserveStatus = "available"
+    reservation_id: str | None = None
+    fencing_token: int = 0
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "spendable_by", frozenset(self.spendable_by))
+
+
+def _reservation_purpose_for_completion_reserve(purpose: CompletionReservePurpose) -> ReservationPurpose:
+    if purpose in {"finalization", "checkpoint"}:
+        return "finalization"
+    return "cleanup"
+
+
 def _amount_key(amount: UsageAmount) -> AmountKey:
     return (amount.kind, amount.unit, tuple(sorted(amount.dimensions.items())))
 
@@ -146,6 +189,8 @@ class InMemoryBudgetLedger:
     _reservations: dict[str, BudgetReservation] = field(default_factory=dict)
     _reservation_holds: dict[str, tuple[str, ...]] = field(default_factory=dict)
     _permits: dict[str, BudgetPermit] = field(default_factory=dict)
+    _completion_reserves: dict[str, CompletionReserve] = field(default_factory=dict)
+    _completion_reserve_holds: dict[str, tuple[str, ...]] = field(default_factory=dict)
     _reservation_counter: int = 0
     _fencing_counter: int = 0
 
@@ -353,6 +398,93 @@ class InMemoryBudgetLedger:
         )
         self._permits[permit_id] = permit
         return permit
+
+    def create_completion_reserve(
+        self,
+        reserve_id: str,
+        budget_id: str,
+        *,
+        purpose: CompletionReservePurpose,
+        amounts: list[UsageAmount],
+        spendable_by: tuple[str, ...],
+        expires_at: str | None = None,
+    ) -> CompletionReserve:
+        if reserve_id in self._completion_reserves:
+            raise BudgetCompletionReserveConflictError(f"completion reserve {reserve_id!r} already exists")
+        if budget_id not in self._accounts:
+            raise BudgetNotFoundError(f"budget {budget_id!r} does not exist")
+        requested = _amounts_to_dict(amounts)
+        held_budget_ids = self._budget_chain(budget_id)
+        for held_budget_id in held_budget_ids:
+            available = _amounts_to_dict(self.balance(held_budget_id).available)
+            for key, amount in requested.items():
+                if amount > available.get(key, Decimal("0")):
+                    raise BudgetExceededError(
+                        f"budget {held_budget_id!r} has insufficient available {key[0]} {key[1]}"
+                    )
+        self._fencing_counter += 1
+        for held_budget_id in held_budget_ids:
+            for key, amount in requested.items():
+                self._reserved[held_budget_id][key] = self._reserved[held_budget_id].get(key, Decimal("0")) + amount
+            self._accounts[held_budget_id] = replace(
+                self._accounts[held_budget_id],
+                revision=self._accounts[held_budget_id].revision + 1,
+            )
+        reserve = CompletionReserve(
+            reserve_id=reserve_id,
+            budget_id=budget_id,
+            purpose=purpose,
+            amounts=_dict_to_amounts(requested),
+            spendable_by=frozenset(spendable_by),
+            expires_at=expires_at,
+            fencing_token=self._fencing_counter,
+        )
+        self._completion_reserves[reserve_id] = reserve
+        self._completion_reserve_holds[reserve_id] = held_budget_ids
+        return reserve
+
+    def completion_reserve(self, reserve_id: str) -> CompletionReserve:
+        reserve = self._completion_reserves.get(reserve_id)
+        if reserve is None:
+            raise BudgetCompletionReserveNotFoundError(f"completion reserve {reserve_id!r} does not exist")
+        return reserve
+
+    def spend_completion_reserve(
+        self,
+        reserve_id: str,
+        spender: str,
+        *,
+        expires_at: str,
+    ) -> BudgetReservation:
+        reserve = self._completion_reserves.get(reserve_id)
+        if reserve is None:
+            raise BudgetCompletionReserveNotFoundError(f"completion reserve {reserve_id!r} does not exist")
+        if reserve.status != "available":
+            raise BudgetCompletionReserveStateError(f"completion reserve {reserve_id!r} is {reserve.status}")
+        if spender not in reserve.spendable_by:
+            raise BudgetCompletionReserveUnauthorizedError(reserve_id, spender)
+
+        self._reservation_counter += 1
+        reservation_id = f"reservation-{self._reservation_counter:06d}"
+        if reservation_id in self._reservations:
+            raise BudgetConflictError(f"reservation {reservation_id!r} already exists")
+        reservation = BudgetReservation(
+            reservation_id=reservation_id,
+            budget_id=reserve.budget_id,
+            owner=ResourceRef(spender),
+            amounts=list(reserve.amounts),
+            purpose=_reservation_purpose_for_completion_reserve(reserve.purpose),
+            expires_at=expires_at,
+            fencing_token=reserve.fencing_token,
+        )
+        self._reservations[reservation_id] = reservation
+        self._reservation_holds[reservation_id] = self._completion_reserve_holds.get(reserve_id, (reserve.budget_id,))
+        self._completion_reserves[reserve_id] = replace(
+            reserve,
+            status="spent",
+            reservation_id=reservation_id,
+        )
+        return reservation
 
     def balance(self, budget_id: str) -> BudgetBalance:
         account = self._accounts.get(budget_id)
