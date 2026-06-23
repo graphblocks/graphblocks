@@ -1,4 +1,6 @@
-use graphblocks_runtime_core::policy::{EnforcementPoint, PrincipalRef};
+use graphblocks_runtime_core::policy::{
+    EnforcementPoint, PolicyDecision, PolicyEffect, PrincipalRef,
+};
 use graphblocks_runtime_core::tool::{
     BlockToolImplementation, ResolvedTool, ToolApproval, ToolBinding, ToolCatalog, ToolDefinition,
     ToolEffect, ToolIdempotency, ToolImplementation, ToolResolutionScope,
@@ -54,6 +56,34 @@ fn process_schema_registry() -> ToolSchemaRegistry {
             .required_property("cmd", JsonSchemaNode::array(JsonSchemaNode::string())),
     )])
     .expect("schema registry is valid")
+}
+
+fn allow_tool_policy_decision() -> PolicyDecision {
+    PolicyDecision {
+        decision_id: "decision-allow-tool".to_owned(),
+        effect: PolicyEffect::Allow,
+        reason_codes: vec!["allow-process".to_owned()],
+        policy_refs: vec!["allow-process".to_owned()],
+        obligations: Vec::new(),
+        advice: Vec::new(),
+        evaluated_at: "2026-06-23T00:00:01Z".to_owned(),
+        valid_until: None,
+        input_digest: "sha256:before-tool".to_owned(),
+    }
+}
+
+fn deny_tool_policy_decision() -> PolicyDecision {
+    PolicyDecision {
+        decision_id: "decision-deny-tool".to_owned(),
+        effect: PolicyEffect::Deny,
+        reason_codes: vec!["process_not_allowed".to_owned()],
+        policy_refs: vec!["deny-process".to_owned()],
+        obligations: Vec::new(),
+        advice: Vec::new(),
+        evaluated_at: "2026-06-23T00:00:01Z".to_owned(),
+        valid_until: None,
+        input_digest: "sha256:before-tool".to_owned(),
+    }
 }
 
 #[test]
@@ -116,12 +146,14 @@ fn admission_requires_valid_approval_when_binding_requires_it() {
     let resolved_tool = resolved_process_tool();
     let call = process_call(&resolved_tool);
     let schemas = process_schema_registry();
+    let policy_decision = allow_tool_policy_decision();
 
     assert_eq!(
         ToolAdmission::admit(ToolAdmissionRequest {
             call: call.clone(),
             resolved_tool: &resolved_tool,
             schema_registry: &schemas,
+            policy_decision: &policy_decision,
             approval: None,
             principal_id: "user-1",
             idempotency_key: Some("idem-1".to_owned()),
@@ -140,6 +172,7 @@ fn admission_requires_valid_approval_when_binding_requires_it() {
         call,
         resolved_tool: &resolved_tool,
         schema_registry: &schemas,
+        policy_decision: &policy_decision,
         approval: Some(&approval),
         principal_id: "user-1",
         idempotency_key: Some("idem-1".to_owned()),
@@ -153,10 +186,89 @@ fn admission_requires_valid_approval_when_binding_requires_it() {
 }
 
 #[test]
+fn admission_denies_before_approval_when_policy_denies_tool_effect() {
+    let resolved_tool = resolved_process_tool();
+    let call = process_call(&resolved_tool);
+    let schemas = process_schema_registry();
+    let policy_decision = deny_tool_policy_decision();
+
+    assert_eq!(
+        ToolAdmission::admit(ToolAdmissionRequest {
+            call,
+            resolved_tool: &resolved_tool,
+            schema_registry: &schemas,
+            policy_decision: &policy_decision,
+            approval: None,
+            principal_id: "user-1",
+            idempotency_key: Some("idem-1".to_owned()),
+            admitted_at_unix_ms: 1_200,
+        }),
+        Err(ToolAdmissionError::PolicyDenied {
+            decision_id: "decision-deny-tool".to_owned(),
+            reason_codes: vec!["process_not_allowed".to_owned()],
+        }),
+    );
+}
+
+#[test]
+fn admission_rejects_policy_decision_without_input_digest() {
+    let resolved_tool = resolved_process_tool();
+    let call = process_call(&resolved_tool);
+    let schemas = process_schema_registry();
+    let mut policy_decision = allow_tool_policy_decision();
+    policy_decision.input_digest.clear();
+
+    assert_eq!(
+        ToolAdmission::admit(ToolAdmissionRequest {
+            call,
+            resolved_tool: &resolved_tool,
+            schema_registry: &schemas,
+            policy_decision: &policy_decision,
+            approval: None,
+            principal_id: "user-1",
+            idempotency_key: Some("idem-1".to_owned()),
+            admitted_at_unix_ms: 1_200,
+        }),
+        Err(ToolAdmissionError::PolicyDecisionMissingInputDigest {
+            decision_id: "decision-allow-tool".to_owned(),
+        }),
+    );
+}
+
+#[test]
+fn admission_defers_before_approval_when_policy_defers_tool_effect() {
+    let resolved_tool = resolved_process_tool();
+    let call = process_call(&resolved_tool);
+    let schemas = process_schema_registry();
+    let mut policy_decision = allow_tool_policy_decision();
+    policy_decision.decision_id = "decision-defer-tool".to_owned();
+    policy_decision.effect = PolicyEffect::Defer;
+    policy_decision.reason_codes = vec!["needs_external_pdp".to_owned()];
+
+    assert_eq!(
+        ToolAdmission::admit(ToolAdmissionRequest {
+            call,
+            resolved_tool: &resolved_tool,
+            schema_registry: &schemas,
+            policy_decision: &policy_decision,
+            approval: None,
+            principal_id: "user-1",
+            idempotency_key: Some("idem-1".to_owned()),
+            admitted_at_unix_ms: 1_200,
+        }),
+        Err(ToolAdmissionError::PolicyDeferred {
+            decision_id: "decision-defer-tool".to_owned(),
+            reason_codes: vec!["needs_external_pdp".to_owned()],
+        }),
+    );
+}
+
+#[test]
 fn admission_rejects_required_idempotency_without_key() {
     let resolved_tool = resolved_process_tool();
     let call = process_call(&resolved_tool);
     let schemas = process_schema_registry();
+    let policy_decision = allow_tool_policy_decision();
     let request =
         ToolApprovalRequest::for_call("approval-1", &resolved_tool, &call, "user-1", 1_100, 2_000)
             .expect("approval request is valid");
@@ -167,6 +279,7 @@ fn admission_rejects_required_idempotency_without_key() {
             call,
             resolved_tool: &resolved_tool,
             schema_registry: &schemas,
+            policy_decision: &policy_decision,
             approval: Some(&approval),
             principal_id: "user-1",
             idempotency_key: None,
@@ -183,6 +296,7 @@ fn admission_rejects_call_for_different_resolved_tool() {
     let resolved_tool = resolved_process_tool();
     let mut call = process_call(&resolved_tool);
     let schemas = process_schema_registry();
+    let policy_decision = allow_tool_policy_decision();
     call.resolved_tool_id = "sha256:other".to_owned();
 
     assert_eq!(
@@ -190,6 +304,7 @@ fn admission_rejects_call_for_different_resolved_tool() {
             call,
             resolved_tool: &resolved_tool,
             schema_registry: &schemas,
+            policy_decision: &policy_decision,
             approval: None,
             principal_id: "user-1",
             idempotency_key: Some("idem-1".to_owned()),
@@ -206,6 +321,7 @@ fn admission_rejects_call_for_different_resolved_tool() {
 fn admission_rejects_arguments_that_do_not_match_input_schema_before_approval() {
     let resolved_tool = resolved_process_tool();
     let schemas = process_schema_registry();
+    let policy_decision = allow_tool_policy_decision();
     let mut draft = ToolCallDraft::proposed("response-1", "call-1", "process.run");
     draft
         .append_argument_fragment("{\"cmd\":\"echo hello\"}")
@@ -219,6 +335,7 @@ fn admission_rejects_arguments_that_do_not_match_input_schema_before_approval() 
             call,
             resolved_tool: &resolved_tool,
             schema_registry: &schemas,
+            policy_decision: &policy_decision,
             approval: None,
             principal_id: "user-1",
             idempotency_key: Some("idem-1".to_owned()),
@@ -239,12 +356,14 @@ fn admission_denies_tool_no_longer_allowed_for_principal() {
     resolved_tool.allowed_for_principal = false;
     let call = process_call(&resolved_tool);
     let schemas = process_schema_registry();
+    let policy_decision = allow_tool_policy_decision();
 
     assert_eq!(
         ToolAdmission::admit(ToolAdmissionRequest {
             call,
             resolved_tool: &resolved_tool,
             schema_registry: &schemas,
+            policy_decision: &policy_decision,
             approval: None,
             principal_id: "user-1",
             idempotency_key: Some("idem-1".to_owned()),
@@ -263,12 +382,14 @@ fn admission_denies_expired_resolved_tool() {
     resolved_tool.valid_until_unix_ms = Some(1_199);
     let call = process_call(&resolved_tool);
     let schemas = process_schema_registry();
+    let policy_decision = allow_tool_policy_decision();
 
     assert_eq!(
         ToolAdmission::admit(ToolAdmissionRequest {
             call,
             resolved_tool: &resolved_tool,
             schema_registry: &schemas,
+            policy_decision: &policy_decision,
             approval: None,
             principal_id: "user-1",
             idempotency_key: Some("idem-1".to_owned()),
@@ -287,12 +408,14 @@ fn admission_reports_missing_input_schema_before_effect_admission() {
     let resolved_tool = resolved_process_tool();
     let call = process_call(&resolved_tool);
     let schemas = ToolSchemaRegistry::new([]).expect("empty registry is valid");
+    let policy_decision = allow_tool_policy_decision();
 
     assert_eq!(
         ToolAdmission::admit(ToolAdmissionRequest {
             call,
             resolved_tool: &resolved_tool,
             schema_registry: &schemas,
+            policy_decision: &policy_decision,
             approval: None,
             principal_id: "user-1",
             idempotency_key: Some("idem-1".to_owned()),

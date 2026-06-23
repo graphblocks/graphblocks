@@ -1,6 +1,8 @@
 use serde_json::{Value, json};
 
-use crate::policy::{EnforcementPoint, PolicyRequest, PrincipalRef, ResourceRef};
+use crate::policy::{
+    EnforcementPoint, PolicyDecision, PolicyEffect, PolicyRequest, PrincipalRef, ResourceRef,
+};
 use crate::tool::{ResolvedTool, ToolApproval, ToolIdempotency};
 use crate::tool_approval::ToolApprovalRecord;
 use crate::tool_call::{ToolCall, ToolCallStatus};
@@ -11,6 +13,7 @@ pub struct ToolAdmissionRequest<'a> {
     pub call: ToolCall,
     pub resolved_tool: &'a ResolvedTool,
     pub schema_registry: &'a ToolSchemaRegistry,
+    pub policy_decision: &'a PolicyDecision,
     pub approval: Option<&'a ToolApprovalRecord>,
     pub principal_id: &'a str,
     pub idempotency_key: Option<String>,
@@ -81,6 +84,17 @@ pub enum ToolAdmissionError {
         resolved_tool_id: String,
         valid_until_unix_ms: u64,
         admitted_at_unix_ms: u64,
+    },
+    PolicyDecisionMissingInputDigest {
+        decision_id: String,
+    },
+    PolicyDenied {
+        decision_id: String,
+        reason_codes: Vec<String>,
+    },
+    PolicyDeferred {
+        decision_id: String,
+        reason_codes: Vec<String>,
     },
 }
 
@@ -207,6 +221,27 @@ impl ToolAdmission {
                 valid_until_unix_ms,
                 admitted_at_unix_ms: request.admitted_at_unix_ms,
             });
+        }
+
+        if request.policy_decision.input_digest.is_empty() {
+            return Err(ToolAdmissionError::PolicyDecisionMissingInputDigest {
+                decision_id: request.policy_decision.decision_id.clone(),
+            });
+        }
+        match request.policy_decision.effect {
+            PolicyEffect::Allow | PolicyEffect::AllowWithObligations => {}
+            PolicyEffect::Deny => {
+                return Err(ToolAdmissionError::PolicyDenied {
+                    decision_id: request.policy_decision.decision_id.clone(),
+                    reason_codes: request.policy_decision.reason_codes.clone(),
+                });
+            }
+            PolicyEffect::Defer => {
+                return Err(ToolAdmissionError::PolicyDeferred {
+                    decision_id: request.policy_decision.decision_id.clone(),
+                    reason_codes: request.policy_decision.reason_codes.clone(),
+                });
+            }
         }
 
         if request.resolved_tool.binding.approval == ToolApproval::Always {
