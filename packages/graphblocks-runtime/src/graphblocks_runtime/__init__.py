@@ -21,7 +21,7 @@ except ImportError:
     def admit_exhaustion_work_json(policy_json: str, request_json: str) -> str:
         raise RuntimeError("graphblocks_runtime native extension is not built")
 
-    def compile_graph_json(document_json: str) -> str:
+    def compile_graph_json(document_json: str, block_catalog_json: str | None = None) -> str:
         raise RuntimeError("graphblocks_runtime native extension is not built")
 
     def evaluate_output_gate_json(gate_json: str, operations_json: str) -> str:

@@ -103,6 +103,40 @@
     }
   },
   {
+    "name": "required_input_missing",
+    "block_catalog": [
+      {
+        "typeId": "text.sink",
+        "version": 1,
+        "inputs": [
+          {
+            "name": "text",
+            "type": "graphblocks.ai/Text@1",
+            "required": true
+          }
+        ]
+      }
+    ],
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "required-input"
+      },
+      "spec": {
+        "nodes": {
+          "sink": {
+            "block": "text.sink@1"
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:b8992cb689b0d1f222b9b43779524d6ca942a9430f845f19948e9aa335c7e9da",
+      "error_codes": ["GB1003"]
+    }
+  },
+  {
     "name": "unsafe_retry",
     "document": {
       "apiVersion": "graphblocks.ai/v1alpha3",

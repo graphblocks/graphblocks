@@ -1,3 +1,5 @@
+use std::collections::{BTreeMap, BTreeSet};
+
 use serde_json::Value;
 
 use crate::canonical::canonical_hash;
@@ -20,7 +22,98 @@ impl Plan {
     }
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct BlockCatalog {
+    descriptors: BTreeMap<String, BlockDescriptor>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BlockDescriptor {
+    pub type_id: String,
+    pub version: u64,
+    pub inputs: Vec<PortDescriptor>,
+}
+
+impl BlockDescriptor {
+    fn block_id(&self) -> String {
+        format!("{}@{}", self.type_id, self.version)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PortDescriptor {
+    pub name: String,
+    pub required: bool,
+}
+
+impl BlockCatalog {
+    pub fn from_blocks(blocks: &Value) -> Result<Self, String> {
+        let blocks = blocks
+            .as_array()
+            .ok_or_else(|| "block catalog must be an array".to_owned())?;
+        let mut descriptors = BTreeMap::new();
+
+        for (index, block) in blocks.iter().enumerate() {
+            let block = block
+                .as_object()
+                .ok_or_else(|| format!("block catalog entry {index} must be an object"))?;
+            let mut type_id = block
+                .get("typeId")
+                .or_else(|| block.get("type_id"))
+                .or_else(|| block.get("block"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("block catalog entry {index} is missing typeId"))?
+                .to_owned();
+            let mut version = block.get("version").and_then(Value::as_u64);
+            if version.is_none()
+                && let Some((parsed_type_id, parsed_version)) = type_id.rsplit_once('@')
+            {
+                version = parsed_version.parse::<u64>().ok();
+                type_id = parsed_type_id.to_owned();
+            }
+            let version =
+                version.ok_or_else(|| format!("block catalog entry {index} is missing version"))?;
+            let inputs = block
+                .get("inputs")
+                .and_then(Value::as_array)
+                .map(|inputs| {
+                    inputs
+                        .iter()
+                        .filter_map(|port| {
+                            let port = port.as_object()?;
+                            let name = port.get("name").and_then(Value::as_str)?;
+                            Some(PortDescriptor {
+                                name: name.to_owned(),
+                                required: port
+                                    .get("required")
+                                    .and_then(Value::as_bool)
+                                    .unwrap_or(true),
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let descriptor = BlockDescriptor {
+                type_id,
+                version,
+                inputs,
+            };
+            descriptors.insert(descriptor.block_id(), descriptor);
+        }
+
+        Ok(Self { descriptors })
+    }
+
+    pub fn get(&self, block_id: &str) -> Option<&BlockDescriptor> {
+        self.descriptors.get(block_id)
+    }
+}
+
 pub fn compile_graph(document: &Value) -> Plan {
+    compile_graph_with_catalog(document, &BlockCatalog::default())
+}
+
+pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog) -> Plan {
     let mut diagnostics = Vec::new();
 
     if document.get("kind").and_then(Value::as_str) != Some("Graph") {
@@ -561,6 +654,63 @@ pub fn compile_graph(document: &Value) -> Plan {
                         "GB1002",
                         format!("edge {key} endpoint references unknown node {owner:?}"),
                         format!("$.spec.edges[{index}].{key}"),
+                    ));
+                }
+            }
+        }
+    }
+
+    if let Some(normalized_nodes) = normalized_nodes
+        && !block_catalog.descriptors.is_empty()
+    {
+        let mut inbound_by_node = normalized_nodes
+            .keys()
+            .map(|node_name| (node_name.as_str(), BTreeSet::<String>::new()))
+            .collect::<BTreeMap<_, _>>();
+        if let Some(edges) = normalized
+            .get("spec")
+            .and_then(|spec| spec.get("edges"))
+            .and_then(Value::as_array)
+        {
+            for edge in edges {
+                let Some(target) = edge.get("to").and_then(Value::as_str) else {
+                    continue;
+                };
+                let Some((target_owner, target_path)) = target.split_once('.') else {
+                    continue;
+                };
+                let port_name = target_path
+                    .split_once('.')
+                    .map_or(target_path, |(port_name, _)| port_name);
+                if let Some(inbound_ports) = inbound_by_node.get_mut(target_owner) {
+                    inbound_ports.insert(port_name.to_owned());
+                }
+            }
+        }
+
+        for (node_name, node) in normalized_nodes {
+            let Some(block_id) = node
+                .as_object()
+                .and_then(|node| node.get("block"))
+                .and_then(Value::as_str)
+            else {
+                continue;
+            };
+            let Some(descriptor) = block_catalog.get(block_id) else {
+                continue;
+            };
+            let produced_inputs = inbound_by_node.get(node_name.as_str());
+            for port in &descriptor.inputs {
+                if port.required
+                    && !produced_inputs.is_some_and(|inputs| inputs.contains(port.name.as_str()))
+                {
+                    diagnostics.push(Diagnostic::error(
+                        "GB1003",
+                        format!(
+                            "required input {:?} is never produced for node {:?}",
+                            port.name, node_name
+                        ),
+                        format!("$.spec.nodes.{node_name}"),
                     ));
                 }
             }

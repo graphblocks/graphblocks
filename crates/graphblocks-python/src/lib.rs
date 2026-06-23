@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use graphblocks_compiler::compiler::compile_graph;
+use graphblocks_compiler::compiler::{BlockCatalog, compile_graph, compile_graph_with_catalog};
 use graphblocks_compiler::diagnostics::Severity;
 use graphblocks_protocol::{
     RemotePayload, RemotePayloadError, RemotePayloadLimits, WorkerAdmissionPolicy,
@@ -30,10 +30,23 @@ fn binding_version() -> &'static str {
 }
 
 #[pyfunction]
-fn compile_graph_json(document_json: &str) -> PyResult<String> {
+#[pyo3(signature = (document_json, block_catalog_json=None))]
+fn compile_graph_json(document_json: &str, block_catalog_json: Option<&str>) -> PyResult<String> {
     let document = serde_json::from_str::<Value>(document_json)
         .map_err(|error| PyValueError::new_err(format!("invalid graph document JSON: {error}")))?;
-    let plan = compile_graph(&document);
+    let block_catalog = block_catalog_json
+        .map(|catalog_json| {
+            let catalog = serde_json::from_str::<Value>(catalog_json).map_err(|error| {
+                PyValueError::new_err(format!("invalid block catalog JSON: {error}"))
+            })?;
+            BlockCatalog::from_blocks(&catalog).map_err(PyValueError::new_err)
+        })
+        .transpose()?;
+    let plan = if let Some(block_catalog) = &block_catalog {
+        compile_graph_with_catalog(&document, block_catalog)
+    } else {
+        compile_graph(&document)
+    };
     let diagnostics = plan
         .diagnostics
         .iter()
@@ -1519,8 +1532,13 @@ mod tests {
 
             let document_json =
                 serde_json::to_string(document).map_err(|error| error.to_string())?;
-            let compiled_json =
-                compile_graph_json(&document_json).map_err(|error| error.to_string())?;
+            let block_catalog_json = case
+                .get("block_catalog")
+                .map(serde_json::to_string)
+                .transpose()
+                .map_err(|error| error.to_string())?;
+            let compiled_json = compile_graph_json(&document_json, block_catalog_json.as_deref())
+                .map_err(|error| error.to_string())?;
             let compiled =
                 serde_json::from_str::<Value>(&compiled_json).map_err(|error| error.to_string())?;
             let diagnostics = compiled

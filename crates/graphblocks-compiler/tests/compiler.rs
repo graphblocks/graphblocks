@@ -1,4 +1,4 @@
-use graphblocks_compiler::compiler::compile_graph;
+use graphblocks_compiler::compiler::{BlockCatalog, compile_graph, compile_graph_with_catalog};
 use graphblocks_compiler::diagnostics::Severity;
 use graphblocks_compiler::graph::GRAPH_API_VERSION;
 use serde_json::json;
@@ -81,6 +81,39 @@ fn compile_graph_reports_unknown_edge_endpoint() {
             .collect::<Vec<_>>(),
         vec!["GB1002"]
     );
+}
+
+#[test]
+fn compile_graph_rejects_required_input_never_produced() -> Result<(), String> {
+    let catalog = BlockCatalog::from_blocks(&json!([
+        {
+            "typeId": "text.sink",
+            "version": 1,
+            "inputs": [
+                {"name": "text", "type": "graphblocks.ai/Text@1", "required": true}
+            ]
+        }
+    ]))?;
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "required-input"},
+        "spec": {
+            "nodes": {"sink": {"block": "text.sink@1"}}
+        }
+    });
+
+    let plan = compile_graph_with_catalog(&graph, &catalog);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["GB1003"]
+    );
+    Ok(())
 }
 
 #[test]
