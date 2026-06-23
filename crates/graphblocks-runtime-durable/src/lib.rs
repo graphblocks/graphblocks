@@ -121,14 +121,36 @@ impl SourceBatch {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct SchemaRef {
+    pub schema_id: String,
+    pub schema_version: u32,
+}
+
+impl SchemaRef {
+    pub fn new(schema_id: impl Into<String>, schema_version: u32) -> Self {
+        Self {
+            schema_id: schema_id.into(),
+            schema_version,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct CheckpointBarrier {
     pub checkpoint_id: String,
     pub run_id: String,
+    pub release_id: String,
+    pub deployment_revision_id: String,
     pub plan_hash: String,
+    pub checkpoint_schema: SchemaRef,
+    pub state_revision: u64,
+    pub completed_nodes: Vec<String>,
+    pub pending_nodes: Vec<String>,
     pub source_cursors: BTreeMap<String, SourceCursor>,
     pub operator_state: BTreeMap<String, Value>,
     pub sink_commit_metadata: BTreeMap<String, Value>,
     pub schema_versions: BTreeMap<String, u32>,
+    pub created_at_unix_ms: u64,
 }
 
 impl CheckpointBarrier {
@@ -139,8 +161,18 @@ impl CheckpointBarrier {
         if self.run_id.is_empty() {
             return Err(CheckpointBarrierError::MissingRunId);
         }
+        if self.release_id.is_empty() {
+            return Err(CheckpointBarrierError::MissingReleaseId);
+        }
+        if self.deployment_revision_id.is_empty() {
+            return Err(CheckpointBarrierError::MissingDeploymentRevisionId);
+        }
         if self.plan_hash.is_empty() {
             return Err(CheckpointBarrierError::MissingPlanHash);
+        }
+        if self.checkpoint_schema.schema_id.is_empty() || self.checkpoint_schema.schema_version == 0
+        {
+            return Err(CheckpointBarrierError::InvalidCheckpointSchema);
         }
         if self.schema_versions.is_empty() {
             return Err(CheckpointBarrierError::MissingSchemaVersions);
@@ -163,11 +195,79 @@ impl CheckpointBarrier {
 pub enum CheckpointBarrierError {
     MissingCheckpointId,
     MissingRunId,
+    MissingReleaseId,
+    MissingDeploymentRevisionId,
     MissingPlanHash,
+    InvalidCheckpointSchema,
     MissingSchemaVersions,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SourceCursorCommitPlan {
     pub cursors: Vec<(String, SourceCursor)>,
+}
+
+#[derive(Default)]
+pub struct InMemoryCheckpointStore {
+    checkpoints_by_run: BTreeMap<String, Vec<CheckpointBarrier>>,
+}
+
+impl InMemoryCheckpointStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn put(&mut self, barrier: CheckpointBarrier) -> Result<(), CheckpointStoreError> {
+        barrier
+            .validate()
+            .map_err(CheckpointStoreError::InvalidBarrier)?;
+        let checkpoints = self
+            .checkpoints_by_run
+            .entry(barrier.run_id.clone())
+            .or_default();
+        if let Some(current) = checkpoints
+            .iter()
+            .map(|checkpoint| checkpoint.state_revision)
+            .max()
+            && barrier.state_revision <= current
+        {
+            return Err(CheckpointStoreError::StaleStateRevision {
+                run_id: barrier.run_id,
+                current,
+                attempted: barrier.state_revision,
+            });
+        }
+        checkpoints.push(barrier);
+        Ok(())
+    }
+
+    pub fn latest_compatible(
+        &self,
+        run_id: &str,
+        release_id: &str,
+        deployment_revision_id: &str,
+        plan_hash: &str,
+    ) -> Option<CheckpointBarrier> {
+        self.checkpoints_by_run.get(run_id).and_then(|checkpoints| {
+            checkpoints
+                .iter()
+                .filter(|checkpoint| {
+                    checkpoint.release_id == release_id
+                        && checkpoint.deployment_revision_id == deployment_revision_id
+                        && checkpoint.plan_hash == plan_hash
+                })
+                .max_by_key(|checkpoint| checkpoint.state_revision)
+                .cloned()
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CheckpointStoreError {
+    InvalidBarrier(CheckpointBarrierError),
+    StaleStateRevision {
+        run_id: String,
+        current: u64,
+        attempted: u64,
+    },
 }
