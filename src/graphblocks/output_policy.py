@@ -355,6 +355,43 @@ class OutputDeliveryGate:
                     self.last_policy_accepted_sequence,
                     decision.accepted_through_sequence,
                 )
+            if decision.disposition == "redact":
+                redactions_by_sequence: dict[int, list[dict[str, object]]] = {}
+                for redaction in decision.redactions:
+                    path = redaction.get("path")
+                    if not isinstance(path, str) or not path.startswith("/chunks/") or not path.endswith("/text"):
+                        raise OutputGateError(f"invalid redaction path {path!r}")
+                    sequence_text = path[len("/chunks/") : -len("/text")]
+                    try:
+                        sequence = int(sequence_text)
+                    except ValueError as error:
+                        raise OutputGateError(f"invalid redaction path {path!r}") from error
+                    redactions_by_sequence.setdefault(sequence, []).append(redaction)
+
+                for sequence, redactions in redactions_by_sequence.items():
+                    if sequence <= self.last_client_delivered_sequence or sequence not in self.pending:
+                        continue
+                    text = self.pending[sequence].text
+                    for redaction in sorted(redactions, key=lambda item: int(item.get("start", -1)), reverse=True):
+                        start = redaction.get("start")
+                        end = redaction.get("end")
+                        replacement = redaction.get("replacement")
+                        if (
+                            not isinstance(start, int)
+                            or not isinstance(end, int)
+                            or not isinstance(replacement, str)
+                            or start < 0
+                            or end < start
+                            or end > len(text)
+                        ):
+                            raise OutputGateError(f"invalid redaction range for {redaction.get('path')!r}")
+                        text = text[:start] + replacement + text[end:]
+                    self.pending[sequence] = GenerationChunk.text(
+                        self.stream_id,
+                        self.response_id,
+                        sequence,
+                        text,
+                    )
             if decision.disposition == "replace" and decision.accepted_through_sequence is not None:
                 for sequence in list(self.pending):
                     if self.last_client_delivered_sequence < sequence <= decision.accepted_through_sequence:

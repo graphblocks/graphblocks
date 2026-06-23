@@ -362,6 +362,47 @@ fn redact_decision_rewrites_pending_chunk_before_delivery() -> Result<(), Output
 }
 
 #[test]
+fn redact_decision_applies_typed_redaction_instruction_before_delivery()
+-> Result<(), OutputGateError> {
+    let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
+
+    gate.record_chunk(GenerationChunk::text(
+        "stream-1",
+        "response-1",
+        1,
+        "hello secret world",
+    ))?;
+
+    let redacted = gate.apply_decision(
+        OutputPolicyDecision::redact(
+            "decision-redact",
+            Some(1),
+            Vec::<GenerationChunk>::new(),
+            "sha256:redact",
+        )
+        .with_redactions([RedactionInstruction::text_range(
+            "/chunks/1/text",
+            6,
+            12,
+            "[redacted]",
+        )]),
+        1_000,
+    )?;
+
+    assert_eq!(
+        redacted
+            .deliverable
+            .iter()
+            .map(|chunk| (chunk.sequence, chunk.text.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(1, "hello [redacted] world")]
+    );
+    assert_eq!(gate.last_policy_accepted_sequence(), 1);
+    assert_eq!(gate.last_client_delivered_sequence(), 1);
+    Ok(())
+}
+
+#[test]
 fn redact_decision_without_replacement_holds_original_pending_chunk() -> Result<(), OutputGateError>
 {
     let mut gate = OutputDeliveryGate::new("stream-1", "response-1");

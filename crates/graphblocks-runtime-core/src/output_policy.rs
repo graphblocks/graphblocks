@@ -476,6 +476,9 @@ pub enum OutputGateError {
         last_generated_sequence: u64,
         attempted_sequence: u64,
     },
+    InvalidRedactionInstruction {
+        path: String,
+    },
     PolicyStopped,
 }
 
@@ -639,11 +642,71 @@ impl OutputDeliveryGate {
             OutputDisposition::Redact | OutputDisposition::Replace => {
                 if decision.disposition == OutputDisposition::Redact
                     && decision.replacement_chunks.is_empty()
+                    && decision.redactions.is_empty()
                 {
                     return Ok(OutputGateUpdate {
                         deliverable: Vec::new(),
                         cutoff: None,
                     });
+                }
+
+                if decision.disposition == OutputDisposition::Redact
+                    && !decision.redactions.is_empty()
+                {
+                    let mut redactions_by_sequence: BTreeMap<u64, Vec<RedactionInstruction>> =
+                        BTreeMap::new();
+                    for redaction in decision.redactions {
+                        let Some(sequence_text) = redaction
+                            .path
+                            .strip_prefix("/chunks/")
+                            .and_then(|suffix| suffix.strip_suffix("/text"))
+                        else {
+                            return Err(OutputGateError::InvalidRedactionInstruction {
+                                path: redaction.path,
+                            });
+                        };
+                        let Ok(sequence) = sequence_text.parse::<u64>() else {
+                            return Err(OutputGateError::InvalidRedactionInstruction {
+                                path: redaction.path,
+                            });
+                        };
+                        redactions_by_sequence
+                            .entry(sequence)
+                            .or_default()
+                            .push(redaction);
+                    }
+
+                    for (sequence, mut redactions) in redactions_by_sequence {
+                        if sequence <= self.last_client_delivered_sequence {
+                            continue;
+                        }
+                        let Some(chunk) = self.pending.get_mut(&sequence) else {
+                            continue;
+                        };
+                        redactions.sort_by(|left, right| right.start.cmp(&left.start));
+                        for redaction in redactions {
+                            let Ok(start) = usize::try_from(redaction.start) else {
+                                return Err(OutputGateError::InvalidRedactionInstruction {
+                                    path: redaction.path,
+                                });
+                            };
+                            let Ok(end) = usize::try_from(redaction.end) else {
+                                return Err(OutputGateError::InvalidRedactionInstruction {
+                                    path: redaction.path,
+                                });
+                            };
+                            if start > end
+                                || end > chunk.text.len()
+                                || !chunk.text.is_char_boundary(start)
+                                || !chunk.text.is_char_boundary(end)
+                            {
+                                return Err(OutputGateError::InvalidRedactionInstruction {
+                                    path: redaction.path,
+                                });
+                            }
+                            chunk.text.replace_range(start..end, &redaction.replacement);
+                        }
+                    }
                 }
 
                 if decision.disposition == OutputDisposition::Replace {

@@ -165,6 +165,25 @@ def test_output_delivery_gate_releases_only_policy_accepted_chunks() -> None:
     assert gate.last_client_delivered_sequence == 2
 
 
+def test_output_delivery_gate_applies_typed_redaction_instruction_before_delivery() -> None:
+    gate = OutputDeliveryGate("stream-1", "response-1")
+    gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "hello secret world"))
+
+    redacted = gate.apply_decision(
+        OutputPolicyDecision.redact(
+            "decision-redact",
+            accepted_through_sequence=1,
+            redactions=({"path": "/chunks/1/text", "start": 6, "end": 12, "replacement": "[redacted]"},),
+            input_digest="sha256:redact",
+        ),
+        occurred_at="2026-06-23T00:00:01Z",
+    )
+
+    assert [(chunk.sequence, chunk.text) for chunk in redacted.deliverable] == [(1, "hello [redacted] world")]
+    assert gate.last_policy_accepted_sequence == 1
+    assert gate.last_client_delivered_sequence == 1
+
+
 def test_output_delivery_gate_policy_abort_cuts_off_and_rejects_late_chunks() -> None:
     gate = OutputDeliveryGate("stream-1", "response-1", turn_id="turn-1")
     gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "safe "))
