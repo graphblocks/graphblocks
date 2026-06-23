@@ -175,6 +175,59 @@ pub fn compile_graph(document: &Value) -> Plan {
         }
     }
 
+    if let Some(delivery) = spec
+        .and_then(|spec| spec.get("outputPolicy"))
+        .or_else(|| spec.and_then(|spec| spec.get("output_policy")))
+        .and_then(|output_policy| output_policy.get("delivery"))
+        .and_then(Value::as_object)
+    {
+        let mode = delivery.get("mode").and_then(Value::as_str);
+        if mode == Some("bounded_holdback") {
+            let has_token_bound = delivery
+                .get("holdbackMaxTokens")
+                .or_else(|| delivery.get("holdback_max_tokens"))
+                .and_then(Value::as_u64)
+                .is_some_and(|value| value > 0);
+            let has_byte_bound = delivery
+                .get("holdbackMaxBytes")
+                .or_else(|| delivery.get("holdback_max_bytes"))
+                .and_then(Value::as_u64)
+                .is_some_and(|value| value > 0);
+            let has_duration_bound = delivery
+                .get("holdbackMaxDuration")
+                .or_else(|| delivery.get("holdback_max_duration"))
+                .or_else(|| delivery.get("holdbackMaxDurationMs"))
+                .or_else(|| delivery.get("holdback_max_duration_ms"))
+                .is_some_and(|duration| match duration {
+                    Value::Number(duration) => duration.as_u64().is_some_and(|value| value > 0),
+                    Value::String(duration) => !duration.trim().is_empty() && duration != "0ms",
+                    _ => false,
+                });
+            if !has_token_bound && !has_byte_bound && !has_duration_bound {
+                diagnostics.push(Diagnostic::error(
+                    "UnboundedPolicyHoldback",
+                    "bounded_holdback output delivery requires a token, byte, or duration bound",
+                    "$.spec.outputPolicy.delivery",
+                ));
+            }
+        }
+
+        if mode == Some("immediate_draft") {
+            let delivered_draft_disposition = delivery
+                .get("deliveredDraftDisposition")
+                .or_else(|| delivery.get("delivered_draft_disposition"))
+                .and_then(Value::as_str)
+                .unwrap_or("retract");
+            if delivered_draft_disposition == "keep" {
+                diagnostics.push(Diagnostic::error(
+                    "ImmediateDraftWithoutRetractionSupport",
+                    "immediate_draft output delivery requires incomplete or retracted draft semantics",
+                    "$.spec.outputPolicy.delivery.deliveredDraftDisposition",
+                ));
+            }
+        }
+    }
+
     let normalized = normalize_graph(document);
     let normalized_nodes = normalized
         .get("spec")

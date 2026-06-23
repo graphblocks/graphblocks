@@ -138,3 +138,94 @@ fn compile_graph_allows_effect_retry_with_idempotency_key() {
             .any(|diagnostic| diagnostic.code == "GB1011")
     );
 }
+
+#[test]
+fn compile_graph_rejects_unbounded_output_holdback() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "unbounded-output-policy"},
+        "spec": {
+            "outputPolicy": {
+                "delivery": {
+                    "mode": "bounded_holdback",
+                    "onViolation": "abort_response"
+                }
+            },
+            "nodes": {
+                "model": {"block": "model.generate@1"}
+            }
+        }
+    });
+
+    let plan = compile_graph(&graph);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["UnboundedPolicyHoldback"]
+    );
+}
+
+#[test]
+fn compile_graph_rejects_immediate_draft_without_retraction_support() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "unsafe-draft-policy"},
+        "spec": {
+            "outputPolicy": {
+                "delivery": {
+                    "mode": "immediate_draft",
+                    "onViolation": "abort_response",
+                    "deliveredDraftDisposition": "keep"
+                }
+            },
+            "nodes": {
+                "model": {"block": "model.generate@1"}
+            }
+        }
+    });
+
+    let plan = compile_graph(&graph);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["ImmediateDraftWithoutRetractionSupport"]
+    );
+}
+
+#[test]
+fn compile_graph_allows_bounded_holdback_with_time_or_size_bound() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "bounded-output-policy"},
+        "spec": {
+            "outputPolicy": {
+                "delivery": {
+                    "mode": "bounded_holdback",
+                    "holdbackMaxDuration": "250ms",
+                    "onViolation": "abort_response"
+                }
+            },
+            "nodes": {
+                "model": {"block": "model.generate@1"}
+            }
+        }
+    });
+
+    let plan = compile_graph(&graph);
+
+    assert!(!plan.diagnostics.iter().any(|diagnostic| matches!(
+        diagnostic.code.as_str(),
+        "UnboundedPolicyHoldback" | "ImmediateDraftWithoutRetractionSupport"
+    )));
+}
