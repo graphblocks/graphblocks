@@ -358,6 +358,24 @@ def test_tool_call_and_result_reject_unknown_statuses() -> None:
         ToolResult(tool_call_id="call-1", status="deferred")
 
 
+def test_tool_lifecycle_records_reject_unknown_literals() -> None:
+    with pytest.raises(ValueError, match="invalid tool call draft status waiting"):
+        ToolCallDraft("response-1", "call-1", "knowledge.search", status="waiting")
+
+    resolved = _resolved_search_tool()
+    call = _search_call(resolved)
+    request = ToolApprovalRequest.for_call(
+        "approval-1",
+        resolved,
+        call,
+        principal_id="user-1",
+        requested_at=1_000,
+        expires_at=2_000,
+    )
+    with pytest.raises(ValueError, match="invalid tool approval status escalated"):
+        ToolApprovalRecord(approval_id=request.approval_id, request=request, status="escalated")
+
+
 def _resolved_search_tool() -> ResolvedTool:
     catalog = ToolCatalog(
         definitions=(
@@ -1173,6 +1191,19 @@ def test_streaming_tool_result_delta_is_not_a_durable_result() -> None:
     assert event.into_result() is None
 
 
+def test_tool_result_event_and_effect_outcome_reject_unknown_literals() -> None:
+    with pytest.raises(ValueError, match="invalid tool result event kind progress"):
+        ToolResultEvent(kind="progress", tool_call_id="call-1", sequence=1)
+
+    with pytest.raises(ValueError, match="invalid tool effect outcome partially_committed"):
+        ToolResult.policy_stopped(
+            "call-1",
+            error={"code": "policy.denied", "message": "tool output was stopped by policy"},
+            started_at="2026-06-23T00:00:00Z",
+            completed_at="2026-06-23T00:00:01Z",
+        ).with_effect_outcome("partially_committed")
+
+
 def test_tool_result_events_carry_artifacts_and_final_result() -> None:
     artifact = ArtifactRef("artifact-1", "file:///tmp/out.txt", checksum="sha256:out")
     artifact_event = ToolResultEvent.artifact_ready("call-1", 4, artifact)
@@ -1254,6 +1285,27 @@ def _tool_call(tool_call_id: str, arguments: str = '{"resource_id":"a"}'):
         .complete_arguments()
         .into_tool_call("resolved-tool-1", created_at="2026-06-23T00:00:00Z")
     )
+
+
+def test_tool_execution_plan_rejects_unknown_policies() -> None:
+    calls = (ToolPlanCall(_tool_call("call-a")),)
+    with pytest.raises(ToolExecutionPlanError, match="invalid failure policy retry_forever"):
+        ToolExecutionPlan(
+            plan_id="plan-1",
+            response_id="response-1",
+            calls=calls,
+            maximum_parallelism=1,
+            failure_policy="retry_forever",
+        )
+
+    with pytest.raises(ToolExecutionPlanError, match="invalid cancellation policy pause_dependents"):
+        ToolExecutionPlan(
+            plan_id="plan-1",
+            response_id="response-1",
+            calls=calls,
+            maximum_parallelism=1,
+            cancellation_policy="pause_dependents",
+        )
 
 
 def test_tool_execution_plan_readies_independent_calls_up_to_parallelism() -> None:

@@ -81,6 +81,7 @@ VALID_TOOL_APPROVALS = frozenset({"never", "policy", "always"})
 VALID_TOOL_IDEMPOTENCIES = frozenset({"not_applicable", "optional", "required"})
 VALID_TOOL_CANCELLATIONS = frozenset({"unsupported", "cooperative", "force_terminable"})
 VALID_TOOL_RESULT_MODES = frozenset({"value", "incremental", "bounded_sequence", "artifact_reference"})
+VALID_TOOL_CALL_DRAFT_STATUSES = frozenset({"proposed", "arguments_streaming", "arguments_complete"})
 VALID_TOOL_CALL_STATUSES = frozenset(
     {
         "validated",
@@ -99,6 +100,25 @@ VALID_TOOL_CALL_STATUSES = frozenset(
 VALID_TOOL_RESULT_STATUSES = frozenset(
     {"completed", "failed", "denied", "cancelled", "policy_stopped", "incomplete"}
 )
+VALID_TOOL_RESULT_EVENT_KINDS = frozenset(
+    {
+        "started",
+        "delta",
+        "artifact_ready",
+        "completed",
+        "failed",
+        "denied",
+        "cancelled",
+        "policy_stopped",
+        "incomplete",
+    }
+)
+VALID_TOOL_EFFECT_OUTCOMES = frozenset({"no_external_effect", "committed", "not_committed", "unknown"})
+VALID_TOOL_EXECUTION_FAILURE_POLICIES = frozenset({"fail_fast", "collect", "return_failures_to_model"})
+VALID_TOOL_EXECUTION_CANCELLATION_POLICIES = frozenset(
+    {"cancel_dependents", "cancel_all", "allow_independent_calls"}
+)
+VALID_TOOL_APPROVAL_STATUSES = frozenset({"requested", "approved", "denied", "invalidated"})
 
 
 class ToolCallError(RuntimeError):
@@ -501,6 +521,10 @@ class ToolApprovalRecord:
     invalidated_at: int | None = None
     reason: str | None = None
 
+    def __post_init__(self) -> None:
+        if self.status not in VALID_TOOL_APPROVAL_STATUSES:
+            raise ValueError(f"invalid tool approval status {self.status}")
+
     @classmethod
     def requested(cls, request: ToolApprovalRequest) -> ToolApprovalRecord:
         return cls(approval_id=request.approval_id, request=request, status="requested")
@@ -689,6 +713,11 @@ class ToolCallDraft:
     sequence: int = 0
     status: ToolCallDraftStatus = "proposed"
 
+    def __post_init__(self) -> None:
+        if self.status not in VALID_TOOL_CALL_DRAFT_STATUSES:
+            raise ValueError(f"invalid tool call draft status {self.status}")
+        object.__setattr__(self, "argument_fragments", tuple(self.argument_fragments))
+
     @classmethod
     def proposed(cls, response_id: str, tool_call_id: str, tool_name: str) -> ToolCallDraft:
         return cls(response_id=response_id, tool_call_id=tool_call_id, tool_name=tool_name)
@@ -856,6 +885,10 @@ class ToolExecutionPlan:
     _calls_by_id: dict[str, ToolPlanCall] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        if self.failure_policy not in VALID_TOOL_EXECUTION_FAILURE_POLICIES:
+            raise ToolExecutionPlanError(f"invalid failure policy {self.failure_policy}")
+        if self.cancellation_policy not in VALID_TOOL_EXECUTION_CANCELLATION_POLICIES:
+            raise ToolExecutionPlanError(f"invalid cancellation policy {self.cancellation_policy}")
         if self.maximum_parallelism <= 0:
             raise ToolExecutionPlanError("maximum_parallelism must be positive")
         self.calls = tuple(self.calls)
@@ -1022,6 +1055,8 @@ class ToolResult:
     def __post_init__(self) -> None:
         if self.status not in VALID_TOOL_RESULT_STATUSES:
             raise ValueError(f"invalid tool result status {self.status}")
+        if self.effect_outcome not in VALID_TOOL_EFFECT_OUTCOMES:
+            raise ValueError(f"invalid tool effect outcome {self.effect_outcome}")
         object.__setattr__(self, "output", tuple(self.output))
         object.__setattr__(
             self,
@@ -1337,6 +1372,11 @@ class ToolResultEvent:
     output: tuple[ContentPart, ...] = field(default_factory=tuple)
     artifact: ArtifactRef | None = None
     result: ToolResult | None = None
+
+    def __post_init__(self) -> None:
+        if self.kind not in VALID_TOOL_RESULT_EVENT_KINDS:
+            raise ValueError(f"invalid tool result event kind {self.kind}")
+        object.__setattr__(self, "output", tuple(self.output))
 
     @classmethod
     def started(cls, tool_call_id: str, sequence: int, *, started_at: str) -> ToolResultEvent:
