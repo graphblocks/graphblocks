@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from graphblocks.run_store import InMemoryRunStore, SQLiteRunStore, StateConflictError
+from graphblocks.run_store import InMemoryRunStore, RunTerminalStateError, SQLiteRunStore, StateConflictError
 
 
 def test_run_store_applies_state_patch_with_revision_cas() -> None:
@@ -47,6 +47,22 @@ def test_state_patch_deletes_key_with_none_value() -> None:
     assert updated.state_revision == 2
 
 
+def test_run_store_rejects_state_and_status_mutation_after_terminal_status() -> None:
+    store = InMemoryRunStore()
+    record = store.create_run("sha256:test", {})
+    store.set_status(record.run_id, "succeeded")
+
+    with pytest.raises(RunTerminalStateError) as patch_error:
+        store.patch_state(record.run_id, {"late": True}, expected_revision=0)
+
+    assert patch_error.value.run_id == record.run_id
+    assert patch_error.value.status == "succeeded"
+    assert str(patch_error.value) == f"run {record.run_id} is terminal with status succeeded"
+
+    with pytest.raises(RunTerminalStateError):
+        store.set_status(record.run_id, "failed")
+
+
 def test_sqlite_run_store_persists_records_across_instances(tmp_path) -> None:
     database = tmp_path / "runs.sqlite3"
     first = SQLiteRunStore(database)
@@ -75,6 +91,24 @@ def test_sqlite_run_store_enforces_state_revision_cas(tmp_path) -> None:
 
     assert error.value.current_revision == 1
     assert store.get_run(record.run_id).state == {"count": 1}
+
+
+def test_sqlite_run_store_rejects_state_and_status_mutation_after_terminal_status(tmp_path) -> None:
+    store = SQLiteRunStore(tmp_path / "runs.sqlite3")
+    record = store.create_run("sha256:test", {})
+    store.set_status(record.run_id, "cancelled")
+
+    with pytest.raises(RunTerminalStateError) as patch_error:
+        store.patch_state(record.run_id, {"late": True}, expected_revision=0)
+
+    assert patch_error.value.run_id == record.run_id
+    assert patch_error.value.status == "cancelled"
+    assert store.get_run(record.run_id).state == {}
+
+    with pytest.raises(RunTerminalStateError):
+        store.set_status(record.run_id, "running")
+
+    assert store.get_run(record.run_id).status == "cancelled"
 
 
 def test_sqlite_run_store_allocates_monotonic_run_ids_after_reopen(tmp_path) -> None:

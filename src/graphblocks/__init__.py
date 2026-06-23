@@ -285,7 +285,7 @@ from .review import (
     ReviewerCredential,
     ReviewerCredentialProvider,
 )
-from .run_store import InMemoryRunStore, RunRecord, SQLiteRunStore, StateConflictError
+from .run_store import InMemoryRunStore, RunRecord, RunTerminalStateError, SQLiteRunStore, StateConflictError
 from .schema import SchemaId, SchemaIdError, TypedValue
 from .server import (
     ApplicationProtocolCapabilities,
@@ -488,6 +488,7 @@ __all__ = [
     "RunOwnershipLease",
     "RunResult",
     "RunRecord",
+    "RunTerminalStateError",
     "ModelVisibleToolRef",
     "ModelPool",
     "ModelPoolMismatchError",

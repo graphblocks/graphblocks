@@ -113,3 +113,18 @@ def test_testing_package_runs_runtime_tck_case_and_reports_output_mismatch(monke
         "outputs": {"prompt": "Hello Ada"},
         "terminal_kind": "run_succeeded",
     }
+
+
+def test_testing_package_exposes_terminal_run_store_error(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    store = graphblocks_testing.InMemoryRunStore()
+    record = store.create_run("sha256:test", {})
+    store.set_status(record.run_id, "succeeded")
+
+    try:
+        store.patch_state(record.run_id, {"late": True}, expected_revision=0)
+    except graphblocks_testing.RunTerminalStateError as error:
+        assert error.status == "succeeded"
+    else:  # pragma: no cover - test should fail before this branch.
+        raise AssertionError("terminal run state mutation was allowed")

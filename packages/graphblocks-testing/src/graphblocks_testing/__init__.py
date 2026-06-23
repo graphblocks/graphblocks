@@ -5,7 +5,13 @@ from typing import Literal
 
 from graphblocks.canonical import canonical_hash
 from graphblocks.compiler import compile_graph
-from graphblocks.run_store import InMemoryRunStore, RunRecord, SQLiteRunStore, StateConflictError
+from graphblocks.run_store import (
+    InMemoryRunStore,
+    RunRecord,
+    RunTerminalStateError,
+    SQLiteRunStore,
+    StateConflictError,
+)
 from graphblocks.runtime import (
     CancellationToken,
     ExecutionJournal,
@@ -209,6 +215,7 @@ __all__ = [
     "JournalRecord",
     "JournalStateError",
     "RunRecord",
+    "RunTerminalStateError",
     "RunResult",
     "RuntimeRegistry",
     "SQLiteExecutionJournal",

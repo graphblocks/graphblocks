@@ -8,6 +8,11 @@ import sqlite3
 from typing import Any, Literal
 
 
+RunStatus = Literal["created", "running", "succeeded", "failed", "cancelled"]
+MutableRunStatus = Literal["running", "succeeded", "failed", "cancelled"]
+TERMINAL_RUN_STATUSES = frozenset({"succeeded", "failed", "cancelled"})
+
+
 class StateConflictError(RuntimeError):
     def __init__(self, run_id: str, expected_revision: int, current_revision: int) -> None:
         super().__init__(
@@ -18,12 +23,19 @@ class StateConflictError(RuntimeError):
         self.current_revision = current_revision
 
 
+class RunTerminalStateError(RuntimeError):
+    def __init__(self, run_id: str, status: str) -> None:
+        super().__init__(f"run {run_id} is terminal with status {status}")
+        self.run_id = run_id
+        self.status = status
+
+
 @dataclass(frozen=True, slots=True)
 class RunRecord:
     run_id: str
     graph_hash: str
     inputs: dict[str, Any]
-    status: Literal["created", "running", "succeeded", "failed", "cancelled"] = "created"
+    status: RunStatus = "created"
     state: dict[str, Any] = field(default_factory=dict)
     state_revision: int = 0
 
@@ -45,6 +57,8 @@ class InMemoryRunStore:
 
     def patch_state(self, run_id: str, patch: dict[str, Any], expected_revision: int) -> RunRecord:
         current = self.runs[run_id]
+        if current.status in TERMINAL_RUN_STATUSES:
+            raise RunTerminalStateError(run_id, current.status)
         if current.state_revision != expected_revision:
             raise StateConflictError(run_id, expected_revision, current.state_revision)
 
@@ -71,8 +85,10 @@ class InMemoryRunStore:
         self.runs[run_id] = updated
         return deepcopy(updated)
 
-    def set_status(self, run_id: str, status: Literal["running", "succeeded", "failed", "cancelled"]) -> RunRecord:
+    def set_status(self, run_id: str, status: MutableRunStatus) -> RunRecord:
         current = self.runs[run_id]
+        if current.status in TERMINAL_RUN_STATUSES:
+            raise RunTerminalStateError(run_id, current.status)
         updated = RunRecord(
             run_id=current.run_id,
             graph_hash=current.graph_hash,
@@ -157,6 +173,8 @@ class SQLiteRunStore:
 
     def patch_state(self, run_id: str, patch: dict[str, Any], expected_revision: int) -> RunRecord:
         current = self.get_run(run_id)
+        if current.status in TERMINAL_RUN_STATUSES:
+            raise RunTerminalStateError(run_id, current.status)
         if current.state_revision != expected_revision:
             raise StateConflictError(run_id, expected_revision, current.state_revision)
 
@@ -192,7 +210,10 @@ class SQLiteRunStore:
         self.connection.commit()
         return self.get_run(run_id)
 
-    def set_status(self, run_id: str, status: Literal["running", "succeeded", "failed", "cancelled"]) -> RunRecord:
+    def set_status(self, run_id: str, status: MutableRunStatus) -> RunRecord:
+        current = self.get_run(run_id)
+        if current.status in TERMINAL_RUN_STATUSES:
+            raise RunTerminalStateError(run_id, current.status)
         cursor = self.connection.execute("UPDATE runs SET status = ? WHERE run_id = ?", (status, run_id))
         if cursor.rowcount != 1:
             raise KeyError(run_id)
