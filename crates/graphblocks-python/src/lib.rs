@@ -12,6 +12,10 @@ use graphblocks_runtime_core::exhaustion::{
     WorkKind,
 };
 use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory, Outcome};
+use graphblocks_runtime_core::output_policy::{
+    DraftDisposition, FlushBoundary, GenerationChunk, OutputDeliveryGate, OutputDeliveryPolicy,
+    OutputPolicyDecision, PendingToolCallsDisposition, ProviderCancellation, ViolationAction,
+};
 use graphblocks_runtime_core::readiness::{InputDependency, PortRef, ResolvedInput};
 use graphblocks_runtime_core::scheduler::{ScheduledNode, StartedNode};
 use graphblocks_runtime_core::test_runtime::{InProcessTestRuntime, NodeExecutor, TestRunStatus};
@@ -946,6 +950,410 @@ fn admit_exhaustion_work_json(policy_json: &str, request_json: &str) -> PyResult
     })
 }
 
+#[pyfunction]
+fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult<String> {
+    let gate_value = parse_json_argument(gate_json, "output gate")?;
+    let operations_value = parse_json_argument(operations_json, "output gate operations")?;
+    let gate_object = json_object(&gate_value, "gate")?;
+    let stream_id = required_string(gate_object, "streamId", "gate")?;
+    let response_id = required_string(gate_object, "responseId", "gate")?;
+    let mut gate = OutputDeliveryGate::new(stream_id, response_id);
+    if let Some(turn_id) = gate_object.get("turnId") {
+        let Some(turn_id) = turn_id.as_str() else {
+            return Err(PyValueError::new_err("gate.turnId must be a string"));
+        };
+        gate = gate.with_turn_id(turn_id);
+    }
+    if let Some(delivery_policy) = gate_object.get("deliveryPolicy") {
+        let delivery_policy = json_object(delivery_policy, "gate.deliveryPolicy")?;
+        let on_violation = match delivery_policy
+            .get("onViolation")
+            .and_then(Value::as_str)
+            .unwrap_or("abort_response")
+        {
+            "abort_response" => ViolationAction::AbortResponse,
+            "abort_turn" => ViolationAction::AbortTurn,
+            "redact" => ViolationAction::Redact,
+            "replace" => ViolationAction::Replace,
+            value => {
+                return Err(PyValueError::new_err(format!(
+                    "gate.deliveryPolicy.onViolation has unknown action {value:?}"
+                )));
+            }
+        };
+        let delivered_draft_disposition = match delivery_policy
+            .get("deliveredDraftDisposition")
+            .and_then(Value::as_str)
+            .unwrap_or("retract")
+        {
+            "keep" => DraftDisposition::Keep,
+            "mark_incomplete" => DraftDisposition::MarkIncomplete,
+            "retract" => DraftDisposition::Retract,
+            value => {
+                return Err(PyValueError::new_err(format!(
+                    "gate.deliveryPolicy.deliveredDraftDisposition has unknown disposition {value:?}"
+                )));
+            }
+        };
+        let mut policy = match required_string(delivery_policy, "mode", "gate.deliveryPolicy")? {
+            "buffer_until_commit" => OutputDeliveryPolicy::buffer_until_commit(on_violation),
+            "bounded_holdback" => {
+                OutputDeliveryPolicy::bounded_holdback(on_violation, delivered_draft_disposition)
+            }
+            "immediate_draft" => {
+                OutputDeliveryPolicy::immediate_draft(on_violation, delivered_draft_disposition)
+            }
+            value => {
+                return Err(PyValueError::new_err(format!(
+                    "gate.deliveryPolicy.mode has unknown mode {value:?}"
+                )));
+            }
+        };
+        if let Some(value) = delivery_policy.get("holdbackMaxTokens") {
+            let Some(value) = value.as_u64() else {
+                return Err(PyValueError::new_err(
+                    "gate.deliveryPolicy.holdbackMaxTokens must be an unsigned integer",
+                ));
+            };
+            policy = policy.with_holdback_max_tokens(value);
+        }
+        if let Some(value) = delivery_policy.get("holdbackMaxBytes") {
+            let Some(value) = value.as_u64() else {
+                return Err(PyValueError::new_err(
+                    "gate.deliveryPolicy.holdbackMaxBytes must be an unsigned integer",
+                ));
+            };
+            policy = policy.with_holdback_max_bytes(value);
+        }
+        if let Some(value) = delivery_policy.get("holdbackMaxDurationMs") {
+            let Some(value) = value.as_u64() else {
+                return Err(PyValueError::new_err(
+                    "gate.deliveryPolicy.holdbackMaxDurationMs must be an unsigned integer",
+                ));
+            };
+            policy = policy.with_holdback_max_duration_ms(value);
+        }
+        if let Some(boundaries) = delivery_policy.get("flushBoundaries") {
+            let Some(boundaries) = boundaries.as_array() else {
+                return Err(PyValueError::new_err(
+                    "gate.deliveryPolicy.flushBoundaries must be an array",
+                ));
+            };
+            let mut parsed_boundaries = Vec::new();
+            for (index, boundary) in boundaries.iter().enumerate() {
+                let Some(boundary) = boundary.as_str() else {
+                    return Err(PyValueError::new_err(format!(
+                        "gate.deliveryPolicy.flushBoundaries[{index}] must be a string"
+                    )));
+                };
+                parsed_boundaries.push(match boundary {
+                    "token" => FlushBoundary::Token,
+                    "sentence" => FlushBoundary::Sentence,
+                    "paragraph" => FlushBoundary::Paragraph,
+                    "content_part" => FlushBoundary::ContentPart,
+                    "tool_call" => FlushBoundary::ToolCall,
+                    "response" => FlushBoundary::Response,
+                    value => {
+                        return Err(PyValueError::new_err(format!(
+                            "gate.deliveryPolicy.flushBoundaries[{index}] has unknown boundary {value:?}"
+                        )));
+                    }
+                });
+            }
+            policy = policy.flush_on(parsed_boundaries);
+        }
+        gate = gate.with_delivery_policy(policy).map_err(|error| {
+            PyValueError::new_err(format!("invalid output gate policy: {error:?}"))
+        })?;
+    }
+
+    let operations = operations_value
+        .as_array()
+        .ok_or_else(|| PyValueError::new_err("output gate operations JSON must be an array"))?;
+    let mut deliveries = Vec::new();
+    for (operation_index, operation) in operations.iter().enumerate() {
+        let operation = json_object(operation, &format!("operations[{operation_index}]"))?;
+        match required_string(operation, "kind", &format!("operations[{operation_index}]"))? {
+            "chunk" => {
+                let sequence = required_u64(
+                    operation,
+                    "sequence",
+                    &format!("operations[{operation_index}]"),
+                )?;
+                let text =
+                    required_string(operation, "text", &format!("operations[{operation_index}]"))?;
+                let operation_stream_id = operation
+                    .get("streamId")
+                    .and_then(Value::as_str)
+                    .unwrap_or(stream_id);
+                let operation_response_id = operation
+                    .get("responseId")
+                    .and_then(Value::as_str)
+                    .unwrap_or(response_id);
+                gate.record_chunk(GenerationChunk::text(
+                    operation_stream_id,
+                    operation_response_id,
+                    sequence,
+                    text,
+                ))
+                .map_err(|error| {
+                    PyValueError::new_err(format!(
+                        "output gate operation {operation_index} failed: {error:?}"
+                    ))
+                })?;
+            }
+            "commit" => {
+                let deliverable = gate.commit_accepted_output();
+                if !deliverable.is_empty() {
+                    deliveries.push(json!({
+                        "operationIndex": operation_index,
+                        "chunks": deliverable
+                            .iter()
+                            .map(|chunk| json!({
+                                "streamId": chunk.stream_id,
+                                "responseId": chunk.response_id,
+                                "sequence": chunk.sequence,
+                                "text": chunk.text,
+                            }))
+                            .collect::<Vec<_>>(),
+                    }));
+                }
+            }
+            "decision" => {
+                let label = format!("operations[{operation_index}]");
+                let decision_id = required_string(operation, "decisionId", &label)?;
+                let input_digest = required_string(operation, "inputDigest", &label)?;
+                let accepted_through_sequence = operation
+                    .get("acceptedThroughSequence")
+                    .map(|value| {
+                        value.as_u64().ok_or_else(|| {
+                            PyValueError::new_err(format!(
+                                "{label}.acceptedThroughSequence must be an unsigned integer"
+                            ))
+                        })
+                    })
+                    .transpose()?;
+                let mut decision = match required_string(operation, "disposition", &label)? {
+                    "allow" => OutputPolicyDecision::allow(
+                        decision_id,
+                        accepted_through_sequence,
+                        input_digest,
+                    ),
+                    "hold" => OutputPolicyDecision::hold(decision_id, input_digest),
+                    "redact" | "replace" => {
+                        let mut replacement_chunks = Vec::new();
+                        if let Some(chunks) = operation.get("replacementChunks") {
+                            let Some(chunks) = chunks.as_array() else {
+                                return Err(PyValueError::new_err(format!(
+                                    "{label}.replacementChunks must be an array"
+                                )));
+                            };
+                            for (chunk_index, chunk) in chunks.iter().enumerate() {
+                                let chunk = json_object(
+                                    chunk,
+                                    &format!("{label}.replacementChunks[{chunk_index}]"),
+                                )?;
+                                replacement_chunks.push(GenerationChunk::text(
+                                    chunk
+                                        .get("streamId")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or(stream_id),
+                                    chunk
+                                        .get("responseId")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or(response_id),
+                                    required_u64(
+                                        chunk,
+                                        "sequence",
+                                        &format!("{label}.replacementChunks[{chunk_index}]"),
+                                    )?,
+                                    required_string(
+                                        chunk,
+                                        "text",
+                                        &format!("{label}.replacementChunks[{chunk_index}]"),
+                                    )?,
+                                ));
+                            }
+                        }
+                        if required_string(operation, "disposition", &label)? == "redact" {
+                            OutputPolicyDecision::redact(
+                                decision_id,
+                                accepted_through_sequence,
+                                replacement_chunks,
+                                input_digest,
+                            )
+                        } else {
+                            OutputPolicyDecision::replace(
+                                decision_id,
+                                accepted_through_sequence,
+                                replacement_chunks,
+                                input_digest,
+                            )
+                        }
+                    }
+                    "abort_response" => {
+                        OutputPolicyDecision::abort_response(decision_id, input_digest)
+                    }
+                    "abort_turn" => OutputPolicyDecision::abort_turn(decision_id, input_digest),
+                    "deny_commit" => OutputPolicyDecision::deny_commit(decision_id, input_digest),
+                    value => {
+                        return Err(PyValueError::new_err(format!(
+                            "{label}.disposition has unknown disposition {value:?}"
+                        )));
+                    }
+                };
+                if let Some(value) = operation.get("providerCancellation") {
+                    let Some(value) = value.as_str() else {
+                        return Err(PyValueError::new_err(format!(
+                            "{label}.providerCancellation must be a string"
+                        )));
+                    };
+                    decision = decision.with_provider_cancellation(match value {
+                        "none" => ProviderCancellation::None,
+                        "request" => ProviderCancellation::Request,
+                        "required_if_supported" => ProviderCancellation::RequiredIfSupported,
+                        value => {
+                            return Err(PyValueError::new_err(format!(
+                                "{label}.providerCancellation has unknown mode {value:?}"
+                            )));
+                        }
+                    });
+                }
+                if let Some(value) = operation.get("draftDisposition") {
+                    let Some(value) = value.as_str() else {
+                        return Err(PyValueError::new_err(format!(
+                            "{label}.draftDisposition must be a string"
+                        )));
+                    };
+                    decision = decision.with_draft_disposition(match value {
+                        "keep" => DraftDisposition::Keep,
+                        "mark_incomplete" => DraftDisposition::MarkIncomplete,
+                        "retract" => DraftDisposition::Retract,
+                        value => {
+                            return Err(PyValueError::new_err(format!(
+                                "{label}.draftDisposition has unknown disposition {value:?}"
+                            )));
+                        }
+                    });
+                }
+                if let Some(value) = operation.get("pendingToolCalls") {
+                    let Some(value) = value.as_str() else {
+                        return Err(PyValueError::new_err(format!(
+                            "{label}.pendingToolCalls must be a string"
+                        )));
+                    };
+                    decision = decision.with_pending_tool_calls(match value {
+                        "keep" => PendingToolCallsDisposition::Keep,
+                        "deny" => PendingToolCallsDisposition::Deny,
+                        "cancel_admitted" => PendingToolCallsDisposition::CancelAdmitted,
+                        value => {
+                            return Err(PyValueError::new_err(format!(
+                                "{label}.pendingToolCalls has unknown disposition {value:?}"
+                            )));
+                        }
+                    });
+                }
+                let occurred_at_unix_ms = required_u64(operation, "occurredAtUnixMs", &label)?;
+                let update =
+                    gate.apply_decision(decision, occurred_at_unix_ms)
+                        .map_err(|error| {
+                            PyValueError::new_err(format!(
+                                "output gate operation {operation_index} failed: {error:?}"
+                            ))
+                        })?;
+                if !update.deliverable.is_empty() || update.cutoff.is_some() {
+                    let cutoff = update.cutoff.as_ref().map(|cutoff| {
+                        json!({
+                            "streamId": cutoff.stream_id,
+                            "responseId": cutoff.response_id,
+                            "turnId": cutoff.turn_id,
+                            "lastGeneratedSequence": cutoff.last_generated_sequence,
+                            "lastPolicyAcceptedSequence": cutoff.last_policy_accepted_sequence,
+                            "lastClientDeliveredSequence": cutoff.last_client_delivered_sequence,
+                            "terminalReason": match cutoff.terminal_reason {
+                                graphblocks_runtime_core::output_policy::TerminalReason::PolicyDenied => "policy_denied",
+                                graphblocks_runtime_core::output_policy::TerminalReason::BudgetExhausted => "budget_exhausted",
+                                graphblocks_runtime_core::output_policy::TerminalReason::Cancelled => "cancelled",
+                                graphblocks_runtime_core::output_policy::TerminalReason::ClientDisconnected => "client_disconnected",
+                            },
+                            "draftDisposition": match cutoff.draft_disposition {
+                                DraftDisposition::Keep => "keep",
+                                DraftDisposition::MarkIncomplete => "mark_incomplete",
+                                DraftDisposition::Retract => "retract",
+                            },
+                            "durableResult": match cutoff.durable_result {
+                                graphblocks_runtime_core::output_policy::DurableResult::None => "none",
+                                graphblocks_runtime_core::output_policy::DurableResult::Incomplete => "incomplete",
+                                graphblocks_runtime_core::output_policy::DurableResult::Partial => "partial",
+                            },
+                            "policyDecisionId": cutoff.policy_decision_id,
+                            "occurredAtUnixMs": cutoff.occurred_at_unix_ms,
+                        })
+                    });
+                    deliveries.push(json!({
+                        "operationIndex": operation_index,
+                        "chunks": update
+                            .deliverable
+                            .iter()
+                            .map(|chunk| json!({
+                                "streamId": chunk.stream_id,
+                                "responseId": chunk.response_id,
+                                "sequence": chunk.sequence,
+                                "text": chunk.text,
+                            }))
+                            .collect::<Vec<_>>(),
+                        "cutoff": cutoff,
+                    }));
+                }
+            }
+            value => {
+                return Err(PyValueError::new_err(format!(
+                    "operations[{operation_index}].kind has unknown kind {value:?}"
+                )));
+            }
+        }
+    }
+
+    let cutoff = gate.cutoff().map(|cutoff| {
+        json!({
+            "streamId": cutoff.stream_id,
+            "responseId": cutoff.response_id,
+            "turnId": cutoff.turn_id,
+            "lastGeneratedSequence": cutoff.last_generated_sequence,
+            "lastPolicyAcceptedSequence": cutoff.last_policy_accepted_sequence,
+            "lastClientDeliveredSequence": cutoff.last_client_delivered_sequence,
+            "terminalReason": match cutoff.terminal_reason {
+                graphblocks_runtime_core::output_policy::TerminalReason::PolicyDenied => "policy_denied",
+                graphblocks_runtime_core::output_policy::TerminalReason::BudgetExhausted => "budget_exhausted",
+                graphblocks_runtime_core::output_policy::TerminalReason::Cancelled => "cancelled",
+                graphblocks_runtime_core::output_policy::TerminalReason::ClientDisconnected => "client_disconnected",
+            },
+            "draftDisposition": match cutoff.draft_disposition {
+                DraftDisposition::Keep => "keep",
+                DraftDisposition::MarkIncomplete => "mark_incomplete",
+                DraftDisposition::Retract => "retract",
+            },
+            "durableResult": match cutoff.durable_result {
+                graphblocks_runtime_core::output_policy::DurableResult::None => "none",
+                graphblocks_runtime_core::output_policy::DurableResult::Incomplete => "incomplete",
+                graphblocks_runtime_core::output_policy::DurableResult::Partial => "partial",
+            },
+            "policyDecisionId": cutoff.policy_decision_id,
+            "occurredAtUnixMs": cutoff.occurred_at_unix_ms,
+        })
+    });
+    let payload = json!({
+        "deliveries": deliveries,
+        "cutoff": cutoff,
+        "lastGeneratedSequence": gate.last_generated_sequence(),
+        "lastPolicyAcceptedSequence": gate.last_policy_accepted_sequence(),
+        "lastClientDeliveredSequence": gate.last_client_delivered_sequence(),
+    });
+    serde_json::to_string(&payload).map_err(|error| {
+        PyRuntimeError::new_err(format!("failed to serialize output gate result: {error}"))
+    })
+}
+
 #[pymodule]
 fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("__version__", env!("CARGO_PKG_VERSION"))?;
@@ -959,6 +1367,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(run_test_graph_json, module)?)?;
     module.add_function(wrap_pyfunction!(run_stdlib_graph_json, module)?)?;
     module.add_function(wrap_pyfunction!(admit_exhaustion_work_json, module)?)?;
+    module.add_function(wrap_pyfunction!(evaluate_output_gate_json, module)?)?;
     Ok(())
 }
 
@@ -967,8 +1376,9 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{
-        admit_exhaustion_work_json, compile_graph_json, run_stdlib_graph_json, run_test_graph_json,
-        validate_remote_payload_json, validate_worker_advertisement_json,
+        admit_exhaustion_work_json, compile_graph_json, evaluate_output_gate_json,
+        run_stdlib_graph_json, run_test_graph_json, validate_remote_payload_json,
+        validate_worker_advertisement_json,
     };
 
     #[test]
@@ -1263,6 +1673,106 @@ mod tests {
             Some("generated")
         );
         assert_eq!(completed_nodes, vec!["render", "model"]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_output_gate_json_delivers_accepted_chunks_and_records_cutoff() -> Result<(), String>
+    {
+        let gate = json!({
+            "streamId": "stream-1",
+            "responseId": "response-1",
+            "turnId": "turn-1",
+            "deliveryPolicy": {
+                "mode": "bounded_holdback",
+                "holdbackMaxTokens": 1,
+                "onViolation": "abort_response",
+                "deliveredDraftDisposition": "retract"
+            }
+        });
+        let operations = json!([
+            {
+                "kind": "chunk",
+                "sequence": 1,
+                "text": "safe "
+            },
+            {
+                "kind": "chunk",
+                "sequence": 2,
+                "text": "blocked"
+            },
+            {
+                "kind": "decision",
+                "decisionId": "decision-allow",
+                "disposition": "allow",
+                "acceptedThroughSequence": 1,
+                "inputDigest": "sha256:allow",
+                "occurredAtUnixMs": 1_000
+            },
+            {
+                "kind": "decision",
+                "decisionId": "decision-abort",
+                "disposition": "abort_response",
+                "inputDigest": "sha256:abort",
+                "occurredAtUnixMs": 1_010
+            }
+        ]);
+        let gate_json = serde_json::to_string(&gate).map_err(|error| error.to_string())?;
+        let operations_json =
+            serde_json::to_string(&operations).map_err(|error| error.to_string())?;
+
+        let result_json = evaluate_output_gate_json(&gate_json, &operations_json)
+            .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            result
+                .get("deliveries")
+                .and_then(Value::as_array)
+                .and_then(|deliveries| deliveries.first())
+                .and_then(|delivery| delivery.get("chunks"))
+                .and_then(Value::as_array)
+                .and_then(|chunks| chunks.first())
+                .and_then(|chunk| chunk.get("text"))
+                .and_then(Value::as_str),
+            Some("safe ")
+        );
+        assert_eq!(
+            result
+                .get("cutoff")
+                .and_then(|cutoff| cutoff.get("lastGeneratedSequence"))
+                .and_then(Value::as_u64),
+            Some(2)
+        );
+        assert_eq!(
+            result
+                .get("cutoff")
+                .and_then(|cutoff| cutoff.get("lastPolicyAcceptedSequence"))
+                .and_then(Value::as_u64),
+            Some(1)
+        );
+        assert_eq!(
+            result
+                .get("cutoff")
+                .and_then(|cutoff| cutoff.get("lastClientDeliveredSequence"))
+                .and_then(Value::as_u64),
+            Some(1)
+        );
+        assert_eq!(
+            result
+                .get("cutoff")
+                .and_then(|cutoff| cutoff.get("draftDisposition"))
+                .and_then(Value::as_str),
+            Some("retract")
+        );
+        assert_eq!(
+            result
+                .get("lastClientDeliveredSequence")
+                .and_then(Value::as_u64),
+            Some(1)
+        );
 
         Ok(())
     }
