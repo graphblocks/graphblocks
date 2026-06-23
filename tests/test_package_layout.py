@@ -105,6 +105,26 @@ def test_tool_adapter_packages_have_pure_python_layouts() -> None:
         assert (package_root / "src" / import_name / "py.typed").exists()
 
 
+def test_policy_adapter_packages_have_pure_python_layouts_without_sdk_dependencies() -> None:
+    for distribution, import_name in (
+        ("graphblocks-policy-opa", "graphblocks_policy_opa"),
+        ("graphblocks-policy-cedar", "graphblocks_policy_cedar"),
+    ):
+        package_root = ROOT / "packages" / distribution
+        pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
+        dependencies = pyproject["project"]["dependencies"]
+
+        assert pyproject["build-system"]["build-backend"] == "hatchling.build"
+        assert pyproject["project"]["name"] == distribution
+        assert dependencies == ["graphblocks-core~=1.0"]
+        assert not any("opa" in dependency.lower() or "cedar" in dependency.lower() for dependency in dependencies)
+        assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
+            f"src/{import_name}"
+        ]
+        assert (package_root / "src" / import_name / "__init__.py").exists()
+        assert (package_root / "src" / import_name / "py.typed").exists()
+
+
 def test_package_lock_resolves_default_metapackage_closure_without_optional_integrations() -> None:
     lock = build_package_lock(load_package_catalog(), requested=("graphblocks",))
 
