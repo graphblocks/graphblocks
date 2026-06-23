@@ -77,6 +77,21 @@ fn block_catalog_rejects_invalid_descriptor_schema_ids() {
 }
 
 #[test]
+fn block_catalog_allows_descriptor_type_expressions() {
+    assert!(
+        BlockCatalog::from_blocks(&json!([
+            {
+                "typeId": "control.map",
+                "version": 1,
+                "inputs": [{"name": "items", "type": "List<Any>"}],
+                "outputs": [{"name": "values", "type": "List<Any>"}]
+            }
+        ]))
+        .is_ok()
+    );
+}
+
+#[test]
 fn compile_graph_migrates_legacy_graph_api_versions() {
     let graph = json!({
         "apiVersion": "graphblocks.ai/v1alpha2",

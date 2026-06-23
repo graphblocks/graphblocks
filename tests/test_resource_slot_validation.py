@@ -1,7 +1,25 @@
 from __future__ import annotations
 
+import pytest
+
 from graphblocks.compiler import compile_graph
 from graphblocks.plugins import BlockCatalog
+
+
+def test_block_catalog_rejects_invalid_resource_slot_schema_ids() -> None:
+    with pytest.raises(
+        ValueError,
+        match="block catalog entry 0 resource slot model has invalid type resources/Model",
+    ):
+        BlockCatalog.from_blocks(
+            [
+                {
+                    "typeId": "model.generate",
+                    "version": 1,
+                    "resourceSlots": {"model": {"type": "resources/Model"}},
+                }
+            ]
+        )
 
 
 def test_compile_rejects_missing_required_resource_slot_binding() -> None:
@@ -109,4 +127,3 @@ def test_compile_allows_optional_resource_slot_to_be_unbound() -> None:
     plan = compile_graph(graph, block_catalog=catalog)
 
     assert "GB1016" not in [item.code for item in plan.diagnostics.diagnostics]
-

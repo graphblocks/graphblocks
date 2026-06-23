@@ -26,6 +26,10 @@ STATIC_MANIFEST_NAMES = {
 }
 
 
+def _is_direct_schema_type_ref(type_ref: str) -> bool:
+    return ("@" in type_ref or "/" in type_ref) and "<" not in type_ref and ">" not in type_ref
+
+
 @dataclass(frozen=True, slots=True)
 class PluginManifest:
     plugin_id: str
@@ -85,7 +89,7 @@ class BlockCatalog:
     @classmethod
     def from_blocks(cls, blocks: list[dict[str, Any]] | tuple[dict[str, Any], ...]) -> BlockCatalog:
         descriptors: dict[str, BlockDescriptor] = {}
-        for block in blocks:
+        for block_index, block in enumerate(blocks):
             block_type = block.get("typeId") or block.get("type_id") or block.get("block")
             version = block.get("version")
             if isinstance(block_type, str) and "@" in block_type and version is None:
@@ -95,20 +99,38 @@ class BlockCatalog:
             inputs: list[PortDescriptor] = []
             for port in block.get("inputs", []):
                 if isinstance(port, dict) and isinstance(port.get("name"), str):
+                    type_ref = port.get("type")
+                    if isinstance(type_ref, str) and _is_direct_schema_type_ref(type_ref):
+                        try:
+                            SchemaId.parse(type_ref)
+                        except SchemaIdError as error:
+                            raise ValueError(
+                                f"block catalog entry {block_index} input {port['name']} "
+                                f"has invalid type {type_ref}: {error}"
+                            ) from error
                     inputs.append(
                         PortDescriptor(
                             name=port["name"],
-                            type_ref=port.get("type"),
+                            type_ref=type_ref,
                             required=bool(port.get("required", True)),
                         )
                     )
             outputs: list[PortDescriptor] = []
             for port in block.get("outputs", []):
                 if isinstance(port, dict) and isinstance(port.get("name"), str):
+                    type_ref = port.get("type")
+                    if isinstance(type_ref, str) and _is_direct_schema_type_ref(type_ref):
+                        try:
+                            SchemaId.parse(type_ref)
+                        except SchemaIdError as error:
+                            raise ValueError(
+                                f"block catalog entry {block_index} output {port['name']} "
+                                f"has invalid type {type_ref}: {error}"
+                            ) from error
                     outputs.append(
                         PortDescriptor(
                             name=port["name"],
-                            type_ref=port.get("type"),
+                            type_ref=type_ref,
                             required=bool(port.get("required", True)),
                         )
                     )
@@ -121,10 +143,19 @@ class BlockCatalog:
                 ]
             for slot in raw_slots:
                 if isinstance(slot, dict) and isinstance(slot.get("name"), str):
+                    type_ref = slot.get("type")
+                    if isinstance(type_ref, str) and _is_direct_schema_type_ref(type_ref):
+                        try:
+                            SchemaId.parse(type_ref)
+                        except SchemaIdError as error:
+                            raise ValueError(
+                                f"block catalog entry {block_index} resource slot {slot['name']} "
+                                f"has invalid type {type_ref}: {error}"
+                            ) from error
                     resource_slots.append(
                         ResourceSlotDescriptor(
                             name=slot["name"],
-                            type_ref=slot.get("type"),
+                            type_ref=type_ref,
                             optional=bool(slot.get("optional", False)),
                         )
                     )
@@ -244,7 +275,7 @@ def validate_plugin_manifest(document: Any) -> DiagnosticSet:
                     )
                     continue
                 type_ref = port.get("type")
-                if isinstance(type_ref, str):
+                if isinstance(type_ref, str) and _is_direct_schema_type_ref(type_ref):
                     try:
                         SchemaId.parse(type_ref)
                     except SchemaIdError as error:
@@ -258,7 +289,11 @@ def validate_plugin_manifest(document: Any) -> DiagnosticSet:
         resource_slots = block.get("resourceSlots", [])
         if isinstance(resource_slots, list):
             for slot_index, slot in enumerate(resource_slots):
-                if isinstance(slot, dict) and isinstance(slot.get("type"), str):
+                if (
+                    isinstance(slot, dict)
+                    and isinstance(slot.get("type"), str)
+                    and _is_direct_schema_type_ref(slot["type"])
+                ):
                     try:
                         SchemaId.parse(slot["type"])
                     except SchemaIdError as error:

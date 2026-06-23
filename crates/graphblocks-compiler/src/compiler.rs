@@ -167,8 +167,14 @@ impl BlockCatalog {
                     .collect::<Vec<_>>(),
                 _ => Vec::new(),
             };
+            let is_direct_schema_type_ref = |type_ref: &str| {
+                (type_ref.contains('@') || type_ref.contains('/'))
+                    && !type_ref.contains('<')
+                    && !type_ref.contains('>')
+            };
             for port in &inputs {
                 if let Some(type_ref) = &port.type_ref
+                    && is_direct_schema_type_ref(type_ref)
                     && let Err(error) = SchemaId::parse(type_ref)
                 {
                     return Err(format!(
@@ -179,6 +185,7 @@ impl BlockCatalog {
             }
             for port in &outputs {
                 if let Some(type_ref) = &port.type_ref
+                    && is_direct_schema_type_ref(type_ref)
                     && let Err(error) = SchemaId::parse(type_ref)
                 {
                     return Err(format!(
@@ -189,6 +196,7 @@ impl BlockCatalog {
             }
             for slot in &resource_slots {
                 if let Some(type_ref) = &slot.type_ref
+                    && is_direct_schema_type_ref(type_ref)
                     && let Err(error) = SchemaId::parse(type_ref)
                 {
                     return Err(format!(

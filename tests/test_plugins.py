@@ -112,3 +112,26 @@ def test_plugin_manifest_validation_rejects_invalid_descriptor_schema_ids() -> N
         "$.spec.blocks[0].inputs[0].type",
         "$.spec.blocks[0].resourceSlots[0].type",
     ]
+
+
+def test_plugin_manifest_validation_allows_descriptor_type_expressions() -> None:
+    diagnostics = validate_plugin_manifest(
+        {
+            "apiVersion": "graphblocks.ai/v1alpha1",
+            "kind": "PluginManifest",
+            "metadata": {"name": "com.example.type_expressions"},
+            "spec": {
+                "pluginId": "com.example.type_expressions",
+                "blocks": [
+                    {
+                        "typeId": "control.map",
+                        "version": 1,
+                        "inputs": [{"name": "items", "type": "List<Any>"}],
+                        "outputs": [{"name": "values", "type": "List<Any>"}],
+                    }
+                ],
+            },
+        }
+    )
+
+    assert diagnostics.ok

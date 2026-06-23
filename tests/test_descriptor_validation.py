@@ -1,7 +1,40 @@
 from __future__ import annotations
 
+import pytest
+
 from graphblocks.compiler import compile_graph
 from graphblocks.plugins import BlockCatalog
+
+
+def test_block_catalog_rejects_invalid_port_schema_ids() -> None:
+    with pytest.raises(
+        ValueError,
+        match="block catalog entry 0 output value has invalid type schemas/Text",
+    ):
+        BlockCatalog.from_blocks(
+            [
+                {
+                    "typeId": "text.source",
+                    "version": 1,
+                    "outputs": [{"name": "value", "type": "schemas/Text"}],
+                }
+            ]
+        )
+
+
+def test_block_catalog_allows_port_type_expressions() -> None:
+    catalog = BlockCatalog.from_blocks(
+        [
+            {
+                "typeId": "control.map",
+                "version": 1,
+                "inputs": [{"name": "items", "type": "List<Any>"}],
+                "outputs": [{"name": "values", "type": "List<Any>"}],
+            }
+        ]
+    )
+
+    assert catalog.get("control.map@1") is not None
 
 
 def test_compile_rejects_edge_to_unknown_input_port() -> None:
