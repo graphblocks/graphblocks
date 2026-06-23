@@ -69,6 +69,24 @@ def test_tool_adapter_packages_are_cataloged_as_optional_integrations() -> None:
     }
 
 
+def test_tool_adapter_packages_have_pure_python_layouts() -> None:
+    for distribution, import_name in (
+        ("graphblocks-mcp", "graphblocks_mcp"),
+        ("graphblocks-openapi", "graphblocks_openapi"),
+    ):
+        package_root = ROOT / "packages" / distribution
+        pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
+
+        assert pyproject["build-system"]["build-backend"] == "hatchling.build"
+        assert pyproject["project"]["name"] == distribution
+        assert pyproject["project"]["dependencies"] == ["graphblocks-core~=1.0"]
+        assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
+            f"src/{import_name}"
+        ]
+        assert (package_root / "src" / import_name / "__init__.py").exists()
+        assert (package_root / "src" / import_name / "py.typed").exists()
+
+
 def test_package_lock_resolves_default_metapackage_closure_without_optional_integrations() -> None:
     lock = build_package_lock(load_package_catalog(), requested=("graphblocks",))
 
