@@ -1,4 +1,7 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, path::Path};
+
+use rusqlite::{Connection, OptionalExtension, Row, params};
+use serde_json::{Map, Number, Value};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UsageSource {
@@ -9,12 +12,56 @@ pub enum UsageSource {
     Reconciled,
 }
 
+impl UsageSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::ProviderReported => "provider_reported",
+            Self::RuntimeMeasured => "runtime_measured",
+            Self::TokenizerEstimated => "tokenizer_estimated",
+            Self::PricingEstimated => "pricing_estimated",
+            Self::Reconciled => "reconciled",
+        }
+    }
+
+    fn from_str(source: &str) -> Option<Self> {
+        match source {
+            "provider_reported" => Some(Self::ProviderReported),
+            "runtime_measured" => Some(Self::RuntimeMeasured),
+            "tokenizer_estimated" => Some(Self::TokenizerEstimated),
+            "pricing_estimated" => Some(Self::PricingEstimated),
+            "reconciled" => Some(Self::Reconciled),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UsageConfidence {
     Exact,
     ProviderExact,
     Estimated,
     Unknown,
+}
+
+impl UsageConfidence {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Exact => "exact",
+            Self::ProviderExact => "provider_exact",
+            Self::Estimated => "estimated",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    fn from_str(confidence: &str) -> Option<Self> {
+        match confidence {
+            "exact" => Some(Self::Exact),
+            "provider_exact" => Some(Self::ProviderExact),
+            "estimated" => Some(Self::Estimated),
+            "unknown" => Some(Self::Unknown),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -109,6 +156,7 @@ impl UsageRecord {
 pub enum UsageLedgerError {
     RecordNotFound { record_id: String },
     RecordConflict { record_id: String },
+    Storage { message: String },
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -202,5 +250,442 @@ impl InMemoryUsageLedger {
         };
 
         self.append(reconciled)
+    }
+}
+
+pub struct SqliteUsageLedger {
+    connection: Connection,
+}
+
+impl SqliteUsageLedger {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, UsageLedgerError> {
+        let connection = Connection::open(path).map_err(usage_storage_error)?;
+        let ledger = Self { connection };
+        ledger.initialize()?;
+        Ok(ledger)
+    }
+
+    pub fn open_in_memory() -> Result<Self, UsageLedgerError> {
+        let connection = Connection::open_in_memory().map_err(usage_storage_error)?;
+        let ledger = Self { connection };
+        ledger.initialize()?;
+        Ok(ledger)
+    }
+
+    fn initialize(&self) -> Result<(), UsageLedgerError> {
+        self.connection
+            .execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS usage_records (
+                    sequence INTEGER PRIMARY KEY,
+                    record_id TEXT NOT NULL UNIQUE,
+                    source TEXT NOT NULL,
+                    confidence TEXT NOT NULL,
+                    amounts_json TEXT NOT NULL,
+                    occurred_at_unix_ms INTEGER NOT NULL,
+                    run_id TEXT,
+                    attempt_id TEXT,
+                    provider_response_id TEXT,
+                    pricing_ref TEXT,
+                    reconciliation_of TEXT,
+                    metadata_json TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS usage_records_run_id
+                    ON usage_records(run_id, sequence);
+                CREATE INDEX IF NOT EXISTS usage_records_provider_response
+                    ON usage_records(provider_response_id, attempt_id, sequence)
+                    WHERE provider_response_id IS NOT NULL AND reconciliation_of IS NULL;
+                ",
+            )
+            .map_err(usage_storage_error)?;
+        Ok(())
+    }
+
+    pub fn append(&mut self, record: UsageRecord) -> Result<UsageRecord, UsageLedgerError> {
+        if record.reconciliation_of.is_none() {
+            if let Some(provider_response_id) = &record.provider_response_id {
+                if let Some(existing) =
+                    self.provider_duplicate(provider_response_id, record.attempt_id.as_deref())?
+                {
+                    return Ok(existing);
+                }
+            }
+        }
+
+        if self.record_exists(&record.record_id)? {
+            return Err(UsageLedgerError::RecordConflict {
+                record_id: record.record_id,
+            });
+        }
+
+        let transaction = self.connection.transaction().map_err(usage_storage_error)?;
+        let next_sequence = transaction
+            .query_row(
+                "SELECT COALESCE(MAX(sequence), 0) + 1 FROM usage_records",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(usage_storage_error)?;
+        transaction
+            .execute(
+                "
+                INSERT INTO usage_records (
+                    sequence,
+                    record_id,
+                    source,
+                    confidence,
+                    amounts_json,
+                    occurred_at_unix_ms,
+                    run_id,
+                    attempt_id,
+                    provider_response_id,
+                    pricing_ref,
+                    reconciliation_of,
+                    metadata_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ",
+                params![
+                    next_sequence,
+                    &record.record_id,
+                    record.source.as_str(),
+                    record.confidence.as_str(),
+                    usage_amounts_json(&record.amounts)?,
+                    usage_u64_to_i64(record.occurred_at_unix_ms, "usage occurred_at")?,
+                    &record.run_id,
+                    &record.attempt_id,
+                    &record.provider_response_id,
+                    &record.pricing_ref,
+                    &record.reconciliation_of,
+                    string_map_json(&record.metadata)?,
+                ],
+            )
+            .map_err(usage_storage_error)?;
+        transaction.commit().map_err(usage_storage_error)?;
+        Ok(record)
+    }
+
+    pub fn get(&self, record_id: impl AsRef<str>) -> Result<UsageRecord, UsageLedgerError> {
+        let record_id = record_id.as_ref();
+        self.connection
+            .query_row(
+                "
+                SELECT
+                    record_id,
+                    source,
+                    confidence,
+                    amounts_json,
+                    occurred_at_unix_ms,
+                    run_id,
+                    attempt_id,
+                    provider_response_id,
+                    pricing_ref,
+                    reconciliation_of,
+                    metadata_json
+                FROM usage_records
+                WHERE record_id = ?
+                ",
+                params![record_id],
+                stored_usage_record_from_row,
+            )
+            .optional()
+            .map_err(usage_storage_error)?
+            .map(usage_record_from_storage)
+            .transpose()?
+            .ok_or_else(|| UsageLedgerError::RecordNotFound {
+                record_id: record_id.to_string(),
+            })
+    }
+
+    pub fn records_for_run(
+        &self,
+        run_id: impl AsRef<str>,
+    ) -> Result<Vec<UsageRecord>, UsageLedgerError> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "
+                SELECT
+                    record_id,
+                    source,
+                    confidence,
+                    amounts_json,
+                    occurred_at_unix_ms,
+                    run_id,
+                    attempt_id,
+                    provider_response_id,
+                    pricing_ref,
+                    reconciliation_of,
+                    metadata_json
+                FROM usage_records
+                WHERE run_id = ?
+                ORDER BY sequence
+                ",
+            )
+            .map_err(usage_storage_error)?;
+        let rows = statement
+            .query_map(params![run_id.as_ref()], stored_usage_record_from_row)
+            .map_err(usage_storage_error)?;
+        let mut records = Vec::new();
+        for row in rows {
+            records.push(usage_record_from_storage(
+                row.map_err(usage_storage_error)?,
+            )?);
+        }
+        Ok(records)
+    }
+
+    pub fn reconcile(
+        &mut self,
+        source_record_id: impl AsRef<str>,
+        amounts: impl IntoIterator<Item = UsageAmount>,
+        occurred_at_unix_ms: u64,
+        record_id: Option<String>,
+    ) -> Result<UsageRecord, UsageLedgerError> {
+        let source_record_id = source_record_id.as_ref();
+        let original = self.get(source_record_id)?;
+        let reconciled = UsageRecord {
+            record_id: record_id.unwrap_or_else(|| format!("{source_record_id}:reconciled")),
+            source: UsageSource::Reconciled,
+            confidence: UsageConfidence::Exact,
+            amounts: amounts.into_iter().collect(),
+            occurred_at_unix_ms,
+            run_id: original.run_id,
+            attempt_id: original.attempt_id,
+            provider_response_id: original.provider_response_id,
+            pricing_ref: original.pricing_ref,
+            reconciliation_of: Some(original.record_id),
+            metadata: BTreeMap::new(),
+        };
+
+        self.append(reconciled)
+    }
+
+    fn record_exists(&self, record_id: &str) -> Result<bool, UsageLedgerError> {
+        self.connection
+            .query_row(
+                "SELECT 1 FROM usage_records WHERE record_id = ?",
+                params![record_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()
+            .map(|value| value.is_some())
+            .map_err(usage_storage_error)
+    }
+
+    fn provider_duplicate(
+        &self,
+        provider_response_id: &str,
+        attempt_id: Option<&str>,
+    ) -> Result<Option<UsageRecord>, UsageLedgerError> {
+        self.connection
+            .query_row(
+                "
+                SELECT
+                    record_id,
+                    source,
+                    confidence,
+                    amounts_json,
+                    occurred_at_unix_ms,
+                    run_id,
+                    attempt_id,
+                    provider_response_id,
+                    pricing_ref,
+                    reconciliation_of,
+                    metadata_json
+                FROM usage_records
+                WHERE provider_response_id = ?
+                    AND ((attempt_id IS NULL AND ? IS NULL) OR attempt_id = ?)
+                    AND reconciliation_of IS NULL
+                ORDER BY sequence
+                LIMIT 1
+                ",
+                params![provider_response_id, attempt_id, attempt_id],
+                stored_usage_record_from_row,
+            )
+            .optional()
+            .map_err(usage_storage_error)?
+            .map(usage_record_from_storage)
+            .transpose()
+    }
+}
+
+struct StoredUsageRecord {
+    record_id: String,
+    source: String,
+    confidence: String,
+    amounts_json: String,
+    occurred_at_unix_ms: i64,
+    run_id: Option<String>,
+    attempt_id: Option<String>,
+    provider_response_id: Option<String>,
+    pricing_ref: Option<String>,
+    reconciliation_of: Option<String>,
+    metadata_json: String,
+}
+
+fn stored_usage_record_from_row(row: &Row<'_>) -> rusqlite::Result<StoredUsageRecord> {
+    Ok(StoredUsageRecord {
+        record_id: row.get(0)?,
+        source: row.get(1)?,
+        confidence: row.get(2)?,
+        amounts_json: row.get(3)?,
+        occurred_at_unix_ms: row.get(4)?,
+        run_id: row.get(5)?,
+        attempt_id: row.get(6)?,
+        provider_response_id: row.get(7)?,
+        pricing_ref: row.get(8)?,
+        reconciliation_of: row.get(9)?,
+        metadata_json: row.get(10)?,
+    })
+}
+
+fn usage_record_from_storage(stored: StoredUsageRecord) -> Result<UsageRecord, UsageLedgerError> {
+    let source =
+        UsageSource::from_str(&stored.source).ok_or_else(|| UsageLedgerError::Storage {
+            message: format!("unknown usage source {:?}", stored.source),
+        })?;
+    let confidence =
+        UsageConfidence::from_str(&stored.confidence).ok_or_else(|| UsageLedgerError::Storage {
+            message: format!("unknown usage confidence {:?}", stored.confidence),
+        })?;
+
+    Ok(UsageRecord {
+        record_id: stored.record_id,
+        source,
+        confidence,
+        amounts: usage_amounts_from_json(&stored.amounts_json)?,
+        occurred_at_unix_ms: usage_i64_to_u64(stored.occurred_at_unix_ms, "usage occurred_at")?,
+        run_id: stored.run_id,
+        attempt_id: stored.attempt_id,
+        provider_response_id: stored.provider_response_id,
+        pricing_ref: stored.pricing_ref,
+        reconciliation_of: stored.reconciliation_of,
+        metadata: string_map_from_json(&stored.metadata_json)?,
+    })
+}
+
+fn usage_amounts_json(amounts: &[UsageAmount]) -> Result<String, UsageLedgerError> {
+    let values = amounts
+        .iter()
+        .map(|amount| {
+            let mut value = Map::new();
+            value.insert("kind".to_string(), Value::String(amount.kind.clone()));
+            value.insert(
+                "amount".to_string(),
+                Value::Number(Number::from(amount.amount)),
+            );
+            value.insert("unit".to_string(), Value::String(amount.unit.clone()));
+            value.insert(
+                "dimensions".to_string(),
+                string_map_value(&amount.dimensions),
+            );
+            Value::Object(value)
+        })
+        .collect::<Vec<_>>();
+    serde_json::to_string(&values).map_err(usage_storage_error)
+}
+
+fn usage_amounts_from_json(value: &str) -> Result<Vec<UsageAmount>, UsageLedgerError> {
+    let Value::Array(values) = serde_json::from_str::<Value>(value).map_err(usage_storage_error)?
+    else {
+        return Err(UsageLedgerError::Storage {
+            message: "usage amounts must be an array".to_string(),
+        });
+    };
+
+    let mut amounts = Vec::new();
+    for value in values {
+        let Value::Object(mut object) = value else {
+            return Err(UsageLedgerError::Storage {
+                message: "usage amount must be an object".to_string(),
+            });
+        };
+        let Some(kind) = object.remove("kind").and_then(|value| match value {
+            Value::String(value) => Some(value),
+            _ => None,
+        }) else {
+            return Err(UsageLedgerError::Storage {
+                message: "usage amount kind must be a string".to_string(),
+            });
+        };
+        let Some(amount) = object.remove("amount").and_then(|value| value.as_i64()) else {
+            return Err(UsageLedgerError::Storage {
+                message: "usage amount must be an integer".to_string(),
+            });
+        };
+        let Some(unit) = object.remove("unit").and_then(|value| match value {
+            Value::String(value) => Some(value),
+            _ => None,
+        }) else {
+            return Err(UsageLedgerError::Storage {
+                message: "usage amount unit must be a string".to_string(),
+            });
+        };
+        let dimensions = match object.remove("dimensions") {
+            Some(value) => string_map_from_value(value)?,
+            None => BTreeMap::new(),
+        };
+        amounts.push(UsageAmount {
+            kind,
+            amount,
+            unit,
+            dimensions,
+        });
+    }
+    Ok(amounts)
+}
+
+fn string_map_json(value: &BTreeMap<String, String>) -> Result<String, UsageLedgerError> {
+    serde_json::to_string(&string_map_value(value)).map_err(usage_storage_error)
+}
+
+fn string_map_value(value: &BTreeMap<String, String>) -> Value {
+    Value::Object(
+        value
+            .iter()
+            .map(|(key, value)| (key.clone(), Value::String(value.clone())))
+            .collect(),
+    )
+}
+
+fn string_map_from_json(value: &str) -> Result<BTreeMap<String, String>, UsageLedgerError> {
+    let value = serde_json::from_str(value).map_err(usage_storage_error)?;
+    string_map_from_value(value)
+}
+
+fn string_map_from_value(value: Value) -> Result<BTreeMap<String, String>, UsageLedgerError> {
+    let Value::Object(object) = value else {
+        return Err(UsageLedgerError::Storage {
+            message: "string map must be an object".to_string(),
+        });
+    };
+    let mut result = BTreeMap::new();
+    for (key, value) in object {
+        let Value::String(value) = value else {
+            return Err(UsageLedgerError::Storage {
+                message: format!("string map value for {key:?} must be a string"),
+            });
+        };
+        result.insert(key, value);
+    }
+    Ok(result)
+}
+
+fn usage_u64_to_i64(value: u64, label: &'static str) -> Result<i64, UsageLedgerError> {
+    i64::try_from(value).map_err(|_| UsageLedgerError::Storage {
+        message: format!("{label} exceeds SQLite integer range"),
+    })
+}
+
+fn usage_i64_to_u64(value: i64, label: &'static str) -> Result<u64, UsageLedgerError> {
+    u64::try_from(value).map_err(|_| UsageLedgerError::Storage {
+        message: format!("{label} must be non-negative"),
+    })
+}
+
+fn usage_storage_error(error: impl std::fmt::Display) -> UsageLedgerError {
+    UsageLedgerError::Storage {
+        message: error.to_string(),
     }
 }

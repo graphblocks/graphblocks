@@ -1,9 +1,26 @@
 use graphblocks_runtime_core::usage::{
-    InMemoryUsageLedger, UsageAmount, UsageConfidence, UsageLedgerError, UsageRecord, UsageSource,
+    InMemoryUsageLedger, SqliteUsageLedger, UsageAmount, UsageConfidence, UsageLedgerError,
+    UsageRecord, UsageSource,
+};
+use std::{
+    fs,
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 fn tokens(amount: i64) -> UsageAmount {
     UsageAmount::new("model_output_tokens", amount, "tokens")
+}
+
+fn sqlite_usage_path(test_name: &str) -> PathBuf {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock is after unix epoch")
+        .as_nanos();
+    std::env::temp_dir().join(format!(
+        "graphblocks-{test_name}-{}-{unique}.sqlite",
+        std::process::id()
+    ))
 }
 
 #[test]
@@ -95,5 +112,71 @@ fn usage_ledger_reconcile_writes_new_record_for_late_final_usage() -> Result<(),
         ledger.records_for_run("run-1"),
         vec![provisional, reconciled]
     );
+    Ok(())
+}
+
+#[test]
+fn sqlite_usage_ledger_persists_records_across_reopen() -> Result<(), UsageLedgerError> {
+    let path = sqlite_usage_path("usage-persist");
+    let record = UsageRecord::new(
+        "usage-1",
+        UsageSource::RuntimeMeasured,
+        UsageConfidence::Estimated,
+        [tokens(12).with_dimension("model", "test-model")],
+        1_000,
+    )
+    .with_run_id("run-1")
+    .with_attempt_id("attempt-1")
+    .with_metadata("phase", "generation");
+
+    {
+        let mut ledger = SqliteUsageLedger::open(&path)?;
+        assert_eq!(ledger.append(record.clone())?, record);
+    }
+
+    let ledger = SqliteUsageLedger::open(&path)?;
+    assert_eq!(ledger.records_for_run("run-1")?, vec![record]);
+    fs::remove_file(path).ok();
+    Ok(())
+}
+
+#[test]
+fn sqlite_usage_ledger_deduplicates_provider_response_and_reconciles_late_usage()
+-> Result<(), UsageLedgerError> {
+    let mut ledger = SqliteUsageLedger::open_in_memory()?;
+    let first = UsageRecord::new(
+        "usage-1",
+        UsageSource::ProviderReported,
+        UsageConfidence::ProviderExact,
+        [tokens(20)],
+        1_000,
+    )
+    .with_run_id("run-1")
+    .with_attempt_id("attempt-1")
+    .with_provider_response_id("resp-1");
+    let duplicate = UsageRecord::new(
+        "usage-duplicate",
+        UsageSource::ProviderReported,
+        UsageConfidence::ProviderExact,
+        [tokens(20)],
+        1_010,
+    )
+    .with_run_id("run-1")
+    .with_attempt_id("attempt-1")
+    .with_provider_response_id("resp-1");
+
+    assert_eq!(ledger.append(first.clone())?, first);
+    assert_eq!(ledger.append(duplicate)?, first);
+
+    let reconciled = ledger.reconcile(
+        "usage-1",
+        [tokens(21)],
+        1_500,
+        Some("usage-reconciled".to_string()),
+    )?;
+
+    assert_eq!(reconciled.source, UsageSource::Reconciled);
+    assert_eq!(reconciled.reconciliation_of.as_deref(), Some("usage-1"));
+    assert_eq!(ledger.records_for_run("run-1")?, vec![first, reconciled]);
     Ok(())
 }
