@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+import graphblocks
 from graphblocks.worker import (
     WORKER_PROTOCOL_VERSION,
     BlockCapability,
@@ -115,6 +116,22 @@ def test_worker_admission_decision_allows_ready_matching_worker() -> None:
 
     assert decision.admitted is True
     assert decision.reason_codes == ()
+
+
+def test_top_level_package_exports_worker_admission_decision_api() -> None:
+    advertisement = graphblocks.WorkerAdvertisement.new(
+        "worker-local-1",
+        "doc-cpu",
+        "sha256:package-lock",
+        "sha256:image",
+        [graphblocks.BlockCapability("prompt.render@1")],
+    )
+    policy = graphblocks.WorkerAdmissionPolicy.current().require_block("prompt.render@1")
+
+    decision = graphblocks.evaluate_worker_admission(policy, advertisement)
+
+    assert isinstance(decision, graphblocks.WorkerAdmissionDecision)
+    assert decision.admitted is True
 
 
 def test_worker_selection_skips_draining_and_saturated_workers() -> None:
