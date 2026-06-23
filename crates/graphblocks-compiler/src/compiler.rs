@@ -456,6 +456,98 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
         .and_then(Value::as_object)
     {
         let mode = delivery.get("mode").and_then(Value::as_str);
+        if let Some(mode) = delivery.get("mode")
+            && !mode.as_str().is_some_and(|mode| {
+                matches!(
+                    mode,
+                    "buffer_until_commit" | "bounded_holdback" | "immediate_draft"
+                )
+            })
+        {
+            diagnostics.push(Diagnostic::error(
+                "InvalidOutputDeliveryMode",
+                format!("invalid output delivery mode {mode}"),
+                "$.spec.outputPolicy.delivery.mode",
+            ));
+        }
+
+        if let Some(on_violation) = delivery
+            .get("onViolation")
+            .or_else(|| delivery.get("on_violation"))
+            && !on_violation.as_str().is_some_and(|on_violation| {
+                matches!(
+                    on_violation,
+                    "abort_response" | "abort_turn" | "redact" | "replace"
+                )
+            })
+        {
+            diagnostics.push(Diagnostic::error(
+                "InvalidViolationAction",
+                format!("invalid violation action {on_violation}"),
+                "$.spec.outputPolicy.delivery.onViolation",
+            ));
+        }
+
+        let delivered_draft_disposition = delivery
+            .get("deliveredDraftDisposition")
+            .map(|value| ("deliveredDraftDisposition", value))
+            .or_else(|| {
+                delivery
+                    .get("delivered_draft_disposition")
+                    .map(|value| ("delivered_draft_disposition", value))
+            });
+        if let Some((path_key, delivered_draft_disposition)) = delivered_draft_disposition
+            && !delivered_draft_disposition
+                .as_str()
+                .is_some_and(|disposition| {
+                    matches!(disposition, "keep" | "mark_incomplete" | "retract")
+                })
+        {
+            diagnostics.push(Diagnostic::error(
+                "InvalidDraftDisposition",
+                format!("invalid draft disposition {delivered_draft_disposition}"),
+                format!("$.spec.outputPolicy.delivery.{path_key}"),
+            ));
+        }
+
+        let flush_boundaries = delivery
+            .get("flushBoundaries")
+            .map(|value| ("flushBoundaries", value))
+            .or_else(|| {
+                delivery
+                    .get("flush_boundaries")
+                    .map(|value| ("flush_boundaries", value))
+            });
+        if let Some((path_key, flush_boundaries)) = flush_boundaries {
+            if let Some(flush_boundaries) = flush_boundaries.as_array() {
+                for (boundary_index, boundary) in flush_boundaries.iter().enumerate() {
+                    if !boundary.as_str().is_some_and(|boundary| {
+                        matches!(
+                            boundary,
+                            "token"
+                                | "sentence"
+                                | "paragraph"
+                                | "content_part"
+                                | "tool_call"
+                                | "response"
+                        )
+                    }) {
+                        diagnostics.push(Diagnostic::error(
+                            "InvalidFlushBoundary",
+                            format!("invalid flush boundary {boundary}"),
+                            format!("$.spec.outputPolicy.delivery.{path_key}[{boundary_index}]"),
+                        ));
+                    }
+                }
+            } else {
+                diagnostics.push(Diagnostic::error(
+                    "InvalidFlushBoundary",
+                    "flush boundaries must be a list of strings",
+                    format!("$.spec.outputPolicy.delivery.{path_key}"),
+                ));
+            }
+        }
+
         if mode == Some("bounded_holdback") {
             let has_token_bound = delivery
                 .get("holdbackMaxTokens")
@@ -527,6 +619,30 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     Some("before_output_commit") => before_output_commit_index = Some(index),
                     _ => {}
                 }
+                if !enforcement_point.as_str().is_some_and(|enforcement_point| {
+                    matches!(
+                        enforcement_point,
+                        "compile"
+                            | "release"
+                            | "admission"
+                            | "before_node"
+                            | "before_provider_call"
+                            | "on_generation_chunk"
+                            | "before_client_delivery"
+                            | "before_output_commit"
+                            | "on_usage_delta"
+                            | "before_tool_or_effect"
+                            | "before_commit"
+                            | "before_publish"
+                            | "on_resume"
+                    )
+                }) {
+                    diagnostics.push(Diagnostic::error(
+                        "InvalidOutputEnforcementPoint",
+                        format!("invalid output policy enforcement point {enforcement_point}"),
+                        format!("$.spec.outputPolicy.evaluation.enforcementPoints[{index}]"),
+                    ));
+                }
             }
 
             if before_client_delivery_index.is_none() {
@@ -576,8 +692,129 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 .get("disposition")
                 .and_then(Value::as_str)
                 .unwrap_or("abort_response");
+            let valid_disposition = on_violation.get("disposition").is_none_or(|disposition| {
+                disposition.as_str().is_some_and(|disposition| {
+                    matches!(
+                        disposition,
+                        "allow"
+                            | "hold"
+                            | "redact"
+                            | "replace"
+                            | "abort_response"
+                            | "abort_turn"
+                            | "deny_commit"
+                    )
+                })
+            });
+            if !valid_disposition {
+                let invalid_disposition = on_violation
+                    .get("disposition")
+                    .map(Value::to_string)
+                    .unwrap_or_default();
+                diagnostics.push(Diagnostic::error(
+                    "InvalidOutputDisposition",
+                    format!("invalid output disposition {invalid_disposition}"),
+                    "$.spec.outputPolicy.onViolation.disposition",
+                ));
+            }
 
-            if matches!(disposition, "abort_response" | "abort_turn") {
+            if let Some(provider_cancellation) = on_violation
+                .get("providerCancellation")
+                .or_else(|| on_violation.get("provider_cancellation"))
+            {
+                if let Some(provider_cancellation) = provider_cancellation.as_object() {
+                    if let Some(mode) = provider_cancellation.get("mode")
+                        && !mode.as_str().is_some_and(|mode| {
+                            matches!(mode, "none" | "request" | "required_if_supported")
+                        })
+                    {
+                        diagnostics.push(Diagnostic::error(
+                            "InvalidProviderCancellation",
+                            format!("invalid provider cancellation {mode}"),
+                            "$.spec.outputPolicy.onViolation.providerCancellation.mode",
+                        ));
+                    }
+                } else if !provider_cancellation
+                    .as_str()
+                    .is_some_and(|provider_cancellation| {
+                        matches!(
+                            provider_cancellation,
+                            "none" | "request" | "required_if_supported"
+                        )
+                    })
+                {
+                    diagnostics.push(Diagnostic::error(
+                        "InvalidProviderCancellation",
+                        format!("invalid provider cancellation {provider_cancellation}"),
+                        "$.spec.outputPolicy.onViolation.providerCancellation",
+                    ));
+                }
+            }
+
+            let pending_tool_calls_disposition_value = on_violation
+                .get("pendingToolCalls")
+                .or_else(|| on_violation.get("pending_tool_calls"))
+                .and_then(Value::as_object)
+                .and_then(|pending_tool_calls| pending_tool_calls.get("disposition"));
+            let valid_pending_tool_calls_disposition = pending_tool_calls_disposition_value
+                .is_none_or(|disposition| {
+                    disposition.as_str().is_some_and(|disposition| {
+                        matches!(disposition, "keep" | "deny" | "cancel_admitted")
+                    })
+                });
+            if !valid_pending_tool_calls_disposition {
+                let invalid_disposition = pending_tool_calls_disposition_value
+                    .map(Value::to_string)
+                    .unwrap_or_default();
+                diagnostics.push(Diagnostic::error(
+                    "InvalidPendingToolCallsDisposition",
+                    format!("invalid pending tool calls disposition {invalid_disposition}"),
+                    "$.spec.outputPolicy.onViolation.pendingToolCalls.disposition",
+                ));
+            }
+
+            let delivered_draft_disposition_value = on_violation
+                .get("deliveredDraft")
+                .or_else(|| on_violation.get("delivered_draft"))
+                .and_then(Value::as_object)
+                .and_then(|delivered_draft| delivered_draft.get("disposition"));
+            if let Some(delivered_draft_disposition) = delivered_draft_disposition_value
+                && !delivered_draft_disposition
+                    .as_str()
+                    .is_some_and(|disposition| {
+                        matches!(disposition, "keep" | "mark_incomplete" | "retract")
+                    })
+            {
+                diagnostics.push(Diagnostic::error(
+                    "InvalidDraftDisposition",
+                    format!("invalid draft disposition {delivered_draft_disposition}"),
+                    "$.spec.outputPolicy.onViolation.deliveredDraft.disposition",
+                ));
+            }
+
+            let durable_result_disposition_value = on_violation
+                .get("durableResult")
+                .or_else(|| on_violation.get("durable_result"))
+                .and_then(Value::as_object)
+                .and_then(|durable_result| durable_result.get("disposition"));
+            let valid_durable_result_disposition =
+                durable_result_disposition_value.is_none_or(|disposition| {
+                    disposition.as_str().is_some_and(|disposition| {
+                        matches!(disposition, "none" | "incomplete" | "partial")
+                    })
+                });
+            if !valid_durable_result_disposition {
+                let invalid_disposition = durable_result_disposition_value
+                    .map(Value::to_string)
+                    .unwrap_or_default();
+                diagnostics.push(Diagnostic::error(
+                    "InvalidOutputDurableResult",
+                    format!("invalid output durable result {invalid_disposition}"),
+                    "$.spec.outputPolicy.onViolation.durableResult.disposition",
+                ));
+            }
+
+            if valid_disposition && matches!(disposition, "abort_response" | "abort_turn") {
                 let pending_tool_calls_disposition = on_violation
                     .get("pendingToolCalls")
                     .or_else(|| on_violation.get("pending_tool_calls"))
@@ -585,7 +822,8 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     .and_then(|pending_tool_calls| pending_tool_calls.get("disposition"))
                     .and_then(Value::as_str)
                     .unwrap_or("deny");
-                if pending_tool_calls_disposition == "keep" {
+                if valid_pending_tool_calls_disposition && pending_tool_calls_disposition == "keep"
+                {
                     diagnostics.push(Diagnostic::error(
                         "PendingToolCallAfterAbort",
                         "policy-aborted responses must deny or cancel pending tool calls",
@@ -600,7 +838,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     .and_then(|durable_result| durable_result.get("disposition"))
                     .and_then(Value::as_str)
                     .unwrap_or("none");
-                if durable_result_disposition != "none" {
+                if valid_durable_result_disposition && durable_result_disposition != "none" {
                     diagnostics.push(Diagnostic::error(
                         "CommitAfterPolicyStop",
                         "policy-stopped responses must not commit a durable result",

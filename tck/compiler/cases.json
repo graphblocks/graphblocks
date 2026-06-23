@@ -868,6 +868,68 @@
     }
   },
   {
+    "name": "invalid_output_policy_literals",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "invalid-output-policy-literals"
+      },
+      "spec": {
+        "nodes": {
+          "agent": {
+            "block": "agent.run@1"
+          }
+        },
+        "outputPolicy": {
+          "delivery": {
+            "mode": "stream",
+            "holdbackMaxTokens": 48,
+            "onViolation": "pause",
+            "flushBoundaries": ["sentence", "clause"]
+          },
+          "evaluation": {
+            "enforcementPoints": [
+              "on_generation_chunk",
+              "before_client_delivery",
+              "before_output_commit",
+              "after_client_delivery"
+            ]
+          },
+          "onViolation": {
+            "disposition": "halt",
+            "providerCancellation": {
+              "mode": "force"
+            },
+            "pendingToolCalls": {
+              "disposition": "pause"
+            },
+            "deliveredDraft": {
+              "disposition": "erase"
+            },
+            "durableResult": {
+              "disposition": "committed"
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:f28117350253ed19e2bf54e191e893601283c42beed6a6b74e0ea5de0dda9d97",
+      "error_codes": [
+        "InvalidOutputDeliveryMode",
+        "InvalidViolationAction",
+        "InvalidFlushBoundary",
+        "InvalidOutputEnforcementPoint",
+        "InvalidOutputDisposition",
+        "InvalidProviderCancellation",
+        "InvalidPendingToolCallsDisposition",
+        "InvalidDraftDisposition",
+        "InvalidOutputDurableResult"
+      ]
+    }
+  },
+  {
     "name": "output_policy_missing_generation_gate",
     "document": {
       "apiVersion": "graphblocks.ai/v1alpha3",

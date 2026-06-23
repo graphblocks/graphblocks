@@ -26,6 +26,33 @@ VALID_TOOL_IDEMPOTENCIES = frozenset({"not_applicable", "optional", "required"})
 VALID_TOOL_CANCELLATIONS = frozenset({"unsupported", "cooperative", "force_terminable"})
 VALID_TOOL_RESULT_MODES = frozenset({"value", "incremental", "bounded_sequence", "artifact_reference"})
 STATE_CHANGING_TOOL_EFFECTS = frozenset({"external_write", "filesystem_write", "process", "destructive"})
+VALID_OUTPUT_DELIVERY_MODES = frozenset({"buffer_until_commit", "bounded_holdback", "immediate_draft"})
+VALID_VIOLATION_ACTIONS = frozenset({"abort_response", "abort_turn", "redact", "replace"})
+VALID_DRAFT_DISPOSITIONS = frozenset({"keep", "mark_incomplete", "retract"})
+VALID_FLUSH_BOUNDARIES = frozenset({"token", "sentence", "paragraph", "content_part", "tool_call", "response"})
+VALID_OUTPUT_DISPOSITIONS = frozenset(
+    {"allow", "hold", "redact", "replace", "abort_response", "abort_turn", "deny_commit"}
+)
+VALID_PROVIDER_CANCELLATIONS = frozenset({"none", "request", "required_if_supported"})
+VALID_PENDING_TOOL_CALLS_DISPOSITIONS = frozenset({"keep", "deny", "cancel_admitted"})
+VALID_OUTPUT_DURABLE_RESULTS = frozenset({"none", "incomplete", "partial"})
+VALID_POLICY_ENFORCEMENT_POINTS = frozenset(
+    {
+        "compile",
+        "release",
+        "admission",
+        "before_node",
+        "before_provider_call",
+        "on_generation_chunk",
+        "before_client_delivery",
+        "before_output_commit",
+        "on_usage_delta",
+        "before_tool_or_effect",
+        "before_commit",
+        "before_publish",
+        "on_resume",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,6 +182,67 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
         delivery = delivery if isinstance(delivery, dict) else None
         if delivery is not None:
             mode = delivery.get("mode")
+            if mode is not None and (not isinstance(mode, str) or mode not in VALID_OUTPUT_DELIVERY_MODES):
+                diagnostics.append(
+                    Diagnostic(
+                        "InvalidOutputDeliveryMode",
+                        f"invalid output delivery mode {mode}",
+                        "$.spec.outputPolicy.delivery.mode",
+                    )
+                )
+            delivery_on_violation = delivery.get("onViolation", delivery.get("on_violation"))
+            if delivery_on_violation is not None and (
+                not isinstance(delivery_on_violation, str) or delivery_on_violation not in VALID_VIOLATION_ACTIONS
+            ):
+                diagnostics.append(
+                    Diagnostic(
+                        "InvalidViolationAction",
+                        f"invalid violation action {delivery_on_violation}",
+                        "$.spec.outputPolicy.delivery.onViolation",
+                    )
+                )
+            if "deliveredDraftDisposition" in delivery:
+                delivered_draft_disposition = delivery.get("deliveredDraftDisposition")
+                delivered_draft_path = "$.spec.outputPolicy.delivery.deliveredDraftDisposition"
+            else:
+                delivered_draft_disposition = delivery.get("delivered_draft_disposition")
+                delivered_draft_path = "$.spec.outputPolicy.delivery.delivered_draft_disposition"
+            if delivered_draft_disposition is not None and (
+                not isinstance(delivered_draft_disposition, str)
+                or delivered_draft_disposition not in VALID_DRAFT_DISPOSITIONS
+            ):
+                diagnostics.append(
+                    Diagnostic(
+                        "InvalidDraftDisposition",
+                        f"invalid draft disposition {delivered_draft_disposition}",
+                        delivered_draft_path,
+                    )
+                )
+            if "flushBoundaries" in delivery:
+                flush_boundaries = delivery.get("flushBoundaries")
+                flush_boundaries_path = "$.spec.outputPolicy.delivery.flushBoundaries"
+            else:
+                flush_boundaries = delivery.get("flush_boundaries")
+                flush_boundaries_path = "$.spec.outputPolicy.delivery.flush_boundaries"
+            if flush_boundaries is not None:
+                if isinstance(flush_boundaries, list):
+                    for boundary_index, boundary in enumerate(flush_boundaries):
+                        if not isinstance(boundary, str) or boundary not in VALID_FLUSH_BOUNDARIES:
+                            diagnostics.append(
+                                Diagnostic(
+                                    "InvalidFlushBoundary",
+                                    f"invalid flush boundary {boundary}",
+                                    f"{flush_boundaries_path}[{boundary_index}]",
+                                )
+                            )
+                else:
+                    diagnostics.append(
+                        Diagnostic(
+                            "InvalidFlushBoundary",
+                            "flush boundaries must be a list of strings",
+                            flush_boundaries_path,
+                        )
+                    )
             if mode == "bounded_holdback":
                 holdback_max_tokens = delivery.get("holdbackMaxTokens", delivery.get("holdback_max_tokens"))
                 holdback_max_bytes = delivery.get("holdbackMaxBytes", delivery.get("holdback_max_bytes"))
@@ -211,6 +299,14 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
             before_client_delivery_index = None
             before_output_commit_index = None
             for index, enforcement_point in enumerate(enforcement_points):
+                if not isinstance(enforcement_point, str) or enforcement_point not in VALID_POLICY_ENFORCEMENT_POINTS:
+                    diagnostics.append(
+                        Diagnostic(
+                            "InvalidOutputEnforcementPoint",
+                            f"invalid output policy enforcement point {enforcement_point}",
+                            f"$.spec.outputPolicy.evaluation.enforcementPoints[{index}]",
+                        )
+                    )
                 if enforcement_point == "on_generation_chunk":
                     on_generation_chunk_index = index
                 elif enforcement_point == "before_client_delivery":
@@ -266,11 +362,84 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
         on_violation = on_violation if isinstance(on_violation, dict) else None
         if on_violation is not None:
             disposition = on_violation.get("disposition", "abort_response")
+            valid_disposition = isinstance(disposition, str) and disposition in VALID_OUTPUT_DISPOSITIONS
+            if not valid_disposition:
+                diagnostics.append(
+                    Diagnostic(
+                        "InvalidOutputDisposition",
+                        f"invalid output disposition {disposition}",
+                        "$.spec.outputPolicy.onViolation.disposition",
+                    )
+                )
+
+            provider_cancellation = on_violation.get("providerCancellation", on_violation.get("provider_cancellation"))
+            if isinstance(provider_cancellation, dict):
+                provider_cancellation_mode = provider_cancellation.get("mode", "request")
+                provider_cancellation_path = "$.spec.outputPolicy.onViolation.providerCancellation.mode"
+            else:
+                provider_cancellation_mode = provider_cancellation
+                provider_cancellation_path = "$.spec.outputPolicy.onViolation.providerCancellation"
+            if provider_cancellation_mode is not None and (
+                not isinstance(provider_cancellation_mode, str)
+                or provider_cancellation_mode not in VALID_PROVIDER_CANCELLATIONS
+            ):
+                diagnostics.append(
+                    Diagnostic(
+                        "InvalidProviderCancellation",
+                        f"invalid provider cancellation {provider_cancellation_mode}",
+                        provider_cancellation_path,
+                    )
+                )
+
+            pending_tool_calls = on_violation.get("pendingToolCalls") or on_violation.get("pending_tool_calls")
+            pending_tool_calls = pending_tool_calls if isinstance(pending_tool_calls, dict) else {}
+            pending_tool_calls_disposition = pending_tool_calls.get("disposition", "deny")
+            valid_pending_tool_calls_disposition = (
+                isinstance(pending_tool_calls_disposition, str)
+                and pending_tool_calls_disposition in VALID_PENDING_TOOL_CALLS_DISPOSITIONS
+            )
+            if not valid_pending_tool_calls_disposition:
+                diagnostics.append(
+                    Diagnostic(
+                        "InvalidPendingToolCallsDisposition",
+                        f"invalid pending tool calls disposition {pending_tool_calls_disposition}",
+                        "$.spec.outputPolicy.onViolation.pendingToolCalls.disposition",
+                    )
+                )
+
+            delivered_draft = on_violation.get("deliveredDraft") or on_violation.get("delivered_draft")
+            delivered_draft = delivered_draft if isinstance(delivered_draft, dict) else {}
+            delivered_draft_disposition = delivered_draft.get("disposition", "retract")
+            if not (
+                isinstance(delivered_draft_disposition, str)
+                and delivered_draft_disposition in VALID_DRAFT_DISPOSITIONS
+            ):
+                diagnostics.append(
+                    Diagnostic(
+                        "InvalidDraftDisposition",
+                        f"invalid draft disposition {delivered_draft_disposition}",
+                        "$.spec.outputPolicy.onViolation.deliveredDraft.disposition",
+                    )
+                )
+
+            durable_result = on_violation.get("durableResult") or on_violation.get("durable_result")
+            durable_result = durable_result if isinstance(durable_result, dict) else {}
+            durable_result_disposition = durable_result.get("disposition", "none")
+            valid_durable_result_disposition = (
+                isinstance(durable_result_disposition, str)
+                and durable_result_disposition in VALID_OUTPUT_DURABLE_RESULTS
+            )
+            if not valid_durable_result_disposition:
+                diagnostics.append(
+                    Diagnostic(
+                        "InvalidOutputDurableResult",
+                        f"invalid output durable result {durable_result_disposition}",
+                        "$.spec.outputPolicy.onViolation.durableResult.disposition",
+                    )
+                )
+
             if disposition in {"abort_response", "abort_turn"}:
-                pending_tool_calls = on_violation.get("pendingToolCalls") or on_violation.get("pending_tool_calls")
-                pending_tool_calls = pending_tool_calls if isinstance(pending_tool_calls, dict) else {}
-                pending_tool_calls_disposition = pending_tool_calls.get("disposition", "deny")
-                if pending_tool_calls_disposition == "keep":
+                if valid_pending_tool_calls_disposition and pending_tool_calls_disposition == "keep":
                     diagnostics.append(
                         Diagnostic(
                             "PendingToolCallAfterAbort",
@@ -279,10 +448,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                         )
                     )
 
-                durable_result = on_violation.get("durableResult") or on_violation.get("durable_result")
-                durable_result = durable_result if isinstance(durable_result, dict) else {}
-                durable_result_disposition = durable_result.get("disposition", "none")
-                if durable_result_disposition != "none":
+                if valid_durable_result_disposition and durable_result_disposition != "none":
                     diagnostics.append(
                         Diagnostic(
                             "CommitAfterPolicyStop",

@@ -298,6 +298,52 @@ def test_compile_rejects_policy_abort_that_keeps_tools_or_commits_result() -> No
     assert _error_codes(commits_result) == ["CommitAfterPolicyStop"]
 
 
+def test_compile_reports_invalid_output_policy_literals() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "invalid-output-policy-literals"},
+        "spec": {
+            "nodes": {"agent": {"block": "agent.run@1"}},
+            "outputPolicy": {
+                "delivery": {
+                    "mode": "stream",
+                    "holdbackMaxTokens": 48,
+                    "onViolation": "pause",
+                    "flushBoundaries": ["sentence", "clause"],
+                },
+                "evaluation": {
+                    "enforcementPoints": [
+                        "on_generation_chunk",
+                        "before_client_delivery",
+                        "before_output_commit",
+                        "after_client_delivery",
+                    ]
+                },
+                "onViolation": {
+                    "disposition": "halt",
+                    "providerCancellation": {"mode": "force"},
+                    "pendingToolCalls": {"disposition": "pause"},
+                    "deliveredDraft": {"disposition": "erase"},
+                    "durableResult": {"disposition": "committed"},
+                },
+            },
+        },
+    }
+
+    assert _error_codes(graph) == [
+        "InvalidOutputDeliveryMode",
+        "InvalidViolationAction",
+        "InvalidFlushBoundary",
+        "InvalidOutputEnforcementPoint",
+        "InvalidOutputDisposition",
+        "InvalidProviderCancellation",
+        "InvalidPendingToolCallsDisposition",
+        "InvalidDraftDisposition",
+        "InvalidOutputDurableResult",
+    ]
+
+
 def test_compile_allows_safe_output_policy_settings() -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
@@ -334,6 +380,15 @@ def test_compile_allows_safe_output_policy_settings() -> None:
         "PolicyGateAfterDelivery",
         "PendingToolCallAfterAbort",
         "CommitAfterPolicyStop",
+        "InvalidOutputDeliveryMode",
+        "InvalidViolationAction",
+        "InvalidFlushBoundary",
+        "InvalidOutputEnforcementPoint",
+        "InvalidOutputDisposition",
+        "InvalidProviderCancellation",
+        "InvalidPendingToolCallsDisposition",
+        "InvalidDraftDisposition",
+        "InvalidOutputDurableResult",
     } & set(_error_codes(graph))
 
 

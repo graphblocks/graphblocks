@@ -879,6 +879,72 @@ fn compile_graph_rejects_durable_commit_after_policy_stop() {
 }
 
 #[test]
+fn compile_graph_reports_invalid_output_policy_literals() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "invalid-output-policy-literals"},
+        "spec": {
+            "outputPolicy": {
+                "delivery": {
+                    "mode": "stream",
+                    "holdbackMaxTokens": 48,
+                    "onViolation": "pause",
+                    "flushBoundaries": ["sentence", "clause"]
+                },
+                "evaluation": {
+                    "enforcementPoints": [
+                        "on_generation_chunk",
+                        "before_client_delivery",
+                        "before_output_commit",
+                        "after_client_delivery"
+                    ]
+                },
+                "onViolation": {
+                    "disposition": "halt",
+                    "providerCancellation": {
+                        "mode": "force"
+                    },
+                    "pendingToolCalls": {
+                        "disposition": "pause"
+                    },
+                    "deliveredDraft": {
+                        "disposition": "erase"
+                    },
+                    "durableResult": {
+                        "disposition": "committed"
+                    }
+                }
+            },
+            "nodes": {
+                "agent": {"block": "agent.run@1"}
+            }
+        }
+    });
+
+    let plan = compile_graph(&graph);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "InvalidOutputDeliveryMode",
+            "InvalidViolationAction",
+            "InvalidFlushBoundary",
+            "InvalidOutputEnforcementPoint",
+            "InvalidOutputDisposition",
+            "InvalidProviderCancellation",
+            "InvalidPendingToolCallsDisposition",
+            "InvalidDraftDisposition",
+            "InvalidOutputDurableResult"
+        ]
+    );
+}
+
+#[test]
 fn compile_graph_allows_safe_policy_abort_cleanup_settings() {
     let graph = json!({
         "apiVersion": GRAPH_API_VERSION,
