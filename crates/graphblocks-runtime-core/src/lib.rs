@@ -3,6 +3,7 @@ pub mod blob_store;
 pub mod budget;
 pub mod cancellation;
 pub mod conversation;
+pub mod document_parsers;
 pub mod documents;
 pub mod evaluation;
 pub mod exhaustion;
