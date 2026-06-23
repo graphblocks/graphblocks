@@ -344,6 +344,26 @@ def test_testing_package_has_pure_python_layout_without_provider_dependencies() 
     assert (package_root / "src" / "graphblocks_testing" / "py.typed").exists()
 
 
+def test_devtools_package_has_pure_python_layout_without_graph_or_template_dependencies() -> None:
+    package_root = ROOT / "packages" / "graphblocks-devtools"
+    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
+    dependencies = pyproject["project"]["dependencies"]
+
+    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
+    assert pyproject["project"]["name"] == "graphblocks-devtools"
+    assert dependencies == ["graphblocks-core~=1.0", "graphblocks-cli~=1.0"]
+    assert not any(
+        dependency_name in dependency.lower()
+        for dependency in dependencies
+        for dependency_name in ("graphviz", "jinja", "networkx", "pydot")
+    )
+    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
+        "src/graphblocks_devtools"
+    ]
+    assert (package_root / "src" / "graphblocks_devtools" / "__init__.py").exists()
+    assert (package_root / "src" / "graphblocks_devtools" / "py.typed").exists()
+
+
 def test_client_package_has_pure_python_layout_without_server_dependencies() -> None:
     package_root = ROOT / "packages" / "graphblocks-client"
     pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
@@ -362,6 +382,26 @@ def test_client_package_has_pure_python_layout_without_server_dependencies() -> 
     ]
     assert (package_root / "src" / "graphblocks_client" / "__init__.py").exists()
     assert (package_root / "src" / "graphblocks_client" / "py.typed").exists()
+
+
+def test_tui_package_has_pure_python_layout_without_ui_framework_dependency() -> None:
+    package_root = ROOT / "packages" / "graphblocks-tui"
+    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
+    dependencies = pyproject["project"]["dependencies"]
+
+    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
+    assert pyproject["project"]["name"] == "graphblocks-tui"
+    assert dependencies == ["graphblocks-client~=1.0"]
+    assert not any(
+        framework in dependency.lower()
+        for dependency in dependencies
+        for framework in ("textual", "rich", "urwid", "prompt-toolkit")
+    )
+    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
+        "src/graphblocks_tui"
+    ]
+    assert (package_root / "src" / "graphblocks_tui" / "__init__.py").exists()
+    assert (package_root / "src" / "graphblocks_tui" / "py.typed").exists()
 
 
 def test_audit_package_has_pure_python_layout_without_backend_dependencies() -> None:
