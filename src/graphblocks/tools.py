@@ -47,6 +47,7 @@ ToolExecutionFailurePolicy = Literal["fail_fast", "collect", "return_failures_to
 ToolExecutionCancellationPolicy = Literal["cancel_dependents", "cancel_all", "allow_independent_calls"]
 ToolExecutionState = Literal["pending", "running", "completed", "failed", "denied", "cancelled", "skipped"]
 PendingToolCallsDisposition = Literal["keep", "deny", "cancel_admitted"]
+JsonSchemaType = Literal["null", "boolean", "integer", "number", "string", "array", "object"]
 
 
 class ToolCallError(RuntimeError):
@@ -59,6 +60,117 @@ class ToolExecutionPlanError(RuntimeError):
 
 class ToolResolutionError(RuntimeError):
     pass
+
+
+class ToolSchemaRegistryError(RuntimeError):
+    pass
+
+
+class ToolSchemaValidationError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class JsonSchemaNode:
+    expected_type: JsonSchemaType | None = None
+    properties: dict[str, JsonSchemaNode] = field(default_factory=dict)
+    required: frozenset[str] = field(default_factory=frozenset)
+    items: JsonSchemaNode | None = None
+
+    @classmethod
+    def any(cls) -> JsonSchemaNode:
+        return cls()
+
+    @classmethod
+    def string(cls) -> JsonSchemaNode:
+        return cls(expected_type="string")
+
+    @classmethod
+    def integer(cls) -> JsonSchemaNode:
+        return cls(expected_type="integer")
+
+    @classmethod
+    def number(cls) -> JsonSchemaNode:
+        return cls(expected_type="number")
+
+    @classmethod
+    def boolean(cls) -> JsonSchemaNode:
+        return cls(expected_type="boolean")
+
+    @classmethod
+    def object(cls) -> JsonSchemaNode:
+        return cls(expected_type="object")
+
+    @classmethod
+    def array(cls, items: JsonSchemaNode) -> JsonSchemaNode:
+        return cls(expected_type="array", items=items)
+
+    def property(self, name: str, schema: JsonSchemaNode) -> JsonSchemaNode:
+        properties = dict(self.properties)
+        properties[name] = schema
+        return replace(self, properties=properties)
+
+    def required_property(self, name: str, schema: JsonSchemaNode) -> JsonSchemaNode:
+        properties = dict(self.properties)
+        properties[name] = schema
+        return replace(self, properties=properties, required=frozenset((*self.required, name)))
+
+
+@dataclass(frozen=True, slots=True)
+class JsonSchema:
+    schema_id: str
+    root: JsonSchemaNode
+
+
+@dataclass(frozen=True, slots=True)
+class ToolSchemaRegistry:
+    schemas: tuple[JsonSchema, ...]
+    _schemas_by_id: dict[str, JsonSchema] = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "schemas", tuple(self.schemas))
+        schemas_by_id: dict[str, JsonSchema] = {}
+        for schema in self.schemas:
+            if schema.schema_id in schemas_by_id:
+                raise ToolSchemaRegistryError(f"duplicate schema {schema.schema_id}")
+            schemas_by_id[schema.schema_id] = schema
+        object.__setattr__(self, "_schemas_by_id", schemas_by_id)
+
+    def validate(self, schema_id: str, value: object) -> None:
+        schema = self._schemas_by_id.get(schema_id)
+        if schema is None:
+            raise ToolSchemaValidationError(f"schema {schema_id} is not registered")
+        self._validate_node(schema_id, schema.root, value, "$")
+
+    def _validate_node(self, schema_id: str, schema: JsonSchemaNode, value: object, path: str) -> None:
+        if schema.expected_type is not None:
+            matches = (
+                (schema.expected_type == "null" and value is None)
+                or (schema.expected_type == "boolean" and isinstance(value, bool))
+                or (schema.expected_type == "integer" and isinstance(value, int) and not isinstance(value, bool))
+                or (
+                    schema.expected_type == "number"
+                    and isinstance(value, (int, float))
+                    and not isinstance(value, bool)
+                )
+                or (schema.expected_type == "string" and isinstance(value, str))
+                or (schema.expected_type == "array" and isinstance(value, (list, tuple)))
+                or (schema.expected_type == "object" and isinstance(value, dict))
+            )
+            if not matches:
+                raise ToolSchemaValidationError(f"{schema_id} expected {schema.expected_type} at {path}")
+
+        if schema.expected_type == "object" and isinstance(value, dict):
+            for required in sorted(schema.required):
+                if required not in value:
+                    raise ToolSchemaValidationError(f"{schema_id} missing required property {required} at {path}")
+            for property_name, property_schema in sorted(schema.properties.items()):
+                if property_name in value:
+                    self._validate_node(schema_id, property_schema, value[property_name], f"{path}.{property_name}")
+
+        if schema.expected_type == "array" and schema.items is not None and isinstance(value, (list, tuple)):
+            for index, item in enumerate(value):
+                self._validate_node(schema_id, schema.items, item, f"{path}[{index}]")
 
 
 @dataclass(frozen=True, slots=True)

@@ -143,6 +143,8 @@ from .policy import (
 from .tools import (
     BlockToolImplementation,
     GraphToolImplementation,
+    JsonSchema,
+    JsonSchemaNode,
     McpToolImplementation,
     OpenApiToolImplementation,
     RemoteToolImplementation,
@@ -160,6 +162,9 @@ from .tools import (
     ToolResolutionScope,
     ToolResult,
     ToolResultEvent,
+    ToolSchemaRegistry,
+    ToolSchemaRegistryError,
+    ToolSchemaValidationError,
 )
 from .rag import (
     Abstention,
@@ -288,6 +293,8 @@ __all__ = [
     "GateResult",
     "GenerationChunk",
     "GraphToolImplementation",
+    "JsonSchema",
+    "JsonSchemaNode",
     "InProcessRuntime",
     "JournalStateError",
     "__version__",
@@ -345,6 +352,9 @@ __all__ = [
     "ToolResolutionScope",
     "ToolResult",
     "ToolResultEvent",
+    "ToolSchemaRegistry",
+    "ToolSchemaRegistryError",
+    "ToolSchemaValidationError",
     "Turn",
     "TrialResult",
     "TypedValueRef",

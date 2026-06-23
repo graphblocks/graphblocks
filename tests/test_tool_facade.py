@@ -6,6 +6,8 @@ from graphblocks import (
     ArtifactRef,
     BlockToolImplementation,
     ContentPart,
+    JsonSchema,
+    JsonSchemaNode,
     OpenApiToolImplementation,
     ResolvedTool,
     ToolBinding,
@@ -20,6 +22,9 @@ from graphblocks import (
     ToolResolutionError,
     ToolResolutionScope,
     ToolResultEvent,
+    ToolSchemaRegistry,
+    ToolSchemaRegistryError,
+    ToolSchemaValidationError,
 )
 
 
@@ -174,6 +179,46 @@ def test_tool_catalog_reports_visible_tool_without_binding() -> None:
         catalog.resolve(ToolResolutionScope(), effective_policy_snapshot_id="policy-snapshot-1")
 
     assert str(error.value) == "tool binding missing for knowledge.search"
+
+
+def test_tool_schema_registry_validates_required_nested_arguments() -> None:
+    registry = ToolSchemaRegistry(
+        schemas=(
+            JsonSchema(
+                "schemas/ProcessRun@1",
+                JsonSchemaNode.object().required_property(
+                    "cmd",
+                    JsonSchemaNode.array(JsonSchemaNode.string()),
+                ),
+            ),
+        )
+    )
+
+    registry.validate("schemas/ProcessRun@1", {"cmd": ["echo", "hello"]})
+
+    with pytest.raises(ToolSchemaValidationError) as missing:
+        registry.validate("schemas/ProcessRun@1", {})
+    assert str(missing.value) == "schemas/ProcessRun@1 missing required property cmd at $"
+
+    with pytest.raises(ToolSchemaValidationError) as mismatch:
+        registry.validate("schemas/ProcessRun@1", {"cmd": ["echo", 7]})
+    assert str(mismatch.value) == "schemas/ProcessRun@1 expected string at $.cmd[1]"
+
+
+def test_tool_schema_registry_reports_missing_and_duplicate_schemas() -> None:
+    with pytest.raises(ToolSchemaRegistryError) as duplicate:
+        ToolSchemaRegistry(
+            schemas=(
+                JsonSchema("schemas/ProcessRun@1", JsonSchemaNode.object()),
+                JsonSchema("schemas/ProcessRun@1", JsonSchemaNode.object()),
+            )
+        )
+    assert str(duplicate.value) == "duplicate schema schemas/ProcessRun@1"
+
+    registry = ToolSchemaRegistry(schemas=())
+    with pytest.raises(ToolSchemaValidationError) as missing:
+        registry.validate("schemas/Missing@1", {})
+    assert str(missing.value) == "schema schemas/Missing@1 is not registered"
 
 
 def test_tool_call_draft_requires_complete_json_arguments_before_final_call() -> None:
