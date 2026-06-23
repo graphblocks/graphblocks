@@ -518,3 +518,94 @@ fn compile_graph_allows_retried_write_tool_with_required_idempotency() {
             .any(|diagnostic| diagnostic.code == "NonIdempotentRetry")
     );
 }
+
+#[test]
+fn compile_graph_rejects_explicit_tool_approval_without_argument_digest_binding() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "approval-without-argument-digest"},
+        "spec": {
+            "bindings": {
+                "tools": {
+                    "createTicket": {
+                        "definition": {
+                            "name": "ticket.create",
+                            "description": "Create a support ticket.",
+                            "inputSchema": "schemas/TicketCreateRequest@1"
+                        },
+                        "implementation": {
+                            "kind": "openapi",
+                            "connection": "ticket-system",
+                            "operationId": "createTicket"
+                        },
+                        "effects": ["external_write", "network"],
+                        "approval": {
+                            "mode": "always",
+                            "summary": "Operator must approve ticket creation."
+                        }
+                    }
+                }
+            },
+            "nodes": {
+                "agent": {"block": "agent.run@1"}
+            }
+        }
+    });
+
+    let plan = compile_graph(&graph);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["ApprovalWithoutArgumentDigest"]
+    );
+}
+
+#[test]
+fn compile_graph_allows_explicit_tool_approval_bound_to_argument_digest() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "approval-with-argument-digest"},
+        "spec": {
+            "bindings": {
+                "tools": {
+                    "createTicket": {
+                        "definition": {
+                            "name": "ticket.create",
+                            "description": "Create a support ticket.",
+                            "inputSchema": "schemas/TicketCreateRequest@1"
+                        },
+                        "implementation": {
+                            "kind": "openapi",
+                            "connection": "ticket-system",
+                            "operationId": "createTicket"
+                        },
+                        "effects": ["external_write", "network"],
+                        "approval": {
+                            "mode": "always",
+                            "bindArgumentsDigest": true,
+                            "summary": "Operator must approve ticket creation."
+                        }
+                    }
+                }
+            },
+            "nodes": {
+                "agent": {"block": "agent.run@1"}
+            }
+        }
+    });
+
+    let plan = compile_graph(&graph);
+
+    assert!(
+        !plan
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "ApprovalWithoutArgumentDigest")
+    );
+}
