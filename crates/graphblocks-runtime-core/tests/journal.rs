@@ -1,4 +1,6 @@
-use graphblocks_runtime_core::journal::{ExecutionJournal, JournalError, JournalMetadata};
+use graphblocks_runtime_core::journal::{
+    ExecutionJournal, JournalError, JournalMetadata, SqliteExecutionJournal,
+};
 use serde_json::json;
 
 #[test]
@@ -90,5 +92,77 @@ fn journal_terminal_record_preserves_metadata() -> Result<(), JournalError> {
     assert_eq!(terminal.attempt_id.as_deref(), Some("attempt-1"));
     assert_eq!(terminal.lease_epoch, Some(11));
     assert_eq!(journal.records().last(), Some(&terminal));
+    Ok(())
+}
+
+#[test]
+fn sqlite_journal_persists_records_across_reopen() -> Result<(), String> {
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "graphblocks-sqlite-journal-{}-persist.sqlite3",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+
+    let first;
+    let terminal;
+    {
+        let mut journal = SqliteExecutionJournal::open(&path, "run-000001")
+            .map_err(|error| format!("{error:?}"))?;
+        first = journal
+            .append_with_metadata(
+                "node_started",
+                JournalMetadata::new()
+                    .with_causation_id("run")
+                    .with_node_id("model")
+                    .with_attempt_id("attempt-1")
+                    .with_lease_epoch(3),
+                Some(json!({"input": "prompt"})),
+            )
+            .map_err(|error| format!("{error:?}"))?;
+        terminal = journal
+            .append_terminal("run_completed", json!({"status": "completed"}))
+            .map_err(|error| format!("{error:?}"))?;
+    }
+
+    let journal =
+        SqliteExecutionJournal::open(&path, "run-000001").map_err(|error| format!("{error:?}"))?;
+    assert_eq!(
+        journal
+            .terminal_kind()
+            .map_err(|error| format!("{error:?}"))?
+            .as_deref(),
+        Some("run_completed")
+    );
+    assert_eq!(
+        journal.records().map_err(|error| format!("{error:?}"))?,
+        vec![first, terminal],
+    );
+
+    let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
+#[test]
+fn sqlite_journal_rejects_late_records_after_terminal() -> Result<(), String> {
+    let mut journal = SqliteExecutionJournal::open_in_memory("run-000001")
+        .map_err(|error| format!("{error:?}"))?;
+
+    journal
+        .append_terminal("run_completed", json!({"status": "completed"}))
+        .map_err(|error| format!("{error:?}"))?;
+
+    assert_eq!(
+        journal.append("late_node_output", json!({"node": "answer"})),
+        Err(JournalError::AppendAfterTerminal {
+            terminal_kind: "run_completed".to_owned(),
+        }),
+    );
+    assert_eq!(
+        journal.append_terminal("run_failed", json!({"error": "late"})),
+        Err(JournalError::TerminalAlreadyRecorded {
+            terminal_kind: "run_completed".to_owned(),
+        }),
+    );
     Ok(())
 }
