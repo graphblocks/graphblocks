@@ -102,6 +102,122 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                 )
             )
 
+    output_policy = spec.get("outputPolicy") or spec.get("output_policy")
+    output_policy = output_policy if isinstance(output_policy, dict) else None
+    if output_policy is not None:
+        delivery = output_policy.get("delivery")
+        delivery = delivery if isinstance(delivery, dict) else None
+        if delivery is not None:
+            mode = delivery.get("mode")
+            if mode == "bounded_holdback":
+                holdback_max_tokens = delivery.get("holdbackMaxTokens", delivery.get("holdback_max_tokens"))
+                holdback_max_bytes = delivery.get("holdbackMaxBytes", delivery.get("holdback_max_bytes"))
+                holdback_max_duration = (
+                    delivery.get("holdbackMaxDuration")
+                    or delivery.get("holdback_max_duration")
+                    or delivery.get("holdbackMaxDurationMs")
+                    or delivery.get("holdback_max_duration_ms")
+                )
+                has_token_bound = isinstance(holdback_max_tokens, int) and holdback_max_tokens > 0
+                has_byte_bound = isinstance(holdback_max_bytes, int) and holdback_max_bytes > 0
+                has_duration_bound = (
+                    (isinstance(holdback_max_duration, int) and holdback_max_duration > 0)
+                    or (
+                        isinstance(holdback_max_duration, str)
+                        and bool(holdback_max_duration.strip())
+                        and holdback_max_duration != "0ms"
+                    )
+                )
+                if not has_token_bound and not has_byte_bound and not has_duration_bound:
+                    diagnostics.append(
+                        Diagnostic(
+                            "UnboundedPolicyHoldback",
+                            "bounded_holdback output delivery requires a token, byte, or duration bound",
+                            "$.spec.outputPolicy.delivery",
+                        )
+                    )
+
+            if mode == "immediate_draft":
+                delivered_draft_disposition = delivery.get(
+                    "deliveredDraftDisposition",
+                    delivery.get("delivered_draft_disposition", "retract"),
+                )
+                if delivered_draft_disposition == "keep":
+                    diagnostics.append(
+                        Diagnostic(
+                            "ImmediateDraftWithoutRetractionSupport",
+                            "immediate_draft output delivery requires incomplete or retracted draft semantics",
+                            "$.spec.outputPolicy.delivery.deliveredDraftDisposition",
+                        )
+                    )
+
+        evaluation = (
+            output_policy.get("evaluation")
+            or output_policy.get("outputEvaluation")
+            or output_policy.get("output_evaluation")
+        )
+        evaluation = evaluation if isinstance(evaluation, dict) else None
+        enforcement_points = None
+        if evaluation is not None:
+            enforcement_points = evaluation.get("enforcementPoints") or evaluation.get("enforcement_points")
+        if isinstance(enforcement_points, list):
+            on_generation_chunk_index = None
+            before_client_delivery_index = None
+            for index, enforcement_point in enumerate(enforcement_points):
+                if enforcement_point == "on_generation_chunk":
+                    on_generation_chunk_index = index
+                elif enforcement_point == "before_client_delivery":
+                    before_client_delivery_index = index
+            if before_client_delivery_index is None:
+                diagnostics.append(
+                    Diagnostic(
+                        "OutputPolicyBypass",
+                        "output policy enforcement must include the before_client_delivery gate",
+                        "$.spec.outputPolicy.evaluation.enforcementPoints",
+                    )
+                )
+            if (
+                before_client_delivery_index is not None
+                and on_generation_chunk_index is not None
+                and before_client_delivery_index < on_generation_chunk_index
+            ):
+                diagnostics.append(
+                    Diagnostic(
+                        "PolicyGateAfterDelivery",
+                        "on_generation_chunk policy evaluation must precede before_client_delivery",
+                        "$.spec.outputPolicy.evaluation.enforcementPoints",
+                    )
+                )
+
+        on_violation = output_policy.get("onViolation") or output_policy.get("on_violation")
+        on_violation = on_violation if isinstance(on_violation, dict) else None
+        if on_violation is not None:
+            disposition = on_violation.get("disposition", "abort_response")
+            if disposition in {"abort_response", "abort_turn"}:
+                pending_tool_calls = on_violation.get("pendingToolCalls") or on_violation.get("pending_tool_calls")
+                pending_tool_calls = pending_tool_calls if isinstance(pending_tool_calls, dict) else {}
+                pending_tool_calls_disposition = pending_tool_calls.get("disposition", "deny")
+                if pending_tool_calls_disposition == "keep":
+                    diagnostics.append(
+                        Diagnostic(
+                            "PendingToolCallAfterAbort",
+                            "policy-aborted responses must deny or cancel pending tool calls",
+                            "$.spec.outputPolicy.onViolation.pendingToolCalls.disposition",
+                        )
+                    )
+
+                durable_result = on_violation.get("durableResult") or on_violation.get("durable_result")
+                durable_result = durable_result if isinstance(durable_result, dict) else {}
+                durable_result_disposition = durable_result.get("disposition", "none")
+                if durable_result_disposition != "none":
+                    diagnostics.append(
+                        Diagnostic(
+                            "CommitAfterPolicyStop",
+                            "policy-stopped responses must not commit a durable result",
+                            "$.spec.outputPolicy.onViolation.durableResult.disposition",
+                        )
+                    )
+
     normalized = normalize_graph(migrated)
     normalized_spec = normalized.get("spec", {})
     normalized_nodes = normalized_spec.get("nodes", {}) if isinstance(normalized_spec, dict) else {}
