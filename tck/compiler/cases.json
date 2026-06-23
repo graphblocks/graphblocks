@@ -553,6 +553,31 @@
     }
   },
   {
+    "name": "ambiguous_connection_binding",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "ambiguous-binding"
+      },
+      "spec": {
+        "nodes": {
+          "read": {
+            "block": "storage.read@1",
+            "connection": "primary-db",
+            "bindings": {
+              "default": "replica-db"
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:b23d9c4866e9f3287e140194f53f3c3e5f04797f7d12c82224de3c17136fad13",
+      "error_codes": ["GB1006"]
+    }
+  },
+  {
     "name": "tool_missing_definition",
     "document": {
       "apiVersion": "graphblocks.ai/v1alpha3",
