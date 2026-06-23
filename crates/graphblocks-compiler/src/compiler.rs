@@ -518,11 +518,13 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
         if let Some(enforcement_points) = enforcement_points {
             let mut on_generation_chunk_index = None;
             let mut before_client_delivery_index = None;
+            let mut before_output_commit_index = None;
 
             for (index, enforcement_point) in enforcement_points.iter().enumerate() {
                 match enforcement_point.as_str() {
                     Some("on_generation_chunk") => on_generation_chunk_index = Some(index),
                     Some("before_client_delivery") => before_client_delivery_index = Some(index),
+                    Some("before_output_commit") => before_output_commit_index = Some(index),
                     _ => {}
                 }
             }
@@ -537,6 +539,12 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 diagnostics.push(Diagnostic::error(
                     "OutputPolicyBypass",
                     "output policy enforcement must include the on_generation_chunk gate",
+                    "$.spec.outputPolicy.evaluation.enforcementPoints",
+                ));
+            } else if before_output_commit_index.is_none() {
+                diagnostics.push(Diagnostic::error(
+                    "OutputPolicyBypass",
+                    "output policy enforcement must include the before_output_commit gate",
                     "$.spec.outputPolicy.evaluation.enforcementPoints",
                 ));
             }

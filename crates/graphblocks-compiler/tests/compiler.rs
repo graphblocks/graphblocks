@@ -671,6 +671,44 @@ fn compile_graph_rejects_output_policy_without_client_delivery_gate() {
 }
 
 #[test]
+fn compile_graph_rejects_output_policy_without_commit_gate() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "output-policy-missing-commit-gate"},
+        "spec": {
+            "outputPolicy": {
+                "delivery": {
+                    "mode": "bounded_holdback",
+                    "holdbackMaxTokens": 48,
+                    "onViolation": "abort_response"
+                },
+                "evaluation": {
+                    "enforcementPoints": [
+                        "on_generation_chunk",
+                        "before_client_delivery"
+                    ]
+                }
+            },
+            "nodes": {
+                "model": {"block": "model.generate@1"}
+            }
+        }
+    });
+
+    let plan = compile_graph(&graph);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["OutputPolicyBypass"]
+    );
+}
+
+#[test]
 fn compile_graph_rejects_output_policy_gate_after_delivery() {
     let graph = json!({
         "apiVersion": GRAPH_API_VERSION,

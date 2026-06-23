@@ -771,5 +771,36 @@
       "graph_hash": "sha256:c8adaf3110389d45adcf98a93e762950eef669a657826568840abc04d449d55c",
       "error_codes": ["OutputPolicyBypass"]
     }
+  },
+  {
+    "name": "output_policy_missing_commit_gate",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "output-policy-missing-commit-gate"
+      },
+      "spec": {
+        "nodes": {
+          "model": {
+            "block": "model.generate@1"
+          }
+        },
+        "outputPolicy": {
+          "delivery": {
+            "mode": "bounded_holdback",
+            "holdbackMaxTokens": 48,
+            "onViolation": "abort_response"
+          },
+          "evaluation": {
+            "enforcementPoints": ["on_generation_chunk", "before_client_delivery"]
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:a6527d5d61af79e18ca2593f36b825fce2f47479b676ef39be2d7bb4c2340cfa",
+      "error_codes": ["OutputPolicyBypass"]
+    }
   }
 ]

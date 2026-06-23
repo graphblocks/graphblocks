@@ -191,11 +191,14 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
         if isinstance(enforcement_points, list):
             on_generation_chunk_index = None
             before_client_delivery_index = None
+            before_output_commit_index = None
             for index, enforcement_point in enumerate(enforcement_points):
                 if enforcement_point == "on_generation_chunk":
                     on_generation_chunk_index = index
                 elif enforcement_point == "before_client_delivery":
                     before_client_delivery_index = index
+                elif enforcement_point == "before_output_commit":
+                    before_output_commit_index = index
             if before_client_delivery_index is None:
                 diagnostics.append(
                     Diagnostic(
@@ -209,6 +212,14 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                     Diagnostic(
                         "OutputPolicyBypass",
                         "output policy enforcement must include the on_generation_chunk gate",
+                        "$.spec.outputPolicy.evaluation.enforcementPoints",
+                    )
+                )
+            elif before_output_commit_index is None:
+                diagnostics.append(
+                    Diagnostic(
+                        "OutputPolicyBypass",
+                        "output policy enforcement must include the before_output_commit gate",
                         "$.spec.outputPolicy.evaluation.enforcementPoints",
                     )
                 )
