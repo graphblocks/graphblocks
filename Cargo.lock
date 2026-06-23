@@ -143,6 +143,7 @@ dependencies = [
  "graphblocks-compiler",
  "rusqlite",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
