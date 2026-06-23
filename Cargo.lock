@@ -145,6 +145,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "graphblocks-runtime-durable"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "graphblocks-runtime-seq"
 version = "0.1.0"
 dependencies = [

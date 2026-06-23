@@ -4,6 +4,7 @@ members = [
   "crates/graphblocks-compiler",
   "crates/graphblocks-runtime-core",
   "crates/graphblocks-runtime-seq",
+  "crates/graphblocks-runtime-durable",
   "crates/graphblocks-python",
   "crates/graphblocks-protocol",
 ]
