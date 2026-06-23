@@ -344,6 +344,26 @@ def test_testing_package_has_pure_python_layout_without_provider_dependencies() 
     assert (package_root / "src" / "graphblocks_testing" / "py.typed").exists()
 
 
+def test_client_package_has_pure_python_layout_without_server_dependencies() -> None:
+    package_root = ROOT / "packages" / "graphblocks-client"
+    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
+    dependencies = pyproject["project"]["dependencies"]
+
+    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
+    assert pyproject["project"]["name"] == "graphblocks-client"
+    assert dependencies == ["graphblocks-core~=1.0"]
+    assert not any(
+        framework in dependency.lower()
+        for dependency in dependencies
+        for framework in ("fastapi", "starlette", "django", "flask", "aiohttp")
+    )
+    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
+        "src/graphblocks_client"
+    ]
+    assert (package_root / "src" / "graphblocks_client" / "__init__.py").exists()
+    assert (package_root / "src" / "graphblocks_client" / "py.typed").exists()
+
+
 def test_policy_adapter_packages_have_pure_python_layouts_without_sdk_dependencies() -> None:
     for distribution, import_name in (
         ("graphblocks-policy-opa", "graphblocks_policy_opa"),
