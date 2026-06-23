@@ -264,6 +264,11 @@ impl MetricObservation {
         self
     }
 
+    pub fn with_baseline_value(mut self, baseline_value: Value) -> Self {
+        self.baseline_value = Some(baseline_value);
+        self
+    }
+
     fn canonical_value(&self) -> Value {
         json!({
             "name": self.name,
@@ -282,6 +287,7 @@ pub enum ConstraintOperator {
     AtLeast,
     AtMost,
     Equals,
+    MaxRegression,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -353,7 +359,7 @@ where
             .iter()
             .find(|metric| metric.name == constraint.metric_name);
         if !metric
-            .map(|metric| metric_satisfies(&metric.value, constraint))
+            .map(|metric| metric_satisfies(metric, constraint))
             .unwrap_or(false)
         {
             violated.push(format!("metric:{}", constraint.metric_name));
@@ -606,11 +612,38 @@ impl ResultBundle {
     }
 }
 
-fn metric_satisfies(value: &Value, constraint: &GateConstraint) -> bool {
+fn metric_satisfies(metric: &MetricObservation, constraint: &GateConstraint) -> bool {
     if constraint.operator == ConstraintOperator::Equals {
-        return value == &constraint.threshold;
+        return metric.value == constraint.threshold;
     }
-    let Some(value) = numeric_value(value) else {
+    if constraint.operator == ConstraintOperator::MaxRegression {
+        let Some(value) = numeric_value(&metric.value) else {
+            return false;
+        };
+        let Some(baseline) = metric.baseline_value.as_ref().and_then(numeric_value) else {
+            return false;
+        };
+        let Some(max_regression) = numeric_value(&constraint.threshold) else {
+            return false;
+        };
+        if max_regression < 0.0 {
+            return false;
+        }
+        return match metric.direction {
+            MetricDirection::Minimize => {
+                value <= baseline
+                    || (baseline.abs() > f64::EPSILON
+                        && (value - baseline) / baseline.abs() <= max_regression)
+            }
+            MetricDirection::Maximize => {
+                value >= baseline
+                    || (baseline.abs() > f64::EPSILON
+                        && (baseline - value) / baseline.abs() <= max_regression)
+            }
+            MetricDirection::Target | MetricDirection::Informational => false,
+        };
+    }
+    let Some(value) = numeric_value(&metric.value) else {
         return false;
     };
     let Some(threshold) = numeric_value(&constraint.threshold) else {
@@ -620,6 +653,7 @@ fn metric_satisfies(value: &Value, constraint: &GateConstraint) -> bool {
         ConstraintOperator::AtLeast => value >= threshold,
         ConstraintOperator::AtMost => value <= threshold,
         ConstraintOperator::Equals => true,
+        ConstraintOperator::MaxRegression => true,
     }
 }
 

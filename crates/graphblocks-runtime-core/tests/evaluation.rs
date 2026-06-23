@@ -77,6 +77,82 @@ fn evaluate_gate_uses_metric_thresholds() {
 }
 
 #[test]
+fn evaluate_gate_supports_rollout_regression_for_minimized_metrics() {
+    let subject = ResourceSnapshotRef::new("candidate-1", "sha256:candidate");
+    let small_regression = [
+        MetricObservation::new("p95_time_to_first_draft_ms", json!(1_120))
+            .with_baseline_value(json!(1_000))
+            .with_direction(MetricDirection::Minimize),
+    ];
+    let large_regression = [
+        MetricObservation::new("p95_time_to_first_draft_ms", json!(1_250))
+            .with_baseline_value(json!(1_000))
+            .with_direction(MetricDirection::Minimize),
+    ];
+    let constraint = [GateConstraint::new(
+        "p95_time_to_first_draft_ms",
+        ConstraintOperator::MaxRegression,
+        json!(0.15),
+    )];
+
+    let passing = evaluate_gate(
+        "rollout-quality",
+        subject.clone(),
+        &[],
+        &small_regression,
+        None::<[&str; 0]>,
+        &constraint,
+        None,
+    );
+    let failing = evaluate_gate(
+        "rollout-quality",
+        subject,
+        &[],
+        &large_regression,
+        None::<[&str; 0]>,
+        &constraint,
+        None,
+    );
+
+    assert_eq!(passing.decision, GateDecision::Pass);
+    assert_eq!(failing.decision, GateDecision::Fail);
+    assert_eq!(
+        failing.violated_constraints,
+        vec!["metric:p95_time_to_first_draft_ms"]
+    );
+}
+
+#[test]
+fn evaluate_gate_supports_rollout_regression_for_maximized_metrics() {
+    let subject = ResourceSnapshotRef::new("candidate-1", "sha256:candidate");
+    let metrics = [
+        MetricObservation::new("citation_validation_rate", json!(0.90))
+            .with_baseline_value(json!(0.99))
+            .with_direction(MetricDirection::Maximize),
+    ];
+
+    let gate = evaluate_gate(
+        "rollout-quality",
+        subject,
+        &[],
+        &metrics,
+        None::<[&str; 0]>,
+        &[GateConstraint::new(
+            "citation_validation_rate",
+            ConstraintOperator::MaxRegression,
+            json!(0.05),
+        )],
+        None,
+    );
+
+    assert_eq!(gate.decision, GateDecision::Fail);
+    assert_eq!(
+        gate.violated_constraints,
+        vec!["metric:citation_validation_rate"]
+    );
+}
+
+#[test]
 fn review_record_is_invalid_for_changed_subject_digest() {
     let subject = ResourceSnapshotRef::new("candidate-1", "sha256:old");
     let review = ReviewRecord::new(
