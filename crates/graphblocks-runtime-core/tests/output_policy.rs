@@ -207,3 +207,164 @@ fn buffer_until_commit_exposes_no_rejected_content() -> Result<(), OutputGateErr
     assert!(gate.commit_accepted_output().is_empty());
     Ok(())
 }
+
+#[test]
+fn replace_decision_delivers_policy_approved_replacement() -> Result<(), OutputGateError> {
+    let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
+
+    gate.record_chunk(GenerationChunk::text(
+        "stream-1",
+        "response-1",
+        1,
+        "blocked draft",
+    ))?;
+
+    let replaced = gate.apply_decision(
+        OutputPolicyDecision::replace(
+            "decision-replace",
+            Some(1),
+            [GenerationChunk::text(
+                "stream-1",
+                "response-1",
+                1,
+                "policy-approved replacement",
+            )],
+            "sha256:replace",
+        ),
+        1_000,
+    )?;
+
+    assert_eq!(
+        replaced
+            .deliverable
+            .iter()
+            .map(|chunk| (chunk.sequence, chunk.text.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(1, "policy-approved replacement")]
+    );
+    assert_eq!(replaced.cutoff, None);
+    assert_eq!(gate.last_policy_accepted_sequence(), 1);
+    assert_eq!(gate.last_client_delivered_sequence(), 1);
+    assert!(gate.commit_accepted_output().is_empty());
+    Ok(())
+}
+
+#[test]
+fn redact_decision_rewrites_pending_chunk_before_delivery() -> Result<(), OutputGateError> {
+    let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
+
+    gate.record_chunk(GenerationChunk::text("stream-1", "response-1", 1, "safe "))?;
+    let delivered = gate.apply_decision(
+        OutputPolicyDecision::allow("decision-allow", Some(1), "sha256:allow"),
+        1_000,
+    )?;
+    assert_eq!(delivered.deliverable.len(), 1);
+
+    gate.record_chunk(GenerationChunk::text(
+        "stream-1",
+        "response-1",
+        2,
+        "secret value",
+    ))?;
+    let redacted = gate.apply_decision(
+        OutputPolicyDecision::redact(
+            "decision-redact",
+            Some(2),
+            [GenerationChunk::text(
+                "stream-1",
+                "response-1",
+                2,
+                "[redacted]",
+            )],
+            "sha256:redact",
+        ),
+        1_010,
+    )?;
+
+    assert_eq!(
+        redacted
+            .deliverable
+            .iter()
+            .map(|chunk| (chunk.sequence, chunk.text.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(2, "[redacted]")]
+    );
+    assert_eq!(redacted.cutoff, None);
+    assert_eq!(gate.last_policy_accepted_sequence(), 2);
+    assert_eq!(gate.last_client_delivered_sequence(), 2);
+    Ok(())
+}
+
+#[test]
+fn redact_decision_without_replacement_holds_original_pending_chunk() -> Result<(), OutputGateError>
+{
+    let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
+
+    gate.record_chunk(GenerationChunk::text(
+        "stream-1",
+        "response-1",
+        1,
+        "secret value",
+    ))?;
+
+    let redacted = gate.apply_decision(
+        OutputPolicyDecision::redact(
+            "decision-redact",
+            Some(1),
+            Vec::<GenerationChunk>::new(),
+            "sha256:redact",
+        ),
+        1_000,
+    )?;
+
+    assert!(redacted.deliverable.is_empty());
+    assert_eq!(redacted.cutoff, None);
+    assert_eq!(gate.last_policy_accepted_sequence(), 0);
+    assert_eq!(gate.last_client_delivered_sequence(), 0);
+    assert!(gate.commit_accepted_output().is_empty());
+    Ok(())
+}
+
+#[test]
+fn buffer_until_commit_holds_replacement_until_commit() -> Result<(), OutputGateError> {
+    let mut gate = OutputDeliveryGate::new("stream-1", "response-1").with_delivery_policy(
+        OutputDeliveryPolicy::buffer_until_commit(ViolationAction::AbortResponse),
+    )?;
+
+    gate.record_chunk(GenerationChunk::text(
+        "stream-1",
+        "response-1",
+        1,
+        "blocked draft",
+    ))?;
+
+    let held = gate.apply_decision(
+        OutputPolicyDecision::replace(
+            "decision-replace",
+            Some(1),
+            [GenerationChunk::text(
+                "stream-1",
+                "response-1",
+                1,
+                "policy-approved replacement",
+            )],
+            "sha256:replace",
+        ),
+        1_000,
+    )?;
+
+    assert!(held.deliverable.is_empty());
+    assert_eq!(gate.last_policy_accepted_sequence(), 1);
+    assert_eq!(gate.last_client_delivered_sequence(), 0);
+
+    let committed = gate.commit_accepted_output();
+    assert_eq!(
+        committed
+            .iter()
+            .map(|chunk| (chunk.sequence, chunk.text.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(1, "policy-approved replacement")]
+    );
+    assert_eq!(gate.last_client_delivered_sequence(), 1);
+    Ok(())
+}

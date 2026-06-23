@@ -201,6 +201,7 @@ pub struct OutputPolicyDecision {
     pub decision_id: String,
     pub disposition: OutputDisposition,
     pub accepted_through_sequence: Option<u64>,
+    pub replacement_chunks: Vec<GenerationChunk>,
     pub provider_cancellation: ProviderCancellation,
     pub draft_disposition: DraftDisposition,
     pub pending_tool_calls: PendingToolCallsDisposition,
@@ -218,6 +219,7 @@ impl OutputPolicyDecision {
             decision_id: decision_id.into(),
             disposition: OutputDisposition::Allow,
             accepted_through_sequence,
+            replacement_chunks: Vec::new(),
             provider_cancellation: ProviderCancellation::Request,
             draft_disposition: DraftDisposition::Keep,
             pending_tool_calls: PendingToolCallsDisposition::Keep,
@@ -231,6 +233,45 @@ impl OutputPolicyDecision {
             decision_id: decision_id.into(),
             disposition: OutputDisposition::Hold,
             accepted_through_sequence: None,
+            replacement_chunks: Vec::new(),
+            provider_cancellation: ProviderCancellation::Request,
+            draft_disposition: DraftDisposition::Keep,
+            pending_tool_calls: PendingToolCallsDisposition::Keep,
+            evaluated_at_unix_ms: None,
+            input_digest: input_digest.into(),
+        }
+    }
+
+    pub fn redact(
+        decision_id: impl Into<String>,
+        accepted_through_sequence: Option<u64>,
+        replacement_chunks: impl IntoIterator<Item = GenerationChunk>,
+        input_digest: impl Into<String>,
+    ) -> Self {
+        Self {
+            decision_id: decision_id.into(),
+            disposition: OutputDisposition::Redact,
+            accepted_through_sequence,
+            replacement_chunks: replacement_chunks.into_iter().collect(),
+            provider_cancellation: ProviderCancellation::Request,
+            draft_disposition: DraftDisposition::Keep,
+            pending_tool_calls: PendingToolCallsDisposition::Keep,
+            evaluated_at_unix_ms: None,
+            input_digest: input_digest.into(),
+        }
+    }
+
+    pub fn replace(
+        decision_id: impl Into<String>,
+        accepted_through_sequence: Option<u64>,
+        replacement_chunks: impl IntoIterator<Item = GenerationChunk>,
+        input_digest: impl Into<String>,
+    ) -> Self {
+        Self {
+            decision_id: decision_id.into(),
+            disposition: OutputDisposition::Replace,
+            accepted_through_sequence,
+            replacement_chunks: replacement_chunks.into_iter().collect(),
             provider_cancellation: ProviderCancellation::Request,
             draft_disposition: DraftDisposition::Keep,
             pending_tool_calls: PendingToolCallsDisposition::Keep,
@@ -244,6 +285,7 @@ impl OutputPolicyDecision {
             decision_id: decision_id.into(),
             disposition: OutputDisposition::AbortResponse,
             accepted_through_sequence: None,
+            replacement_chunks: Vec::new(),
             provider_cancellation: ProviderCancellation::Request,
             draft_disposition: DraftDisposition::Retract,
             pending_tool_calls: PendingToolCallsDisposition::Deny,
@@ -257,6 +299,7 @@ impl OutputPolicyDecision {
             decision_id: decision_id.into(),
             disposition: OutputDisposition::AbortTurn,
             accepted_through_sequence: None,
+            replacement_chunks: Vec::new(),
             provider_cancellation: ProviderCancellation::Request,
             draft_disposition: DraftDisposition::Retract,
             pending_tool_calls: PendingToolCallsDisposition::Deny,
@@ -270,6 +313,7 @@ impl OutputPolicyDecision {
             decision_id: decision_id.into(),
             disposition: OutputDisposition::DenyCommit,
             accepted_through_sequence: None,
+            replacement_chunks: Vec::new(),
             provider_cancellation: ProviderCancellation::Request,
             draft_disposition: DraftDisposition::Retract,
             pending_tool_calls: PendingToolCallsDisposition::Deny,
@@ -426,6 +470,10 @@ impl OutputDeliveryGate {
 
         let delivered_after = self.last_client_delivered_sequence + 1;
         let accepted_through = self.last_policy_accepted_sequence;
+        if delivered_after > accepted_through {
+            return Vec::new();
+        }
+
         let ready_sequences = self
             .pending
             .range(delivered_after..=accepted_through)
@@ -498,9 +546,67 @@ impl OutputDeliveryGate {
                     cutoff: None,
                 })
             }
-            OutputDisposition::Hold | OutputDisposition::Redact | OutputDisposition::Replace => {
+            OutputDisposition::Hold => Ok(OutputGateUpdate {
+                deliverable: Vec::new(),
+                cutoff: None,
+            }),
+            OutputDisposition::Redact | OutputDisposition::Replace => {
+                if decision.disposition == OutputDisposition::Redact
+                    && decision.replacement_chunks.is_empty()
+                {
+                    return Ok(OutputGateUpdate {
+                        deliverable: Vec::new(),
+                        cutoff: None,
+                    });
+                }
+
+                if decision.disposition == OutputDisposition::Replace {
+                    if let Some(accepted_through_sequence) = decision.accepted_through_sequence {
+                        let delivered_after = self.last_client_delivered_sequence + 1;
+                        let replaced_sequences = self
+                            .pending
+                            .range(delivered_after..=accepted_through_sequence)
+                            .map(|(sequence, _)| *sequence)
+                            .collect::<Vec<_>>();
+                        for sequence in replaced_sequences {
+                            self.pending.remove(&sequence);
+                        }
+                    }
+                }
+
+                for chunk in decision.replacement_chunks {
+                    if chunk.stream_id != self.stream_id {
+                        return Err(OutputGateError::StreamMismatch {
+                            expected_stream_id: self.stream_id.clone(),
+                            actual_stream_id: chunk.stream_id,
+                        });
+                    }
+                    if chunk.response_id != self.response_id {
+                        return Err(OutputGateError::ResponseMismatch {
+                            expected_response_id: self.response_id.clone(),
+                            actual_response_id: chunk.response_id,
+                        });
+                    }
+                    if chunk.sequence > self.last_client_delivered_sequence {
+                        self.pending.insert(chunk.sequence, chunk);
+                    }
+                }
+
+                if let Some(accepted_through_sequence) = decision.accepted_through_sequence {
+                    if accepted_through_sequence > self.last_policy_accepted_sequence {
+                        self.last_policy_accepted_sequence = accepted_through_sequence;
+                    }
+                }
+
+                let deliverable = match self.delivery_policy.mode {
+                    DeliveryMode::BufferUntilCommit => Vec::new(),
+                    DeliveryMode::BoundedHoldback | DeliveryMode::ImmediateDraft => {
+                        self.commit_accepted_output()
+                    }
+                };
+
                 Ok(OutputGateUpdate {
-                    deliverable: Vec::new(),
+                    deliverable,
                     cutoff: None,
                 })
             }
