@@ -656,23 +656,69 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
             let Some(tool) = tool.as_object() else {
                 continue;
             };
-            let state_changing_tool = match tool.get("effects") {
+            let mut valid_effects = BTreeSet::new();
+            match tool.get("effects") {
                 Some(Value::String(effect)) => {
-                    matches!(
+                    if matches!(
                         effect.as_str(),
-                        "external_write" | "filesystem_write" | "process" | "destructive"
-                    )
+                        "none"
+                            | "external_read"
+                            | "external_write"
+                            | "filesystem_read"
+                            | "filesystem_write"
+                            | "process"
+                            | "network"
+                            | "destructive"
+                    ) {
+                        valid_effects.insert(effect.as_str());
+                    } else {
+                        diagnostics.push(Diagnostic::error(
+                            "InvalidToolEffect",
+                            format!("invalid tool effect {effect}"),
+                            format!("$.spec.bindings.tools.{tool_key}.effects"),
+                        ));
+                    }
                 }
-                Some(Value::Array(effects)) => effects.iter().any(|effect| {
-                    effect.as_str().is_some_and(|effect| {
-                        matches!(
-                            effect,
-                            "external_write" | "filesystem_write" | "process" | "destructive"
-                        )
-                    })
-                }),
-                _ => false,
+                Some(Value::Array(effects)) => {
+                    for (effect_index, effect) in effects.iter().enumerate() {
+                        if let Some(effect) = effect.as_str()
+                            && matches!(
+                                effect,
+                                "none"
+                                    | "external_read"
+                                    | "external_write"
+                                    | "filesystem_read"
+                                    | "filesystem_write"
+                                    | "process"
+                                    | "network"
+                                    | "destructive"
+                            )
+                        {
+                            valid_effects.insert(effect);
+                            continue;
+                        }
+                        diagnostics.push(Diagnostic::error(
+                            "InvalidToolEffect",
+                            format!("invalid tool effect {effect}"),
+                            format!("$.spec.bindings.tools.{tool_key}.effects[{effect_index}]"),
+                        ));
+                    }
+                }
+                Some(_) => {
+                    diagnostics.push(Diagnostic::error(
+                        "InvalidToolEffect",
+                        "tool effects must be a string or list of strings",
+                        format!("$.spec.bindings.tools.{tool_key}.effects"),
+                    ));
+                }
+                None => {}
             };
+            let state_changing_tool = valid_effects.iter().any(|effect| {
+                matches!(
+                    *effect,
+                    "external_write" | "filesystem_write" | "process" | "destructive"
+                )
+            });
             has_state_changing_tool |= state_changing_tool;
             let has_retry_policy_ref = tool
                 .get("retryPolicyRef")

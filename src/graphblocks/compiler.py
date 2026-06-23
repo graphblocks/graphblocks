@@ -9,6 +9,20 @@ from .migration import GRAPH_API_VERSION, LEGACY_GRAPH_API_VERSIONS, migrate_doc
 from .plugins import BlockCatalog
 from .schema import SchemaId, SchemaIdError
 
+VALID_TOOL_EFFECTS = frozenset(
+    {
+        "none",
+        "external_read",
+        "external_write",
+        "filesystem_read",
+        "filesystem_write",
+        "process",
+        "network",
+        "destructive",
+    }
+)
+STATE_CHANGING_TOOL_EFFECTS = frozenset({"external_write", "filesystem_write", "process", "destructive"})
+
 
 @dataclass(frozen=True, slots=True)
 class Plan:
@@ -304,13 +318,38 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
         for tool_key, tool in tools.items():
             if not isinstance(tool, dict):
                 continue
-            effects = tool.get("effects", [])
-            if isinstance(effects, str):
-                effects = [effects]
-            state_changing_tool = (
-                isinstance(effects, list)
-                and bool({"external_write", "filesystem_write", "process", "destructive"} & {str(effect) for effect in effects})
-            )
+            effects_value = tool.get("effects", [])
+            if isinstance(effects_value, str):
+                effects = [effects_value]
+            elif isinstance(effects_value, list):
+                effects = effects_value
+            else:
+                effects = []
+                diagnostics.append(
+                    Diagnostic(
+                        "InvalidToolEffect",
+                        "tool effects must be a string or list of strings",
+                        f"$.spec.bindings.tools.{tool_key}.effects",
+                    )
+                )
+            valid_effects: set[str] = set()
+            for effect_index, effect in enumerate(effects):
+                if not isinstance(effect, str) or effect not in VALID_TOOL_EFFECTS:
+                    effect_path = (
+                        f"$.spec.bindings.tools.{tool_key}.effects"
+                        if isinstance(effects_value, str)
+                        else f"$.spec.bindings.tools.{tool_key}.effects[{effect_index}]"
+                    )
+                    diagnostics.append(
+                        Diagnostic(
+                            "InvalidToolEffect",
+                            f"invalid tool effect {effect}",
+                            effect_path,
+                        )
+                    )
+                    continue
+                valid_effects.add(effect)
+            state_changing_tool = bool(STATE_CHANGING_TOOL_EFFECTS & valid_effects)
             has_state_changing_tool = has_state_changing_tool or state_changing_tool
 
             retry_policy_ref = tool.get("retryPolicyRef") or tool.get("retry_policy_ref")

@@ -1196,6 +1196,48 @@ fn compile_graph_accepts_tool_definition_with_schema_and_binding() {
 }
 
 #[test]
+fn compile_graph_reports_invalid_tool_effect_literals() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "invalid-tool-effect"},
+        "spec": {
+            "bindings": {
+                "tools": {
+                    "createTicket": {
+                        "definition": {
+                            "name": "ticket.create",
+                            "description": "Create a support ticket.",
+                            "inputSchema": "schemas/TicketCreateRequest@1"
+                        },
+                        "implementation": {
+                            "kind": "openapi",
+                            "connection": "ticket-system",
+                            "operationId": "createTicket"
+                        },
+                        "effects": ["external-write"]
+                    }
+                }
+            },
+            "nodes": {
+                "agent": {"block": "agent.run@1"}
+            }
+        }
+    });
+
+    let plan = compile_graph(&graph);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["InvalidToolEffect"]
+    );
+}
+
+#[test]
 fn compile_graph_rejects_parallel_state_changing_tools_without_effect_serialization() {
     let graph = json!({
         "apiVersion": GRAPH_API_VERSION,

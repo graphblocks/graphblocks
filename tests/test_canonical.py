@@ -473,6 +473,36 @@ def test_compile_reports_malformed_tool_implementation_bindings() -> None:
     assert _error_codes(missing_openapi_operation) == ["ToolBindingMissing"]
 
 
+def test_compile_reports_invalid_tool_effect_literals() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "invalid-tool-effect"},
+        "spec": {
+            "nodes": {"agent": {"block": "agent.run@1"}},
+            "bindings": {
+                "tools": {
+                    "createTicket": {
+                        "definition": {
+                            "name": "ticket.create",
+                            "description": "Create a support ticket.",
+                            "inputSchema": "schemas/TicketCreateRequest@1",
+                        },
+                        "implementation": {
+                            "kind": "openapi",
+                            "connection": "ticket-system",
+                            "operationId": "createTicket",
+                        },
+                        "effects": ["external-write"],
+                    }
+                }
+            },
+        },
+    }
+
+    assert _error_codes(graph) == ["InvalidToolEffect"]
+
+
 def test_compile_rejects_parallel_state_changing_tools_without_effect_serialization() -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",

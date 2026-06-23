@@ -644,6 +644,44 @@
     }
   },
   {
+    "name": "invalid_tool_effect",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "invalid-tool-effect"
+      },
+      "spec": {
+        "nodes": {
+          "agent": {
+            "block": "agent.run@1"
+          }
+        },
+        "bindings": {
+          "tools": {
+            "createTicket": {
+              "definition": {
+                "name": "ticket.create",
+                "description": "Create a support ticket.",
+                "inputSchema": "schemas/TicketCreateRequest@1"
+              },
+              "implementation": {
+                "kind": "openapi",
+                "connection": "ticket-system",
+                "operationId": "createTicket"
+              },
+              "effects": ["external-write"]
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:3461012777b99e9765a1d08a2896700e3f53e7687745e162c7ae258543a39c15",
+      "error_codes": ["InvalidToolEffect"]
+    }
+  },
+  {
     "name": "invalid_tool_schema_ids",
     "document": {
       "apiVersion": "graphblocks.ai/v1alpha3",
