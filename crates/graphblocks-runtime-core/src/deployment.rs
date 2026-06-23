@@ -6,6 +6,243 @@ use graphblocks_compiler::canonical::canonical_hash;
 use serde_json::{Value, json};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GraphReleaseGraph {
+    pub graph_hash: String,
+    pub normalized_plan_hash: String,
+}
+
+impl GraphReleaseGraph {
+    pub fn new(graph_hash: impl Into<String>, normalized_plan_hash: impl Into<String>) -> Self {
+        Self {
+            graph_hash: graph_hash.into(),
+            normalized_plan_hash: normalized_plan_hash.into(),
+        }
+    }
+
+    fn canonical_value(&self) -> Value {
+        json!({
+            "graph_hash": self.graph_hash,
+            "normalized_plan_hash": self.normalized_plan_hash,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ImageRef {
+    pub image: String,
+}
+
+impl ImageRef {
+    pub fn new(image: impl Into<String>) -> Self {
+        Self {
+            image: image.into(),
+        }
+    }
+
+    fn canonical_value(&self) -> Value {
+        json!({ "image": self.image })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PromptLock {
+    Versioned { name: String, version: String },
+    Label { name: String, label: String },
+}
+
+impl PromptLock {
+    pub fn versioned(name: impl Into<String>, version: impl Into<String>) -> Self {
+        Self::Versioned {
+            name: name.into(),
+            version: version.into(),
+        }
+    }
+
+    pub fn label(name: impl Into<String>, label: impl Into<String>) -> Self {
+        Self::Label {
+            name: name.into(),
+            label: label.into(),
+        }
+    }
+
+    fn canonical_value(&self) -> Value {
+        match self {
+            Self::Versioned { name, version } => {
+                json!({"kind": "versioned", "name": name, "version": version})
+            }
+            Self::Label { name, label } => {
+                json!({"kind": "label", "name": name, "label": label})
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct KnowledgeBinding {
+    pub index_id: String,
+    pub index_revision: String,
+}
+
+impl KnowledgeBinding {
+    pub fn new(index_id: impl Into<String>, index_revision: impl Into<String>) -> Self {
+        Self {
+            index_id: index_id.into(),
+            index_revision: index_revision.into(),
+        }
+    }
+
+    fn canonical_value(&self) -> Value {
+        json!({
+            "index_id": self.index_id,
+            "index_revision": self.index_revision,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GraphRelease {
+    pub name: String,
+    pub version: String,
+    pub bundle_digest: Option<String>,
+    pub bundle_media_type: Option<String>,
+    pub application_hash: Option<String>,
+    pub graphs: BTreeMap<String, GraphReleaseGraph>,
+    pub images: BTreeMap<String, ImageRef>,
+    pub prompt_locks: BTreeMap<String, PromptLock>,
+    pub knowledge: BTreeMap<String, KnowledgeBinding>,
+}
+
+impl GraphRelease {
+    pub fn new(name: impl Into<String>, version: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            version: version.into(),
+            bundle_digest: None,
+            bundle_media_type: None,
+            application_hash: None,
+            graphs: BTreeMap::new(),
+            images: BTreeMap::new(),
+            prompt_locks: BTreeMap::new(),
+            knowledge: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_bundle(mut self, digest: impl Into<String>, media_type: impl Into<String>) -> Self {
+        self.bundle_digest = Some(digest.into());
+        self.bundle_media_type = Some(media_type.into());
+        self
+    }
+
+    pub fn with_application_hash(mut self, application_hash: impl Into<String>) -> Self {
+        self.application_hash = Some(application_hash.into());
+        self
+    }
+
+    pub fn with_graph(mut self, graph_name: impl Into<String>, graph: GraphReleaseGraph) -> Self {
+        self.graphs.insert(graph_name.into(), graph);
+        self
+    }
+
+    pub fn with_image(mut self, image_name: impl Into<String>, image: ImageRef) -> Self {
+        self.images.insert(image_name.into(), image);
+        self
+    }
+
+    pub fn with_prompt_lock(
+        mut self,
+        prompt_name: impl Into<String>,
+        prompt_lock: PromptLock,
+    ) -> Self {
+        self.prompt_locks.insert(prompt_name.into(), prompt_lock);
+        self
+    }
+
+    pub fn with_knowledge(mut self, binding: KnowledgeBinding) -> Self {
+        self.knowledge.insert(binding.index_id.clone(), binding);
+        self
+    }
+
+    pub fn content_digest(&self) -> String {
+        canonical_hash(&json!({
+            "version": self.version,
+            "bundle": {
+                "digest": self.bundle_digest,
+                "media_type": self.bundle_media_type,
+            },
+            "application_hash": self.application_hash,
+            "graphs": self.graphs.iter().map(|(name, graph)| (name, graph.canonical_value())).collect::<BTreeMap<_, _>>(),
+            "images": self.images.iter().map(|(name, image)| (name, image.canonical_value())).collect::<BTreeMap<_, _>>(),
+            "prompt_locks": self.prompt_locks.iter().map(|(name, prompt)| (name, prompt.canonical_value())).collect::<BTreeMap<_, _>>(),
+            "knowledge": self.knowledge.iter().map(|(name, binding)| (name, binding.canonical_value())).collect::<BTreeMap<_, _>>(),
+        }))
+    }
+
+    pub fn validate_production_pins(&self) -> Result<(), GraphReleaseError> {
+        let mut references = Vec::new();
+        if self
+            .bundle_digest
+            .as_deref()
+            .is_none_or(|digest| !is_sha256_digest(digest))
+        {
+            references.push("bundle.digest".to_owned());
+        }
+        for (name, graph) in &self.graphs {
+            if !is_sha256_digest(&graph.graph_hash) {
+                references.push(format!("graphs.{name}.graph_hash"));
+            }
+            if !is_sha256_digest(&graph.normalized_plan_hash) {
+                references.push(format!("graphs.{name}.normalized_plan_hash"));
+            }
+        }
+        for (name, image) in &self.images {
+            if !image.image.contains("@sha256:") {
+                references.push(format!("images.{name}"));
+            }
+        }
+        for (name, binding) in &self.knowledge {
+            if is_mutable_label(&binding.index_revision) {
+                references.push(format!("knowledge.{name}.index_revision"));
+            }
+        }
+        for (name, prompt) in &self.prompt_locks {
+            if matches!(prompt, PromptLock::Label { .. }) {
+                references.push(format!("prompts.{name}"));
+            }
+        }
+        if references.is_empty() {
+            Ok(())
+        } else {
+            Err(GraphReleaseError::MutableReferences { references })
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum GraphReleaseError {
+    MutableReferences { references: Vec<String> },
+}
+
+impl fmt::Display for GraphReleaseError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MutableReferences { references } => {
+                write!(formatter, "mutable release references: {references:?}")
+            }
+        }
+    }
+}
+
+impl Error for GraphReleaseError {}
+
+fn is_sha256_digest(value: &str) -> bool {
+    value.starts_with("sha256:") && value.len() > "sha256:".len()
+}
+
+fn is_mutable_label(value: &str) -> bool {
+    value.trim().is_empty() || matches!(value, "latest" | "current" | "main" | "master" | "HEAD")
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DeploymentRevision {
     pub revision_id: String,
     pub release_digest: String,
