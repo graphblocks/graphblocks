@@ -252,6 +252,17 @@ from .runtime import (
     SQLiteExecutionJournal,
     stdlib_registry,
 )
+from .review import (
+    InMemoryReviewerCredentialProvider,
+    ReviewCredentialMissingError,
+    ReviewRequest,
+    ReviewScopeNotRequestedError,
+    ReviewSubjectChangedError,
+    ReviewWorkflow,
+    ReviewWorkflowError,
+    ReviewerCredential,
+    ReviewerCredentialProvider,
+)
 from .run_store import InMemoryRunStore, RunRecord, SQLiteRunStore, StateConflictError
 from .schema import SchemaId, SchemaIdError, TypedValue
 from .usage import (
@@ -410,6 +421,7 @@ __all__ = [
     "InMemoryConversationStore",
     "InMemoryLeasePool",
     "InMemoryChunkRetriever",
+    "InMemoryReviewerCredentialProvider",
     "InputDependency",
     "InvalidBlobKeyError",
     "KnowledgeBinding",
@@ -429,6 +441,14 @@ __all__ = [
     "ResolvedInput",
     "ResolvedPlacement",
     "ReviewRecord",
+    "ReviewCredentialMissingError",
+    "ReviewRequest",
+    "ReviewScopeNotRequestedError",
+    "ReviewSubjectChangedError",
+    "ReviewWorkflow",
+    "ReviewWorkflowError",
+    "ReviewerCredential",
+    "ReviewerCredentialProvider",
     "RunProvenance",
     "RuntimeRegistry",
     "SQLiteRunStore",
