@@ -816,3 +816,72 @@ def test_tool_execution_plan_policy_stop_denies_pending_and_can_cancel_running()
     assert cancel_plan.apply_policy_stop("cancel_admitted") == ["call-a", "call-b"]
     assert cancel_plan.state("call-a") == "cancelled"
     assert cancel_plan.state("call-b") == "denied"
+
+
+def test_tool_execution_cancelled_call_cancels_dependents_by_default() -> None:
+    dependent = replace(_tool_call("call-b", '{"resource_id":"b"}'), depends_on=("call-a",))
+    plan = ToolExecutionPlan(
+        plan_id="plan-1",
+        response_id="response-1",
+        calls=(
+            ToolPlanCall(_tool_call("call-a", '{"resource_id":"a"}')),
+            ToolPlanCall(dependent),
+            ToolPlanCall(_tool_call("call-c", '{"resource_id":"c"}')),
+        ),
+        maximum_parallelism=3,
+    )
+
+    plan.record_started("call-a")
+    plan.record_cancelled("call-a")
+
+    assert plan.state("call-a") == "cancelled"
+    assert plan.state("call-b") == "cancelled"
+    assert plan.state("call-c") == "pending"
+    assert plan.ready_call_ids() == ["call-c"]
+
+
+def test_tool_execution_cancelled_call_can_skip_dependents_and_allow_independent_calls() -> None:
+    dependent = replace(_tool_call("call-b", '{"resource_id":"b"}'), depends_on=("call-a",))
+    plan = ToolExecutionPlan(
+        plan_id="plan-1",
+        response_id="response-1",
+        calls=(
+            ToolPlanCall(_tool_call("call-a", '{"resource_id":"a"}')),
+            ToolPlanCall(dependent),
+            ToolPlanCall(_tool_call("call-c", '{"resource_id":"c"}')),
+        ),
+        maximum_parallelism=3,
+        cancellation_policy="allow_independent_calls",
+    )
+
+    plan.record_started("call-a")
+    plan.record_cancelled("call-a")
+
+    assert plan.state("call-a") == "cancelled"
+    assert plan.state("call-b") == "skipped"
+    assert plan.state("call-c") == "pending"
+    assert plan.ready_call_ids() == ["call-c"]
+
+
+def test_tool_execution_cancel_all_policy_cancels_every_nonterminal_call() -> None:
+    plan = ToolExecutionPlan(
+        plan_id="plan-1",
+        response_id="response-1",
+        calls=(
+            ToolPlanCall(_tool_call("call-a", '{"resource_id":"a"}')),
+            ToolPlanCall(_tool_call("call-b", '{"resource_id":"b"}')),
+            ToolPlanCall(_tool_call("call-c", '{"resource_id":"c"}')),
+        ),
+        maximum_parallelism=3,
+        cancellation_policy="cancel_all",
+    )
+
+    plan.record_started("call-a")
+    plan.record_started("call-c")
+    plan.record_completed("call-c")
+    plan.record_cancelled("call-a")
+
+    assert plan.state("call-a") == "cancelled"
+    assert plan.state("call-b") == "cancelled"
+    assert plan.state("call-c") == "completed"
+    assert plan.ready_call_ids() == []

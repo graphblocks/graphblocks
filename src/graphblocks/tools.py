@@ -820,8 +820,30 @@ class ToolExecutionPlan:
 
     def record_failed(self, tool_call_id: str) -> None:
         self._enter_terminal(tool_call_id, "failed")
+        self._mark_blocked_dependents("skipped")
+        if self.failure_policy == "fail_fast":
+            for candidate_id, state in list(self._states.items()):
+                if state == "pending":
+                    self._states[candidate_id] = "cancelled"
+
+    def record_cancelled(self, tool_call_id: str) -> None:
+        self._enter_terminal(tool_call_id, "cancelled")
+        if self.cancellation_policy == "cancel_dependents":
+            self._mark_blocked_dependents("cancelled")
+            return
+        if self.cancellation_policy == "cancel_all":
+            for candidate_id, state in list(self._states.items()):
+                if state in {"pending", "running"}:
+                    self._states[candidate_id] = "cancelled"
+            return
+        if self.cancellation_policy == "allow_independent_calls":
+            self._mark_blocked_dependents("skipped")
+            return
+        raise ToolExecutionPlanError(f"unknown cancellation policy {self.cancellation_policy}")
+
+    def _mark_blocked_dependents(self, blocked_state: ToolExecutionState) -> None:
         while True:
-            skipped: list[str] = []
+            blocked: list[str] = []
             for planned_call in self.calls:
                 candidate_id = planned_call.call.tool_call_id
                 if self._states[candidate_id] != "pending":
@@ -830,15 +852,11 @@ class ToolExecutionPlan:
                     self._states.get(dependency) in {"failed", "denied", "cancelled", "skipped"}
                     for dependency in planned_call.call.depends_on
                 ):
-                    skipped.append(candidate_id)
-            if not skipped:
+                    blocked.append(candidate_id)
+            if not blocked:
                 break
-            for skipped_id in skipped:
-                self._states[skipped_id] = "skipped"
-        if self.failure_policy == "fail_fast":
-            for candidate_id, state in list(self._states.items()):
-                if state == "pending":
-                    self._states[candidate_id] = "cancelled"
+            for blocked_id in blocked:
+                self._states[blocked_id] = blocked_state
 
     def apply_policy_stop(self, pending_tool_calls: PendingToolCallsDisposition) -> list[str]:
         affected: list[str] = []
