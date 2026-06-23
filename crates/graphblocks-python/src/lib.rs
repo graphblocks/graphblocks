@@ -1072,6 +1072,7 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
         .as_array()
         .ok_or_else(|| PyValueError::new_err("output gate operations JSON must be an array"))?;
     let mut deliveries = Vec::new();
+    let mut decisions = Vec::new();
     for (operation_index, operation) in operations.iter().enumerate() {
         let operation = json_object(operation, &format!("operations[{operation_index}]"))?;
         match required_string(operation, "kind", &format!("operations[{operation_index}]"))? {
@@ -1124,6 +1125,7 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
                 let label = format!("operations[{operation_index}]");
                 let decision_id = required_string(operation, "decisionId", &label)?;
                 let input_digest = required_string(operation, "inputDigest", &label)?;
+                let disposition = required_string(operation, "disposition", &label)?;
                 let accepted_through_sequence = operation
                     .get("acceptedThroughSequence")
                     .map(|value| {
@@ -1134,7 +1136,7 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
                         })
                     })
                     .transpose()?;
-                let mut decision = match required_string(operation, "disposition", &label)? {
+                let mut decision = match disposition {
                     "allow" => OutputPolicyDecision::allow(
                         decision_id,
                         accepted_through_sequence,
@@ -1176,7 +1178,7 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
                                 ));
                             }
                         }
-                        if required_string(operation, "disposition", &label)? == "redact" {
+                        if disposition == "redact" {
                             OutputPolicyDecision::redact(
                                 decision_id,
                                 accepted_through_sequence,
@@ -1221,6 +1223,40 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
                         ));
                     }
                     decision = decision.with_redactions(parsed_redactions);
+                }
+                if let Some(values) = operation.get("reasonCodes") {
+                    let Some(values) = values.as_array() else {
+                        return Err(PyValueError::new_err(format!(
+                            "{label}.reasonCodes must be an array"
+                        )));
+                    };
+                    let mut parsed_reason_codes = Vec::new();
+                    for (value_index, value) in values.iter().enumerate() {
+                        let Some(value) = value.as_str() else {
+                            return Err(PyValueError::new_err(format!(
+                                "{label}.reasonCodes[{value_index}] must be a string"
+                            )));
+                        };
+                        parsed_reason_codes.push(value.to_owned());
+                    }
+                    decision = decision.with_reason_codes(parsed_reason_codes);
+                }
+                if let Some(values) = operation.get("policyRefs") {
+                    let Some(values) = values.as_array() else {
+                        return Err(PyValueError::new_err(format!(
+                            "{label}.policyRefs must be an array"
+                        )));
+                    };
+                    let mut parsed_policy_refs = Vec::new();
+                    for (value_index, value) in values.iter().enumerate() {
+                        let Some(value) = value.as_str() else {
+                            return Err(PyValueError::new_err(format!(
+                                "{label}.policyRefs[{value_index}] must be a string"
+                            )));
+                        };
+                        parsed_policy_refs.push(value.to_owned());
+                    }
+                    decision = decision.with_policy_refs(parsed_policy_refs);
                 }
                 if let Some(value) = operation.get("providerCancellation") {
                     let Some(value) = value.as_str() else {
@@ -1273,7 +1309,26 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
                         }
                     });
                 }
+                if let Some(value) = operation.get("evaluatedAtUnixMs") {
+                    let Some(value) = value.as_u64() else {
+                        return Err(PyValueError::new_err(format!(
+                            "{label}.evaluatedAtUnixMs must be an unsigned integer"
+                        )));
+                    };
+                    decision = decision.evaluated_at_unix_ms(value);
+                }
                 let occurred_at_unix_ms = required_u64(operation, "occurredAtUnixMs", &label)?;
+                let decision_trace = json!({
+                    "operationIndex": operation_index,
+                    "decisionId": decision.decision_id.as_str(),
+                    "disposition": disposition,
+                    "acceptedThroughSequence": decision.accepted_through_sequence,
+                    "reasonCodes": &decision.reason_codes,
+                    "policyRefs": &decision.policy_refs,
+                    "evaluatedAtUnixMs": decision.evaluated_at_unix_ms,
+                    "occurredAtUnixMs": occurred_at_unix_ms,
+                    "inputDigest": decision.input_digest.as_str(),
+                });
                 let update =
                     gate.apply_decision(decision, occurred_at_unix_ms)
                         .map_err(|error| {
@@ -1281,6 +1336,7 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
                                 "output gate operation {operation_index} failed: {error:?}"
                             ))
                         })?;
+                decisions.push(decision_trace);
                 if !update.deliverable.is_empty() || update.cutoff.is_some() {
                     let cutoff = update.cutoff.as_ref().map(|cutoff| {
                         json!({
@@ -1364,6 +1420,7 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
     });
     let payload = json!({
         "deliveries": deliveries,
+        "decisions": decisions,
         "cutoff": cutoff,
         "lastGeneratedSequence": gate.last_generated_sequence(),
         "lastPolicyAcceptedSequence": gate.last_policy_accepted_sequence(),
@@ -1851,6 +1908,66 @@ mod tests {
                 .and_then(|chunk| chunk.get("text"))
                 .and_then(Value::as_str),
             Some("hello [redacted] world")
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_output_gate_json_preserves_decision_metadata() -> Result<(), String> {
+        let gate = json!({
+            "streamId": "stream-1",
+            "responseId": "response-1",
+            "deliveryPolicy": {
+                "mode": "bounded_holdback",
+                "holdbackMaxTokens": 8,
+                "onViolation": "abort_response"
+            }
+        });
+        let operations = json!([
+            {
+                "kind": "chunk",
+                "sequence": 1,
+                "text": "safe"
+            },
+            {
+                "kind": "decision",
+                "decisionId": "decision-allow",
+                "disposition": "allow",
+                "acceptedThroughSequence": 1,
+                "inputDigest": "sha256:allow",
+                "reasonCodes": ["pii.clear"],
+                "policyRefs": ["policy/output-standard"],
+                "evaluatedAtUnixMs": 995,
+                "occurredAtUnixMs": 1_000
+            }
+        ]);
+        let gate_json = serde_json::to_string(&gate).map_err(|error| error.to_string())?;
+        let operations_json =
+            serde_json::to_string(&operations).map_err(|error| error.to_string())?;
+
+        let result_json = evaluate_output_gate_json(&gate_json, &operations_json)
+            .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+        let decision = result
+            .get("decisions")
+            .and_then(Value::as_array)
+            .and_then(|decisions| decisions.first())
+            .ok_or_else(|| "missing output decision trace".to_owned())?;
+
+        assert_eq!(
+            decision.get("decisionId").and_then(Value::as_str),
+            Some("decision-allow")
+        );
+        assert_eq!(decision.get("reasonCodes"), Some(&json!(["pii.clear"])));
+        assert_eq!(
+            decision.get("policyRefs"),
+            Some(&json!(["policy/output-standard"]))
+        );
+        assert_eq!(
+            decision.get("evaluatedAtUnixMs").and_then(Value::as_u64),
+            Some(995)
         );
 
         Ok(())
