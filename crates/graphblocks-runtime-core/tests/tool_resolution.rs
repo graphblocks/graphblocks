@@ -2,6 +2,7 @@ use graphblocks_runtime_core::tool::{
     BlockToolImplementation, OpenApiToolImplementation, ToolBinding, ToolCatalog, ToolDefinition,
     ToolEffect, ToolImplementation, ToolResolutionError, ToolResolutionScope,
 };
+use graphblocks_schema::SchemaIdError;
 
 fn search_definition() -> ToolDefinition {
     ToolDefinition::new(
@@ -78,6 +79,25 @@ fn model_visible_tool_without_binding_is_reported() {
         catalog.resolve(scope, "policy-snapshot-1"),
         Err(ToolResolutionError::ToolBindingMissing {
             tool_name: "knowledge.search".to_owned()
+        }),
+    );
+}
+
+#[test]
+fn catalog_rejects_invalid_tool_definition_schema_ids() {
+    assert_eq!(
+        ToolCatalog::new(
+            [ToolDefinition::new(
+                "knowledge.search",
+                "Search internal documentation.",
+                "schemas/KnowledgeSearchRequest",
+            )],
+            [],
+        ),
+        Err(ToolResolutionError::InvalidToolSchemaId {
+            tool_name: "knowledge.search".to_owned(),
+            schema_id: "schemas/KnowledgeSearchRequest".to_owned(),
+            error: SchemaIdError::MissingVersion,
         }),
     );
 }

@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use graphblocks_compiler::canonical::canonical_hash;
+use graphblocks_schema::{SchemaId, SchemaIdError};
 use serde_json::{Value, json};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -431,6 +432,11 @@ pub enum ToolResolutionError {
         definition_name: String,
         binding_tool_name: String,
     },
+    InvalidToolSchemaId {
+        tool_name: String,
+        schema_id: String,
+        error: SchemaIdError,
+    },
     ToolBindingMissing {
         tool_name: String,
     },
@@ -563,6 +569,22 @@ impl ToolCatalog {
         let mut indexed_definitions = BTreeMap::new();
         for definition in definitions {
             let tool_name = definition.name.clone();
+            if let Err(error) = SchemaId::parse(&definition.input_schema) {
+                return Err(ToolResolutionError::InvalidToolSchemaId {
+                    tool_name,
+                    schema_id: definition.input_schema,
+                    error,
+                });
+            }
+            if let Some(output_schema) = &definition.output_schema
+                && let Err(error) = SchemaId::parse(output_schema)
+            {
+                return Err(ToolResolutionError::InvalidToolSchemaId {
+                    tool_name,
+                    schema_id: output_schema.clone(),
+                    error,
+                });
+            }
             if indexed_definitions.contains_key(&tool_name) {
                 return Err(ToolResolutionError::DuplicateToolDefinition { tool_name });
             }

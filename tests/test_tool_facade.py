@@ -256,6 +256,25 @@ def test_tool_catalog_reports_visible_tool_without_binding() -> None:
     assert str(error.value) == "tool binding missing for knowledge.search"
 
 
+def test_tool_catalog_rejects_invalid_tool_definition_schema_id() -> None:
+    with pytest.raises(ToolResolutionError) as error:
+        ToolCatalog(
+            definitions=(
+                ToolDefinition(
+                    name="knowledge.search",
+                    description="Search support documentation.",
+                    input_schema="schemas/SearchRequest",
+                ),
+            ),
+            bindings=(),
+        )
+
+    assert str(error.value) == (
+        "tool knowledge.search has invalid schema id schemas/SearchRequest: "
+        "schema id must include a major version suffix"
+    )
+
+
 def test_tool_schema_registry_validates_required_nested_arguments() -> None:
     registry = ToolSchemaRegistry(
         schemas=(

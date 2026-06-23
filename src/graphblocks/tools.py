@@ -562,6 +562,19 @@ class ToolCatalog:
         object.__setattr__(self, "bindings", tuple(self.bindings))
         definitions_by_name: dict[str, ToolDefinition] = {}
         for definition in self.definitions:
+            try:
+                SchemaId.parse(definition.input_schema)
+            except SchemaIdError as error:
+                raise ToolResolutionError(
+                    f"tool {definition.name} has invalid schema id {definition.input_schema}: {error}"
+                ) from error
+            if definition.output_schema is not None:
+                try:
+                    SchemaId.parse(definition.output_schema)
+                except SchemaIdError as error:
+                    raise ToolResolutionError(
+                        f"tool {definition.name} has invalid schema id {definition.output_schema}: {error}"
+                    ) from error
             if definition.name in definitions_by_name:
                 raise ToolResolutionError(f"duplicate tool definition {definition.name}")
             definitions_by_name[definition.name] = definition
