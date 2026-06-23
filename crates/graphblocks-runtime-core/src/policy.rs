@@ -852,6 +852,11 @@ pub struct PolicyEnforcementRecord {
     pub metadata: BTreeMap<String, Value>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PolicyEnforcementRecordError {
+    UnknownObligation { obligation_id: String },
+}
+
 impl PolicyEnforcementRecord {
     pub fn new(
         record_id: impl Into<String>,
@@ -868,6 +873,45 @@ impl PolicyEnforcementRecord {
             occurred_at: String::new(),
             metadata: BTreeMap::new(),
         }
+    }
+
+    pub fn from_decision<I>(
+        record_id: impl Into<String>,
+        decision: &PolicyDecision,
+        enforcement_point: EnforcementPoint,
+        status: impl Into<String>,
+        enforced_obligation_ids: I,
+        occurred_at: impl Into<String>,
+    ) -> Result<Self, PolicyEnforcementRecordError>
+    where
+        I: IntoIterator,
+        I::Item: Into<String>,
+    {
+        let enforced_obligation_ids = enforced_obligation_ids
+            .into_iter()
+            .map(Into::into)
+            .collect::<Vec<_>>();
+        for obligation_id in &enforced_obligation_ids {
+            if !decision
+                .obligations
+                .iter()
+                .any(|obligation| obligation.obligation_id == *obligation_id)
+            {
+                return Err(PolicyEnforcementRecordError::UnknownObligation {
+                    obligation_id: obligation_id.clone(),
+                });
+            }
+        }
+
+        let mut record = Self::new(
+            record_id,
+            decision.decision_id.clone(),
+            enforcement_point,
+            status,
+        );
+        record.enforced_obligation_ids = enforced_obligation_ids;
+        record.occurred_at = occurred_at.into();
+        Ok(record)
     }
 
     pub fn with_enforced_obligation_id(mut self, obligation_id: impl Into<String>) -> Self {

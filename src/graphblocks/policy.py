@@ -242,6 +242,34 @@ class PolicyEnforcementRecord:
     occurred_at: str = ""
     metadata: dict[str, object] = field(default_factory=dict)
 
+    @classmethod
+    def from_decision(
+        cls,
+        *,
+        record_id: str,
+        decision: PolicyDecision,
+        enforcement_point: EnforcementPoint,
+        status: Literal["enforced", "blocked", "deferred", "failed"],
+        enforced_obligation_ids: tuple[str, ...] = (),
+        occurred_at: str = "",
+        metadata: dict[str, object] | None = None,
+    ) -> PolicyEnforcementRecord:
+        known_obligation_ids = {obligation.obligation_id for obligation in decision.obligations}
+        for obligation_id in enforced_obligation_ids:
+            if obligation_id not in known_obligation_ids:
+                raise ValueError(
+                    f"unknown policy obligation {obligation_id!r} for decision {decision.decision_id!r}"
+                )
+        return cls(
+            record_id=record_id,
+            decision_id=decision.decision_id,
+            enforcement_point=enforcement_point,
+            status=status,
+            enforced_obligation_ids=tuple(enforced_obligation_ids),
+            occurred_at=occurred_at,
+            metadata=dict(metadata or {}),
+        )
+
 
 @dataclass(slots=True)
 class StaticPolicyEvaluator:

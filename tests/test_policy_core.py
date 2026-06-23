@@ -3,8 +3,11 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import get_args
 
+import pytest
+
 from graphblocks.policy import (
     EnforcementPoint,
+    PolicyDecision,
     PolicyEnforcementRecord,
     PolicyObligation,
     PolicyRequest,
@@ -113,4 +116,37 @@ def test_policy_enforcement_record_is_separate_from_decision() -> None:
 
     assert record.decision_id == "decision-1"
     assert record.status == "enforced"
+    assert record.enforced_obligation_ids == ("obl-1",)
+
+
+def test_policy_enforcement_record_from_decision_validates_obligations() -> None:
+    decision = PolicyDecision(
+        decision_id="decision-1",
+        effect="allow_with_obligations",
+        reason_codes=["cap-input"],
+        policy_refs=["cap-input"],
+        obligations=[PolicyObligation("obl-1", "cap_model_input", {"max_tokens": 4000})],
+        evaluated_at="2026-06-22T00:00:01Z",
+        input_digest="sha256:input",
+    )
+
+    record = PolicyEnforcementRecord.from_decision(
+        record_id="enforce-1",
+        decision=decision,
+        enforcement_point="before_provider_call",
+        status="enforced",
+        enforced_obligation_ids=("obl-1",),
+        occurred_at="2026-06-22T00:00:02Z",
+    )
+    with pytest.raises(ValueError, match="unknown policy obligation"):
+        PolicyEnforcementRecord.from_decision(
+            record_id="enforce-2",
+            decision=decision,
+            enforcement_point="before_provider_call",
+            status="enforced",
+            enforced_obligation_ids=("obl-missing",),
+            occurred_at="2026-06-22T00:00:03Z",
+        )
+
+    assert record.decision_id == decision.decision_id
     assert record.enforced_obligation_ids == ("obl-1",)

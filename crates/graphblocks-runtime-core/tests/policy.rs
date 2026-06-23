@@ -1,7 +1,7 @@
 use graphblocks_runtime_core::policy::{
-    EnforcementPoint, EntitlementSnapshot, PolicyBundle, PolicyEnforcementRecord, PolicyObligation,
-    PolicyProfile, PolicyRequest, PolicyRule, PrincipalRef, ResourceRef, RuleEffect,
-    StaticPolicyEvaluator, resolve_policy_snapshot,
+    EnforcementPoint, EntitlementSnapshot, PolicyBundle, PolicyEnforcementRecord,
+    PolicyEnforcementRecordError, PolicyObligation, PolicyProfile, PolicyRequest, PolicyRule,
+    PrincipalRef, ResourceRef, RuleEffect, StaticPolicyEvaluator, resolve_policy_snapshot,
 };
 use serde_json::json;
 
@@ -91,6 +91,65 @@ fn policy_enforcement_record_is_separate_from_decision() {
     assert_eq!(record.decision_id, "decision-1");
     assert_eq!(record.status, "enforced");
     assert_eq!(record.enforced_obligation_ids, vec!["obl-1"]);
+}
+
+#[test]
+fn policy_enforcement_record_from_decision_validates_obligation_ids() {
+    let obligation = PolicyObligation::new("obl-1", "cap_model_input")
+        .with_parameter("max_tokens", json!(4_000));
+    let decision = StaticPolicyEvaluator::new([
+        PolicyRule::new(
+            "allow-model",
+            RuleEffect::Allow,
+            ["model.generate"],
+            ["model"],
+        ),
+        PolicyRule::new(
+            "cap-input",
+            RuleEffect::Obligate,
+            ["model.generate"],
+            ["model"],
+        )
+        .with_obligation(obligation),
+    ])
+    .evaluate(
+        &PolicyRequest::new(
+            "req-1",
+            EnforcementPoint::BeforeProviderCall,
+            "model.generate",
+            ResourceRef::new("model:gpt").with_resource_kind("model"),
+            "2026-06-22T00:00:00Z",
+        ),
+        "2026-06-22T00:00:01Z",
+    );
+
+    let record = PolicyEnforcementRecord::from_decision(
+        "enforce-1",
+        &decision,
+        EnforcementPoint::BeforeProviderCall,
+        "enforced",
+        ["obl-1"],
+        "2026-06-22T00:00:02Z",
+    )
+    .expect("known obligation id is accepted");
+    let error = PolicyEnforcementRecord::from_decision(
+        "enforce-2",
+        &decision,
+        EnforcementPoint::BeforeProviderCall,
+        "enforced",
+        ["obl-missing"],
+        "2026-06-22T00:00:03Z",
+    )
+    .expect_err("unknown obligation id is rejected");
+
+    assert_eq!(record.decision_id, decision.decision_id);
+    assert_eq!(record.enforced_obligation_ids, vec!["obl-1"]);
+    assert_eq!(
+        error,
+        PolicyEnforcementRecordError::UnknownObligation {
+            obligation_id: "obl-missing".to_string(),
+        }
+    );
 }
 
 #[test]
