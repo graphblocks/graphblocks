@@ -81,6 +81,24 @@ VALID_TOOL_APPROVALS = frozenset({"never", "policy", "always"})
 VALID_TOOL_IDEMPOTENCIES = frozenset({"not_applicable", "optional", "required"})
 VALID_TOOL_CANCELLATIONS = frozenset({"unsupported", "cooperative", "force_terminable"})
 VALID_TOOL_RESULT_MODES = frozenset({"value", "incremental", "bounded_sequence", "artifact_reference"})
+VALID_TOOL_CALL_STATUSES = frozenset(
+    {
+        "validated",
+        "policy_pending",
+        "approval_pending",
+        "admitted",
+        "running",
+        "completed",
+        "failed",
+        "denied",
+        "cancelled",
+        "policy_stopped",
+        "expired",
+    }
+)
+VALID_TOOL_RESULT_STATUSES = frozenset(
+    {"completed", "failed", "denied", "cancelled", "policy_stopped", "incomplete"}
+)
 
 
 class ToolCallError(RuntimeError):
@@ -735,6 +753,8 @@ class ToolCall:
     completed_at: str | None = None
 
     def __post_init__(self) -> None:
+        if self.status not in VALID_TOOL_CALL_STATUSES:
+            raise ValueError(f"invalid tool call status {self.status}")
         object.__setattr__(self, "depends_on", tuple(self.depends_on))
 
     def revise_arguments(self, arguments: object) -> ToolCall:
@@ -1000,6 +1020,8 @@ class ToolResult:
     effect_outcome: ToolEffectOutcome = "unknown"
 
     def __post_init__(self) -> None:
+        if self.status not in VALID_TOOL_RESULT_STATUSES:
+            raise ValueError(f"invalid tool result status {self.status}")
         object.__setattr__(self, "output", tuple(self.output))
         object.__setattr__(
             self,

@@ -344,6 +344,20 @@ def test_tool_schema_registry_reports_missing_and_duplicate_schemas() -> None:
     assert str(missing.value) == "schema schemas/Missing@1 is not registered"
 
 
+def test_tool_call_and_result_reject_unknown_statuses() -> None:
+    with pytest.raises(ValueError, match="invalid tool call status queued"):
+        (
+            ToolCallDraft.proposed("response-1", "call-1", "knowledge.search")
+            .append_argument_fragment("{}")
+            .complete_arguments()
+            .into_tool_call("resolved-tool-1", created_at="2026-06-23T00:00:00Z")
+            .with_status("queued")
+        )
+
+    with pytest.raises(ValueError, match="invalid tool result status deferred"):
+        ToolResult(tool_call_id="call-1", status="deferred")
+
+
 def _resolved_search_tool() -> ResolvedTool:
     catalog = ToolCatalog(
         definitions=(
