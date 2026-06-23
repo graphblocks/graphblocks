@@ -430,6 +430,103 @@ impl DeploymentEvent {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorkloadKind {
+    NewRequest,
+    ExistingRequest,
+    Conversation,
+    DurableJob,
+    RealtimeSession,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RevisionDecision {
+    AdmitOnNew {
+        revision_id: String,
+    },
+    FinishOnOld {
+        revision_id: String,
+    },
+    KeepAffinity {
+        revision_id: String,
+    },
+    CheckpointAndMigrate {
+        from_revision_id: String,
+        to_revision_id: String,
+    },
+    DrainOnOld {
+        revision_id: String,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UpgradePolicy {
+    pub old_revision_id: String,
+    pub new_revision_id: String,
+}
+
+impl UpgradePolicy {
+    pub fn workload_aware(
+        old_revision_id: impl Into<String>,
+        new_revision_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            old_revision_id: old_revision_id.into(),
+            new_revision_id: new_revision_id.into(),
+        }
+    }
+
+    pub fn decide(
+        &self,
+        workload: WorkloadKind,
+        affinity_revision_id: Option<&str>,
+        checkpoint_compatible: bool,
+    ) -> RevisionDecision {
+        match workload {
+            WorkloadKind::NewRequest => RevisionDecision::AdmitOnNew {
+                revision_id: self.new_revision_id.clone(),
+            },
+            WorkloadKind::ExistingRequest => RevisionDecision::FinishOnOld {
+                revision_id: affinity_revision_id
+                    .unwrap_or(&self.old_revision_id)
+                    .to_owned(),
+            },
+            WorkloadKind::Conversation => {
+                if let Some(revision_id) = affinity_revision_id {
+                    RevisionDecision::KeepAffinity {
+                        revision_id: revision_id.to_owned(),
+                    }
+                } else {
+                    RevisionDecision::AdmitOnNew {
+                        revision_id: self.new_revision_id.clone(),
+                    }
+                }
+            }
+            WorkloadKind::DurableJob => {
+                if checkpoint_compatible {
+                    RevisionDecision::CheckpointAndMigrate {
+                        from_revision_id: affinity_revision_id
+                            .unwrap_or(&self.old_revision_id)
+                            .to_owned(),
+                        to_revision_id: self.new_revision_id.clone(),
+                    }
+                } else {
+                    RevisionDecision::FinishOnOld {
+                        revision_id: affinity_revision_id
+                            .unwrap_or(&self.old_revision_id)
+                            .to_owned(),
+                    }
+                }
+            }
+            WorkloadKind::RealtimeSession => RevisionDecision::DrainOnOld {
+                revision_id: affinity_revision_id
+                    .unwrap_or(&self.old_revision_id)
+                    .to_owned(),
+            },
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub enum ExecutionTargetKind {
     Service,

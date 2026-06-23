@@ -2,7 +2,7 @@ use graphblocks_runtime_core::deployment::{
     DeploymentEvent, DeploymentEventKind, DeploymentObservabilityContext, DeploymentRevision,
     ExecutionTarget, ExecutionTargetKind, GraphRelease, GraphReleaseError, GraphReleaseGraph,
     ImageRef, KnowledgeBinding, PhysicalExecutionPlan, PlacementError, PlacementRule,
-    PlacementSelector, PromptLock,
+    PlacementSelector, PromptLock, RevisionDecision, UpgradePolicy, WorkloadKind,
 };
 use serde_json::json;
 
@@ -323,4 +323,57 @@ fn deployment_observability_context_compares_stable_and_canary_rollout_step() {
     assert!(stable.same_rollout_step(&canary));
     assert!(!stable.same_rollout_step(&later));
     assert_ne!(stable.cohort.as_deref(), canary.cohort.as_deref());
+}
+
+#[test]
+fn upgrade_policy_finishes_existing_requests_on_old_revision() {
+    let policy = UpgradePolicy::workload_aware("rev-old", "rev-new");
+
+    assert_eq!(
+        policy.decide(WorkloadKind::ExistingRequest, None, false),
+        RevisionDecision::FinishOnOld {
+            revision_id: "rev-old".to_owned(),
+        }
+    );
+}
+
+#[test]
+fn upgrade_policy_preserves_conversation_affinity() {
+    let policy = UpgradePolicy::workload_aware("rev-old", "rev-new");
+
+    assert_eq!(
+        policy.decide(
+            WorkloadKind::Conversation,
+            Some("rev-conversation-affinity"),
+            false,
+        ),
+        RevisionDecision::KeepAffinity {
+            revision_id: "rev-conversation-affinity".to_owned(),
+        }
+    );
+    assert_eq!(
+        policy.decide(WorkloadKind::Conversation, None, false),
+        RevisionDecision::AdmitOnNew {
+            revision_id: "rev-new".to_owned(),
+        }
+    );
+}
+
+#[test]
+fn upgrade_policy_migrates_compatible_durable_jobs_and_drains_realtime_on_old() {
+    let policy = UpgradePolicy::workload_aware("rev-old", "rev-new");
+
+    assert_eq!(
+        policy.decide(WorkloadKind::DurableJob, Some("rev-old"), true),
+        RevisionDecision::CheckpointAndMigrate {
+            from_revision_id: "rev-old".to_owned(),
+            to_revision_id: "rev-new".to_owned(),
+        }
+    );
+    assert_eq!(
+        policy.decide(WorkloadKind::RealtimeSession, Some("rev-old"), true),
+        RevisionDecision::DrainOnOld {
+            revision_id: "rev-old".to_owned(),
+        }
+    );
 }
