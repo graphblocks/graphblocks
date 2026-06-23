@@ -104,6 +104,64 @@ def test_non_tool_events_reject_tool_event_constructor() -> None:
     assert str(error.value) == "event OutputCutoff is not a tool event"
 
 
+def test_tool_call_drafts_map_to_argument_lifecycle_application_events() -> None:
+    draft = ToolCallDraft.proposed("response-1", "call-1", "knowledge.search")
+    proposed = ApplicationEvent.tool_call_draft(_metadata(), draft)
+
+    streaming = draft.append_argument_fragment('{"query"')
+    delta = ApplicationEvent.tool_call_draft(
+        ApplicationEventMetadata(
+            event_id="event-2",
+            run_id="run-1",
+            response_id="response-1",
+            turn_id="turn-1",
+            sequence=8,
+            release_id="release-1",
+            policy_snapshot_id="policy-1",
+            occurred_at="2026-06-23T00:00:01Z",
+        ),
+        streaming,
+    )
+    completed_draft = streaming.append_argument_fragment(':"runtime"}').complete_arguments()
+    completed = ApplicationEvent.tool_call_draft(
+        ApplicationEventMetadata(
+            event_id="event-3",
+            run_id="run-1",
+            response_id="response-1",
+            turn_id="turn-1",
+            sequence=9,
+            release_id="release-1",
+            policy_snapshot_id="policy-1",
+            occurred_at="2026-06-23T00:00:02Z",
+        ),
+        completed_draft,
+    )
+
+    assert proposed.kind == "ToolCallProposed"
+    assert proposed.tool_call_id == "call-1"
+    assert proposed.payload == {
+        "tool_name": "knowledge.search",
+        "status": "proposed",
+        "draft_sequence": 0,
+        "fragment_count": 0,
+    }
+    assert delta.kind == "ToolCallArgumentsDelta"
+    assert delta.payload == {
+        "tool_name": "knowledge.search",
+        "status": "arguments_streaming",
+        "draft_sequence": 1,
+        "fragment_count": 1,
+        "argument_fragment": '{"query"',
+    }
+    assert completed.kind == "ToolCallArgumentsCompleted"
+    assert completed.payload == {
+        "tool_name": "knowledge.search",
+        "status": "arguments_complete",
+        "draft_sequence": 2,
+        "fragment_count": 2,
+    }
+
+
 def test_tool_approval_request_maps_to_standard_application_event() -> None:
     catalog = ToolCatalog(
         definitions=(

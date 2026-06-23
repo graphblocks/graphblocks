@@ -146,6 +146,78 @@ fn non_tool_events_reject_tool_event_constructor() {
 }
 
 #[test]
+fn tool_call_drafts_map_to_argument_lifecycle_application_events() {
+    let mut draft = ToolCallDraft::proposed("response-1", "call-1", "knowledge.search");
+    let proposed = ApplicationEvent::tool_call_draft(metadata(), &draft)
+        .expect("proposed draft event should be valid");
+
+    draft
+        .append_argument_fragment("{\"query\"")
+        .expect("argument fragment should append");
+    let delta = ApplicationEvent::tool_call_draft(
+        ApplicationEventMetadata {
+            event_id: "event-2".to_string(),
+            sequence: 8,
+            ..metadata()
+        },
+        &draft,
+    )
+    .expect("argument delta event should be valid");
+
+    draft
+        .append_argument_fragment(":\"runtime\"}")
+        .expect("argument fragment should append");
+    draft
+        .complete_arguments()
+        .expect("arguments should complete");
+    let completed = ApplicationEvent::tool_call_draft(
+        ApplicationEventMetadata {
+            event_id: "event-3".to_string(),
+            sequence: 9,
+            ..metadata()
+        },
+        &draft,
+    )
+    .expect("completed arguments event should be valid");
+
+    assert_eq!(proposed.kind, ApplicationEventKind::ToolCallProposed);
+    assert_eq!(proposed.tool_call_id.as_deref(), Some("call-1"));
+    assert_eq!(
+        proposed.payload,
+        json!({
+            "tool_name": "knowledge.search",
+            "status": "proposed",
+            "draft_sequence": 0,
+            "fragment_count": 0,
+        })
+    );
+    assert_eq!(delta.kind, ApplicationEventKind::ToolCallArgumentsDelta);
+    assert_eq!(
+        delta.payload,
+        json!({
+            "tool_name": "knowledge.search",
+            "status": "arguments_streaming",
+            "draft_sequence": 1,
+            "fragment_count": 1,
+            "argument_fragment": "{\"query\"",
+        })
+    );
+    assert_eq!(
+        completed.kind,
+        ApplicationEventKind::ToolCallArgumentsCompleted
+    );
+    assert_eq!(
+        completed.payload,
+        json!({
+            "tool_name": "knowledge.search",
+            "status": "arguments_complete",
+            "draft_sequence": 2,
+            "fragment_count": 2,
+        })
+    );
+}
+
+#[test]
 fn tool_approval_request_maps_to_standard_application_event() {
     let catalog = ToolCatalog::new(
         [ToolDefinition::new(

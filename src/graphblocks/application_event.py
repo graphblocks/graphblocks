@@ -4,7 +4,7 @@ from dataclasses import dataclass, field, replace
 from typing import Literal
 
 from .output_policy import OutputCutoff, OutputPolicyDecision
-from .tools import ToolApprovalRequest, ToolResult, ToolResultEvent
+from .tools import ToolApprovalRequest, ToolCallDraft, ToolResult, ToolResultEvent
 
 
 ApplicationEventKind = Literal[
@@ -99,6 +99,49 @@ class ApplicationEvent:
     metadata: ApplicationEventMetadata
     payload: dict[str, object] = field(default_factory=dict)
     tool_call_id: str | None = None
+
+    @classmethod
+    def tool_call_draft(
+        cls,
+        metadata: ApplicationEventMetadata,
+        draft: ToolCallDraft,
+    ) -> ApplicationEvent:
+        if draft.status == "proposed":
+            return cls.tool(
+                "ToolCallProposed",
+                metadata,
+                tool_call_id=draft.tool_call_id,
+                payload={
+                    "tool_name": draft.tool_name,
+                    "status": "proposed",
+                    "draft_sequence": draft.sequence,
+                    "fragment_count": len(draft.argument_fragments),
+                },
+            )
+        if draft.status == "arguments_streaming":
+            return cls.tool(
+                "ToolCallArgumentsDelta",
+                metadata,
+                tool_call_id=draft.tool_call_id,
+                payload={
+                    "tool_name": draft.tool_name,
+                    "status": "arguments_streaming",
+                    "draft_sequence": draft.sequence,
+                    "fragment_count": len(draft.argument_fragments),
+                    "argument_fragment": draft.argument_fragments[-1] if draft.argument_fragments else None,
+                },
+            )
+        return cls.tool(
+            "ToolCallArgumentsCompleted",
+            metadata,
+            tool_call_id=draft.tool_call_id,
+            payload={
+                "tool_name": draft.tool_name,
+                "status": "arguments_complete",
+                "draft_sequence": draft.sequence,
+                "fragment_count": len(draft.argument_fragments),
+            },
+        )
 
     @classmethod
     def tool_approval_requested(

@@ -7,6 +7,7 @@ use crate::output_policy::{
     TerminalReason,
 };
 use crate::tool_approval::ToolApprovalRequest;
+use crate::tool_call::{ToolCallDraft, ToolCallDraftStatus};
 use crate::tool_result::{ToolEffectOutcome, ToolResult, ToolResultEvent, ToolResultStatus};
 use serde_json::{Value, json};
 
@@ -112,6 +113,48 @@ pub enum ApplicationEventError {
 }
 
 impl ApplicationEvent {
+    pub fn tool_call_draft(
+        metadata: ApplicationEventMetadata,
+        draft: &ToolCallDraft,
+    ) -> Result<Self, ApplicationEventError> {
+        match draft.status {
+            ToolCallDraftStatus::Proposed => Self::tool(
+                ApplicationEventKind::ToolCallProposed,
+                metadata,
+                &draft.tool_call_id,
+                json!({
+                    "tool_name": &draft.tool_name,
+                    "status": "proposed",
+                    "draft_sequence": draft.sequence,
+                    "fragment_count": draft.argument_fragments.len(),
+                }),
+            ),
+            ToolCallDraftStatus::ArgumentsStreaming => Self::tool(
+                ApplicationEventKind::ToolCallArgumentsDelta,
+                metadata,
+                &draft.tool_call_id,
+                json!({
+                    "tool_name": &draft.tool_name,
+                    "status": "arguments_streaming",
+                    "draft_sequence": draft.sequence,
+                    "fragment_count": draft.argument_fragments.len(),
+                    "argument_fragment": draft.argument_fragments.last().map(String::as_str),
+                }),
+            ),
+            ToolCallDraftStatus::ArgumentsComplete => Self::tool(
+                ApplicationEventKind::ToolCallArgumentsCompleted,
+                metadata,
+                &draft.tool_call_id,
+                json!({
+                    "tool_name": &draft.tool_name,
+                    "status": "arguments_complete",
+                    "draft_sequence": draft.sequence,
+                    "fragment_count": draft.argument_fragments.len(),
+                }),
+            ),
+        }
+    }
+
     pub fn tool_approval_requested(
         metadata: ApplicationEventMetadata,
         request: &ToolApprovalRequest,
