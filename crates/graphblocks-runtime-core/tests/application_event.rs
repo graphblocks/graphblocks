@@ -4,7 +4,10 @@ use graphblocks_runtime_core::application_event::{
     ApplicationProtocolCapabilities, ApplicationProtocolEvent, ApplicationProtocolEventKind,
     ApplicationProtocolEventMetadata, ApplicationProtocolLog,
 };
-use graphblocks_runtime_core::output_policy::{GenerationChunk, OutputPolicyDecision};
+use graphblocks_runtime_core::output_policy::{
+    DraftDisposition, DurableResult, GenerationChunk, OutputCutoff, OutputPolicyDecision,
+    TerminalReason,
+};
 use serde_json::json;
 
 fn metadata() -> ApplicationEventMetadata {
@@ -191,6 +194,89 @@ fn output_policy_termination_decision_maps_to_violation_event() {
     assert_eq!(
         event.payload.get("reason_codes"),
         Some(&json!(["policy.denied"]))
+    );
+}
+
+#[test]
+fn output_cutoff_events_include_cutoff_and_retraction_semantics() {
+    let cutoff = OutputCutoff {
+        stream_id: "stream-1".to_owned(),
+        response_id: "response-1".to_owned(),
+        turn_id: Some("turn-1".to_owned()),
+        last_generated_sequence: 4,
+        last_policy_accepted_sequence: 2,
+        last_client_delivered_sequence: 2,
+        terminal_reason: TerminalReason::PolicyDenied,
+        draft_disposition: DraftDisposition::Retract,
+        durable_result: DurableResult::None,
+        policy_decision_id: Some("decision-abort".to_owned()),
+        occurred_at_unix_ms: 1_700_000,
+    };
+
+    let events = ApplicationEvent::output_cutoff(metadata(), &cutoff)
+        .expect("output cutoff events are valid");
+
+    assert_eq!(
+        events.iter().map(|event| event.kind).collect::<Vec<_>>(),
+        vec![
+            ApplicationEventKind::OutputCutoff,
+            ApplicationEventKind::AssistantRetracted
+        ]
+    );
+    assert_eq!(events[0].metadata.event_id, "event-1");
+    assert_eq!(events[1].metadata.event_id, "event-1:draft");
+    assert_eq!(events[1].metadata.sequence, events[0].metadata.sequence + 1);
+    assert_eq!(
+        events[0].payload,
+        json!({
+            "stream_id": "stream-1",
+            "response_id": "response-1",
+            "turn_id": "turn-1",
+            "last_generated_sequence": 4,
+            "last_policy_accepted_sequence": 2,
+            "last_client_delivered_sequence": 2,
+            "terminal_reason": "policy_denied",
+            "draft_disposition": "retract",
+            "durable_result": "none",
+            "policy_decision_id": "decision-abort",
+            "occurred_at_unix_ms": 1_700_000,
+        })
+    );
+    assert_eq!(
+        events[1].payload,
+        json!({
+            "response_id": "response-1",
+            "last_client_delivered_sequence": 2,
+            "policy_decision_id": "decision-abort",
+        })
+    );
+}
+
+#[test]
+fn output_cutoff_events_mark_incomplete_when_retraction_is_not_required() {
+    let cutoff = OutputCutoff {
+        stream_id: "stream-1".to_owned(),
+        response_id: "response-1".to_owned(),
+        turn_id: None,
+        last_generated_sequence: 3,
+        last_policy_accepted_sequence: 1,
+        last_client_delivered_sequence: 1,
+        terminal_reason: TerminalReason::Cancelled,
+        draft_disposition: DraftDisposition::MarkIncomplete,
+        durable_result: DurableResult::Incomplete,
+        policy_decision_id: None,
+        occurred_at_unix_ms: 1_700_010,
+    };
+
+    let events = ApplicationEvent::output_cutoff(metadata(), &cutoff)
+        .expect("output cutoff events are valid");
+
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].kind, ApplicationEventKind::OutputCutoff);
+    assert_eq!(events[1].kind, ApplicationEventKind::AssistantIncomplete);
+    assert_eq!(
+        events[1].payload.get("last_client_delivered_sequence"),
+        Some(&json!(1))
     );
 }
 

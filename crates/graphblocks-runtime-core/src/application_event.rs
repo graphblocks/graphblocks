@@ -2,7 +2,10 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
-use crate::output_policy::{OutputDisposition, OutputPolicyDecision};
+use crate::output_policy::{
+    DraftDisposition, DurableResult, OutputCutoff, OutputDisposition, OutputPolicyDecision,
+    TerminalReason,
+};
 use serde_json::{Value, json};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -107,6 +110,67 @@ pub enum ApplicationEventError {
 }
 
 impl ApplicationEvent {
+    pub fn output_cutoff(
+        metadata: ApplicationEventMetadata,
+        cutoff: &OutputCutoff,
+    ) -> Result<Vec<Self>, ApplicationEventError> {
+        let terminal_reason = match cutoff.terminal_reason {
+            TerminalReason::PolicyDenied => "policy_denied",
+            TerminalReason::BudgetExhausted => "budget_exhausted",
+            TerminalReason::Cancelled => "cancelled",
+            TerminalReason::ClientDisconnected => "client_disconnected",
+        };
+        let draft_disposition = match cutoff.draft_disposition {
+            DraftDisposition::Keep => "keep",
+            DraftDisposition::MarkIncomplete => "mark_incomplete",
+            DraftDisposition::Retract => "retract",
+        };
+        let durable_result = match cutoff.durable_result {
+            DurableResult::None => "none",
+            DurableResult::Incomplete => "incomplete",
+            DurableResult::Partial => "partial",
+        };
+        let mut events = vec![Self::new(
+            ApplicationEventKind::OutputCutoff,
+            metadata.clone(),
+            json!({
+                "stream_id": cutoff.stream_id,
+                "response_id": cutoff.response_id,
+                "turn_id": cutoff.turn_id,
+                "last_generated_sequence": cutoff.last_generated_sequence,
+                "last_policy_accepted_sequence": cutoff.last_policy_accepted_sequence,
+                "last_client_delivered_sequence": cutoff.last_client_delivered_sequence,
+                "terminal_reason": terminal_reason,
+                "draft_disposition": draft_disposition,
+                "durable_result": durable_result,
+                "policy_decision_id": cutoff.policy_decision_id,
+                "occurred_at_unix_ms": cutoff.occurred_at_unix_ms,
+            }),
+        )?];
+
+        let draft_event_kind = match cutoff.draft_disposition {
+            DraftDisposition::Keep => None,
+            DraftDisposition::MarkIncomplete => Some(ApplicationEventKind::AssistantIncomplete),
+            DraftDisposition::Retract => Some(ApplicationEventKind::AssistantRetracted),
+        };
+        if let Some(kind) = draft_event_kind {
+            let mut draft_metadata = metadata;
+            draft_metadata.event_id = format!("{}:draft", draft_metadata.event_id);
+            draft_metadata.sequence += 1;
+            events.push(Self::new(
+                kind,
+                draft_metadata,
+                json!({
+                    "response_id": cutoff.response_id,
+                    "last_client_delivered_sequence": cutoff.last_client_delivered_sequence,
+                    "policy_decision_id": cutoff.policy_decision_id,
+                }),
+            )?);
+        }
+
+        Ok(events)
+    }
+
     pub fn output_policy_decision(
         metadata: ApplicationEventMetadata,
         decision: &OutputPolicyDecision,
