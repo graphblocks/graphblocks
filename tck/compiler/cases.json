@@ -293,6 +293,109 @@
     }
   },
   {
+    "name": "missing_resource_slot_binding",
+    "block_catalog": [
+      {
+        "typeId": "model.generate",
+        "version": 1,
+        "resourceSlots": [
+          {
+            "name": "model",
+            "type": "graphblocks.ai/ChatModel@1"
+          }
+        ]
+      }
+    ],
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "missing-resource"
+      },
+      "spec": {
+        "nodes": {
+          "generate": {
+            "block": "model.generate@1"
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:e653283e2a5485493f31c8944685ce70ee6a4e4d681ba8436d260b5cf4926f59",
+      "error_codes": ["GB1016"]
+    }
+  },
+  {
+    "name": "unknown_resource_slot_binding",
+    "block_catalog": [
+      {
+        "typeId": "model.generate",
+        "version": 1,
+        "resourceSlots": [
+          {
+            "name": "model",
+            "type": "graphblocks.ai/ChatModel@1"
+          }
+        ]
+      }
+    ],
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "unknown-resource-slot"
+      },
+      "spec": {
+        "nodes": {
+          "generate": {
+            "block": "model.generate@1",
+            "bindings": {
+              "unknown": "answer-model"
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:0661dff13294b471104fc09f63605411fa6182d40362de72b4d350c4b0e0ce5b",
+      "error_codes": ["GB1017"]
+    }
+  },
+  {
+    "name": "optional_resource_slot_unbound",
+    "block_catalog": [
+      {
+        "typeId": "rank.documents",
+        "version": 1,
+        "resourceSlots": [
+          {
+            "name": "reranker",
+            "type": "graphblocks.ai/Reranker@1",
+            "optional": true
+          }
+        ]
+      }
+    ],
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "optional-resource"
+      },
+      "spec": {
+        "nodes": {
+          "rank": {
+            "block": "rank.documents@1"
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:6e641d6d34652fc0130b906a7f91cd7e93aa70fe4900f906d1ab51f1d8176f13",
+      "error_codes": []
+    }
+  },
+  {
     "name": "unsafe_retry",
     "document": {
       "apiVersion": "graphblocks.ai/v1alpha3",

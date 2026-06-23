@@ -33,6 +33,7 @@ pub struct BlockDescriptor {
     pub version: u64,
     pub inputs: Vec<PortDescriptor>,
     pub outputs: Vec<PortDescriptor>,
+    pub resource_slots: Vec<ResourceSlotDescriptor>,
 }
 
 impl BlockDescriptor {
@@ -46,6 +47,13 @@ pub struct PortDescriptor {
     pub name: String,
     pub type_ref: Option<String>,
     pub required: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResourceSlotDescriptor {
+    pub name: String,
+    pub type_ref: Option<String>,
+    pub optional: bool,
 }
 
 impl BlockCatalog {
@@ -123,11 +131,47 @@ impl BlockCatalog {
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
+            let resource_slots = match block.get("resourceSlots") {
+                Some(Value::Array(slots)) => slots
+                    .iter()
+                    .filter_map(|slot| {
+                        let slot = slot.as_object()?;
+                        let name = slot.get("name").and_then(Value::as_str)?;
+                        Some(ResourceSlotDescriptor {
+                            name: name.to_owned(),
+                            type_ref: slot.get("type").and_then(Value::as_str).map(str::to_owned),
+                            optional: slot
+                                .get("optional")
+                                .and_then(Value::as_bool)
+                                .unwrap_or(false),
+                        })
+                    })
+                    .collect::<Vec<_>>(),
+                Some(Value::Object(slots)) => slots
+                    .iter()
+                    .map(|(slot_name, slot)| {
+                        let slot = slot.as_object();
+                        ResourceSlotDescriptor {
+                            name: slot_name.to_owned(),
+                            type_ref: slot
+                                .and_then(|slot| slot.get("type"))
+                                .and_then(Value::as_str)
+                                .map(str::to_owned),
+                            optional: slot
+                                .and_then(|slot| slot.get("optional"))
+                                .and_then(Value::as_bool)
+                                .unwrap_or(false),
+                        }
+                    })
+                    .collect::<Vec<_>>(),
+                _ => Vec::new(),
+            };
             let descriptor = BlockDescriptor {
                 type_id,
                 version,
                 inputs,
                 outputs,
+                resource_slots,
             };
             descriptors.insert(descriptor.block_id(), descriptor);
         }
@@ -806,16 +850,65 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
         }
 
         for (node_name, node) in normalized_nodes {
-            let Some(block_id) = node
-                .as_object()
-                .and_then(|node| node.get("block"))
-                .and_then(Value::as_str)
-            else {
+            let Some(node) = node.as_object() else {
+                continue;
+            };
+            let Some(block_id) = node.get("block").and_then(Value::as_str) else {
                 continue;
             };
             let Some(descriptor) = block_catalog.get(block_id) else {
                 continue;
             };
+            if !descriptor.resource_slots.is_empty() {
+                let bindings = node.get("bindings");
+                let mut bindings_object = bindings.and_then(Value::as_object);
+                let mut invalid_resource_binding_node = false;
+                if bindings.is_some() && bindings_object.is_none() {
+                    diagnostics.push(Diagnostic::error(
+                        "GB1017",
+                        "node bindings must be a mapping",
+                        format!("$.spec.nodes.{node_name}.bindings"),
+                    ));
+                    bindings_object = None;
+                }
+                let slot_names = descriptor
+                    .resource_slots
+                    .iter()
+                    .map(|slot| slot.name.as_str())
+                    .collect::<BTreeSet<_>>();
+                if let Some(bindings_object) = bindings_object {
+                    for binding_name in bindings_object.keys() {
+                        if !slot_names.contains(binding_name.as_str()) {
+                            invalid_resource_binding_node = true;
+                            diagnostics.push(Diagnostic::error(
+                                "GB1017",
+                                format!(
+                                    "block {} has no resource slot {:?}",
+                                    descriptor.block_id(),
+                                    binding_name
+                                ),
+                                format!("$.spec.nodes.{node_name}.bindings.{binding_name}"),
+                            ));
+                        }
+                    }
+                }
+                for slot in &descriptor.resource_slots {
+                    if !invalid_resource_binding_node
+                        && !slot.optional
+                        && !bindings_object
+                            .is_some_and(|bindings| bindings.contains_key(slot.name.as_str()))
+                    {
+                        diagnostics.push(Diagnostic::error(
+                            "GB1016",
+                            format!(
+                                "required resource slot {:?} is not bound for node {:?}",
+                                slot.name, node_name
+                            ),
+                            format!("$.spec.nodes.{node_name}.bindings"),
+                        ));
+                    }
+                }
+            }
             if invalid_input_port_nodes.contains(node_name.as_str()) {
                 continue;
             }

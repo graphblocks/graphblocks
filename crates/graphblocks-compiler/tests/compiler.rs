@@ -249,6 +249,112 @@ fn compile_graph_rejects_catalog_port_type_mismatch() -> Result<(), String> {
 }
 
 #[test]
+fn compile_graph_rejects_missing_required_resource_slot_binding() -> Result<(), String> {
+    let catalog = BlockCatalog::from_blocks(&json!([
+        {
+            "typeId": "model.generate",
+            "version": 1,
+            "resourceSlots": [
+                {"name": "model", "type": "graphblocks.ai/ChatModel@1"}
+            ]
+        }
+    ]))?;
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "missing-resource"},
+        "spec": {
+            "nodes": {
+                "generate": {"block": "model.generate@1"}
+            }
+        }
+    });
+
+    let plan = compile_graph_with_catalog(&graph, &catalog);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["GB1016"]
+    );
+    Ok(())
+}
+
+#[test]
+fn compile_graph_rejects_unknown_resource_slot_binding() -> Result<(), String> {
+    let catalog = BlockCatalog::from_blocks(&json!([
+        {
+            "typeId": "model.generate",
+            "version": 1,
+            "resourceSlots": [
+                {"name": "model", "type": "graphblocks.ai/ChatModel@1"}
+            ]
+        }
+    ]))?;
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "unknown-resource-slot"},
+        "spec": {
+            "nodes": {
+                "generate": {
+                    "block": "model.generate@1",
+                    "bindings": {"unknown": "answer-model"}
+                }
+            }
+        }
+    });
+
+    let plan = compile_graph_with_catalog(&graph, &catalog);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["GB1017"]
+    );
+    Ok(())
+}
+
+#[test]
+fn compile_graph_allows_optional_resource_slot_to_be_unbound() -> Result<(), String> {
+    let catalog = BlockCatalog::from_blocks(&json!([
+        {
+            "typeId": "rank.documents",
+            "version": 1,
+            "resourceSlots": [
+                {"name": "reranker", "type": "graphblocks.ai/Reranker@1", "optional": true}
+            ]
+        }
+    ]))?;
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "optional-resource"},
+        "spec": {
+            "nodes": {
+                "rank": {"block": "rank.documents@1"}
+            }
+        }
+    });
+
+    let plan = compile_graph_with_catalog(&graph, &catalog);
+
+    assert!(
+        !plan
+            .diagnostics
+            .iter()
+            .any(|diagnostic| matches!(diagnostic.code.as_str(), "GB1016" | "GB1017"))
+    );
+    Ok(())
+}
+
+#[test]
 fn compile_graph_rejects_effect_retry_without_idempotency_key() {
     let graph = json!({
         "apiVersion": GRAPH_API_VERSION,
