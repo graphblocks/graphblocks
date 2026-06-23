@@ -1325,6 +1325,21 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
                     "acceptedThroughSequence": decision.accepted_through_sequence,
                     "reasonCodes": &decision.reason_codes,
                     "policyRefs": &decision.policy_refs,
+                    "providerCancellation": match decision.provider_cancellation {
+                        ProviderCancellation::None => "none",
+                        ProviderCancellation::Request => "request",
+                        ProviderCancellation::RequiredIfSupported => "required_if_supported",
+                    },
+                    "draftDisposition": match decision.draft_disposition {
+                        DraftDisposition::Keep => "keep",
+                        DraftDisposition::MarkIncomplete => "mark_incomplete",
+                        DraftDisposition::Retract => "retract",
+                    },
+                    "pendingToolCalls": match decision.pending_tool_calls {
+                        PendingToolCallsDisposition::Keep => "keep",
+                        PendingToolCallsDisposition::Deny => "deny",
+                        PendingToolCallsDisposition::CancelAdmitted => "cancel_admitted",
+                    },
                     "evaluatedAtUnixMs": decision.evaluated_at_unix_ms,
                     "occurredAtUnixMs": occurred_at_unix_ms,
                     "inputDigest": decision.input_digest.as_str(),
@@ -1952,6 +1967,9 @@ mod tests {
                 "inputDigest": "sha256:allow",
                 "reasonCodes": ["pii.clear"],
                 "policyRefs": ["policy/output-standard"],
+                "providerCancellation": "required_if_supported",
+                "draftDisposition": "mark_incomplete",
+                "pendingToolCalls": "cancel_admitted",
                 "evaluatedAtUnixMs": 995,
                 "occurredAtUnixMs": 1_000
             }
@@ -1982,6 +2000,18 @@ mod tests {
         assert_eq!(
             decision.get("evaluatedAtUnixMs").and_then(Value::as_u64),
             Some(995)
+        );
+        assert_eq!(
+            decision.get("providerCancellation").and_then(Value::as_str),
+            Some("required_if_supported")
+        );
+        assert_eq!(
+            decision.get("draftDisposition").and_then(Value::as_str),
+            Some("mark_incomplete")
+        );
+        assert_eq!(
+            decision.get("pendingToolCalls").and_then(Value::as_str),
+            Some("cancel_admitted")
         );
 
         Ok(())
