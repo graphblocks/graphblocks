@@ -231,6 +231,118 @@ fn compile_graph_allows_bounded_holdback_with_time_or_size_bound() {
 }
 
 #[test]
+fn compile_graph_rejects_output_policy_without_client_delivery_gate() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "output-policy-bypass"},
+        "spec": {
+            "outputPolicy": {
+                "delivery": {
+                    "mode": "bounded_holdback",
+                    "holdbackMaxTokens": 48,
+                    "onViolation": "abort_response"
+                },
+                "evaluation": {
+                    "enforcementPoints": [
+                        "on_generation_chunk",
+                        "before_output_commit"
+                    ]
+                }
+            },
+            "nodes": {
+                "model": {"block": "model.generate@1"}
+            }
+        }
+    });
+
+    let plan = compile_graph(&graph);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["OutputPolicyBypass"]
+    );
+}
+
+#[test]
+fn compile_graph_rejects_output_policy_gate_after_delivery() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "late-output-policy-gate"},
+        "spec": {
+            "outputPolicy": {
+                "delivery": {
+                    "mode": "bounded_holdback",
+                    "holdbackMaxTokens": 48,
+                    "onViolation": "abort_response"
+                },
+                "evaluation": {
+                    "enforcementPoints": [
+                        "before_client_delivery",
+                        "on_generation_chunk",
+                        "before_output_commit"
+                    ]
+                }
+            },
+            "nodes": {
+                "model": {"block": "model.generate@1"}
+            }
+        }
+    });
+
+    let plan = compile_graph(&graph);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["PolicyGateAfterDelivery"]
+    );
+}
+
+#[test]
+fn compile_graph_allows_output_policy_gate_before_delivery() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "ordered-output-policy-gate"},
+        "spec": {
+            "outputPolicy": {
+                "delivery": {
+                    "mode": "bounded_holdback",
+                    "holdbackMaxTokens": 48,
+                    "onViolation": "abort_response"
+                },
+                "evaluation": {
+                    "enforcementPoints": [
+                        "on_generation_chunk",
+                        "before_client_delivery",
+                        "before_output_commit"
+                    ]
+                }
+            },
+            "nodes": {
+                "model": {"block": "model.generate@1"}
+            }
+        }
+    });
+
+    let plan = compile_graph(&graph);
+
+    assert!(!plan.diagnostics.iter().any(|diagnostic| matches!(
+        diagnostic.code.as_str(),
+        "OutputPolicyBypass" | "PolicyGateAfterDelivery"
+    )));
+}
+
+#[test]
 fn compile_graph_reports_model_visible_tool_without_binding() {
     let graph = json!({
         "apiVersion": GRAPH_API_VERSION,

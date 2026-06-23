@@ -175,9 +175,12 @@ pub fn compile_graph(document: &Value) -> Plan {
         }
     }
 
-    if let Some(delivery) = spec
+    let output_policy = spec
         .and_then(|spec| spec.get("outputPolicy"))
         .or_else(|| spec.and_then(|spec| spec.get("output_policy")))
+        .and_then(Value::as_object);
+
+    if let Some(delivery) = output_policy
         .and_then(|output_policy| output_policy.get("delivery"))
         .and_then(Value::as_object)
     {
@@ -223,6 +226,52 @@ pub fn compile_graph(document: &Value) -> Plan {
                     "ImmediateDraftWithoutRetractionSupport",
                     "immediate_draft output delivery requires incomplete or retracted draft semantics",
                     "$.spec.outputPolicy.delivery.deliveredDraftDisposition",
+                ));
+            }
+        }
+    }
+
+    if let Some(output_policy) = output_policy {
+        let enforcement_points = output_policy
+            .get("evaluation")
+            .or_else(|| output_policy.get("outputEvaluation"))
+            .or_else(|| output_policy.get("output_evaluation"))
+            .and_then(Value::as_object)
+            .and_then(|evaluation| {
+                evaluation
+                    .get("enforcementPoints")
+                    .or_else(|| evaluation.get("enforcement_points"))
+            })
+            .and_then(Value::as_array);
+
+        if let Some(enforcement_points) = enforcement_points {
+            let mut on_generation_chunk_index = None;
+            let mut before_client_delivery_index = None;
+
+            for (index, enforcement_point) in enforcement_points.iter().enumerate() {
+                match enforcement_point.as_str() {
+                    Some("on_generation_chunk") => on_generation_chunk_index = Some(index),
+                    Some("before_client_delivery") => before_client_delivery_index = Some(index),
+                    _ => {}
+                }
+            }
+
+            if before_client_delivery_index.is_none() {
+                diagnostics.push(Diagnostic::error(
+                    "OutputPolicyBypass",
+                    "output policy enforcement must include the before_client_delivery gate",
+                    "$.spec.outputPolicy.evaluation.enforcementPoints",
+                ));
+            }
+
+            if let (Some(before_client_delivery_index), Some(on_generation_chunk_index)) =
+                (before_client_delivery_index, on_generation_chunk_index)
+                && before_client_delivery_index < on_generation_chunk_index
+            {
+                diagnostics.push(Diagnostic::error(
+                    "PolicyGateAfterDelivery",
+                    "on_generation_chunk policy evaluation must precede before_client_delivery",
+                    "$.spec.outputPolicy.evaluation.enforcementPoints",
                 ));
             }
         }
