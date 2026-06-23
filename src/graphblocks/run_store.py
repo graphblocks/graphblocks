@@ -8,9 +8,9 @@ import sqlite3
 from typing import Any, Literal
 
 
-RunStatus = Literal["created", "running", "succeeded", "failed", "cancelled"]
-MutableRunStatus = Literal["running", "succeeded", "failed", "cancelled"]
-TERMINAL_RUN_STATUSES = frozenset({"succeeded", "failed", "cancelled"})
+RunStatus = Literal["created", "running", "succeeded", "failed", "cancelled", "policy_stopped"]
+MutableRunStatus = Literal["running", "succeeded", "failed", "cancelled", "policy_stopped"]
+TERMINAL_RUN_STATUSES = frozenset({"succeeded", "failed", "cancelled", "policy_stopped"})
 
 
 class StateConflictError(RuntimeError):
