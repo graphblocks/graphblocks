@@ -34,6 +34,70 @@ def test_budget_ledger_issues_bounded_permit_from_reservations() -> None:
     assert permit.fencing_tokens == {"budget-1": reservation.fencing_token}
     assert permit.owner.resource_id == "worker:1"
     assert permit.atomic_unit.resource_id == "turn:1"
+    assert permit.allows([_tokens("25")]) is True
+    assert permit.allows([_tokens("41")]) is False
+
+
+def test_budget_permit_requires_matching_usage_dimensions() -> None:
+    ledger = InMemoryBudgetLedger()
+    ledger.allocate(
+        "budget-1",
+        ResourceRef("tenant:acme"),
+        [
+            UsageAmount(
+                kind="model_total_tokens",
+                amount=Decimal("100"),
+                unit="tokens",
+                dimensions={"model": "small"},
+            )
+        ],
+        policy_ref="policy-1",
+    )
+    reservation = ledger.reserve(
+        "budget-1",
+        ResourceRef("run:1"),
+        [
+            UsageAmount(
+                kind="model_total_tokens",
+                amount=Decimal("40"),
+                unit="tokens",
+                dimensions={"model": "small"},
+            )
+        ],
+        purpose="provider_call",
+        expires_at="later",
+    )
+    issued = ledger.issue_permit(
+        "permit-1",
+        reservation_ids=[reservation.reservation_id],
+        owner=ResourceRef("worker:1"),
+        atomic_unit=ResourceRef("turn:1"),
+        admission_epoch=1,
+        continuation_profile="finish_current_turn",
+        policy_snapshot_digest="sha256:policy",
+        expires_at="later",
+    )
+
+    assert issued.allows(
+        [
+            UsageAmount(
+                kind="model_total_tokens",
+                amount=Decimal("20"),
+                unit="tokens",
+                dimensions={"model": "small"},
+            )
+        ]
+    )
+    assert not issued.allows(
+        [
+            UsageAmount(
+                kind="model_total_tokens",
+                amount=Decimal("20"),
+                unit="tokens",
+                dimensions={"model": "large"},
+            )
+        ]
+    )
 
 
 def test_budget_ledger_permit_combines_multiple_reservations() -> None:

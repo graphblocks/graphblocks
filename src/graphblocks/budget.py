@@ -109,6 +109,11 @@ class BudgetPermit:
     low_watermark: list[UsageAmount] = field(default_factory=list)
     fencing_tokens: dict[str, int] = field(default_factory=dict)
 
+    def allows(self, amounts: list[UsageAmount]) -> bool:
+        authorized = _amounts_to_dict(self.authorized_amounts)
+        requested = _amounts_to_dict(amounts)
+        return all(amount <= authorized.get(key, Decimal("0")) for key, amount in requested.items())
+
 
 def _amount_key(amount: UsageAmount) -> AmountKey:
     return (amount.kind, amount.unit, tuple(sorted(amount.dimensions.items())))
