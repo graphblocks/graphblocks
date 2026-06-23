@@ -137,6 +137,25 @@ class CitationSourceTrace:
     element_ids: list[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True, slots=True)
+class RankedHit:
+    hit: SearchHit
+    rerank_score: float | None = None
+    reranker: str | None = None
+    explanation: str | None = None
+    metadata: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class RerankResult:
+    ranked_hits: list[RankedHit]
+    reranker: str
+    input_count: int
+    evaluated_count: int
+    truncated_hit_ids: list[str] = field(default_factory=list)
+    metadata: dict[str, object] = field(default_factory=dict)
+
+
 def build_context_pack(
     context_id: str,
     hits: list[SearchHit],
@@ -284,6 +303,78 @@ def fuse_search_hits(
             )
         )
     return fused_hits
+
+
+def rerank_search_hits(
+    hits: list[SearchHit],
+    *,
+    reranker_id: str,
+    query_terms: list[str],
+    input_limit: int | None = None,
+) -> RerankResult:
+    if input_limit is not None and input_limit < 1:
+        raise ValueError("input_limit must be at least 1")
+
+    normalized_terms = [term.lower() for term in query_terms if term]
+    ordered_hits = sorted(hits, key=lambda hit: (hit.rank, hit.hit_id))
+    input_count = len(ordered_hits)
+    evaluated_count = min(input_limit, input_count) if input_limit is not None else input_count
+    truncated_hit_ids = [hit.hit_id for hit in ordered_hits[evaluated_count:]]
+    ranked_hits: list[RankedHit] = []
+
+    for hit in ordered_hits[:evaluated_count]:
+        preview_text = "\n".join(hit.item.preview).lower()
+        score = sum(preview_text.count(term) for term in normalized_terms)
+        ranked_hits.append(
+            RankedHit(
+                hit=hit,
+                rerank_score=float(score),
+                reranker=reranker_id,
+                explanation=f"matched {score} query term occurrence(s)",
+                metadata={
+                    "original_rank": hit.rank,
+                    "source_hit_id": hit.hit_id,
+                    "query_terms": normalized_terms,
+                },
+            )
+        )
+
+    ranked_hits = sorted(
+        ranked_hits,
+        key=lambda ranked: (-(ranked.rerank_score or 0.0), ranked.hit.rank, ranked.hit.hit_id),
+    )
+    ranked_hits = [
+        RankedHit(
+            hit=SearchHit(
+                hit_id=ranked.hit.hit_id,
+                item=ranked.hit.item,
+                rank=rank,
+                retriever=ranked.hit.retriever,
+                raw_score=ranked.hit.raw_score,
+                normalized_score=ranked.hit.normalized_score,
+                score_kind=ranked.hit.score_kind,
+                highlights=list(ranked.hit.highlights),
+                metadata=dict(ranked.hit.metadata),
+            ),
+            rerank_score=ranked.rerank_score,
+            reranker=ranked.reranker,
+            explanation=ranked.explanation,
+            metadata=dict(ranked.metadata),
+        )
+        for rank, ranked in enumerate(ranked_hits, start=1)
+    ]
+
+    return RerankResult(
+        ranked_hits=ranked_hits,
+        reranker=reranker_id,
+        input_count=input_count,
+        evaluated_count=evaluated_count,
+        truncated_hit_ids=truncated_hit_ids,
+        metadata={
+            "query_terms": normalized_terms,
+            "truncated_hit_ids": truncated_hit_ids,
+        },
+    )
 
 
 def resolve_citation_source_trace(answer: Answer, context: ContextPack, citation_id: str) -> CitationSourceTrace:
