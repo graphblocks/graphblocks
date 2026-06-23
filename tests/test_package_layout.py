@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import tomllib
 
-from graphblocks.packages import build_package_lock, load_package_catalog, package_rows
+from graphblocks.packages import build_package_lock, doctor_package_catalog, load_package_catalog, package_rows
 
 
 ROOT = Path(__file__).parents[1]
@@ -106,3 +106,53 @@ def test_package_lock_includes_requested_extension_and_transitive_dependencies()
     assert lock.entry("graphblocks-agents").default is False
     assert lock.entry("graphblocks-core").dependencies == ()
     assert lock.entry("graphblocks-conversation").dependencies == ("graphblocks-core",)
+
+
+def test_package_catalog_doctor_accepts_builtin_catalog() -> None:
+    diagnostics = doctor_package_catalog(load_package_catalog())
+
+    assert diagnostics.ok
+    assert diagnostics.diagnostics == ()
+
+
+def test_package_catalog_doctor_reports_unknown_dependency_and_default_constraint() -> None:
+    diagnostics = doctor_package_catalog(
+        {
+            "catalogVersion": 1,
+            "specVersion": "1.0",
+            "defaultMetaPackage": {
+                "distribution": "graphblocks",
+                "dependencies": ["missing-default~=1.0"],
+                "excludedCategories": [],
+            },
+            "packages": [
+                {
+                    "distribution": "graphblocks",
+                    "default": True,
+                    "dependsOn": ["missing-runtime"],
+                }
+            ],
+        }
+    )
+
+    assert [item.code for item in diagnostics.diagnostics] == [
+        "PackageDefaultDependencyMissing",
+        "PackageDependencyMissing",
+    ]
+
+
+def test_package_catalog_doctor_reports_dependency_cycles() -> None:
+    diagnostics = doctor_package_catalog(
+        {
+            "catalogVersion": 1,
+            "specVersion": "1.0",
+            "defaultMetaPackage": {"distribution": "graphblocks", "dependencies": [], "excludedCategories": []},
+            "packages": [
+                {"distribution": "graphblocks", "default": True, "dependsOn": []},
+                {"distribution": "graphblocks-core", "default": True, "dependsOn": ["graphblocks-runtime"]},
+                {"distribution": "graphblocks-runtime", "default": True, "dependsOn": ["graphblocks-core"]},
+            ],
+        }
+    )
+
+    assert [item.code for item in diagnostics.diagnostics] == ["PackageDependencyCycle"]

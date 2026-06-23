@@ -43,6 +43,11 @@ def test_packages_cli_lists_catalog(capsys) -> None:
     assert "graphblocks-core" in capsys.readouterr().out
 
 
+def test_packages_cli_doctor_accepts_catalog(capsys) -> None:
+    assert main(["packages", "doctor"]) == 0
+    assert capsys.readouterr().out.strip() == "OK"
+
+
 def test_lock_cli_emits_graph_hash_and_default_package_closure(tmp_path, capsys) -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",

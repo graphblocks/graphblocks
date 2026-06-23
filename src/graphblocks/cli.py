@@ -12,7 +12,7 @@ from .compiler import compile_graph
 from .diagnostics import Diagnostic
 from .loader import load_documents
 from .migration import migrate_document
-from .packages import build_package_lock, load_package_catalog, package_rows
+from .packages import build_package_lock, doctor_package_catalog, load_package_catalog, package_rows
 from .plugins import BlockCatalog, discover_plugins, load_plugin_manifest, validate_plugin_manifest
 from .runtime import InProcessRuntime, stdlib_registry
 
@@ -72,6 +72,9 @@ def main(argv: list[str] | None = None) -> int:
     packages_list_parser = packages_subparsers.add_parser("list", help="list package catalog entries")
     packages_list_parser.add_argument("--catalog", type=Path, help="override package-catalog.yaml")
     packages_list_parser.add_argument("--json", action="store_true", help="emit JSON")
+    packages_doctor_parser = packages_subparsers.add_parser("doctor", help="validate package catalog closure")
+    packages_doctor_parser.add_argument("--catalog", type=Path, help="override package-catalog.yaml")
+    packages_doctor_parser.add_argument("--json", action="store_true", help="emit JSON")
 
     lock_parser = subparsers.add_parser("lock", help="create a semantic graph lockfile")
     lock_parser.add_argument("path", type=Path)
@@ -289,6 +292,16 @@ def main(argv: list[str] | None = None) -> int:
                         f"{row['kind']} {row['stability']}"
                     )
             return 0
+        if args.packages_command == "doctor":
+            diagnostics = doctor_package_catalog(load_package_catalog(args.catalog))
+            if args.json:
+                print(json.dumps({"ok": diagnostics.ok, "diagnostics": diagnostics.to_list()}, indent=2, sort_keys=True))
+            elif diagnostics.diagnostics:
+                for item in diagnostics.diagnostics:
+                    print(f"{item.severity} {item.code} {item.path}: {item.message}")
+            else:
+                print("OK")
+            return 0 if diagnostics.ok else 1
         packages_parser.print_help()
         return 0
     parser.print_help()
