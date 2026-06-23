@@ -562,6 +562,19 @@ def test_tool_call_draft_requires_complete_json_arguments_before_final_call() ->
     assert call.status == "validated"
 
 
+def test_tool_call_draft_rejects_non_finite_json_constants() -> None:
+    draft = (
+        ToolCallDraft.proposed("response-1", "call-1", "knowledge.search")
+        .append_argument_fragment('{"score": NaN}')
+        .complete_arguments()
+    )
+
+    with pytest.raises(ToolCallError) as error:
+        draft.into_tool_call("resolved-tool-1", created_at="2026-06-23T00:00:00Z")
+
+    assert str(error.value) == "tool arguments are invalid JSON"
+
+
 def test_tool_call_argument_digest_is_stable_and_revision_resets_admission_state() -> None:
     left = (
         ToolCallDraft.proposed("response-1", "call-1", "ticket.create")

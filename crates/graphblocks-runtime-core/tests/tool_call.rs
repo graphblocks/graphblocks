@@ -46,6 +46,20 @@ fn invalid_arguments_are_rejected_before_validated_call_exists() -> Result<(), T
 }
 
 #[test]
+fn non_finite_argument_constants_are_rejected() -> Result<(), ToolCallError> {
+    let mut draft = ToolCallDraft::proposed("response-1", "call-1", "knowledge.search");
+
+    draft.append_argument_fragment("{\"score\": NaN}")?;
+    draft.complete_arguments()?;
+
+    assert_eq!(
+        draft.into_tool_call("resolved-tool-1", 1_000),
+        Err(ToolCallError::InvalidArgumentsJson),
+    );
+    Ok(())
+}
+
+#[test]
 fn canonical_arguments_digest_is_stable_for_object_key_order() -> Result<(), ToolCallError> {
     let mut left = ToolCallDraft::proposed("response-1", "call-1", "ticket.create");
     left.append_argument_fragment("{\"b\":2,\"a\":1}")?;

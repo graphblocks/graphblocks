@@ -634,8 +634,14 @@ class ToolCallDraft:
             raise ToolCallError("tool arguments are not complete")
 
         try:
-            arguments = json.loads("".join(self.argument_fragments))
-        except json.JSONDecodeError as error:
+            arguments = json.loads(
+                "".join(self.argument_fragments),
+                parse_constant=lambda constant: (_ for _ in ()).throw(
+                    ValueError(f"invalid JSON constant {constant}")
+                ),
+            )
+            arguments_digest = canonical_hash(arguments)
+        except (json.JSONDecodeError, ValueError) as error:
             raise ToolCallError("tool arguments are invalid JSON") from error
 
         return ToolCall(
@@ -644,7 +650,7 @@ class ToolCallDraft:
             resolved_tool_id=resolved_tool_id,
             name=self.tool_name,
             arguments=arguments,
-            arguments_digest=canonical_hash(arguments),
+            arguments_digest=arguments_digest,
             revision=1,
             status="validated",
             depends_on=(),
