@@ -444,6 +444,26 @@ def test_terraform_package_has_pure_python_layout_without_cli_or_hcl_dependencie
     assert (package_root / "src" / "graphblocks_terraform" / "py.typed").exists()
 
 
+def test_oci_package_has_pure_python_layout_without_registry_client_dependency() -> None:
+    package_root = ROOT / "packages" / "graphblocks-oci"
+    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
+    dependencies = pyproject["project"]["dependencies"]
+
+    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
+    assert pyproject["project"]["name"] == "graphblocks-oci"
+    assert dependencies == ["graphblocks-deployment~=1.0"]
+    assert not any(
+        client in dependency.lower()
+        for dependency in dependencies
+        for client in ("oras", "docker", "skopeo", "cosign", "cryptography")
+    )
+    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
+        "src/graphblocks_oci"
+    ]
+    assert (package_root / "src" / "graphblocks_oci" / "__init__.py").exists()
+    assert (package_root / "src" / "graphblocks_oci" / "py.typed").exists()
+
+
 def test_worker_package_has_pure_python_layout_without_server_dependencies() -> None:
     package_root = ROOT / "packages" / "graphblocks-worker"
     pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
