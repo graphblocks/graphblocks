@@ -1,6 +1,6 @@
 use graphblocks_runtime_core::connectors::{
-    CapabilityError, ConnectionSpec, InMemoryPromptRegistry, PromptRef, PromptRegistryError,
-    PromptTemplate, SecretRef, ensure_capabilities,
+    CapabilityError, ConnectionSpec, InMemoryPromptRegistry, InMemorySecretProvider, PromptRef,
+    PromptRegistryError, PromptTemplate, SecretProviderError, SecretRef, ensure_capabilities,
 };
 use serde_json::json;
 
@@ -89,6 +89,52 @@ fn in_memory_prompt_registry_rejects_ambiguous_or_unknown_references() {
         Err(PromptRegistryError::PromptNotFound {
             name: "support.reply".to_owned(),
             selector: "label:missing".to_owned()
+        })
+    );
+}
+
+#[test]
+fn in_memory_secret_provider_resolves_value_with_redacted_debug_and_access_metadata() {
+    let mut provider = InMemorySecretProvider::new("env");
+    provider.insert(
+        SecretRef::new("secret://env/OPENAI_API_KEY").with_version("2026-06"),
+        "sk-test-123",
+    );
+
+    let resolved = provider
+        .resolve(
+            &SecretRef::new("secret://env/OPENAI_API_KEY").with_version("2026-06"),
+            "runtime-admission",
+        )
+        .expect("secret should resolve");
+
+    assert_eq!(resolved.expose_secret(), "sk-test-123");
+    assert_eq!(resolved.access.provider_kind, "env");
+    assert_eq!(resolved.access.secret_uri, "secret://env/OPENAI_API_KEY");
+    assert_eq!(resolved.access.version.as_deref(), Some("2026-06"));
+    assert_eq!(resolved.access.requester, "runtime-admission");
+    assert!(format!("{resolved:?}").contains("<redacted>"));
+    assert!(!format!("{resolved:?}").contains("sk-test-123"));
+}
+
+#[test]
+fn in_memory_secret_provider_rejects_missing_and_unsupported_secret_refs() {
+    let provider = InMemorySecretProvider::new("env");
+
+    assert_eq!(
+        provider.resolve(&SecretRef::new("env:OPENAI_API_KEY"), "runtime-admission"),
+        Err(SecretProviderError::UnsupportedUri {
+            uri: "env:OPENAI_API_KEY".to_owned(),
+        })
+    );
+    assert_eq!(
+        provider.resolve(
+            &SecretRef::new("secret://env/OPENAI_API_KEY"),
+            "runtime-admission"
+        ),
+        Err(SecretProviderError::NotFound {
+            uri: "secret://env/OPENAI_API_KEY".to_owned(),
+            version: None,
         })
     );
 }

@@ -32,6 +32,114 @@ impl SecretRef {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SecretAccessRecord {
+    pub secret_uri: String,
+    pub version: Option<String>,
+    pub provider_kind: String,
+    pub requester: String,
+}
+
+#[derive(Clone, Eq, PartialEq)]
+pub struct ResolvedSecret {
+    value: String,
+    pub access: SecretAccessRecord,
+}
+
+impl ResolvedSecret {
+    pub fn expose_secret(&self) -> &str {
+        &self.value
+    }
+}
+
+impl fmt::Debug for ResolvedSecret {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ResolvedSecret")
+            .field("value", &"<redacted>")
+            .field("access", &self.access)
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SecretProviderError {
+    UnsupportedUri {
+        uri: String,
+    },
+    NotFound {
+        uri: String,
+        version: Option<String>,
+    },
+}
+
+impl fmt::Display for SecretProviderError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnsupportedUri { uri } => {
+                write!(formatter, "secret URI {uri:?} is not a secret:// reference")
+            }
+            Self::NotFound { uri, version } => {
+                write!(
+                    formatter,
+                    "secret {uri:?} version {version:?} was not found"
+                )
+            }
+        }
+    }
+}
+
+impl Error for SecretProviderError {}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct InMemorySecretProvider {
+    provider_kind: String,
+    values: BTreeMap<(String, Option<String>), String>,
+}
+
+impl InMemorySecretProvider {
+    pub fn new(provider_kind: impl Into<String>) -> Self {
+        Self {
+            provider_kind: provider_kind.into(),
+            values: BTreeMap::new(),
+        }
+    }
+
+    pub fn insert(&mut self, reference: SecretRef, value: impl Into<String>) {
+        self.values
+            .insert((reference.uri, reference.version), value.into());
+    }
+
+    pub fn resolve(
+        &self,
+        reference: &SecretRef,
+        requester: impl Into<String>,
+    ) -> Result<ResolvedSecret, SecretProviderError> {
+        if !reference.uri.starts_with("secret://") {
+            return Err(SecretProviderError::UnsupportedUri {
+                uri: reference.uri.clone(),
+            });
+        }
+        let value = self
+            .values
+            .get(&(reference.uri.clone(), reference.version.clone()))
+            .cloned()
+            .ok_or_else(|| SecretProviderError::NotFound {
+                uri: reference.uri.clone(),
+                version: reference.version.clone(),
+            })?;
+        Ok(ResolvedSecret {
+            value,
+            access: SecretAccessRecord {
+                secret_uri: reference.uri.clone(),
+                version: reference.version.clone(),
+                provider_kind: self.provider_kind.clone(),
+                requester: requester.into(),
+            },
+        })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ConnectionSpec {
     pub connection_id: String,
