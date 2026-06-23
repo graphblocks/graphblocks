@@ -227,6 +227,7 @@ from .runtime import (
     stdlib_registry,
 )
 from .run_store import InMemoryRunStore, RunRecord, SQLiteRunStore, StateConflictError
+from .schema import SchemaId, SchemaIdError, TypedValue
 from .usage import (
     InMemoryUsageLedger,
     UsageLedgerError,
@@ -362,6 +363,8 @@ __all__ = [
     "RuntimeRegistry",
     "SQLiteRunStore",
     "SQLiteExecutionJournal",
+    "SchemaId",
+    "SchemaIdError",
     "Readiness",
     "ReadinessTracker",
     "RetrievalResult",
@@ -419,6 +422,7 @@ __all__ = [
     "validate_tool_result_for_model",
     "Turn",
     "TrialResult",
+    "TypedValue",
     "TypedValueRef",
     "TurnConflictError",
     "TurnNotFoundError",
