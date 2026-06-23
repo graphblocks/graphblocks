@@ -4,6 +4,7 @@ use graphblocks_compiler::canonical::canonical_hash;
 use serde_json::{Value, json};
 
 use crate::outcome::BlockError;
+use crate::output_policy::RedactionInstruction;
 use crate::tool::ResolvedTool;
 use crate::tool_call::ToolCall;
 use crate::tool_schema::{ToolSchemaRegistry, ToolSchemaValidationError};
@@ -333,6 +334,31 @@ impl ToolResult {
     }
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ToolResultContentPolicy {
+    pub max_output_bytes: Option<usize>,
+    pub redactions: Vec<RedactionInstruction>,
+}
+
+impl ToolResultContentPolicy {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_max_output_bytes(mut self, max_output_bytes: usize) -> Self {
+        self.max_output_bytes = Some(max_output_bytes);
+        self
+    }
+
+    pub fn with_redactions<I>(mut self, redactions: I) -> Self
+    where
+        I: IntoIterator<Item = RedactionInstruction>,
+    {
+        self.redactions = redactions.into_iter().collect();
+        self
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ToolResultValidationRequest<'a> {
     pub call: &'a ToolCall,
@@ -377,6 +403,10 @@ pub enum ToolResultValidationError {
         tool_call_id: String,
         max_bytes: usize,
         actual_bytes: usize,
+    },
+    ModelOutputRedactionInvalid {
+        tool_call_id: String,
+        path: String,
     },
 }
 
@@ -462,12 +492,23 @@ impl ToolResultValidation {
     pub fn prepare_for_model(
         request: ToolResultValidationRequest<'_>,
     ) -> Result<Vec<ContentPart>, ToolResultValidationError> {
-        Self::prepare_for_model_with_limits(request, None)
+        Self::prepare_for_model_with_content_policy(request, &ToolResultContentPolicy::new())
     }
 
     pub fn prepare_for_model_with_limits(
         request: ToolResultValidationRequest<'_>,
         max_output_bytes: Option<usize>,
+    ) -> Result<Vec<ContentPart>, ToolResultValidationError> {
+        let mut policy = ToolResultContentPolicy::new();
+        if let Some(max_output_bytes) = max_output_bytes {
+            policy = policy.with_max_output_bytes(max_output_bytes);
+        }
+        Self::prepare_for_model_with_content_policy(request, &policy)
+    }
+
+    pub fn prepare_for_model_with_content_policy(
+        request: ToolResultValidationRequest<'_>,
+        content_policy: &ToolResultContentPolicy,
     ) -> Result<Vec<ContentPart>, ToolResultValidationError> {
         Self::validate_for_model(ToolResultValidationRequest {
             call: request.call,
@@ -479,9 +520,93 @@ impl ToolResultValidation {
             return Ok(Vec::new());
         }
 
-        if let Some(max_bytes) = max_output_bytes {
+        let mut model_output = request
+            .result
+            .output
+            .iter()
+            .cloned()
+            .map(|mut part| {
+                part.metadata
+                    .entry("trust_designation".to_string())
+                    .or_insert_with(|| json!("untrusted_external"));
+                part.metadata
+                    .entry("prompt_injection_label".to_string())
+                    .or_insert_with(|| json!("untrusted_tool_output"));
+                part
+            })
+            .collect::<Vec<_>>();
+
+        if !content_policy.redactions.is_empty() {
+            let mut redactions_by_part: BTreeMap<usize, Vec<&RedactionInstruction>> =
+                BTreeMap::new();
+            for redaction in &content_policy.redactions {
+                let Some(part_index_text) = redaction
+                    .path
+                    .strip_prefix("/parts/")
+                    .and_then(|suffix| suffix.strip_suffix("/text"))
+                else {
+                    return Err(ToolResultValidationError::ModelOutputRedactionInvalid {
+                        tool_call_id: request.result.tool_call_id.clone(),
+                        path: redaction.path.clone(),
+                    });
+                };
+                let Ok(part_index) = part_index_text.parse::<usize>() else {
+                    return Err(ToolResultValidationError::ModelOutputRedactionInvalid {
+                        tool_call_id: request.result.tool_call_id.clone(),
+                        path: redaction.path.clone(),
+                    });
+                };
+                redactions_by_part
+                    .entry(part_index)
+                    .or_default()
+                    .push(redaction);
+            }
+
+            for (part_index, mut redactions) in redactions_by_part {
+                let Some(part) = model_output.get_mut(part_index) else {
+                    return Err(ToolResultValidationError::ModelOutputRedactionInvalid {
+                        tool_call_id: request.result.tool_call_id.clone(),
+                        path: format!("/parts/{part_index}/text"),
+                    });
+                };
+                let Some(text) = part.text.as_mut() else {
+                    return Err(ToolResultValidationError::ModelOutputRedactionInvalid {
+                        tool_call_id: request.result.tool_call_id.clone(),
+                        path: format!("/parts/{part_index}/text"),
+                    });
+                };
+                redactions.sort_by(|left, right| right.start.cmp(&left.start));
+                for redaction in redactions {
+                    let Ok(start) = usize::try_from(redaction.start) else {
+                        return Err(ToolResultValidationError::ModelOutputRedactionInvalid {
+                            tool_call_id: request.result.tool_call_id.clone(),
+                            path: redaction.path.clone(),
+                        });
+                    };
+                    let Ok(end) = usize::try_from(redaction.end) else {
+                        return Err(ToolResultValidationError::ModelOutputRedactionInvalid {
+                            tool_call_id: request.result.tool_call_id.clone(),
+                            path: redaction.path.clone(),
+                        });
+                    };
+                    if start > end
+                        || end > text.len()
+                        || !text.is_char_boundary(start)
+                        || !text.is_char_boundary(end)
+                    {
+                        return Err(ToolResultValidationError::ModelOutputRedactionInvalid {
+                            tool_call_id: request.result.tool_call_id.clone(),
+                            path: redaction.path.clone(),
+                        });
+                    }
+                    text.replace_range(start..end, &redaction.replacement);
+                }
+            }
+        }
+
+        if let Some(max_bytes) = content_policy.max_output_bytes {
             let mut actual_bytes = 0usize;
-            for part in &request.result.output {
+            for part in &model_output {
                 if let Some(text) = part.text.as_ref() {
                     actual_bytes = actual_bytes.saturating_add(text.as_bytes().len());
                 }
@@ -499,21 +624,7 @@ impl ToolResultValidation {
             }
         }
 
-        Ok(request
-            .result
-            .output
-            .iter()
-            .cloned()
-            .map(|mut part| {
-                part.metadata
-                    .entry("trust_designation".to_string())
-                    .or_insert_with(|| json!("untrusted_external"));
-                part.metadata
-                    .entry("prompt_injection_label".to_string())
-                    .or_insert_with(|| json!("untrusted_tool_output"));
-                part
-            })
-            .collect())
+        Ok(model_output)
     }
 }
 

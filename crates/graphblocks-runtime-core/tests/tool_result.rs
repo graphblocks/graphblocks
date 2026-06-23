@@ -1,12 +1,14 @@
 use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory};
+use graphblocks_runtime_core::output_policy::RedactionInstruction;
 use graphblocks_runtime_core::tool::{
     BlockToolImplementation, ToolBinding, ToolCatalog, ToolDefinition, ToolImplementation,
     ToolResolutionScope,
 };
 use graphblocks_runtime_core::tool_call::ToolCallDraft;
 use graphblocks_runtime_core::tool_result::{
-    ArtifactRef, ContentPart, Diagnostic, ToolEffectOutcome, ToolResult, ToolResultEvent,
-    ToolResultStatus, ToolResultValidation, ToolResultValidationError, ToolResultValidationRequest,
+    ArtifactRef, ContentPart, Diagnostic, ToolEffectOutcome, ToolResult, ToolResultContentPolicy,
+    ToolResultEvent, ToolResultStatus, ToolResultValidation, ToolResultValidationError,
+    ToolResultValidationRequest,
 };
 use graphblocks_runtime_core::tool_schema::{JsonSchema, JsonSchemaNode, ToolSchemaRegistry};
 use serde_json::json;
@@ -232,6 +234,67 @@ fn completed_tool_result_model_output_enforces_byte_limit_before_model_return() 
             max_bytes: 8,
             actual_bytes: 9,
         })
+    );
+}
+
+#[test]
+fn completed_tool_result_model_output_applies_redactions_before_model_return() {
+    let catalog = ToolCatalog::new(
+        [ToolDefinition::new(
+            "knowledge.search",
+            "Search documentation.",
+            "schemas/SearchRequest@1",
+        )],
+        [ToolBinding::new(
+            "binding-search",
+            "knowledge.search",
+            ToolImplementation::Block(BlockToolImplementation::new("blocks.search")),
+        )],
+    )
+    .expect("catalog should be valid");
+    let resolved = catalog
+        .resolve(ToolResolutionScope::new(), "policy-snapshot-1")
+        .expect("tool should resolve")
+        .remove(0);
+    let mut draft = ToolCallDraft::proposed("response-1", "call-1", "knowledge.search");
+    draft
+        .append_argument_fragment("{}")
+        .expect("argument fragment should append");
+    let call = draft
+        .into_completed_tool_call(resolved.resolved_tool_id.clone(), 1_000)
+        .expect("arguments should parse");
+    let registry =
+        ToolSchemaRegistry::new(Vec::<JsonSchema>::new()).expect("schema registry should be valid");
+    let result = ToolResult::completed(
+        "call-1",
+        [ContentPart::text("safe secret suffix")],
+        1_100,
+        1_200,
+    );
+    let policy =
+        ToolResultContentPolicy::new().with_redactions([RedactionInstruction::text_range(
+            "/parts/0/text",
+            5,
+            11,
+            "[redacted]",
+        )]);
+
+    let output = ToolResultValidation::prepare_for_model_with_content_policy(
+        ToolResultValidationRequest {
+            call: &call,
+            result: &result,
+            resolved_tool: &resolved,
+            schema_registry: &registry,
+        },
+        &policy,
+    )
+    .expect("tool output should validate and prepare");
+
+    assert_eq!(output[0].text.as_deref(), Some("safe [redacted] suffix"));
+    assert_eq!(result.output[0].text.as_deref(), Some("safe secret suffix"));
+    assert_eq!(
+        output[0].metadata.get("prompt_injection_label"),
+        Some(&json!("untrusted_tool_output"))
     );
 }
 

@@ -1045,6 +1045,7 @@ def validate_tool_result_for_model(
     schema_registry: ToolSchemaRegistry,
     *,
     max_output_bytes: int | None = None,
+    redactions: tuple[dict[str, object], ...] = (),
 ) -> tuple[ContentPart, ...]:
     if result.tool_call_id != call.tool_call_id:
         raise ToolResultValidationError(
@@ -1064,9 +1065,53 @@ def validate_tool_result_for_model(
             raise ToolResultValidationError(f"tool result {result.tool_call_id} has multiple JSON outputs")
         schema_registry.validate(output_schema, json_outputs[0].data)
 
+    model_output: list[ContentPart] = []
+    for part in result.output:
+        metadata = dict(part.metadata)
+        metadata.setdefault("trust_designation", "untrusted_external")
+        metadata.setdefault("prompt_injection_label", "untrusted_tool_output")
+        model_output.append(replace(part, metadata=metadata))
+
+    if redactions:
+        redactions_by_part: dict[int, list[dict[str, object]]] = {}
+        for redaction in redactions:
+            path = redaction.get("path")
+            if not isinstance(path, str) or not path.startswith("/parts/") or not path.endswith("/text"):
+                raise ToolResultValidationError(f"invalid tool result redaction path {path!r}")
+            part_index_text = path[len("/parts/") : -len("/text")]
+            try:
+                part_index = int(part_index_text)
+            except ValueError as error:
+                raise ToolResultValidationError(f"invalid tool result redaction path {path!r}") from error
+            redactions_by_part.setdefault(part_index, []).append(redaction)
+
+        for part_index, part_redactions in redactions_by_part.items():
+            if part_index < 0 or part_index >= len(model_output):
+                raise ToolResultValidationError(f"invalid tool result redaction path '/parts/{part_index}/text'")
+            text = model_output[part_index].text
+            if text is None:
+                raise ToolResultValidationError(f"invalid tool result redaction path '/parts/{part_index}/text'")
+            for redaction in sorted(part_redactions, key=lambda item: int(item.get("start", -1)), reverse=True):
+                start = redaction.get("start")
+                end = redaction.get("end")
+                replacement = redaction.get("replacement")
+                if (
+                    not isinstance(start, int)
+                    or not isinstance(end, int)
+                    or not isinstance(replacement, str)
+                    or start < 0
+                    or end < start
+                    or end > len(text)
+                ):
+                    raise ToolResultValidationError(
+                        f"invalid tool result redaction range for {redaction.get('path')!r}"
+                    )
+                text = text[:start] + replacement + text[end:]
+            model_output[part_index] = replace(model_output[part_index], text=text)
+
     if max_output_bytes is not None:
         actual_bytes = 0
-        for part in result.output:
+        for part in model_output:
             if part.text is not None:
                 actual_bytes += len(part.text.encode("utf-8"))
             if part.data is not None:
@@ -1079,12 +1124,6 @@ def validate_tool_result_for_model(
                 f"{max_output_bytes} bytes (actual {actual_bytes} bytes)"
             )
 
-    model_output: list[ContentPart] = []
-    for part in result.output:
-        metadata = dict(part.metadata)
-        metadata.setdefault("trust_designation", "untrusted_external")
-        metadata.setdefault("prompt_injection_label", "untrusted_tool_output")
-        model_output.append(replace(part, metadata=metadata))
     return tuple(model_output)
 
 
