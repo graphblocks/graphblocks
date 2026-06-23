@@ -229,3 +229,114 @@ fn compile_graph_allows_bounded_holdback_with_time_or_size_bound() {
         "UnboundedPolicyHoldback" | "ImmediateDraftWithoutRetractionSupport"
     )));
 }
+
+#[test]
+fn compile_graph_reports_model_visible_tool_without_binding() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "missing-tool-binding"},
+        "spec": {
+            "bindings": {
+                "tools": {
+                    "search": {
+                        "definition": {
+                            "name": "knowledge.search",
+                            "description": "Search documentation.",
+                            "inputSchema": "schemas/Search@1"
+                        }
+                    }
+                }
+            },
+            "nodes": {
+                "model": {"block": "model.generate@1"}
+            }
+        }
+    });
+
+    let plan = compile_graph(&graph);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["ToolBindingMissing"]
+    );
+}
+
+#[test]
+fn compile_graph_reports_tool_definition_without_input_schema() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "missing-tool-schema"},
+        "spec": {
+            "bindings": {
+                "tools": {
+                    "search": {
+                        "definition": {
+                            "name": "knowledge.search",
+                            "description": "Search documentation."
+                        },
+                        "implementation": {
+                            "kind": "block",
+                            "block": "blocks.search"
+                        }
+                    }
+                }
+            },
+            "nodes": {
+                "model": {"block": "model.generate@1"}
+            }
+        }
+    });
+
+    let plan = compile_graph(&graph);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["ToolSchemaMissing"]
+    );
+}
+
+#[test]
+fn compile_graph_accepts_tool_definition_with_schema_and_binding() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "valid-tool-binding"},
+        "spec": {
+            "bindings": {
+                "tools": {
+                    "search": {
+                        "definition": {
+                            "name": "knowledge.search",
+                            "description": "Search documentation.",
+                            "inputSchema": "schemas/Search@1"
+                        },
+                        "implementation": {
+                            "kind": "block",
+                            "block": "blocks.search"
+                        }
+                    }
+                }
+            },
+            "nodes": {
+                "model": {"block": "model.generate@1"}
+            }
+        }
+    });
+
+    let plan = compile_graph(&graph);
+
+    assert!(!plan.diagnostics.iter().any(|diagnostic| matches!(
+        diagnostic.code.as_str(),
+        "ToolBindingMissing" | "ToolSchemaMissing"
+    )));
+}

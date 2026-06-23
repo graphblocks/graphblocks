@@ -228,6 +228,39 @@ pub fn compile_graph(document: &Value) -> Plan {
         }
     }
 
+    if let Some(tools) = spec
+        .and_then(|spec| spec.get("bindings"))
+        .and_then(|bindings| bindings.get("tools"))
+        .and_then(Value::as_object)
+    {
+        for (tool_key, tool) in tools {
+            let Some(tool) = tool.as_object() else {
+                continue;
+            };
+            if let Some(definition) = tool.get("definition").and_then(Value::as_object) {
+                let has_input_schema = definition
+                    .get("inputSchema")
+                    .or_else(|| definition.get("input_schema"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|schema| !schema.trim().is_empty());
+                if !has_input_schema {
+                    diagnostics.push(Diagnostic::error(
+                        "ToolSchemaMissing",
+                        "model-visible tool definitions require an input schema",
+                        format!("$.spec.bindings.tools.{tool_key}.definition.inputSchema"),
+                    ));
+                }
+                if !tool.contains_key("implementation") {
+                    diagnostics.push(Diagnostic::error(
+                        "ToolBindingMissing",
+                        "model-visible tools require an executable binding implementation",
+                        format!("$.spec.bindings.tools.{tool_key}.implementation"),
+                    ));
+                }
+            }
+        }
+    }
+
     let normalized = normalize_graph(document);
     let normalized_nodes = normalized
         .get("spec")
