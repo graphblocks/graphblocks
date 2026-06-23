@@ -10,6 +10,9 @@ from graphblocks import (
     JsonSchemaNode,
     OpenApiToolImplementation,
     ResolvedTool,
+    ToolApprovalError,
+    ToolApprovalRecord,
+    ToolApprovalRequest,
     ToolBinding,
     ToolCatalog,
     ToolCallDraft,
@@ -219,6 +222,115 @@ def test_tool_schema_registry_reports_missing_and_duplicate_schemas() -> None:
     with pytest.raises(ToolSchemaValidationError) as missing:
         registry.validate("schemas/Missing@1", {})
     assert str(missing.value) == "schema schemas/Missing@1 is not registered"
+
+
+def _resolved_search_tool() -> ResolvedTool:
+    catalog = ToolCatalog(
+        definitions=(
+            ToolDefinition(
+                name="knowledge.search",
+                description="Search documentation.",
+                input_schema="schemas/Search@1",
+            ),
+        ),
+        bindings=(
+            ToolBinding(
+                binding_id="binding-search",
+                tool_name="knowledge.search",
+                implementation=BlockToolImplementation(block="blocks.search"),
+                effects=frozenset({"external_read"}),
+            ),
+        ),
+    )
+    return catalog.resolve(ToolResolutionScope(), effective_policy_snapshot_id="policy-snapshot-1")[0]
+
+
+def _search_call(resolved: ResolvedTool, query: str = "runtime"):
+    return (
+        ToolCallDraft.proposed("response-1", "call-1", "knowledge.search")
+        .append_argument_fragment(f'{{"query":"{query}"}}')
+        .complete_arguments()
+        .into_tool_call(resolved.resolved_tool_id, created_at="2026-06-23T00:00:00Z")
+    )
+
+
+def test_tool_approval_record_is_valid_only_for_same_call_arguments_and_principal() -> None:
+    resolved = _resolved_search_tool()
+    call = _search_call(resolved)
+    request = ToolApprovalRequest.for_call(
+        "approval-1",
+        resolved,
+        call,
+        principal_id="user-1",
+        requested_at=1_000,
+        expires_at=2_000,
+    )
+    record = ToolApprovalRecord.approve(request, approver_id="admin-1", decided_at=1_100)
+
+    assert record.status == "approved"
+    assert record.request.revision == 1
+    assert record.is_valid_for(resolved, call, principal_id="user-1", now=1_500) is True
+    assert record.is_valid_for(resolved, call, principal_id="user-2", now=1_500) is False
+    assert record.is_valid_for(resolved, call, principal_id="user-1", now=2_001) is False
+
+    changed = _search_call(resolved, query="changed")
+    assert record.is_valid_for(resolved, changed, principal_id="user-1", now=1_500) is False
+
+
+def test_tool_approval_record_is_invalid_after_argument_revision() -> None:
+    resolved = _resolved_search_tool()
+    call = _search_call(resolved)
+    request = ToolApprovalRequest.for_call(
+        "approval-1",
+        resolved,
+        call,
+        principal_id="user-1",
+        requested_at=1_000,
+        expires_at=2_000,
+    )
+    record = ToolApprovalRecord.approve(request, approver_id="admin-1", decided_at=1_100)
+    revised = call.revise_arguments({"query": "changed"})
+
+    assert revised.revision == 2
+    assert record.is_valid_for(resolved, revised, principal_id="user-1", now=1_500) is False
+
+
+def test_tool_approval_request_rejects_mismatch_and_invalid_expiration() -> None:
+    resolved = _resolved_search_tool()
+    call = _search_call(resolved)
+
+    with pytest.raises(ToolApprovalError) as expiration:
+        ToolApprovalRequest.for_call(
+            "approval-1",
+            resolved,
+            call,
+            principal_id="user-1",
+            requested_at=2_000,
+            expires_at=1_000,
+        )
+    assert str(expiration.value) == "approval expiration must be after request time"
+
+    mismatched = call.__class__(
+        tool_call_id=call.tool_call_id,
+        response_id=call.response_id,
+        resolved_tool_id="resolved-tool-other",
+        name=call.name,
+        arguments=call.arguments,
+        arguments_digest=call.arguments_digest,
+        revision=call.revision,
+        status=call.status,
+        created_at=call.created_at,
+    )
+    with pytest.raises(ToolApprovalError) as mismatch:
+        ToolApprovalRequest.for_call(
+            "approval-1",
+            resolved,
+            mismatched,
+            principal_id="user-1",
+            requested_at=1_000,
+            expires_at=2_000,
+        )
+    assert str(mismatch.value) == "tool call references a different resolved tool"
 
 
 def test_tool_call_draft_requires_complete_json_arguments_before_final_call() -> None:

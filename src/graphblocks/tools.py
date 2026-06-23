@@ -48,6 +48,7 @@ ToolExecutionCancellationPolicy = Literal["cancel_dependents", "cancel_all", "al
 ToolExecutionState = Literal["pending", "running", "completed", "failed", "denied", "cancelled", "skipped"]
 PendingToolCallsDisposition = Literal["keep", "deny", "cancel_admitted"]
 JsonSchemaType = Literal["null", "boolean", "integer", "number", "string", "array", "object"]
+ToolApprovalStatus = Literal["requested", "approved", "denied", "invalidated"]
 
 
 class ToolCallError(RuntimeError):
@@ -59,6 +60,10 @@ class ToolExecutionPlanError(RuntimeError):
 
 
 class ToolResolutionError(RuntimeError):
+    pass
+
+
+class ToolApprovalError(RuntimeError):
     pass
 
 
@@ -351,6 +356,113 @@ class ResolvedTool:
             effective_policy_snapshot_id=effective_policy_snapshot_id,
             allowed_for_principal=allowed_for_principal,
             valid_until=valid_until,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ToolApprovalRequest:
+    approval_id: str
+    tool_call_id: str
+    tool_name: str
+    revision: int
+    definition_digest: str
+    binding_digest: str
+    arguments_digest: str
+    policy_snapshot_id: str
+    principal_id: str
+    requested_at: int
+    expires_at: int
+
+    @classmethod
+    def for_call(
+        cls,
+        approval_id: str,
+        resolved_tool: ResolvedTool,
+        call: ToolCall,
+        *,
+        principal_id: str,
+        requested_at: int,
+        expires_at: int,
+    ) -> ToolApprovalRequest:
+        if expires_at <= requested_at:
+            raise ToolApprovalError("approval expiration must be after request time")
+        if call.resolved_tool_id != resolved_tool.resolved_tool_id:
+            raise ToolApprovalError("tool call references a different resolved tool")
+        if call.name != resolved_tool.definition.name:
+            raise ToolApprovalError("tool call name does not match resolved tool")
+        return cls(
+            approval_id=approval_id,
+            tool_call_id=call.tool_call_id,
+            tool_name=call.name,
+            revision=call.revision,
+            definition_digest=resolved_tool.definition_digest,
+            binding_digest=resolved_tool.binding_digest,
+            arguments_digest=call.arguments_digest,
+            policy_snapshot_id=resolved_tool.effective_policy_snapshot_id,
+            principal_id=principal_id,
+            requested_at=requested_at,
+            expires_at=expires_at,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ToolApprovalRecord:
+    approval_id: str
+    request: ToolApprovalRequest
+    status: ToolApprovalStatus
+    approver_id: str | None = None
+    decided_at: int | None = None
+    invalidated_at: int | None = None
+    reason: str | None = None
+
+    @classmethod
+    def requested(cls, request: ToolApprovalRequest) -> ToolApprovalRecord:
+        return cls(approval_id=request.approval_id, request=request, status="requested")
+
+    @classmethod
+    def approve(cls, request: ToolApprovalRequest, *, approver_id: str, decided_at: int) -> ToolApprovalRecord:
+        return cls(
+            approval_id=request.approval_id,
+            request=request,
+            status="approved",
+            approver_id=approver_id,
+            decided_at=decided_at,
+        )
+
+    @classmethod
+    def deny(
+        cls,
+        request: ToolApprovalRequest,
+        *,
+        approver_id: str,
+        decided_at: int,
+        reason: str,
+    ) -> ToolApprovalRecord:
+        return cls(
+            approval_id=request.approval_id,
+            request=request,
+            status="denied",
+            approver_id=approver_id,
+            decided_at=decided_at,
+            reason=reason,
+        )
+
+    def invalidate(self, invalidated_at: int) -> ToolApprovalRecord:
+        return replace(self, status="invalidated", invalidated_at=invalidated_at)
+
+    def is_valid_for(self, resolved_tool: ResolvedTool, call: ToolCall, *, principal_id: str, now: int) -> bool:
+        return (
+            self.status == "approved"
+            and self.invalidated_at is None
+            and now <= self.request.expires_at
+            and self.request.tool_call_id == call.tool_call_id
+            and self.request.tool_name == call.name
+            and self.request.revision == call.revision
+            and self.request.definition_digest == resolved_tool.definition_digest
+            and self.request.binding_digest == resolved_tool.binding_digest
+            and self.request.arguments_digest == call.arguments_digest
+            and self.request.policy_snapshot_id == resolved_tool.effective_policy_snapshot_id
+            and self.request.principal_id == principal_id
         )
 
 
