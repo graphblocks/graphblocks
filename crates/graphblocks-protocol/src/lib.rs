@@ -21,6 +21,20 @@ impl BlockCapability {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ArtifactRef {
+    pub artifact_id: String,
+    pub uri: String,
+    pub media_type: Option<String>,
+    pub size_bytes: Option<u64>,
+    pub checksum: Option<String>,
+    pub etag: Option<String>,
+    pub version: Option<String>,
+    pub filename: Option<String>,
+    pub metadata: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WorkerAdvertisement {
     pub protocol_version: u16,
     pub worker_id: String,
@@ -185,6 +199,69 @@ pub struct RunOwnershipLease {
     pub lease_epoch: u64,
     pub expires_at_unix_ms: u64,
     pub last_checkpoint: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum RemotePayload {
+    Inline {
+        schema: String,
+        value: Value,
+    },
+    ArtifactRef {
+        schema: String,
+        artifact: ArtifactRef,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RemotePayloadLimits {
+    pub max_inline_bytes: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RemotePayloadError {
+    OversizedInlinePayload {
+        max_inline_bytes: usize,
+        actual_inline_bytes: usize,
+    },
+    InvalidArtifactRef {
+        field: String,
+    },
+    InlineJsonEncoding,
+}
+
+pub fn validate_remote_payload(
+    payload: &RemotePayload,
+    limits: &RemotePayloadLimits,
+) -> Result<(), RemotePayloadError> {
+    match payload {
+        RemotePayload::Inline { value, .. } => {
+            let actual_inline_bytes = serde_json::to_vec(value)
+                .map_err(|_| RemotePayloadError::InlineJsonEncoding)?
+                .len();
+            if actual_inline_bytes > limits.max_inline_bytes {
+                return Err(RemotePayloadError::OversizedInlinePayload {
+                    max_inline_bytes: limits.max_inline_bytes,
+                    actual_inline_bytes,
+                });
+            }
+            Ok(())
+        }
+        RemotePayload::ArtifactRef { artifact, .. } => {
+            if artifact.artifact_id.is_empty() {
+                return Err(RemotePayloadError::InvalidArtifactRef {
+                    field: "artifact_id".to_owned(),
+                });
+            }
+            if artifact.uri.is_empty() {
+                return Err(RemotePayloadError::InvalidArtifactRef {
+                    field: "uri".to_owned(),
+                });
+            }
+            Ok(())
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
