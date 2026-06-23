@@ -1,5 +1,8 @@
 use graphblocks_runtime_core::application_event::{
-    ApplicationEvent, ApplicationEventError, ApplicationEventKind, ApplicationEventMetadata,
+    ApplicationCommand, ApplicationCommandKind, ApplicationCommandMetadata, ApplicationEvent,
+    ApplicationEventError, ApplicationEventKind, ApplicationEventMetadata,
+    ApplicationProtocolCapabilities, ApplicationProtocolEvent, ApplicationProtocolEventKind,
+    ApplicationProtocolEventMetadata, ApplicationProtocolLog,
 };
 use serde_json::json;
 
@@ -127,5 +130,193 @@ fn non_tool_events_reject_tool_event_constructor() {
         ApplicationEventError::NotToolEvent {
             kind: ApplicationEventKind::OutputCutoff
         }
+    );
+}
+
+fn command_metadata() -> ApplicationCommandMetadata {
+    ApplicationCommandMetadata {
+        command_id: "command-1".to_owned(),
+        protocol_version: "graphblocks.app.v1".to_owned(),
+        run_id: "run-1".to_owned(),
+        turn_id: Some("turn-1".to_owned()),
+        sequence: 3,
+        idempotency_key: Some("idem-1".to_owned()),
+        issued_at_unix_ms: 1_700_100,
+    }
+}
+
+fn protocol_event_metadata(
+    event_id: &str,
+    sequence: u64,
+    cursor: &str,
+) -> ApplicationProtocolEventMetadata {
+    ApplicationProtocolEventMetadata {
+        event_id: event_id.to_owned(),
+        protocol_version: "graphblocks.app.v1".to_owned(),
+        run_id: "run-1".to_owned(),
+        turn_id: Some("turn-1".to_owned()),
+        sequence,
+        cursor: Some(cursor.to_owned()),
+        occurred_at_unix_ms: 1_700_200 + sequence,
+    }
+}
+
+#[test]
+fn application_command_names_match_the_client_protocol() {
+    let names = [
+        ApplicationCommandKind::InvokeGraph.as_str(),
+        ApplicationCommandKind::CancelRun.as_str(),
+        ApplicationCommandKind::SubmitInput.as_str(),
+        ApplicationCommandKind::ApproveEffect.as_str(),
+        ApplicationCommandKind::DenyEffect.as_str(),
+        ApplicationCommandKind::SubmitReview.as_str(),
+        ApplicationCommandKind::RequestBudgetExtension.as_str(),
+        ApplicationCommandKind::ApplyPolicyOverride.as_str(),
+        ApplicationCommandKind::ResumeInterrupt.as_str(),
+        ApplicationCommandKind::SelectCandidate.as_str(),
+        ApplicationCommandKind::OpenArtifact.as_str(),
+        ApplicationCommandKind::SetBreakpoint.as_str(),
+        ApplicationCommandKind::RequestSnapshot.as_str(),
+    ];
+
+    assert_eq!(
+        names,
+        [
+            "InvokeGraph",
+            "CancelRun",
+            "SubmitInput",
+            "ApproveEffect",
+            "DenyEffect",
+            "SubmitReview",
+            "RequestBudgetExtension",
+            "ApplyPolicyOverride",
+            "ResumeInterrupt",
+            "SelectCandidate",
+            "OpenArtifact",
+            "SetBreakpoint",
+            "RequestSnapshot"
+        ]
+    );
+}
+
+#[test]
+fn application_command_preserves_common_envelope_and_payload() {
+    let command = ApplicationCommand::new(
+        ApplicationCommandKind::ApproveEffect,
+        command_metadata(),
+        json!({"tool_call_id": "tool-1"}),
+    )
+    .expect("command is valid");
+
+    assert_eq!(command.kind, ApplicationCommandKind::ApproveEffect);
+    assert_eq!(command.metadata.command_id, "command-1");
+    assert_eq!(command.metadata.protocol_version, "graphblocks.app.v1");
+    assert_eq!(command.metadata.run_id, "run-1");
+    assert_eq!(command.metadata.turn_id.as_deref(), Some("turn-1"));
+    assert_eq!(command.metadata.idempotency_key.as_deref(), Some("idem-1"));
+    assert_eq!(command.payload, json!({"tool_call_id": "tool-1"}));
+}
+
+#[test]
+fn application_protocol_event_names_and_envelope_match_client_protocol() {
+    let names = [
+        ApplicationProtocolEventKind::RunStarted.as_str(),
+        ApplicationProtocolEventKind::TurnStarted.as_str(),
+        ApplicationProtocolEventKind::ContextReady.as_str(),
+        ApplicationProtocolEventKind::AssistantDraftStarted.as_str(),
+        ApplicationProtocolEventKind::AssistantDraftDelta.as_str(),
+        ApplicationProtocolEventKind::AssistantCommitted.as_str(),
+        ApplicationProtocolEventKind::AssistantRetracted.as_str(),
+        ApplicationProtocolEventKind::ToolStarted.as_str(),
+        ApplicationProtocolEventKind::ToolCompleted.as_str(),
+        ApplicationProtocolEventKind::ApprovalRequested.as_str(),
+        ApplicationProtocolEventKind::ReviewRequested.as_str(),
+        ApplicationProtocolEventKind::BudgetConstrained.as_str(),
+        ApplicationProtocolEventKind::BudgetExhausted.as_str(),
+        ApplicationProtocolEventKind::BudgetExtensionRequested.as_str(),
+        ApplicationProtocolEventKind::BudgetExtensionGranted.as_str(),
+        ApplicationProtocolEventKind::PolicyDecisionRequired.as_str(),
+        ApplicationProtocolEventKind::ExecutionDegraded.as_str(),
+        ApplicationProtocolEventKind::FilePatchPreview.as_str(),
+        ApplicationProtocolEventKind::JobProgress.as_str(),
+        ApplicationProtocolEventKind::ArtifactReady.as_str(),
+        ApplicationProtocolEventKind::StateSnapshot.as_str(),
+        ApplicationProtocolEventKind::RunCompleted.as_str(),
+        ApplicationProtocolEventKind::RunFailed.as_str(),
+        ApplicationProtocolEventKind::RunCancelled.as_str(),
+    ];
+
+    let event = ApplicationProtocolEvent::new(
+        ApplicationProtocolEventKind::StateSnapshot,
+        protocol_event_metadata("event-1", 5, "cursor-5"),
+        json!({"revision": 2}),
+    )
+    .expect("event is valid");
+
+    assert_eq!(names[0], "RunStarted");
+    assert_eq!(names[23], "RunCancelled");
+    assert_eq!(event.metadata.event_id, "event-1");
+    assert_eq!(event.metadata.protocol_version, "graphblocks.app.v1");
+    assert_eq!(event.metadata.cursor.as_deref(), Some("cursor-5"));
+    assert_eq!(event.payload, json!({"revision": 2}));
+}
+
+#[test]
+fn protocol_log_suppresses_duplicate_event_ids_and_replays_after_cursor() {
+    let mut log = ApplicationProtocolLog::new();
+    let first = ApplicationProtocolEvent::new(
+        ApplicationProtocolEventKind::RunStarted,
+        protocol_event_metadata("event-1", 1, "cursor-1"),
+        json!({}),
+    )
+    .expect("event is valid");
+    let second = ApplicationProtocolEvent::new(
+        ApplicationProtocolEventKind::JobProgress,
+        protocol_event_metadata("event-2", 2, "cursor-2"),
+        json!({"done": 1, "total": 2}),
+    )
+    .expect("event is valid");
+
+    assert!(log.append(first.clone()).expect("append succeeds"));
+    assert!(!log.append(first).expect("duplicate is suppressed"));
+    assert!(log.append(second).expect("append succeeds"));
+
+    let replay = log.replay_after(Some("cursor-1"), 10);
+
+    assert_eq!(log.len(), 2);
+    assert_eq!(replay.len(), 1);
+    assert_eq!(replay[0].metadata.event_id, "event-2");
+}
+
+#[test]
+fn protocol_capability_negotiation_intersects_commands_and_events() {
+    let server = ApplicationProtocolCapabilities::new("graphblocks.app.v1")
+        .with_commands([
+            ApplicationCommandKind::InvokeGraph,
+            ApplicationCommandKind::CancelRun,
+        ])
+        .with_events([
+            ApplicationProtocolEventKind::RunStarted,
+            ApplicationProtocolEventKind::RunCompleted,
+        ]);
+    let client = ApplicationProtocolCapabilities::new("graphblocks.app.v1")
+        .with_commands([
+            ApplicationCommandKind::CancelRun,
+            ApplicationCommandKind::OpenArtifact,
+        ])
+        .with_events([
+            ApplicationProtocolEventKind::RunCompleted,
+            ApplicationProtocolEventKind::ArtifactReady,
+        ]);
+
+    let negotiated = server.negotiate(&client).expect("versions match");
+
+    assert_eq!(
+        negotiated.commands,
+        [ApplicationCommandKind::CancelRun].into()
+    );
+    assert_eq!(
+        negotiated.events,
+        [ApplicationProtocolEventKind::RunCompleted].into()
     );
 }

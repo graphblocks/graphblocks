@@ -1,3 +1,7 @@
+use std::collections::BTreeSet;
+use std::error::Error;
+use std::fmt;
+
 use serde_json::Value;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -139,6 +143,315 @@ impl ApplicationEvent {
             metadata,
             tool_call_id: Some(tool_call_id),
             payload,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum ApplicationCommandKind {
+    InvokeGraph,
+    CancelRun,
+    SubmitInput,
+    ApproveEffect,
+    DenyEffect,
+    SubmitReview,
+    RequestBudgetExtension,
+    ApplyPolicyOverride,
+    ResumeInterrupt,
+    SelectCandidate,
+    OpenArtifact,
+    SetBreakpoint,
+    RequestSnapshot,
+}
+
+impl ApplicationCommandKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::InvokeGraph => "InvokeGraph",
+            Self::CancelRun => "CancelRun",
+            Self::SubmitInput => "SubmitInput",
+            Self::ApproveEffect => "ApproveEffect",
+            Self::DenyEffect => "DenyEffect",
+            Self::SubmitReview => "SubmitReview",
+            Self::RequestBudgetExtension => "RequestBudgetExtension",
+            Self::ApplyPolicyOverride => "ApplyPolicyOverride",
+            Self::ResumeInterrupt => "ResumeInterrupt",
+            Self::SelectCandidate => "SelectCandidate",
+            Self::OpenArtifact => "OpenArtifact",
+            Self::SetBreakpoint => "SetBreakpoint",
+            Self::RequestSnapshot => "RequestSnapshot",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ApplicationCommandMetadata {
+    pub command_id: String,
+    pub protocol_version: String,
+    pub run_id: String,
+    pub turn_id: Option<String>,
+    pub sequence: u64,
+    pub idempotency_key: Option<String>,
+    pub issued_at_unix_ms: u64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ApplicationCommand {
+    pub kind: ApplicationCommandKind,
+    pub metadata: ApplicationCommandMetadata,
+    pub payload: Value,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum ApplicationProtocolEventKind {
+    RunStarted,
+    TurnStarted,
+    ContextReady,
+    AssistantDraftStarted,
+    AssistantDraftDelta,
+    AssistantCommitted,
+    AssistantRetracted,
+    ToolStarted,
+    ToolCompleted,
+    ApprovalRequested,
+    ReviewRequested,
+    BudgetConstrained,
+    BudgetExhausted,
+    BudgetExtensionRequested,
+    BudgetExtensionGranted,
+    PolicyDecisionRequired,
+    ExecutionDegraded,
+    FilePatchPreview,
+    JobProgress,
+    ArtifactReady,
+    StateSnapshot,
+    RunCompleted,
+    RunFailed,
+    RunCancelled,
+}
+
+impl ApplicationProtocolEventKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::RunStarted => "RunStarted",
+            Self::TurnStarted => "TurnStarted",
+            Self::ContextReady => "ContextReady",
+            Self::AssistantDraftStarted => "AssistantDraftStarted",
+            Self::AssistantDraftDelta => "AssistantDraftDelta",
+            Self::AssistantCommitted => "AssistantCommitted",
+            Self::AssistantRetracted => "AssistantRetracted",
+            Self::ToolStarted => "ToolStarted",
+            Self::ToolCompleted => "ToolCompleted",
+            Self::ApprovalRequested => "ApprovalRequested",
+            Self::ReviewRequested => "ReviewRequested",
+            Self::BudgetConstrained => "BudgetConstrained",
+            Self::BudgetExhausted => "BudgetExhausted",
+            Self::BudgetExtensionRequested => "BudgetExtensionRequested",
+            Self::BudgetExtensionGranted => "BudgetExtensionGranted",
+            Self::PolicyDecisionRequired => "PolicyDecisionRequired",
+            Self::ExecutionDegraded => "ExecutionDegraded",
+            Self::FilePatchPreview => "FilePatchPreview",
+            Self::JobProgress => "JobProgress",
+            Self::ArtifactReady => "ArtifactReady",
+            Self::StateSnapshot => "StateSnapshot",
+            Self::RunCompleted => "RunCompleted",
+            Self::RunFailed => "RunFailed",
+            Self::RunCancelled => "RunCancelled",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ApplicationProtocolEventMetadata {
+    pub event_id: String,
+    pub protocol_version: String,
+    pub run_id: String,
+    pub turn_id: Option<String>,
+    pub sequence: u64,
+    pub cursor: Option<String>,
+    pub occurred_at_unix_ms: u64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ApplicationProtocolEvent {
+    pub kind: ApplicationProtocolEventKind,
+    pub metadata: ApplicationProtocolEventMetadata,
+    pub payload: Value,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ApplicationProtocolError {
+    EmptyCommandId,
+    EmptyEventId,
+    NonMonotonicSequence { previous: u64, next: u64 },
+    ProtocolVersionMismatch { left: String, right: String },
+}
+
+impl fmt::Display for ApplicationProtocolError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyCommandId => write!(formatter, "application command id must not be empty"),
+            Self::EmptyEventId => write!(formatter, "application event id must not be empty"),
+            Self::NonMonotonicSequence { previous, next } => write!(
+                formatter,
+                "application event sequence {next} must be greater than previous sequence {previous}"
+            ),
+            Self::ProtocolVersionMismatch { left, right } => {
+                write!(formatter, "protocol versions differ: {left:?} vs {right:?}")
+            }
+        }
+    }
+}
+
+impl Error for ApplicationProtocolError {}
+
+impl ApplicationCommand {
+    pub fn new(
+        kind: ApplicationCommandKind,
+        metadata: ApplicationCommandMetadata,
+        payload: Value,
+    ) -> Result<Self, ApplicationProtocolError> {
+        if metadata.command_id.trim().is_empty() {
+            return Err(ApplicationProtocolError::EmptyCommandId);
+        }
+        Ok(Self {
+            kind,
+            metadata,
+            payload,
+        })
+    }
+}
+
+impl ApplicationProtocolEvent {
+    pub fn new(
+        kind: ApplicationProtocolEventKind,
+        metadata: ApplicationProtocolEventMetadata,
+        payload: Value,
+    ) -> Result<Self, ApplicationProtocolError> {
+        if metadata.event_id.trim().is_empty() {
+            return Err(ApplicationProtocolError::EmptyEventId);
+        }
+        Ok(Self {
+            kind,
+            metadata,
+            payload,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ApplicationProtocolLog {
+    events: Vec<ApplicationProtocolEvent>,
+    event_ids: BTreeSet<String>,
+    last_sequence: Option<u64>,
+}
+
+impl ApplicationProtocolLog {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn append(
+        &mut self,
+        event: ApplicationProtocolEvent,
+    ) -> Result<bool, ApplicationProtocolError> {
+        if self.event_ids.contains(&event.metadata.event_id) {
+            return Ok(false);
+        }
+        if let Some(previous) = self.last_sequence {
+            if event.metadata.sequence <= previous {
+                return Err(ApplicationProtocolError::NonMonotonicSequence {
+                    previous,
+                    next: event.metadata.sequence,
+                });
+            }
+        }
+        self.last_sequence = Some(event.metadata.sequence);
+        self.event_ids.insert(event.metadata.event_id.clone());
+        self.events.push(event);
+        Ok(true)
+    }
+
+    pub fn replay_after(
+        &self,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> Vec<ApplicationProtocolEvent> {
+        let start_index = cursor
+            .and_then(|cursor| {
+                self.events.iter().position(|event| {
+                    event.metadata.cursor.as_deref() == Some(cursor)
+                        || event.metadata.sequence.to_string() == cursor
+                })
+            })
+            .map_or(0, |index| index + 1);
+        self.events
+            .iter()
+            .skip(start_index)
+            .take(limit)
+            .cloned()
+            .collect()
+    }
+
+    pub fn len(&self) -> usize {
+        self.events.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.events.is_empty()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ApplicationProtocolCapabilities {
+    pub protocol_version: String,
+    pub commands: BTreeSet<ApplicationCommandKind>,
+    pub events: BTreeSet<ApplicationProtocolEventKind>,
+}
+
+impl ApplicationProtocolCapabilities {
+    pub fn new(protocol_version: impl Into<String>) -> Self {
+        Self {
+            protocol_version: protocol_version.into(),
+            commands: BTreeSet::new(),
+            events: BTreeSet::new(),
+        }
+    }
+
+    pub fn with_commands<I>(mut self, commands: I) -> Self
+    where
+        I: IntoIterator<Item = ApplicationCommandKind>,
+    {
+        self.commands = commands.into_iter().collect();
+        self
+    }
+
+    pub fn with_events<I>(mut self, events: I) -> Self
+    where
+        I: IntoIterator<Item = ApplicationProtocolEventKind>,
+    {
+        self.events = events.into_iter().collect();
+        self
+    }
+
+    pub fn negotiate(
+        &self,
+        peer: &ApplicationProtocolCapabilities,
+    ) -> Result<ApplicationProtocolCapabilities, ApplicationProtocolError> {
+        if self.protocol_version != peer.protocol_version {
+            return Err(ApplicationProtocolError::ProtocolVersionMismatch {
+                left: self.protocol_version.clone(),
+                right: peer.protocol_version.clone(),
+            });
+        }
+        Ok(ApplicationProtocolCapabilities {
+            protocol_version: self.protocol_version.clone(),
+            commands: self
+                .commands
+                .intersection(&peer.commands)
+                .copied()
+                .collect(),
+            events: self.events.intersection(&peer.events).copied().collect(),
         })
     }
 }
