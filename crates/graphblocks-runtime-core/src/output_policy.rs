@@ -1,5 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use graphblocks_compiler::canonical::canonical_hash;
+use serde_json::json;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GenerationChunk {
     pub stream_id: String,
@@ -414,6 +417,228 @@ impl OutputPolicyDecision {
     pub fn evaluated_at_unix_ms(mut self, evaluated_at_unix_ms: u64) -> Self {
         self.evaluated_at_unix_ms = Some(evaluated_at_unix_ms);
         self
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeclarativeOutputPolicyRule {
+    pub rule_id: String,
+    pub literal: String,
+    pub disposition: OutputDisposition,
+    pub replacement: Option<String>,
+    pub reason_codes: Vec<String>,
+    pub policy_refs: Vec<String>,
+    pub priority: i64,
+}
+
+impl DeclarativeOutputPolicyRule {
+    pub fn new(
+        rule_id: impl Into<String>,
+        literal: impl Into<String>,
+        disposition: OutputDisposition,
+    ) -> Self {
+        Self {
+            rule_id: rule_id.into(),
+            literal: literal.into(),
+            disposition,
+            replacement: None,
+            reason_codes: Vec::new(),
+            policy_refs: Vec::new(),
+            priority: 0,
+        }
+    }
+
+    pub fn with_replacement(mut self, replacement: impl Into<String>) -> Self {
+        self.replacement = Some(replacement.into());
+        self
+    }
+
+    pub fn with_reason_codes<I, S>(mut self, reason_codes: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.reason_codes = reason_codes.into_iter().map(Into::into).collect();
+        self
+    }
+
+    pub fn with_policy_refs<I, S>(mut self, policy_refs: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.policy_refs = policy_refs.into_iter().map(Into::into).collect();
+        self
+    }
+
+    pub fn with_priority(mut self, priority: i64) -> Self {
+        self.priority = priority;
+        self
+    }
+
+    fn effective_policy_refs(&self) -> Vec<String> {
+        if self.policy_refs.is_empty() {
+            vec![self.rule_id.clone()]
+        } else {
+            self.policy_refs.clone()
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct DeclarativeOutputPolicyEvaluator {
+    pub rules: Vec<DeclarativeOutputPolicyRule>,
+}
+
+impl DeclarativeOutputPolicyEvaluator {
+    pub fn new<I>(rules: I) -> Self
+    where
+        I: IntoIterator<Item = DeclarativeOutputPolicyRule>,
+    {
+        Self {
+            rules: rules.into_iter().collect(),
+        }
+    }
+
+    pub fn evaluate_chunk(
+        &self,
+        chunk: &GenerationChunk,
+        evaluated_at_unix_ms: u64,
+    ) -> OutputPolicyDecision {
+        let input_digest = self.input_digest(chunk);
+        let mut rules = self.rules.iter().collect::<Vec<_>>();
+        rules.sort_by(|left, right| {
+            right
+                .priority
+                .cmp(&left.priority)
+                .then_with(|| left.rule_id.cmp(&right.rule_id))
+        });
+        for rule in rules {
+            if chunk.text.contains(&rule.literal) {
+                return self
+                    .decision_for_rule(rule, chunk, &input_digest)
+                    .evaluated_at_unix_ms(evaluated_at_unix_ms);
+            }
+        }
+
+        OutputPolicyDecision::allow(
+            Self::decision_id(&input_digest, OutputDisposition::Allow, None),
+            Some(chunk.sequence),
+            input_digest,
+        )
+        .evaluated_at_unix_ms(evaluated_at_unix_ms)
+    }
+
+    fn decision_for_rule(
+        &self,
+        rule: &DeclarativeOutputPolicyRule,
+        chunk: &GenerationChunk,
+        input_digest: &str,
+    ) -> OutputPolicyDecision {
+        let decision_id = Self::decision_id(input_digest, rule.disposition, Some(&rule.rule_id));
+        let decision = match rule.disposition {
+            OutputDisposition::Allow => {
+                OutputPolicyDecision::allow(decision_id, Some(chunk.sequence), input_digest)
+            }
+            OutputDisposition::Hold => OutputPolicyDecision::hold(decision_id, input_digest),
+            OutputDisposition::Redact => OutputPolicyDecision::redact(
+                decision_id,
+                Some(chunk.sequence),
+                Vec::<GenerationChunk>::new(),
+                input_digest,
+            )
+            .with_redactions(self.redactions_for_rule(rule, chunk)),
+            OutputDisposition::Replace => OutputPolicyDecision::replace(
+                decision_id,
+                Some(chunk.sequence),
+                [GenerationChunk::text(
+                    chunk.stream_id.clone(),
+                    chunk.response_id.clone(),
+                    chunk.sequence,
+                    rule.replacement.clone().unwrap_or_default(),
+                )],
+                input_digest,
+            ),
+            OutputDisposition::AbortResponse => {
+                OutputPolicyDecision::abort_response(decision_id, input_digest)
+            }
+            OutputDisposition::AbortTurn => {
+                OutputPolicyDecision::abort_turn(decision_id, input_digest)
+            }
+            OutputDisposition::DenyCommit => {
+                OutputPolicyDecision::deny_commit(decision_id, input_digest)
+            }
+        };
+
+        decision
+            .with_reason_codes(rule.reason_codes.clone())
+            .with_policy_refs(rule.effective_policy_refs())
+    }
+
+    fn redactions_for_rule(
+        &self,
+        rule: &DeclarativeOutputPolicyRule,
+        chunk: &GenerationChunk,
+    ) -> Vec<RedactionInstruction> {
+        let mut redactions = Vec::new();
+        let mut search_start = 0;
+        while let Some(offset) = chunk.text[search_start..].find(&rule.literal) {
+            let start = search_start + offset;
+            let end = start + rule.literal.len();
+            redactions.push(RedactionInstruction::text_range(
+                format!("/chunks/{}/text", chunk.sequence),
+                start as u64,
+                end as u64,
+                rule.replacement.clone().unwrap_or_default(),
+            ));
+            search_start = end;
+        }
+        redactions
+    }
+
+    fn input_digest(&self, chunk: &GenerationChunk) -> String {
+        canonical_hash(&json!({
+            "chunk": {
+                "stream_id": chunk.stream_id,
+                "response_id": chunk.response_id,
+                "sequence": chunk.sequence,
+                "text": chunk.text,
+            },
+            "rules": self.rules.iter().map(|rule| json!({
+                "rule_id": rule.rule_id,
+                "literal": rule.literal,
+                "disposition": disposition_name(rule.disposition),
+                "replacement": rule.replacement,
+                "reason_codes": rule.reason_codes,
+                "policy_refs": rule.policy_refs,
+                "priority": rule.priority,
+            })).collect::<Vec<_>>(),
+        }))
+    }
+
+    fn decision_id(
+        input_digest: &str,
+        disposition: OutputDisposition,
+        rule_id: Option<&str>,
+    ) -> String {
+        "output-decision:".to_owned()
+            + &canonical_hash(&json!({
+                "input_digest": input_digest,
+                "disposition": disposition_name(disposition),
+                "rule_id": rule_id,
+            }))
+    }
+}
+
+fn disposition_name(disposition: OutputDisposition) -> &'static str {
+    match disposition {
+        OutputDisposition::Allow => "allow",
+        OutputDisposition::Hold => "hold",
+        OutputDisposition::Redact => "redact",
+        OutputDisposition::Replace => "replace",
+        OutputDisposition::AbortResponse => "abort_response",
+        OutputDisposition::AbortTurn => "abort_turn",
+        OutputDisposition::DenyCommit => "deny_commit",
     }
 }
 

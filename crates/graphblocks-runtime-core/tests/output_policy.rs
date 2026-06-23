@@ -1,6 +1,7 @@
 use graphblocks_runtime_core::output_policy::{
-    DraftDisposition, DurableResult, GenerationChunk, OutputCutoff, OutputDeliveryGate,
-    OutputDeliveryPolicy, OutputDeliveryPolicyError, OutputGateError, OutputPolicyDecision,
+    DeclarativeOutputPolicyEvaluator, DeclarativeOutputPolicyRule, DraftDisposition, DurableResult,
+    GenerationChunk, OutputCutoff, OutputDeliveryGate, OutputDeliveryPolicy,
+    OutputDeliveryPolicyError, OutputDisposition, OutputGateError, OutputPolicyDecision,
     PendingToolCallsDisposition, RedactionInstruction, TerminalReason, ViolationAction,
 };
 
@@ -210,6 +211,85 @@ fn output_policy_decision_preserves_metadata_and_redaction_instructions() {
             "[redacted]",
         )]
     );
+}
+
+#[test]
+fn declarative_output_policy_evaluator_allows_unmatched_chunk() {
+    let evaluator = DeclarativeOutputPolicyEvaluator::new([DeclarativeOutputPolicyRule::new(
+        "blocked-secret",
+        "secret",
+        OutputDisposition::AbortResponse,
+    )]);
+    let decision = evaluator.evaluate_chunk(
+        &GenerationChunk::text("stream-1", "response-1", 3, "safe response"),
+        1_000,
+    );
+
+    assert_eq!(decision.disposition, OutputDisposition::Allow);
+    assert_eq!(decision.accepted_through_sequence, Some(3));
+    assert!(decision.input_digest.starts_with("sha256:"));
+    assert_eq!(decision.evaluated_at_unix_ms, Some(1_000));
+    assert!(decision.reason_codes.is_empty());
+    assert!(decision.policy_refs.is_empty());
+}
+
+#[test]
+fn declarative_output_policy_evaluator_redacts_literal_match() {
+    let evaluator = DeclarativeOutputPolicyEvaluator::new([DeclarativeOutputPolicyRule::new(
+        "redact-secret",
+        "secret",
+        OutputDisposition::Redact,
+    )
+    .with_replacement("[redacted]")
+    .with_reason_codes(["secret.detected"])
+    .with_policy_refs(["policy/output-standard#redact-secret"])]);
+    let decision = evaluator.evaluate_chunk(
+        &GenerationChunk::text("stream-1", "response-1", 4, "safe secret suffix"),
+        1_010,
+    );
+
+    assert_eq!(decision.disposition, OutputDisposition::Redact);
+    assert_eq!(decision.accepted_through_sequence, Some(4));
+    assert_eq!(
+        decision.redactions,
+        vec![RedactionInstruction::text_range(
+            "/chunks/4/text",
+            5,
+            11,
+            "[redacted]",
+        )]
+    );
+    assert_eq!(decision.reason_codes, vec!["secret.detected"]);
+    assert_eq!(
+        decision.policy_refs,
+        vec!["policy/output-standard#redact-secret"]
+    );
+    assert_eq!(decision.evaluated_at_unix_ms, Some(1_010));
+}
+
+#[test]
+fn declarative_output_policy_evaluator_aborts_on_blocked_literal() {
+    let evaluator = DeclarativeOutputPolicyEvaluator::new([DeclarativeOutputPolicyRule::new(
+        "blocked-secret",
+        "secret",
+        OutputDisposition::AbortResponse,
+    )
+    .with_reason_codes(["secret.detected"])]);
+    let decision = evaluator.evaluate_chunk(
+        &GenerationChunk::text("stream-1", "response-1", 5, "unsafe secret"),
+        1_020,
+    );
+
+    assert_eq!(decision.disposition, OutputDisposition::AbortResponse);
+    assert_eq!(decision.accepted_through_sequence, None);
+    assert_eq!(
+        decision.pending_tool_calls,
+        PendingToolCallsDisposition::Deny
+    );
+    assert_eq!(decision.draft_disposition, DraftDisposition::Retract);
+    assert_eq!(decision.reason_codes, vec!["secret.detected"]);
+    assert_eq!(decision.policy_refs, vec!["blocked-secret"]);
+    assert_eq!(decision.evaluated_at_unix_ms, Some(1_020));
 }
 
 #[test]
