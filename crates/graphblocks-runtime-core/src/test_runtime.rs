@@ -268,17 +268,26 @@ impl InProcessTestRuntime {
 
                             match boundary.policy.decide(&request) {
                                 RetryDecision::Retry { delay_ms } => {
+                                    let mut payload = json!({
+                                        "attempt": attempt,
+                                        "code": error.code,
+                                        "category": format!("{:?}", error.category),
+                                        "message": error.message,
+                                        "details": error.details,
+                                        "delayMs": delay_ms,
+                                    });
+                                    if let Some(idempotency_key) = &boundary.idempotency_key
+                                        && let Some(payload) = payload.as_object_mut()
+                                    {
+                                        payload.insert(
+                                            "idempotencyKey".to_owned(),
+                                            json!(idempotency_key),
+                                        );
+                                    }
                                     self.journal.append_with_metadata(
                                         "node_retry",
                                         metadata,
-                                        Some(json!({
-                                            "attempt": attempt,
-                                            "code": error.code,
-                                            "category": format!("{:?}", error.category),
-                                            "message": error.message,
-                                            "details": error.details,
-                                            "delayMs": delay_ms,
-                                        })),
+                                        Some(payload),
                                     )?;
                                     attempt += 1;
                                     continue;
@@ -375,16 +384,25 @@ impl InProcessTestRuntime {
 
                             match boundary.policy.decide(&request) {
                                 RetryDecision::Retry { delay_ms } => {
+                                    let mut payload = json!({
+                                        "attempt": attempt,
+                                        "code": error.code,
+                                        "category": format!("{:?}", error.category),
+                                        "message": error.message,
+                                        "delayMs": delay_ms,
+                                    });
+                                    if let Some(idempotency_key) = &boundary.idempotency_key
+                                        && let Some(payload) = payload.as_object_mut()
+                                    {
+                                        payload.insert(
+                                            "idempotencyKey".to_owned(),
+                                            json!(idempotency_key),
+                                        );
+                                    }
                                     self.journal.append_with_metadata(
                                         "node_retry",
                                         metadata,
-                                        Some(json!({
-                                            "attempt": attempt,
-                                            "code": error.code,
-                                            "category": format!("{:?}", error.category),
-                                            "message": error.message,
-                                            "delayMs": delay_ms,
-                                        })),
+                                        Some(payload),
                                     )?;
                                     attempt += 1;
                                     continue;

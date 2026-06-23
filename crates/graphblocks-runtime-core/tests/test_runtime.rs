@@ -525,6 +525,7 @@ fn in_process_test_runtime_cancels_before_retrying_failed_attempt() {
 
 struct ExternalWriteFlakyExecutor {
     attempts: usize,
+    failures_before_success: usize,
 }
 
 impl NodeExecutor for ExternalWriteFlakyExecutor {
@@ -533,7 +534,7 @@ impl NodeExecutor for ExternalWriteFlakyExecutor {
         _node: StartedNode,
     ) -> Result<Vec<(PortRef, Outcome<Value>)>, BlockError> {
         self.attempts += 1;
-        if self.attempts == 1 {
+        if self.attempts <= self.failures_before_success {
             return Err(BlockError::new(
                 "tool.transient",
                 ErrorCategory::Transient,
@@ -557,7 +558,10 @@ fn in_process_test_runtime_rejects_effect_retry_without_idempotency_key() {
             "tool",
             NodeRetryBoundary::new(policy).with_effect(EffectKind::ExternalWrite),
         );
-    let mut executor = ExternalWriteFlakyExecutor { attempts: 0 };
+    let mut executor = ExternalWriteFlakyExecutor {
+        attempts: 0,
+        failures_before_success: 1,
+    };
 
     let result = runtime.run(&mut executor).expect("runtime should run");
 
@@ -586,7 +590,10 @@ fn in_process_test_runtime_retries_effect_with_idempotency_key() {
                 .with_effect(EffectKind::ExternalWrite)
                 .with_idempotency_key("tool-call-1"),
         );
-    let mut executor = ExternalWriteFlakyExecutor { attempts: 0 };
+    let mut executor = ExternalWriteFlakyExecutor {
+        attempts: 0,
+        failures_before_success: 1,
+    };
 
     let result = runtime.run(&mut executor).expect("runtime should run");
 
@@ -607,6 +614,44 @@ fn in_process_test_runtime_retries_effect_with_idempotency_key() {
             "node_completed",
             "run_succeeded",
         ],
+    );
+}
+
+#[test]
+fn in_process_test_runtime_records_same_idempotency_key_across_effect_retries() {
+    let policy = RetryPolicy::new(4).retry_on([ErrorCategory::Transient]);
+    let mut runtime = InProcessTestRuntime::new("run-000001", [ScheduledNode::new("tool", [])])
+        .expect("runtime should be created")
+        .with_retry_boundary(
+            "tool",
+            NodeRetryBoundary::new(policy)
+                .with_effect(EffectKind::ExternalWrite)
+                .with_idempotency_key("tool-call-1"),
+        );
+    let mut executor = ExternalWriteFlakyExecutor {
+        attempts: 0,
+        failures_before_success: 2,
+    };
+
+    let result = runtime.run(&mut executor).expect("runtime should run");
+
+    assert_eq!(result.status, TestRunStatus::Succeeded);
+    assert_eq!(executor.attempts, 3);
+    assert_eq!(
+        result
+            .journal
+            .records()
+            .iter()
+            .filter(|record| record.kind == "node_retry")
+            .map(|record| {
+                record
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("idempotencyKey"))
+                    .and_then(Value::as_str)
+            })
+            .collect::<Vec<_>>(),
+        vec![Some("tool-call-1"), Some("tool-call-1")]
     );
 }
 
