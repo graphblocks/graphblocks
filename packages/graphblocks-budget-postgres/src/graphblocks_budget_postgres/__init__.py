@@ -150,6 +150,48 @@ WHERE {schema.schema}.budget_accounts.revision <= EXCLUDED.revision;
     )
 
 
+def upsert_budget_reservation_statement(
+    reservation: BudgetReservation,
+    *,
+    schema: PostgresBudgetSchema | None = None,
+) -> PostgresStatement:
+    schema = schema or PostgresBudgetSchema()
+    return PostgresStatement(
+        name="budget_reservation_upsert",
+        sql=f"""
+INSERT INTO {schema.schema}.budget_reservations (
+  reservation_id,
+  budget_id,
+  owner_json,
+  amounts_json,
+  purpose,
+  expires_at,
+  fencing_token,
+  status
+) VALUES (
+  %(reservation_id)s,
+  %(budget_id)s,
+  %(owner_json)s,
+  %(amounts_json)s,
+  %(purpose)s,
+  %(expires_at)s,
+  %(fencing_token)s,
+  %(status)s
+)
+ON CONFLICT (reservation_id) DO UPDATE SET
+  budget_id = EXCLUDED.budget_id,
+  owner_json = EXCLUDED.owner_json,
+  amounts_json = EXCLUDED.amounts_json,
+  purpose = EXCLUDED.purpose,
+  expires_at = EXCLUDED.expires_at,
+  fencing_token = EXCLUDED.fencing_token,
+  status = EXCLUDED.status,
+  updated_at = now();
+""".strip(),
+        params=encode_budget_reservation(reservation),
+    )
+
+
 __all__ = [
     "PostgresBudgetAdapterError",
     "PostgresBudgetSchema",
@@ -157,4 +199,5 @@ __all__ = [
     "encode_budget_account",
     "encode_budget_reservation",
     "upsert_budget_account_statement",
+    "upsert_budget_reservation_statement",
 ]

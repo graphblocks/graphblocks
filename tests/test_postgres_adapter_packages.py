@@ -69,6 +69,60 @@ def test_budget_postgres_schema_and_account_codec(monkeypatch) -> None:
     assert statement.params["budget_id"] == "budget-1"
 
 
+def test_budget_postgres_reservation_statement(monkeypatch) -> None:
+    _add_budget_postgres_paths(monkeypatch)
+    graphblocks_budget = importlib.import_module("graphblocks_budget")
+    graphblocks_budget_postgres = importlib.import_module("graphblocks_budget_postgres")
+    schema = graphblocks_budget_postgres.PostgresBudgetSchema(schema="gb_budget")
+    reservation = graphblocks_budget.BudgetReservation(
+        reservation_id="reservation-1",
+        budget_id="budget-1",
+        owner=graphblocks_budget.ResourceRef("run-1", "run"),
+        amounts=[
+            graphblocks_budget.UsageAmount(
+                "model_total_tokens",
+                Decimal("40"),
+                "tokens",
+                {"model": "gpt-test"},
+            )
+        ],
+        purpose="provider_call",
+        expires_at="2026-06-23T00:00:00Z",
+        fencing_token=7,
+    )
+
+    assert graphblocks_budget_postgres.encode_budget_reservation(reservation) == {
+        "reservation_id": "reservation-1",
+        "budget_id": "budget-1",
+        "owner_json": {
+            "resource_id": "run-1",
+            "resource_kind": "run",
+            "tenant_id": None,
+            "attributes": {},
+        },
+        "amounts_json": [
+            {
+                "kind": "model_total_tokens",
+                "amount": "40",
+                "unit": "tokens",
+                "dimensions": {"model": "gpt-test"},
+            }
+        ],
+        "purpose": "provider_call",
+        "expires_at": "2026-06-23T00:00:00Z",
+        "fencing_token": 7,
+        "status": "reserved",
+    }
+
+    statement = graphblocks_budget_postgres.upsert_budget_reservation_statement(reservation, schema=schema)
+
+    assert statement.name == "budget_reservation_upsert"
+    assert "INSERT INTO gb_budget.budget_reservations" in statement.sql
+    assert "ON CONFLICT (reservation_id) DO UPDATE" in statement.sql
+    assert statement.params["reservation_id"] == "reservation-1"
+    assert statement.params["fencing_token"] == 7
+
+
 def test_usage_postgres_schema_and_record_codec(monkeypatch) -> None:
     _add_usage_postgres_paths(monkeypatch)
     graphblocks_usage = importlib.import_module("graphblocks_usage")
