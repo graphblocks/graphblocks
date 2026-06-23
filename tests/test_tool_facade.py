@@ -8,6 +8,7 @@ from graphblocks import (
     OpenApiToolImplementation,
     ResolvedTool,
     ToolBinding,
+    ToolCatalog,
     ToolCallDraft,
     ToolCallError,
     ToolResult,
@@ -15,6 +16,8 @@ from graphblocks import (
     ToolExecutionPlan,
     ToolExecutionPlanError,
     ToolPlanCall,
+    ToolResolutionError,
+    ToolResolutionScope,
 )
 
 
@@ -109,6 +112,66 @@ def test_resolved_tool_records_definition_binding_and_policy_identity() -> None:
     assert resolved.binding_digest == binding.digest()
     assert resolved.effective_policy_snapshot_id == "policy-snapshot-1"
     assert resolved.allowed_for_principal is True
+
+
+def test_tool_catalog_resolution_intersects_scoped_capabilities() -> None:
+    knowledge = ToolDefinition(
+        name="knowledge.search",
+        description="Search support documentation.",
+        input_schema="schemas/SearchRequest@1",
+    )
+    ticket = ToolDefinition(
+        name="ticket.create",
+        description="Create a support ticket.",
+        input_schema="schemas/TicketCreateRequest@1",
+    )
+    catalog = ToolCatalog(
+        definitions=(knowledge, ticket),
+        bindings=(
+            ToolBinding(
+                binding_id="binding-knowledge",
+                tool_name="knowledge.search",
+                implementation=BlockToolImplementation(block="knowledge.search@1"),
+                effects=frozenset({"external_read"}),
+            ),
+            ToolBinding(
+                binding_id="binding-ticket",
+                tool_name="ticket.create",
+                implementation=OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
+                effects=frozenset({"external_write", "network"}),
+            ),
+        ),
+    )
+    scope = ToolResolutionScope(
+        application_tools=frozenset({"knowledge.search", "ticket.create"}),
+        graph_tools=frozenset({"knowledge.search", "ticket.create"}),
+        principal_tools=frozenset({"knowledge.search"}),
+        budget_tools=frozenset({"knowledge.search", "ticket.create"}),
+    )
+
+    resolved = catalog.resolve(scope, effective_policy_snapshot_id="policy-snapshot-1")
+
+    assert [tool.definition.name for tool in resolved] == ["knowledge.search"]
+    assert resolved[0].allowed_for_principal is True
+    assert resolved[0].resolved_tool_id.startswith("sha256:")
+
+
+def test_tool_catalog_reports_visible_tool_without_binding() -> None:
+    catalog = ToolCatalog(
+        definitions=(
+            ToolDefinition(
+                name="knowledge.search",
+                description="Search support documentation.",
+                input_schema="schemas/SearchRequest@1",
+            ),
+        ),
+        bindings=(),
+    )
+
+    with pytest.raises(ToolResolutionError) as error:
+        catalog.resolve(ToolResolutionScope(), effective_policy_snapshot_id="policy-snapshot-1")
+
+    assert str(error.value) == "tool binding missing for knowledge.search"
 
 
 def test_tool_call_draft_requires_complete_json_arguments_before_final_call() -> None:

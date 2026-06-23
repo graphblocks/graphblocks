@@ -141,6 +141,7 @@ from .tools import (
     RemoteToolImplementation,
     ResolvedTool,
     ToolBinding,
+    ToolCatalog,
     ToolCall,
     ToolCallDraft,
     ToolCallError,
@@ -148,6 +149,8 @@ from .tools import (
     ToolExecutionPlan,
     ToolExecutionPlanError,
     ToolPlanCall,
+    ToolResolutionError,
+    ToolResolutionScope,
     ToolResult,
 )
 from .rag import (
@@ -317,6 +320,7 @@ __all__ = [
     "StaticPolicyEvaluator",
     "PutOptions",
     "ToolBinding",
+    "ToolCatalog",
     "ToolCall",
     "ToolCallDraft",
     "ToolCallError",
@@ -324,6 +328,8 @@ __all__ = [
     "ToolExecutionPlan",
     "ToolExecutionPlanError",
     "ToolPlanCall",
+    "ToolResolutionError",
+    "ToolResolutionScope",
     "ToolResult",
     "Turn",
     "TrialResult",

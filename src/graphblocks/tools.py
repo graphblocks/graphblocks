@@ -55,6 +55,10 @@ class ToolExecutionPlanError(RuntimeError):
     pass
 
 
+class ToolResolutionError(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True, slots=True)
 class ToolDefinition:
     name: str
@@ -234,6 +238,121 @@ class ResolvedTool:
             allowed_for_principal=allowed_for_principal,
             valid_until=valid_until,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class ToolResolutionScope:
+    application_tools: frozenset[str] | None = None
+    graph_tools: frozenset[str] | None = None
+    principal_tools: frozenset[str] | None = None
+    tenant_policy_tools: frozenset[str] | None = None
+    conversation_policy_tools: frozenset[str] | None = None
+    data_classification_tools: frozenset[str] | None = None
+    deployment_tools: frozenset[str] | None = None
+    budget_tools: frozenset[str] | None = None
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "application_tools",
+            "graph_tools",
+            "principal_tools",
+            "tenant_policy_tools",
+            "conversation_policy_tools",
+            "data_classification_tools",
+            "deployment_tools",
+            "budget_tools",
+        ):
+            value = getattr(self, field_name)
+            if value is not None:
+                object.__setattr__(self, field_name, frozenset(value))
+
+    def allows(self, tool_name: str) -> bool:
+        return all(
+            tools is None or tool_name in tools
+            for tools in (
+                self.application_tools,
+                self.graph_tools,
+                self.principal_tools,
+                self.tenant_policy_tools,
+                self.conversation_policy_tools,
+                self.data_classification_tools,
+                self.deployment_tools,
+                self.budget_tools,
+            )
+        )
+
+    def contains_in_principal_scope(self, tool_name: str) -> bool:
+        return self.principal_tools is None or tool_name in self.principal_tools
+
+
+@dataclass(frozen=True, slots=True)
+class ToolCatalog:
+    definitions: tuple[ToolDefinition, ...]
+    bindings: tuple[ToolBinding, ...]
+    _definitions_by_name: dict[str, ToolDefinition] = field(init=False, repr=False)
+    _bindings_by_tool: dict[str, ToolBinding] = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "definitions", tuple(self.definitions))
+        object.__setattr__(self, "bindings", tuple(self.bindings))
+        definitions_by_name: dict[str, ToolDefinition] = {}
+        for definition in self.definitions:
+            if definition.name in definitions_by_name:
+                raise ToolResolutionError(f"duplicate tool definition {definition.name}")
+            definitions_by_name[definition.name] = definition
+
+        binding_ids: set[str] = set()
+        bindings_by_tool: dict[str, ToolBinding] = {}
+        for binding in self.bindings:
+            if binding.binding_id in binding_ids:
+                raise ToolResolutionError(f"duplicate tool binding {binding.binding_id}")
+            binding_ids.add(binding.binding_id)
+            if binding.tool_name not in definitions_by_name:
+                raise ToolResolutionError(
+                    f"tool binding {binding.binding_id} references unknown tool {binding.tool_name}"
+                )
+            if binding.tool_name in bindings_by_tool:
+                raise ToolResolutionError(f"multiple bindings for tool {binding.tool_name}")
+            bindings_by_tool[binding.tool_name] = binding
+
+        object.__setattr__(self, "_definitions_by_name", definitions_by_name)
+        object.__setattr__(self, "_bindings_by_tool", bindings_by_tool)
+
+    def resolve(
+        self,
+        scope: ToolResolutionScope,
+        *,
+        effective_policy_snapshot_id: str,
+    ) -> list[ResolvedTool]:
+        resolved: list[ResolvedTool] = []
+        for tool_name in sorted(self._definitions_by_name):
+            if not scope.allows(tool_name):
+                continue
+            definition = self._definitions_by_name[tool_name]
+            binding = self._bindings_by_tool.get(tool_name)
+            if binding is None:
+                raise ToolResolutionError(f"tool binding missing for {tool_name}")
+            definition_digest = definition.digest()
+            binding_digest = binding.digest()
+            resolved.append(
+                ResolvedTool(
+                    resolved_tool_id=canonical_hash(
+                        {
+                            "tool_name": tool_name,
+                            "definition_digest": definition_digest,
+                            "binding_digest": binding_digest,
+                            "policy_snapshot": effective_policy_snapshot_id,
+                        }
+                    ),
+                    definition=definition,
+                    binding=binding,
+                    definition_digest=definition_digest,
+                    binding_digest=binding_digest,
+                    effective_policy_snapshot_id=effective_policy_snapshot_id,
+                    allowed_for_principal=scope.contains_in_principal_scope(tool_name),
+                )
+            )
+        return resolved
 
 
 @dataclass(frozen=True, slots=True)
