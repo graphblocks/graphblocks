@@ -868,6 +868,61 @@ def test_artifact_reference_tool_result_mode_rejects_inline_model_output() -> No
     assert validate_tool_result_for_model(call, referenced, resolved, registry)[0].kind == "artifact_ref"
 
 
+def test_completed_tool_result_model_output_records_capture_policy_before_model_return() -> None:
+    catalog = ToolCatalog(
+        definitions=(
+            ToolDefinition(
+                name="knowledge.search",
+                description="Search documentation.",
+                input_schema="schemas/SearchRequest@1",
+            ),
+        ),
+        bindings=(
+            ToolBinding(
+                binding_id="binding-search",
+                tool_name="knowledge.search",
+                implementation=BlockToolImplementation(block="blocks.search"),
+            ),
+        ),
+    )
+    resolved = catalog.resolve(ToolResolutionScope(), effective_policy_snapshot_id="policy-snapshot-1")[0]
+    call = (
+        ToolCallDraft.proposed("response-1", "call-1", "knowledge.search")
+        .append_argument_fragment("{}")
+        .complete_arguments()
+        .into_tool_call(resolved.resolved_tool_id, created_at="2026-06-23T00:00:00Z")
+    )
+    registry = ToolSchemaRegistry(())
+    result = ToolResult.completed(
+        "call-1",
+        (ContentPart(kind="text", text="safe secret suffix"),),
+        started_at="2026-06-23T00:00:01Z",
+        completed_at="2026-06-23T00:00:02Z",
+    )
+
+    output = validate_tool_result_for_model(
+        call,
+        result,
+        resolved,
+        registry,
+        capture_policy={
+            "mode": "hash_only",
+            "retention_policy": "records-30d",
+            "consent_ref": "consent-1",
+        },
+    )
+    capture = output[0].metadata["capture"]
+
+    assert capture["mode"] == "hash_only"
+    assert capture["content_kind"] == "tool_result_text"
+    assert str(capture["content_digest"]).startswith("sha256:")
+    assert capture["preview"] is None
+    assert capture["retention_policy"] == "records-30d"
+    assert capture["consent_ref"] == "consent-1"
+    assert "secret" not in repr(capture)
+    assert "capture" not in result.output[0].metadata
+
+
 def test_policy_stopped_tool_result_is_final_but_incomplete() -> None:
     result = ToolResult.policy_stopped(
         "call-1",

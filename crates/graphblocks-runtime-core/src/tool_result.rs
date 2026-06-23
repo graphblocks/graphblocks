@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use graphblocks_compiler::canonical::canonical_hash;
 use serde_json::{Value, json};
 
+use crate::observability::{CaptureDecision, CaptureMode, RedactionRule};
 use crate::outcome::BlockError;
 use crate::output_policy::RedactionInstruction;
 use crate::tool::{ResolvedTool, ToolResultMode};
@@ -338,6 +339,7 @@ impl ToolResult {
 pub struct ToolResultContentPolicy {
     pub max_output_bytes: Option<usize>,
     pub redactions: Vec<RedactionInstruction>,
+    pub capture_decision: Option<CaptureDecision>,
 }
 
 impl ToolResultContentPolicy {
@@ -355,6 +357,11 @@ impl ToolResultContentPolicy {
         I: IntoIterator<Item = RedactionInstruction>,
     {
         self.redactions = redactions.into_iter().collect();
+        self
+    }
+
+    pub fn with_capture_decision(mut self, capture_decision: CaptureDecision) -> Self {
+        self.capture_decision = Some(capture_decision);
         self
     }
 }
@@ -621,6 +628,61 @@ impl ToolResultValidation {
                     }
                     text.replace_range(start..end, &redaction.replacement);
                 }
+            }
+        }
+
+        if let Some(capture_decision) = content_policy.capture_decision.as_ref() {
+            for part in &mut model_output {
+                let capture_input = match part.kind {
+                    ContentPartKind::Text => part
+                        .text
+                        .as_ref()
+                        .map(|text| ("tool_result_text", text.clone(), None)),
+                    ContentPartKind::Json => part.data.as_ref().map(|data| {
+                        (
+                            "tool_result_json",
+                            serde_json::to_string(data).unwrap_or_default(),
+                            None,
+                        )
+                    }),
+                    ContentPartKind::ArtifactRef => part.data.as_ref().map(|data| {
+                        (
+                            "tool_result_artifact_ref",
+                            serde_json::to_string(data).unwrap_or_default(),
+                            data.get("uri").and_then(Value::as_str).map(str::to_owned),
+                        )
+                    }),
+                };
+                let Some((content_kind, capture_text, content_ref)) = capture_input else {
+                    continue;
+                };
+                let captured = capture_decision.capture_text(
+                    content_kind,
+                    &capture_text,
+                    content_ref.as_deref(),
+                    Vec::<RedactionRule>::new(),
+                );
+                let mode = match captured.mode {
+                    CaptureMode::None => "none",
+                    CaptureMode::HashOnly => "hash_only",
+                    CaptureMode::ReferenceOnly => "reference_only",
+                    CaptureMode::RedactedPreview => "redacted_preview",
+                    CaptureMode::Full => "full",
+                };
+                part.metadata.insert(
+                    "capture".to_string(),
+                    json!({
+                        "mode": mode,
+                        "content_kind": captured.content_kind,
+                        "content_digest": captured.content_digest,
+                        "preview": captured.preview,
+                        "content_ref": captured.content_ref,
+                        "retention_policy": captured.retention_policy,
+                        "consent_ref": captured.consent_ref,
+                        "redaction_count": captured.redaction_count,
+                        "original_bytes": captured.original_bytes,
+                    }),
+                );
             }
         }
 

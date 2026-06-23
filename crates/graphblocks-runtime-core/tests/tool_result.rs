@@ -1,3 +1,4 @@
+use graphblocks_runtime_core::observability::CaptureDecision;
 use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory};
 use graphblocks_runtime_core::output_policy::RedactionInstruction;
 use graphblocks_runtime_core::tool::{
@@ -11,7 +12,7 @@ use graphblocks_runtime_core::tool_result::{
     ToolResultValidationRequest,
 };
 use graphblocks_runtime_core::tool_schema::{JsonSchema, JsonSchemaNode, ToolSchemaRegistry};
-use serde_json::json;
+use serde_json::{Value, json};
 
 #[test]
 fn completed_tool_result_computes_stable_output_digest() {
@@ -378,6 +379,73 @@ fn artifact_reference_tool_result_mode_rejects_inline_model_output() {
         }),
         Ok(())
     );
+}
+
+#[test]
+fn completed_tool_result_model_output_records_capture_policy_before_model_return() {
+    let catalog = ToolCatalog::new(
+        [ToolDefinition::new(
+            "knowledge.search",
+            "Search documentation.",
+            "schemas/SearchRequest@1",
+        )],
+        [ToolBinding::new(
+            "binding-search",
+            "knowledge.search",
+            ToolImplementation::Block(BlockToolImplementation::new("blocks.search")),
+        )],
+    )
+    .expect("catalog should be valid");
+    let resolved = catalog
+        .resolve(ToolResolutionScope::new(), "policy-snapshot-1")
+        .expect("tool should resolve")
+        .remove(0);
+    let mut draft = ToolCallDraft::proposed("response-1", "call-1", "knowledge.search");
+    draft
+        .append_argument_fragment("{}")
+        .expect("argument fragment should append");
+    let call = draft
+        .into_completed_tool_call(resolved.resolved_tool_id.clone(), 1_000)
+        .expect("arguments should parse");
+    let registry =
+        ToolSchemaRegistry::new(Vec::<JsonSchema>::new()).expect("schema registry should be valid");
+    let result = ToolResult::completed(
+        "call-1",
+        [ContentPart::text("safe secret suffix")],
+        1_100,
+        1_200,
+    );
+    let policy = ToolResultContentPolicy::new().with_capture_decision(
+        CaptureDecision::hash_only("records-30d").with_consent_ref("consent-1"),
+    );
+
+    let output = ToolResultValidation::prepare_for_model_with_content_policy(
+        ToolResultValidationRequest {
+            call: &call,
+            result: &result,
+            resolved_tool: &resolved,
+            schema_registry: &registry,
+        },
+        &policy,
+    )
+    .expect("tool output should validate and prepare");
+    let capture = output[0]
+        .metadata
+        .get("capture")
+        .expect("capture metadata should be present");
+
+    assert_eq!(capture["mode"], json!("hash_only"));
+    assert_eq!(capture["content_kind"], json!("tool_result_text"));
+    assert!(
+        capture["content_digest"]
+            .as_str()
+            .is_some_and(|digest| digest.starts_with("sha256:"))
+    );
+    assert_eq!(capture["preview"], Value::Null);
+    assert_eq!(capture["retention_policy"], json!("records-30d"));
+    assert_eq!(capture["consent_ref"], json!("consent-1"));
+    assert!(!format!("{capture:?}").contains("secret"));
+    assert_eq!(result.output[0].metadata.get("capture"), None);
 }
 
 #[test]

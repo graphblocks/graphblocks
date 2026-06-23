@@ -1046,6 +1046,7 @@ def validate_tool_result_for_model(
     *,
     max_output_bytes: int | None = None,
     redactions: tuple[dict[str, object], ...] = (),
+    capture_policy: dict[str, object] | None = None,
 ) -> tuple[ContentPart, ...]:
     if result.tool_call_id != call.tool_call_id:
         raise ToolResultValidationError(
@@ -1115,6 +1116,44 @@ def validate_tool_result_for_model(
                     )
                 text = text[:start] + replacement + text[end:]
             model_output[part_index] = replace(model_output[part_index], text=text)
+
+    if capture_policy is not None:
+        mode = capture_policy.get("mode", "hash_only")
+        if mode not in {"none", "hash_only", "reference_only", "redacted_preview", "full"}:
+            raise ToolResultValidationError(f"invalid capture mode {mode!r}")
+        retention_policy = str(capture_policy.get("retention_policy", ""))
+        consent_ref = capture_policy.get("consent_ref")
+        for index, part in enumerate(model_output):
+            content_ref = None
+            if part.kind == "text":
+                content_kind = "tool_result_text"
+                capture_text = part.text or ""
+            elif part.kind == "json":
+                content_kind = "tool_result_json"
+                capture_text = json.dumps(part.data, sort_keys=True, separators=(",", ":"))
+            elif part.kind == "artifact_ref":
+                content_kind = "tool_result_artifact_ref"
+                capture_text = json.dumps(part.data, sort_keys=True, separators=(",", ":"))
+                if isinstance(part.data, dict) and isinstance(part.data.get("uri"), str):
+                    content_ref = part.data["uri"]
+            else:
+                continue
+
+            preview = capture_text if mode in {"redacted_preview", "full"} else None
+            stored_ref = content_ref if mode == "reference_only" else None
+            metadata = dict(part.metadata)
+            metadata["capture"] = {
+                "mode": mode,
+                "content_kind": content_kind,
+                "content_digest": canonical_hash(capture_text),
+                "preview": preview,
+                "content_ref": stored_ref,
+                "retention_policy": retention_policy,
+                "consent_ref": consent_ref if isinstance(consent_ref, str) else None,
+                "redaction_count": 0,
+                "original_bytes": len(capture_text.encode("utf-8")),
+            }
+            model_output[index] = replace(part, metadata=metadata)
 
     if max_output_bytes is not None:
         actual_bytes = 0
