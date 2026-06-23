@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use graphblocks_schema::{SchemaId, SchemaIdError};
 use serde_json::Value;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -113,7 +114,13 @@ impl JsonSchema {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ToolSchemaRegistryError {
-    DuplicateSchema { schema_id: String },
+    InvalidSchemaId {
+        schema_id: String,
+        error: SchemaIdError,
+    },
+    DuplicateSchema {
+        schema_id: String,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -146,6 +153,9 @@ impl ToolSchemaRegistry {
         let mut indexed = BTreeMap::new();
         for schema in schemas {
             let schema_id = schema.schema_id.clone();
+            if let Err(error) = SchemaId::parse(&schema_id) {
+                return Err(ToolSchemaRegistryError::InvalidSchemaId { schema_id, error });
+            }
             if indexed.contains_key(&schema_id) {
                 return Err(ToolSchemaRegistryError::DuplicateSchema { schema_id });
             }

@@ -8,6 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 graphblocks-compiler = { path = "../graphblocks-compiler" }
+graphblocks-schema = { path = "../graphblocks-schema" }
 rusqlite = { version = "0.34.0", features = ["bundled"] }
 serde_json = "1.0"
 sha2 = "0.10"

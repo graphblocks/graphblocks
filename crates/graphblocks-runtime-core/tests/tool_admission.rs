@@ -11,6 +11,7 @@ use graphblocks_runtime_core::tool_call::{ToolCall, ToolCallDraft, ToolCallStatu
 use graphblocks_runtime_core::tool_schema::{
     JsonSchema, JsonSchemaNode, ToolSchemaRegistry, ToolSchemaRegistryError,
 };
+use graphblocks_schema::SchemaIdError;
 use serde_json::json;
 
 fn resolved_process_tool() -> ResolvedTool {
@@ -312,6 +313,20 @@ fn schema_registry_rejects_duplicate_schema_ids() {
         ]),
         Err(ToolSchemaRegistryError::DuplicateSchema {
             schema_id: "schemas/ProcessRun@1".to_owned()
+        }),
+    );
+}
+
+#[test]
+fn schema_registry_rejects_invalid_schema_ids() {
+    assert_eq!(
+        ToolSchemaRegistry::new([JsonSchema::new(
+            "schemas/ProcessRun",
+            JsonSchemaNode::object(),
+        )]),
+        Err(ToolSchemaRegistryError::InvalidSchemaId {
+            schema_id: "schemas/ProcessRun".to_owned(),
+            error: SchemaIdError::MissingVersion,
         }),
     );
 }
