@@ -633,6 +633,26 @@ def test_observability_projection_packages_have_pure_python_layouts_without_sdk_
         assert (package_root / "src" / import_name / "py.typed").exists()
 
 
+def test_prometheus_package_has_pure_python_layout_without_client_dependency() -> None:
+    package_root = ROOT / "packages" / "graphblocks-prometheus"
+    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
+    dependencies = pyproject["project"]["dependencies"]
+
+    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
+    assert pyproject["project"]["name"] == "graphblocks-prometheus"
+    assert dependencies == ["graphblocks-telemetry~=1.0"]
+    assert not any(
+        client in dependency.lower()
+        for dependency in dependencies
+        for client in ("prometheus-client", "prometheus-api-client", "requests")
+    )
+    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
+        "src/graphblocks_prometheus"
+    ]
+    assert (package_root / "src" / "graphblocks_prometheus" / "__init__.py").exists()
+    assert (package_root / "src" / "graphblocks_prometheus" / "py.typed").exists()
+
+
 def test_package_lock_resolves_default_metapackage_closure_without_optional_integrations() -> None:
     lock = build_package_lock(load_package_catalog(), requested=("graphblocks",))
 
