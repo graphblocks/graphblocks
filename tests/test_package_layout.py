@@ -231,6 +231,22 @@ def test_policy_package_has_pure_python_layout_without_external_pdp_dependencies
     assert (package_root / "src" / "graphblocks_policy" / "py.typed").exists()
 
 
+def test_cli_package_has_python_entrypoint_layout_without_native_dependency() -> None:
+    package_root = ROOT / "packages" / "graphblocks-cli"
+    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
+
+    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
+    assert pyproject["project"]["name"] == "graphblocks-cli"
+    assert pyproject["project"]["dependencies"] == ["graphblocks-core~=1.0"]
+    assert "maturin" not in pyproject
+    assert pyproject["project"]["scripts"] == {"graphblocks": "graphblocks_cli:main"}
+    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
+        "src/graphblocks_cli"
+    ]
+    assert (package_root / "src" / "graphblocks_cli" / "__init__.py").exists()
+    assert (package_root / "src" / "graphblocks_cli" / "py.typed").exists()
+
+
 def test_policy_adapter_packages_have_pure_python_layouts_without_sdk_dependencies() -> None:
     for distribution, import_name in (
         ("graphblocks-policy-opa", "graphblocks_policy_opa"),
