@@ -176,6 +176,14 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                         "$.spec.outputPolicy.evaluation.enforcementPoints",
                     )
                 )
+            elif on_generation_chunk_index is None:
+                diagnostics.append(
+                    Diagnostic(
+                        "OutputPolicyBypass",
+                        "output policy enforcement must include the on_generation_chunk gate",
+                        "$.spec.outputPolicy.evaluation.enforcementPoints",
+                    )
+                )
             if (
                 before_client_delivery_index is not None
                 and on_generation_chunk_index is not None

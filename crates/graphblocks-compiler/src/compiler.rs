@@ -262,6 +262,12 @@ pub fn compile_graph(document: &Value) -> Plan {
                     "output policy enforcement must include the before_client_delivery gate",
                     "$.spec.outputPolicy.evaluation.enforcementPoints",
                 ));
+            } else if on_generation_chunk_index.is_none() {
+                diagnostics.push(Diagnostic::error(
+                    "OutputPolicyBypass",
+                    "output policy enforcement must include the on_generation_chunk gate",
+                    "$.spec.outputPolicy.evaluation.enforcementPoints",
+                ));
             }
 
             if let (Some(before_client_delivery_index), Some(on_generation_chunk_index)) =

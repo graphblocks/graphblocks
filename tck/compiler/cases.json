@@ -215,5 +215,36 @@
       "graph_hash": "sha256:ac3c094f1af1e4e254d7f5c1ad444f37ae50585205ed71aca7bf6a9258730a4b",
       "error_codes": ["OutputPolicyBypass"]
     }
+  },
+  {
+    "name": "output_policy_missing_generation_gate",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "output-policy-missing-generation-gate"
+      },
+      "spec": {
+        "nodes": {
+          "model": {
+            "block": "model.generate@1"
+          }
+        },
+        "outputPolicy": {
+          "delivery": {
+            "mode": "bounded_holdback",
+            "holdbackMaxTokens": 48,
+            "onViolation": "abort_response"
+          },
+          "evaluation": {
+            "enforcementPoints": ["before_client_delivery"]
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:c8adaf3110389d45adcf98a93e762950eef669a657826568840abc04d449d55c",
+      "error_codes": ["OutputPolicyBypass"]
+    }
   }
 ]

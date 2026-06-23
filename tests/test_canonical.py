@@ -186,6 +186,18 @@ def test_compile_rejects_output_policy_bypass_and_gate_after_delivery() -> None:
             },
         },
     }
+    missing_generation_gate = {
+        **base,
+        "spec": {
+            **base["spec"],
+            "outputPolicy": {
+                **base["spec"]["outputPolicy"],
+                "evaluation": {
+                    "enforcementPoints": ["before_client_delivery"],
+                },
+            },
+        },
+    }
     late_gate = {
         **base,
         "spec": {
@@ -205,6 +217,7 @@ def test_compile_rejects_output_policy_bypass_and_gate_after_delivery() -> None:
 
     assert _error_codes(base) == ["OutputPolicyBypass"]
     assert _error_codes(missing_enforcement_points) == ["OutputPolicyBypass"]
+    assert _error_codes(missing_generation_gate) == ["OutputPolicyBypass"]
     assert _error_codes(late_gate) == ["PolicyGateAfterDelivery"]
 
 
