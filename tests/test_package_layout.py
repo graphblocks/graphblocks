@@ -195,6 +195,26 @@ def test_budget_package_has_pure_python_layout_without_backend_dependencies() ->
     assert (package_root / "src" / "graphblocks_budget" / "py.typed").exists()
 
 
+def test_usage_package_has_pure_python_layout_without_backend_dependencies() -> None:
+    package_root = ROOT / "packages" / "graphblocks-usage"
+    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
+    dependencies = pyproject["project"]["dependencies"]
+
+    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
+    assert pyproject["project"]["name"] == "graphblocks-usage"
+    assert dependencies == ["graphblocks-core~=1.0"]
+    assert not any(
+        backend in dependency.lower()
+        for dependency in dependencies
+        for backend in ("sqlalchemy", "psycopg", "asyncpg", "redis")
+    )
+    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
+        "src/graphblocks_usage"
+    ]
+    assert (package_root / "src" / "graphblocks_usage" / "__init__.py").exists()
+    assert (package_root / "src" / "graphblocks_usage" / "py.typed").exists()
+
+
 def test_policy_adapter_packages_have_pure_python_layouts_without_sdk_dependencies() -> None:
     for distribution, import_name in (
         ("graphblocks-policy-opa", "graphblocks_policy_opa"),
