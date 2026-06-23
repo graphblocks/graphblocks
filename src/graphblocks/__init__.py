@@ -165,6 +165,8 @@ from .plugins import (
     validate_plugin_manifest,
 )
 from .output_policy import (
+    DeclarativeOutputPolicyEvaluator,
+    DeclarativeOutputPolicyRule,
     GenerationChunk,
     OutputCutoff,
     OutputDeliveryGate,
@@ -428,6 +430,8 @@ __all__ = [
     "ConversationArchivedError",
     "ConversationConflictError",
     "ConversationError",
+    "DeclarativeOutputPolicyEvaluator",
+    "DeclarativeOutputPolicyRule",
     "ConversationNotFoundError",
     "ConversationSnapshot",
     "ContextPack",

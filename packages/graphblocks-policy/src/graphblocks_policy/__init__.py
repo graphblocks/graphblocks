@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from graphblocks.output_policy import (
+    DeclarativeOutputPolicyEvaluator,
+    DeclarativeOutputPolicyRule,
     DeliveryMode,
     DraftDisposition,
     FlushBoundary,
@@ -40,6 +42,8 @@ from graphblocks.policy import (
 
 
 __all__ = [
+    "DeclarativeOutputPolicyEvaluator",
+    "DeclarativeOutputPolicyRule",
     "DeliveryMode",
     "DraftDisposition",
     "EnforcementPoint",

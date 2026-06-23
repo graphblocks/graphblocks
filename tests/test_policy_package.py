@@ -42,3 +42,29 @@ def test_policy_package_exposes_static_evaluator_and_output_gate_contract(monkey
     assert update.cutoff is not None
     assert update.cutoff.policy_decision_id == "output-decision-1"
     assert update.pending_tool_calls == "deny"
+
+
+def test_policy_package_exposes_declarative_output_policy_evaluator(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy" / "src"))
+    graphblocks_policy = importlib.import_module("graphblocks_policy")
+    evaluator = graphblocks_policy.DeclarativeOutputPolicyEvaluator(
+        rules=(
+            graphblocks_policy.DeclarativeOutputPolicyRule(
+                rule_id="redact-secret",
+                literal="secret",
+                disposition="redact",
+                replacement="[redacted]",
+            ),
+        )
+    )
+
+    decision = evaluator.evaluate_chunk(
+        graphblocks_policy.GenerationChunk.text("stream-1", "response-1", 1, "hello secret"),
+        evaluated_at="2026-06-23T00:00:00Z",
+    )
+
+    assert decision.disposition == "redact"
+    assert decision.redactions == (
+        {"path": "/chunks/1/text", "start": 6, "end": 12, "replacement": "[redacted]"},
+    )
+    assert "DeclarativeOutputPolicyEvaluator" in graphblocks_policy.__all__

@@ -4,6 +4,7 @@ from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Literal
 
+from .canonical import canonical_hash
 from .conversation import ContentPart
 
 
@@ -36,6 +37,151 @@ class OutputDeliveryPolicyError(ValueError):
 
 class OutputGateError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class DeclarativeOutputPolicyRule:
+    rule_id: str
+    literal: str
+    disposition: OutputDisposition
+    replacement: str | None = None
+    reason_codes: tuple[str, ...] = field(default_factory=tuple)
+    policy_refs: tuple[str, ...] = field(default_factory=tuple)
+    priority: int = 0
+
+    def __post_init__(self) -> None:
+        if not self.rule_id.strip():
+            raise ValueError("output policy rule_id must not be empty")
+        if not self.literal:
+            raise ValueError("output policy rule literal must not be empty")
+        if self.disposition not in VALID_OUTPUT_DISPOSITIONS:
+            raise ValueError(f"invalid output disposition {self.disposition}")
+        if self.disposition in {"redact", "replace"} and self.replacement is None:
+            raise ValueError(f"{self.disposition} output policy rules require a replacement")
+        object.__setattr__(self, "reason_codes", tuple(self.reason_codes))
+        object.__setattr__(self, "policy_refs", tuple(self.policy_refs))
+
+    def policy_ref_tuple(self) -> tuple[str, ...]:
+        return self.policy_refs or (self.rule_id,)
+
+    def rule_contract(self) -> dict[str, object]:
+        return {
+            "rule_id": self.rule_id,
+            "literal": self.literal,
+            "disposition": self.disposition,
+            "replacement": self.replacement,
+            "reason_codes": list(self.reason_codes),
+            "policy_refs": list(self.policy_refs),
+            "priority": self.priority,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class DeclarativeOutputPolicyEvaluator:
+    rules: tuple[DeclarativeOutputPolicyRule, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "rules", tuple(self.rules))
+
+    def evaluate_chunk(self, chunk: GenerationChunk, *, evaluated_at: str) -> OutputPolicyDecision:
+        if not isinstance(chunk, GenerationChunk):
+            raise TypeError("DeclarativeOutputPolicyEvaluator.evaluate_chunk requires a GenerationChunk")
+
+        input_digest = canonical_hash(
+            {
+                "chunk": {
+                    "stream_id": chunk.stream_id,
+                    "response_id": chunk.response_id,
+                    "sequence": chunk.sequence,
+                    "text": chunk.text,
+                },
+                "rules": [rule.rule_contract() for rule in self.rules],
+            }
+        )
+        for rule in sorted(self.rules, key=lambda item: (-item.priority, item.rule_id)):
+            if rule.literal not in chunk.text:
+                continue
+            return self._decision_for_rule(rule, chunk, input_digest, evaluated_at)
+
+        return OutputPolicyDecision.allow(
+            self._decision_id(input_digest, "allow", None),
+            accepted_through_sequence=chunk.sequence,
+            input_digest=input_digest,
+        ).evaluated_at_time(evaluated_at)
+
+    def _decision_for_rule(
+        self,
+        rule: DeclarativeOutputPolicyRule,
+        chunk: GenerationChunk,
+        input_digest: str,
+        evaluated_at: str,
+    ) -> OutputPolicyDecision:
+        decision_id = self._decision_id(input_digest, rule.disposition, rule.rule_id)
+        if rule.disposition == "allow":
+            decision = OutputPolicyDecision.allow(
+                decision_id,
+                accepted_through_sequence=chunk.sequence,
+                input_digest=input_digest,
+            )
+        elif rule.disposition == "hold":
+            decision = OutputPolicyDecision.hold(decision_id, input_digest=input_digest)
+        elif rule.disposition == "redact":
+            decision = OutputPolicyDecision.redact(
+                decision_id,
+                accepted_through_sequence=chunk.sequence,
+                redactions=tuple(
+                    {
+                        "path": f"/chunks/{chunk.sequence}/text",
+                        "start": start,
+                        "end": start + len(rule.literal),
+                        "replacement": rule.replacement or "",
+                    }
+                    for start in self._literal_offsets(chunk.text, rule.literal)
+                ),
+                input_digest=input_digest,
+            )
+        elif rule.disposition == "replace":
+            decision = OutputPolicyDecision.replace(
+                decision_id,
+                accepted_through_sequence=chunk.sequence,
+                replacement_parts=(ContentPart(kind="text", text=rule.replacement or ""),),
+                input_digest=input_digest,
+            )
+        elif rule.disposition == "abort_response":
+            decision = OutputPolicyDecision.abort_response(decision_id, input_digest=input_digest)
+        elif rule.disposition == "abort_turn":
+            decision = OutputPolicyDecision.abort_turn(decision_id, input_digest=input_digest)
+        elif rule.disposition == "deny_commit":
+            decision = OutputPolicyDecision.deny_commit(decision_id, input_digest=input_digest)
+        else:
+            raise OutputGateError(f"unknown output policy disposition {rule.disposition}")
+
+        return (
+            decision.with_reason_codes(rule.reason_codes)
+            .with_policy_refs(rule.policy_ref_tuple())
+            .evaluated_at_time(evaluated_at)
+        )
+
+    @staticmethod
+    def _literal_offsets(text: str, literal: str) -> tuple[int, ...]:
+        offsets: list[int] = []
+        start = 0
+        while True:
+            index = text.find(literal, start)
+            if index < 0:
+                return tuple(offsets)
+            offsets.append(index)
+            start = index + len(literal)
+
+    @staticmethod
+    def _decision_id(input_digest: str, disposition: str, rule_id: str | None) -> str:
+        return "output-decision:" + canonical_hash(
+            {
+                "input_digest": input_digest,
+                "disposition": disposition,
+                "rule_id": rule_id,
+            }
+        )
 
 
 class GenerationChunk:

@@ -4,6 +4,8 @@ import pytest
 
 from graphblocks import (
     ContentPart,
+    DeclarativeOutputPolicyEvaluator,
+    DeclarativeOutputPolicyRule,
     GenerationChunk,
     OutputCutoff,
     OutputDeliveryGate,
@@ -145,6 +147,80 @@ def test_output_delivery_policy_accepts_bounded_holdback_and_rejects_unsafe_imme
         unsafe.validate()
 
     assert str(error.value) == "immediate_draft requires incomplete or retracted draft semantics"
+
+
+def test_declarative_output_policy_evaluator_allows_unmatched_chunk() -> None:
+    evaluator = DeclarativeOutputPolicyEvaluator(
+        rules=(
+            DeclarativeOutputPolicyRule(
+                rule_id="blocked-secret",
+                literal="secret",
+                disposition="abort_response",
+            ),
+        )
+    )
+    chunk = GenerationChunk.text("stream-1", "response-1", 3, "safe response")
+
+    decision = evaluator.evaluate_chunk(chunk, evaluated_at="2026-06-23T00:00:00Z")
+
+    assert decision.disposition == "allow"
+    assert decision.accepted_through_sequence == 3
+    assert decision.reason_codes == ()
+    assert decision.policy_refs == ()
+    assert decision.input_digest.startswith("sha256:")
+    assert decision.evaluated_at == "2026-06-23T00:00:00Z"
+
+
+def test_declarative_output_policy_evaluator_redacts_literal_match() -> None:
+    evaluator = DeclarativeOutputPolicyEvaluator(
+        rules=(
+            DeclarativeOutputPolicyRule(
+                rule_id="redact-secret",
+                literal="secret",
+                disposition="redact",
+                replacement="[redacted]",
+                reason_codes=("secret.detected",),
+                policy_refs=("policy/output-standard#redact-secret",),
+            ),
+        )
+    )
+    chunk = GenerationChunk.text("stream-1", "response-1", 4, "safe secret suffix")
+
+    decision = evaluator.evaluate_chunk(chunk, evaluated_at="2026-06-23T00:00:01Z")
+
+    assert decision.disposition == "redact"
+    assert decision.accepted_through_sequence == 4
+    assert decision.redactions == (
+        {"path": "/chunks/4/text", "start": 5, "end": 11, "replacement": "[redacted]"},
+    )
+    assert decision.reason_codes == ("secret.detected",)
+    assert decision.policy_refs == ("policy/output-standard#redact-secret",)
+    assert decision.evaluated_at == "2026-06-23T00:00:01Z"
+
+
+def test_declarative_output_policy_evaluator_aborts_on_blocked_literal() -> None:
+    evaluator = DeclarativeOutputPolicyEvaluator(
+        rules=(
+            DeclarativeOutputPolicyRule(
+                rule_id="blocked-secret",
+                literal="secret",
+                disposition="abort_response",
+                reason_codes=("secret.detected",),
+            ),
+        )
+    )
+
+    decision = evaluator.evaluate_chunk(
+        GenerationChunk.text("stream-1", "response-1", 5, "unsafe secret"),
+        evaluated_at="2026-06-23T00:00:02Z",
+    )
+
+    assert decision.disposition == "abort_response"
+    assert decision.accepted_through_sequence is None
+    assert decision.pending_tool_calls == "deny"
+    assert decision.draft_disposition == "retract"
+    assert decision.reason_codes == ("secret.detected",)
+    assert decision.policy_refs == ("blocked-secret",)
 
 
 def test_output_cutoff_discards_delayed_output_after_terminal_cutoff() -> None:
