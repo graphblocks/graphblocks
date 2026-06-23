@@ -17,6 +17,18 @@ ViolationAction = Literal["abort_response", "abort_turn", "redact", "replace"]
 TerminalReason = Literal["policy_denied", "budget_exhausted", "cancelled", "client_disconnected"]
 OutputDurableResult = Literal["none", "incomplete", "partial"]
 
+VALID_OUTPUT_DISPOSITIONS = frozenset(
+    {"allow", "hold", "redact", "replace", "abort_response", "abort_turn", "deny_commit"}
+)
+VALID_PROVIDER_CANCELLATIONS = frozenset({"none", "request", "required_if_supported"})
+VALID_DRAFT_DISPOSITIONS = frozenset({"keep", "mark_incomplete", "retract"})
+VALID_PENDING_TOOL_CALLS_DISPOSITIONS = frozenset({"keep", "deny", "cancel_admitted"})
+VALID_DELIVERY_MODES = frozenset({"buffer_until_commit", "bounded_holdback", "immediate_draft"})
+VALID_FLUSH_BOUNDARIES = frozenset({"token", "sentence", "paragraph", "content_part", "tool_call", "response"})
+VALID_VIOLATION_ACTIONS = frozenset({"abort_response", "abort_turn", "redact", "replace"})
+VALID_TERMINAL_REASONS = frozenset({"policy_denied", "budget_exhausted", "cancelled", "client_disconnected"})
+VALID_OUTPUT_DURABLE_RESULTS = frozenset({"none", "incomplete", "partial"})
+
 
 class OutputDeliveryPolicyError(ValueError):
     pass
@@ -73,6 +85,14 @@ class OutputPolicyDecision:
     input_digest: str = ""
 
     def __post_init__(self) -> None:
+        if self.disposition not in VALID_OUTPUT_DISPOSITIONS:
+            raise ValueError(f"invalid output disposition {self.disposition}")
+        if self.provider_cancellation not in VALID_PROVIDER_CANCELLATIONS:
+            raise ValueError(f"invalid provider cancellation {self.provider_cancellation}")
+        if self.draft_disposition not in VALID_DRAFT_DISPOSITIONS:
+            raise ValueError(f"invalid draft disposition {self.draft_disposition}")
+        if self.pending_tool_calls not in VALID_PENDING_TOOL_CALLS_DISPOSITIONS:
+            raise ValueError(f"invalid pending tool calls disposition {self.pending_tool_calls}")
         object.__setattr__(self, "replacement_parts", tuple(self.replacement_parts))
         object.__setattr__(
             self,
@@ -198,6 +218,15 @@ class OutputDeliveryPolicy:
     delivered_draft_disposition: DraftDisposition = "retract"
 
     def __post_init__(self) -> None:
+        if self.mode not in VALID_DELIVERY_MODES:
+            raise ValueError(f"invalid output delivery mode {self.mode}")
+        if self.on_violation not in VALID_VIOLATION_ACTIONS:
+            raise ValueError(f"invalid violation action {self.on_violation}")
+        if self.delivered_draft_disposition not in VALID_DRAFT_DISPOSITIONS:
+            raise ValueError(f"invalid draft disposition {self.delivered_draft_disposition}")
+        for boundary in self.flush_boundaries:
+            if boundary not in VALID_FLUSH_BOUNDARIES:
+                raise ValueError(f"invalid flush boundary {boundary}")
         object.__setattr__(self, "flush_boundaries", frozenset(self.flush_boundaries))
 
     @classmethod
@@ -273,6 +302,14 @@ class OutputCutoff:
     durable_result: OutputDurableResult = "none"
     policy_decision_id: str | None = None
     occurred_at: str = ""
+
+    def __post_init__(self) -> None:
+        if self.terminal_reason not in VALID_TERMINAL_REASONS:
+            raise ValueError(f"invalid terminal reason {self.terminal_reason}")
+        if self.draft_disposition not in VALID_DRAFT_DISPOSITIONS:
+            raise ValueError(f"invalid draft disposition {self.draft_disposition}")
+        if self.durable_result not in VALID_OUTPUT_DURABLE_RESULTS:
+            raise ValueError(f"invalid output durable result {self.durable_result}")
 
     def accepts(self, output: GenerationChunk) -> bool:
         if not isinstance(output, GenerationChunk):

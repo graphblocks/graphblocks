@@ -89,6 +89,32 @@ def test_output_policy_decision_metadata_builders_are_chainable() -> None:
         decision.redactions[0]["replacement"] = "[mutated]"
 
 
+def test_output_policy_contract_rejects_unknown_literals() -> None:
+    with pytest.raises(ValueError, match="invalid output disposition stream"):
+        OutputPolicyDecision("decision-1", disposition="stream")
+
+    with pytest.raises(ValueError, match="invalid provider cancellation force"):
+        OutputPolicyDecision.abort_response("decision-1", input_digest="sha256:input").with_provider_cancellation(
+            "force"
+        )
+
+    with pytest.raises(ValueError, match="invalid output delivery mode stream"):
+        OutputDeliveryPolicy(mode="stream")
+
+    with pytest.raises(ValueError, match="invalid flush boundary clause"):
+        OutputDeliveryPolicy.bounded_holdback(
+            on_violation="abort_response",
+            holdback_max_tokens=1,
+            flush_boundaries=frozenset({"clause"}),
+        )
+
+    with pytest.raises(ValueError, match="invalid terminal reason throttled"):
+        OutputCutoff(stream_id="stream-1", response_id="response-1", terminal_reason="throttled")
+
+    with pytest.raises(ValueError, match="invalid output durable result committed"):
+        OutputCutoff(stream_id="stream-1", response_id="response-1", durable_result="committed")
+
+
 def test_bounded_holdback_requires_size_or_time_bound() -> None:
     policy = OutputDeliveryPolicy.bounded_holdback(on_violation="abort_response")
 
