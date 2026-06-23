@@ -65,6 +65,23 @@ PendingToolCallsDisposition = Literal["keep", "deny", "cancel_admitted"]
 JsonSchemaType = Literal["null", "boolean", "integer", "number", "string", "array", "object"]
 ToolApprovalStatus = Literal["requested", "approved", "denied", "invalidated"]
 
+VALID_TOOL_EFFECTS = frozenset(
+    {
+        "none",
+        "external_read",
+        "external_write",
+        "filesystem_read",
+        "filesystem_write",
+        "process",
+        "network",
+        "destructive",
+    }
+)
+VALID_TOOL_APPROVALS = frozenset({"never", "policy", "always"})
+VALID_TOOL_IDEMPOTENCIES = frozenset({"not_applicable", "optional", "required"})
+VALID_TOOL_CANCELLATIONS = frozenset({"unsupported", "cooperative", "force_terminable"})
+VALID_TOOL_RESULT_MODES = frozenset({"value", "incremental", "bounded_sequence", "artifact_reference"})
+
 
 class ToolCallError(RuntimeError):
     pass
@@ -338,7 +355,19 @@ class ToolBinding:
     execution_class: str | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "effects", frozenset(self.effects))
+        effects = frozenset(self.effects)
+        invalid_effects = sorted(effect for effect in effects if effect not in VALID_TOOL_EFFECTS)
+        if invalid_effects:
+            raise ValueError(f"invalid tool effect {invalid_effects[0]}")
+        if self.approval not in VALID_TOOL_APPROVALS:
+            raise ValueError(f"invalid tool approval {self.approval}")
+        if self.idempotency not in VALID_TOOL_IDEMPOTENCIES:
+            raise ValueError(f"invalid tool idempotency {self.idempotency}")
+        if self.cancellation not in VALID_TOOL_CANCELLATIONS:
+            raise ValueError(f"invalid tool cancellation {self.cancellation}")
+        if self.result_mode not in VALID_TOOL_RESULT_MODES:
+            raise ValueError(f"invalid tool result mode {self.result_mode}")
+        object.__setattr__(self, "effects", effects)
 
     def binding_contract(self) -> dict[str, object]:
         return {

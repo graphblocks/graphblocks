@@ -107,6 +107,25 @@ def test_tool_binding_digest_includes_execution_contract_not_definition_text() -
     assert binding.digest().startswith("sha256:")
 
 
+def test_tool_binding_rejects_unknown_contract_values() -> None:
+    base = {
+        "binding_id": "binding-search",
+        "tool_name": "knowledge.search",
+        "implementation": BlockToolImplementation(block="knowledge.search@1"),
+    }
+
+    cases = (
+        ({"effects": frozenset({"external_read", "telepathy"})}, "invalid tool effect telepathy"),
+        ({"approval": "sometimes"}, "invalid tool approval sometimes"),
+        ({"idempotency": "maybe"}, "invalid tool idempotency maybe"),
+        ({"cancellation": "eventually"}, "invalid tool cancellation eventually"),
+        ({"result_mode": "firehose"}, "invalid tool result mode firehose"),
+    )
+    for overrides, message in cases:
+        with pytest.raises(ValueError, match=message):
+            ToolBinding(**base, **overrides)
+
+
 def test_tool_implementation_mapping_mutation_cannot_change_binding_digest() -> None:
     input_mapping = {"query": "$args.query"}
     output_mapping = {"items": "$result.items"}
