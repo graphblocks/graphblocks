@@ -600,6 +600,160 @@ fn budget_ledger_rejects_duplicate_permit_ids() -> Result<(), BudgetError> {
 }
 
 #[test]
+fn budget_ledger_commit_with_permit_settles_authorized_reservation() -> Result<(), BudgetError> {
+    let mut ledger = InMemoryBudgetLedger::new();
+    ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+    let reservation = ledger.reserve(
+        "budget-1",
+        "run:1",
+        [tokens(40)],
+        ReservationPurpose::ProviderCall,
+        "later",
+        None,
+    )?;
+    let permit = ledger.issue_permit(
+        "permit-1",
+        vec![reservation.reservation_id.clone()],
+        "worker:1",
+        "turn:1",
+        1,
+        "finish_current_turn",
+        "sha256:policy",
+        "later",
+        Vec::new(),
+    )?;
+
+    let settlement =
+        ledger.commit_with_permit(&permit.permit_id, &reservation.reservation_id, [tokens(25)])?;
+
+    assert_eq!(settlement.committed, vec![tokens(25)]);
+    assert_eq!(settlement.released, vec![tokens(15)]);
+    assert_eq!(ledger.balance("budget-1")?.available, vec![tokens(75)]);
+    Ok(())
+}
+
+#[test]
+fn budget_ledger_release_with_permit_restores_authorized_reservation() -> Result<(), BudgetError> {
+    let mut ledger = InMemoryBudgetLedger::new();
+    ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+    let reservation = ledger.reserve(
+        "budget-1",
+        "run:1",
+        [tokens(40)],
+        ReservationPurpose::ProviderCall,
+        "later",
+        None,
+    )?;
+    let permit = ledger.issue_permit(
+        "permit-1",
+        vec![reservation.reservation_id.clone()],
+        "worker:1",
+        "turn:1",
+        1,
+        "finish_current_turn",
+        "sha256:policy",
+        "later",
+        Vec::new(),
+    )?;
+
+    let settlement = ledger.release_with_permit(&permit.permit_id, &reservation.reservation_id)?;
+
+    assert_eq!(settlement.released, vec![tokens(40)]);
+    assert_eq!(ledger.balance("budget-1")?.available, vec![tokens(100)]);
+    Ok(())
+}
+
+#[test]
+fn budget_ledger_commit_with_permit_rejects_usage_above_authorized_without_mutating()
+-> Result<(), BudgetError> {
+    let mut ledger = InMemoryBudgetLedger::new();
+    ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+    let reservation = ledger.reserve(
+        "budget-1",
+        "run:1",
+        [tokens(40)],
+        ReservationPurpose::ProviderCall,
+        "later",
+        None,
+    )?;
+    let permit = ledger.issue_permit(
+        "permit-1",
+        vec![reservation.reservation_id.clone()],
+        "worker:1",
+        "turn:1",
+        1,
+        "finish_current_turn",
+        "sha256:policy",
+        "later",
+        Vec::new(),
+    )?;
+
+    let error = ledger
+        .commit_with_permit(&permit.permit_id, &reservation.reservation_id, [tokens(41)])
+        .expect_err("permit-backed commit must stay within authorized usage");
+
+    assert_eq!(
+        error,
+        BudgetError::BudgetExceeded {
+            budget_id: "budget-1".to_string(),
+            kind: "model_total_tokens".to_string(),
+            unit: "tokens".to_string(),
+        }
+    );
+    let balance = ledger.balance("budget-1")?;
+    assert_eq!(balance.reserved, vec![tokens(40)]);
+    assert_eq!(balance.committed, Vec::<UsageAmount>::new());
+    assert_eq!(balance.available, vec![tokens(60)]);
+    Ok(())
+}
+
+#[test]
+fn budget_ledger_permit_cannot_settle_unreferenced_reservation() -> Result<(), BudgetError> {
+    let mut ledger = InMemoryBudgetLedger::new();
+    ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+    let first = ledger.reserve(
+        "budget-1",
+        "run:1",
+        [tokens(25)],
+        ReservationPurpose::Task,
+        "later",
+        None,
+    )?;
+    let second = ledger.reserve(
+        "budget-1",
+        "run:1",
+        [tokens(15)],
+        ReservationPurpose::Task,
+        "later",
+        None,
+    )?;
+    let permit = ledger.issue_permit(
+        "permit-1",
+        vec![first.reservation_id],
+        "worker:1",
+        "turn:1",
+        1,
+        "finish_current_turn",
+        "sha256:policy",
+        "later",
+        Vec::new(),
+    )?;
+
+    let error = ledger
+        .commit_with_permit(&permit.permit_id, &second.reservation_id, [tokens(10)])
+        .expect_err("permit cannot settle reservations it does not name");
+
+    assert_eq!(
+        error,
+        BudgetError::PermitScope {
+            permit_id: "permit-1".to_string(),
+            reservation_id: second.reservation_id,
+        }
+    );
+    Ok(())
+}
+
+#[test]
 fn completion_reserve_holds_finalization_capacity_out_of_general_budget() -> Result<(), BudgetError>
 {
     let mut ledger = InMemoryBudgetLedger::new();

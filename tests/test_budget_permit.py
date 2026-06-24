@@ -4,7 +4,13 @@ from decimal import Decimal
 
 import pytest
 
-from graphblocks.budget import BudgetReservationStateError, InMemoryBudgetLedger, UsageAmount
+from graphblocks.budget import (
+    BudgetExceededError,
+    BudgetPermitScopeError,
+    BudgetReservationStateError,
+    InMemoryBudgetLedger,
+    UsageAmount,
+)
 from graphblocks.policy import ResourceRef
 
 
@@ -138,3 +144,111 @@ def test_budget_ledger_rejects_permit_for_released_reservation() -> None:
             policy_snapshot_digest="sha256:policy",
             expires_at="later",
         )
+
+
+def test_budget_ledger_commit_with_permit_settles_authorized_reservation() -> None:
+    ledger = InMemoryBudgetLedger()
+    ledger.allocate("budget-1", ResourceRef("tenant:acme"), [_tokens("100")], policy_ref="policy-1")
+    reservation = ledger.reserve(
+        "budget-1",
+        ResourceRef("run:1"),
+        [_tokens("40")],
+        purpose="provider_call",
+        expires_at="later",
+    )
+    permit = ledger.issue_permit(
+        "permit-1",
+        reservation_ids=[reservation.reservation_id],
+        owner=ResourceRef("worker:1"),
+        atomic_unit=ResourceRef("turn:1"),
+        admission_epoch=1,
+        continuation_profile="finish_current_turn",
+        policy_snapshot_digest="sha256:policy",
+        expires_at="later",
+    )
+
+    settlement = ledger.commit_with_permit(permit.permit_id, reservation.reservation_id, [_tokens("25")])
+
+    assert settlement.committed == [_tokens("25")]
+    assert settlement.released == [_tokens("15")]
+    assert ledger.balance("budget-1").available == [_tokens("75")]
+
+
+def test_budget_ledger_release_with_permit_restores_authorized_reservation() -> None:
+    ledger = InMemoryBudgetLedger()
+    ledger.allocate("budget-1", ResourceRef("tenant:acme"), [_tokens("100")], policy_ref="policy-1")
+    reservation = ledger.reserve(
+        "budget-1",
+        ResourceRef("run:1"),
+        [_tokens("40")],
+        purpose="provider_call",
+        expires_at="later",
+    )
+    permit = ledger.issue_permit(
+        "permit-1",
+        reservation_ids=[reservation.reservation_id],
+        owner=ResourceRef("worker:1"),
+        atomic_unit=ResourceRef("turn:1"),
+        admission_epoch=1,
+        continuation_profile="finish_current_turn",
+        policy_snapshot_digest="sha256:policy",
+        expires_at="later",
+    )
+
+    settlement = ledger.release_with_permit(permit.permit_id, reservation.reservation_id)
+
+    assert settlement.released == [_tokens("40")]
+    assert ledger.balance("budget-1").available == [_tokens("100")]
+
+
+def test_budget_ledger_commit_with_permit_rejects_usage_above_authorized_without_mutating() -> None:
+    ledger = InMemoryBudgetLedger()
+    ledger.allocate("budget-1", ResourceRef("tenant:acme"), [_tokens("100")], policy_ref="policy-1")
+    reservation = ledger.reserve(
+        "budget-1",
+        ResourceRef("run:1"),
+        [_tokens("40")],
+        purpose="provider_call",
+        expires_at="later",
+    )
+    permit = ledger.issue_permit(
+        "permit-1",
+        reservation_ids=[reservation.reservation_id],
+        owner=ResourceRef("worker:1"),
+        atomic_unit=ResourceRef("turn:1"),
+        admission_epoch=1,
+        continuation_profile="finish_current_turn",
+        policy_snapshot_digest="sha256:policy",
+        expires_at="later",
+    )
+
+    with pytest.raises(BudgetExceededError):
+        ledger.commit_with_permit(permit.permit_id, reservation.reservation_id, [_tokens("41")])
+
+    balance = ledger.balance("budget-1")
+    assert balance.reserved == [_tokens("40")]
+    assert balance.committed == []
+    assert balance.available == [_tokens("60")]
+
+
+def test_budget_ledger_permit_cannot_settle_unreferenced_reservation() -> None:
+    ledger = InMemoryBudgetLedger()
+    ledger.allocate("budget-1", ResourceRef("tenant:acme"), [_tokens("100")], policy_ref="policy-1")
+    first = ledger.reserve("budget-1", ResourceRef("run:1"), [_tokens("25")], purpose="task", expires_at="later")
+    second = ledger.reserve("budget-1", ResourceRef("run:1"), [_tokens("15")], purpose="task", expires_at="later")
+    permit = ledger.issue_permit(
+        "permit-1",
+        reservation_ids=[first.reservation_id],
+        owner=ResourceRef("worker:1"),
+        atomic_unit=ResourceRef("turn:1"),
+        admission_epoch=1,
+        continuation_profile="finish_current_turn",
+        policy_snapshot_digest="sha256:policy",
+        expires_at="later",
+    )
+
+    with pytest.raises(BudgetPermitScopeError) as error:
+        ledger.commit_with_permit(permit.permit_id, second.reservation_id, [_tokens("10")])
+
+    assert error.value.permit_id == "permit-1"
+    assert error.value.reservation_id == second.reservation_id

@@ -71,8 +71,21 @@ pub enum BudgetError {
     ReservationConflict {
         reservation_id: String,
     },
+    PermitNotFound {
+        permit_id: String,
+    },
     PermitConflict {
         permit_id: String,
+    },
+    PermitScope {
+        permit_id: String,
+        reservation_id: String,
+    },
+    PermitFencing {
+        permit_id: String,
+        budget_id: String,
+        required_token: u64,
+        actual_token: Option<u64>,
     },
     CompletionReserveNotFound {
         reserve_id: String,
@@ -195,6 +208,7 @@ pub struct InMemoryBudgetLedger {
     reservations: BTreeMap<String, BudgetReservation>,
     reservation_holds: BTreeMap<String, Vec<String>>,
     permits: BTreeMap<String, BudgetPermit>,
+    permit_spent: BTreeMap<String, BTreeMap<AmountKey, i64>>,
     completion_reserves: BTreeMap<String, CompletionReserve>,
     completion_reserve_holds: BTreeMap<String, Vec<String>>,
     reservation_counter: u64,
@@ -488,6 +502,35 @@ impl InMemoryBudgetLedger {
         })
     }
 
+    pub fn commit_with_permit(
+        &mut self,
+        permit_id: impl AsRef<str>,
+        reservation_id: impl AsRef<str>,
+        actual_amounts: impl IntoIterator<Item = UsageAmount>,
+    ) -> Result<BudgetSettlement, BudgetError> {
+        let permit_id = permit_id.as_ref();
+        let reservation_id = reservation_id.as_ref();
+        let reservation = self.validate_permit_for_reservation(permit_id, reservation_id)?;
+        let actual_amounts = actual_amounts.into_iter().collect::<Vec<_>>();
+        let actual = amounts_to_map(actual_amounts.clone());
+        self.ensure_permit_allows_additional(permit_id, &actual, &reservation.budget_id)?;
+        let settlement = self.commit(reservation_id, actual_amounts)?;
+        add_amounts(
+            self.permit_spent.entry(permit_id.to_string()).or_default(),
+            &actual,
+        );
+        Ok(settlement)
+    }
+
+    pub fn release_with_permit(
+        &mut self,
+        permit_id: impl AsRef<str>,
+        reservation_id: impl AsRef<str>,
+    ) -> Result<BudgetSettlement, BudgetError> {
+        self.validate_permit_for_reservation(permit_id.as_ref(), reservation_id.as_ref())?;
+        self.release(reservation_id)
+    }
+
     pub fn balance(&self, budget_id: impl AsRef<str>) -> Result<BudgetBalance, BudgetError> {
         let budget_id = budget_id.as_ref();
         let account = self
@@ -587,6 +630,8 @@ impl InMemoryBudgetLedger {
             fencing_tokens,
         };
         self.permits.insert(permit_id, permit.clone());
+        self.permit_spent
+            .insert(permit.permit_id.clone(), BTreeMap::new());
         Ok(permit)
     }
 
@@ -790,6 +835,83 @@ impl InMemoryBudgetLedger {
         if let Some(account) = self.accounts.get_mut(budget_id) {
             account.revision += 1;
         }
+    }
+
+    fn validate_permit_for_reservation(
+        &self,
+        permit_id: &str,
+        reservation_id: &str,
+    ) -> Result<BudgetReservation, BudgetError> {
+        let permit = self
+            .permits
+            .get(permit_id)
+            .ok_or_else(|| BudgetError::PermitNotFound {
+                permit_id: permit_id.to_string(),
+            })?;
+        let reservation = self
+            .reservations
+            .get(reservation_id)
+            .cloned()
+            .ok_or_else(|| BudgetError::ReservationNotFound {
+                reservation_id: reservation_id.to_string(),
+            })?;
+        if !permit
+            .reservation_refs
+            .iter()
+            .any(|reference| reference == reservation_id)
+        {
+            return Err(BudgetError::PermitScope {
+                permit_id: permit_id.to_string(),
+                reservation_id: reservation_id.to_string(),
+            });
+        }
+        let held_budget_ids = self
+            .reservation_holds
+            .get(reservation_id)
+            .cloned()
+            .unwrap_or_else(|| vec![reservation.budget_id.clone()]);
+        for budget_id in held_budget_ids {
+            let actual_token = permit.fencing_tokens.get(&budget_id).copied();
+            if actual_token.is_none_or(|token| token < reservation.fencing_token) {
+                return Err(BudgetError::PermitFencing {
+                    permit_id: permit_id.to_string(),
+                    budget_id,
+                    required_token: reservation.fencing_token,
+                    actual_token,
+                });
+            }
+        }
+        Ok(reservation)
+    }
+
+    fn ensure_permit_allows_additional(
+        &self,
+        permit_id: &str,
+        requested: &BTreeMap<AmountKey, i64>,
+        budget_id: &str,
+    ) -> Result<(), BudgetError> {
+        let permit = self
+            .permits
+            .get(permit_id)
+            .ok_or_else(|| BudgetError::PermitNotFound {
+                permit_id: permit_id.to_string(),
+            })?;
+        let authorized = amounts_to_map(permit.authorized_amounts.clone());
+        let spent = self.permit_spent.get(permit_id);
+        for (key, amount) in requested {
+            let already_spent = spent
+                .and_then(|values| values.get(key))
+                .copied()
+                .unwrap_or(0);
+            if already_spent + amount > authorized.get(key).copied().unwrap_or(0) {
+                return Err(BudgetError::BudgetExceeded {
+                    budget_id: budget_id.to_string(),
+                    kind: key.0.clone(),
+                    unit: key.1.clone(),
+                });
+            }
+        }
+        Ok(())
     }
 }
 

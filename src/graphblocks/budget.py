@@ -39,6 +39,29 @@ class BudgetReservationStateError(BudgetError):
     pass
 
 
+class BudgetPermitNotFoundError(BudgetError):
+    pass
+
+
+class BudgetPermitScopeError(BudgetError):
+    def __init__(self, permit_id: str, reservation_id: str) -> None:
+        super().__init__(f"permit {permit_id!r} cannot settle reservation {reservation_id!r}")
+        self.permit_id = permit_id
+        self.reservation_id = reservation_id
+
+
+class BudgetPermitFencingError(BudgetError):
+    def __init__(self, permit_id: str, budget_id: str, required_token: int, actual_token: int | None) -> None:
+        super().__init__(
+            f"permit {permit_id!r} has stale fencing token for budget {budget_id!r}: "
+            f"{actual_token!r} < {required_token!r}"
+        )
+        self.permit_id = permit_id
+        self.budget_id = budget_id
+        self.required_token = required_token
+        self.actual_token = actual_token
+
+
 class BudgetCompletionReserveNotFoundError(BudgetError):
     pass
 
@@ -189,6 +212,7 @@ class InMemoryBudgetLedger:
     _reservations: dict[str, BudgetReservation] = field(default_factory=dict)
     _reservation_holds: dict[str, tuple[str, ...]] = field(default_factory=dict)
     _permits: dict[str, BudgetPermit] = field(default_factory=dict)
+    _permit_spent: dict[str, dict[AmountKey, Decimal]] = field(default_factory=dict)
     _completion_reserves: dict[str, CompletionReserve] = field(default_factory=dict)
     _completion_reserve_holds: dict[str, tuple[str, ...]] = field(default_factory=dict)
     _reservation_counter: int = 0
@@ -397,7 +421,31 @@ class InMemoryBudgetLedger:
             fencing_tokens=fencing_tokens,
         )
         self._permits[permit_id] = permit
+        self._permit_spent[permit_id] = {}
         return permit
+
+    def commit_with_permit(
+        self,
+        permit_id: str,
+        reservation_id: str,
+        actual_amounts: list[UsageAmount],
+        *,
+        max_overdraft: list[UsageAmount] | None = None,
+    ) -> BudgetSettlement:
+        permit = self._permit_for_reservation(permit_id, reservation_id)
+        actual = _amounts_to_dict(actual_amounts)
+        self._ensure_permit_allows_additional(permit, actual, self._reservations[reservation_id].budget_id)
+        settlement = self.commit(reservation_id, actual_amounts, max_overdraft=max_overdraft)
+        spent = self._permit_spent.setdefault(permit_id, {})
+        for key, amount in actual.items():
+            spent[key] = spent.get(key, Decimal("0")) + amount
+            if spent[key] == 0:
+                del spent[key]
+        return settlement
+
+    def release_with_permit(self, permit_id: str, reservation_id: str) -> BudgetSettlement:
+        self._permit_for_reservation(permit_id, reservation_id)
+        return self.release(reservation_id)
 
     def create_completion_reserve(
         self,
@@ -525,3 +573,32 @@ class InMemoryBudgetLedger:
             seen.add(current_id)
             current_id = account.parent_budget_id
         return tuple(chain)
+
+    def _permit_for_reservation(self, permit_id: str, reservation_id: str) -> BudgetPermit:
+        permit = self._permits.get(permit_id)
+        if permit is None:
+            raise BudgetPermitNotFoundError(f"permit {permit_id!r} does not exist")
+        reservation = self._reservations.get(reservation_id)
+        if reservation is None:
+            raise BudgetReservationNotFoundError(f"reservation {reservation_id!r} does not exist")
+        if reservation_id not in permit.reservation_refs:
+            raise BudgetPermitScopeError(permit_id, reservation_id)
+        for budget_id in self._reservation_holds.get(reservation_id, (reservation.budget_id,)):
+            actual_token = permit.fencing_tokens.get(budget_id)
+            if actual_token is None or actual_token < reservation.fencing_token:
+                raise BudgetPermitFencingError(permit_id, budget_id, reservation.fencing_token, actual_token)
+        return permit
+
+    def _ensure_permit_allows_additional(
+        self,
+        permit: BudgetPermit,
+        requested: dict[AmountKey, Decimal],
+        budget_id: str,
+    ) -> None:
+        authorized = _amounts_to_dict(permit.authorized_amounts)
+        spent = self._permit_spent.setdefault(permit.permit_id, {})
+        for key, amount in requested.items():
+            if spent.get(key, Decimal("0")) + amount > authorized.get(key, Decimal("0")):
+                raise BudgetExceededError(
+                    f"permit {permit.permit_id!r} exceeds authorized {key[0]} {key[1]} for budget {budget_id!r}"
+                )
