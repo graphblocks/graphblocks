@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+import json
 import re
 from typing import Literal, TypeAlias
 
@@ -299,6 +300,46 @@ def build_context_pack(
         token_count=token_count,
         metadata=context_metadata,
     )
+
+
+def render_context_pack(context: ContextPack) -> str:
+    lines = [
+        "GRAPHBLOCKS_CONTEXT_PACK_BEGIN "
+        + _compact_json(
+            {"context_id": context.context_id, "trust_boundary": "retrieved_untrusted"}
+        )
+    ]
+    for hit in context.hits:
+        source_refs = hit.highlights or [hit.item.source]
+        sources = [
+            {
+                "source_id": source.source_id,
+                "source_kind": source.source_kind,
+                "trust": "retrieved_untrusted",
+            }
+            for source in source_refs
+        ]
+        lines.append(
+            "GRAPHBLOCKS_RETRIEVED_ITEM_BEGIN "
+            + _compact_json(
+                {
+                    "hit_id": hit.hit_id,
+                    "item_id": hit.item.item_id,
+                    "rank": hit.rank,
+                    "retriever": hit.retriever,
+                    "sources": sources,
+                    "trust": "retrieved_untrusted",
+                }
+            )
+        )
+        lines.append(_compact_json("\n".join(hit.item.preview)))
+        lines.append("GRAPHBLOCKS_RETRIEVED_ITEM_END")
+    lines.append("GRAPHBLOCKS_CONTEXT_PACK_END")
+    return "\n".join(lines)
+
+
+def _compact_json(value: object) -> str:
+    return json.dumps(value, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
 
 
 def fuse_search_hits(

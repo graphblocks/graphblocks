@@ -12,6 +12,7 @@ from graphblocks import (
     chunk_document_by_lines,
     create_local_text_revision,
     parse_plain_text_document,
+    render_context_pack,
 )
 
 
@@ -60,3 +61,10 @@ def test_rag_package_exposes_result_bundle_profile(monkeypatch) -> None:
     assert graphblocks_rag.QueryPlan is QueryPlan
     assert graphblocks_rag.RagResultPayload is RagResultPayload
     assert graphblocks_rag.RagResultBundle is RagResultBundle
+
+
+def test_rag_package_exposes_context_renderer(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-rag" / "src"))
+    graphblocks_rag = importlib.import_module("graphblocks_rag")
+
+    assert graphblocks_rag.render_context_pack is render_context_pack

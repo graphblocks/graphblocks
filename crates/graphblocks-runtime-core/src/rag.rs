@@ -1169,6 +1169,54 @@ pub fn build_context_pack(
     Ok(context)
 }
 
+pub fn render_context_pack(context: &ContextPack) -> String {
+    let mut lines = Vec::new();
+    lines.push(format!(
+        "GRAPHBLOCKS_CONTEXT_PACK_BEGIN {}",
+        serde_json::to_string(&json!({
+            "context_id": &context.context_id,
+            "trust_boundary": "retrieved_untrusted",
+        }))
+        .expect("context metadata should serialize")
+    ));
+    for hit in &context.hits {
+        let source_refs = if hit.highlights.is_empty() {
+            vec![&hit.item.source]
+        } else {
+            hit.highlights.iter().collect::<Vec<_>>()
+        };
+        let sources = source_refs
+            .iter()
+            .map(|source| {
+                json!({
+                    "source_id": &source.source_id,
+                    "source_kind": &source.source_kind,
+                    "trust": "retrieved_untrusted",
+                })
+            })
+            .collect::<Vec<_>>();
+        lines.push(format!(
+            "GRAPHBLOCKS_RETRIEVED_ITEM_BEGIN {}",
+            serde_json::to_string(&json!({
+                "hit_id": &hit.hit_id,
+                "item_id": &hit.item.item_id,
+                "rank": hit.rank,
+                "retriever": &hit.retriever,
+                "sources": sources,
+                "trust": "retrieved_untrusted",
+            }))
+            .expect("item metadata should serialize")
+        ));
+        lines.push(
+            serde_json::to_string(&hit.item.preview.join("\n"))
+                .expect("context content should serialize"),
+        );
+        lines.push("GRAPHBLOCKS_RETRIEVED_ITEM_END".to_owned());
+    }
+    lines.push("GRAPHBLOCKS_CONTEXT_PACK_END".to_owned());
+    lines.join("\n")
+}
+
 pub fn fuse_search_hits(
     hit_sets: &[Vec<SearchHit>],
     options: FusionOptions,
