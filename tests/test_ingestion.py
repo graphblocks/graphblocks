@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 import graphblocks
@@ -136,6 +138,40 @@ def test_ingestion_manifest_store_commit_is_idempotent_for_ready_manifest() -> N
     assert committed.parsed_document_ref == parsed_ref
     assert committed.index_records == (_index_record("rev-1"),)
     assert committed.updated_at == "2026-06-22T00:02:00Z"
+
+
+def test_ingestion_manifest_store_copies_manifests_and_index_metadata_at_boundaries() -> None:
+    store = InMemoryIngestionManifestStore()
+    manifest = replace(
+        _manifest("manifest-1", "rev-1"),
+        parser=ProcessorRef("plain-text", "1", metadata={"profile": "initial"}),
+        metadata={"phase": "initial"},
+    )
+
+    processing = store.create_processing(manifest, "2026-06-22T00:01:00Z")
+    manifest.metadata["phase"] = "manifest-mutated"
+    manifest.parser.metadata["profile"] = "manifest-mutated"
+    processing.metadata["phase"] = "returned-mutated"
+    processing.parser.metadata["profile"] = "returned-mutated"
+
+    fresh_processing = store.get("manifest-1")
+    assert fresh_processing.metadata == {"phase": "initial"}
+    assert fresh_processing.parser.metadata == {"profile": "initial"}
+
+    index_record = IndexRecordRef(
+        index_id="knowledge-local",
+        record_id="record-rev-1",
+        asset_id="asset-1",
+        revision_id="rev-1",
+        chunk_ids=("chunk-rev-1",),
+        metadata={"source": "initial"},
+    )
+    committed = store.commit("manifest-1", None, None, (index_record,), "2026-06-22T00:02:00Z")
+    index_record.metadata["source"] = "index-mutated"
+    committed.index_records[0].metadata["source"] = "returned-mutated"
+
+    fresh_ready = store.get("manifest-1")
+    assert fresh_ready.index_records[0].metadata == {"source": "initial"}
 
 
 def test_ingestion_manifest_store_tombstone_marks_deleted_and_clears_current() -> None:

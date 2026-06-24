@@ -14,6 +14,22 @@ class IngestionError(RuntimeError):
     pass
 
 
+def _copy_artifact_ref(artifact: ArtifactRef | None) -> ArtifactRef | None:
+    if artifact is None:
+        return None
+    return ArtifactRef(
+        artifact_id=artifact.artifact_id,
+        uri=artifact.uri,
+        media_type=artifact.media_type,
+        size_bytes=artifact.size_bytes,
+        checksum=artifact.checksum,
+        etag=artifact.etag,
+        version=artifact.version,
+        filename=artifact.filename,
+        metadata=dict(artifact.metadata),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class ProcessorRef:
     processor_id: str
@@ -23,6 +39,17 @@ class ProcessorRef:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "metadata", dict(self.metadata))
+
+
+def _copy_processor_ref(processor: ProcessorRef | None) -> ProcessorRef | None:
+    if processor is None:
+        return None
+    return ProcessorRef(
+        processor_id=processor.processor_id,
+        version=processor.version,
+        config_digest=processor.config_digest,
+        metadata=dict(processor.metadata),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +64,17 @@ class IndexRecordRef:
     def __post_init__(self) -> None:
         object.__setattr__(self, "chunk_ids", tuple(self.chunk_ids))
         object.__setattr__(self, "metadata", dict(self.metadata))
+
+
+def _copy_index_record_ref(record: IndexRecordRef) -> IndexRecordRef:
+    return IndexRecordRef(
+        index_id=record.index_id,
+        record_id=record.record_id,
+        asset_id=record.asset_id,
+        revision_id=record.revision_id,
+        chunk_ids=tuple(record.chunk_ids),
+        metadata=dict(record.metadata),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,8 +101,22 @@ class IngestionManifest:
     metadata: JsonObject = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "normalizers", tuple(self.normalizers))
-        object.__setattr__(self, "index_records", tuple(self.index_records))
+        object.__setattr__(self, "parser", _copy_processor_ref(self.parser))
+        object.__setattr__(self, "chunker", _copy_processor_ref(self.chunker))
+        object.__setattr__(self, "ocr", _copy_processor_ref(self.ocr))
+        object.__setattr__(
+            self,
+            "normalizers",
+            tuple(_copy_processor_ref(processor) for processor in self.normalizers),
+        )
+        object.__setattr__(self, "embedding", _copy_processor_ref(self.embedding))
+        object.__setattr__(self, "parsed_document_ref", _copy_artifact_ref(self.parsed_document_ref))
+        object.__setattr__(self, "chunk_set_ref", _copy_artifact_ref(self.chunk_set_ref))
+        object.__setattr__(
+            self,
+            "index_records",
+            tuple(_copy_index_record_ref(record) for record in self.index_records),
+        )
         object.__setattr__(self, "metadata", dict(self.metadata))
 
     @classmethod
@@ -105,6 +157,31 @@ class IngestionManifest:
         return replace(self, acl_revision=acl_revision)
 
 
+def _copy_ingestion_manifest(manifest: IngestionManifest) -> IngestionManifest:
+    return IngestionManifest(
+        manifest_id=manifest.manifest_id,
+        asset_id=manifest.asset_id,
+        revision_id=manifest.revision_id,
+        source_uri=manifest.source_uri,
+        content_hash=manifest.content_hash,
+        parser=manifest.parser,
+        chunker=manifest.chunker,
+        pipeline_hash=manifest.pipeline_hash,
+        status=manifest.status,
+        created_at=manifest.created_at,
+        updated_at=manifest.updated_at,
+        ocr=manifest.ocr,
+        normalizers=tuple(manifest.normalizers),
+        embedding=manifest.embedding,
+        parsed_document_ref=manifest.parsed_document_ref,
+        chunk_set_ref=manifest.chunk_set_ref,
+        index_records=tuple(manifest.index_records),
+        acl_revision=manifest.acl_revision,
+        error=manifest.error,
+        metadata=dict(manifest.metadata),
+    )
+
+
 @dataclass(slots=True)
 class InMemoryIngestionManifestStore:
     _manifests: dict[str, IngestionManifest] = field(default_factory=dict)
@@ -113,9 +190,9 @@ class InMemoryIngestionManifestStore:
     def create_processing(self, manifest: IngestionManifest, updated_at: str) -> IngestionManifest:
         if manifest.manifest_id in self._manifests:
             raise IngestionError(f"ingestion manifest {manifest.manifest_id!r} already exists")
-        processing = replace(manifest, status="processing", updated_at=updated_at)
+        processing = _copy_ingestion_manifest(replace(manifest, status="processing", updated_at=updated_at))
         self._manifests[processing.manifest_id] = processing
-        return processing
+        return _copy_ingestion_manifest(processing)
 
     def commit(
         self,
@@ -127,7 +204,7 @@ class InMemoryIngestionManifestStore:
     ) -> IngestionManifest:
         manifest = self._require_manifest(manifest_id)
         if manifest.status == "ready":
-            return manifest
+            return _copy_ingestion_manifest(manifest)
         if manifest.status not in {"discovered", "processing"}:
             raise IngestionError(
                 f"ingestion manifest {manifest_id!r} cannot transition from {manifest.status!r} to 'ready'"
@@ -136,11 +213,12 @@ class InMemoryIngestionManifestStore:
             manifest,
             parsed_document_ref=parsed_document_ref,
             chunk_set_ref=chunk_set_ref,
-            index_records=tuple(index_records),
+            index_records=tuple(_copy_index_record_ref(record) for record in index_records),
             status="ready",
             error=None,
             updated_at=updated_at,
         )
+        ready = _copy_ingestion_manifest(ready)
         self._manifests[manifest_id] = ready
         previous_current = self._current_by_asset.get(ready.asset_id)
         self._current_by_asset[ready.asset_id] = manifest_id
@@ -152,7 +230,7 @@ class InMemoryIngestionManifestStore:
                     status="superseded",
                     updated_at=updated_at,
                 )
-        return ready
+        return _copy_ingestion_manifest(ready)
 
     def fail(self, manifest_id: str, error: str, updated_at: str) -> IngestionManifest:
         manifest = self._require_manifest(manifest_id)
@@ -160,32 +238,33 @@ class InMemoryIngestionManifestStore:
             raise IngestionError(
                 f"ingestion manifest {manifest_id!r} cannot transition from {manifest.status!r} to 'failed'"
             )
-        failed = replace(manifest, status="failed", error=error, updated_at=updated_at)
+        failed = _copy_ingestion_manifest(replace(manifest, status="failed", error=error, updated_at=updated_at))
         self._manifests[manifest_id] = failed
-        return failed
+        return _copy_ingestion_manifest(failed)
 
     def tombstone(self, manifest_id: str, updated_at: str) -> IngestionManifest:
         manifest = self._require_manifest(manifest_id)
         if manifest.status == "deleted":
-            return manifest
-        deleted = replace(manifest, status="deleted", updated_at=updated_at)
+            return _copy_ingestion_manifest(manifest)
+        deleted = _copy_ingestion_manifest(replace(manifest, status="deleted", updated_at=updated_at))
         self._manifests[manifest_id] = deleted
         if self._current_by_asset.get(deleted.asset_id) == manifest_id:
             self._current_by_asset.pop(deleted.asset_id, None)
-        return deleted
+        return _copy_ingestion_manifest(deleted)
 
     def get(self, manifest_id: str) -> IngestionManifest:
-        return self._require_manifest(manifest_id)
+        return _copy_ingestion_manifest(self._require_manifest(manifest_id))
 
     def current_for_asset(self, asset_id: str) -> IngestionManifest | None:
         manifest_id = self._current_by_asset.get(asset_id)
         if manifest_id is None:
             return None
-        return self._manifests.get(manifest_id)
+        manifest = self._manifests.get(manifest_id)
+        return None if manifest is None else _copy_ingestion_manifest(manifest)
 
     def list_by_status(self, status: IngestionStatus) -> list[IngestionManifest]:
         return [
-            self._manifests[manifest_id]
+            _copy_ingestion_manifest(self._manifests[manifest_id])
             for manifest_id in sorted(self._manifests)
             if self._manifests[manifest_id].status == status
         ]
