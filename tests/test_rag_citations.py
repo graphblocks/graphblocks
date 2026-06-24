@@ -197,6 +197,36 @@ def test_validate_answer_citations_rejects_source_outside_current_context() -> N
     assert result.issues[0].citation_id == "cite-1"
 
 
+def test_validate_answer_citations_rejects_claim_unsupported_by_cited_source() -> None:
+    context = _single_hit_context()
+    citation = Citation(
+        citation_id="cite-1",
+        source=context.hits[0].item.source,
+        cited_text="requires audit logs",
+    )
+    answer = Answer(
+        answer_id="answer-1",
+        text="Beta policy requires approval.",
+        claims=[
+            Claim(
+                claim_id="claim-1",
+                text="Beta policy requires approval.",
+                citation_ids=["cite-1"],
+            )
+        ],
+        citations=[citation],
+    )
+
+    result = validate_answer_citations(answer, context)
+
+    assert result.ok is False
+    assert [issue.code for issue in result.issues] == [
+        "claim.unsupported_by_citation"
+    ]
+    assert result.issues[0].citation_id == "cite-1"
+    assert result.issues[0].claim_id == "claim-1"
+
+
 def test_validate_answer_citations_can_abstain_on_invalid_citation() -> None:
     context = _single_hit_context()
     citation = Citation(

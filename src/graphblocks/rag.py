@@ -969,6 +969,7 @@ def validate_answer_citations(
         raise ValueError("failure_policy must be one of warn, fail, abstain, repair, or remove_invalid")
 
     severity: Literal["warning", "error"] = "warning" if failure_policy == "warn" else "error"
+    normalize_text = lambda value: " ".join(value.split()).lower()
     issues: list[CitationValidationIssue] = []
     citations_by_id: dict[str, Citation] = {}
     context_source_texts: list[tuple[SourceRef, str]] = []
@@ -1027,6 +1028,28 @@ def validate_answer_citations(
                         severity=severity,
                     )
                 )
+            normalized_claim_text = normalize_text(claim.text)
+            if normalized_claim_text:
+                matching_texts = [
+                    text
+                    for source_ref, text in context_source_texts
+                    if _source_ref_matches(citation.source, source_ref)
+                ]
+                if matching_texts and not any(
+                    normalized_claim_text in normalize_text(text) for text in matching_texts
+                ):
+                    issues.append(
+                        CitationValidationIssue(
+                            code="claim.unsupported_by_citation",
+                            message=(
+                                f"claim {claim.claim_id!r} is not supported by "
+                                f"citation {citation.citation_id!r}"
+                            ),
+                            citation_id=citation.citation_id,
+                            claim_id=claim.claim_id,
+                            severity=severity,
+                        )
+                    )
 
     for citation in answer.citations:
         matching_texts = [
@@ -1045,8 +1068,8 @@ def validate_answer_citations(
             )
             continue
         if citation.cited_text is not None:
-            quoted_text = " ".join(citation.cited_text.split()).lower()
-            if quoted_text and not any(quoted_text in " ".join(text.split()).lower() for text in matching_texts):
+            quoted_text = normalize_text(citation.cited_text)
+            if quoted_text and not any(quoted_text in normalize_text(text) for text in matching_texts):
                 issues.append(
                     CitationValidationIssue(
                         code="citation.text_mismatch",

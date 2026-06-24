@@ -2077,6 +2077,12 @@ pub fn validate_answer_citations(
     } else {
         CitationSeverity::Error
     };
+    let normalize_text = |text: &str| {
+        text.split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_ascii_lowercase()
+    };
     let mut issues = Vec::new();
     let mut citations_by_id: BTreeMap<String, &Citation> = BTreeMap::new();
     let mut context_source_texts: Vec<(&SourceRef, String)> = Vec::new();
@@ -2151,6 +2157,37 @@ pub fn validate_answer_citations(
                     .with_claim_id(&claim.claim_id),
                 );
             }
+            let normalized_claim_text = normalize_text(&claim.text);
+            if !normalized_claim_text.is_empty() {
+                let matching_texts = context_source_texts
+                    .iter()
+                    .filter_map(|(source_ref, text)| {
+                        if source_ref_matches(&citation.source, source_ref) {
+                            Some(text.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                if !matching_texts.is_empty()
+                    && !matching_texts
+                        .iter()
+                        .any(|text| normalize_text(text).contains(&normalized_claim_text))
+                {
+                    issues.push(
+                        CitationValidationIssue::new(
+                            "claim.unsupported_by_citation",
+                            format!(
+                                "claim {:?} is not supported by citation {:?}",
+                                claim.claim_id, citation.citation_id
+                            ),
+                            severity.clone(),
+                        )
+                        .with_citation_id(&citation.citation_id)
+                        .with_claim_id(&claim.claim_id),
+                    );
+                }
+            }
         }
     }
 
@@ -2180,19 +2217,11 @@ pub fn validate_answer_citations(
             continue;
         }
         if let Some(cited_text) = &citation.cited_text {
-            let quoted_text = cited_text
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ")
-                .to_ascii_lowercase();
+            let quoted_text = normalize_text(cited_text);
             if !quoted_text.is_empty()
-                && !matching_texts.iter().any(|text| {
-                    text.split_whitespace()
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                        .to_ascii_lowercase()
-                        .contains(&quoted_text)
-                })
+                && !matching_texts
+                    .iter()
+                    .any(|text| normalize_text(text).contains(&quoted_text))
             {
                 issues.push(
                     CitationValidationIssue::new(

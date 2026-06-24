@@ -1312,6 +1312,44 @@ fn validate_answer_citations_rejects_wrong_locator_on_matching_source() {
 }
 
 #[test]
+fn validate_answer_citations_rejects_claim_unsupported_by_cited_source() {
+    let context = build_context_pack(
+        "ctx-1",
+        vec![hit(
+            "hit-1",
+            "chunk-1",
+            "doc-1",
+            "Alpha policy requires audit logs.",
+            1,
+        )],
+        ContextBuildOptions::new(10),
+    )
+    .expect("context build succeeds");
+    let citation = Citation::new("cite-1", context.hits[0].item.source.clone())
+        .with_cited_text("requires audit logs");
+    let answer = Answer::new("answer-1", "Beta policy requires approval.")
+        .with_claim(
+            Claim::new("claim-1", "Beta policy requires approval.").with_citation_ids(["cite-1"]),
+        )
+        .with_citation(citation);
+
+    let result = validate_answer_citations(&answer, &context, true, FailurePolicy::Fail)
+        .expect("citation validation succeeds");
+
+    assert!(!result.ok);
+    assert_eq!(
+        result
+            .issues
+            .iter()
+            .map(|issue| issue.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["claim.unsupported_by_citation"]
+    );
+    assert_eq!(result.issues[0].citation_id.as_deref(), Some("cite-1"));
+    assert_eq!(result.issues[0].claim_id.as_deref(), Some("claim-1"));
+}
+
+#[test]
 fn validate_answer_citations_can_remove_invalid_citations() {
     let context = build_context_pack(
         "ctx-1",
