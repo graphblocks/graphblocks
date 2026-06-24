@@ -232,6 +232,7 @@ impl NodeExecutor for StdlibExecutor {
             "prompt.render@1" => execute_prompt_render(&inputs, &config),
             "model.generate@1" => execute_scripted_generate(&inputs, &config),
             "conversation.commit_turn@1" => execute_commit_turn(&inputs),
+            "conversation.policy_stop_turn@1" => execute_policy_stop_turn(&inputs, &config),
             _ => Err(BlockError::new(
                 format!("{block_id}.unsupported"),
                 ErrorCategory::Configuration,
@@ -844,6 +845,14 @@ fn execute_commit_turn(inputs: &Value) -> Result<Value, BlockError> {
             false,
         ));
     };
+    if transaction.get("status").and_then(Value::as_str) == Some("policy_stopped") {
+        return Err(BlockError::new(
+            "conversation.commit_turn.policy_stopped",
+            ErrorCategory::Policy,
+            "conversation.commit_turn@1 cannot commit policy-stopped turn",
+            false,
+        ));
+    }
     let Some(candidate) = inputs.get("candidate") else {
         return Err(BlockError::new(
             "conversation.commit_turn.missing_candidate",
@@ -870,6 +879,41 @@ fn execute_commit_turn(inputs: &Value) -> Result<Value, BlockError> {
                 .and_then(Value::as_str)
                 .unwrap_or("turn-000001"),
         }
+    }))
+}
+
+fn execute_policy_stop_turn(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
+    let Some(transaction) = inputs.get("transaction").and_then(Value::as_object) else {
+        return Err(BlockError::new(
+            "conversation.policy_stop_turn.missing_transaction",
+            ErrorCategory::Configuration,
+            "conversation.policy_stop_turn@1 requires transaction input",
+            false,
+        ));
+    };
+    let conversation_id = transaction
+        .get("conversationId")
+        .and_then(Value::as_str)
+        .unwrap_or("conversation-default");
+    let turn_id = transaction
+        .get("turnId")
+        .and_then(Value::as_str)
+        .unwrap_or("turn-000001");
+    let draft_disposition = config
+        .get("draftDisposition")
+        .and_then(Value::as_str)
+        .unwrap_or("retract");
+    let stopped = json!({
+        "conversationId": conversation_id,
+        "turnId": turn_id,
+        "status": "policy_stopped",
+        "draftDisposition": draft_disposition,
+        "committedMessageIds": [],
+    });
+
+    Ok(json!({
+        "transaction": stopped,
+        "turn": stopped,
     }))
 }
 
@@ -2733,6 +2777,77 @@ mod tests {
         assert_eq!(
             completed_nodes,
             vec!["begin", "render", "generate", "commit"]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn run_stdlib_graph_json_blocks_commit_after_policy_stop() -> Result<(), String> {
+        let graph = json!({
+            "apiVersion": "graphblocks.ai/v1alpha3",
+            "kind": "Graph",
+            "metadata": {"name": "native-policy-stopped-turn"},
+            "spec": {
+                "interface": {
+                    "inputs": {"message": "graphblocks.ai/Message@1"},
+                    "outputs": {"answer": "graphblocks.ai/Answer@1"}
+                },
+                "nodes": {
+                    "begin": {"block": "conversation.begin_turn@1"},
+                    "render": {
+                        "block": "prompt.render@1",
+                        "config": {"template": "Answer: {message.text}"},
+                        "inputs": {"message": "$input.message"}
+                    },
+                    "generate": {
+                        "block": "model.generate@1",
+                        "config": {"script": {"Answer: Hello": "blocked answer"}},
+                        "inputs": {"prompt": "render.prompt"}
+                    },
+                    "stop": {
+                        "block": "conversation.policy_stop_turn@1",
+                        "inputs": {"transaction": "begin.transaction"}
+                    },
+                    "commit": {
+                        "block": "conversation.commit_turn@1",
+                        "inputs": {
+                            "transaction": "stop.transaction",
+                            "candidate": "generate.response"
+                        },
+                        "outputs": {"answer": "$output.answer"}
+                    }
+                }
+            }
+        });
+        let graph_json = serde_json::to_string(&graph).map_err(|error| error.to_string())?;
+        let result_json = run_stdlib_graph_json(&graph_json, r#"{"message":{"text":"Hello"}}"#)
+            .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+        let journal = result
+            .get("journal")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "stdlib runtime result is missing journal".to_owned())?;
+        let failed = journal
+            .iter()
+            .find(|record| record.get("kind").and_then(Value::as_str) == Some("node_failed"))
+            .ok_or_else(|| "stdlib runtime result is missing node_failed".to_owned())?;
+
+        assert_eq!(result.get("status").and_then(Value::as_str), Some("failed"));
+        assert_eq!(
+            result
+                .get("outputs")
+                .and_then(|outputs| outputs.get("answer")),
+            None
+        );
+        assert_eq!(failed.get("nodeId").and_then(Value::as_str), Some("commit"));
+        assert_eq!(
+            failed
+                .get("payload")
+                .and_then(|payload| payload.get("message"))
+                .and_then(Value::as_str),
+            Some("conversation.commit_turn@1 cannot commit policy-stopped turn")
         );
 
         Ok(())

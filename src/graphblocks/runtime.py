@@ -614,6 +614,8 @@ def stdlib_registry() -> RuntimeRegistry:
 
     def commit_turn(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         transaction = inputs["transaction"]
+        if isinstance(transaction, dict) and transaction.get("status") == "policy_stopped":
+            raise RuntimeError("conversation.commit_turn@1 cannot commit policy-stopped turn")
         candidate = inputs["candidate"]
         text = candidate["text"] if isinstance(candidate, dict) and "text" in candidate else str(candidate)
         return {
@@ -623,6 +625,19 @@ def stdlib_registry() -> RuntimeRegistry:
                 "turnId": transaction["turnId"],
             }
         }
+
+    def policy_stop_turn(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+        transaction = inputs["transaction"]
+        if not isinstance(transaction, dict):
+            raise TypeError("conversation.policy_stop_turn@1 requires transaction mapping")
+        stopped = {
+            "conversationId": transaction["conversationId"],
+            "turnId": transaction["turnId"],
+            "status": "policy_stopped",
+            "draftDisposition": str(config.get("draftDisposition", "retract")),
+            "committedMessageIds": [],
+        }
+        return {"transaction": stopped, "turn": stopped}
 
     def control_map(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         items = inputs.get("items", [])
@@ -683,6 +698,7 @@ def stdlib_registry() -> RuntimeRegistry:
     registry.register("tools.resolve@1", resolve_tools)
     registry.register("agent.run@1", scripted_agent_run)
     registry.register("conversation.commit_turn@1", commit_turn)
+    registry.register("conversation.policy_stop_turn@1", policy_stop_turn)
     registry.register("control.map@2", control_map)
     registry.register("control.select@1", control_select)
     return registry

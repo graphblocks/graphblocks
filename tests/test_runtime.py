@@ -72,6 +72,54 @@ def test_runtime_executes_conversation_vertical_slice() -> None:
     ]
 
 
+def test_stdlib_policy_stop_turn_blocks_late_commit() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "policy-stopped-turn"},
+        "spec": {
+            "interface": {
+                "inputs": {"message": "graphblocks.ai/Message@1"},
+                "outputs": {"answer": "graphblocks.ai/Answer@1"},
+            },
+            "nodes": {
+                "begin": {"block": "conversation.begin_turn@1"},
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Answer: {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                },
+                "generate": {
+                    "block": "model.generate@1",
+                    "config": {"script": {"Answer: Hello": "blocked answer"}},
+                    "inputs": {"prompt": "render.prompt"},
+                },
+                "stop": {
+                    "block": "conversation.policy_stop_turn@1",
+                    "inputs": {"transaction": "begin.transaction"},
+                },
+                "commit": {
+                    "block": "conversation.commit_turn@1",
+                    "inputs": {
+                        "transaction": "stop.transaction",
+                        "candidate": "generate.response",
+                    },
+                    "outputs": {"answer": "$output.answer"},
+                },
+            },
+        },
+    }
+
+    result = InProcessRuntime(stdlib_registry()).run(graph, {"message": {"text": "Hello"}})
+
+    assert result.status == "failed"
+    assert result.outputs == {}
+    assert result.journal.terminal_kind == "run_failed"
+    failed = [record for record in result.journal.records if record.kind == "node_failed"]
+    assert failed[0].payload["node"] == "commit"
+    assert failed[0].payload["error"] == "conversation.commit_turn@1 cannot commit policy-stopped turn"
+
+
 def test_stdlib_runtime_executes_tool_resolution_and_agent_run() -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
