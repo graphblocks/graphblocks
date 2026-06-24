@@ -152,7 +152,7 @@ def openapi_tool_result_from_response(
                 ContentPart(
                     kind="json",
                     data=dict(output),
-                    metadata={"adapter": "openapi"},
+                    metadata={"adapter": "openapi", "trust": "untrusted_external"},
                 ),
             ),
             started_at=started_at,
