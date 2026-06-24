@@ -371,3 +371,119 @@ def test_release_verify_cli_rejects_mutable_production_references(tmp_path, caps
         "knowledge.support_docs.index_revision",
         "prompts.answer",
     ]
+
+
+def test_deploy_plan_cli_builds_physical_execution_plan(tmp_path, capsys) -> None:
+    release = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "GraphRelease",
+        "metadata": {"name": "support-agent", "version": "2026.06.24.1"},
+        "spec": {
+            "bundle": {
+                "digest": "sha256:bundle",
+                "mediaType": "application/vnd.graphblocks.release.v1",
+            },
+            "graphs": {
+                "turn": {
+                    "graphHash": "sha256:graph-turn",
+                    "normalizedPlanHash": "sha256:plan-turn",
+                }
+            },
+        },
+    }
+    deployment = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "GraphDeployment",
+        "metadata": {"name": "support-production"},
+        "spec": {
+            "releaseRef": {"name": "support-agent"},
+            "profile": "production",
+            "coordinator": {"target": "control"},
+            "targets": {
+                "control": {
+                    "kind": "service",
+                    "executionHost": "rust",
+                    "image": "registry.example.com/graphblocks/control@sha256:control",
+                    "accepts": {"capabilities": ["graph.coordinator"]},
+                },
+                "docs": {
+                    "kind": "workerPool",
+                    "executionHost": "python_worker",
+                    "packageLock": "locks/docs.lock",
+                    "accepts": {"capabilities": ["document.parse.pdf"]},
+                },
+            },
+            "placements": [
+                {
+                    "id": "document-parser",
+                    "select": {"capabilities": ["document.parse.pdf"]},
+                    "target": "docs",
+                },
+                {
+                    "id": "fallback",
+                    "select": {"default": True},
+                    "target": "control",
+                },
+            ],
+        },
+    }
+    path = tmp_path / "deployment.yaml"
+    path.write_text(yaml.safe_dump_all([release, deployment]), encoding="utf-8")
+
+    assert main(["deploy", "plan", str(path), "--revision", "rev-1", "--json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["deploymentId"] == "support-production"
+    assert payload["deploymentRevisionId"] == "rev-1"
+    assert payload["graphName"] == "turn"
+    assert payload["releaseDigest"].startswith("sha256:")
+    assert payload["planHash"].startswith("sha256:")
+    assert payload["deploymentSpecHash"].startswith("sha256:")
+    assert payload["plan"]["graphHash"] == "sha256:graph-turn"
+    assert payload["plan"]["defaultTarget"] == "control"
+    assert payload["plan"]["targets"]["docs"]["kind"] == "worker_pool"
+    assert payload["plan"]["targets"]["docs"]["capabilities"] == ["document.parse.pdf"]
+    assert payload["plan"]["placements"] == [
+        {
+            "ruleId": "document-parser",
+            "selector": {
+                "kind": "capabilities",
+                "values": ["document.parse.pdf"],
+            },
+            "target": "docs",
+        }
+    ]
+
+
+def test_deploy_plan_cli_rejects_mismatched_release_reference(tmp_path, capsys) -> None:
+    release = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "GraphRelease",
+        "metadata": {"name": "support-agent", "version": "2026.06.24.1"},
+        "spec": {
+            "bundle": {"digest": "sha256:bundle"},
+            "graphs": {
+                "turn": {
+                    "graphHash": "sha256:graph-turn",
+                    "normalizedPlanHash": "sha256:plan-turn",
+                }
+            },
+        },
+    }
+    deployment = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "GraphDeployment",
+        "metadata": {"name": "support-production"},
+        "spec": {
+            "releaseRef": {"name": "another-release"},
+            "targets": {},
+        },
+    }
+    path = tmp_path / "deployment.yaml"
+    path.write_text(yaml.safe_dump_all([release, deployment]), encoding="utf-8")
+
+    assert main(["deploy", "plan", str(path), "--revision", "rev-1", "--json"]) == 1
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["error"] == "GraphDeployment releaseRef.name 'another-release' does not match 'support-agent'"

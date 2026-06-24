@@ -11,11 +11,15 @@ import yaml
 from . import __version__
 from .compiler import compile_graph
 from .deployment import (
+    ExecutionTarget,
+    GraphDeployment,
     GraphRelease,
     GraphReleaseGraph,
     GraphReleaseMutableReferencesError,
     ImageRef,
     KnowledgeBinding,
+    PlacementRule,
+    PlacementSelector,
     PromptLock,
 )
 from .diagnostics import Diagnostic
@@ -154,6 +158,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     release_verify_parser.add_argument("path", type=Path)
     release_verify_parser.add_argument("--json", action="store_true", help="emit JSON")
+
+    deploy_parser = subparsers.add_parser("deploy", help="compile graph deployment plans")
+    deploy_subparsers = deploy_parser.add_subparsers(dest="deploy_command")
+    deploy_plan_parser = deploy_subparsers.add_parser(
+        "plan",
+        help="resolve GraphRelease and GraphDeployment documents into a physical plan",
+    )
+    deploy_plan_parser.add_argument("path", type=Path)
+    deploy_plan_parser.add_argument("--revision", required=True, help="immutable deployment revision id")
+    deploy_plan_parser.add_argument("--graph", help="release graph name; inferred when the release has one graph")
+    deploy_plan_parser.add_argument("--json", action="store_true", help="emit JSON")
 
     lock_parser = subparsers.add_parser("lock", help="create a semantic graph lockfile")
     lock_parser.add_argument("path", type=Path)
@@ -408,154 +423,509 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         observe_parser.print_help()
         return 0
-    if args.command == "release":
-        if args.release_command == "verify":
-            try:
-                documents = [
-                    document
-                    for document in load_documents(args.path)
-                    if document.get("kind") == "GraphRelease"
-                ]
-                if len(documents) != 1:
-                    raise ValueError(f"expected one GraphRelease document, found {len(documents)}")
-                document = documents[0]
-                metadata = document.get("metadata", {})
-                spec = document.get("spec", {})
-                if not isinstance(metadata, Mapping) or not isinstance(spec, Mapping):
-                    raise ValueError("GraphRelease documents require metadata and spec mappings")
-                name = str(_field(metadata, "name", default="")).strip()
-                version = str(_field(metadata, "version", default=_field(spec, "version", default=""))).strip()
-                if not name:
-                    raise ValueError("GraphRelease metadata.name is required")
-                if not version:
-                    raise ValueError("GraphRelease metadata.version is required")
+    release_documents: list[dict[str, object]] = []
+    release: GraphRelease | None = None
+    if (args.command == "release" and args.release_command == "verify") or (
+        args.command == "deploy" and args.deploy_command == "plan"
+    ):
+        try:
+            release_documents = load_documents(args.path)
+            matching_releases = [
+                document
+                for document in release_documents
+                if document.get("kind") == "GraphRelease"
+            ]
+            if len(matching_releases) != 1:
+                raise ValueError(
+                    f"expected one GraphRelease document, found {len(matching_releases)}"
+                )
+            document = matching_releases[0]
+            metadata = document.get("metadata", {})
+            spec = document.get("spec", {})
+            if not isinstance(metadata, Mapping) or not isinstance(spec, Mapping):
+                raise ValueError("GraphRelease documents require metadata and spec mappings")
+            name = str(_field(metadata, "name", default="")).strip()
+            version = str(
+                _field(metadata, "version", default=_field(spec, "version", default=""))
+            ).strip()
+            if not name:
+                raise ValueError("GraphRelease metadata.name is required")
+            if not version:
+                raise ValueError("GraphRelease metadata.version is required")
 
-                release = GraphRelease(name=name, version=version)
-                bundle_data = _field(spec, "bundle", default={})
-                if bundle_data is not None:
-                    if not isinstance(bundle_data, Mapping):
-                        raise ValueError("GraphRelease spec.bundle must be a mapping")
-                    bundle_digest = _field(bundle_data, "digest")
-                    bundle_ref = _field(bundle_data, "ref")
-                    if bundle_digest is None and isinstance(bundle_ref, str) and "@sha256:" in bundle_ref:
-                        bundle_digest = f"sha256:{bundle_ref.rsplit('@sha256:', 1)[1]}"
-                    media_type = _field(bundle_data, "mediaType", "media_type")
-                    if bundle_digest is not None or media_type is not None:
-                        release = release.with_bundle(str(bundle_digest or ""), str(media_type or ""))
+            release = GraphRelease(name=name, version=version)
+            bundle_data = _field(spec, "bundle", default={})
+            if bundle_data is not None:
+                if not isinstance(bundle_data, Mapping):
+                    raise ValueError("GraphRelease spec.bundle must be a mapping")
+                bundle_digest = _field(bundle_data, "digest")
+                bundle_ref = _field(bundle_data, "ref")
+                if (
+                    bundle_digest is None
+                    and isinstance(bundle_ref, str)
+                    and "@sha256:" in bundle_ref
+                ):
+                    bundle_digest = f"sha256:{bundle_ref.rsplit('@sha256:', 1)[1]}"
+                media_type = _field(bundle_data, "mediaType", "media_type")
+                if bundle_digest is not None or media_type is not None:
+                    release = release.with_bundle(
+                        str(bundle_digest or ""),
+                        str(media_type or ""),
+                    )
 
-                application_data = _field(spec, "application")
-                if isinstance(application_data, Mapping):
-                    application_hash = _field(application_data, "hash", "applicationHash", "application_hash")
-                    if application_hash is not None:
-                        release = release.with_application_hash(str(application_hash))
+            application_data = _field(spec, "application")
+            if isinstance(application_data, Mapping):
+                application_hash = _field(
+                    application_data,
+                    "hash",
+                    "applicationHash",
+                    "application_hash",
+                )
+                if application_hash is not None:
+                    release = release.with_application_hash(str(application_hash))
 
-                graphs_data = _field(spec, "graphs", default={})
-                if not isinstance(graphs_data, Mapping):
-                    raise ValueError("GraphRelease spec.graphs must be a mapping")
-                for graph_name, graph_data in graphs_data.items():
-                    if not isinstance(graph_data, Mapping):
-                        raise ValueError(f"GraphRelease graph {graph_name!r} must be a mapping")
-                    release = release.with_graph(
-                        str(graph_name),
-                        GraphReleaseGraph(
-                            graph_hash=str(_field(graph_data, "graphHash", "graph_hash", default="")),
-                            normalized_plan_hash=str(
+            graphs_data = _field(spec, "graphs", default={})
+            if not isinstance(graphs_data, Mapping):
+                raise ValueError("GraphRelease spec.graphs must be a mapping")
+            for graph_name, graph_data in graphs_data.items():
+                if not isinstance(graph_data, Mapping):
+                    raise ValueError(f"GraphRelease graph {graph_name!r} must be a mapping")
+                release = release.with_graph(
+                    str(graph_name),
+                    GraphReleaseGraph(
+                        graph_hash=str(
+                            _field(graph_data, "graphHash", "graph_hash", default="")
+                        ),
+                        normalized_plan_hash=str(
+                            _field(
+                                graph_data,
+                                "normalizedPlanHash",
+                                "normalized_plan_hash",
+                                default="",
+                            )
+                        ),
+                    ),
+                )
+
+            images_data = _field(spec, "images", default={})
+            if not isinstance(images_data, Mapping):
+                raise ValueError("GraphRelease spec.images must be a mapping")
+            for image_name, image_data in images_data.items():
+                if isinstance(image_data, Mapping):
+                    image_value = _field(image_data, "image", "ref", default="")
+                else:
+                    image_value = image_data
+                release = release.with_image(str(image_name), ImageRef(str(image_value)))
+
+            prompts_data = _field(
+                spec,
+                "prompts",
+                "promptLocks",
+                "prompt_locks",
+                default={},
+            )
+            if not isinstance(prompts_data, Mapping):
+                raise ValueError("GraphRelease spec.prompts must be a mapping")
+            for prompt_name, prompt_data in prompts_data.items():
+                if not isinstance(prompt_data, Mapping):
+                    raise ValueError(f"GraphRelease prompt {prompt_name!r} must be a mapping")
+                resolved_name = str(_field(prompt_data, "name", default=prompt_name))
+                prompt_version = _field(prompt_data, "version")
+                prompt_label = _field(prompt_data, "label", "lockLabel", "lock_label")
+                if prompt_version is not None:
+                    prompt_lock = PromptLock.versioned(resolved_name, str(prompt_version))
+                elif prompt_label is not None:
+                    prompt_lock = PromptLock.label(resolved_name, str(prompt_label))
+                else:
+                    raise ValueError(
+                        f"GraphRelease prompt {prompt_name!r} requires version or label"
+                    )
+                release = release.with_prompt_lock(str(prompt_name), prompt_lock)
+
+            knowledge_data = _field(spec, "knowledge", default={})
+            if not isinstance(knowledge_data, Mapping):
+                raise ValueError("GraphRelease spec.knowledge must be a mapping")
+            top_level_revision = _field(knowledge_data, "indexRevision", "index_revision")
+            if top_level_revision is not None:
+                release = release.with_knowledge(
+                    KnowledgeBinding(
+                        index_id=str(
+                            _field(
+                                knowledge_data,
+                                "indexId",
+                                "index_id",
+                                default="default",
+                            )
+                        ),
+                        index_revision=str(top_level_revision),
+                    )
+                )
+            else:
+                for index_id, binding_data in knowledge_data.items():
+                    if not isinstance(binding_data, Mapping):
+                        raise ValueError(
+                            f"GraphRelease knowledge binding {index_id!r} must be a mapping"
+                        )
+                    release = release.with_knowledge(
+                        KnowledgeBinding(
+                            index_id=str(
                                 _field(
-                                    graph_data,
-                                    "normalizedPlanHash",
-                                    "normalized_plan_hash",
+                                    binding_data,
+                                    "indexId",
+                                    "index_id",
+                                    default=index_id,
+                                )
+                            ),
+                            index_revision=str(
+                                _field(
+                                    binding_data,
+                                    "indexRevision",
+                                    "index_revision",
                                     default="",
                                 )
                             ),
+                        )
+                    )
+        except (OSError, TypeError, ValueError, yaml.YAMLError) as error:
+            if args.json:
+                print(
+                    json.dumps(
+                        {"ok": False, "error": str(error)},
+                        indent=2,
+                        sort_keys=True,
+                    )
+                )
+            else:
+                print(f"{args.command} error: {error}")
+            return 1
+    if args.command == "release":
+        if args.release_command == "verify":
+            assert release is not None
+            mutable_references: list[str] = []
+            try:
+                release.validate_production_pins()
+            except GraphReleaseMutableReferencesError as error:
+                mutable_references.extend(error.references)
+            payload = {
+                "ok": not mutable_references,
+                "name": release.name,
+                "version": release.version,
+                "releaseDigest": release.content_digest(),
+                "mutableReferences": mutable_references,
+            }
+            if args.json:
+                print(json.dumps(payload, indent=2, sort_keys=True))
+            elif mutable_references:
+                print(f"FAIL {release.name} mutable references: {', '.join(mutable_references)}")
+            else:
+                print(f"OK {release.name} {release.version} {release.content_digest()}")
+            return 0 if payload["ok"] else 1
+        release_parser.print_help()
+        return 0
+    if args.command == "deploy":
+        if args.deploy_command == "plan":
+            assert release is not None
+            try:
+                release.validate_production_pins()
+                deployment_documents = [
+                    document
+                    for document in release_documents
+                    if document.get("kind") == "GraphDeployment"
+                ]
+                if len(deployment_documents) != 1:
+                    raise ValueError(
+                        f"expected one GraphDeployment document, found {len(deployment_documents)}"
+                    )
+                deployment_document = deployment_documents[0]
+                metadata = deployment_document.get("metadata", {})
+                spec = deployment_document.get("spec", {})
+                if not isinstance(metadata, Mapping) or not isinstance(spec, Mapping):
+                    raise ValueError(
+                        "GraphDeployment documents require metadata and spec mappings"
+                    )
+                deployment_id = str(_field(metadata, "name", default="")).strip()
+                if not deployment_id:
+                    raise ValueError("GraphDeployment metadata.name is required")
+
+                release_ref = _field(spec, "releaseRef", "release_ref", default={})
+                if not isinstance(release_ref, Mapping):
+                    raise ValueError("GraphDeployment spec.releaseRef must be a mapping")
+                release_name = _field(release_ref, "name")
+                if release_name is not None and str(release_name) != release.name:
+                    raise ValueError(
+                        f"GraphDeployment releaseRef.name {release_name!r} "
+                        f"does not match {release.name!r}"
+                    )
+                release_digest = _field(release_ref, "digest")
+                if (
+                    release_digest is not None
+                    and str(release_digest) != release.content_digest()
+                ):
+                    raise ValueError(
+                        f"GraphDeployment releaseRef.digest {release_digest!r} "
+                        f"does not match {release.content_digest()!r}"
+                    )
+
+                graph_name_value = args.graph or _field(
+                    spec,
+                    "graph",
+                    "graphName",
+                    "graph_name",
+                )
+                if graph_name_value is None:
+                    if len(release.graphs) != 1:
+                        raise ValueError(
+                            "GraphDeployment requires --graph when the release does not contain exactly one graph"
+                        )
+                    graph_name_value = next(iter(release.graphs))
+                graph_name = str(graph_name_value)
+                if graph_name not in release.graphs:
+                    raise ValueError(
+                        f"GraphRelease {release.name!r} has no graph {graph_name!r}"
+                    )
+
+                deployment = GraphDeployment(
+                    deployment_id=deployment_id,
+                    release=release,
+                    graph_name=graph_name,
+                    deployment_revision_id=args.revision,
+                    environment=str(
+                        _field(spec, "environment", "profile", default="local")
+                    ),
+                )
+                targets_data = _field(spec, "targets", default={})
+                if not isinstance(targets_data, Mapping):
+                    raise ValueError("GraphDeployment spec.targets must be a mapping")
+                target_kind_names = {
+                    "service": "service",
+                    "workerPool": "worker_pool",
+                    "worker_pool": "worker_pool",
+                    "jobPool": "job_pool",
+                    "job_pool": "job_pool",
+                    "sandboxPool": "sandbox_pool",
+                    "sandbox_pool": "sandbox_pool",
+                    "statefulService": "stateful_service",
+                    "stateful_service": "stateful_service",
+                    "external": "external",
+                }
+                for target_id, target_data in targets_data.items():
+                    if not isinstance(target_data, Mapping):
+                        raise ValueError(
+                            f"GraphDeployment target {target_id!r} must be a mapping"
+                        )
+                    raw_kind = str(_field(target_data, "kind", default=""))
+                    target_kind = target_kind_names.get(raw_kind)
+                    if target_kind is None:
+                        raise ValueError(
+                            f"GraphDeployment target {target_id!r} has unknown kind {raw_kind!r}"
+                        )
+                    execution_host = str(
+                        _field(
+                            target_data,
+                            "executionHost",
+                            "execution_host",
+                            default="",
+                        )
+                    )
+                    if not execution_host:
+                        raise ValueError(
+                            f"GraphDeployment target {target_id!r} requires executionHost"
+                        )
+                    accepts = _field(target_data, "accepts", default={})
+                    if not isinstance(accepts, Mapping):
+                        raise ValueError(
+                            f"GraphDeployment target {target_id!r} accepts must be a mapping"
+                        )
+                    target = ExecutionTarget(
+                        target_id=str(target_id),
+                        kind=target_kind,
+                        execution_host=execution_host,
+                        capabilities=_tuple_field(
+                            accepts,
+                            "capabilities",
+                        )
+                        or _tuple_field(target_data, "capabilities"),
+                        effects=_tuple_field(accepts, "effects")
+                        or _tuple_field(target_data, "effects"),
+                        package_lock=(
+                            str(
+                                _field(
+                                    target_data,
+                                    "packageLock",
+                                    "package_lock",
+                                )
+                            )
+                            if _field(
+                                target_data,
+                                "packageLock",
+                                "package_lock",
+                            )
+                            is not None
+                            else None
+                        ),
+                        image=(
+                            str(_field(target_data, "image"))
+                            if _field(target_data, "image") is not None
+                            else None
                         ),
                     )
+                    deployment = deployment.with_target(target)
 
-                images_data = _field(spec, "images", default={})
-                if not isinstance(images_data, Mapping):
-                    raise ValueError("GraphRelease spec.images must be a mapping")
-                for image_name, image_data in images_data.items():
-                    if isinstance(image_data, Mapping):
-                        image_value = _field(image_data, "image", "ref", default="")
-                    else:
-                        image_value = image_data
-                    release = release.with_image(str(image_name), ImageRef(str(image_value)))
-
-                prompts_data = _field(spec, "prompts", "promptLocks", "prompt_locks", default={})
-                if not isinstance(prompts_data, Mapping):
-                    raise ValueError("GraphRelease spec.prompts must be a mapping")
-                for prompt_name, prompt_data in prompts_data.items():
-                    if not isinstance(prompt_data, Mapping):
-                        raise ValueError(f"GraphRelease prompt {prompt_name!r} must be a mapping")
-                    resolved_name = str(_field(prompt_data, "name", default=prompt_name))
-                    prompt_version = _field(prompt_data, "version")
-                    prompt_label = _field(prompt_data, "label", "lockLabel", "lock_label")
-                    if prompt_version is not None:
-                        prompt_lock = PromptLock.versioned(resolved_name, str(prompt_version))
-                    elif prompt_label is not None:
-                        prompt_lock = PromptLock.label(resolved_name, str(prompt_label))
-                    else:
+                coordinator = _field(spec, "coordinator", default={})
+                if coordinator is not None and not isinstance(coordinator, Mapping):
+                    raise ValueError("GraphDeployment spec.coordinator must be a mapping")
+                default_target = (
+                    str(_field(coordinator, "target"))
+                    if isinstance(coordinator, Mapping)
+                    and _field(coordinator, "target") is not None
+                    else None
+                )
+                placements_data = _field(spec, "placements", default=())
+                if not isinstance(placements_data, list):
+                    raise ValueError("GraphDeployment spec.placements must be a list")
+                selector_kinds = {
+                    "nodes": "nodes",
+                    "executionGroups": "execution_groups",
+                    "execution_groups": "execution_groups",
+                    "blocks": "blocks",
+                    "blockNamespaces": "blocks",
+                    "block_namespaces": "blocks",
+                    "capabilities": "capabilities",
+                    "effects": "effects",
+                    "executionClasses": "execution_classes",
+                    "execution_classes": "execution_classes",
+                }
+                for index, placement_data in enumerate(placements_data):
+                    if not isinstance(placement_data, Mapping):
                         raise ValueError(
-                            f"GraphRelease prompt {prompt_name!r} requires version or label"
+                            f"GraphDeployment placement {index} must be a mapping"
                         )
-                    release = release.with_prompt_lock(str(prompt_name), prompt_lock)
-
-                knowledge_data = _field(spec, "knowledge", default={})
-                if not isinstance(knowledge_data, Mapping):
-                    raise ValueError("GraphRelease spec.knowledge must be a mapping")
-                top_level_revision = _field(knowledge_data, "indexRevision", "index_revision")
-                if top_level_revision is not None:
-                    release = release.with_knowledge(
-                        KnowledgeBinding(
-                            index_id=str(_field(knowledge_data, "indexId", "index_id", default="default")),
-                            index_revision=str(top_level_revision),
+                    selector_data = _field(placement_data, "select", "selector")
+                    if not isinstance(selector_data, Mapping):
+                        raise ValueError(
+                            f"GraphDeployment placement {index} requires select mapping"
+                        )
+                    target_id = str(_field(placement_data, "target", default=""))
+                    if not target_id:
+                        raise ValueError(
+                            f"GraphDeployment placement {index} requires target"
+                        )
+                    if bool(_field(selector_data, "default", default=False)):
+                        if default_target is not None and default_target != target_id:
+                            raise ValueError(
+                                "GraphDeployment declares conflicting default targets "
+                                f"{default_target!r} and {target_id!r}"
+                            )
+                        default_target = target_id
+                        continue
+                    selected = [
+                        (selector_kinds[key], _tuple_field(selector_data, key))
+                        for key in selector_kinds
+                        if key in selector_data
+                    ]
+                    if len(selected) != 1:
+                        raise ValueError(
+                            f"GraphDeployment placement {index} must declare exactly one selector"
+                        )
+                    selector_kind, selector_values = selected[0]
+                    if not selector_values:
+                        raise ValueError(
+                            f"GraphDeployment placement {index} selector cannot be empty"
+                        )
+                    deployment = deployment.with_placement(
+                        PlacementRule(
+                            rule_id=str(
+                                _field(
+                                    placement_data,
+                                    "ruleId",
+                                    "rule_id",
+                                    "id",
+                                    default=f"placement-{index + 1}",
+                                )
+                            ),
+                            selector=PlacementSelector(
+                                selector_kind,
+                                selector_values,
+                            ),
+                            target_id=target_id,
                         )
                     )
-                else:
-                    for index_id, binding_data in knowledge_data.items():
-                        if not isinstance(binding_data, Mapping):
-                            raise ValueError(
-                                f"GraphRelease knowledge binding {index_id!r} must be a mapping"
-                            )
-                        release = release.with_knowledge(
-                            KnowledgeBinding(
-                                index_id=str(_field(binding_data, "indexId", "index_id", default=index_id)),
-                                index_revision=str(
-                                    _field(
-                                        binding_data,
-                                        "indexRevision",
-                                        "index_revision",
-                                        default="",
-                                    )
-                                ),
-                            )
+                if default_target is not None:
+                    if default_target not in deployment.targets:
+                        raise ValueError(
+                            f"GraphDeployment default target {default_target!r} is not defined"
                         )
+                    deployment = deployment.with_default_target(default_target)
 
-                mutable_references: list[str] = []
-                try:
-                    release.validate_production_pins()
-                except GraphReleaseMutableReferencesError as error:
-                    mutable_references.extend(error.references)
+                package_lock_hash = _field(
+                    spec,
+                    "packageLockHash",
+                    "package_lock_hash",
+                )
+                plan = deployment.to_physical_plan(
+                    package_lock_hash=(
+                        str(package_lock_hash)
+                        if package_lock_hash is not None
+                        else None
+                    )
+                )
                 payload = {
-                    "ok": not mutable_references,
-                    "name": release.name,
-                    "version": release.version,
-                    "releaseDigest": release.content_digest(),
-                    "mutableReferences": mutable_references,
+                    "ok": True,
+                    "deploymentId": deployment.deployment_id,
+                    "deploymentRevisionId": deployment.deployment_revision_id,
+                    "graphName": deployment.graph_name,
+                    "releaseDigest": plan.release_digest,
+                    "deploymentSpecHash": deployment.deployment_spec_hash(),
+                    "planHash": plan.plan_hash(),
+                    "plan": {
+                        "graphHash": plan.graph_hash,
+                        "packageLockHash": plan.package_lock_hash,
+                        "defaultTarget": plan.default_target,
+                        "targets": {
+                            target_id: {
+                                "kind": target.kind,
+                                "executionHost": target.execution_host,
+                                "capabilities": list(target.capabilities),
+                                "effects": list(target.effects),
+                                "packageLock": target.package_lock,
+                                "image": target.image,
+                            }
+                            for target_id, target in sorted(plan.targets.items())
+                        },
+                        "placements": [
+                            {
+                                "ruleId": placement.rule_id,
+                                "selector": {
+                                    "kind": placement.selector.kind,
+                                    "values": list(placement.selector.values),
+                                },
+                                "target": placement.target_id,
+                            }
+                            for placement in plan.placements
+                        ],
+                    },
                 }
                 if args.json:
                     print(json.dumps(payload, indent=2, sort_keys=True))
-                elif mutable_references:
-                    print(f"FAIL {release.name} mutable references: {', '.join(mutable_references)}")
                 else:
-                    print(f"OK {release.name} {release.version} {release.content_digest()}")
-                return 0 if payload["ok"] else 1
+                    print(
+                        f"{deployment.deployment_id} {plan.plan_hash()} "
+                        f"release={plan.release_digest} revision={plan.deployment_revision_id}"
+                    )
+                return 0
             except (OSError, TypeError, ValueError, yaml.YAMLError) as error:
                 if args.json:
-                    print(json.dumps({"ok": False, "error": str(error)}, indent=2, sort_keys=True))
+                    print(
+                        json.dumps(
+                            {"ok": False, "error": str(error)},
+                            indent=2,
+                            sort_keys=True,
+                        )
+                    )
                 else:
-                    print(f"release verify error: {error}")
+                    print(f"deploy plan error: {error}")
                 return 1
-        release_parser.print_help()
+        deploy_parser.print_help()
         return 0
     if args.command == "policy":
         if args.policy_command == "test":
