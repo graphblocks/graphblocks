@@ -410,6 +410,41 @@ def test_output_delivery_gate_policy_abort_cuts_off_and_rejects_late_chunks() ->
     assert str(error.value) == "output gate is policy stopped"
 
 
+def test_output_delivery_gate_immediate_draft_delivers_before_policy_and_retracts_on_abort() -> None:
+    gate = OutputDeliveryGate(
+        "stream-1",
+        "response-1",
+        delivery_policy=OutputDeliveryPolicy.immediate_draft(
+            on_violation="abort_response",
+            delivered_draft_disposition="retract",
+        ),
+    )
+
+    delivered = gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "provisional draft"))
+
+    assert [(chunk.sequence, chunk.text) for chunk in delivered] == [(1, "provisional draft")]
+    assert gate.last_generated_sequence == 1
+    assert gate.last_policy_accepted_sequence == 0
+    assert gate.last_client_delivered_sequence == 1
+
+    stopped = gate.apply_decision(
+        OutputPolicyDecision.abort_response(
+            "decision-abort",
+            input_digest="sha256:blocked",
+        ).with_draft_disposition("retract"),
+        occurred_at="2026-06-23T00:00:02Z",
+    )
+
+    assert stopped.cutoff is not None
+    assert stopped.cutoff.last_generated_sequence == 1
+    assert stopped.cutoff.last_policy_accepted_sequence == 0
+    assert stopped.cutoff.last_client_delivered_sequence == 1
+    assert stopped.cutoff.draft_disposition == "retract"
+    with pytest.raises(OutputGateError) as error:
+        gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 2, "late"))
+    assert str(error.value) == "output gate is policy stopped"
+
+
 def test_output_delivery_gate_buffer_until_commit_holds_accepted_chunks() -> None:
     gate = OutputDeliveryGate(
         "stream-1",

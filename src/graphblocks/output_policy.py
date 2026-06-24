@@ -500,7 +500,7 @@ class OutputDeliveryGate:
     def __post_init__(self) -> None:
         self.delivery_policy.validate()
 
-    def record_chunk(self, chunk: GenerationChunk) -> None:
+    def record_chunk(self, chunk: GenerationChunk) -> list[GenerationChunk]:
         if self.cutoff is not None:
             raise OutputGateError("output gate is policy stopped")
         if chunk.stream_id != self.stream_id:
@@ -518,6 +518,12 @@ class OutputDeliveryGate:
             )
         self.last_generated_sequence = chunk.sequence
         self.pending[chunk.sequence] = chunk
+        if self.delivery_policy.mode != "immediate_draft":
+            return []
+
+        delivered = self.pending.pop(chunk.sequence)
+        self.last_client_delivered_sequence = delivered.sequence
+        return [delivered]
 
     def commit_accepted_output(self) -> list[GenerationChunk]:
         if self.cutoff is not None:
