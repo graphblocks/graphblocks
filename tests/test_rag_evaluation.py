@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+import math
 
 import graphblocks
 from graphblocks.documents import (
@@ -70,6 +71,10 @@ def test_evaluate_retrieval_metrics_reports_recall_precision_and_mrr() -> None:
     assert by_name["average_precision_at_k"].value == (
         Decimal(1) + Decimal(2) / Decimal(3)
     ) / Decimal(2)
+    expected_ndcg = (1.0 + 1.0 / math.log2(4.0)) / (
+        1.0 + 1.0 / math.log2(3.0)
+    )
+    assert by_name["ndcg_at_k"].value == Decimal(str(expected_ndcg))
     assert by_name["mrr"].value == Decimal("1")
     assert by_name["recall_at_k"].direction == "maximize"
     assert by_name["precision_at_k"].evaluator == {"k": 3}
@@ -90,6 +95,7 @@ def test_evaluate_retrieval_metrics_returns_no_data_without_relevant_items() -> 
     assert by_name["recall_at_k"].value is None
     assert by_name["precision_at_k"].value is None
     assert by_name["average_precision_at_k"].value is None
+    assert by_name["ndcg_at_k"].value is None
     assert by_name["mrr"].value is None
 
 

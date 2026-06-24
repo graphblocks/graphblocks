@@ -2543,8 +2543,14 @@ where
         .filter(|hit| relevant_item_ids.contains(&hit.item.item_id))
         .count();
 
-    let (recall, precision, average_precision, mrr) = if relevant_item_ids.is_empty() {
-        (Value::Null, Value::Null, Value::Null, Value::Null)
+    let (recall, precision, average_precision, ndcg, mrr) = if relevant_item_ids.is_empty() {
+        (
+            Value::Null,
+            Value::Null,
+            Value::Null,
+            Value::Null,
+            Value::Null,
+        )
     } else {
         let mut relevant_seen = 0usize;
         let mut precision_sum = 0.0;
@@ -2554,6 +2560,16 @@ where
                 precision_sum += relevant_seen as f64 / (index + 1) as f64;
             }
         }
+        let dcg = hits_at_k
+            .iter()
+            .enumerate()
+            .filter(|(_, hit)| relevant_item_ids.contains(&hit.item.item_id))
+            .map(|(index, _)| 1.0 / ((index + 2) as f64).log2())
+            .sum::<f64>();
+        let ideal_relevant_count = relevant_item_ids.len().min(cutoff);
+        let idcg = (0..ideal_relevant_count)
+            .map(|index| 1.0 / ((index + 2) as f64).log2())
+            .sum::<f64>();
         let first_relevant_rank = hits_at_k
             .iter()
             .position(|hit| relevant_item_ids.contains(&hit.item.item_id))
@@ -2566,6 +2582,11 @@ where
                 json!(relevant_hits_at_k as f64 / cutoff as f64)
             },
             json!(precision_sum / relevant_item_ids.len() as f64),
+            if idcg == 0.0 {
+                Value::Null
+            } else {
+                json!(dcg / idcg)
+            },
             first_relevant_rank
                 .map(|rank| json!(1.0 / rank as f64))
                 .unwrap_or_else(|| json!(0.0)),
@@ -2579,6 +2600,7 @@ where
             .with_direction(MetricDirection::Maximize),
         MetricObservation::new("average_precision_at_k", average_precision)
             .with_direction(MetricDirection::Maximize),
+        MetricObservation::new("ndcg_at_k", ndcg).with_direction(MetricDirection::Maximize),
         MetricObservation::new("mrr", mrr).with_direction(MetricDirection::Maximize),
     ];
     for metric in &mut metrics {

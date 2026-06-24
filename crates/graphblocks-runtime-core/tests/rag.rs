@@ -1651,6 +1651,12 @@ fn evaluate_retrieval_metrics_reports_recall_precision_and_mrr() {
         .find(|metric| metric.name == "average_precision_at_k")
         .expect("average precision metric exists");
     assert_eq!(average_precision.value, json!((1.0 + 2.0 / 3.0) / 2.0));
+    let ndcg = metrics
+        .iter()
+        .find(|metric| metric.name == "ndcg_at_k")
+        .expect("NDCG metric exists");
+    let expected_ndcg = (1.0 + 1.0 / 4.0_f64.log2()) / (1.0 + 1.0 / 3.0_f64.log2());
+    assert_eq!(ndcg.value, json!(expected_ndcg));
     let mrr = metrics
         .iter()
         .find(|metric| metric.name == "mrr")
