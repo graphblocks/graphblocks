@@ -2546,6 +2546,13 @@ pub fn evaluate_rag_answer_metrics(
         json!(unsupported_claim_ids.len() as f64 / answer.claims.len() as f64)
     };
     let faithfulness = citation_recall.clone();
+    let answer_relevance = answer
+        .metadata
+        .get("answer_relevance")
+        .or_else(|| answer.metadata.get("answer_relevance_score"))
+        .and_then(Value::as_f64)
+        .filter(|score| score.is_finite())
+        .map_or(Value::Null, |score| json!(score));
 
     vec![
         MetricObservation::new("citation_precision", citation_precision)
@@ -2553,6 +2560,8 @@ pub fn evaluate_rag_answer_metrics(
         MetricObservation::new("citation_recall", citation_recall)
             .with_direction(MetricDirection::Maximize),
         MetricObservation::new("citation_source_accuracy", citation_source_accuracy)
+            .with_direction(MetricDirection::Maximize),
+        MetricObservation::new("answer_relevance", answer_relevance)
             .with_direction(MetricDirection::Maximize),
         MetricObservation::new("faithfulness", faithfulness)
             .with_direction(MetricDirection::Maximize),

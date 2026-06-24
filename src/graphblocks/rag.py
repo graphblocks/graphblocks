@@ -1015,6 +1015,20 @@ def evaluate_rag_answer_metrics(
         if not answer.claims
         else Decimal(len(unsupported_claim_ids)) / Decimal(len(answer.claims))
     )
+    raw_answer_relevance = answer.metadata.get(
+        "answer_relevance",
+        answer.metadata.get("answer_relevance_score"),
+    )
+    answer_relevance = (
+        Decimal(str(raw_answer_relevance))
+        if not isinstance(raw_answer_relevance, bool)
+        and isinstance(raw_answer_relevance, int | float | Decimal)
+        and (
+            not isinstance(raw_answer_relevance, float)
+            or math.isfinite(raw_answer_relevance)
+        )
+        else None
+    )
 
     return [
         MetricObservation(
@@ -1030,6 +1044,11 @@ def evaluate_rag_answer_metrics(
         MetricObservation(
             "citation_source_accuracy",
             citation_source_accuracy,
+            direction="maximize",
+        ),
+        MetricObservation(
+            "answer_relevance",
+            answer_relevance,
             direction="maximize",
         ),
         MetricObservation(

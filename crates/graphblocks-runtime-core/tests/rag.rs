@@ -1557,13 +1557,16 @@ fn evaluate_rag_answer_metrics_reports_citation_precision() {
         .with_cited_text("requires audit logs");
     let invalid = Citation::new("cite-invalid", context.hits[0].item.source.clone())
         .with_cited_text("unrelated phrase");
-    let answer = Answer::new("answer-1", "Alpha policy requires audit logs.")
+    let mut answer = Answer::new("answer-1", "Alpha policy requires audit logs.")
         .with_claim(
             Claim::new("claim-1", "Alpha policy requires audit logs.")
                 .with_citation_ids(["cite-valid", "cite-invalid"]),
         )
         .with_citation(valid)
         .with_citation(invalid);
+    answer
+        .metadata
+        .insert("answer_relevance".to_owned(), json!(0.8));
     let validation = validate_answer_citations(&answer, &context, true, FailurePolicy::Fail)
         .expect("citation validation succeeds");
 
@@ -1590,6 +1593,12 @@ fn evaluate_rag_answer_metrics_reports_citation_precision() {
         citation_source_accuracy.direction,
         MetricDirection::Maximize
     );
+    let answer_relevance = metrics
+        .iter()
+        .find(|metric| metric.name == "answer_relevance")
+        .expect("answer relevance metric exists");
+    assert_eq!(answer_relevance.value, json!(0.8));
+    assert_eq!(answer_relevance.direction, MetricDirection::Maximize);
     let faithfulness = metrics
         .iter()
         .find(|metric| metric.name == "faithfulness")
@@ -1645,6 +1654,11 @@ fn evaluate_rag_answer_metrics_reports_unsupported_claim_rate() {
         .find(|metric| metric.name == "citation_source_accuracy")
         .expect("citation source accuracy metric exists");
     assert_eq!(citation_source_accuracy.value, json!(1.0));
+    let answer_relevance = metrics
+        .iter()
+        .find(|metric| metric.name == "answer_relevance")
+        .expect("answer relevance metric exists");
+    assert_eq!(answer_relevance.value, Value::Null);
     let faithfulness = metrics
         .iter()
         .find(|metric| metric.name == "faithfulness")
