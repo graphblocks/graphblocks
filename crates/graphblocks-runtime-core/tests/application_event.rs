@@ -465,6 +465,7 @@ fn output_policy_decision_event_maps_disposition_and_metadata_payload() {
             "policy_refs": ["policy/output-standard"],
             "evaluated_at_unix_ms": 1_699_995,
             "input_digest": "sha256:redact",
+            "replacement_part_count": 1,
             "replacement_chunk_count": 1,
             "redaction_count": 0,
             "provider_cancellation": "request",

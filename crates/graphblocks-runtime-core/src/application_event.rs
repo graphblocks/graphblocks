@@ -508,6 +508,7 @@ impl ApplicationEvent {
                 "policy_refs": decision.policy_refs,
                 "evaluated_at_unix_ms": decision.evaluated_at_unix_ms,
                 "input_digest": decision.input_digest,
+                "replacement_part_count": decision.replacement_chunks.len(),
                 "replacement_chunk_count": decision.replacement_chunks.len(),
                 "redaction_count": decision.redactions.len(),
                 "provider_cancellation": provider_cancellation,
