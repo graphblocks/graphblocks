@@ -6,6 +6,7 @@ from typing import Literal, TypeAlias
 
 from .canonical import canonical_hash
 from .documents import DocumentChunk, DocumentSpan, SourceRef
+from .evaluation import ResultBundle
 
 KnowledgeDeleteMode: TypeAlias = Literal["tombstone", "hard"]
 KnowledgeRecordStatus: TypeAlias = Literal["active", "tombstoned"]
@@ -17,6 +18,15 @@ class SearchRequest:
     top_k: int = 10
     filters: dict[str, object] = field(default_factory=dict)
     metadata: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class QueryPlan:
+    original: str
+    rewritten: list[str]
+    subqueries: list[str] = field(default_factory=list)
+    filters: dict[str, object] | None = None
+    rationale_summary: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +116,22 @@ class Answer:
     citations: list[Citation] = field(default_factory=list)
     abstention: Abstention | None = None
     metadata: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class RagResultPayload:
+    query_plan: QueryPlan
+    retrievals: list[RetrievalResult]
+    context: ContextPack
+    model_response: dict[str, object]
+    answer: Answer
+
+
+@dataclass(frozen=True, slots=True)
+class RagResultBundle:
+    base: ResultBundle
+    payload: RagResultPayload
+    profile: Literal["rag"] = "rag"
 
 
 @dataclass(frozen=True, slots=True)

@@ -6,6 +6,7 @@ use graphblocks_compiler::canonical::canonical_hash;
 use serde_json::{Map, Value, json};
 
 use crate::documents::{DocumentChunk, DocumentSpan, SourceRef};
+use crate::evaluation::ResultBundle;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SearchRequest {
@@ -27,6 +28,55 @@ impl SearchRequest {
 
     pub fn with_top_k(mut self, top_k: usize) -> Self {
         self.top_k = top_k;
+        self
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct QueryPlan {
+    pub original: String,
+    pub rewritten: Vec<String>,
+    pub subqueries: Vec<String>,
+    pub filters: Option<Value>,
+    pub rationale_summary: Option<String>,
+}
+
+impl QueryPlan {
+    pub fn new(original: impl Into<String>) -> Self {
+        Self {
+            original: original.into(),
+            rewritten: Vec::new(),
+            subqueries: Vec::new(),
+            filters: None,
+            rationale_summary: None,
+        }
+    }
+
+    pub fn with_rewritten<I, S>(mut self, rewritten: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.rewritten = rewritten.into_iter().map(Into::into).collect();
+        self
+    }
+
+    pub fn with_subqueries<I, S>(mut self, subqueries: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.subqueries = subqueries.into_iter().map(Into::into).collect();
+        self
+    }
+
+    pub fn with_filter(mut self, filters: Value) -> Self {
+        self.filters = Some(filters);
+        self
+    }
+
+    pub fn with_rationale_summary(mut self, rationale_summary: impl Into<String>) -> Self {
+        self.rationale_summary = Some(rationale_summary.into());
         self
     }
 }
@@ -729,6 +779,50 @@ impl Answer {
     pub fn with_citation(mut self, citation: Citation) -> Self {
         self.citations.push(citation);
         self
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RagResultPayload {
+    pub query_plan: QueryPlan,
+    pub retrievals: Vec<RetrievalResult>,
+    pub context: ContextPack,
+    pub model_response: Value,
+    pub answer: Answer,
+}
+
+impl RagResultPayload {
+    pub fn new(
+        query_plan: QueryPlan,
+        retrievals: Vec<RetrievalResult>,
+        context: ContextPack,
+        model_response: Value,
+        answer: Answer,
+    ) -> Self {
+        Self {
+            query_plan,
+            retrievals,
+            context,
+            model_response,
+            answer,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RagResultBundle {
+    pub base: ResultBundle,
+    pub profile: String,
+    pub payload: RagResultPayload,
+}
+
+impl RagResultBundle {
+    pub fn new(base: ResultBundle, payload: RagResultPayload) -> Self {
+        Self {
+            base,
+            profile: "rag".to_owned(),
+            payload,
+        }
     }
 }
 

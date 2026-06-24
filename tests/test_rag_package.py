@@ -6,6 +6,9 @@ from pathlib import Path
 from graphblocks import (
     InMemoryKnowledgeIndex,
     KnowledgeDeleteMode,
+    QueryPlan,
+    RagResultBundle,
+    RagResultPayload,
     chunk_document_by_lines,
     create_local_text_revision,
     parse_plain_text_document,
@@ -48,3 +51,12 @@ def test_rag_package_exposes_knowledge_index_facade(monkeypatch) -> None:
 
     assert graphblocks_rag.InMemoryKnowledgeIndex is InMemoryKnowledgeIndex
     assert graphblocks_rag.KnowledgeDeleteMode is KnowledgeDeleteMode
+
+
+def test_rag_package_exposes_result_bundle_profile(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-rag" / "src"))
+    graphblocks_rag = importlib.import_module("graphblocks_rag")
+
+    assert graphblocks_rag.QueryPlan is QueryPlan
+    assert graphblocks_rag.RagResultPayload is RagResultPayload
+    assert graphblocks_rag.RagResultBundle is RagResultBundle

@@ -3,13 +3,15 @@ use graphblocks_runtime_core::documents::{
     DocumentSpan, SourceRef, chunk_document_by_lines, create_local_text_revision,
     parse_plain_text_document,
 };
+use graphblocks_runtime_core::evaluation::ResultBundle;
 use graphblocks_runtime_core::rag::{
     Answer, AuthContext, Citation, Claim, ContextBuildOptions, ContextPack, FailurePolicy,
     FusionOptions, FusionStrategy, InMemoryChunkRetriever, InMemoryKnowledgeIndex,
-    KnowledgeDeleteMode, KnowledgeItemRef, KnowledgeRecordStatus, RagError, RerankOptions,
-    SearchHit, SearchRequest, authorize_search_hits, build_context_pack, fuse_search_hits,
-    knowledge_item_from_chunk, rerank_search_hits, resolve_citation_source_trace,
-    validate_answer_citation_authorization, validate_answer_citations,
+    KnowledgeDeleteMode, KnowledgeItemRef, KnowledgeRecordStatus, QueryPlan, RagError,
+    RagResultBundle, RagResultPayload, RerankOptions, RetrievalResult, SearchHit, SearchRequest,
+    authorize_search_hits, build_context_pack, fuse_search_hits, knowledge_item_from_chunk,
+    rerank_search_hits, resolve_citation_source_trace, validate_answer_citation_authorization,
+    validate_answer_citations,
 };
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -566,6 +568,39 @@ fn rerank_search_hits_applies_input_limit_and_reports_truncation()
         vec!["hit-b", "hit-a"]
     );
     Ok(())
+}
+
+#[test]
+fn rag_result_bundle_wraps_generic_result_bundle_with_typed_payload() {
+    let query_plan = QueryPlan::new("How do I reset a password?")
+        .with_rewritten(["reset password"])
+        .with_subqueries(["password reset policy"])
+        .with_filter(json!({"tenant": "acme"}))
+        .with_rationale_summary("normalized support request");
+    let retrieval = RetrievalResult::new(
+        "retrieval-1",
+        SearchRequest::new("reset password").with_top_k(3),
+        Vec::new(),
+    );
+    let context = ContextPack::new("context-1", Vec::new());
+    let answer = Answer::new("answer-1", "Use the password reset flow.");
+    let payload = RagResultPayload::new(
+        query_plan,
+        vec![retrieval],
+        context,
+        json!({"response_id": "response-1"}),
+        answer,
+    );
+    let base = ResultBundle::new("bundle-1", "run-1", "release-1");
+
+    let bundle = RagResultBundle::new(base.clone(), payload);
+
+    assert_eq!(bundle.profile, "rag");
+    assert_eq!(bundle.base.content_digest(), base.content_digest());
+    assert_eq!(bundle.payload.query_plan.rewritten, vec!["reset password"]);
+    assert_eq!(bundle.payload.retrievals[0].retrieval_id, "retrieval-1");
+    assert_eq!(bundle.payload.context.context_id, "context-1");
+    assert_eq!(bundle.payload.answer.answer_id, "answer-1");
 }
 
 #[test]
