@@ -601,6 +601,34 @@ fn application_event_stream_state_discards_late_output_after_cutoff() {
         &ToolCallDraft::proposed("response-1", "call-draft", "ticket.create"),
     )
     .expect("tool draft event is valid");
+    let validated_tool = ApplicationEvent::tool(
+        ApplicationEventKind::ToolCallValidated,
+        metadata(),
+        "call-validated",
+        json!({"status": "validated"}),
+    )
+    .expect("tool event is valid");
+    let admitted_tool = ApplicationEvent::tool(
+        ApplicationEventKind::ToolCallAdmitted,
+        metadata(),
+        "call-admitted",
+        json!({"status": "admitted"}),
+    )
+    .expect("tool event is valid");
+    let started_tool = ApplicationEvent::tool(
+        ApplicationEventKind::ToolCallStarted,
+        metadata(),
+        "call-started",
+        json!({"status": "running"}),
+    )
+    .expect("tool event is valid");
+    let completed_tool = ApplicationEvent::tool(
+        ApplicationEventKind::ToolCallCompleted,
+        metadata(),
+        "call-completed",
+        json!({"status": "completed"}),
+    )
+    .expect("tool event is valid");
     let replacement_tool_draft = ApplicationEvent::tool_call_draft(
         ApplicationEventMetadata {
             event_id: "event-replacement-tool".to_owned(),
@@ -618,6 +646,20 @@ fn application_event_stream_state_discards_late_output_after_cutoff() {
         json!({"status": "denied"}),
     )
     .expect("tool event is valid");
+    let cancelled_tool = ApplicationEvent::tool(
+        ApplicationEventKind::ToolCallCancelled,
+        metadata(),
+        "call-2",
+        json!({"status": "cancelled"}),
+    )
+    .expect("tool event is valid");
+    let policy_stopped_tool = ApplicationEvent::tool(
+        ApplicationEventKind::ToolCallPolicyStopped,
+        metadata(),
+        "call-3",
+        json!({"status": "policy_stopped"}),
+    )
+    .expect("tool event is valid");
 
     assert_eq!(
         state.accept(cutoff_events[0].clone()),
@@ -630,6 +672,10 @@ fn application_event_stream_state_discards_late_output_after_cutoff() {
     );
     assert_eq!(state.accept(late_output), None);
     assert_eq!(state.accept(late_tool_draft), None);
+    assert_eq!(state.accept(validated_tool), None);
+    assert_eq!(state.accept(admitted_tool), None);
+    assert_eq!(state.accept(started_tool), None);
+    assert_eq!(state.accept(completed_tool), None);
     assert_eq!(
         state.accept(replacement_response.clone()),
         Some(replacement_response)
@@ -639,6 +685,11 @@ fn application_event_stream_state_discards_late_output_after_cutoff() {
         Some(replacement_tool_draft)
     );
     assert_eq!(state.accept(denied_tool.clone()), Some(denied_tool));
+    assert_eq!(state.accept(cancelled_tool.clone()), Some(cancelled_tool));
+    assert_eq!(
+        state.accept(policy_stopped_tool.clone()),
+        Some(policy_stopped_tool)
+    );
     assert_eq!(
         state
             .accepted_events()
@@ -651,6 +702,8 @@ fn application_event_stream_state_discards_late_output_after_cutoff() {
             ApplicationEventKind::OutputPolicyEvaluationStarted,
             ApplicationEventKind::ToolCallProposed,
             ApplicationEventKind::ToolCallDenied,
+            ApplicationEventKind::ToolCallCancelled,
+            ApplicationEventKind::ToolCallPolicyStopped,
         ]
     );
 }

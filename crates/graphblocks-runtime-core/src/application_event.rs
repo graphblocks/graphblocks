@@ -86,6 +86,13 @@ impl ApplicationEventKind {
                 | Self::ToolCallPolicyStopped
         )
     }
+
+    fn is_allowed_after_output_cutoff(&self) -> bool {
+        matches!(
+            self,
+            Self::ToolCallDenied | Self::ToolCallCancelled | Self::ToolCallPolicyStopped
+        )
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -657,6 +664,9 @@ impl ApplicationEventStreamState {
                     | ApplicationEventKind::ToolCallArgumentsDelta
                     | ApplicationEventKind::ToolCallArgumentsCompleted
             ) {
+                return None;
+            }
+            if event.kind.is_tool_event() && !event.kind.is_allowed_after_output_cutoff() {
                 return None;
             }
         }

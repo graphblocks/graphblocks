@@ -431,6 +431,30 @@ def test_application_event_stream_state_discards_late_output_after_cutoff() -> N
         _metadata(),
         ToolCallDraft.proposed("response-1", "call-draft", "ticket.create"),
     )
+    validated_tool = ApplicationEvent.tool(
+        "ToolCallValidated",
+        _metadata(),
+        tool_call_id="call-validated",
+        payload={"status": "validated"},
+    )
+    admitted_tool = ApplicationEvent.tool(
+        "ToolCallAdmitted",
+        _metadata(),
+        tool_call_id="call-admitted",
+        payload={"status": "admitted"},
+    )
+    started_tool = ApplicationEvent.tool(
+        "ToolCallStarted",
+        _metadata(),
+        tool_call_id="call-started",
+        payload={"status": "running"},
+    )
+    completed_tool = ApplicationEvent.tool(
+        "ToolCallCompleted",
+        _metadata(),
+        tool_call_id="call-completed",
+        payload={"status": "completed"},
+    )
     replacement_tool_draft = ApplicationEvent.tool_call_draft(
         ApplicationEventMetadata(
             event_id="event-replacement-tool",
@@ -450,20 +474,40 @@ def test_application_event_stream_state_discards_late_output_after_cutoff() -> N
         tool_call_id="call-1",
         payload={"status": "denied"},
     )
+    cancelled_tool = ApplicationEvent.tool(
+        "ToolCallCancelled",
+        _metadata(),
+        tool_call_id="call-2",
+        payload={"status": "cancelled"},
+    )
+    policy_stopped_tool = ApplicationEvent.tool(
+        "ToolCallPolicyStopped",
+        _metadata(),
+        tool_call_id="call-3",
+        payload={"status": "policy_stopped"},
+    )
 
     assert state.accept(cutoff_event) == cutoff_event
     assert state.accept(retraction_event) == retraction_event
     assert state.accept(late_output) is None
     assert state.accept(late_tool_draft) is None
+    assert state.accept(validated_tool) is None
+    assert state.accept(admitted_tool) is None
+    assert state.accept(started_tool) is None
+    assert state.accept(completed_tool) is None
     assert state.accept(replacement_response) == replacement_response
     assert state.accept(replacement_tool_draft) == replacement_tool_draft
     assert state.accept(denied_tool) == denied_tool
+    assert state.accept(cancelled_tool) == cancelled_tool
+    assert state.accept(policy_stopped_tool) == policy_stopped_tool
     assert [event.kind for event in state.accepted_events] == [
         "OutputCutoff",
         "AssistantRetracted",
         "OutputPolicyEvaluationStarted",
         "ToolCallProposed",
         "ToolCallDenied",
+        "ToolCallCancelled",
+        "ToolCallPolicyStopped",
     ]
 
 

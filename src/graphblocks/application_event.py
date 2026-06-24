@@ -85,6 +85,14 @@ TOOL_DRAFT_APPLICATION_EVENT_KINDS: frozenset[ApplicationEventKind] = frozenset(
     )
 )
 
+POST_CUTOFF_TOOL_APPLICATION_EVENT_KINDS: frozenset[ApplicationEventKind] = frozenset(
+    (
+        "ToolCallDenied",
+        "ToolCallCancelled",
+        "ToolCallPolicyStopped",
+    )
+)
+
 
 class ApplicationEventError(RuntimeError):
     pass
@@ -484,7 +492,7 @@ class ApplicationEventStreamState:
                 return None
             if str(event.kind).startswith("OutputPolicy"):
                 return None
-            if event.kind in TOOL_DRAFT_APPLICATION_EVENT_KINDS:
+            if event.kind in TOOL_APPLICATION_EVENT_KINDS and event.kind not in POST_CUTOFF_TOOL_APPLICATION_EVENT_KINDS:
                 return None
 
         self.accepted_events.append(event)
