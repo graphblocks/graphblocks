@@ -990,5 +990,85 @@
       "graph_hash": "sha256:a6527d5d61af79e18ca2593f36b825fce2f47479b676ef39be2d7bb4c2340cfa",
       "error_codes": ["OutputPolicyBypass"]
     }
+  },
+  {
+    "name": "unsafe_parallel_tool_effects",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "unsafe-parallel-tools"
+      },
+      "spec": {
+        "nodes": {
+          "agent": {
+            "block": "agent.run@1"
+          }
+        },
+        "bindings": {
+          "tools": {
+            "createTicket": {
+              "definition": {
+                "name": "ticket.create",
+                "description": "Create a support ticket.",
+                "inputSchema": "schemas/TicketCreateRequest@1"
+              },
+              "implementation": {
+                "kind": "openapi",
+                "connection": "ticket-system",
+                "operationId": "createTicket"
+              },
+              "effects": ["external_write", "network"]
+            }
+          }
+        },
+        "toolExecution": {
+          "maximumParallelism": 4
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:72a5894044a7b432206998578d3c64522c88ad1471dc63f48613d1ab6de22d54",
+      "error_codes": ["UnsafeParallelEffects"]
+    }
+  },
+  {
+    "name": "nonidempotent_tool_retry",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "nonidempotent-tool-retry"
+      },
+      "spec": {
+        "nodes": {
+          "agent": {
+            "block": "agent.run@1"
+          }
+        },
+        "bindings": {
+          "tools": {
+            "createTicket": {
+              "definition": {
+                "name": "ticket.create",
+                "description": "Create a support ticket.",
+                "inputSchema": "schemas/TicketCreateRequest@1"
+              },
+              "implementation": {
+                "kind": "openapi",
+                "connection": "ticket-system",
+                "operationId": "createTicket"
+              },
+              "effects": ["external_write", "network"],
+              "retryPolicyRef": "retry/default"
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:e0c38ac31de6e479bd32fd9fa90ef7ab288c73f15454564ab2cc75c38d72a55b",
+      "error_codes": ["NonIdempotentRetry"]
+    }
   }
 ]
