@@ -119,6 +119,19 @@ def test_output_policy_contract_rejects_unknown_literals() -> None:
     with pytest.raises(ValueError, match="invalid output durable result committed"):
         OutputCutoff(stream_id="stream-1", response_id="response-1", durable_result="committed")
 
+    with pytest.raises(ValueError, match="generation chunk sequence must be non-negative"):
+        GenerationChunk.text("stream-1", "response-1", -1, "late")
+
+    with pytest.raises(ValueError, match="accepted_through_sequence must be non-negative"):
+        OutputPolicyDecision.allow(
+            "decision-1",
+            accepted_through_sequence=-1,
+            input_digest="sha256:input",
+        )
+
+    with pytest.raises(ValueError, match="last_generated_sequence must be non-negative"):
+        OutputCutoff(stream_id="stream-1", response_id="response-1", last_generated_sequence=-1)
+
 
 def test_bounded_holdback_requires_size_or_time_bound() -> None:
     policy = OutputDeliveryPolicy.bounded_holdback(on_violation="abort_response")

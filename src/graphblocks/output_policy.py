@@ -186,6 +186,8 @@ class DeclarativeOutputPolicyEvaluator:
 
 class GenerationChunk:
     def __init__(self, stream_id: str, response_id: str, sequence: int, text: str) -> None:
+        if sequence < 0:
+            raise ValueError("generation chunk sequence must be non-negative")
         self.stream_id = stream_id
         self.response_id = response_id
         self.sequence = sequence
@@ -241,6 +243,8 @@ class OutputPolicyDecision:
             raise ValueError(f"invalid pending tool calls disposition {self.pending_tool_calls}")
         if not self.input_digest.strip():
             raise ValueError("output policy decisions require an input digest")
+        if self.accepted_through_sequence is not None and self.accepted_through_sequence < 0:
+            raise ValueError("accepted_through_sequence must be non-negative")
         object.__setattr__(self, "replacement_parts", tuple(self.replacement_parts))
         object.__setattr__(
             self,
@@ -458,6 +462,12 @@ class OutputCutoff:
             raise ValueError(f"invalid draft disposition {self.draft_disposition}")
         if self.durable_result not in VALID_OUTPUT_DURABLE_RESULTS:
             raise ValueError(f"invalid output durable result {self.durable_result}")
+        if self.last_generated_sequence < 0:
+            raise ValueError("last_generated_sequence must be non-negative")
+        if self.last_policy_accepted_sequence < 0:
+            raise ValueError("last_policy_accepted_sequence must be non-negative")
+        if self.last_client_delivered_sequence < 0:
+            raise ValueError("last_client_delivered_sequence must be non-negative")
 
     def accepts(self, output: GenerationChunk) -> bool:
         if not isinstance(output, GenerationChunk):
