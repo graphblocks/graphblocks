@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 
 
@@ -56,6 +56,34 @@ class GenerationTelemetryRecord:
             "timing_ms": dict(sorted(self.timing_ms.items())),
             "attributes": dict(sorted(self.attributes.items())),
         }
+
+
+@dataclass(frozen=True, slots=True)
+class TelemetryCapturePolicy:
+    redacted_attribute_keys: tuple[str, ...] = field(default_factory=tuple)
+    dropped_attribute_keys: tuple[str, ...] = field(default_factory=tuple)
+    replacement: str = "[redacted]"
+    capture_input_digest: bool = True
+    capture_output_digest: bool = True
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "redacted_attribute_keys", tuple(sorted(set(self.redacted_attribute_keys))))
+        object.__setattr__(self, "dropped_attribute_keys", tuple(sorted(set(self.dropped_attribute_keys))))
+
+    def apply_generation(self, record: GenerationTelemetryRecord) -> GenerationTelemetryRecord:
+        dropped = set(self.dropped_attribute_keys)
+        redacted = set(self.redacted_attribute_keys)
+        attributes = {
+            key: self.replacement if key in redacted else value
+            for key, value in record.attributes.items()
+            if key not in dropped
+        }
+        return replace(
+            record,
+            input_digest=record.input_digest if self.capture_input_digest else None,
+            output_digest=record.output_digest if self.capture_output_digest else None,
+            attributes=attributes,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,6 +225,7 @@ __all__ = [
     "MetricCardinalityIssue",
     "MetricCardinalityLintResult",
     "MetricCardinalityLinter",
+    "TelemetryCapturePolicy",
     "TelemetryExportResult",
     "TelemetryProjectionError",
 ]

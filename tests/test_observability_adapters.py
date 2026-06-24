@@ -52,6 +52,45 @@ def test_telemetry_observation_contract_detaches_mutable_inputs(monkeypatch) -> 
     }
 
 
+def test_telemetry_capture_policy_redacts_sensitive_observation_fields(monkeypatch) -> None:
+    _add_observability_package_paths(monkeypatch)
+    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
+    observation = graphblocks_telemetry.GenerationTelemetryRecord(
+        record_id="gen-1",
+        run_id="run-1",
+        span_id="span-1",
+        node_id="agent",
+        provider="openai-compatible",
+        model="gpt-test",
+        input_digest="sha256:input",
+        output_digest="sha256:output",
+        attributes={
+            "tenant": "tenant-1",
+            "prompt": "secret prompt",
+            "api_key": "sk-test",
+            "debug": "drop me",
+        },
+    )
+    policy = graphblocks_telemetry.TelemetryCapturePolicy(
+        redacted_attribute_keys=("api_key", "prompt"),
+        dropped_attribute_keys=("debug",),
+        capture_input_digest=False,
+        capture_output_digest=True,
+    )
+
+    redacted = policy.apply_generation(observation)
+
+    assert redacted.observation_contract()["input_digest"] is None
+    assert redacted.observation_contract()["output_digest"] == "sha256:output"
+    assert redacted.observation_contract()["attributes"] == {
+        "api_key": "[redacted]",
+        "prompt": "[redacted]",
+        "tenant": "tenant-1",
+    }
+    assert observation.attributes["prompt"] == "secret prompt"
+    assert "TelemetryCapturePolicy" in graphblocks_telemetry.__all__
+
+
 def test_telemetry_export_failure_is_non_fatal_to_run(monkeypatch) -> None:
     _add_observability_package_paths(monkeypatch)
     graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
