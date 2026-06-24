@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 import re
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
 import sqlite3
 import time
+from types import MappingProxyType
 from typing import Any, Callable, Literal, Protocol
 
 from .compiler import compile_graph
@@ -71,6 +73,26 @@ def parse_duration_seconds(value: Any) -> float | None:
     return float(text)
 
 
+def _freeze_json_like(value: Any) -> Any:
+    if isinstance(value, dict):
+        return MappingProxyType({key: _freeze_json_like(nested) for key, nested in value.items()})
+    if isinstance(value, list):
+        return tuple(_freeze_json_like(nested) for nested in value)
+    if isinstance(value, tuple):
+        return tuple(_freeze_json_like(nested) for nested in value)
+    return value
+
+
+def _mutable_json_like(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {key: _mutable_json_like(nested) for key, nested in value.items()}
+    if isinstance(value, tuple):
+        return [_mutable_json_like(nested) for nested in value]
+    if isinstance(value, list):
+        return [_mutable_json_like(nested) for nested in value]
+    return value
+
+
 @dataclass(slots=True)
 class CancellationToken:
     cancelled: bool = False
@@ -87,7 +109,17 @@ class CancellationToken:
 class JournalRecord:
     sequence: int
     kind: JournalKind
-    payload: dict[str, Any]
+    payload: Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "payload", _freeze_json_like(self.payload))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "sequence": self.sequence,
+            "kind": self.kind,
+            "payload": _mutable_json_like(self.payload),
+        }
 
 
 @dataclass(slots=True)

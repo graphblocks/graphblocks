@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Mapping
-from dataclasses import asdict
 import hashlib
 import io
 import json
@@ -294,7 +293,7 @@ def main(argv: list[str] | None = None) -> int:
                     "runId": result.run_id,
                     "status": result.status,
                     "outputs": result.outputs,
-                    "journal": [asdict(record) for record in result.journal.records],
+                    "journal": [record.to_dict() for record in result.journal.records],
                 },
                 indent=2,
                 sort_keys=True,
