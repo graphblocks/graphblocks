@@ -277,3 +277,97 @@ def test_observe_run_cli_reports_missing_run(tmp_path, capsys) -> None:
     assert main(["observe", "run", "run-missing", "--store", str(store_path)]) == 1
 
     assert "run not found: run-missing" in capsys.readouterr().out
+
+
+def test_release_verify_cli_accepts_immutable_release(tmp_path, capsys) -> None:
+    release = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "GraphRelease",
+        "metadata": {"name": "support-agent", "version": "2026.06.24.1"},
+        "spec": {
+            "bundle": {
+                "digest": "sha256:bundle",
+                "mediaType": "application/vnd.graphblocks.release.v1",
+            },
+            "application": {"hash": "sha256:application"},
+            "graphs": {
+                "turn": {
+                    "graphHash": "sha256:graph-turn",
+                    "normalizedPlanHash": "sha256:plan-turn",
+                }
+            },
+            "images": {
+                "control": "registry.example.com/graphblocks/control@sha256:image-control",
+            },
+            "prompts": {
+                "answer": {
+                    "name": "support.answer",
+                    "version": "2026.06.24",
+                }
+            },
+            "knowledge": {
+                "support_docs": {
+                    "indexRevision": "support-docs-v17",
+                }
+            },
+        },
+    }
+    path = tmp_path / "release.yaml"
+    path.write_text(yaml.safe_dump(release), encoding="utf-8")
+
+    assert main(["release", "verify", str(path), "--json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["name"] == "support-agent"
+    assert payload["version"] == "2026.06.24.1"
+    assert payload["releaseDigest"].startswith("sha256:")
+    assert payload["mutableReferences"] == []
+
+
+def test_release_verify_cli_rejects_mutable_production_references(tmp_path, capsys) -> None:
+    release = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "GraphRelease",
+        "metadata": {"name": "support-agent", "version": "2026.06.24.1"},
+        "spec": {
+            "bundle": {
+                "digest": "latest",
+                "mediaType": "application/vnd.graphblocks.release.v1",
+            },
+            "graphs": {
+                "turn": {
+                    "graphHash": "main",
+                    "normalizedPlanHash": "sha256:plan-turn",
+                }
+            },
+            "images": {
+                "control": "registry.example.com/graphblocks/control:latest",
+            },
+            "prompts": {
+                "answer": {
+                    "name": "support.answer",
+                    "label": "production",
+                }
+            },
+            "knowledge": {
+                "support_docs": {
+                    "indexRevision": "current",
+                }
+            },
+        },
+    }
+    path = tmp_path / "release.yaml"
+    path.write_text(yaml.safe_dump(release), encoding="utf-8")
+
+    assert main(["release", "verify", str(path), "--json"]) == 1
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["mutableReferences"] == [
+        "bundle.digest",
+        "graphs.turn.graph_hash",
+        "images.control",
+        "knowledge.support_docs.index_revision",
+        "prompts.answer",
+    ]
