@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import tarfile
 import yaml
 
 from graphblocks.cli import main
@@ -487,3 +488,47 @@ def test_deploy_plan_cli_rejects_mismatched_release_reference(tmp_path, capsys) 
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is False
     assert payload["error"] == "GraphDeployment releaseRef.name 'another-release' does not match 'support-agent'"
+
+
+def test_release_build_cli_creates_deterministic_verifiable_bundle(tmp_path, capsys) -> None:
+    release = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "GraphRelease",
+        "metadata": {"name": "support-agent", "version": "2026.06.24.1"},
+        "spec": {
+            "bundle": {
+                "digest": "sha256:source-bundle",
+                "mediaType": "application/vnd.graphblocks.release.v1",
+            },
+            "graphs": {
+                "turn": {
+                    "graphHash": "sha256:graph-turn",
+                    "normalizedPlanHash": "sha256:plan-turn",
+                }
+            },
+            "images": {
+                "control": "registry.example.com/graphblocks/control@sha256:control",
+            },
+        },
+    }
+    path = tmp_path / "release.yaml"
+    first = tmp_path / "first.gbr"
+    second = tmp_path / "second.gbr"
+    path.write_text(yaml.safe_dump(release), encoding="utf-8")
+
+    assert main(["release", "build", str(path), "--out", str(first), "--json"]) == 0
+    first_payload = json.loads(capsys.readouterr().out)
+    assert main(["release", "build", str(path), "--out", str(second), "--json"]) == 0
+    second_payload = json.loads(capsys.readouterr().out)
+
+    assert first.read_bytes() == second.read_bytes()
+    assert first_payload["bundleDigest"] == second_payload["bundleDigest"]
+    assert first_payload["releaseDigest"] == second_payload["releaseDigest"]
+    with tarfile.open(first, "r:") as archive:
+        assert archive.getnames() == ["manifest.json", "release.json"]
+
+    assert main(["release", "verify", str(first), "--json"]) == 0
+    verify_payload = json.loads(capsys.readouterr().out)
+    assert verify_payload["ok"] is True
+    assert verify_payload["bundleDigest"] == first_payload["bundleDigest"]
+    assert verify_payload["releaseDigest"] == first_payload["releaseDigest"]

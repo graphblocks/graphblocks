@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Mapping
-import json
 from dataclasses import asdict
+import hashlib
+import io
+import json
 from pathlib import Path
+import tarfile
 
 import yaml
 
@@ -152,6 +155,13 @@ def main(argv: list[str] | None = None) -> int:
 
     release_parser = subparsers.add_parser("release", help="verify immutable graph releases")
     release_subparsers = release_parser.add_subparsers(dest="release_command")
+    release_build_parser = release_subparsers.add_parser(
+        "build",
+        help="build a deterministic local GraphRelease bundle",
+    )
+    release_build_parser.add_argument("path", type=Path)
+    release_build_parser.add_argument("--out", required=True, type=Path)
+    release_build_parser.add_argument("--json", action="store_true", help="emit JSON")
     release_verify_parser = release_subparsers.add_parser(
         "verify",
         help="verify a GraphRelease document and its production pins",
@@ -425,11 +435,49 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     release_documents: list[dict[str, object]] = []
     release: GraphRelease | None = None
-    if (args.command == "release" and args.release_command == "verify") or (
+    archive_manifest: Mapping[str, object] | None = None
+    archive_release_bytes: bytes | None = None
+    archive_digest: str | None = None
+    if (
+        args.command == "release"
+        and args.release_command in {"build", "verify"}
+    ) or (
         args.command == "deploy" and args.deploy_command == "plan"
     ):
         try:
-            release_documents = load_documents(args.path)
+            if (
+                args.command == "release"
+                and args.release_command == "verify"
+                and args.path.suffix.lower() == ".gbr"
+            ):
+                archive_bytes = args.path.read_bytes()
+                archive_digest = (
+                    "sha256:" + hashlib.sha256(archive_bytes).hexdigest()
+                )
+                with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:") as archive:
+                    if archive.getnames() != ["manifest.json", "release.json"]:
+                        raise ValueError(
+                            "GraphRelease bundle must contain manifest.json and release.json"
+                        )
+                    manifest_member = archive.getmember("manifest.json")
+                    release_member = archive.getmember("release.json")
+                    if not manifest_member.isfile() or not release_member.isfile():
+                        raise ValueError("GraphRelease bundle members must be regular files")
+                    manifest_file = archive.extractfile(manifest_member)
+                    release_file = archive.extractfile(release_member)
+                    if manifest_file is None or release_file is None:
+                        raise ValueError("GraphRelease bundle members could not be read")
+                    manifest_value = json.loads(manifest_file.read().decode("utf-8"))
+                    archive_release_bytes = release_file.read()
+                    release_value = json.loads(archive_release_bytes.decode("utf-8"))
+                if not isinstance(manifest_value, Mapping):
+                    raise ValueError("GraphRelease bundle manifest must be a mapping")
+                if not isinstance(release_value, Mapping):
+                    raise ValueError("GraphRelease bundle release must be a mapping")
+                archive_manifest = manifest_value
+                release_documents = [dict(release_value)]
+            else:
+                release_documents = load_documents(args.path)
             matching_releases = [
                 document
                 for document in release_documents
@@ -586,7 +634,32 @@ def main(argv: list[str] | None = None) -> int:
                             ),
                         )
                     )
-        except (OSError, TypeError, ValueError, yaml.YAMLError) as error:
+            if archive_manifest is not None:
+                if archive_release_bytes is None:
+                    raise ValueError("GraphRelease bundle release content is missing")
+                if _field(archive_manifest, "formatVersion") != 1:
+                    raise ValueError("unsupported GraphRelease bundle formatVersion")
+                if (
+                    _field(archive_manifest, "mediaType")
+                    != "application/vnd.graphblocks.release.bundle.v1+tar"
+                ):
+                    raise ValueError("unsupported GraphRelease bundle mediaType")
+                if _field(archive_manifest, "releaseName") != release.name:
+                    raise ValueError("GraphRelease bundle releaseName mismatch")
+                if _field(archive_manifest, "releaseVersion") != release.version:
+                    raise ValueError("GraphRelease bundle releaseVersion mismatch")
+                if _field(archive_manifest, "releaseDigest") != release.content_digest():
+                    raise ValueError("GraphRelease bundle releaseDigest mismatch")
+                files = _field(archive_manifest, "files", default={})
+                if not isinstance(files, Mapping):
+                    raise ValueError("GraphRelease bundle files must be a mapping")
+                expected_release_digest = _field(files, "release.json")
+                actual_release_digest = (
+                    "sha256:" + hashlib.sha256(archive_release_bytes).hexdigest()
+                )
+                if expected_release_digest != actual_release_digest:
+                    raise ValueError("GraphRelease bundle release.json digest mismatch")
+        except (OSError, TypeError, ValueError, tarfile.TarError, yaml.YAMLError) as error:
             if args.json:
                 print(
                     json.dumps(
@@ -599,6 +672,91 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{args.command} error: {error}")
             return 1
     if args.command == "release":
+        if args.release_command == "build":
+            assert release is not None
+            try:
+                release.validate_production_pins()
+            except GraphReleaseMutableReferencesError as error:
+                payload = {
+                    "ok": False,
+                    "name": release.name,
+                    "version": release.version,
+                    "releaseDigest": release.content_digest(),
+                    "mutableReferences": list(error.references),
+                }
+                if args.json:
+                    print(json.dumps(payload, indent=2, sort_keys=True))
+                else:
+                    print(
+                        f"FAIL {release.name} mutable references: "
+                        f"{', '.join(error.references)}"
+                    )
+                return 1
+
+            release_bytes = json.dumps(
+                matching_releases[0],
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+            release_file_digest = (
+                "sha256:" + hashlib.sha256(release_bytes).hexdigest()
+            )
+            manifest = {
+                "formatVersion": 1,
+                "mediaType": "application/vnd.graphblocks.release.bundle.v1+tar",
+                "releaseName": release.name,
+                "releaseVersion": release.version,
+                "releaseDigest": release.content_digest(),
+                "files": {"release.json": release_file_digest},
+            }
+            manifest_bytes = json.dumps(
+                manifest,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+            bundle_buffer = io.BytesIO()
+            with tarfile.open(
+                fileobj=bundle_buffer,
+                mode="w:",
+                format=tarfile.USTAR_FORMAT,
+            ) as archive:
+                for filename, content in (
+                    ("manifest.json", manifest_bytes),
+                    ("release.json", release_bytes),
+                ):
+                    member = tarfile.TarInfo(filename)
+                    member.size = len(content)
+                    member.mode = 0o644
+                    member.mtime = 0
+                    member.uid = 0
+                    member.gid = 0
+                    member.uname = ""
+                    member.gname = ""
+                    archive.addfile(member, io.BytesIO(content))
+            bundle_bytes = bundle_buffer.getvalue()
+            bundle_digest = (
+                "sha256:" + hashlib.sha256(bundle_bytes).hexdigest()
+            )
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_bytes(bundle_bytes)
+            payload = {
+                "ok": True,
+                "name": release.name,
+                "version": release.version,
+                "releaseDigest": release.content_digest(),
+                "bundleDigest": bundle_digest,
+                "output": str(args.out),
+            }
+            if args.json:
+                print(json.dumps(payload, indent=2, sort_keys=True))
+            else:
+                print(
+                    f"{args.out} {bundle_digest} "
+                    f"release={release.content_digest()}"
+                )
+            return 0
         if args.release_command == "verify":
             assert release is not None
             mutable_references: list[str] = []
@@ -613,6 +771,8 @@ def main(argv: list[str] | None = None) -> int:
                 "releaseDigest": release.content_digest(),
                 "mutableReferences": mutable_references,
             }
+            if archive_digest is not None:
+                payload["bundleDigest"] = archive_digest
             if args.json:
                 print(json.dumps(payload, indent=2, sort_keys=True))
             elif mutable_references:
