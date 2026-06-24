@@ -1537,6 +1537,25 @@ pub fn build_answer_from_model_response(
     Ok(answer)
 }
 
+pub fn build_abstention_answer(
+    answer_id: impl Into<String>,
+    reason: impl Into<String>,
+    user_message: impl Into<String>,
+    diagnostics: BTreeMap<String, Value>,
+) -> Answer {
+    let user_message = user_message.into();
+    let mut answer = Answer::new(answer_id, user_message.clone());
+    answer.abstention = Some(Abstention {
+        reason: reason.into(),
+        user_message,
+        diagnostics,
+    });
+    answer
+        .metadata
+        .insert("answer_kind".to_owned(), json!("abstention"));
+    answer
+}
+
 pub fn federated_retrieve(
     retriever_id: impl Into<String>,
     request: SearchRequest,

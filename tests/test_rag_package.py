@@ -11,6 +11,7 @@ from graphblocks import (
     QueryPlan,
     RagResultBundle,
     RagResultPayload,
+    build_abstention_answer,
     chunk_document_by_lines,
     build_answer_from_model_response,
     create_local_text_revision,
@@ -96,3 +97,4 @@ def test_rag_package_exposes_answer_builder(monkeypatch) -> None:
     graphblocks_rag = importlib.import_module("graphblocks_rag")
 
     assert graphblocks_rag.build_answer_from_model_response is build_answer_from_model_response
+    assert graphblocks_rag.build_abstention_answer is build_abstention_answer

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from graphblocks.canonical import canonical_hash
-from graphblocks.rag import build_answer_from_model_response
+from graphblocks.rag import build_abstention_answer, build_answer_from_model_response
 
 
 def test_build_answer_from_model_response_preserves_structured_output_metadata() -> None:
@@ -40,3 +40,23 @@ def test_build_answer_from_model_response_requires_text() -> None:
         assert str(error) == "model_response must contain string output_text or text"
     else:
         raise AssertionError("answer assembly should require model output text")
+
+
+def test_build_abstention_answer_sets_terminal_answer_and_diagnostics() -> None:
+    answer = build_abstention_answer(
+        "answer-1",
+        "insufficient_context",
+        "I do not have enough validated source support to answer.",
+        diagnostics={"issue_codes": ["grounding.insufficient_context"]},
+    )
+
+    assert answer.answer_id == "answer-1"
+    assert answer.text == "I do not have enough validated source support to answer."
+    assert answer.claims == []
+    assert answer.citations == []
+    assert answer.abstention is not None
+    assert answer.abstention.reason == "insufficient_context"
+    assert answer.abstention.diagnostics == {
+        "issue_codes": ["grounding.insufficient_context"]
+    }
+    assert answer.metadata["answer_kind"] == "abstention"

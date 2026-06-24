@@ -501,6 +501,25 @@ def build_answer_from_model_response(answer_id: str, model_response: dict[str, o
     return Answer(answer_id=answer_id, text=text, claims=claims, metadata=metadata)
 
 
+def build_abstention_answer(
+    answer_id: str,
+    reason: str,
+    user_message: str,
+    *,
+    diagnostics: dict[str, object] | None = None,
+) -> Answer:
+    return Answer(
+        answer_id=answer_id,
+        text=user_message,
+        abstention=Abstention(
+            reason=reason,
+            user_message=user_message,
+            diagnostics=dict(diagnostics or {}),
+        ),
+        metadata={"answer_kind": "abstention"},
+    )
+
+
 def _compact_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
 

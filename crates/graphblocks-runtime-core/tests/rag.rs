@@ -10,10 +10,10 @@ use graphblocks_runtime_core::rag::{
     FusionStrategy, InMemoryChunkRetriever, InMemoryKnowledgeIndex, KnowledgeDeleteMode,
     KnowledgeItemRef, KnowledgeRecordStatus, QueryPlan, RagError, RagResultBundle,
     RagResultPayload, RerankOptions, RetrievalResult, SearchHit, SearchRequest,
-    authorize_search_hits, build_answer_from_model_response, build_context_pack,
-    federated_retrieve, fuse_search_hits, knowledge_item_from_chunk, render_context_pack,
-    rerank_search_hits, resolve_citation_source_trace, validate_answer_citation_authorization,
-    validate_answer_citations, validate_answer_grounding,
+    authorize_search_hits, build_abstention_answer, build_answer_from_model_response,
+    build_context_pack, federated_retrieve, fuse_search_hits, knowledge_item_from_chunk,
+    render_context_pack, rerank_search_hits, resolve_citation_source_trace,
+    validate_answer_citation_authorization, validate_answer_citations, validate_answer_grounding,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -937,6 +937,37 @@ fn build_answer_from_model_response_requires_text() {
         error.to_string(),
         "model_response must contain string output_text or text"
     );
+}
+
+#[test]
+fn build_abstention_answer_sets_terminal_answer_and_diagnostics() {
+    let mut diagnostics = BTreeMap::new();
+    diagnostics.insert(
+        "issue_codes".to_owned(),
+        json!(["grounding.insufficient_context"]),
+    );
+
+    let answer = build_abstention_answer(
+        "answer-1",
+        "insufficient_context",
+        "I do not have enough validated source support to answer.",
+        diagnostics,
+    );
+
+    assert_eq!(answer.answer_id, "answer-1");
+    assert_eq!(
+        answer.text,
+        "I do not have enough validated source support to answer."
+    );
+    assert!(answer.claims.is_empty());
+    assert!(answer.citations.is_empty());
+    let abstention = answer.abstention.expect("answer has abstention");
+    assert_eq!(abstention.reason, "insufficient_context");
+    assert_eq!(
+        abstention.diagnostics["issue_codes"],
+        json!(["grounding.insufficient_context"])
+    );
+    assert_eq!(answer.metadata["answer_kind"], json!("abstention"));
 }
 
 #[test]
