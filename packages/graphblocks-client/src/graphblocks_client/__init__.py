@@ -6,13 +6,22 @@ import json
 from urllib.request import Request, urlopen
 
 from graphblocks.application_event import (
+    APPLICATION_COMMAND_KINDS,
+    APPLICATION_PROTOCOL_EVENT_KINDS,
     STANDARD_APPLICATION_EVENT_KINDS,
     TOOL_APPLICATION_EVENT_KINDS,
+    ApplicationCommand,
+    ApplicationCommandKind,
+    ApplicationCommandMetadata,
     ApplicationEvent,
     ApplicationEventError,
     ApplicationEventKind,
     ApplicationEventMetadata,
     ApplicationEventStreamState,
+    ApplicationProtocolError,
+    ApplicationProtocolEvent,
+    ApplicationProtocolEventKind,
+    ApplicationProtocolEventMetadata,
 )
 from graphblocks.runtime import InProcessRuntime, RuntimeRegistry, stdlib_registry
 
@@ -229,13 +238,22 @@ class HttpGraphBlocksClient:
 
 
 __all__ = [
+    "APPLICATION_COMMAND_KINDS",
+    "APPLICATION_PROTOCOL_EVENT_KINDS",
     "STANDARD_APPLICATION_EVENT_KINDS",
     "TOOL_APPLICATION_EVENT_KINDS",
+    "ApplicationCommand",
+    "ApplicationCommandKind",
+    "ApplicationCommandMetadata",
     "ApplicationEvent",
     "ApplicationEventError",
     "ApplicationEventKind",
     "ApplicationEventMetadata",
     "ApplicationEventStreamState",
+    "ApplicationProtocolError",
+    "ApplicationProtocolEvent",
+    "ApplicationProtocolEventKind",
+    "ApplicationProtocolEventMetadata",
     "HttpGraphBlocksClient",
     "LocalGraphBlocksClient",
     "RunGraphCommand",

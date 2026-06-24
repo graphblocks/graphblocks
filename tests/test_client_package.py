@@ -66,6 +66,42 @@ def test_client_package_exposes_application_event_protocol(monkeypatch) -> None:
     assert "OutputCutoff" in graphblocks_client.STANDARD_APPLICATION_EVENT_KINDS
 
 
+def test_client_package_exposes_application_protocol_envelopes(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+
+    command = graphblocks_client.ApplicationCommand.new(
+        "InvokeGraph",
+        graphblocks_client.ApplicationCommandMetadata(
+            command_id="command-1",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            sequence=1,
+            issued_at_unix_ms=1_765_843_200_000,
+        ),
+        payload={"graph": "support-agent-turn"},
+    )
+    event = graphblocks_client.ApplicationProtocolEvent.new(
+        "AssistantDraftDelta",
+        graphblocks_client.ApplicationProtocolEventMetadata(
+            event_id="event-1",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            sequence=2,
+            cursor="cursor-2",
+            occurred_at_unix_ms=1_765_843_201_000,
+        ),
+        payload={"delta": "hello"},
+    )
+
+    assert command.payload == {"graph": "support-agent-turn"}
+    assert event.kind == "AssistantDraftDelta"
+    assert "RequestSnapshot" in graphblocks_client.APPLICATION_COMMAND_KINDS
+    assert "AssistantDraftDelta" in graphblocks_client.APPLICATION_PROTOCOL_EVENT_KINDS
+    assert "ApplicationCommand" in graphblocks_client.__all__
+    assert "ApplicationProtocolEvent" in graphblocks_client.__all__
+
+
 def test_client_package_runs_local_graph_command_and_emits_events(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
     graphblocks_client = importlib.import_module("graphblocks_client")

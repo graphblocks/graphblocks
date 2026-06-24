@@ -102,9 +102,181 @@ POST_CUTOFF_TOOL_APPLICATION_EVENT_KINDS: frozenset[ApplicationEventKind] = froz
     )
 )
 
+ApplicationCommandKind = Literal[
+    "InvokeGraph",
+    "CancelRun",
+    "SubmitInput",
+    "ApproveEffect",
+    "DenyEffect",
+    "SubmitReview",
+    "RequestBudgetExtension",
+    "ApplyPolicyOverride",
+    "ResumeInterrupt",
+    "SelectCandidate",
+    "OpenArtifact",
+    "SetBreakpoint",
+    "RequestSnapshot",
+]
+
+APPLICATION_COMMAND_KINDS: tuple[ApplicationCommandKind, ...] = (
+    "InvokeGraph",
+    "CancelRun",
+    "SubmitInput",
+    "ApproveEffect",
+    "DenyEffect",
+    "SubmitReview",
+    "RequestBudgetExtension",
+    "ApplyPolicyOverride",
+    "ResumeInterrupt",
+    "SelectCandidate",
+    "OpenArtifact",
+    "SetBreakpoint",
+    "RequestSnapshot",
+)
+
+ApplicationProtocolEventKind = Literal[
+    "RunStarted",
+    "TurnStarted",
+    "ContextReady",
+    "AssistantDraftStarted",
+    "AssistantDraftDelta",
+    "AssistantCommitted",
+    "AssistantRetracted",
+    "ToolStarted",
+    "ToolCompleted",
+    "ApprovalRequested",
+    "ReviewRequested",
+    "BudgetConstrained",
+    "BudgetExhausted",
+    "BudgetExtensionRequested",
+    "BudgetExtensionGranted",
+    "PolicyDecisionRequired",
+    "ExecutionDegraded",
+    "FilePatchPreview",
+    "JobProgress",
+    "ArtifactReady",
+    "StateSnapshot",
+    "RunCompleted",
+    "RunFailed",
+    "RunCancelled",
+]
+
+APPLICATION_PROTOCOL_EVENT_KINDS: tuple[ApplicationProtocolEventKind, ...] = (
+    "RunStarted",
+    "TurnStarted",
+    "ContextReady",
+    "AssistantDraftStarted",
+    "AssistantDraftDelta",
+    "AssistantCommitted",
+    "AssistantRetracted",
+    "ToolStarted",
+    "ToolCompleted",
+    "ApprovalRequested",
+    "ReviewRequested",
+    "BudgetConstrained",
+    "BudgetExhausted",
+    "BudgetExtensionRequested",
+    "BudgetExtensionGranted",
+    "PolicyDecisionRequired",
+    "ExecutionDegraded",
+    "FilePatchPreview",
+    "JobProgress",
+    "ArtifactReady",
+    "StateSnapshot",
+    "RunCompleted",
+    "RunFailed",
+    "RunCancelled",
+)
+
 
 class ApplicationEventError(RuntimeError):
     pass
+
+
+class ApplicationProtocolError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class ApplicationCommandMetadata:
+    command_id: str
+    protocol_version: str
+    run_id: str
+    sequence: int
+    issued_at_unix_ms: int
+    turn_id: str | None = None
+    idempotency_key: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.command_id.strip():
+            raise ApplicationProtocolError("application command id must not be empty")
+        if self.sequence < 0:
+            raise ApplicationProtocolError("application command sequence must be non-negative")
+        if self.issued_at_unix_ms < 0:
+            raise ApplicationProtocolError("application command issued_at_unix_ms must be non-negative")
+
+
+@dataclass(frozen=True, slots=True)
+class ApplicationCommand:
+    kind: ApplicationCommandKind
+    metadata: ApplicationCommandMetadata
+    payload: Mapping[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.kind not in APPLICATION_COMMAND_KINDS:
+            raise ApplicationProtocolError(f"unknown application command kind {self.kind}")
+        object.__setattr__(self, "payload", MappingProxyType(dict(self.payload)))
+
+    @classmethod
+    def new(
+        cls,
+        kind: ApplicationCommandKind,
+        metadata: ApplicationCommandMetadata,
+        *,
+        payload: Mapping[str, object] | None = None,
+    ) -> ApplicationCommand:
+        return cls(kind=kind, metadata=metadata, payload=dict(payload or {}))
+
+
+@dataclass(frozen=True, slots=True)
+class ApplicationProtocolEventMetadata:
+    event_id: str
+    protocol_version: str
+    run_id: str
+    sequence: int
+    occurred_at_unix_ms: int
+    turn_id: str | None = None
+    cursor: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.event_id.strip():
+            raise ApplicationProtocolError("application event id must not be empty")
+        if self.sequence < 0:
+            raise ApplicationProtocolError("application event sequence must be non-negative")
+        if self.occurred_at_unix_ms < 0:
+            raise ApplicationProtocolError("application event occurred_at_unix_ms must be non-negative")
+
+
+@dataclass(frozen=True, slots=True)
+class ApplicationProtocolEvent:
+    kind: ApplicationProtocolEventKind
+    metadata: ApplicationProtocolEventMetadata
+    payload: Mapping[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.kind not in APPLICATION_PROTOCOL_EVENT_KINDS:
+            raise ApplicationProtocolError(f"unknown application protocol event kind {self.kind}")
+        object.__setattr__(self, "payload", MappingProxyType(dict(self.payload)))
+
+    @classmethod
+    def new(
+        cls,
+        kind: ApplicationProtocolEventKind,
+        metadata: ApplicationProtocolEventMetadata,
+        *,
+        payload: Mapping[str, object] | None = None,
+    ) -> ApplicationProtocolEvent:
+        return cls(kind=kind, metadata=metadata, payload=dict(payload or {}))
 
 
 @dataclass(frozen=True, slots=True)

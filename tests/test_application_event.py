@@ -4,11 +4,18 @@ import pytest
 
 import graphblocks
 from graphblocks import (
+    APPLICATION_COMMAND_KINDS,
+    APPLICATION_PROTOCOL_EVENT_KINDS,
     ApplicationEvent,
     ApplicationEventError,
     ApplicationEventKind,
     ApplicationEventMetadata,
     ApplicationEventStreamState,
+    ApplicationCommand,
+    ApplicationCommandMetadata,
+    ApplicationProtocolError,
+    ApplicationProtocolEvent,
+    ApplicationProtocolEventMetadata,
     BlockToolImplementation,
     ContentPart,
     GenerationChunk,
@@ -76,6 +83,105 @@ def test_standard_application_event_names_match_tool_and_output_policy_contract(
 
 def test_top_level_package_exports_application_event_kind() -> None:
     assert graphblocks.ApplicationEventKind == ApplicationEventKind
+
+
+def test_application_protocol_command_and_event_envelopes_match_client_contract() -> None:
+    assert APPLICATION_COMMAND_KINDS == (
+        "InvokeGraph",
+        "CancelRun",
+        "SubmitInput",
+        "ApproveEffect",
+        "DenyEffect",
+        "SubmitReview",
+        "RequestBudgetExtension",
+        "ApplyPolicyOverride",
+        "ResumeInterrupt",
+        "SelectCandidate",
+        "OpenArtifact",
+        "SetBreakpoint",
+        "RequestSnapshot",
+    )
+    assert APPLICATION_PROTOCOL_EVENT_KINDS == (
+        "RunStarted",
+        "TurnStarted",
+        "ContextReady",
+        "AssistantDraftStarted",
+        "AssistantDraftDelta",
+        "AssistantCommitted",
+        "AssistantRetracted",
+        "ToolStarted",
+        "ToolCompleted",
+        "ApprovalRequested",
+        "ReviewRequested",
+        "BudgetConstrained",
+        "BudgetExhausted",
+        "BudgetExtensionRequested",
+        "BudgetExtensionGranted",
+        "PolicyDecisionRequired",
+        "ExecutionDegraded",
+        "FilePatchPreview",
+        "JobProgress",
+        "ArtifactReady",
+        "StateSnapshot",
+        "RunCompleted",
+        "RunFailed",
+        "RunCancelled",
+    )
+
+    command_payload = {"tool_call_id": "tool-call-1"}
+    command = ApplicationCommand.new(
+        "ApproveEffect",
+        ApplicationCommandMetadata(
+            command_id="command-1",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            turn_id="turn-1",
+            sequence=3,
+            idempotency_key="idem-1",
+            issued_at_unix_ms=1_765_843_200_000,
+        ),
+        payload=command_payload,
+    )
+    command_payload["tool_call_id"] = "mutated"
+
+    event_payload = {"delta": "hello"}
+    event = ApplicationProtocolEvent.new(
+        "AssistantDraftDelta",
+        ApplicationProtocolEventMetadata(
+            event_id="event-1",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            turn_id="turn-1",
+            sequence=4,
+            cursor="cursor-4",
+            occurred_at_unix_ms=1_765_843_201_000,
+        ),
+        payload=event_payload,
+    )
+    event_payload["delta"] = "mutated"
+
+    assert command.kind == "ApproveEffect"
+    assert command.metadata.idempotency_key == "idem-1"
+    assert command.payload == {"tool_call_id": "tool-call-1"}
+    assert event.kind == "AssistantDraftDelta"
+    assert event.metadata.cursor == "cursor-4"
+    assert event.payload == {"delta": "hello"}
+    with pytest.raises(TypeError):
+        command.payload["tool_call_id"] = "mutated"
+    with pytest.raises(TypeError):
+        event.payload["delta"] = "mutated"
+    with pytest.raises(ApplicationProtocolError, match="application command id must not be empty"):
+        ApplicationCommand.new(
+            "CancelRun",
+            ApplicationCommandMetadata(
+                command_id=" ",
+                protocol_version="graphblocks.app.v1",
+                run_id="run-1",
+                sequence=1,
+                issued_at_unix_ms=1_765_843_200_000,
+            ),
+            payload={},
+        )
 
 
 def test_tool_events_carry_tool_call_id_and_required_envelope_fields() -> None:
