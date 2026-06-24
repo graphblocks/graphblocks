@@ -885,7 +885,10 @@ def admit_tool_call(
             f"policy decision {policy_decision.decision_id} has unsupported effect {policy_decision.effect}"
         )
 
-    if resolved_tool.binding.approval == "always":
+    policy_requires_approval = resolved_tool.binding.approval == "policy" and any(
+        obligation.obligation_type == "require_tool_approval" for obligation in policy_decision.obligations
+    )
+    if resolved_tool.binding.approval == "always" or policy_requires_approval:
         if approval is None:
             raise ToolAdmissionError(f"tool call {call.tool_call_id} requires approval")
         if not approval.is_valid_for(resolved_tool, call, principal_id=principal_id, now=now):

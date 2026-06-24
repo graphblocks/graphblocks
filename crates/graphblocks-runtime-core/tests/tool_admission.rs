@@ -1,5 +1,5 @@
 use graphblocks_runtime_core::policy::{
-    EnforcementPoint, PolicyDecision, PolicyEffect, PrincipalRef,
+    EnforcementPoint, PolicyDecision, PolicyEffect, PolicyObligation, PrincipalRef,
 };
 use graphblocks_runtime_core::tool::{
     BlockToolImplementation, ResolvedTool, ToolApproval, ToolBinding, ToolCatalog, ToolDefinition,
@@ -183,6 +183,56 @@ fn admission_requires_valid_approval_when_binding_requires_it() {
     assert_eq!(admitted.call.status, ToolCallStatus::Admitted);
     assert_eq!(admitted.call.admitted_at_unix_ms, Some(1_200));
     assert_eq!(admitted.idempotency_key.as_deref(), Some("idem-1"));
+}
+
+#[test]
+fn admission_requires_approval_when_policy_obligates_it() {
+    let mut resolved_tool = resolved_process_tool();
+    resolved_tool.binding.approval = ToolApproval::Policy;
+    resolved_tool.binding_digest = resolved_tool.binding.digest();
+    resolved_tool.resolved_tool_id = "resolved-policy-process".to_owned();
+    let call = process_call(&resolved_tool);
+    let schemas = process_schema_registry();
+    let mut policy_decision = allow_tool_policy_decision();
+    policy_decision.effect = PolicyEffect::AllowWithObligations;
+    policy_decision.obligations = vec![PolicyObligation::new(
+        "obl-approval",
+        "require_tool_approval",
+    )];
+
+    assert_eq!(
+        ToolAdmission::admit(ToolAdmissionRequest {
+            call: call.clone(),
+            resolved_tool: &resolved_tool,
+            schema_registry: &schemas,
+            policy_decision: &policy_decision,
+            approval: None,
+            principal_id: "user-1",
+            idempotency_key: Some("idem-1".to_owned()),
+            admitted_at_unix_ms: 1_200,
+        }),
+        Err(ToolAdmissionError::ApprovalRequired {
+            tool_call_id: "call-1".to_owned()
+        }),
+    );
+
+    let request =
+        ToolApprovalRequest::for_call("approval-1", &resolved_tool, &call, "user-1", 1_100, 2_000)
+            .expect("approval request is valid");
+    let approval = ToolApprovalRecord::approve(request, "admin-1", 1_150);
+    let admitted = ToolAdmission::admit(ToolAdmissionRequest {
+        call,
+        resolved_tool: &resolved_tool,
+        schema_registry: &schemas,
+        policy_decision: &policy_decision,
+        approval: Some(&approval),
+        principal_id: "user-1",
+        idempotency_key: Some("idem-1".to_owned()),
+        admitted_at_unix_ms: 1_200,
+    })
+    .expect("policy-obligated approval admits");
+
+    assert_eq!(admitted.call.status, ToolCallStatus::Admitted);
 }
 
 #[test]

@@ -238,7 +238,17 @@ impl ToolAdmission {
             }
         }
 
-        if request.resolved_tool.binding.approval == ToolApproval::Always {
+        let policy_requires_approval = request.resolved_tool.binding.approval
+            == ToolApproval::Policy
+            && request
+                .policy_decision
+                .obligations
+                .iter()
+                .any(|obligation| obligation.obligation_type == "require_tool_approval");
+
+        if request.resolved_tool.binding.approval == ToolApproval::Always
+            || policy_requires_approval
+        {
             let Some(approval) = request.approval else {
                 return Err(ToolAdmissionError::ApprovalRequired {
                     tool_call_id: request.call.tool_call_id,

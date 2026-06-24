@@ -15,6 +15,7 @@ from graphblocks import (
     JsonSchemaNode,
     OpenApiToolImplementation,
     PolicyDecision,
+    PolicyObligation,
     PrincipalRef,
     ResolvedTool,
     ToolAdmissionError,
@@ -738,6 +739,61 @@ def test_tool_admission_requires_approval_and_idempotency_key() -> None:
             now=1_200,
         )
     assert str(idempotency_error.value) == "tool call call-1 requires an idempotency key"
+
+
+def test_tool_admission_requires_approval_when_policy_obligates_it() -> None:
+    base_resolved = _resolved_process_tool()
+    binding = replace(base_resolved.binding, approval="policy")
+    resolved = ResolvedTool.from_definition_and_binding(
+        resolved_tool_id="resolved-policy-process",
+        definition=base_resolved.definition,
+        binding=binding,
+        effective_policy_snapshot_id=base_resolved.effective_policy_snapshot_id,
+        allowed_for_principal=True,
+    )
+    call = _process_call(resolved)
+    policy_decision = replace(
+        _allow_tool_policy_decision(),
+        effect="allow_with_obligations",
+        obligations=(PolicyObligation("obl-approval", "require_tool_approval"),),
+    )
+
+    with pytest.raises(ToolAdmissionError) as approval_error:
+        admit_tool_call(
+            call,
+            resolved,
+            _process_schema_registry(),
+            policy_decision=policy_decision,
+            principal_id="user-1",
+            idempotency_key="idem-1",
+            admitted_at="2026-06-23T00:00:01Z",
+            now=1_200,
+        )
+    assert str(approval_error.value) == "tool call call-1 requires approval"
+
+    request = ToolApprovalRequest.for_call(
+        "approval-1",
+        resolved,
+        call,
+        principal_id="user-1",
+        requested_at=1_100,
+        expires_at=2_000,
+    )
+    approval = ToolApprovalRecord.approve(request, approver_id="admin-1", decided_at=1_150)
+
+    admitted = admit_tool_call(
+        call,
+        resolved,
+        _process_schema_registry(),
+        approval=approval,
+        policy_decision=policy_decision,
+        principal_id="user-1",
+        idempotency_key="idem-1",
+        admitted_at="2026-06-23T00:00:01Z",
+        now=1_200,
+    )
+
+    assert admitted.call.status == "admitted"
 
 
 def test_tool_admission_returns_admitted_call_with_idempotency_key() -> None:
