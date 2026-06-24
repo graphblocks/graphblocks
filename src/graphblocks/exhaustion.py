@@ -5,6 +5,7 @@ from decimal import Decimal
 from typing import Literal
 
 from .budget import BudgetPermit, UsageAmount
+from .output_policy import OutputCutoff
 
 
 ContinuationWork = Literal[
@@ -280,17 +281,6 @@ class ExhaustionController:
             and permit.continuation_profile == self.policy.preset
             and permit.admission_epoch == self.admission_epoch
         )
-
-
-@dataclass(frozen=True, slots=True)
-class OutputCutoff:
-    stream_id: str
-    last_accepted_sequence: int
-    terminal_reason: Literal["budget_exhausted", "policy_denied", "cancelled"]
-    durable_result: DurableResult
-
-    def accepts(self, sequence: int) -> bool:
-        return sequence <= self.last_accepted_sequence
 
 
 def validate_exhaustion_policy(policy: ExhaustionPolicy, *, production: bool = False) -> list[str]:

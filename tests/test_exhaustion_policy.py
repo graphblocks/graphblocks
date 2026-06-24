@@ -13,6 +13,7 @@ from graphblocks.exhaustion import (
     OutputCutoff,
     validate_exhaustion_policy,
 )
+from graphblocks.output_policy import OutputCutoff as CanonicalOutputCutoff
 from graphblocks.policy import ResourceRef
 
 
@@ -76,9 +77,11 @@ def test_hard_stop_blocks_new_work_and_late_output_delivery() -> None:
     controller = ExhaustionController(policy, atomic_unit_id="call-1", admission_epoch=2)
     cutoff = OutputCutoff(
         stream_id="stream-1",
-        last_accepted_sequence=5,
+        response_id="response-1",
+        last_client_delivered_sequence=5,
         terminal_reason="budget_exhausted",
-        durable_result="mark_incomplete",
+        draft_disposition="mark_incomplete",
+        durable_result="incomplete",
     )
 
     cleanup = controller.admit("cleanup", work_epoch=2)
@@ -86,8 +89,12 @@ def test_hard_stop_blocks_new_work_and_late_output_delivery() -> None:
 
     assert cleanup.allowed is True
     assert provider_call.allowed is False
-    assert cutoff.accepts(5) is True
-    assert cutoff.accepts(6) is False
+    assert cutoff.accepts_sequence(5) is True
+    assert cutoff.accepts_sequence(6) is False
+
+
+def test_exhaustion_output_cutoff_uses_canonical_output_policy_contract() -> None:
+    assert OutputCutoff is CanonicalOutputCutoff
 
 
 def test_continuation_permit_must_match_atomic_unit_and_profile() -> None:
