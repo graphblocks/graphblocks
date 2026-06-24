@@ -21,6 +21,7 @@ TurnStatus = Literal[
     "completed",
     "failed",
     "cancelled",
+    "policy_stopped",
 ]
 
 
@@ -244,7 +245,7 @@ class InMemoryConversationStore:
         turn = self._turns.get(turn_id)
         if turn is None:
             raise TurnNotFoundError(f"turn {turn_id!r} does not exist")
-        if turn.status in {"completed", "failed", "cancelled"}:
+        if turn.status in {"completed", "failed", "cancelled", "policy_stopped"}:
             raise TurnConflictError(f"turn {turn_id!r} is already terminal")
         draft_message = replace(message, status="draft")
         updated = Turn(
@@ -264,7 +265,7 @@ class InMemoryConversationStore:
         turn = self._turns.get(turn_id)
         if turn is None:
             raise TurnNotFoundError(f"turn {turn_id!r} does not exist")
-        if turn.status in {"completed", "failed", "cancelled"}:
+        if turn.status in {"completed", "failed", "cancelled", "policy_stopped"}:
             raise TurnConflictError(f"turn {turn_id!r} is already terminal")
         committed_messages = tuple(replace(message, status="committed") for message in turn.messages)
         try:
@@ -299,7 +300,7 @@ class InMemoryConversationStore:
         turn = self._turns.get(turn_id)
         if turn is None:
             raise TurnNotFoundError(f"turn {turn_id!r} does not exist")
-        if turn.status in {"completed", "failed", "cancelled"}:
+        if turn.status in {"completed", "failed", "cancelled", "policy_stopped"}:
             raise TurnConflictError(f"turn {turn_id!r} is already terminal")
         cancelled = Turn(
             turn_id=turn.turn_id,
@@ -313,6 +314,25 @@ class InMemoryConversationStore:
         )
         self._turns[turn_id] = cancelled
         return _copy_turn(cancelled)
+
+    def policy_stop_turn(self, turn_id: str) -> Turn:
+        turn = self._turns.get(turn_id)
+        if turn is None:
+            raise TurnNotFoundError(f"turn {turn_id!r} does not exist")
+        if turn.status in {"completed", "failed", "cancelled", "policy_stopped"}:
+            raise TurnConflictError(f"turn {turn_id!r} is already terminal")
+        stopped = Turn(
+            turn_id=turn.turn_id,
+            conversation_id=turn.conversation_id,
+            base_revision=turn.base_revision,
+            status="policy_stopped",
+            messages=tuple(replace(message, status="retracted") for message in turn.messages),
+            committed_revision=None,
+            committed_message_ids=(),
+            metadata=dict(turn.metadata),
+        )
+        self._turns[turn_id] = stopped
+        return _copy_turn(stopped)
 
     def append_messages(self, conversation_id: str, expected_revision: int, messages: list[Message]) -> int:
         conversation = self._conversations.get(conversation_id)

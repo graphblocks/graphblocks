@@ -55,6 +55,24 @@ def test_abort_turn_retracts_drafts_without_appending_to_conversation() -> None:
         store.commit_turn("turn-1")
 
 
+def test_policy_stop_turn_retracts_drafts_without_committing_assistant_message() -> None:
+    store = InMemoryConversationStore()
+    store.create(Conversation(conversation_id="conv-1"))
+    store.begin_turn("conv-1", expected_revision=0, turn_id="turn-1")
+    store.append_turn_message(
+        "turn-1",
+        Message(message_id="msg-1", role="assistant", parts=(ContentPart(kind="text", text="blocked"),)),
+    )
+
+    stopped_turn = store.policy_stop_turn("turn-1")
+
+    assert stopped_turn.status == "policy_stopped"
+    assert stopped_turn.messages[0].status == "retracted"
+    assert store.get("conv-1").conversation.messages == ()
+    with pytest.raises(TurnConflictError):
+        store.commit_turn("turn-1")
+
+
 def test_turn_commit_conflict_marks_turn_failed() -> None:
     store = InMemoryConversationStore()
     store.create(Conversation(conversation_id="conv-1"))

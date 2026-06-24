@@ -325,6 +325,7 @@ pub enum TurnStatus {
     Completed,
     Failed,
     Cancelled,
+    PolicyStopped,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -360,7 +361,10 @@ impl Turn {
     fn is_terminal(&self) -> bool {
         matches!(
             self.status,
-            TurnStatus::Completed | TurnStatus::Failed | TurnStatus::Cancelled
+            TurnStatus::Completed
+                | TurnStatus::Failed
+                | TurnStatus::Cancelled
+                | TurnStatus::PolicyStopped
         )
     }
 }
@@ -694,6 +698,33 @@ impl InMemoryConversationStore {
         }
 
         turn.status = TurnStatus::Cancelled;
+        turn.messages = turn
+            .messages
+            .iter()
+            .cloned()
+            .map(|message| message.with_status(MessageStatus::Retracted))
+            .collect();
+        turn.committed_revision = None;
+        turn.committed_message_ids.clear();
+        Ok(turn.clone())
+    }
+
+    pub fn policy_stop_turn(&mut self, turn_id: impl AsRef<str>) -> Result<Turn, TurnError> {
+        let turn_id = turn_id.as_ref();
+        let turn = self
+            .turns
+            .get_mut(turn_id)
+            .ok_or_else(|| TurnError::NotFound {
+                turn_id: turn_id.to_owned(),
+            })?;
+        if turn.is_terminal() {
+            return Err(TurnError::Terminal {
+                turn_id: turn_id.to_owned(),
+                status: turn.status,
+            });
+        }
+
+        turn.status = TurnStatus::PolicyStopped;
         turn.messages = turn
             .messages
             .iter()

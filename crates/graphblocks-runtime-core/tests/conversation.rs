@@ -64,6 +64,29 @@ fn abort_turn_retracts_drafts_without_appending_to_conversation()
 }
 
 #[test]
+fn policy_stop_turn_retracts_drafts_without_committing_assistant_message()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut store = InMemoryConversationStore::new();
+    store.create(Conversation::new("conv-1"))?;
+    store.begin_turn("conv-1", 0, "turn-1")?;
+    store.append_turn_message("turn-1", assistant_message("msg-1", "blocked"))?;
+
+    let stopped_turn = store.policy_stop_turn("turn-1")?;
+
+    assert_eq!(stopped_turn.status, TurnStatus::PolicyStopped);
+    assert_eq!(stopped_turn.messages[0].status, MessageStatus::Retracted);
+    assert!(store.get("conv-1")?.conversation.messages.is_empty());
+    assert_eq!(
+        store.commit_turn("turn-1"),
+        Err(TurnError::Terminal {
+            turn_id: "turn-1".to_owned(),
+            status: TurnStatus::PolicyStopped,
+        }),
+    );
+    Ok(())
+}
+
+#[test]
 fn turn_commit_conflict_marks_turn_failed() -> Result<(), Box<dyn std::error::Error>> {
     let mut store = InMemoryConversationStore::new();
     store.create(Conversation::new("conv-1"))?;
