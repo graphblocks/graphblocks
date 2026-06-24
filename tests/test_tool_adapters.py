@@ -7,6 +7,7 @@ import pytest
 
 from graphblocks import (
     AdmittedToolCall,
+    ContentPart,
     JsonSchema,
     JsonSchemaNode,
     McpToolImplementation,
@@ -15,6 +16,7 @@ from graphblocks import (
     ToolBinding,
     ToolCall,
     ToolDefinition,
+    ToolResult,
     ToolSchemaRegistry,
     canonical_hash,
 )
@@ -181,6 +183,43 @@ def test_mcp_adapter_converts_valid_response_to_tool_result(monkeypatch) -> None
     assert result.effect_outcome == "no_external_effect"
 
 
+def test_mcp_adapter_prepares_tool_result_with_redactions_and_capture_policy(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
+    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    admitted, resolved = _admitted_call_for(
+        McpToolImplementation(server="support-mcp", remote_name="search"),
+        tool_name="knowledge.search",
+        binding_id="binding-mcp-search",
+        arguments={"query": "billing"},
+    )
+    result = ToolResult.completed(
+        "call-1",
+        (ContentPart(kind="text", text="safe secret suffix", metadata={"adapter": "mcp"}),),
+        started_at="2026-06-23T00:00:01Z",
+        completed_at="2026-06-23T00:00:02Z",
+    )
+
+    prepared = graphblocks_mcp.prepare_mcp_tool_result_for_model(
+        admitted,
+        resolved,
+        _tool_output_registry(),
+        result,
+        redactions=(
+            {"path": "/parts/0/text", "start": 5, "end": 11, "replacement": "[redacted]"},
+        ),
+        capture_policy={
+            "mode": "hash_only",
+            "retention_policy": "records-30d",
+            "consent_ref": "consent-1",
+        },
+    )
+
+    assert prepared[0].text == "safe [redacted] suffix"
+    assert prepared[0].metadata["capture"]["mode"] == "hash_only"
+    assert "secret" not in repr(prepared[0].metadata["capture"])
+    assert result.output[0].text == "safe secret suffix"
+
+
 def test_mcp_adapter_converts_error_to_failed_tool_result(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
     graphblocks_mcp = importlib.import_module("graphblocks_mcp")
@@ -301,6 +340,29 @@ def test_openapi_adapter_converts_valid_response_to_tool_result(monkeypatch) -> 
     assert result.status == "completed"
     assert result.output[0].data == {"ticket_id": "ticket-1"}
     assert result.effect_was_committed()
+
+
+def test_openapi_adapter_enforces_result_policy_size_limit(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
+    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    admitted, resolved = _admitted_call_for(
+        OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
+        tool_name="ticket.create",
+        binding_id="binding-ticket-create",
+        arguments={"title": "Need help"},
+        output_schema="schemas/Ticket@1",
+    )
+
+    with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="failed validation"):
+        graphblocks_openapi.openapi_tool_result_from_response(
+            admitted,
+            resolved,
+            _tool_output_registry(),
+            output={"ticket_id": "ticket-1"},
+            started_at="2026-06-23T00:00:01Z",
+            completed_at="2026-06-23T00:00:02Z",
+            max_output_bytes=4,
+        )
 
 
 def test_openapi_adapter_rejects_response_that_fails_output_schema(monkeypatch) -> None:

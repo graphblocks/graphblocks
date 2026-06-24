@@ -137,6 +137,9 @@ def openapi_tool_result_from_response(
     started_at: str,
     completed_at: str,
     effect_outcome: str = "unknown",
+    max_output_bytes: int | None = None,
+    redactions: Iterable[Mapping[str, object]] = (),
+    capture_policy: Mapping[str, object] | None = None,
 ) -> ToolResult:
     prepare_openapi_operation_invocation(admitted, resolved_tool)
     if not isinstance(output, Mapping):
@@ -155,18 +158,44 @@ def openapi_tool_result_from_response(
             started_at=started_at,
             completed_at=completed_at,
         ).with_effect_outcome(effect_outcome)
-        validate_tool_result_for_model(
+    except ValueError as error:
+        raise OpenApiToolAdapterError("OpenAPI tool result has an invalid effect outcome") from error
+
+    prepare_openapi_tool_result_for_model(
+        admitted,
+        resolved_tool,
+        schema_registry,
+        result,
+        max_output_bytes=max_output_bytes,
+        redactions=redactions,
+        capture_policy=capture_policy,
+    )
+    return result
+
+
+def prepare_openapi_tool_result_for_model(
+    admitted: AdmittedToolCall,
+    resolved_tool: ResolvedTool,
+    schema_registry: ToolSchemaRegistry,
+    result: ToolResult,
+    *,
+    max_output_bytes: int | None = None,
+    redactions: Iterable[Mapping[str, object]] = (),
+    capture_policy: Mapping[str, object] | None = None,
+) -> tuple[ContentPart, ...]:
+    prepare_openapi_operation_invocation(admitted, resolved_tool)
+    try:
+        return validate_tool_result_for_model(
             admitted.call,
             result,
             resolved_tool,
             schema_registry,
+            max_output_bytes=max_output_bytes,
+            redactions=tuple(dict(redaction) for redaction in redactions),
+            capture_policy=dict(capture_policy) if capture_policy is not None else None,
         )
     except (ToolResultValidationError, ToolSchemaValidationError) as error:
         raise OpenApiToolAdapterError("OpenAPI tool result failed validation") from error
-    except ValueError as error:
-        raise OpenApiToolAdapterError("OpenAPI tool result has an invalid effect outcome") from error
-
-    return result
 
 
 def openapi_tool_result_from_error(
@@ -201,4 +230,5 @@ __all__ = [
     "openapi_tool_result_from_error",
     "openapi_tool_result_from_response",
     "prepare_openapi_operation_invocation",
+    "prepare_openapi_tool_result_for_model",
 ]
