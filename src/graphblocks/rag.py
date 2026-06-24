@@ -256,6 +256,7 @@ def build_context_pack(
     reserve_output_tokens: int = 0,
     per_document_max_chunks: int | None = None,
     per_section_max_chunks: int | None = None,
+    per_source_max_chunks: int | None = None,
     deduplicate: bool = True,
     minimum_source_modified_at: str | None = None,
     metadata: dict[str, object] | None = None,
@@ -268,6 +269,8 @@ def build_context_pack(
         raise ValueError("per_document_max_chunks must be at least 1")
     if per_section_max_chunks is not None and per_section_max_chunks < 1:
         raise ValueError("per_section_max_chunks must be at least 1")
+    if per_source_max_chunks is not None and per_source_max_chunks < 1:
+        raise ValueError("per_source_max_chunks must be at least 1")
 
     effective_context_token_budget = max(token_budget - reserve_output_tokens, 0)
     selected: list[SearchHit] = []
@@ -277,6 +280,7 @@ def build_context_pack(
     selected_item_ids: set[str] = set()
     chunks_per_document: dict[str, int] = {}
     chunks_per_section: dict[str, int] = {}
+    chunks_per_source: dict[str, int] = {}
     token_count = 0
 
     for hit in sorted(hits, key=lambda item: (item.rank, item.hit_id)):
@@ -326,6 +330,18 @@ def build_context_pack(
             drop_reasons[hit.hit_id] = "per_section_max_chunks"
             continue
 
+        source_id = hit.metadata.get("source_id")
+        if not isinstance(source_id, str):
+            source_id = hit.retriever
+        current_source_chunks = chunks_per_source.get(source_id, 0)
+        if (
+            per_source_max_chunks is not None
+            and current_source_chunks >= per_source_max_chunks
+        ):
+            dropped_hit_ids.append(hit.hit_id)
+            drop_reasons[hit.hit_id] = "per_source_max_chunks"
+            continue
+
         if minimum_source_modified_at is not None:
             source_modified_at = hit.metadata.get("source_modified_at")
             if not isinstance(source_modified_at, str):
@@ -350,6 +366,7 @@ def build_context_pack(
         chunks_per_document[document_id] = current_document_chunks + 1
         if isinstance(section_id, str):
             chunks_per_section[section_id] = current_section_chunks + 1
+        chunks_per_source[source_id] = current_source_chunks + 1
         token_count += estimated_tokens
 
     context_metadata = dict(metadata or {})
@@ -364,6 +381,8 @@ def build_context_pack(
         context_metadata["minimum_source_modified_at"] = minimum_source_modified_at
     if per_section_max_chunks is not None:
         context_metadata["per_section_max_chunks"] = per_section_max_chunks
+    if per_source_max_chunks is not None:
+        context_metadata["per_source_max_chunks"] = per_source_max_chunks
     if reserve_output_tokens > 0:
         context_metadata["reserve_output_tokens"] = reserve_output_tokens
         context_metadata["effective_context_token_budget"] = effective_context_token_budget

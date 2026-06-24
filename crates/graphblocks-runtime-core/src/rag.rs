@@ -362,6 +362,7 @@ pub struct ContextBuildOptions {
     pub reserve_output_tokens: usize,
     pub per_document_max_chunks: Option<usize>,
     pub per_section_max_chunks: Option<usize>,
+    pub per_source_max_chunks: Option<usize>,
     pub deduplicate: bool,
     pub minimum_source_modified_at: Option<String>,
 }
@@ -373,6 +374,7 @@ impl ContextBuildOptions {
             reserve_output_tokens: 0,
             per_document_max_chunks: None,
             per_section_max_chunks: None,
+            per_source_max_chunks: None,
             deduplicate: true,
             minimum_source_modified_at: None,
         }
@@ -390,6 +392,11 @@ impl ContextBuildOptions {
 
     pub fn with_per_section_max_chunks(mut self, per_section_max_chunks: usize) -> Self {
         self.per_section_max_chunks = Some(per_section_max_chunks);
+        self
+    }
+
+    pub fn with_per_source_max_chunks(mut self, per_source_max_chunks: usize) -> Self {
+        self.per_source_max_chunks = Some(per_source_max_chunks);
         self
     }
 
@@ -1008,6 +1015,7 @@ pub struct CitationSourceTrace {
 pub enum RagError {
     InvalidPerDocumentMaxChunks,
     InvalidPerSectionMaxChunks,
+    InvalidPerSourceMaxChunks,
     InvalidFusionK,
     WeightCountMismatch,
     InvalidRerankInputLimit,
@@ -1041,6 +1049,9 @@ impl fmt::Display for RagError {
             }
             Self::InvalidPerSectionMaxChunks => {
                 write!(formatter, "per_section_max_chunks must be at least 1")
+            }
+            Self::InvalidPerSourceMaxChunks => {
+                write!(formatter, "per_source_max_chunks must be at least 1")
             }
             Self::InvalidFusionK => write!(formatter, "fusion k must be at least 1"),
             Self::WeightCountMismatch => {
@@ -1211,6 +1222,9 @@ pub fn build_context_pack(
     if matches!(options.per_section_max_chunks, Some(0)) {
         return Err(RagError::InvalidPerSectionMaxChunks);
     }
+    if matches!(options.per_source_max_chunks, Some(0)) {
+        return Err(RagError::InvalidPerSourceMaxChunks);
+    }
     hits.sort_by(|left, right| {
         left.rank
             .cmp(&right.rank)
@@ -1226,6 +1240,7 @@ pub fn build_context_pack(
     let mut selected_item_ids = BTreeSet::new();
     let mut chunks_per_document: BTreeMap<String, usize> = BTreeMap::new();
     let mut chunks_per_section: BTreeMap<String, usize> = BTreeMap::new();
+    let mut chunks_per_source: BTreeMap<String, usize> = BTreeMap::new();
     let mut token_count = 0;
 
     for hit in hits {
@@ -1292,6 +1307,21 @@ pub fn build_context_pack(
             drop_reasons.insert(hit.hit_id.clone(), json!("per_section_max_chunks"));
             continue;
         }
+        let source_id = hit
+            .metadata
+            .get("source_id")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .unwrap_or_else(|| hit.retriever.clone());
+        let current_source_chunks = chunks_per_source.get(&source_id).copied().unwrap_or(0);
+        if options
+            .per_source_max_chunks
+            .is_some_and(|limit| current_source_chunks >= limit)
+        {
+            dropped_hit_ids.push(hit.hit_id.clone());
+            drop_reasons.insert(hit.hit_id.clone(), json!("per_source_max_chunks"));
+            continue;
+        }
         if let Some(minimum_source_modified_at) = &options.minimum_source_modified_at {
             let source_modified_at = hit
                 .metadata
@@ -1326,6 +1356,7 @@ pub fn build_context_pack(
         if let Some(section_id) = section_id {
             chunks_per_section.insert(section_id, current_section_chunks + 1);
         }
+        chunks_per_source.insert(source_id, current_source_chunks + 1);
         token_count += estimated_tokens;
         selected.push(hit);
     }
@@ -1352,6 +1383,12 @@ pub fn build_context_pack(
         context.metadata.insert(
             "per_section_max_chunks".to_owned(),
             json!(per_section_max_chunks),
+        );
+    }
+    if let Some(per_source_max_chunks) = options.per_source_max_chunks {
+        context.metadata.insert(
+            "per_source_max_chunks".to_owned(),
+            json!(per_source_max_chunks),
         );
     }
     if options.reserve_output_tokens > 0 {
