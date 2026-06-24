@@ -42,6 +42,7 @@ from graphblocks import (
     resolve_citation_source_trace,
     validate_answer_citation_authorization,
     validate_answer_citations,
+    validate_answer_grounding,
 )
 
 
@@ -87,4 +88,5 @@ __all__ = [
     "resolve_citation_source_trace",
     "validate_answer_citation_authorization",
     "validate_answer_citations",
+    "validate_answer_grounding",
 ]

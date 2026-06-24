@@ -16,6 +16,7 @@ from graphblocks import (
     federated_retrieve,
     parse_plain_text_document,
     render_context_pack,
+    validate_answer_grounding,
 )
 
 
@@ -80,3 +81,10 @@ def test_rag_package_exposes_federated_retrieval_contract(monkeypatch) -> None:
     assert graphblocks_rag.FederatedRetrievalSource is FederatedRetrievalSource
     assert graphblocks_rag.FederatedRetrievalError is FederatedRetrievalError
     assert graphblocks_rag.federated_retrieve is federated_retrieve
+
+
+def test_rag_package_exposes_grounding_validator(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-rag" / "src"))
+    graphblocks_rag = importlib.import_module("graphblocks_rag")
+
+    assert graphblocks_rag.validate_answer_grounding is validate_answer_grounding

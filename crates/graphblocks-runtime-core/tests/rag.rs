@@ -13,7 +13,7 @@ use graphblocks_runtime_core::rag::{
     authorize_search_hits, build_context_pack, federated_retrieve, fuse_search_hits,
     knowledge_item_from_chunk, render_context_pack, rerank_search_hits,
     resolve_citation_source_trace, validate_answer_citation_authorization,
-    validate_answer_citations,
+    validate_answer_citations, validate_answer_grounding,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -809,6 +809,73 @@ fn validate_answer_citations_accepts_current_context_source() {
     assert!(result.ok);
     assert!(result.issues.is_empty());
     assert!(result.abstention.is_none());
+}
+
+#[test]
+fn validate_answer_grounding_accepts_cited_current_context_source() {
+    let context = build_context_pack(
+        "ctx-1",
+        vec![hit(
+            "hit-1",
+            "chunk-1",
+            "doc-1",
+            "Alpha policy requires audit logs.",
+            1,
+        )],
+        ContextBuildOptions::new(10),
+    )
+    .expect("context build succeeds");
+    let citation = Citation::new("cite-1", context.hits[0].item.source.clone())
+        .with_cited_text("requires audit logs");
+    let answer = Answer::new("answer-1", "Alpha policy requires audit logs.")
+        .with_claim(
+            Claim::new("claim-1", "Alpha policy requires audit logs.")
+                .with_citation_ids(["cite-1"]),
+        )
+        .with_citation(citation);
+
+    let result = validate_answer_grounding(&answer, &context, true, FailurePolicy::Abstain)
+        .expect("grounding validation succeeds");
+
+    assert!(result.ok);
+    assert!(result.issues.is_empty());
+    assert!(result.abstention.is_none());
+}
+
+#[test]
+fn validate_answer_grounding_abstains_when_context_is_empty() {
+    let answer = Answer::new("answer-1", "Alpha policy requires audit logs.").with_claim(
+        Claim::new("claim-1", "Alpha policy requires audit logs.").with_citation_ids(["cite-1"]),
+    );
+
+    let result = validate_answer_grounding(
+        &answer,
+        &ContextPack::new("ctx-empty", Vec::new()),
+        true,
+        FailurePolicy::Abstain,
+    )
+    .expect("grounding validation succeeds");
+
+    assert!(!result.ok);
+    assert_eq!(
+        result
+            .issues
+            .iter()
+            .map(|issue| issue.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["grounding.insufficient_context"]
+    );
+    assert_eq!(
+        result.abstention.as_ref().map(|item| item.reason.as_str()),
+        Some("insufficient_context")
+    );
+    assert_eq!(
+        result
+            .abstention
+            .as_ref()
+            .and_then(|item| item.diagnostics.get("issue_codes")),
+        Some(&json!(["grounding.insufficient_context"]))
+    );
 }
 
 #[test]

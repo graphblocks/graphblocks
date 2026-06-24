@@ -351,6 +351,7 @@ from .rag import (
     resolve_citation_source_trace,
     validate_answer_citation_authorization,
     validate_answer_citations,
+    validate_answer_grounding,
 )
 from .runtime import (
     CancellationToken,
@@ -873,6 +874,7 @@ __all__ = [
     "validate_plugin_manifest",
     "validate_answer_citation_authorization",
     "validate_answer_citations",
+    "validate_answer_grounding",
     "validate_exhaustion_policy",
     "validate_worker_result",
     "build_context_pack",

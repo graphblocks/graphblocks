@@ -816,6 +816,46 @@ def validate_answer_citations(
     return CitationValidationResult(ok=False, issues=issues)
 
 
+def validate_answer_grounding(
+    answer: Answer,
+    context: ContextPack,
+    *,
+    require_citations: bool = True,
+    failure_policy: Literal["warn", "fail", "abstain"] = "abstain",
+) -> CitationValidationResult:
+    if failure_policy not in {"warn", "fail", "abstain"}:
+        raise ValueError("failure_policy must be one of warn, fail, or abstain")
+    if not context.hits and (answer.text.strip() or any(claim.text.strip() for claim in answer.claims)):
+        severity: Literal["warning", "error"] = "warning" if failure_policy == "warn" else "error"
+        issues = [
+            CitationValidationIssue(
+                code="grounding.insufficient_context",
+                message="answer grounding requires at least one context hit",
+                severity=severity,
+            )
+        ]
+        if failure_policy == "warn":
+            return CitationValidationResult(ok=True, issues=issues)
+        if failure_policy == "abstain":
+            return CitationValidationResult(
+                ok=False,
+                issues=issues,
+                abstention=Abstention(
+                    reason="insufficient_context",
+                    user_message="I do not have enough retrieved context to answer.",
+                    diagnostics={"issue_codes": ["grounding.insufficient_context"]},
+                ),
+            )
+        return CitationValidationResult(ok=False, issues=issues)
+
+    return validate_answer_citations(
+        answer,
+        context,
+        require_citations=require_citations,
+        failure_policy=failure_policy,
+    )
+
+
 def _source_ref_matches(citation_source: SourceRef, context_source: SourceRef) -> bool:
     if citation_source.source_id != context_source.source_id:
         return False

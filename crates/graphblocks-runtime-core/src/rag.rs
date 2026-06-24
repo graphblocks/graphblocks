@@ -1896,6 +1896,62 @@ pub fn validate_answer_citations(
     })
 }
 
+pub fn validate_answer_grounding(
+    answer: &Answer,
+    context: &ContextPack,
+    require_citations: bool,
+    failure_policy: FailurePolicy,
+) -> Result<CitationValidationResult, RagError> {
+    if context.hits.is_empty()
+        && (!answer.text.trim().is_empty()
+            || answer
+                .claims
+                .iter()
+                .any(|claim| !claim.text.trim().is_empty()))
+    {
+        let severity = if failure_policy == FailurePolicy::Warn {
+            CitationSeverity::Warning
+        } else {
+            CitationSeverity::Error
+        };
+        let issues = vec![CitationValidationIssue::new(
+            "grounding.insufficient_context",
+            "answer grounding requires at least one context hit",
+            severity,
+        )];
+        if failure_policy == FailurePolicy::Warn {
+            return Ok(CitationValidationResult {
+                ok: true,
+                issues,
+                abstention: None,
+            });
+        }
+        if failure_policy == FailurePolicy::Abstain {
+            let mut diagnostics = BTreeMap::new();
+            diagnostics.insert(
+                "issue_codes".to_owned(),
+                json!(["grounding.insufficient_context"]),
+            );
+            return Ok(CitationValidationResult {
+                ok: false,
+                issues,
+                abstention: Some(Abstention {
+                    reason: "insufficient_context".to_owned(),
+                    user_message: "I do not have enough retrieved context to answer.".to_owned(),
+                    diagnostics,
+                }),
+            });
+        }
+        return Ok(CitationValidationResult {
+            ok: false,
+            issues,
+            abstention: None,
+        });
+    }
+
+    validate_answer_citations(answer, context, require_citations, failure_policy)
+}
+
 pub fn validate_answer_citation_authorization(
     answer: &Answer,
     context: &ContextPack,
