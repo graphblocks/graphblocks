@@ -185,24 +185,11 @@ impl ToolResult {
         I: IntoIterator<Item = ContentPart>,
     {
         let output = output.into_iter().collect::<Vec<_>>();
-        let output_value = Value::Array(
-            output
-                .iter()
-                .map(|part| {
-                    json!({
-                        "kind": part.kind.as_str(),
-                        "text": part.text,
-                        "data": part.data,
-                        "metadata": part.metadata,
-                    })
-                })
-                .collect(),
-        );
         Self {
             tool_call_id: tool_call_id.into(),
             status: ToolResultStatus::Completed,
+            output_digest: Some(tool_result_output_digest(&output)),
             output,
-            output_digest: Some(canonical_hash(&output_value)),
             artifacts: Vec::new(),
             diagnostics: Vec::new(),
             error: None,
@@ -335,6 +322,22 @@ impl ToolResult {
     }
 }
 
+fn tool_result_output_digest(output: &[ContentPart]) -> String {
+    canonical_hash(&Value::Array(
+        output
+            .iter()
+            .map(|part| {
+                json!({
+                    "kind": part.kind.as_str(),
+                    "text": part.text,
+                    "data": part.data,
+                    "metadata": part.metadata,
+                })
+            })
+            .collect(),
+    ))
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ToolResultContentPolicy {
     pub max_output_bytes: Option<usize>,
@@ -434,6 +437,9 @@ pub enum ToolResultValidationError {
         path: String,
         property: String,
     },
+    OutputDigestMismatch {
+        tool_call_id: String,
+    },
     ModelOutputTooLarge {
         tool_call_id: String,
         max_bytes: usize,
@@ -468,6 +474,16 @@ impl ToolResultValidation {
         }
         if request.result.status != ToolResultStatus::Completed {
             return Ok(());
+        }
+        if request
+            .result
+            .output_digest
+            .as_ref()
+            .is_some_and(|digest| digest != &tool_result_output_digest(&request.result.output))
+        {
+            return Err(ToolResultValidationError::OutputDigestMismatch {
+                tool_call_id: request.result.tool_call_id.clone(),
+            });
         }
 
         if request.resolved_tool.binding.result_mode == ToolResultMode::ArtifactReference

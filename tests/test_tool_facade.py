@@ -1116,6 +1116,54 @@ def test_completed_tool_result_validates_output_schema_before_model_return() -> 
     assert str(error.value) == "schemas/SearchResult@1 expected string at $.answer"
 
 
+def test_completed_tool_result_rejects_stale_output_digest_before_model_return() -> None:
+    catalog = ToolCatalog(
+        definitions=(
+            ToolDefinition(
+                name="knowledge.search",
+                description="Search documentation.",
+                input_schema="schemas/SearchRequest@1",
+                output_schema="schemas/SearchResult@1",
+            ),
+        ),
+        bindings=(
+            ToolBinding(
+                binding_id="binding-search",
+                tool_name="knowledge.search",
+                implementation=BlockToolImplementation(block="blocks.search"),
+            ),
+        ),
+    )
+    resolved = catalog.resolve(ToolResolutionScope(), effective_policy_snapshot_id="policy-snapshot-1")[0]
+    call = (
+        ToolCallDraft.proposed("response-1", "call-1", "knowledge.search")
+        .append_argument_fragment("{}")
+        .complete_arguments()
+        .into_tool_call(resolved.resolved_tool_id, created_at="2026-06-23T00:00:00Z")
+    )
+    registry = ToolSchemaRegistry(
+        (
+            JsonSchema(
+                "schemas/SearchResult@1",
+                JsonSchemaNode.object().required_property("answer", JsonSchemaNode.string()),
+            ),
+        )
+    )
+    result = ToolResult.completed(
+        "call-1",
+        (ContentPart(kind="json", data={"answer": "Use the runtime."}),),
+        started_at="2026-06-23T00:00:01Z",
+        completed_at="2026-06-23T00:00:02Z",
+    )
+    assert result.output[0].data is not None
+    result.output[0].data["answer"] = "Mutated but still schema-valid"
+
+    with pytest.raises(ToolResultValidationError) as error:
+        validate_tool_result_for_model(call, result, resolved, registry)
+
+    assert str(error.value) == "tool result call-1 output digest does not match output"
+
+
 def test_completed_tool_result_model_output_overrides_raw_trust_metadata_by_default() -> None:
     catalog = ToolCatalog(
         definitions=(

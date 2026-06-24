@@ -1269,17 +1269,8 @@ class ToolResult:
         completed_at: str,
     ) -> ToolResult:
         output = tuple(output)
-        output_value = [
-            {
-                "kind": part.kind,
-                "text": part.text,
-                "data": part.data,
-                "metadata": part.metadata,
-            }
-            for part in output
-        ]
         try:
-            output_digest = canonical_hash(output_value)
+            output_digest = _tool_result_output_digest(output)
         except (TypeError, ValueError) as error:
             raise ToolResultValidationError(f"tool result {tool_call_id} output is not canonical JSON") from error
         return cls(
@@ -1378,6 +1369,22 @@ class ToolResult:
         return self.effect_outcome == "committed"
 
 
+def _tool_result_output_value(output: tuple[ContentPart, ...]) -> list[dict[str, object]]:
+    return [
+        {
+            "kind": part.kind,
+            "text": part.text,
+            "data": part.data,
+            "metadata": part.metadata,
+        }
+        for part in output
+    ]
+
+
+def _tool_result_output_digest(output: tuple[ContentPart, ...]) -> str:
+    return canonical_hash(_tool_result_output_value(output))
+
+
 def validate_tool_result_for_model(
     call: ToolCall,
     result: ToolResult,
@@ -1399,6 +1406,14 @@ def validate_tool_result_for_model(
         raise ToolResultValidationError("tool call references a different resolved tool")
     if result.status != "completed":
         return ()
+    try:
+        actual_output_digest = _tool_result_output_digest(result.output)
+    except (TypeError, ValueError) as error:
+        raise ToolResultValidationError(f"tool result {result.tool_call_id} output is not canonical JSON") from error
+    if result.output_digest != actual_output_digest:
+        raise ToolResultValidationError(
+            f"tool result {result.tool_call_id} output digest does not match output"
+        )
     if resolved_tool.binding.result_mode == "artifact_reference" and any(
         part.kind != "artifact_ref" for part in result.output
     ):
