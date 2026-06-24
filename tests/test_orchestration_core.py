@@ -13,7 +13,9 @@ from graphblocks.orchestration import (
     ModelSelectionRequest,
     ModelSensitivityAboveCeilingError,
     ModelToolNotAllowedError,
+    TaskContextAccess,
     TaskPlanCycleError,
+    TaskPlanContextAccessError,
     TaskPlanDependencyError,
     TaskPlanLimitError,
     TaskPlanLimits,
@@ -117,6 +119,68 @@ def test_task_plan_limits_bound_steps_and_dependencies() -> None:
     assert dependency_error.value.limit_name == "max_dependencies_per_step"
     assert dependency_error.value.limit == 1
     assert dependency_error.value.actual == 2
+
+
+def test_task_plan_context_access_graph_is_validated_and_digest_stable() -> None:
+    left = TaskPlan(
+        plan_id="plan-1",
+        objective="answer support request",
+        steps=(
+            TaskStep("draft", "Draft response"),
+            TaskStep("verify", "Verify answer", depends_on=("draft",)),
+        ),
+        context_resources=("tenant-profile", "policy-doc"),
+        context_access=(
+            TaskContextAccess("verify", "tenant-profile", "read"),
+            TaskContextAccess("draft", "policy-doc", "read"),
+        ),
+    )
+    right = TaskPlan(
+        plan_id="plan-2",
+        objective="answer support request",
+        steps=tuple(reversed(left.steps)),
+        context_resources=tuple(reversed(left.context_resources)),
+        context_access=tuple(reversed(left.context_access)),
+    )
+
+    assert left.content_digest() == right.content_digest()
+    assert [access.step_id for access in left.context_access] == ["draft", "verify"]
+
+    with pytest.raises(TaskPlanContextAccessError) as step_error:
+        TaskPlan(
+            plan_id="plan-3",
+            objective="answer support request",
+            steps=(TaskStep("draft", "Draft response"),),
+            context_resources=("policy-doc",),
+            context_access=(TaskContextAccess("missing", "policy-doc", "read"),),
+        )
+
+    assert step_error.value.reason == "unknown_step"
+    assert step_error.value.step_id == "missing"
+
+    with pytest.raises(TaskPlanContextAccessError) as resource_error:
+        TaskPlan(
+            plan_id="plan-4",
+            objective="answer support request",
+            steps=(TaskStep("draft", "Draft response"),),
+            context_resources=("policy-doc",),
+            context_access=(TaskContextAccess("draft", "secret-vault", "read"),),
+        )
+
+    assert resource_error.value.reason == "unknown_resource"
+    assert resource_error.value.resource_id == "secret-vault"
+
+    with pytest.raises(TaskPlanContextAccessError) as mode_error:
+        TaskPlan(
+            plan_id="plan-5",
+            objective="answer support request",
+            steps=(TaskStep("draft", "Draft response"),),
+            context_resources=("policy-doc",),
+            context_access=(TaskContextAccess("draft", "policy-doc", "execute"),),
+        )
+
+    assert mode_error.value.reason == "invalid_mode"
+    assert mode_error.value.mode == "execute"
 
 
 def test_model_pool_selects_first_profile_matching_worker_policy_and_request() -> None:

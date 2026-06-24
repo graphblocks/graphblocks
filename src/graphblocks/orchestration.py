@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from typing import Literal
 
 from .budget import BudgetPermit, UsageAmount
 from .canonical import canonical_hash
 from .policy import ResourceRef
 from .worker import WorkerAdvertisement, select_worker_for_block
+
+
+ContextAccessMode = Literal["read", "write", "read_write"]
+VALID_CONTEXT_ACCESS_MODES = {"read", "write", "read_write"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +54,22 @@ class TaskPlanLimits:
     max_steps: int = 128
     max_dependencies_per_step: int = 16
     max_description_chars: int = 4096
+
+
+@dataclass(frozen=True, slots=True)
+class TaskContextAccess:
+    step_id: str
+    resource_id: str
+    mode: ContextAccessMode
+    reason: str | None = None
+
+    def canonical_value(self) -> dict[str, object]:
+        return {
+            "step_id": self.step_id,
+            "resource_id": self.resource_id,
+            "mode": self.mode,
+            "reason": self.reason,
+        }
 
 
 class TaskPlanError(ValueError):
@@ -100,6 +121,17 @@ class TaskPlanCycleError(TaskPlanError):
         super().__init__(f"task plan dependency cycle: {' -> '.join(cycle)}")
 
 
+class TaskPlanContextAccessError(TaskPlanError):
+    def __init__(self, step_id: str, resource_id: str, mode: str, reason: str) -> None:
+        self.step_id = step_id
+        self.resource_id = resource_id
+        self.mode = mode
+        self.reason = reason
+        super().__init__(
+            f"task context access {step_id!r}:{resource_id!r}:{mode!r} is invalid: {reason}"
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class TaskPlan:
     plan_id: str
@@ -108,10 +140,23 @@ class TaskPlan:
     revision: int = 1
     metadata: dict[str, object] = field(default_factory=dict)
     limits: TaskPlanLimits = field(default_factory=TaskPlanLimits)
+    context_resources: tuple[str, ...] = field(default_factory=tuple)
+    context_access: tuple[TaskContextAccess, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "steps", tuple(sorted(self.steps, key=lambda step: step.step_id)))
         object.__setattr__(self, "metadata", dict(self.metadata))
+        object.__setattr__(self, "context_resources", tuple(sorted(set(self.context_resources))))
+        object.__setattr__(
+            self,
+            "context_access",
+            tuple(
+                sorted(
+                    self.context_access,
+                    key=lambda access: (access.step_id, access.resource_id, access.mode),
+                )
+            ),
+        )
         if len(self.steps) > self.limits.max_steps:
             raise TaskPlanLimitError("max_steps", self.limits.max_steps, len(self.steps))
         steps_by_id: dict[str, TaskStep] = {}
@@ -156,6 +201,30 @@ class TaskPlan:
         for step_id in steps_by_id:
             visit(step_id)
 
+        context_resource_ids = set(self.context_resources)
+        for access in self.context_access:
+            if access.mode not in VALID_CONTEXT_ACCESS_MODES:
+                raise TaskPlanContextAccessError(
+                    access.step_id,
+                    access.resource_id,
+                    str(access.mode),
+                    "invalid_mode",
+                )
+            if access.step_id not in steps_by_id:
+                raise TaskPlanContextAccessError(
+                    access.step_id,
+                    access.resource_id,
+                    access.mode,
+                    "unknown_step",
+                )
+            if access.resource_id not in context_resource_ids:
+                raise TaskPlanContextAccessError(
+                    access.step_id,
+                    access.resource_id,
+                    access.mode,
+                    "unknown_resource",
+                )
+
     def step(self, step_id: str) -> TaskStep:
         for step in self.steps:
             if step.step_id == step_id:
@@ -189,6 +258,8 @@ class TaskPlan:
                     "max_dependencies_per_step": self.limits.max_dependencies_per_step,
                     "max_description_chars": self.limits.max_description_chars,
                 },
+                "context_resources": self.context_resources,
+                "context_access": [access.canonical_value() for access in self.context_access],
             }
         )
 
@@ -418,7 +489,9 @@ __all__ = [
     "ModelSensitivityAboveCeilingError",
     "ModelToolNotAllowedError",
     "NoEligibleModelError",
+    "TaskContextAccess",
     "TaskPlan",
+    "TaskPlanContextAccessError",
     "TaskPlanCycleError",
     "TaskPlanDependencyError",
     "TaskPlanDuplicateStepError",
