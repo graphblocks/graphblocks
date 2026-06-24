@@ -425,6 +425,94 @@ fn sqlite_budget_ledger_serializes_competing_reservations() -> Result<(), Budget
 }
 
 #[test]
+fn sqlite_budget_ledger_commit_with_permit_settles_authorized_reservation()
+-> Result<(), BudgetError> {
+    let mut ledger = SqliteBudgetLedger::open_in_memory()?;
+    ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+    let reservation = ledger.reserve(
+        "budget-1",
+        "run:1",
+        [tokens(40)],
+        ReservationPurpose::ProviderCall,
+        "later",
+        None,
+    )?;
+    let permit = ledger.issue_permit(
+        "permit-1",
+        vec![reservation.reservation_id.clone()],
+        "worker:1",
+        "turn:1",
+        1,
+        "finish_current_turn",
+        "sha256:policy",
+        "later",
+        vec![tokens(10)],
+    )?;
+
+    let settlement =
+        ledger.commit_with_permit(&permit.permit_id, &reservation.reservation_id, [tokens(25)])?;
+
+    assert_eq!(permit.authorized_amounts, vec![tokens(40)]);
+    assert_eq!(permit.low_watermark, vec![tokens(10)]);
+    assert_eq!(
+        permit.fencing_tokens,
+        BTreeMap::from([("budget-1".to_string(), 1)])
+    );
+    assert_eq!(settlement.committed, vec![tokens(25)]);
+    assert_eq!(settlement.released, vec![tokens(15)]);
+    assert_eq!(ledger.balance("budget-1")?.available, vec![tokens(75)]);
+    Ok(())
+}
+
+#[test]
+fn sqlite_budget_ledger_commit_with_permit_rejects_usage_above_authorized_without_mutating()
+-> Result<(), BudgetError> {
+    let mut ledger = SqliteBudgetLedger::open_in_memory()?;
+    ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+    let reservation = ledger.reserve(
+        "budget-1",
+        "run:1",
+        [tokens(40)],
+        ReservationPurpose::ProviderCall,
+        "later",
+        None,
+    )?;
+    let permit = ledger.issue_permit(
+        "permit-1",
+        vec![reservation.reservation_id.clone()],
+        "worker:1",
+        "turn:1",
+        1,
+        "finish_current_turn",
+        "sha256:policy",
+        "later",
+        Vec::new(),
+    )?;
+
+    let error = ledger
+        .commit_with_permit(&permit.permit_id, &reservation.reservation_id, [tokens(41)])
+        .expect_err("permit-backed SQLite commit must stay within authorized usage");
+
+    assert_eq!(
+        error,
+        BudgetError::BudgetExceeded {
+            budget_id: "budget-1".to_string(),
+            kind: "model_total_tokens".to_string(),
+            unit: "tokens".to_string(),
+        }
+    );
+    let balance = ledger.balance("budget-1")?;
+    assert_eq!(balance.reserved, vec![tokens(40)]);
+    assert_eq!(balance.committed, Vec::<UsageAmount>::new());
+    assert_eq!(balance.available, vec![tokens(60)]);
+
+    let settlement = ledger.release_with_permit(&permit.permit_id, &reservation.reservation_id)?;
+    assert_eq!(settlement.released, vec![tokens(40)]);
+    assert_eq!(ledger.balance("budget-1")?.available, vec![tokens(100)]);
+    Ok(())
+}
+
+#[test]
 fn budget_ledger_commit_over_reserved_records_overdraft() -> Result<(), BudgetError> {
     let mut ledger = InMemoryBudgetLedger::new();
     let account = ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
