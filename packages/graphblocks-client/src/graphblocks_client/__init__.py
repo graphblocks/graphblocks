@@ -118,6 +118,18 @@ class HttpGraphBlocksClient:
     timeout: float = 30.0
     transport: Callable[..., object] | None = None
 
+    def health(self) -> dict[str, object]:
+        request = Request(
+            f"{self.base_url.rstrip('/')}/health",
+            headers={"Accept": "application/json"},
+            method="GET",
+        )
+        response = (self.transport or urlopen)(request, timeout=self.timeout)
+        payload = json.loads(response.read().decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("GraphBlocks health response must be a JSON object")
+        return payload
+
     def run_graph(self, command: RunGraphCommand) -> RunGraphResponse:
         body = json.dumps(
             {

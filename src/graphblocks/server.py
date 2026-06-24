@@ -134,6 +134,9 @@ class ServerResponse:
     headers: dict[str, str]
     body: bytes
 
+    def read(self) -> bytes:
+        return self.body
+
     @classmethod
     def json(cls, status_code: int, payload: dict[str, object]) -> ServerResponse:
         return cls(

@@ -177,3 +177,45 @@ def test_client_package_posts_run_graph_command_over_http(monkeypatch) -> None:
     assert response.events[0].kind == "RunStarted"
     assert response.event_stream.accept(response.events[0]) == response.events[0]
     assert "HttpGraphBlocksClient" in graphblocks_client.__all__
+
+
+def test_client_package_reads_server_health_over_http_transport(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+    from graphblocks.server import GraphBlocksServerApp, ServerHealth, ServerRequest
+
+    app = GraphBlocksServerApp(
+        health=ServerHealth(
+            "graphblocks-api",
+            checks=(("runtime", "healthy", {"workers": 2}),),
+            observed_at="2026-06-24T00:00:00Z",
+        )
+    )
+
+    def transport(request: object, *, timeout: float) -> object:
+        assert timeout == 2.5
+        return app.handle(
+            ServerRequest(
+                method=request.get_method(),
+                path="/health",
+                headers=dict(request.headers),
+                query={},
+                cookies={},
+                body=request.data or b"",
+            )
+        )
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api/",
+        timeout=2.5,
+        transport=transport,
+    )
+
+    health = client.health()
+
+    assert health == {
+        "service": "graphblocks-api",
+        "status": "healthy",
+        "observed_at": "2026-06-24T00:00:00Z",
+        "checks": {"runtime": {"status": "healthy", "details": {"workers": 2}}},
+    }
