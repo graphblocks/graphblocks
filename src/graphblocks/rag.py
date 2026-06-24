@@ -474,60 +474,93 @@ def fuse_search_hits(
         raise ValueError("weights length must match hit_sets length")
 
     grouped_hits: dict[str, list[SearchHit]] = {}
-    first_seen_item_ids: list[str] = []
+    first_seen_keys: list[str] = []
     fusion_scores: dict[str, float] = {}
+    dedupe_keys_by_hit: dict[int, str] = {}
     for set_index, hit_set in enumerate(hit_sets):
         weight = weights[set_index] if weights is not None else 1.0
         for hit in hit_set:
-            item_id = hit.item.item_id
-            if item_id not in grouped_hits:
-                grouped_hits[item_id] = []
-                first_seen_item_ids.append(item_id)
-            grouped_hits[item_id].append(hit)
+            source_ref = next(
+                (
+                    source_ref
+                    for source_ref in [hit.item.source, *hit.highlights]
+                    if source_ref.locator is not None
+                ),
+                None,
+            )
+            locator = source_ref.locator if source_ref is not None else None
+            if locator is not None:
+                dedupe_key = "source_span:" + _compact_json(
+                    {
+                        "asset_id": locator.asset_id,
+                        "revision_id": locator.revision_id,
+                        "document_id": locator.document_id,
+                        "element_id": locator.element_id,
+                        "chunk_id": locator.chunk_id,
+                        "page": locator.page,
+                        "bbox": locator.bbox,
+                        "char_start": locator.char_start,
+                        "char_end": locator.char_end,
+                        "sheet": locator.sheet,
+                        "cell_range": locator.cell_range,
+                        "slide": locator.slide,
+                    }
+                )
+            else:
+                dedupe_key = f"item:{hit.item.item_id}"
+            dedupe_keys_by_hit[id(hit)] = dedupe_key
+            if dedupe_key not in grouped_hits:
+                grouped_hits[dedupe_key] = []
+                first_seen_keys.append(dedupe_key)
+            grouped_hits[dedupe_key].append(hit)
             if strategy == "reciprocal_rank_fusion":
-                fusion_scores[item_id] = fusion_scores.get(item_id, 0.0) + weight / (k + hit.rank)
+                fusion_scores[dedupe_key] = (
+                    fusion_scores.get(dedupe_key, 0.0) + weight / (k + hit.rank)
+                )
             elif strategy == "weighted_rank":
-                fusion_scores[item_id] = fusion_scores.get(item_id, 0.0) + weight / max(hit.rank, 1)
+                fusion_scores[dedupe_key] = (
+                    fusion_scores.get(dedupe_key, 0.0) + weight / max(hit.rank, 1)
+                )
             elif strategy == "normalized_score":
-                fusion_scores[item_id] = (
-                    fusion_scores.get(item_id, 0.0) + weight * (hit.normalized_score or 0.0)
+                fusion_scores[dedupe_key] = (
+                    fusion_scores.get(dedupe_key, 0.0) + weight * (hit.normalized_score or 0.0)
                 )
 
     if strategy == "concatenate":
-        ordered_item_ids = first_seen_item_ids
+        ordered_keys = first_seen_keys
         score_kind = "concatenate"
         max_score = None
     elif strategy == "interleave":
         sorted_hit_sets = [sorted(hit_set, key=lambda hit: (hit.rank, hit.hit_id)) for hit_set in hit_sets]
-        ordered_item_ids = []
-        seen_item_ids: set[str] = set()
+        ordered_keys = []
+        seen_keys: set[str] = set()
         max_len = max((len(hit_set) for hit_set in sorted_hit_sets), default=0)
         for index in range(max_len):
             for hit_set in sorted_hit_sets:
                 if index >= len(hit_set):
                     continue
-                item_id = hit_set[index].item.item_id
-                if item_id in seen_item_ids:
+                dedupe_key = dedupe_keys_by_hit[id(hit_set[index])]
+                if dedupe_key in seen_keys:
                     continue
-                ordered_item_ids.append(item_id)
-                seen_item_ids.add(item_id)
+                ordered_keys.append(dedupe_key)
+                seen_keys.add(dedupe_key)
         score_kind = "interleave"
         max_score = None
     else:
-        ordered_item_ids = sorted(
+        ordered_keys = sorted(
             grouped_hits,
-            key=lambda item_id: (
-                -fusion_scores.get(item_id, 0.0),
-                min(hit.rank for hit in grouped_hits[item_id]),
-                item_id,
+            key=lambda dedupe_key: (
+                -fusion_scores.get(dedupe_key, 0.0),
+                min(hit.rank for hit in grouped_hits[dedupe_key]),
+                dedupe_key,
             ),
         )
         score_kind = strategy
-        max_score = fusion_scores.get(ordered_item_ids[0]) if ordered_item_ids else None
+        max_score = fusion_scores.get(ordered_keys[0]) if ordered_keys else None
 
     fused_hits: list[SearchHit] = []
-    for rank, item_id in enumerate(ordered_item_ids, start=1):
-        source_hits = grouped_hits[item_id]
+    for rank, dedupe_key in enumerate(ordered_keys, start=1):
+        source_hits = grouped_hits[dedupe_key]
         representative = source_hits[0]
         source_hit_ids = [hit.hit_id for hit in source_hits]
         source_ranks = {hit.retriever: hit.rank for hit in source_hits}
@@ -545,17 +578,18 @@ def fuse_search_hits(
                 "source_hit_ids": source_hit_ids,
                 "source_ranks": source_ranks,
                 "fusion_strategy": strategy,
+                "dedupe_key": dedupe_key,
             }
         )
         raw_score = (
-            fusion_scores.get(item_id)
+            fusion_scores.get(dedupe_key)
             if strategy in {"reciprocal_rank_fusion", "weighted_rank", "normalized_score"}
             else None
         )
         metadata["fusion_score"] = raw_score
         fused_hits.append(
             SearchHit(
-                hit_id=f"{retriever_id}:{item_id}",
+                hit_id=f"{retriever_id}:{representative.item.item_id}",
                 item=representative.item,
                 rank=rank,
                 retriever=retriever_id,

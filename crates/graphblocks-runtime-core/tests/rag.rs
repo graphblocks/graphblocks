@@ -455,6 +455,57 @@ fn fuse_search_hits_uses_reciprocal_rank_fusion_and_preserves_source_ranks() {
 }
 
 #[test]
+fn fuse_search_hits_deduplicates_equivalent_source_spans() {
+    let keyword_hit = hit_from("kw-a", "chunk-a", "doc-1", "chunk-a", 1, "keyword");
+    let provider_source = SourceRef::document_chunk(
+        "provider-chunk-a",
+        "rev-1",
+        "sha256:content",
+        DocumentSpan::new("asset-1", "rev-1", "doc-1").with_chunk_id("chunk-a"),
+    );
+    let mut provider_metadata = BTreeMap::new();
+    provider_metadata.insert("document_id".to_owned(), json!("doc-1"));
+    let provider_hit = SearchHit::new(
+        "provider-a",
+        KnowledgeItemRef::new(
+            "provider-chunk-a",
+            "document_chunk",
+            provider_source.clone(),
+        )
+        .with_preview(["provider copy"])
+        .with_metadata(provider_metadata),
+        1,
+        "provider",
+    )
+    .with_highlights([provider_source]);
+
+    let fused = fuse_search_hits(
+        &[vec![keyword_hit], vec![provider_hit]],
+        FusionOptions::new()
+            .with_strategy(FusionStrategy::ReciprocalRankFusion)
+            .with_retriever_id("fused"),
+    )
+    .expect("fusion succeeds");
+
+    assert_eq!(
+        fused
+            .iter()
+            .map(|hit| hit.item.item_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["chunk-a"]
+    );
+    assert_eq!(
+        fused[0].metadata["source_hit_ids"],
+        json!(["kw-a", "provider-a"])
+    );
+    assert!(
+        fused[0].metadata["dedupe_key"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("source_span:"))
+    );
+}
+
+#[test]
 fn fuse_search_hits_supports_weighted_rank_strategy() {
     let keyword_hits = vec![
         hit_from("kw-a", "chunk-a", "doc-1", "chunk-a", 1, "keyword"),

@@ -61,6 +61,43 @@ def test_fuse_search_hits_concatenate_keeps_first_duplicate() -> None:
     assert fused[0].metadata["source_hit_ids"] == ["kw-a", "dense-a"]
 
 
+def test_fuse_search_hits_deduplicates_equivalent_source_spans() -> None:
+    keyword_hit = _hit("kw-a", "chunk-a", 1, "keyword")
+    provider_source = SourceRef(
+        source_id="provider-chunk-a",
+        source_kind="document_chunk",
+        locator=DocumentSpan(
+            asset_id="asset-1",
+            revision_id="rev-1",
+            document_id="doc-1",
+            chunk_id="chunk-a",
+        ),
+    )
+    provider_hit = SearchHit(
+        hit_id="provider-a",
+        item=KnowledgeItemRef(
+            item_id="provider-chunk-a",
+            item_kind="document_chunk",
+            source=provider_source,
+            preview=["provider copy"],
+            metadata={"document_id": "doc-1"},
+        ),
+        rank=1,
+        retriever="provider",
+        highlights=[provider_source],
+    )
+
+    fused = fuse_search_hits(
+        [[keyword_hit], [provider_hit]],
+        strategy="reciprocal_rank_fusion",
+        retriever_id="fused",
+    )
+
+    assert [hit.item.item_id for hit in fused] == ["chunk-a"]
+    assert fused[0].metadata["source_hit_ids"] == ["kw-a", "provider-a"]
+    assert fused[0].metadata["dedupe_key"].startswith("source_span:")
+
+
 def test_fuse_search_hits_rejects_unknown_strategy() -> None:
     with pytest.raises(ValueError):
         fuse_search_hits([], strategy="unknown")

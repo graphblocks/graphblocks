@@ -1433,8 +1433,37 @@ pub fn fuse_search_hits(
         return Err(RagError::WeightCountMismatch);
     }
 
+    let dedupe_key_for = |hit: &SearchHit| -> String {
+        let locator = std::iter::once(&hit.item.source)
+            .chain(hit.highlights.iter())
+            .find_map(|source| source.locator.as_ref());
+        locator.map_or_else(
+            || format!("item:{}", hit.item.item_id),
+            |locator| {
+                format!(
+                    "source_span:{}",
+                    serde_json::to_string(&json!({
+                        "asset_id": &locator.asset_id,
+                        "revision_id": &locator.revision_id,
+                        "document_id": &locator.document_id,
+                        "element_id": &locator.element_id,
+                        "chunk_id": &locator.chunk_id,
+                        "page": locator.page,
+                        "bbox": &locator.bbox,
+                        "char_start": locator.char_start,
+                        "char_end": locator.char_end,
+                        "sheet": &locator.sheet,
+                        "cell_range": &locator.cell_range,
+                        "slide": locator.slide,
+                    }))
+                    .expect("source span should serialize")
+                )
+            },
+        )
+    };
+
     let mut grouped_hits: BTreeMap<String, Vec<SearchHit>> = BTreeMap::new();
-    let mut first_seen_item_ids = Vec::new();
+    let mut first_seen_keys = Vec::new();
     let mut fusion_scores: BTreeMap<String, f64> = BTreeMap::new();
     for (set_index, hit_set) in hit_sets.iter().enumerate() {
         let weight = options
@@ -1444,11 +1473,12 @@ pub fn fuse_search_hits(
             .copied()
             .unwrap_or(1.0);
         for hit in hit_set {
-            if !grouped_hits.contains_key(&hit.item.item_id) {
-                first_seen_item_ids.push(hit.item.item_id.clone());
+            let dedupe_key = dedupe_key_for(hit);
+            if !grouped_hits.contains_key(&dedupe_key) {
+                first_seen_keys.push(dedupe_key.clone());
             }
             grouped_hits
-                .entry(hit.item.item_id.clone())
+                .entry(dedupe_key.clone())
                 .or_default()
                 .push(hit.clone());
             let score = match options.strategy {
@@ -1462,13 +1492,13 @@ pub fn fuse_search_hits(
                 FusionStrategy::Concatenate | FusionStrategy::Interleave => None,
             };
             if let Some(score) = score {
-                *fusion_scores.entry(hit.item.item_id.clone()).or_insert(0.0) += score;
+                *fusion_scores.entry(dedupe_key).or_insert(0.0) += score;
             }
         }
     }
 
-    let (ordered_item_ids, score_kind, max_score) = match options.strategy {
-        FusionStrategy::Concatenate => (first_seen_item_ids, "concatenate", None),
+    let (ordered_keys, score_kind, max_score) = match options.strategy {
+        FusionStrategy::Concatenate => (first_seen_keys, "concatenate", None),
         FusionStrategy::Interleave => {
             let mut sorted_hit_sets = hit_sets
                 .iter()
@@ -1487,24 +1517,25 @@ pub fn fuse_search_hits(
                 .map(|hit_set| hit_set.len())
                 .max()
                 .unwrap_or(0);
-            let mut item_ids = Vec::new();
-            let mut seen_item_ids = BTreeSet::new();
+            let mut keys = Vec::new();
+            let mut seen_keys = BTreeSet::new();
             for index in 0..max_len {
                 for hit_set in &mut sorted_hit_sets {
                     if let Some(hit) = hit_set.get(index) {
-                        if seen_item_ids.insert(hit.item.item_id.clone()) {
-                            item_ids.push(hit.item.item_id.clone());
+                        let dedupe_key = dedupe_key_for(hit);
+                        if seen_keys.insert(dedupe_key.clone()) {
+                            keys.push(dedupe_key);
                         }
                     }
                 }
             }
-            (item_ids, "interleave", None)
+            (keys, "interleave", None)
         }
         FusionStrategy::ReciprocalRankFusion
         | FusionStrategy::WeightedRank
         | FusionStrategy::NormalizedScore => {
-            let mut item_ids = grouped_hits.keys().cloned().collect::<Vec<_>>();
-            item_ids.sort_by(|left, right| {
+            let mut keys = grouped_hits.keys().cloned().collect::<Vec<_>>();
+            keys.sort_by(|left, right| {
                 let left_score = fusion_scores.get(left).copied().unwrap_or(0.0);
                 let right_score = fusion_scores.get(right).copied().unwrap_or(0.0);
                 right_score
@@ -1525,9 +1556,9 @@ pub fn fuse_search_hits(
                     })
                     .then_with(|| left.cmp(right))
             });
-            let max_score = item_ids
+            let max_score = keys
                 .first()
-                .and_then(|item_id| fusion_scores.get(item_id))
+                .and_then(|dedupe_key| fusion_scores.get(dedupe_key))
                 .copied();
             let score_kind = match options.strategy {
                 FusionStrategy::ReciprocalRankFusion => "reciprocal_rank_fusion",
@@ -1535,13 +1566,13 @@ pub fn fuse_search_hits(
                 FusionStrategy::NormalizedScore => "normalized_score",
                 FusionStrategy::Concatenate | FusionStrategy::Interleave => unreachable!(),
             };
-            (item_ids, score_kind, max_score)
+            (keys, score_kind, max_score)
         }
     };
 
     let mut fused_hits = Vec::new();
-    for (rank, item_id) in ordered_item_ids.iter().enumerate() {
-        let source_hits = &grouped_hits[item_id];
+    for (rank, dedupe_key) in ordered_keys.iter().enumerate() {
+        let source_hits = &grouped_hits[dedupe_key];
         let representative = &source_hits[0];
         let mut metadata = representative.metadata.clone();
         metadata.insert(
@@ -1568,10 +1599,11 @@ pub fn fuse_search_hits(
                 FusionStrategy::Interleave => "interleave",
             }),
         );
+        metadata.insert("dedupe_key".to_owned(), json!(dedupe_key));
         let raw_score = match options.strategy {
             FusionStrategy::ReciprocalRankFusion
             | FusionStrategy::WeightedRank
-            | FusionStrategy::NormalizedScore => fusion_scores.get(item_id).copied(),
+            | FusionStrategy::NormalizedScore => fusion_scores.get(dedupe_key).copied(),
             FusionStrategy::Concatenate | FusionStrategy::Interleave => None,
         };
         metadata.insert(
@@ -1594,7 +1626,7 @@ pub fn fuse_search_hits(
             }
         }
         let mut fused = SearchHit::new(
-            format!("{}:{item_id}", options.retriever_id),
+            format!("{}:{}", options.retriever_id, representative.item.item_id),
             representative.item.clone(),
             rank + 1,
             &options.retriever_id,
