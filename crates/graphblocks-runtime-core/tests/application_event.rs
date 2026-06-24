@@ -596,6 +596,21 @@ fn application_event_stream_state_discards_late_output_after_cutoff() {
         "sha256:replacement",
     )
     .expect("replacement response event is valid");
+    let late_tool_draft = ApplicationEvent::tool_call_draft(
+        metadata(),
+        &ToolCallDraft::proposed("response-1", "call-draft", "ticket.create"),
+    )
+    .expect("tool draft event is valid");
+    let replacement_tool_draft = ApplicationEvent::tool_call_draft(
+        ApplicationEventMetadata {
+            event_id: "event-replacement-tool".to_owned(),
+            response_id: "response-2".to_owned(),
+            sequence: 8,
+            ..metadata()
+        },
+        &ToolCallDraft::proposed("response-2", "call-replacement", "knowledge.search"),
+    )
+    .expect("replacement tool draft event is valid");
     let denied_tool = ApplicationEvent::tool(
         ApplicationEventKind::ToolCallDenied,
         metadata(),
@@ -614,9 +629,14 @@ fn application_event_stream_state_discards_late_output_after_cutoff() {
         Some(cutoff_events[1].clone())
     );
     assert_eq!(state.accept(late_output), None);
+    assert_eq!(state.accept(late_tool_draft), None);
     assert_eq!(
         state.accept(replacement_response.clone()),
         Some(replacement_response)
+    );
+    assert_eq!(
+        state.accept(replacement_tool_draft.clone()),
+        Some(replacement_tool_draft)
     );
     assert_eq!(state.accept(denied_tool.clone()), Some(denied_tool));
     assert_eq!(
@@ -629,6 +649,7 @@ fn application_event_stream_state_discards_late_output_after_cutoff() {
             ApplicationEventKind::OutputCutoff,
             ApplicationEventKind::AssistantRetracted,
             ApplicationEventKind::OutputPolicyEvaluationStarted,
+            ApplicationEventKind::ToolCallProposed,
             ApplicationEventKind::ToolCallDenied,
         ]
     );

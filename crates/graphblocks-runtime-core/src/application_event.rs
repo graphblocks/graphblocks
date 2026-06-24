@@ -651,6 +651,14 @@ impl ApplicationEventStreamState {
             ) {
                 return None;
             }
+            if matches!(
+                event.kind,
+                ApplicationEventKind::ToolCallProposed
+                    | ApplicationEventKind::ToolCallArgumentsDelta
+                    | ApplicationEventKind::ToolCallArgumentsCompleted
+            ) {
+                return None;
+            }
         }
 
         self.accepted_events.push(event.clone());

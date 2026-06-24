@@ -427,6 +427,23 @@ def test_application_event_stream_state_discards_late_output_after_cutoff() -> N
         GenerationChunk.text("stream-1", "response-2", 1, "replacement"),
         input_digest="sha256:replacement",
     )
+    late_tool_draft = ApplicationEvent.tool_call_draft(
+        _metadata(),
+        ToolCallDraft.proposed("response-1", "call-draft", "ticket.create"),
+    )
+    replacement_tool_draft = ApplicationEvent.tool_call_draft(
+        ApplicationEventMetadata(
+            event_id="event-replacement-tool",
+            run_id="run-1",
+            response_id="response-2",
+            turn_id="turn-1",
+            sequence=8,
+            release_id="release-1",
+            policy_snapshot_id="policy-1",
+            occurred_at="2026-06-23T00:00:02Z",
+        ),
+        ToolCallDraft.proposed("response-2", "call-replacement", "knowledge.search"),
+    )
     denied_tool = ApplicationEvent.tool(
         "ToolCallDenied",
         _metadata(),
@@ -437,12 +454,15 @@ def test_application_event_stream_state_discards_late_output_after_cutoff() -> N
     assert state.accept(cutoff_event) == cutoff_event
     assert state.accept(retraction_event) == retraction_event
     assert state.accept(late_output) is None
+    assert state.accept(late_tool_draft) is None
     assert state.accept(replacement_response) == replacement_response
+    assert state.accept(replacement_tool_draft) == replacement_tool_draft
     assert state.accept(denied_tool) == denied_tool
     assert [event.kind for event in state.accepted_events] == [
         "OutputCutoff",
         "AssistantRetracted",
         "OutputPolicyEvaluationStarted",
+        "ToolCallProposed",
         "ToolCallDenied",
     ]
 

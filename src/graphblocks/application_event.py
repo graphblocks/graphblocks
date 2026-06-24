@@ -77,6 +77,14 @@ TOOL_APPLICATION_EVENT_KINDS: frozenset[ApplicationEventKind] = frozenset(
     )
 )
 
+TOOL_DRAFT_APPLICATION_EVENT_KINDS: frozenset[ApplicationEventKind] = frozenset(
+    (
+        "ToolCallProposed",
+        "ToolCallArgumentsDelta",
+        "ToolCallArgumentsCompleted",
+    )
+)
+
 
 class ApplicationEventError(RuntimeError):
     pass
@@ -475,6 +483,8 @@ class ApplicationEventStreamState:
             if isinstance(chunk_sequence, int):
                 return None
             if str(event.kind).startswith("OutputPolicy"):
+                return None
+            if event.kind in TOOL_DRAFT_APPLICATION_EVENT_KINDS:
                 return None
 
         self.accepted_events.append(event)
