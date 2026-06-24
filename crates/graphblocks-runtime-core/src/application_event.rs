@@ -16,6 +16,10 @@ use serde_json::{Value, json};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ApplicationEventKind {
+    RunStarted,
+    RunSucceeded,
+    RunFailed,
+    RunCancelled,
     ToolCallProposed,
     ToolCallArgumentsDelta,
     ToolCallArgumentsCompleted,
@@ -43,6 +47,10 @@ pub enum ApplicationEventKind {
 impl ApplicationEventKind {
     pub fn as_str(&self) -> &'static str {
         match self {
+            Self::RunStarted => "RunStarted",
+            Self::RunSucceeded => "RunSucceeded",
+            Self::RunFailed => "RunFailed",
+            Self::RunCancelled => "RunCancelled",
             Self::ToolCallProposed => "ToolCallProposed",
             Self::ToolCallArgumentsDelta => "ToolCallArgumentsDelta",
             Self::ToolCallArgumentsCompleted => "ToolCallArgumentsCompleted",

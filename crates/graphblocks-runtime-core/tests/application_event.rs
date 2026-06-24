@@ -37,6 +37,10 @@ fn metadata() -> ApplicationEventMetadata {
 #[test]
 fn standard_event_names_match_the_tool_and_output_policy_contract() {
     let names = [
+        ApplicationEventKind::RunStarted.as_str(),
+        ApplicationEventKind::RunSucceeded.as_str(),
+        ApplicationEventKind::RunFailed.as_str(),
+        ApplicationEventKind::RunCancelled.as_str(),
         ApplicationEventKind::ToolCallProposed.as_str(),
         ApplicationEventKind::ToolCallArgumentsDelta.as_str(),
         ApplicationEventKind::ToolCallArgumentsCompleted.as_str(),
@@ -64,6 +68,10 @@ fn standard_event_names_match_the_tool_and_output_policy_contract() {
     assert_eq!(
         names,
         [
+            "RunStarted",
+            "RunSucceeded",
+            "RunFailed",
+            "RunCancelled",
             "ToolCallProposed",
             "ToolCallArgumentsDelta",
             "ToolCallArgumentsCompleted",
@@ -88,6 +96,23 @@ fn standard_event_names_match_the_tool_and_output_policy_contract() {
             "AssistantRetracted"
         ]
     );
+}
+
+#[test]
+fn run_events_use_the_common_application_event_envelope() {
+    let event = ApplicationEvent::new(
+        ApplicationEventKind::RunStarted,
+        metadata(),
+        json!({"status": "running"}),
+    )
+    .expect("run event is valid");
+
+    assert_eq!(event.kind, ApplicationEventKind::RunStarted);
+    assert_eq!(event.tool_call_id, None);
+    assert_eq!(event.metadata.run_id, "run-1");
+    assert_eq!(event.metadata.release_id, "release-1");
+    assert_eq!(event.metadata.policy_snapshot_id, "policy-1");
+    assert_eq!(event.payload, json!({"status": "running"}));
 }
 
 #[test]
