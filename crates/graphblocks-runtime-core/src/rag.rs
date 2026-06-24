@@ -1480,6 +1480,22 @@ pub fn build_answer_from_model_response(
     answer_id: impl Into<String>,
     model_response: &Value,
 ) -> Result<Answer, RagError> {
+    build_answer_from_model_response_inner(answer_id.into(), model_response, None)
+}
+
+pub fn build_answer_from_model_response_with_context(
+    answer_id: impl Into<String>,
+    model_response: &Value,
+    context: &ContextPack,
+) -> Result<Answer, RagError> {
+    build_answer_from_model_response_inner(answer_id.into(), model_response, Some(context))
+}
+
+fn build_answer_from_model_response_inner(
+    answer_id: String,
+    model_response: &Value,
+    context: Option<&ContextPack>,
+) -> Result<Answer, RagError> {
     let text = model_response
         .get("output_text")
         .and_then(Value::as_str)
@@ -1518,6 +1534,47 @@ pub fn build_answer_from_model_response(
             answer
                 .claims
                 .push(Claim::new(claim_id, claim_text).with_citation_ids(citation_ids));
+        }
+    }
+    if let Some(citations) = model_response.get("citations").and_then(Value::as_array) {
+        let context = context.ok_or_else(|| RagError::InvalidModelResponse {
+            message: "model_response citations require context for source resolution".to_owned(),
+        })?;
+        for citation_value in citations {
+            let citation_id = citation_value
+                .get("citation_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| RagError::InvalidModelResponse {
+                    message:
+                        "model_response citations must contain string citation_id and source_id"
+                            .to_owned(),
+                })?;
+            let source_id = citation_value
+                .get("source_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| RagError::InvalidModelResponse {
+                    message:
+                        "model_response citations must contain string citation_id and source_id"
+                            .to_owned(),
+                })?;
+            let source = context
+                .hits
+                .iter()
+                .flat_map(|hit| std::iter::once(&hit.item.source).chain(hit.highlights.iter()))
+                .find(|source| source.source_id == source_id)
+                .cloned()
+                .ok_or_else(|| RagError::InvalidModelResponse {
+                    message: format!("citation source '{source_id}' was not found in context"),
+                })?;
+            let mut citation = Citation::new(citation_id, source);
+            if let Some(claim_id) = citation_value.get("claim_id").and_then(Value::as_str) {
+                citation.claim_id = Some(claim_id.to_owned());
+            }
+            if let Some(cited_text) = citation_value.get("cited_text").and_then(Value::as_str) {
+                citation.cited_text = Some(cited_text.to_owned());
+            }
+            citation.confidence = citation_value.get("confidence").and_then(Value::as_f64);
+            answer.citations.push(citation);
         }
     }
     answer.metadata.insert(

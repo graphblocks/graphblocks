@@ -455,7 +455,12 @@ def render_context_pack(context: ContextPack) -> str:
     return "\n".join(lines)
 
 
-def build_answer_from_model_response(answer_id: str, model_response: dict[str, object]) -> Answer:
+def build_answer_from_model_response(
+    answer_id: str,
+    model_response: dict[str, object],
+    *,
+    context: ContextPack | None = None,
+) -> Answer:
     text = model_response.get("output_text")
     if not isinstance(text, str):
         text = model_response.get("text")
@@ -488,6 +493,49 @@ def build_answer_from_model_response(answer_id: str, model_response: dict[str, o
                 )
             )
 
+    citations: list[Citation] = []
+    raw_citations = model_response.get("citations", [])
+    if raw_citations is not None and not isinstance(raw_citations, list):
+        raise ValueError("model_response citations must be a list when present")
+    if isinstance(raw_citations, list) and raw_citations:
+        if context is None:
+            raise ValueError("model_response citations require context for source resolution")
+        for raw_citation in raw_citations:
+            if not isinstance(raw_citation, dict):
+                raise ValueError("model_response citations must contain mapping items")
+            citation_id = raw_citation.get("citation_id")
+            source_id = raw_citation.get("source_id")
+            if not isinstance(citation_id, str) or not isinstance(source_id, str):
+                raise ValueError(
+                    "model_response citations must contain string citation_id and source_id"
+                )
+            source = None
+            for hit in context.hits:
+                for source_ref in [hit.item.source, *hit.highlights]:
+                    if source_ref.source_id == source_id:
+                        source = source_ref
+                        break
+                if source is not None:
+                    break
+            if source is None:
+                raise ValueError(f"citation source {source_id!r} was not found in context")
+            claim_id = raw_citation.get("claim_id")
+            cited_text = raw_citation.get("cited_text")
+            confidence = raw_citation.get("confidence")
+            citations.append(
+                Citation(
+                    citation_id=citation_id,
+                    source=source,
+                    claim_id=claim_id if isinstance(claim_id, str) else None,
+                    cited_text=cited_text if isinstance(cited_text, str) else None,
+                    confidence=(
+                        float(confidence)
+                        if isinstance(confidence, int | float)
+                        else None
+                    ),
+                )
+            )
+
     metadata: dict[str, object] = {
         "model_response_digest": canonical_hash(model_response),
     }
@@ -498,7 +546,13 @@ def build_answer_from_model_response(answer_id: str, model_response: dict[str, o
         value = model_response.get(key)
         if isinstance(value, str):
             metadata[key] = value
-    return Answer(answer_id=answer_id, text=text, claims=claims, metadata=metadata)
+    return Answer(
+        answer_id=answer_id,
+        text=text,
+        claims=claims,
+        citations=citations,
+        metadata=metadata,
+    )
 
 
 def build_abstention_answer(

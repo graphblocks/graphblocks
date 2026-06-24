@@ -11,9 +11,10 @@ use graphblocks_runtime_core::rag::{
     KnowledgeItemRef, KnowledgeRecordStatus, QueryPlan, RagError, RagResultBundle,
     RagResultPayload, RerankOptions, RetrievalResult, SearchHit, SearchRequest,
     authorize_search_hits, build_abstention_answer, build_answer_from_model_response,
-    build_context_pack, federated_retrieve, fuse_search_hits, knowledge_item_from_chunk,
-    render_context_pack, rerank_search_hits, resolve_citation_source_trace,
-    validate_answer_citation_authorization, validate_answer_citations, validate_answer_grounding,
+    build_answer_from_model_response_with_context, build_context_pack, federated_retrieve,
+    fuse_search_hits, knowledge_item_from_chunk, render_context_pack, rerank_search_hits,
+    resolve_citation_source_trace, validate_answer_citation_authorization,
+    validate_answer_citations, validate_answer_grounding,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -926,6 +927,89 @@ fn build_answer_from_model_response_preserves_structured_output_metadata()
     assert_eq!(answer.metadata["model"], json!("model-test"));
     assert_eq!(answer.metadata["finish_reason"], json!("stop"));
     Ok(())
+}
+
+#[test]
+fn build_answer_from_model_response_resolves_structured_citations_from_context()
+-> Result<(), Box<dyn std::error::Error>> {
+    let context = ContextPack::new(
+        "ctx-1",
+        vec![hit(
+            "hit-1",
+            "chunk-1",
+            "doc-1",
+            "Alpha policy requires audit logs.",
+            1,
+        )],
+    );
+    let model_response = json!({
+        "response_id": "response-1",
+        "output_text": "Alpha policy requires audit logs.",
+        "claims": [
+            {
+                "claim_id": "claim-1",
+                "text": "Alpha policy requires audit logs.",
+                "citation_ids": ["cite-1"],
+            }
+        ],
+        "citations": [
+            {
+                "citation_id": "cite-1",
+                "claim_id": "claim-1",
+                "source_id": "chunk-1",
+                "cited_text": "requires audit logs",
+                "confidence": 0.91,
+            }
+        ],
+    });
+
+    let answer =
+        build_answer_from_model_response_with_context("answer-1", &model_response, &context)?;
+
+    assert_eq!(
+        answer
+            .citations
+            .iter()
+            .map(|citation| citation.citation_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["cite-1"]
+    );
+    assert_eq!(answer.citations[0].claim_id.as_deref(), Some("claim-1"));
+    assert_eq!(answer.citations[0].source.source_id, "chunk-1");
+    assert_eq!(
+        answer.citations[0].cited_text.as_deref(),
+        Some("requires audit logs")
+    );
+    assert_eq!(answer.citations[0].confidence, Some(0.91));
+    Ok(())
+}
+
+#[test]
+fn build_answer_from_model_response_rejects_unknown_citation_source() {
+    let context = ContextPack::new(
+        "ctx-1",
+        vec![hit(
+            "hit-1",
+            "chunk-1",
+            "doc-1",
+            "Alpha policy requires audit logs.",
+            1,
+        )],
+    );
+    let error = build_answer_from_model_response_with_context(
+        "answer-1",
+        &json!({
+            "output_text": "Alpha policy requires audit logs.",
+            "citations": [{"citation_id": "cite-1", "source_id": "missing"}],
+        }),
+        &context,
+    )
+    .expect_err("answer assembly should reject citations outside context");
+
+    assert_eq!(
+        error.to_string(),
+        "citation source 'missing' was not found in context"
+    );
 }
 
 #[test]

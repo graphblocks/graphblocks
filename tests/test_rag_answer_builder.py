@@ -1,7 +1,44 @@
 from __future__ import annotations
 
 from graphblocks.canonical import canonical_hash
-from graphblocks.rag import build_abstention_answer, build_answer_from_model_response
+from graphblocks.documents import DocumentSpan, SourceRef
+from graphblocks.rag import (
+    ContextPack,
+    KnowledgeItemRef,
+    SearchHit,
+    build_abstention_answer,
+    build_answer_from_model_response,
+)
+
+
+def _context() -> ContextPack:
+    source = SourceRef(
+        source_id="chunk-1",
+        source_kind="document_chunk",
+        locator=DocumentSpan(
+            asset_id="asset-1",
+            revision_id="rev-1",
+            document_id="doc-1",
+            chunk_id="chunk-1",
+        ),
+    )
+    return ContextPack(
+        context_id="ctx-1",
+        hits=[
+            SearchHit(
+                hit_id="hit-1",
+                item=KnowledgeItemRef(
+                    item_id="chunk-1",
+                    item_kind="document_chunk",
+                    source=source,
+                    preview=["Alpha policy requires audit logs."],
+                ),
+                rank=1,
+                retriever="local",
+                highlights=[source],
+            )
+        ],
+    )
 
 
 def test_build_answer_from_model_response_preserves_structured_output_metadata() -> None:
@@ -31,6 +68,53 @@ def test_build_answer_from_model_response_preserves_structured_output_metadata()
     assert answer.metadata["provider"] == "scripted"
     assert answer.metadata["model"] == "model-test"
     assert answer.metadata["finish_reason"] == "stop"
+
+
+def test_build_answer_from_model_response_resolves_structured_citations_from_context() -> None:
+    model_response = {
+        "response_id": "response-1",
+        "output_text": "Alpha policy requires audit logs.",
+        "claims": [
+            {
+                "claim_id": "claim-1",
+                "text": "Alpha policy requires audit logs.",
+                "citation_ids": ["cite-1"],
+            }
+        ],
+        "citations": [
+            {
+                "citation_id": "cite-1",
+                "claim_id": "claim-1",
+                "source_id": "chunk-1",
+                "cited_text": "requires audit logs",
+                "confidence": 0.91,
+            }
+        ],
+    }
+
+    answer = build_answer_from_model_response("answer-1", model_response, context=_context())
+
+    assert [citation.citation_id for citation in answer.citations] == ["cite-1"]
+    assert answer.citations[0].claim_id == "claim-1"
+    assert answer.citations[0].source.source_id == "chunk-1"
+    assert answer.citations[0].cited_text == "requires audit logs"
+    assert answer.citations[0].confidence == 0.91
+
+
+def test_build_answer_from_model_response_rejects_unknown_citation_source() -> None:
+    try:
+        build_answer_from_model_response(
+            "answer-1",
+            {
+                "output_text": "Alpha policy requires audit logs.",
+                "citations": [{"citation_id": "cite-1", "source_id": "missing"}],
+            },
+            context=_context(),
+        )
+    except ValueError as error:
+        assert str(error) == "citation source 'missing' was not found in context"
+    else:
+        raise AssertionError("answer assembly should reject citations outside context")
 
 
 def test_build_answer_from_model_response_requires_text() -> None:
