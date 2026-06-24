@@ -385,11 +385,7 @@ def resolve_citation_source_trace(answer: Answer, context: ContextPack, citation
 
     for hit in context.hits:
         for source_ref in [hit.item.source, *hit.highlights]:
-            if (
-                source_ref.source_id == citation.source.source_id
-                and (citation.source.revision is None or citation.source.revision == source_ref.revision)
-                and (citation.source.digest is None or citation.source.digest == source_ref.digest)
-            ):
+            if _source_ref_matches(citation.source, source_ref):
                 raw_element_ids = hit.item.metadata.get("element_ids")
                 element_ids = [item for item in raw_element_ids if isinstance(item, str)] if isinstance(raw_element_ids, list) else []
                 if not element_ids and source_ref.locator is not None and source_ref.locator.element_id is not None:
@@ -426,11 +422,7 @@ def validate_answer_citation_authorization(
         has_authorized_source = False
         for hit in context.hits:
             for source_ref in [hit.item.source, *hit.highlights]:
-                if (
-                    source_ref.source_id == citation.source.source_id
-                    and (citation.source.revision is None or citation.source.revision == source_ref.revision)
-                    and (citation.source.digest is None or citation.source.digest == source_ref.digest)
-                ):
+                if _source_ref_matches(citation.source, source_ref):
                     matched_context_source = True
                     if _acl_allows(hit.hit_id, hit.item.acl, auth):
                         has_authorized_source = True
@@ -469,7 +461,7 @@ def validate_answer_citations(
     severity: Literal["warning", "error"] = "warning" if failure_policy == "warn" else "error"
     issues: list[CitationValidationIssue] = []
     citations_by_id: dict[str, Citation] = {}
-    context_source_texts: dict[tuple[str, str | None, str | None], str] = {}
+    context_source_texts: list[tuple[SourceRef, str]] = []
 
     for citation in answer.citations:
         if citation.citation_id in citations_by_id:
@@ -487,10 +479,7 @@ def validate_answer_citations(
     for hit in context.hits:
         preview_text = "\n".join(hit.item.preview)
         for source_ref in [hit.item.source, *hit.highlights]:
-            context_source_texts.setdefault(
-                (source_ref.source_id, source_ref.revision, source_ref.digest),
-                preview_text,
-            )
+            context_source_texts.append((source_ref, preview_text))
 
     for claim in answer.claims:
         if require_citations and claim.text.strip() and not claim.citation_ids:
@@ -532,10 +521,8 @@ def validate_answer_citations(
     for citation in answer.citations:
         matching_texts = [
             text
-            for (source_id, revision, digest), text in context_source_texts.items()
-            if source_id == citation.source.source_id
-            and (citation.source.revision is None or citation.source.revision == revision)
-            and (citation.source.digest is None or citation.source.digest == digest)
+            for source_ref, text in context_source_texts
+            if _source_ref_matches(citation.source, source_ref)
         ]
         if not matching_texts:
             issues.append(
@@ -574,6 +561,44 @@ def validate_answer_citations(
             ),
         )
     return CitationValidationResult(ok=False, issues=issues)
+
+
+def _source_ref_matches(citation_source: SourceRef, context_source: SourceRef) -> bool:
+    if citation_source.source_id != context_source.source_id:
+        return False
+    if citation_source.revision is not None and citation_source.revision != context_source.revision:
+        return False
+    if citation_source.digest is not None and citation_source.digest != context_source.digest:
+        return False
+    return _locator_matches(citation_source.locator, context_source.locator)
+
+
+def _locator_matches(citation_locator: DocumentSpan | None, context_locator: DocumentSpan | None) -> bool:
+    if citation_locator is None:
+        return True
+    if context_locator is None:
+        return False
+    if citation_locator.asset_id != context_locator.asset_id:
+        return False
+    if citation_locator.revision_id != context_locator.revision_id:
+        return False
+    if citation_locator.document_id != context_locator.document_id:
+        return False
+    for attribute in (
+        "element_id",
+        "chunk_id",
+        "page",
+        "bbox",
+        "char_start",
+        "char_end",
+        "sheet",
+        "cell_range",
+        "slide",
+    ):
+        expected = getattr(citation_locator, attribute)
+        if expected is not None and expected != getattr(context_locator, attribute):
+            return False
+    return True
 
 
 def _acl_allows(resource_id: str, acl: dict[str, object] | None, auth: AuthContext | None) -> bool:

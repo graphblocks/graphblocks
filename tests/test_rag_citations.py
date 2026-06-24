@@ -49,6 +49,33 @@ def test_validate_answer_citations_accepts_current_context_source() -> None:
     assert result.abstention is None
 
 
+def test_validate_answer_citations_rejects_wrong_locator_on_matching_source() -> None:
+    context = _single_hit_context()
+    source = context.hits[0].item.source
+    assert source.locator is not None
+    wrong_source = replace(
+        source,
+        locator=replace(source.locator, chunk_id="wrong-chunk"),
+    )
+    citation = Citation(
+        citation_id="cite-1",
+        source=wrong_source,
+        cited_text="requires audit logs",
+    )
+    answer = Answer(
+        answer_id="answer-1",
+        text="Alpha policy requires audit logs.",
+        claims=[Claim(claim_id="claim-1", text="Alpha policy requires audit logs.", citation_ids=["cite-1"])],
+        citations=[citation],
+    )
+
+    result = validate_answer_citations(answer, context)
+
+    assert result.ok is False
+    assert [issue.code for issue in result.issues] == ["citation.source_not_in_context"]
+    assert result.issues[0].citation_id == "cite-1"
+
+
 def test_resolve_citation_source_trace_links_citation_to_context_hit_and_document_span() -> None:
     context = _single_hit_context()
     hit = replace(
@@ -84,6 +111,34 @@ def test_resolve_citation_source_trace_links_citation_to_context_hit_and_documen
     assert trace.locator.revision_id == hit.item.source.locator.revision_id
     assert trace.locator.document_id == hit.item.source.locator.document_id
     assert trace.locator.chunk_id == hit.item.item_id
+
+
+def test_resolve_citation_source_trace_rejects_wrong_locator_on_matching_source() -> None:
+    context = _single_hit_context()
+    source = context.hits[0].item.source
+    assert source.locator is not None
+    wrong_source = replace(
+        source,
+        locator=replace(source.locator, chunk_id="wrong-chunk"),
+    )
+    citation = Citation(
+        citation_id="cite-1",
+        source=wrong_source,
+        cited_text="requires audit logs",
+    )
+    answer = Answer(
+        answer_id="answer-1",
+        text="Alpha policy requires audit logs.",
+        claims=[Claim(claim_id="claim-1", text="Alpha policy requires audit logs.", citation_ids=["cite-1"])],
+        citations=[citation],
+    )
+
+    try:
+        resolve_citation_source_trace(answer, context, "cite-1")
+    except ValueError as error:
+        assert str(error) == "citation 'cite-1' does not point to the current context"
+    else:
+        raise AssertionError("wrong citation locator should not resolve to the context hit")
 
 
 def test_validate_answer_citations_rejects_uncited_claim_when_required() -> None:

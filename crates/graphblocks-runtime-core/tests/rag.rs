@@ -543,6 +543,46 @@ fn validate_answer_citations_accepts_current_context_source() {
 }
 
 #[test]
+fn validate_answer_citations_rejects_wrong_locator_on_matching_source() {
+    let context = build_context_pack(
+        "ctx-1",
+        vec![hit(
+            "hit-1",
+            "chunk-1",
+            "doc-1",
+            "Alpha policy requires audit logs.",
+            1,
+        )],
+        ContextBuildOptions::new(10),
+    )
+    .expect("context build succeeds");
+    let mut wrong_source = context.hits[0].item.source.clone();
+    wrong_source.locator =
+        Some(DocumentSpan::new("asset-1", "rev-1", "doc-1").with_chunk_id("wrong-chunk"));
+    let citation = Citation::new("cite-1", wrong_source).with_cited_text("requires audit logs");
+    let answer = Answer::new("answer-1", "Alpha policy requires audit logs.")
+        .with_claim(
+            Claim::new("claim-1", "Alpha policy requires audit logs.")
+                .with_citation_ids(["cite-1"]),
+        )
+        .with_citation(citation);
+
+    let result = validate_answer_citations(&answer, &context, true, FailurePolicy::Fail)
+        .expect("citation validation succeeds");
+
+    assert!(!result.ok);
+    assert_eq!(
+        result
+            .issues
+            .iter()
+            .map(|issue| issue.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["citation.source_not_in_context"]
+    );
+    assert_eq!(result.issues[0].citation_id.as_deref(), Some("cite-1"));
+}
+
+#[test]
 fn resolve_citation_source_trace_links_citation_to_context_hit_and_document_span()
 -> Result<(), Box<dyn std::error::Error>> {
     let source = SourceRef::document_chunk(
@@ -597,6 +637,47 @@ fn resolve_citation_source_trace_links_citation_to_context_hit_and_document_span
     assert_eq!(locator.chunk_id.as_deref(), Some("chunk-1"));
     assert_eq!((locator.char_start, locator.char_end), (Some(7), Some(31)));
     Ok(())
+}
+
+#[test]
+fn resolve_citation_source_trace_rejects_wrong_locator_on_matching_source() {
+    let source = SourceRef::document_chunk(
+        "chunk-1",
+        "rev-1",
+        "sha256:content",
+        DocumentSpan::new("asset-1", "rev-1", "doc-1").with_chunk_id("chunk-1"),
+    );
+    let context = ContextPack::new(
+        "ctx-1",
+        vec![
+            SearchHit::new(
+                "hit-1",
+                KnowledgeItemRef::new("chunk-1", "document_chunk", source.clone())
+                    .with_preview(["Alpha policy requires audit logs."]),
+                1,
+                "local",
+            )
+            .with_highlights([source.clone()]),
+        ],
+    );
+    let mut wrong_source = source;
+    wrong_source.locator =
+        Some(DocumentSpan::new("asset-1", "rev-1", "doc-1").with_chunk_id("wrong-chunk"));
+    let citation = Citation::new("cite-1", wrong_source).with_cited_text("requires audit logs");
+    let answer = Answer::new("answer-1", "Alpha policy requires audit logs.")
+        .with_claim(
+            Claim::new("claim-1", "Alpha policy requires audit logs.")
+                .with_citation_ids(["cite-1"]),
+        )
+        .with_citation(citation);
+
+    let error = resolve_citation_source_trace(&answer, &context, "cite-1")
+        .expect_err("wrong citation locator should not resolve to the context hit");
+
+    assert!(matches!(
+        error,
+        RagError::CitationSourceNotInContext { citation_id } if citation_id == "cite-1"
+    ));
 }
 
 #[test]

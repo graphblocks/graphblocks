@@ -1292,18 +1292,7 @@ pub fn resolve_citation_source_trace(
 
     for hit in &context.hits {
         for source_ref in std::iter::once(&hit.item.source).chain(hit.highlights.iter()) {
-            if source_ref.source_id == citation.source.source_id
-                && citation
-                    .source
-                    .revision
-                    .as_ref()
-                    .is_none_or(|expected| Some(expected) == source_ref.revision.as_ref())
-                && citation
-                    .source
-                    .digest
-                    .as_ref()
-                    .is_none_or(|expected| Some(expected) == source_ref.digest.as_ref())
-            {
+            if source_ref_matches(&citation.source, source_ref) {
                 let mut element_ids = hit
                     .item
                     .metadata
@@ -1360,8 +1349,7 @@ pub fn validate_answer_citations(
     };
     let mut issues = Vec::new();
     let mut citations_by_id: BTreeMap<String, &Citation> = BTreeMap::new();
-    let mut context_source_texts: BTreeMap<(String, Option<String>, Option<String>), String> =
-        BTreeMap::new();
+    let mut context_source_texts: Vec<(&SourceRef, String)> = Vec::new();
 
     for citation in &answer.citations {
         if citations_by_id.contains_key(&citation.citation_id) {
@@ -1384,13 +1372,7 @@ pub fn validate_answer_citations(
     for hit in &context.hits {
         let preview_text = hit.item.preview.join("\n");
         for source_ref in std::iter::once(&hit.item.source).chain(hit.highlights.iter()) {
-            context_source_texts
-                .entry((
-                    source_ref.source_id.clone(),
-                    source_ref.revision.clone(),
-                    source_ref.digest.clone(),
-                ))
-                .or_insert_with(|| preview_text.clone());
+            context_source_texts.push((source_ref, preview_text.clone()));
         }
     }
 
@@ -1445,19 +1427,8 @@ pub fn validate_answer_citations(
     for citation in &answer.citations {
         let matching_texts = context_source_texts
             .iter()
-            .filter_map(|((source_id, revision, digest), text)| {
-                if source_id == &citation.source.source_id
-                    && citation
-                        .source
-                        .revision
-                        .as_ref()
-                        .is_none_or(|expected| Some(expected) == revision.as_ref())
-                    && citation
-                        .source
-                        .digest
-                        .as_ref()
-                        .is_none_or(|expected| Some(expected) == digest.as_ref())
-                {
+            .filter_map(|(source_ref, text)| {
+                if source_ref_matches(&citation.source, source_ref) {
                     Some(text.as_str())
                 } else {
                     None
@@ -1552,18 +1523,7 @@ pub fn validate_answer_citation_authorization(
         let mut has_authorized_source = false;
         for hit in &context.hits {
             for source_ref in std::iter::once(&hit.item.source).chain(hit.highlights.iter()) {
-                if source_ref.source_id == citation.source.source_id
-                    && citation
-                        .source
-                        .revision
-                        .as_ref()
-                        .is_none_or(|expected| Some(expected) == source_ref.revision.as_ref())
-                    && citation
-                        .source
-                        .digest
-                        .as_ref()
-                        .is_none_or(|expected| Some(expected) == source_ref.digest.as_ref())
-                {
+                if source_ref_matches(&citation.source, source_ref) {
                     matched_context_source = true;
                     if acl_allows(&hit.hit_id, &hit.item.acl, auth)? {
                         has_authorized_source = true;
@@ -1602,6 +1562,66 @@ pub fn validate_answer_citation_authorization(
         issues,
         abstention: None,
     })
+}
+
+fn source_ref_matches(citation_source: &SourceRef, context_source: &SourceRef) -> bool {
+    citation_source.source_id == context_source.source_id
+        && citation_source
+            .revision
+            .as_ref()
+            .is_none_or(|expected| Some(expected) == context_source.revision.as_ref())
+        && citation_source
+            .digest
+            .as_ref()
+            .is_none_or(|expected| Some(expected) == context_source.digest.as_ref())
+        && locator_matches(&citation_source.locator, &context_source.locator)
+}
+
+fn locator_matches(
+    citation_locator: &Option<DocumentSpan>,
+    context_locator: &Option<DocumentSpan>,
+) -> bool {
+    let Some(citation_locator) = citation_locator else {
+        return true;
+    };
+    let Some(context_locator) = context_locator else {
+        return false;
+    };
+    citation_locator.asset_id == context_locator.asset_id
+        && citation_locator.revision_id == context_locator.revision_id
+        && citation_locator.document_id == context_locator.document_id
+        && citation_locator
+            .element_id
+            .as_ref()
+            .is_none_or(|expected| Some(expected) == context_locator.element_id.as_ref())
+        && citation_locator
+            .chunk_id
+            .as_ref()
+            .is_none_or(|expected| Some(expected) == context_locator.chunk_id.as_ref())
+        && citation_locator
+            .page
+            .is_none_or(|expected| Some(expected) == context_locator.page)
+        && citation_locator
+            .bbox
+            .as_ref()
+            .is_none_or(|expected| Some(expected) == context_locator.bbox.as_ref())
+        && citation_locator
+            .char_start
+            .is_none_or(|expected| Some(expected) == context_locator.char_start)
+        && citation_locator
+            .char_end
+            .is_none_or(|expected| Some(expected) == context_locator.char_end)
+        && citation_locator
+            .sheet
+            .as_ref()
+            .is_none_or(|expected| Some(expected) == context_locator.sheet.as_ref())
+        && citation_locator
+            .cell_range
+            .as_ref()
+            .is_none_or(|expected| Some(expected) == context_locator.cell_range.as_ref())
+        && citation_locator
+            .slide
+            .is_none_or(|expected| Some(expected) == context_locator.slide)
 }
 
 fn acl_allows(
