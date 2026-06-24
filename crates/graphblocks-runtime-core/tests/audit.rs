@@ -191,7 +191,7 @@ fn tool_effect_audit_event_records_precondition_outcome_and_immutable_digests() 
             "definition_digest": resolved_tool.definition_digest,
             "binding_digest": resolved_tool.binding_digest,
             "effective_policy_snapshot_id": "policy-snapshot-1",
-            "effects": ["external_write", "network", "destructive"],
+            "effects": ["destructive", "external_write", "network"],
             "effect_key": "ticket.create:cust-1",
             "precondition_digest": "sha256:precondition",
             "idempotency_key": "idem-ticket-1",

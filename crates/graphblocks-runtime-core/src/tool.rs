@@ -88,6 +88,15 @@ impl ToolEffect {
     }
 }
 
+pub(crate) fn canonical_effect_names(effects: &BTreeSet<ToolEffect>) -> Vec<&'static str> {
+    let mut names = effects
+        .iter()
+        .map(|effect| effect.as_str())
+        .collect::<Vec<_>>();
+    names.sort_unstable();
+    names
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ToolApproval {
     Never,
@@ -356,7 +365,7 @@ impl ToolBinding {
             "binding_id": self.binding_id,
             "tool_name": self.tool_name,
             "implementation": self.implementation.canonical_value(),
-            "effects": self.effects.iter().map(|effect| effect.as_str()).collect::<Vec<_>>(),
+            "effects": canonical_effect_names(&self.effects),
             "approval": self.approval.as_str(),
             "idempotency": self.idempotency.as_str(),
             "cancellation": self.cancellation.as_str(),

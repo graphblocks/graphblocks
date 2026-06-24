@@ -6,7 +6,7 @@ use graphblocks_compiler::canonical::canonical_hash;
 use serde_json::{Value, json};
 
 use crate::policy::{PrincipalRef, ResourceRef};
-use crate::tool::{ResolvedTool, ToolEffect};
+use crate::tool::{ResolvedTool, ToolEffect, canonical_effect_names};
 use crate::tool_call::ToolCall;
 use crate::tool_result::{ToolEffectOutcome, ToolResult, ToolResultStatus};
 
@@ -178,13 +178,7 @@ impl AuditEvent {
         } else {
             AuditTargetKind::ToolEffect
         };
-        let effects = context
-            .resolved_tool
-            .binding
-            .effects
-            .iter()
-            .map(|effect| effect.as_str())
-            .collect::<Vec<_>>();
+        let effects = canonical_effect_names(&context.resolved_tool.binding.effects);
         let result_status = match context.result.status {
             ToolResultStatus::Completed => "completed",
             ToolResultStatus::Failed => "failed",

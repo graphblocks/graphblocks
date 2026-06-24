@@ -1,8 +1,10 @@
+use graphblocks_compiler::canonical::canonical_hash;
 use graphblocks_runtime_core::tool::{
     BlockToolImplementation, OpenApiToolImplementation, ToolBinding, ToolCatalog, ToolDefinition,
     ToolEffect, ToolImplementation, ToolResolutionError, ToolResolutionScope,
 };
 use graphblocks_schema::SchemaIdError;
+use serde_json::json;
 
 fn search_definition() -> ToolDefinition {
     ToolDefinition::new(
@@ -156,4 +158,40 @@ fn tool_digests_are_stable_for_set_insertion_order() -> Result<(), ToolResolutio
     assert_eq!(left[0].binding_digest, right[0].binding_digest);
     assert_eq!(left[0].resolved_tool_id, right[0].resolved_tool_id);
     Ok(())
+}
+
+#[test]
+fn tool_binding_digest_serializes_effects_by_canonical_string_order() {
+    let binding = ToolBinding::new(
+        "binding-ticket",
+        "ticket.create",
+        ToolImplementation::Block(BlockToolImplementation::new("blocks.ticket")),
+    )
+    .with_effects([
+        ToolEffect::ExternalWrite,
+        ToolEffect::Network,
+        ToolEffect::Destructive,
+    ]);
+
+    let expected = canonical_hash(&json!({
+        "binding_id": "binding-ticket",
+        "tool_name": "ticket.create",
+        "implementation": {
+            "kind": "block",
+            "block": "blocks.ticket",
+            "input_mapping": {},
+            "output_mapping": {},
+        },
+        "effects": ["destructive", "external_write", "network"],
+        "approval": "policy",
+        "idempotency": "optional",
+        "cancellation": "cooperative",
+        "result_mode": "value",
+        "timeout_ms": null,
+        "retry_policy_ref": null,
+        "policy_profile_ref": null,
+        "execution_class": null,
+    }));
+
+    assert_eq!(binding.digest(), expected);
 }

@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 use crate::policy::{
     EnforcementPoint, PolicyDecision, PolicyEffect, PolicyRequest, PrincipalRef, ResourceRef,
 };
-use crate::tool::{ResolvedTool, ToolApproval, ToolIdempotency};
+use crate::tool::{ResolvedTool, ToolApproval, ToolIdempotency, canonical_effect_names};
 use crate::tool_approval::ToolApprovalRecord;
 use crate::tool_call::{ToolCall, ToolCallStatus};
 use crate::tool_schema::{ToolSchemaRegistry, ToolSchemaValidationError};
@@ -133,15 +133,9 @@ impl ToolAdmission {
         )
         .with_attribute(
             "effects",
-            json!(
-                context
-                    .resolved_tool
-                    .binding
-                    .effects
-                    .iter()
-                    .map(|effect| effect.as_str())
-                    .collect::<Vec<_>>()
-            ),
+            json!(canonical_effect_names(
+                &context.resolved_tool.binding.effects
+            )),
         );
 
         if let Some(run_id) = context.run_id {
