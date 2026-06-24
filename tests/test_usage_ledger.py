@@ -36,6 +36,32 @@ def test_usage_ledger_appends_immutable_records_and_queries_by_run() -> None:
     assert ledger.records_for_run("missing") == []
 
 
+def test_usage_record_deep_copies_mutable_amounts_and_metadata() -> None:
+    amounts = [_tokens("12")]
+    metadata = {"phase": "generation"}
+    record = UsageRecord(
+        record_id="usage-1",
+        source="runtime_measured",
+        confidence="estimated",
+        amounts=amounts,
+        occurred_at="2026-06-22T00:00:00Z",
+        run_id="run-1",
+        attempt_id="attempt-1",
+        metadata=metadata,
+    )
+    amounts.append(_tokens("99"))
+    metadata["phase"] = "mutated"
+
+    assert record.amounts == (_tokens("12"),)
+    assert record.metadata == {"phase": "generation"}
+    with pytest.raises(AttributeError):
+        record.amounts.append(_tokens("13"))  # type: ignore[attr-defined]
+    with pytest.raises(TypeError):
+        record.amounts[0].dimensions["scope"] = "direct"
+    with pytest.raises(TypeError):
+        record.metadata["phase"] = "direct"
+
+
 def test_usage_ledger_replays_identical_records_without_double_counting() -> None:
     ledger = InMemoryUsageLedger()
     record = UsageRecord(

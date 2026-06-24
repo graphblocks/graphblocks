@@ -5,6 +5,7 @@ from decimal import Decimal
 import json
 from pathlib import Path
 import sqlite3
+from types import MappingProxyType
 from typing import Literal
 
 from .budget import UsageAmount
@@ -37,7 +38,7 @@ class UsageRecord:
     record_id: str
     source: UsageSource
     confidence: UsageConfidence
-    amounts: list[UsageAmount]
+    amounts: tuple[UsageAmount, ...]
     occurred_at: str
     run_id: str | None = None
     attempt_id: str | None = None
@@ -47,6 +48,19 @@ class UsageRecord:
     execution_scope: str | None = None
     reconciliation_of: str | None = None
     metadata: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        amounts = tuple(
+            UsageAmount(
+                kind=amount.kind,
+                amount=amount.amount,
+                unit=amount.unit,
+                dimensions=MappingProxyType(dict(amount.dimensions)),
+            )
+            for amount in self.amounts
+        )
+        object.__setattr__(self, "amounts", amounts)
+        object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
 
 
 @dataclass(slots=True)
