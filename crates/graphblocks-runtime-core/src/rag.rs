@@ -360,6 +360,7 @@ impl ContextPack {
 pub struct ContextBuildOptions {
     pub token_budget: usize,
     pub per_document_max_chunks: Option<usize>,
+    pub per_section_max_chunks: Option<usize>,
     pub deduplicate: bool,
     pub minimum_source_modified_at: Option<String>,
 }
@@ -369,6 +370,7 @@ impl ContextBuildOptions {
         Self {
             token_budget,
             per_document_max_chunks: None,
+            per_section_max_chunks: None,
             deduplicate: true,
             minimum_source_modified_at: None,
         }
@@ -376,6 +378,11 @@ impl ContextBuildOptions {
 
     pub fn with_per_document_max_chunks(mut self, per_document_max_chunks: usize) -> Self {
         self.per_document_max_chunks = Some(per_document_max_chunks);
+        self
+    }
+
+    pub fn with_per_section_max_chunks(mut self, per_section_max_chunks: usize) -> Self {
+        self.per_section_max_chunks = Some(per_section_max_chunks);
         self
     }
 
@@ -993,6 +1000,7 @@ pub struct CitationSourceTrace {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RagError {
     InvalidPerDocumentMaxChunks,
+    InvalidPerSectionMaxChunks,
     InvalidFusionK,
     WeightCountMismatch,
     InvalidRerankInputLimit,
@@ -1023,6 +1031,9 @@ impl fmt::Display for RagError {
         match self {
             Self::InvalidPerDocumentMaxChunks => {
                 write!(formatter, "per_document_max_chunks must be at least 1")
+            }
+            Self::InvalidPerSectionMaxChunks => {
+                write!(formatter, "per_section_max_chunks must be at least 1")
             }
             Self::InvalidFusionK => write!(formatter, "fusion k must be at least 1"),
             Self::WeightCountMismatch => {
@@ -1190,6 +1201,9 @@ pub fn build_context_pack(
     if matches!(options.per_document_max_chunks, Some(0)) {
         return Err(RagError::InvalidPerDocumentMaxChunks);
     }
+    if matches!(options.per_section_max_chunks, Some(0)) {
+        return Err(RagError::InvalidPerSectionMaxChunks);
+    }
     hits.sort_by(|left, right| {
         left.rank
             .cmp(&right.rank)
@@ -1201,6 +1215,7 @@ pub fn build_context_pack(
     let mut drop_reasons = Map::new();
     let mut selected_item_ids = BTreeSet::new();
     let mut chunks_per_document: BTreeMap<String, usize> = BTreeMap::new();
+    let mut chunks_per_section: BTreeMap<String, usize> = BTreeMap::new();
     let mut token_count = 0;
 
     for hit in hits {
@@ -1230,6 +1245,41 @@ pub fn build_context_pack(
         {
             dropped_hit_ids.push(hit.hit_id.clone());
             drop_reasons.insert(hit.hit_id.clone(), json!("per_document_max_chunks"));
+            continue;
+        }
+        let section_id = hit
+            .metadata
+            .get("section_id")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .or_else(|| {
+                hit.item
+                    .metadata
+                    .get("section_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+            .or_else(|| {
+                std::iter::once(&hit.item.source)
+                    .chain(hit.highlights.iter())
+                    .find_map(|source| {
+                        source
+                            .locator
+                            .as_ref()
+                            .and_then(|locator| locator.element_id.clone())
+                    })
+            });
+        let current_section_chunks = section_id
+            .as_ref()
+            .map(|section_id| chunks_per_section.get(section_id).copied().unwrap_or(0))
+            .unwrap_or(0);
+        if section_id.is_some()
+            && options
+                .per_section_max_chunks
+                .is_some_and(|limit| current_section_chunks >= limit)
+        {
+            dropped_hit_ids.push(hit.hit_id.clone());
+            drop_reasons.insert(hit.hit_id.clone(), json!("per_section_max_chunks"));
             continue;
         }
         if let Some(minimum_source_modified_at) = &options.minimum_source_modified_at {
@@ -1263,6 +1313,9 @@ pub fn build_context_pack(
         selected_hit_ids.push(hit.hit_id.clone());
         selected_item_ids.insert(hit.item.item_id.clone());
         chunks_per_document.insert(document_id, current_document_chunks + 1);
+        if let Some(section_id) = section_id {
+            chunks_per_section.insert(section_id, current_section_chunks + 1);
+        }
         token_count += estimated_tokens;
         selected.push(hit);
     }
@@ -1283,6 +1336,12 @@ pub fn build_context_pack(
         context.metadata.insert(
             "minimum_source_modified_at".to_owned(),
             json!(minimum_source_modified_at),
+        );
+    }
+    if let Some(per_section_max_chunks) = options.per_section_max_chunks {
+        context.metadata.insert(
+            "per_section_max_chunks".to_owned(),
+            json!(per_section_max_chunks),
         );
     }
     Ok(context)

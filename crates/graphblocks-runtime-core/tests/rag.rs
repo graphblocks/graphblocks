@@ -366,6 +366,44 @@ fn build_context_pack_limits_per_document_and_deduplicates_items() {
 }
 
 #[test]
+fn build_context_pack_limits_chunks_per_section() {
+    let mut first = hit("hit-1", "chunk-1", "doc-1", "alpha", 1);
+    first
+        .metadata
+        .insert("section_id".to_owned(), json!("section-a"));
+    let mut same_section = hit("hit-2", "chunk-2", "doc-1", "beta", 2);
+    same_section
+        .metadata
+        .insert("section_id".to_owned(), json!("section-a"));
+    let mut other_section = hit("hit-3", "chunk-3", "doc-1", "gamma", 3);
+    other_section
+        .metadata
+        .insert("section_id".to_owned(), json!("section-b"));
+
+    let context = build_context_pack(
+        "ctx-1",
+        vec![first, same_section, other_section],
+        ContextBuildOptions::new(10).with_per_section_max_chunks(1),
+    )
+    .expect("context build succeeds");
+
+    assert_eq!(
+        context
+            .hits
+            .iter()
+            .map(|hit| hit.hit_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["hit-1", "hit-3"]
+    );
+    assert_eq!(context.metadata["dropped_hit_ids"], json!(["hit-2"]));
+    assert_eq!(
+        context.metadata["drop_reasons"],
+        json!({"hit-2": "per_section_max_chunks"})
+    );
+    assert_eq!(context.metadata["per_section_max_chunks"], json!(1));
+}
+
+#[test]
 fn build_context_pack_filters_hits_by_minimum_source_modified_at() {
     let mut fresh = hit("hit-fresh", "chunk-fresh", "doc-1", "fresh", 1);
     fresh.metadata.insert(

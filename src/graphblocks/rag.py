@@ -254,6 +254,7 @@ def build_context_pack(
     *,
     token_budget: int,
     per_document_max_chunks: int | None = None,
+    per_section_max_chunks: int | None = None,
     deduplicate: bool = True,
     minimum_source_modified_at: str | None = None,
     metadata: dict[str, object] | None = None,
@@ -262,6 +263,8 @@ def build_context_pack(
         raise ValueError("token_budget must be non-negative")
     if per_document_max_chunks is not None and per_document_max_chunks < 1:
         raise ValueError("per_document_max_chunks must be at least 1")
+    if per_section_max_chunks is not None and per_section_max_chunks < 1:
+        raise ValueError("per_section_max_chunks must be at least 1")
 
     selected: list[SearchHit] = []
     selected_hit_ids: list[str] = []
@@ -269,6 +272,7 @@ def build_context_pack(
     drop_reasons: dict[str, str] = {}
     selected_item_ids: set[str] = set()
     chunks_per_document: dict[str, int] = {}
+    chunks_per_section: dict[str, int] = {}
     token_count = 0
 
     for hit in sorted(hits, key=lambda item: (item.rank, item.hit_id)):
@@ -286,6 +290,36 @@ def build_context_pack(
         if per_document_max_chunks is not None and current_document_chunks >= per_document_max_chunks:
             dropped_hit_ids.append(hit.hit_id)
             drop_reasons[hit.hit_id] = "per_document_max_chunks"
+            continue
+
+        section_id = hit.metadata.get("section_id")
+        if not isinstance(section_id, str):
+            section_id = hit.item.metadata.get("section_id")
+        if not isinstance(section_id, str):
+            source_ref = next(
+                (
+                    source_ref
+                    for source_ref in [hit.item.source, *hit.highlights]
+                    if source_ref.locator is not None
+                    and source_ref.locator.element_id is not None
+                ),
+                None,
+            )
+            section_id = (
+                source_ref.locator.element_id
+                if source_ref is not None and source_ref.locator is not None
+                else None
+            )
+        current_section_chunks = (
+            chunks_per_section.get(section_id, 0) if isinstance(section_id, str) else 0
+        )
+        if (
+            isinstance(section_id, str)
+            and per_section_max_chunks is not None
+            and current_section_chunks >= per_section_max_chunks
+        ):
+            dropped_hit_ids.append(hit.hit_id)
+            drop_reasons[hit.hit_id] = "per_section_max_chunks"
             continue
 
         if minimum_source_modified_at is not None:
@@ -310,6 +344,8 @@ def build_context_pack(
         selected_hit_ids.append(hit.hit_id)
         selected_item_ids.add(hit.item.item_id)
         chunks_per_document[document_id] = current_document_chunks + 1
+        if isinstance(section_id, str):
+            chunks_per_section[section_id] = current_section_chunks + 1
         token_count += estimated_tokens
 
     context_metadata = dict(metadata or {})
@@ -322,6 +358,8 @@ def build_context_pack(
     )
     if minimum_source_modified_at is not None:
         context_metadata["minimum_source_modified_at"] = minimum_source_modified_at
+    if per_section_max_chunks is not None:
+        context_metadata["per_section_max_chunks"] = per_section_max_chunks
     return ContextPack(
         context_id=context_id,
         hits=selected,
