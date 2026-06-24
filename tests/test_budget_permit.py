@@ -6,6 +6,7 @@ import pytest
 
 from graphblocks.budget import (
     BudgetExceededError,
+    BudgetPermitExpiredError,
     BudgetPermitScopeError,
     BudgetReservationStateError,
     InMemoryBudgetLedger,
@@ -229,6 +230,76 @@ def test_budget_ledger_commit_with_permit_rejects_usage_above_authorized_without
     assert balance.reserved == [_tokens("40")]
     assert balance.committed == []
     assert balance.available == [_tokens("60")]
+
+
+def test_budget_ledger_commit_with_expired_permit_rejects_without_mutating() -> None:
+    ledger = InMemoryBudgetLedger()
+    ledger.allocate("budget-1", ResourceRef("tenant:acme"), [_tokens("100")], policy_ref="policy-1")
+    reservation = ledger.reserve(
+        "budget-1",
+        ResourceRef("run:1"),
+        [_tokens("40")],
+        purpose="provider_call",
+        expires_at="2026-06-22T00:10:00Z",
+    )
+    permit = ledger.issue_permit(
+        "permit-1",
+        reservation_ids=[reservation.reservation_id],
+        owner=ResourceRef("worker:1"),
+        atomic_unit=ResourceRef("turn:1"),
+        admission_epoch=1,
+        continuation_profile="finish_current_turn",
+        policy_snapshot_digest="sha256:policy",
+        expires_at="2026-06-22T00:05:00Z",
+    )
+
+    with pytest.raises(BudgetPermitExpiredError) as error:
+        ledger.commit_with_permit_at(
+            permit.permit_id,
+            reservation.reservation_id,
+            [_tokens("25")],
+            now="2026-06-22T00:05:00Z",
+        )
+
+    assert error.value.permit_id == "permit-1"
+    assert error.value.expires_at == "2026-06-22T00:05:00Z"
+    assert error.value.now == "2026-06-22T00:05:00Z"
+    balance = ledger.balance("budget-1")
+    assert balance.reserved == [_tokens("40")]
+    assert balance.committed == []
+    assert balance.available == [_tokens("60")]
+
+
+def test_budget_ledger_release_with_expired_permit_rejects_without_mutating() -> None:
+    ledger = InMemoryBudgetLedger()
+    ledger.allocate("budget-1", ResourceRef("tenant:acme"), [_tokens("100")], policy_ref="policy-1")
+    reservation = ledger.reserve(
+        "budget-1",
+        ResourceRef("run:1"),
+        [_tokens("40")],
+        purpose="provider_call",
+        expires_at="2026-06-22T00:10:00Z",
+    )
+    permit = ledger.issue_permit(
+        "permit-1",
+        reservation_ids=[reservation.reservation_id],
+        owner=ResourceRef("worker:1"),
+        atomic_unit=ResourceRef("turn:1"),
+        admission_epoch=1,
+        continuation_profile="finish_current_turn",
+        policy_snapshot_digest="sha256:policy",
+        expires_at="2026-06-22T00:05:00Z",
+    )
+
+    with pytest.raises(BudgetPermitExpiredError) as error:
+        ledger.release_with_permit_at(
+            permit.permit_id,
+            reservation.reservation_id,
+            now="2026-06-22T00:05:00Z",
+        )
+
+    assert error.value.permit_id == "permit-1"
+    assert ledger.balance("budget-1").reserved == [_tokens("40")]
 
 
 def test_budget_ledger_permit_cannot_settle_unreferenced_reservation() -> None:

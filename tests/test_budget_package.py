@@ -45,6 +45,7 @@ def test_budget_package_exposes_reservation_settlement_and_permit_contract(monke
     assert permit.allows([actual])
     assert settlement.committed == [actual]
     assert "BudgetPermitScopeError" in graphblocks_budget.__all__
+    assert "BudgetPermitExpiredError" in graphblocks_budget.__all__
     assert ledger.balance("budget-1").available == [
         graphblocks_budget.UsageAmount("model_total_tokens", Decimal("75"), "tokens")
     ]

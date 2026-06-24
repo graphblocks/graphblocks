@@ -62,6 +62,14 @@ class BudgetPermitFencingError(BudgetError):
         self.actual_token = actual_token
 
 
+class BudgetPermitExpiredError(BudgetError):
+    def __init__(self, permit_id: str, expires_at: str, now: str) -> None:
+        super().__init__(f"permit {permit_id!r} expired at {expires_at!r} before {now!r}")
+        self.permit_id = permit_id
+        self.expires_at = expires_at
+        self.now = now
+
+
 class BudgetCompletionReserveNotFoundError(BudgetError):
     pass
 
@@ -460,10 +468,43 @@ class InMemoryBudgetLedger:
         max_overdraft: list[UsageAmount] | None = None,
     ) -> BudgetSettlement:
         permit = self._permit_for_reservation(permit_id, reservation_id)
+        return self._commit_with_permit(
+            permit,
+            reservation_id,
+            actual_amounts,
+            max_overdraft=max_overdraft,
+        )
+
+    def commit_with_permit_at(
+        self,
+        permit_id: str,
+        reservation_id: str,
+        actual_amounts: list[UsageAmount],
+        *,
+        now: str,
+        max_overdraft: list[UsageAmount] | None = None,
+    ) -> BudgetSettlement:
+        permit = self._permit_for_reservation(permit_id, reservation_id)
+        self._ensure_permit_not_expired(permit, now)
+        return self._commit_with_permit(
+            permit,
+            reservation_id,
+            actual_amounts,
+            max_overdraft=max_overdraft,
+        )
+
+    def _commit_with_permit(
+        self,
+        permit: BudgetPermit,
+        reservation_id: str,
+        actual_amounts: list[UsageAmount],
+        *,
+        max_overdraft: list[UsageAmount] | None = None,
+    ) -> BudgetSettlement:
         actual = _amounts_to_dict(actual_amounts)
         self._ensure_permit_allows_additional(permit, actual, self._reservations[reservation_id].budget_id)
         settlement = self.commit(reservation_id, actual_amounts, max_overdraft=max_overdraft)
-        spent = self._permit_spent.setdefault(permit_id, {})
+        spent = self._permit_spent.setdefault(permit.permit_id, {})
         for key, amount in actual.items():
             spent[key] = spent.get(key, Decimal("0")) + amount
             if spent[key] == 0:
@@ -472,6 +513,11 @@ class InMemoryBudgetLedger:
 
     def release_with_permit(self, permit_id: str, reservation_id: str) -> BudgetSettlement:
         self._permit_for_reservation(permit_id, reservation_id)
+        return self.release(reservation_id)
+
+    def release_with_permit_at(self, permit_id: str, reservation_id: str, *, now: str) -> BudgetSettlement:
+        permit = self._permit_for_reservation(permit_id, reservation_id)
+        self._ensure_permit_not_expired(permit, now)
         return self.release(reservation_id)
 
     def create_completion_reserve(
@@ -615,6 +661,10 @@ class InMemoryBudgetLedger:
             if actual_token is None or actual_token < reservation.fencing_token:
                 raise BudgetPermitFencingError(permit_id, budget_id, reservation.fencing_token, actual_token)
         return permit
+
+    def _ensure_permit_not_expired(self, permit: BudgetPermit, now: str) -> None:
+        if permit.expires_at <= now:
+            raise BudgetPermitExpiredError(permit.permit_id, permit.expires_at, now)
 
     def _ensure_permit_allows_additional(
         self,
