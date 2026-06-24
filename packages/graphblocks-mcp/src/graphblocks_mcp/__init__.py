@@ -152,7 +152,7 @@ def mcp_tool_result_from_response(
                 ContentPart(
                     kind="json",
                     data=dict(output),
-                    metadata={"adapter": "mcp", "trust": "untrusted_external"},
+                    metadata={"adapter": "mcp", "trust_designation": "untrusted_external"},
                 ),
             ),
             started_at=started_at,

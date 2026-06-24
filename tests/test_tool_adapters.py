@@ -179,7 +179,7 @@ def test_mcp_adapter_converts_valid_response_to_tool_result(monkeypatch) -> None
     assert result.status == "completed"
     assert result.output[0].kind == "json"
     assert result.output[0].data == {"items": ["billing"]}
-    assert result.output[0].metadata["trust"] == "untrusted_external"
+    assert result.output[0].metadata["trust_designation"] == "untrusted_external"
     assert result.output_digest.startswith("sha256:")
     assert result.effect_outcome == "no_external_effect"
 
@@ -340,7 +340,7 @@ def test_openapi_adapter_converts_valid_response_to_tool_result(monkeypatch) -> 
 
     assert result.status == "completed"
     assert result.output[0].data == {"ticket_id": "ticket-1"}
-    assert result.output[0].metadata["trust"] == "untrusted_external"
+    assert result.output[0].metadata["trust_designation"] == "untrusted_external"
     assert result.effect_was_committed()
 
 
