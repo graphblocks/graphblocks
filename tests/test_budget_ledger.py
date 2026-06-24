@@ -8,6 +8,7 @@ from graphblocks.budget import (
     BudgetCompletionReserveUnauthorizedError,
     BudgetExceededError,
     InMemoryBudgetLedger,
+    BudgetReservationStateError,
     UsageAmount,
 )
 from graphblocks.policy import ResourceRef
@@ -70,6 +71,45 @@ def test_budget_ledger_release_restores_available_balance() -> None:
 
     assert settlement.released == [_tokens("40")]
     assert ledger.balance("budget-1").available == [_tokens("100")]
+
+
+def test_budget_ledger_expire_restores_available_balance() -> None:
+    ledger = InMemoryBudgetLedger()
+    ledger.allocate("budget-1", ResourceRef("tenant:acme"), [_tokens("100")], policy_ref="policy-1")
+    reservation = ledger.reserve("budget-1", ResourceRef("run:1"), [_tokens("40")], purpose="provider_call", expires_at="later")
+
+    settlement = ledger.expire(reservation.reservation_id)
+
+    balance = ledger.balance("budget-1")
+    assert settlement.status == "expired"
+    assert settlement.released == [_tokens("40")]
+    assert balance.reserved == []
+    assert balance.committed == []
+    assert balance.available == [_tokens("100")]
+
+
+def test_budget_ledger_expired_reservation_cannot_be_settled_or_authorize_permit() -> None:
+    ledger = InMemoryBudgetLedger()
+    ledger.allocate("budget-1", ResourceRef("tenant:acme"), [_tokens("100")], policy_ref="policy-1")
+    reservation = ledger.reserve("budget-1", ResourceRef("run:1"), [_tokens("40")], purpose="provider_call", expires_at="later")
+
+    ledger.expire(reservation.reservation_id)
+
+    with pytest.raises(BudgetReservationStateError):
+        ledger.commit(reservation.reservation_id, [_tokens("1")])
+    with pytest.raises(BudgetReservationStateError):
+        ledger.release(reservation.reservation_id)
+    with pytest.raises(BudgetReservationStateError):
+        ledger.issue_permit(
+            "permit-1",
+            reservation_ids=[reservation.reservation_id],
+            owner=ResourceRef("worker:1"),
+            atomic_unit=ResourceRef("turn:1"),
+            admission_epoch=1,
+            continuation_profile="hard_stop",
+            policy_snapshot_digest="sha256:policy",
+            expires_at="later",
+        )
 
 
 def test_budget_ledger_commit_over_reserved_records_overdraft() -> None:

@@ -113,6 +113,86 @@ fn budget_ledger_release_restores_available_balance() -> Result<(), BudgetError>
 }
 
 #[test]
+fn budget_ledger_expire_restores_available_balance() -> Result<(), BudgetError> {
+    let mut ledger = InMemoryBudgetLedger::new();
+    ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+    let reservation = ledger.reserve(
+        "budget-1",
+        "run:1",
+        [tokens(40)],
+        ReservationPurpose::ProviderCall,
+        "later",
+        None,
+    )?;
+
+    let settlement = ledger.expire(&reservation.reservation_id)?;
+
+    let balance = ledger.balance("budget-1")?;
+    assert_eq!(settlement.released, vec![tokens(40)]);
+    assert_eq!(settlement.status, ReservationStatus::Expired);
+    assert_eq!(balance.reserved, Vec::<UsageAmount>::new());
+    assert_eq!(balance.committed, Vec::<UsageAmount>::new());
+    assert_eq!(balance.available, vec![tokens(100)]);
+    Ok(())
+}
+
+#[test]
+fn budget_ledger_expired_reservation_cannot_be_settled_or_authorize_permit()
+-> Result<(), BudgetError> {
+    let mut ledger = InMemoryBudgetLedger::new();
+    ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+    let reservation = ledger.reserve(
+        "budget-1",
+        "run:1",
+        [tokens(40)],
+        ReservationPurpose::ProviderCall,
+        "later",
+        None,
+    )?;
+
+    ledger.expire(&reservation.reservation_id)?;
+
+    assert_eq!(
+        ledger
+            .commit(&reservation.reservation_id, [tokens(1)])
+            .expect_err("expired reservation cannot be committed"),
+        BudgetError::ReservationState {
+            reservation_id: reservation.reservation_id.clone(),
+            status: ReservationStatus::Expired,
+        }
+    );
+    assert_eq!(
+        ledger
+            .release(&reservation.reservation_id)
+            .expect_err("expired reservation cannot be released"),
+        BudgetError::ReservationState {
+            reservation_id: reservation.reservation_id.clone(),
+            status: ReservationStatus::Expired,
+        }
+    );
+    assert_eq!(
+        ledger
+            .issue_permit(
+                "permit-1",
+                vec![reservation.reservation_id.clone()],
+                "worker:1",
+                "turn:1",
+                1,
+                "hard_stop",
+                "sha256:policy",
+                "later",
+                Vec::new(),
+            )
+            .expect_err("expired reservation cannot authorize a permit"),
+        BudgetError::ReservationState {
+            reservation_id: reservation.reservation_id,
+            status: ReservationStatus::Expired,
+        }
+    );
+    Ok(())
+}
+
+#[test]
 fn budget_ledger_commit_over_reserved_records_overdraft() -> Result<(), BudgetError> {
     let mut ledger = InMemoryBudgetLedger::new();
     let account = ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;

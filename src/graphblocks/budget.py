@@ -377,6 +377,33 @@ class InMemoryBudgetLedger:
             revision=self._accounts[budget_id].revision,
         )
 
+    def expire(self, reservation_id: str) -> BudgetSettlement:
+        reservation = self._reservations.get(reservation_id)
+        if reservation is None:
+            raise BudgetReservationNotFoundError(f"reservation {reservation_id!r} does not exist")
+        if reservation.status != "reserved":
+            raise BudgetReservationStateError(f"reservation {reservation_id!r} is {reservation.status}")
+        budget_id = reservation.budget_id
+        held_budget_ids = self._reservation_holds.get(reservation_id, (budget_id,))
+        reserved = _amounts_to_dict(reservation.amounts)
+        for held_budget_id in held_budget_ids:
+            for key, amount in reserved.items():
+                self._reserved[held_budget_id][key] = self._reserved[held_budget_id].get(key, Decimal("0")) - amount
+                if self._reserved[held_budget_id][key] == 0:
+                    del self._reserved[held_budget_id][key]
+            self._accounts[held_budget_id] = replace(
+                self._accounts[held_budget_id],
+                revision=self._accounts[held_budget_id].revision + 1,
+            )
+        self._reservations[reservation_id] = replace(reservation, status="expired")
+        return BudgetSettlement(
+            reservation_id=reservation_id,
+            budget_id=budget_id,
+            released=_dict_to_amounts(reserved),
+            status="expired",
+            revision=self._accounts[budget_id].revision,
+        )
+
     def issue_permit(
         self,
         permit_id: str,

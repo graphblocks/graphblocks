@@ -502,6 +502,62 @@ impl InMemoryBudgetLedger {
         })
     }
 
+    pub fn expire(
+        &mut self,
+        reservation_id: impl AsRef<str>,
+    ) -> Result<BudgetSettlement, BudgetError> {
+        let reservation_id = reservation_id.as_ref();
+        let reservation = self
+            .reservations
+            .get(reservation_id)
+            .cloned()
+            .ok_or_else(|| BudgetError::ReservationNotFound {
+                reservation_id: reservation_id.to_string(),
+            })?;
+        if reservation.status != ReservationStatus::Reserved {
+            return Err(BudgetError::ReservationState {
+                reservation_id: reservation_id.to_string(),
+                status: reservation.status,
+            });
+        }
+
+        let reserved = amounts_to_map(reservation.amounts.clone());
+        let held_budget_ids = self
+            .reservation_holds
+            .get(reservation_id)
+            .cloned()
+            .unwrap_or_else(|| vec![reservation.budget_id.clone()]);
+        for held_budget_id in &held_budget_ids {
+            subtract_amounts(
+                self.reserved
+                    .get_mut(held_budget_id)
+                    .expect("budget has reserved balance map"),
+                &reserved,
+            );
+            self.bump_revision(held_budget_id);
+        }
+
+        let updated = BudgetReservation {
+            status: ReservationStatus::Expired,
+            ..reservation.clone()
+        };
+        self.reservations
+            .insert(reservation_id.to_string(), updated);
+        Ok(BudgetSettlement {
+            reservation_id: reservation_id.to_string(),
+            budget_id: reservation.budget_id.clone(),
+            committed: Vec::new(),
+            released: map_to_amounts(&reserved),
+            overdraft: Vec::new(),
+            status: ReservationStatus::Expired,
+            revision: self
+                .accounts
+                .get(&reservation.budget_id)
+                .expect("budget account exists")
+                .revision,
+        })
+    }
+
     pub fn commit_with_permit(
         &mut self,
         permit_id: impl AsRef<str>,
