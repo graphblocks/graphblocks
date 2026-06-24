@@ -59,6 +59,18 @@ impl ReservationPurpose {
             Self::Cleanup => "cleanup",
         }
     }
+
+    fn from_str(purpose: &str) -> Option<Self> {
+        match purpose {
+            "provider_call" => Some(Self::ProviderCall),
+            "task" => Some(Self::Task),
+            "trial" => Some(Self::Trial),
+            "tool" => Some(Self::Tool),
+            "finalization" => Some(Self::Finalization),
+            "cleanup" => Some(Self::Cleanup),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -95,6 +107,16 @@ impl ReservationStatus {
             Self::Committed => "committed",
             Self::Released => "released",
             Self::Expired => "expired",
+        }
+    }
+
+    fn from_str(status: &str) -> Option<Self> {
+        match status {
+            "reserved" => Some(Self::Reserved),
+            "committed" => Some(Self::Committed),
+            "released" => Some(Self::Released),
+            "expired" => Some(Self::Expired),
+            _ => None,
         }
     }
 }
@@ -1037,6 +1059,12 @@ struct StoredBudgetAccount {
     overdraft: BTreeMap<AmountKey, i64>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct StoredBudgetReservation {
+    reservation: BudgetReservation,
+    held_budget_ids: Vec<String>,
+}
+
 impl StoredBudgetAccount {
     fn available(&self) -> BTreeMap<AmountKey, i64> {
         let mut keys = BTreeSet::new();
@@ -1285,6 +1313,178 @@ impl SqliteBudgetLedger {
         Ok(reservation)
     }
 
+    pub fn commit(
+        &mut self,
+        reservation_id: impl AsRef<str>,
+        actual_amounts: impl IntoIterator<Item = UsageAmount>,
+    ) -> Result<BudgetSettlement, BudgetError> {
+        self.commit_inner(
+            reservation_id.as_ref(),
+            actual_amounts.into_iter().collect(),
+            None,
+        )
+    }
+
+    pub fn commit_with_overdraft_limit(
+        &mut self,
+        reservation_id: impl AsRef<str>,
+        actual_amounts: impl IntoIterator<Item = UsageAmount>,
+        max_overdraft: impl IntoIterator<Item = UsageAmount>,
+    ) -> Result<BudgetSettlement, BudgetError> {
+        self.commit_inner(
+            reservation_id.as_ref(),
+            actual_amounts.into_iter().collect(),
+            Some(max_overdraft.into_iter().collect()),
+        )
+    }
+
+    fn commit_inner(
+        &mut self,
+        reservation_id: &str,
+        actual_amounts: Vec<UsageAmount>,
+        max_overdraft: Option<Vec<UsageAmount>>,
+    ) -> Result<BudgetSettlement, BudgetError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(budget_storage_error)?;
+        let stored_reservation = sqlite_load_reservation(&transaction, reservation_id)?
+            .ok_or_else(|| BudgetError::ReservationNotFound {
+                reservation_id: reservation_id.to_string(),
+            })?;
+        let reservation = stored_reservation.reservation;
+        if reservation.status != ReservationStatus::Reserved {
+            return Err(BudgetError::ReservationState {
+                reservation_id: reservation_id.to_string(),
+                status: reservation.status,
+            });
+        }
+
+        let reserved = amounts_to_map(reservation.amounts.clone());
+        let actual = amounts_to_map(actual_amounts);
+        let mut released = BTreeMap::new();
+        let mut overdraft = BTreeMap::new();
+        for (key, amount) in &reserved {
+            let unused = amount - actual.get(key).copied().unwrap_or(0);
+            if unused > 0 {
+                released.insert(key.clone(), unused);
+            }
+        }
+        for (key, amount) in &actual {
+            let extra = amount - reserved.get(key).copied().unwrap_or(0);
+            if extra > 0 {
+                overdraft.insert(key.clone(), extra);
+            }
+        }
+        if let Some(max_overdraft) = max_overdraft {
+            let overdraft_limit = amounts_to_map(max_overdraft);
+            for (key, amount) in &overdraft {
+                if *amount > overdraft_limit.get(key).copied().unwrap_or(0) {
+                    return Err(BudgetError::BudgetExceeded {
+                        budget_id: reservation.budget_id.clone(),
+                        kind: key.0.clone(),
+                        unit: key.1.clone(),
+                    });
+                }
+            }
+        }
+
+        for held_budget_id in &stored_reservation.held_budget_ids {
+            let mut account = sqlite_load_account(&transaction, held_budget_id)?
+                .expect("reservation hold points to an existing budget account");
+            subtract_amounts(&mut account.reserved, &reserved);
+            add_amounts(&mut account.committed, &actual);
+            add_amounts(&mut account.overdraft, &overdraft);
+            account.account.revision += 1;
+            sqlite_update_account_balances(&transaction, &account)?;
+        }
+        sqlite_update_reservation_status(
+            &transaction,
+            reservation_id,
+            ReservationStatus::Committed,
+        )?;
+        transaction.commit().map_err(budget_storage_error)?;
+
+        let account =
+            sqlite_load_account(&self.connection, &reservation.budget_id)?.ok_or_else(|| {
+                BudgetError::BudgetNotFound {
+                    budget_id: reservation.budget_id.clone(),
+                }
+            })?;
+        Ok(BudgetSettlement {
+            reservation_id: reservation_id.to_string(),
+            budget_id: reservation.budget_id,
+            committed: map_to_amounts(&actual),
+            released: map_to_amounts(&released),
+            overdraft: map_to_amounts(&overdraft),
+            status: ReservationStatus::Committed,
+            revision: account.account.revision,
+        })
+    }
+
+    pub fn release(
+        &mut self,
+        reservation_id: impl AsRef<str>,
+    ) -> Result<BudgetSettlement, BudgetError> {
+        self.release_inner(reservation_id.as_ref(), ReservationStatus::Released)
+    }
+
+    pub fn expire(
+        &mut self,
+        reservation_id: impl AsRef<str>,
+    ) -> Result<BudgetSettlement, BudgetError> {
+        self.release_inner(reservation_id.as_ref(), ReservationStatus::Expired)
+    }
+
+    fn release_inner(
+        &mut self,
+        reservation_id: &str,
+        status: ReservationStatus,
+    ) -> Result<BudgetSettlement, BudgetError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(budget_storage_error)?;
+        let stored_reservation = sqlite_load_reservation(&transaction, reservation_id)?
+            .ok_or_else(|| BudgetError::ReservationNotFound {
+                reservation_id: reservation_id.to_string(),
+            })?;
+        let reservation = stored_reservation.reservation;
+        if reservation.status != ReservationStatus::Reserved {
+            return Err(BudgetError::ReservationState {
+                reservation_id: reservation_id.to_string(),
+                status: reservation.status,
+            });
+        }
+
+        let reserved = amounts_to_map(reservation.amounts.clone());
+        for held_budget_id in &stored_reservation.held_budget_ids {
+            let mut account = sqlite_load_account(&transaction, held_budget_id)?
+                .expect("reservation hold points to an existing budget account");
+            subtract_amounts(&mut account.reserved, &reserved);
+            account.account.revision += 1;
+            sqlite_update_account_balances(&transaction, &account)?;
+        }
+        sqlite_update_reservation_status(&transaction, reservation_id, status)?;
+        transaction.commit().map_err(budget_storage_error)?;
+
+        let account =
+            sqlite_load_account(&self.connection, &reservation.budget_id)?.ok_or_else(|| {
+                BudgetError::BudgetNotFound {
+                    budget_id: reservation.budget_id.clone(),
+                }
+            })?;
+        Ok(BudgetSettlement {
+            reservation_id: reservation_id.to_string(),
+            budget_id: reservation.budget_id,
+            committed: Vec::new(),
+            released: map_to_amounts(&reserved),
+            overdraft: Vec::new(),
+            status,
+            revision: account.account.revision,
+        })
+    }
+
     pub fn balance(&self, budget_id: impl AsRef<str>) -> Result<BudgetBalance, BudgetError> {
         let budget_id = budget_id.as_ref();
         let account = sqlite_load_account(&self.connection, budget_id)?.ok_or_else(|| {
@@ -1374,6 +1574,103 @@ fn sqlite_reservation_exists(
         .optional()
         .map(|value| value.is_some())
         .map_err(budget_storage_error)
+}
+
+fn sqlite_load_reservation(
+    connection: &Connection,
+    reservation_id: &str,
+) -> Result<Option<StoredBudgetReservation>, BudgetError> {
+    let stored = connection
+        .query_row(
+            "
+            SELECT
+                reservation_id,
+                budget_id,
+                owner,
+                amounts_json,
+                purpose,
+                expires_at,
+                fencing_token,
+                status,
+                held_budget_ids_json
+            FROM budget_reservations
+            WHERE reservation_id = ?
+            ",
+            params![reservation_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, i64>(6)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, String>(8)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(budget_storage_error)?;
+
+    let Some((
+        reservation_id,
+        budget_id,
+        owner,
+        amounts_json,
+        purpose,
+        expires_at,
+        fencing_token,
+        status,
+        held_budget_ids_json,
+    )) = stored
+    else {
+        return Ok(None);
+    };
+
+    let purpose = ReservationPurpose::from_str(&purpose).ok_or_else(|| BudgetError::Storage {
+        message: format!("unknown reservation purpose {purpose:?}"),
+    })?;
+    let status = ReservationStatus::from_str(&status).ok_or_else(|| BudgetError::Storage {
+        message: format!("unknown reservation status {status:?}"),
+    })?;
+    Ok(Some(StoredBudgetReservation {
+        reservation: BudgetReservation {
+            reservation_id,
+            budget_id,
+            owner,
+            amounts: usage_amounts_from_json(&amounts_json)?,
+            purpose,
+            expires_at,
+            fencing_token: budget_i64_to_u64(fencing_token, "reservation fencing token")?,
+            status,
+        },
+        held_budget_ids: string_list_from_json(&held_budget_ids_json)?,
+    }))
+}
+
+fn sqlite_update_reservation_status(
+    connection: &Connection,
+    reservation_id: &str,
+    status: ReservationStatus,
+) -> Result<(), BudgetError> {
+    let updated = connection
+        .execute(
+            "
+            UPDATE budget_reservations
+            SET status = ?
+            WHERE reservation_id = ?
+            ",
+            params![status.as_str(), reservation_id],
+        )
+        .map_err(budget_storage_error)?;
+    if updated == 0 {
+        return Err(BudgetError::ReservationNotFound {
+            reservation_id: reservation_id.to_string(),
+        });
+    }
+    Ok(())
 }
 
 fn sqlite_load_account(
@@ -1618,6 +1915,27 @@ fn string_list_json(values: &[String]) -> Result<String, BudgetError> {
         .map(|value| Value::String(value.clone()))
         .collect::<Vec<_>>();
     serde_json::to_string(&values).map_err(budget_storage_error)
+}
+
+fn string_list_from_json(value: &str) -> Result<Vec<String>, BudgetError> {
+    let Value::Array(values) =
+        serde_json::from_str::<Value>(value).map_err(budget_storage_error)?
+    else {
+        return Err(BudgetError::Storage {
+            message: "budget string list must be an array".to_string(),
+        });
+    };
+
+    let mut result = Vec::new();
+    for value in values {
+        let Value::String(value) = value else {
+            return Err(BudgetError::Storage {
+                message: "budget string list value must be a string".to_string(),
+            });
+        };
+        result.push(value);
+    }
+    Ok(result)
 }
 
 fn string_map_value(value: &BTreeMap<String, String>) -> Value {
