@@ -635,12 +635,14 @@ class OutputDeliveryGate:
                 else self.last_generated_sequence
             )
             for index, part in enumerate(decision.replacement_parts):
+                if part.kind != "text" or part.text is None:
+                    raise OutputGateError(f"replacement part {index} must be text")
                 sequence = replacement_base_sequence + index
                 self.pending[sequence] = GenerationChunk.text(
                     self.stream_id,
                     self.response_id,
                     sequence,
-                    part.text or "",
+                    part.text,
                 )
                 replacement_end_sequence = sequence
             if replacement_end_sequence is not None:
