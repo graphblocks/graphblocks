@@ -137,6 +137,14 @@ from .documents import (
     create_local_text_revision,
     parse_plain_text_document,
 )
+from .ingestion import (
+    InMemoryIngestionManifestStore,
+    IndexRecordRef,
+    IngestionError,
+    IngestionManifest,
+    IngestionStatus,
+    ProcessorRef,
+)
 from .evaluation import (
     ChangeSet,
     CheckResult,
@@ -583,6 +591,7 @@ __all__ = [
     "InMemoryBudgetLedger",
     "SQLiteBudgetLedger",
     "InMemoryRunStore",
+    "InMemoryIngestionManifestStore",
     "InMemoryUsageLedger",
     "InMemoryConversationStore",
     "InMemoryLeasePool",
@@ -591,6 +600,10 @@ __all__ = [
     "InMemoryWorkspaceStore",
     "InputDependency",
     "InvalidBlobKeyError",
+    "IndexRecordRef",
+    "IngestionError",
+    "IngestionManifest",
+    "IngestionStatus",
     "KnowledgeBinding",
     "KnowledgeItemRef",
     "RankedHit",
@@ -682,6 +695,7 @@ __all__ = [
     "StateConflictError",
     "StaticPolicyEvaluator",
     "StaticBearerAuthHook",
+    "ProcessorRef",
     "PromptLock",
     "PutOptions",
     "ReleaseBundle",
