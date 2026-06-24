@@ -77,3 +77,13 @@ def test_budget_package_exposes_completion_reserve_contract(monkeypatch) -> None
     assert reservation.purpose == "finalization"
     assert reservation.amounts == [amount]
     assert "CompletionReserve" in graphblocks_budget.__all__
+
+    released = ledger.create_completion_reserve(
+        "reserve-2",
+        "budget-1",
+        purpose="cleanup",
+        amounts=[amount],
+        spendable_by=("cleanup.worker",),
+    )
+    assert released.status == "available"
+    assert ledger.release_completion_reserve("reserve-2").status == "released"

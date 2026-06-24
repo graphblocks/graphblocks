@@ -607,6 +607,37 @@ class InMemoryBudgetLedger:
         )
         return reservation
 
+    def release_completion_reserve(self, reserve_id: str) -> CompletionReserve:
+        return self._settle_completion_reserve(reserve_id, "released")
+
+    def expire_completion_reserve(self, reserve_id: str) -> CompletionReserve:
+        return self._settle_completion_reserve(reserve_id, "expired")
+
+    def _settle_completion_reserve(
+        self,
+        reserve_id: str,
+        status: CompletionReserveStatus,
+    ) -> CompletionReserve:
+        reserve = self._completion_reserves.get(reserve_id)
+        if reserve is None:
+            raise BudgetCompletionReserveNotFoundError(f"completion reserve {reserve_id!r} does not exist")
+        if reserve.status != "available":
+            raise BudgetCompletionReserveStateError(f"completion reserve {reserve_id!r} is {reserve.status}")
+
+        amounts = _amounts_to_dict(reserve.amounts)
+        for held_budget_id in self._completion_reserve_holds.get(reserve_id, (reserve.budget_id,)):
+            for key, amount in amounts.items():
+                self._reserved[held_budget_id][key] = self._reserved[held_budget_id].get(key, Decimal("0")) - amount
+                if self._reserved[held_budget_id][key] == 0:
+                    del self._reserved[held_budget_id][key]
+            self._accounts[held_budget_id] = replace(
+                self._accounts[held_budget_id],
+                revision=self._accounts[held_budget_id].revision + 1,
+            )
+        updated = replace(reserve, status=status)
+        self._completion_reserves[reserve_id] = updated
+        return updated
+
     def balance(self, budget_id: str) -> BudgetBalance:
         account = self._accounts.get(budget_id)
         if account is None:

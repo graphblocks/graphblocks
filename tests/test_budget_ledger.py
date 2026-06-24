@@ -5,6 +5,7 @@ from decimal import Decimal
 import pytest
 
 from graphblocks.budget import (
+    BudgetCompletionReserveStateError,
     BudgetCompletionReserveUnauthorizedError,
     BudgetExceededError,
     InMemoryBudgetLedger,
@@ -197,6 +198,45 @@ def test_completion_reserve_can_be_spent_by_authorized_finalization_work() -> No
     assert balance.reserved == []
     assert balance.committed == [_tokens("15")]
     assert balance.available == [_tokens("85")]
+
+
+def test_completion_reserve_release_restores_held_capacity() -> None:
+    ledger = InMemoryBudgetLedger()
+    ledger.allocate("budget-1", ResourceRef("tenant:acme"), [_tokens("100")], policy_ref="policy-1")
+    ledger.create_completion_reserve(
+        "finalization-reserve",
+        "budget-1",
+        purpose="finalization",
+        amounts=[_tokens("20")],
+        spendable_by=("agent.finalize",),
+    )
+
+    reserve = ledger.release_completion_reserve("finalization-reserve")
+
+    assert reserve.status == "released"
+    assert ledger.balance("budget-1").reserved == []
+    assert ledger.balance("budget-1").available == [_tokens("100")]
+    with pytest.raises(BudgetCompletionReserveStateError):
+        ledger.spend_completion_reserve("finalization-reserve", "agent.finalize", expires_at="later")
+
+
+def test_completion_reserve_expire_restores_held_capacity() -> None:
+    ledger = InMemoryBudgetLedger()
+    ledger.allocate("budget-1", ResourceRef("tenant:acme"), [_tokens("100")], policy_ref="policy-1")
+    ledger.create_completion_reserve(
+        "finalization-reserve",
+        "budget-1",
+        purpose="finalization",
+        amounts=[_tokens("20")],
+        spendable_by=("agent.finalize",),
+        expires_at="2026-06-22T00:05:00Z",
+    )
+
+    reserve = ledger.expire_completion_reserve("finalization-reserve")
+
+    assert reserve.status == "expired"
+    assert ledger.balance("budget-1").reserved == []
+    assert ledger.balance("budget-1").available == [_tokens("100")]
 
 
 def test_completion_reserve_rejects_unauthorized_spender() -> None:
