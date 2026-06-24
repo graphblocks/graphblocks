@@ -259,6 +259,7 @@ def test_output_cutoff_discards_delayed_output_after_terminal_cutoff() -> None:
     assert cutoff.accepts(delayed) is False
     assert cutoff.accepts(other_response) is False
     assert cutoff.accepts_sequence(1) is True
+    assert cutoff.accepts_sequence(-1) is False
     with pytest.raises(TypeError) as error:
         cutoff.accepts(1)  # type: ignore[arg-type]
 
@@ -344,6 +345,24 @@ def test_output_delivery_gate_applies_typed_redaction_instruction_before_deliver
     assert [(chunk.sequence, chunk.text) for chunk in redacted.deliverable] == [(1, "hello [redacted] world")]
     assert gate.last_policy_accepted_sequence == 1
     assert gate.last_client_delivered_sequence == 1
+
+
+def test_output_delivery_gate_rejects_negative_redaction_chunk_sequence() -> None:
+    gate = OutputDeliveryGate("stream-1", "response-1")
+    gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "hello secret world"))
+
+    with pytest.raises(OutputGateError) as error:
+        gate.apply_decision(
+            OutputPolicyDecision.redact(
+                "decision-redact",
+                accepted_through_sequence=1,
+                redactions=({"path": "/chunks/-1/text", "start": 6, "end": 12, "replacement": "[redacted]"},),
+                input_digest="sha256:redact",
+            ),
+            occurred_at="2026-06-23T00:00:01Z",
+        )
+
+    assert str(error.value) == "invalid redaction path '/chunks/-1/text'"
 
 
 def test_output_delivery_gate_redact_without_replacement_holds_original_pending_chunk() -> None:

@@ -479,7 +479,7 @@ class OutputCutoff:
         )
 
     def accepts_sequence(self, sequence: int) -> bool:
-        return sequence <= self.last_client_delivered_sequence
+        return sequence >= 0 and sequence <= self.last_client_delivered_sequence
 
 
 @dataclass(frozen=True, slots=True)
@@ -596,6 +596,8 @@ class OutputDeliveryGate:
                         sequence = int(sequence_text)
                     except ValueError as error:
                         raise OutputGateError(f"invalid redaction path {path!r}") from error
+                    if sequence < 0:
+                        raise OutputGateError(f"invalid redaction path {path!r}")
                     redactions_by_sequence.setdefault(sequence, []).append(redaction)
 
                 for sequence, redactions in redactions_by_sequence.items():
