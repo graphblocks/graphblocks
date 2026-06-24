@@ -333,8 +333,10 @@ class InProcessRuntime:
                 retry = flow.get("retry", {}) if isinstance(flow, dict) else {}
                 timeout_seconds = parse_duration_seconds(flow.get("timeout")) if isinstance(flow, dict) else None
                 max_attempts = 1
+                idempotency_key = None
                 if isinstance(retry, dict):
                     max_attempts = int(retry.get("maxAttempts", 1))
+                    idempotency_key = retry.get("idempotencyKey") or retry.get("idempotency_key")
                 elif isinstance(retry, int):
                     max_attempts = retry
                 if max_attempts < 1:
@@ -347,10 +349,19 @@ class InProcessRuntime:
                         merged_inputs = {**node_inputs[node_name], **resolved_inputs}
                         started_at = time.monotonic()
                         deadline = None if timeout_seconds is None else started_at + timeout_seconds
+                        attempt_context = {
+                            **context,
+                            "node": node_name,
+                            "attempt": attempt,
+                            "deadline_monotonic": deadline,
+                        }
+                        if idempotency_key is not None:
+                            attempt_context["idempotency_key"] = str(idempotency_key)
+                            attempt_context["idempotencyKey"] = str(idempotency_key)
                         attempt_result = block(
                             merged_inputs,
                             node.get("config", {}),
-                            {**context, "node": node_name, "attempt": attempt, "deadline_monotonic": deadline},
+                            attempt_context,
                         )
                         if timeout_seconds is not None and time.monotonic() > started_at + timeout_seconds:
                             raise TimeoutError(f"node {node_name!r} exceeded timeout {flow.get('timeout')}")
@@ -360,9 +371,17 @@ class InProcessRuntime:
                         break
                     except Exception as exc:
                         if attempt < max_attempts:
+                            retry_payload: dict[str, Any] = {
+                                "node": node_name,
+                                "block": block_id,
+                                "attempt": attempt,
+                                "error": str(exc),
+                            }
+                            if idempotency_key is not None:
+                                retry_payload["idempotencyKey"] = str(idempotency_key)
                             journal.append(
                                 "node_retry",
-                                {"node": node_name, "block": block_id, "attempt": attempt, "error": str(exc)},
+                                retry_payload,
                             )
                             continue
                         journal.append("node_failed", {"node": node_name, "error": str(exc), "attempt": attempt})
