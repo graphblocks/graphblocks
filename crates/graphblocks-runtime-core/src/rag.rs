@@ -2192,17 +2192,11 @@ pub fn validate_answer_citations(
     }
 
     for citation in &answer.citations {
-        let matching_texts = context_source_texts
+        let matching_sources = context_source_texts
             .iter()
-            .filter_map(|(source_ref, text)| {
-                if source_ref_matches(&citation.source, source_ref) {
-                    Some(text.as_str())
-                } else {
-                    None
-                }
-            })
+            .filter(|(source_ref, _)| source_ref_matches(&citation.source, source_ref))
             .collect::<Vec<_>>();
-        if matching_texts.is_empty() {
+        if matching_sources.is_empty() {
             issues.push(
                 CitationValidationIssue::new(
                     "citation.source_not_in_context",
@@ -2216,12 +2210,29 @@ pub fn validate_answer_citations(
             );
             continue;
         }
+        if citation.source.locator.is_none()
+            && matching_sources
+                .iter()
+                .any(|(source_ref, _)| source_ref.locator.is_none())
+        {
+            issues.push(
+                CitationValidationIssue::new(
+                    "citation.precision_limited",
+                    format!(
+                        "citation {:?} has no page, cell, slide, or span locator",
+                        citation.citation_id
+                    ),
+                    CitationSeverity::Warning,
+                )
+                .with_citation_id(&citation.citation_id),
+            );
+        }
         if let Some(cited_text) = &citation.cited_text {
             let quoted_text = normalize_text(cited_text);
             if !quoted_text.is_empty()
-                && !matching_texts
+                && !matching_sources
                     .iter()
-                    .any(|text| normalize_text(text).contains(&quoted_text))
+                    .any(|(_, text)| normalize_text(text).contains(&quoted_text))
             {
                 issues.push(
                     CitationValidationIssue::new(
@@ -2241,6 +2252,17 @@ pub fn validate_answer_citations(
     if issues.is_empty() {
         return Ok(CitationValidationResult::ok());
     }
+    if !issues
+        .iter()
+        .any(|issue| issue.severity == CitationSeverity::Error)
+    {
+        return Ok(CitationValidationResult {
+            ok: true,
+            issues,
+            abstention: None,
+            repaired_answer: None,
+        });
+    }
     if failure_policy == FailurePolicy::Warn {
         return Ok(CitationValidationResult {
             ok: true,
@@ -2255,6 +2277,7 @@ pub fn validate_answer_citations(
     ) {
         let invalid_citation_ids = issues
             .iter()
+            .filter(|issue| issue.severity == CitationSeverity::Error)
             .filter_map(|issue| issue.citation_id.clone())
             .collect::<BTreeSet<_>>();
         let mut repaired_answer = answer.clone();

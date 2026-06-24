@@ -1052,12 +1052,12 @@ def validate_answer_citations(
                     )
 
     for citation in answer.citations:
-        matching_texts = [
-            text
+        matching_sources = [
+            (source_ref, text)
             for source_ref, text in context_source_texts
             if _source_ref_matches(citation.source, source_ref)
         ]
-        if not matching_texts:
+        if not matching_sources:
             issues.append(
                 CitationValidationIssue(
                     code="citation.source_not_in_context",
@@ -1067,9 +1067,25 @@ def validate_answer_citations(
                 )
             )
             continue
+        if citation.source.locator is None and any(
+            source_ref.locator is None for source_ref, _ in matching_sources
+        ):
+            issues.append(
+                CitationValidationIssue(
+                    code="citation.precision_limited",
+                    message=(
+                        f"citation {citation.citation_id!r} has no page, cell, "
+                        "slide, or span locator"
+                    ),
+                    citation_id=citation.citation_id,
+                    severity="warning",
+                )
+            )
         if citation.cited_text is not None:
             quoted_text = normalize_text(citation.cited_text)
-            if quoted_text and not any(quoted_text in normalize_text(text) for text in matching_texts):
+            if quoted_text and not any(
+                quoted_text in normalize_text(text) for _, text in matching_sources
+            ):
                 issues.append(
                     CitationValidationIssue(
                         code="citation.text_mismatch",
@@ -1081,11 +1097,15 @@ def validate_answer_citations(
 
     if not issues:
         return CitationValidationResult(ok=True)
+    if not any(issue.severity == "error" for issue in issues):
+        return CitationValidationResult(ok=True, issues=issues)
     if failure_policy == "warn":
         return CitationValidationResult(ok=True, issues=issues)
     if failure_policy in {"repair", "remove_invalid"}:
         invalid_citation_ids = {
-            issue.citation_id for issue in issues if issue.citation_id is not None
+            issue.citation_id
+            for issue in issues
+            if issue.severity == "error" and issue.citation_id is not None
         }
         repaired_citations = [
             citation

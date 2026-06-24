@@ -5,11 +5,11 @@ use graphblocks_runtime_core::documents::{
 };
 use graphblocks_runtime_core::evaluation::ResultBundle;
 use graphblocks_runtime_core::rag::{
-    Answer, AuthContext, Citation, Claim, ContextBuildOptions, ContextPack, FailurePolicy,
-    FederatedFailureMode, FederatedRetrievalOptions, FederatedRetrievalSource, FusionOptions,
-    FusionStrategy, InMemoryChunkRetriever, InMemoryKnowledgeIndex, KnowledgeDeleteMode,
-    KnowledgeItemRef, KnowledgeRecordStatus, QueryPlan, RagError, RagResultBundle,
-    RagResultPayload, RerankOptions, RetrievalResult, SearchHit, SearchRequest,
+    Answer, AuthContext, Citation, CitationSeverity, Claim, ContextBuildOptions, ContextPack,
+    FailurePolicy, FederatedFailureMode, FederatedRetrievalOptions, FederatedRetrievalSource,
+    FusionOptions, FusionStrategy, InMemoryChunkRetriever, InMemoryKnowledgeIndex,
+    KnowledgeDeleteMode, KnowledgeItemRef, KnowledgeRecordStatus, QueryPlan, RagError,
+    RagResultBundle, RagResultPayload, RerankOptions, RetrievalResult, SearchHit, SearchRequest,
     authorize_search_hits, build_abstention_answer, build_answer_from_model_response,
     build_answer_from_model_response_with_context, build_context_pack, federated_retrieve,
     fuse_search_hits, knowledge_item_from_chunk, render_context_pack, rerank_search_hits,
@@ -1202,6 +1202,48 @@ fn validate_answer_citations_accepts_current_context_source() {
     assert!(result.ok);
     assert!(result.issues.is_empty());
     assert!(result.abstention.is_none());
+}
+
+#[test]
+fn validate_answer_citations_warns_when_source_has_limited_precision() {
+    let mut context = build_context_pack(
+        "ctx-1",
+        vec![hit(
+            "hit-1",
+            "chunk-1",
+            "doc-1",
+            "Alpha policy requires audit logs.",
+            1,
+        )],
+        ContextBuildOptions::new(10),
+    )
+    .expect("context build succeeds");
+    context.hits[0].item.source.locator = None;
+    context.hits[0].highlights.clear();
+    let citation = Citation::new("cite-1", context.hits[0].item.source.clone())
+        .with_cited_text("requires audit logs");
+    let answer = Answer::new("answer-1", "Alpha policy requires audit logs.")
+        .with_claim(
+            Claim::new("claim-1", "Alpha policy requires audit logs.")
+                .with_citation_ids(["cite-1"]),
+        )
+        .with_citation(citation);
+
+    let result = validate_answer_citations(&answer, &context, true, FailurePolicy::Fail)
+        .expect("citation validation succeeds");
+
+    assert!(result.ok);
+    assert_eq!(
+        result
+            .issues
+            .iter()
+            .map(|issue| issue.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["citation.precision_limited"]
+    );
+    assert_eq!(result.issues[0].severity, CitationSeverity::Warning);
+    assert_eq!(result.issues[0].citation_id.as_deref(), Some("cite-1"));
+    assert!(result.repaired_answer.is_none());
 }
 
 #[test]

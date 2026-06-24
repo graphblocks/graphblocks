@@ -49,6 +49,42 @@ def test_validate_answer_citations_accepts_current_context_source() -> None:
     assert result.abstention is None
 
 
+def test_validate_answer_citations_warns_when_source_has_limited_precision() -> None:
+    context = _single_hit_context()
+    source = replace(context.hits[0].item.source, locator=None)
+    hit = replace(
+        context.hits[0],
+        item=replace(context.hits[0].item, source=source),
+        highlights=[],
+    )
+    context = replace(context, hits=[hit])
+    citation = Citation(
+        citation_id="cite-1",
+        source=source,
+        cited_text="requires audit logs",
+    )
+    answer = Answer(
+        answer_id="answer-1",
+        text="Alpha policy requires audit logs.",
+        claims=[
+            Claim(
+                claim_id="claim-1",
+                text="Alpha policy requires audit logs.",
+                citation_ids=["cite-1"],
+            )
+        ],
+        citations=[citation],
+    )
+
+    result = validate_answer_citations(answer, context)
+
+    assert result.ok is True
+    assert [issue.code for issue in result.issues] == ["citation.precision_limited"]
+    assert result.issues[0].severity == "warning"
+    assert result.issues[0].citation_id == "cite-1"
+    assert result.repaired_answer is None
+
+
 def test_validate_answer_citations_rejects_wrong_locator_on_matching_source() -> None:
     context = _single_hit_context()
     source = context.hits[0].item.source
