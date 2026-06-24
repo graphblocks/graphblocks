@@ -1590,6 +1590,12 @@ fn evaluate_rag_answer_metrics_reports_citation_precision() {
         citation_source_accuracy.direction,
         MetricDirection::Maximize
     );
+    let faithfulness = metrics
+        .iter()
+        .find(|metric| metric.name == "faithfulness")
+        .expect("faithfulness metric exists");
+    assert_eq!(faithfulness.value, json!(1.0));
+    assert_eq!(faithfulness.direction, MetricDirection::Maximize);
     let unsupported_claim_rate = metrics
         .iter()
         .find(|metric| metric.name == "unsupported_claim_rate")
@@ -1639,6 +1645,11 @@ fn evaluate_rag_answer_metrics_reports_unsupported_claim_rate() {
         .find(|metric| metric.name == "citation_source_accuracy")
         .expect("citation source accuracy metric exists");
     assert_eq!(citation_source_accuracy.value, json!(1.0));
+    let faithfulness = metrics
+        .iter()
+        .find(|metric| metric.name == "faithfulness")
+        .expect("faithfulness metric exists");
+    assert_eq!(faithfulness.value, json!(0.0));
     let unsupported_claim_rate = metrics
         .iter()
         .find(|metric| metric.name == "unsupported_claim_rate")

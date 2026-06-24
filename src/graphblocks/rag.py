@@ -1009,6 +1009,7 @@ def evaluate_rag_answer_metrics(
         else Decimal(len(answer.claims) - len(unsupported_claim_ids))
         / Decimal(len(answer.claims))
     )
+    faithfulness = citation_recall
     unsupported_claim_rate = (
         None
         if not answer.claims
@@ -1029,6 +1030,11 @@ def evaluate_rag_answer_metrics(
         MetricObservation(
             "citation_source_accuracy",
             citation_source_accuracy,
+            direction="maximize",
+        ),
+        MetricObservation(
+            "faithfulness",
+            faithfulness,
             direction="maximize",
         ),
         MetricObservation(
