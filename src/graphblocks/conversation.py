@@ -153,7 +153,7 @@ class Turn:
 def _copy_conversation(conversation: Conversation) -> Conversation:
     return Conversation(
         conversation_id=conversation.conversation_id,
-        messages=tuple(conversation.messages),
+        messages=tuple(_copy_message(message) for message in conversation.messages),
         attachments=tuple(_copy_attachment(attachment) for attachment in conversation.attachments),
         compactions=tuple(_copy_compaction(record) for record in conversation.compactions),
         revision=conversation.revision,
@@ -161,6 +161,28 @@ def _copy_conversation(conversation: Conversation) -> Conversation:
         branch_of=conversation.branch_of,
         branched_from_message_id=conversation.branched_from_message_id,
         metadata=dict(conversation.metadata),
+    )
+
+
+def _copy_content_part(part: ContentPart) -> ContentPart:
+    return ContentPart(
+        kind=part.kind,
+        text=part.text,
+        data=None if part.data is None else dict(part.data),
+        metadata=dict(part.metadata),
+    )
+
+
+def _copy_message(message: Message) -> Message:
+    return Message(
+        message_id=message.message_id,
+        role=message.role,
+        parts=tuple(_copy_content_part(part) for part in message.parts),
+        parent_message_id=message.parent_message_id,
+        revision=message.revision,
+        status=message.status,
+        created_at=message.created_at,
+        metadata=dict(message.metadata),
     )
 
 
@@ -196,7 +218,7 @@ def _copy_turn(turn: Turn) -> Turn:
         conversation_id=turn.conversation_id,
         base_revision=turn.base_revision,
         status=turn.status,
-        messages=tuple(turn.messages),
+        messages=tuple(_copy_message(message) for message in turn.messages),
         committed_revision=turn.committed_revision,
         committed_message_ids=tuple(turn.committed_message_ids),
         metadata=dict(turn.metadata),
@@ -247,7 +269,7 @@ class InMemoryConversationStore:
             raise TurnNotFoundError(f"turn {turn_id!r} does not exist")
         if turn.status in {"completed", "failed", "cancelled", "policy_stopped"}:
             raise TurnConflictError(f"turn {turn_id!r} is already terminal")
-        draft_message = replace(message, status="draft")
+        draft_message = _copy_message(replace(message, status="draft"))
         updated = Turn(
             turn_id=turn.turn_id,
             conversation_id=turn.conversation_id,
@@ -267,7 +289,7 @@ class InMemoryConversationStore:
             raise TurnNotFoundError(f"turn {turn_id!r} does not exist")
         if turn.status in {"completed", "failed", "cancelled", "policy_stopped"}:
             raise TurnConflictError(f"turn {turn_id!r} is already terminal")
-        committed_messages = tuple(replace(message, status="committed") for message in turn.messages)
+        committed_messages = tuple(_copy_message(replace(message, status="committed")) for message in turn.messages)
         try:
             new_revision = self.append_messages(turn.conversation_id, turn.base_revision, list(committed_messages))
         except ConversationConflictError:
@@ -276,7 +298,7 @@ class InMemoryConversationStore:
                 conversation_id=turn.conversation_id,
                 base_revision=turn.base_revision,
                 status="failed",
-                messages=turn.messages,
+                messages=tuple(_copy_message(message) for message in turn.messages),
                 committed_revision=None,
                 committed_message_ids=(),
                 metadata=dict(turn.metadata),
@@ -307,7 +329,7 @@ class InMemoryConversationStore:
             conversation_id=turn.conversation_id,
             base_revision=turn.base_revision,
             status="cancelled",
-            messages=tuple(replace(message, status="retracted") for message in turn.messages),
+            messages=tuple(_copy_message(replace(message, status="retracted")) for message in turn.messages),
             committed_revision=None,
             committed_message_ids=(),
             metadata=dict(turn.metadata),
@@ -326,7 +348,7 @@ class InMemoryConversationStore:
             conversation_id=turn.conversation_id,
             base_revision=turn.base_revision,
             status="policy_stopped",
-            messages=tuple(replace(message, status="retracted") for message in turn.messages),
+            messages=tuple(_copy_message(replace(message, status="retracted")) for message in turn.messages),
             committed_revision=None,
             committed_message_ids=(),
             metadata=dict(turn.metadata),
@@ -345,9 +367,10 @@ class InMemoryConversationStore:
                 f"conversation {conversation_id!r} is at revision {conversation.revision}, not {expected_revision}"
             )
         new_revision = conversation.revision + 1
+        copied_messages = tuple(_copy_message(message) for message in messages)
         self._conversations[conversation_id] = Conversation(
             conversation_id=conversation.conversation_id,
-            messages=(*conversation.messages, *messages),
+            messages=(*conversation.messages, *copied_messages),
             attachments=conversation.attachments,
             compactions=conversation.compactions,
             revision=new_revision,
@@ -374,7 +397,7 @@ class InMemoryConversationStore:
                 break
         if source_index is None:
             raise MessageNotFoundError(f"message {request.from_message_id!r} does not exist")
-        branch_messages = conversation.messages[: source_index + 1]
+        branch_messages = tuple(_copy_message(message) for message in conversation.messages[: source_index + 1])
         branch_message_ids = {message.message_id for message in branch_messages}
         branch = Conversation(
             conversation_id=branch_id,
@@ -451,7 +474,7 @@ class InMemoryConversationStore:
                     f"parent user message for assistant message {request.assistant_message_id!r} does not exist"
                 )
 
-        branch_messages = conversation.messages[: parent_index + 1]
+        branch_messages = tuple(_copy_message(message) for message in conversation.messages[: parent_index + 1])
         branch_message_ids = {message.message_id for message in branch_messages}
         branch = Conversation(
             conversation_id=branch_id,
@@ -477,7 +500,7 @@ class InMemoryConversationStore:
             },
         )
         superseded_messages = tuple(
-            replace(message, status="superseded") if index == assistant_index else message
+            _copy_message(replace(message, status="superseded") if index == assistant_index else message)
             for index, message in enumerate(conversation.messages)
         )
         self._conversations[request.conversation_id] = Conversation(

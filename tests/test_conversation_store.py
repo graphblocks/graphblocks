@@ -38,6 +38,35 @@ def test_append_messages_uses_expected_revision_cas() -> None:
         store.append_messages("conv-1", expected_revision=0, messages=[message])
 
 
+def test_conversation_store_copies_message_payloads_at_boundaries() -> None:
+    store = InMemoryConversationStore()
+    metadata = {"source": "initial"}
+    data = {"answer": "original"}
+    message = Message(
+        message_id="msg-1",
+        role="assistant",
+        parts=(ContentPart(kind="json", data=data),),
+        metadata=metadata,
+    )
+
+    store.create(Conversation(conversation_id="conv-1", messages=(message,)))
+    metadata["source"] = "mutated"
+    data["answer"] = "mutated"
+
+    snapshot = store.get("conv-1")
+    stored_message = snapshot.conversation.messages[0]
+    assert stored_message.metadata == {"source": "initial"}
+    assert stored_message.parts[0].data == {"answer": "original"}
+
+    stored_message.metadata["source"] = "snapshot-mutated"
+    assert stored_message.parts[0].data is not None
+    stored_message.parts[0].data["answer"] = "snapshot-mutated"
+
+    fresh = store.get("conv-1").conversation.messages[0]
+    assert fresh.metadata == {"source": "initial"}
+    assert fresh.parts[0].data == {"answer": "original"}
+
+
 def test_branch_preserves_lineage_and_copies_messages_through_source_message() -> None:
     store = InMemoryConversationStore()
     user_message = Message(
