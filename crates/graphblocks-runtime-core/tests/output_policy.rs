@@ -164,6 +164,29 @@ fn policy_abort_cuts_off_delivery_and_rejects_late_chunks() -> Result<(), Output
 }
 
 #[test]
+fn policy_abort_cannot_keep_pending_tool_calls() -> Result<(), OutputGateError> {
+    let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
+    gate.record_chunk(GenerationChunk::text(
+        "stream-1",
+        "response-1",
+        1,
+        "blocked",
+    ))?;
+
+    let stopped = gate.apply_decision(
+        OutputPolicyDecision::abort_response("decision-abort", "sha256:abort")
+            .with_pending_tool_calls(PendingToolCallsDisposition::Keep),
+        1_000,
+    )?;
+
+    assert_eq!(
+        stopped.pending_tool_calls,
+        Some(PendingToolCallsDisposition::Deny)
+    );
+    Ok(())
+}
+
+#[test]
 fn bounded_holdback_policy_requires_a_bound() {
     let policy = OutputDeliveryPolicy::bounded_holdback(
         ViolationAction::AbortResponse,
