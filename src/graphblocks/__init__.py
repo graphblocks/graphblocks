@@ -61,6 +61,7 @@ from .budget import (
     CompletionReservePurpose,
     CompletionReserveStatus,
     InMemoryBudgetLedger,
+    SQLiteBudgetLedger,
     UsageAmount,
 )
 from .canonical import canonical_dumps, canonical_hash, normalize_graph
@@ -536,6 +537,7 @@ __all__ = [
     "JournalStateError",
     "__version__",
     "InMemoryBudgetLedger",
+    "SQLiteBudgetLedger",
     "InMemoryRunStore",
     "InMemoryUsageLedger",
     "InMemoryConversationStore",

@@ -87,3 +87,29 @@ def test_budget_package_exposes_completion_reserve_contract(monkeypatch) -> None
     )
     assert released.status == "available"
     assert ledger.release_completion_reserve("reserve-2").status == "released"
+
+
+def test_budget_package_exposes_local_sqlite_ledger(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-budget" / "src"))
+    graphblocks_budget = importlib.import_module("graphblocks_budget")
+    ledger = graphblocks_budget.SQLiteBudgetLedger.in_memory()
+
+    ledger.allocate(
+        "budget-1",
+        graphblocks_budget.ResourceRef("tenant:acme"),
+        [graphblocks_budget.UsageAmount("model_total_tokens", Decimal("100"), "tokens")],
+        policy_ref="policy-1",
+    )
+    ledger.reserve(
+        "budget-1",
+        graphblocks_budget.ResourceRef("run:1"),
+        [graphblocks_budget.UsageAmount("model_total_tokens", Decimal("40"), "tokens")],
+        purpose="provider_call",
+        expires_at="later",
+    )
+
+    assert ledger.balance("budget-1").available == [
+        graphblocks_budget.UsageAmount("model_total_tokens", Decimal("60"), "tokens")
+    ]
+    assert "SQLiteBudgetLedger" in graphblocks_budget.__all__
+    ledger.close()

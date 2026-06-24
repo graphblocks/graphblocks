@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
-from typing import Literal
+import json
+from pathlib import Path
+import sqlite3
+from typing import Literal, TypeVar
 
 from .policy import ResourceRef
 
 
 AmountKey = tuple[str, str, tuple[tuple[str, str], ...]]
+BudgetLedgerResult = TypeVar("BudgetLedgerResult")
 BudgetStatus = Literal["active", "exhausted", "paused", "closed"]
 ReservationPurpose = Literal["provider_call", "task", "trial", "tool", "finalization", "cleanup"]
 ReservationStatus = Literal["reserved", "committed", "released", "expired"]
@@ -710,3 +715,514 @@ class InMemoryBudgetLedger:
                 raise BudgetExceededError(
                     f"permit {permit.permit_id!r} exceeds authorized {key[0]} {key[1]} for budget {budget_id!r}"
                 )
+
+
+def _usage_amount_to_json(amount: UsageAmount) -> dict[str, object]:
+    return {
+        "kind": amount.kind,
+        "amount": str(amount.amount),
+        "unit": amount.unit,
+        "dimensions": dict(sorted(amount.dimensions.items())),
+    }
+
+
+def _usage_amount_from_json(data: dict[str, object]) -> UsageAmount:
+    return UsageAmount(
+        kind=str(data["kind"]),
+        amount=Decimal(str(data["amount"])),
+        unit=str(data["unit"]),
+        dimensions=dict(data.get("dimensions", {})),
+    )
+
+
+def _resource_ref_to_json(resource: ResourceRef) -> dict[str, object]:
+    return {
+        "resource_id": resource.resource_id,
+        "resource_kind": resource.resource_kind,
+        "tenant_id": resource.tenant_id,
+        "attributes": dict(sorted(resource.attributes.items())),
+    }
+
+
+def _resource_ref_from_json(data: dict[str, object]) -> ResourceRef:
+    return ResourceRef(
+        resource_id=str(data["resource_id"]),
+        resource_kind=data.get("resource_kind"),
+        tenant_id=data.get("tenant_id"),
+        attributes=dict(data.get("attributes", {})),
+    )
+
+
+def _amount_map_to_json(values: dict[AmountKey, Decimal]) -> list[dict[str, object]]:
+    return [
+        {
+            "kind": kind,
+            "amount": str(values[(kind, unit, dimensions)]),
+            "unit": unit,
+            "dimensions": dict(dimensions),
+        }
+        for kind, unit, dimensions in sorted(values)
+    ]
+
+
+def _amount_map_from_json(entries: list[dict[str, object]]) -> dict[AmountKey, Decimal]:
+    values: dict[AmountKey, Decimal] = {}
+    for entry in entries:
+        dimensions = tuple(sorted(dict(entry.get("dimensions", {})).items()))
+        values[(str(entry["kind"]), str(entry["unit"]), dimensions)] = Decimal(str(entry["amount"]))
+    return values
+
+
+def _account_to_json(account: BudgetAccount) -> dict[str, object]:
+    return {
+        "budget_id": account.budget_id,
+        "scope": _resource_ref_to_json(account.scope),
+        "allocated": [_usage_amount_to_json(amount) for amount in account.allocated],
+        "parent_budget_id": account.parent_budget_id,
+        "status": account.status,
+        "policy_ref": account.policy_ref,
+        "revision": account.revision,
+    }
+
+
+def _account_from_json(data: dict[str, object]) -> BudgetAccount:
+    return BudgetAccount(
+        budget_id=str(data["budget_id"]),
+        scope=_resource_ref_from_json(data["scope"]),
+        allocated=[_usage_amount_from_json(entry) for entry in data.get("allocated", [])],
+        parent_budget_id=data.get("parent_budget_id"),
+        status=data.get("status", "active"),
+        policy_ref=str(data.get("policy_ref", "")),
+        revision=int(data.get("revision", 0)),
+    )
+
+
+def _reservation_to_json(reservation: BudgetReservation) -> dict[str, object]:
+    return {
+        "reservation_id": reservation.reservation_id,
+        "budget_id": reservation.budget_id,
+        "owner": _resource_ref_to_json(reservation.owner),
+        "amounts": [_usage_amount_to_json(amount) for amount in reservation.amounts],
+        "purpose": reservation.purpose,
+        "expires_at": reservation.expires_at,
+        "fencing_token": reservation.fencing_token,
+        "status": reservation.status,
+    }
+
+
+def _reservation_from_json(data: dict[str, object]) -> BudgetReservation:
+    return BudgetReservation(
+        reservation_id=str(data["reservation_id"]),
+        budget_id=str(data["budget_id"]),
+        owner=_resource_ref_from_json(data["owner"]),
+        amounts=[_usage_amount_from_json(entry) for entry in data.get("amounts", [])],
+        purpose=data["purpose"],
+        expires_at=str(data["expires_at"]),
+        fencing_token=int(data.get("fencing_token", 0)),
+        status=data.get("status", "reserved"),
+    )
+
+
+def _permit_to_json(permit: BudgetPermit) -> dict[str, object]:
+    return {
+        "permit_id": permit.permit_id,
+        "reservation_refs": list(permit.reservation_refs),
+        "owner": _resource_ref_to_json(permit.owner),
+        "atomic_unit": _resource_ref_to_json(permit.atomic_unit),
+        "admission_epoch": permit.admission_epoch,
+        "authorized_amounts": [_usage_amount_to_json(amount) for amount in permit.authorized_amounts],
+        "continuation_profile": permit.continuation_profile,
+        "policy_snapshot_digest": permit.policy_snapshot_digest,
+        "expires_at": permit.expires_at,
+        "low_watermark": [_usage_amount_to_json(amount) for amount in permit.low_watermark],
+        "fencing_tokens": dict(sorted(permit.fencing_tokens.items())),
+    }
+
+
+def _permit_from_json(data: dict[str, object]) -> BudgetPermit:
+    return BudgetPermit(
+        permit_id=str(data["permit_id"]),
+        reservation_refs=tuple(str(reservation_id) for reservation_id in data.get("reservation_refs", [])),
+        owner=_resource_ref_from_json(data["owner"]),
+        atomic_unit=_resource_ref_from_json(data["atomic_unit"]),
+        admission_epoch=int(data["admission_epoch"]),
+        authorized_amounts=[_usage_amount_from_json(entry) for entry in data.get("authorized_amounts", [])],
+        continuation_profile=str(data["continuation_profile"]),
+        policy_snapshot_digest=str(data["policy_snapshot_digest"]),
+        expires_at=str(data["expires_at"]),
+        low_watermark=[_usage_amount_from_json(entry) for entry in data.get("low_watermark", [])],
+        fencing_tokens={str(budget_id): int(token) for budget_id, token in data.get("fencing_tokens", {}).items()},
+    )
+
+
+def _completion_reserve_to_json(reserve: CompletionReserve) -> dict[str, object]:
+    return {
+        "reserve_id": reserve.reserve_id,
+        "budget_id": reserve.budget_id,
+        "purpose": reserve.purpose,
+        "amounts": [_usage_amount_to_json(amount) for amount in reserve.amounts],
+        "spendable_by": sorted(reserve.spendable_by),
+        "expires_at": reserve.expires_at,
+        "status": reserve.status,
+        "reservation_id": reserve.reservation_id,
+        "fencing_token": reserve.fencing_token,
+    }
+
+
+def _completion_reserve_from_json(data: dict[str, object]) -> CompletionReserve:
+    return CompletionReserve(
+        reserve_id=str(data["reserve_id"]),
+        budget_id=str(data["budget_id"]),
+        purpose=data["purpose"],
+        amounts=[_usage_amount_from_json(entry) for entry in data.get("amounts", [])],
+        spendable_by=frozenset(str(spender) for spender in data.get("spendable_by", [])),
+        expires_at=data.get("expires_at"),
+        status=data.get("status", "available"),
+        reservation_id=data.get("reservation_id"),
+        fencing_token=int(data.get("fencing_token", 0)),
+    )
+
+
+def _budget_ledger_to_snapshot(ledger: InMemoryBudgetLedger) -> dict[str, object]:
+    return {
+        "version": 1,
+        "accounts": {
+            budget_id: _account_to_json(account) for budget_id, account in sorted(ledger._accounts.items())
+        },
+        "allocated": {
+            budget_id: _amount_map_to_json(amounts) for budget_id, amounts in sorted(ledger._allocated.items())
+        },
+        "reserved": {
+            budget_id: _amount_map_to_json(amounts) for budget_id, amounts in sorted(ledger._reserved.items())
+        },
+        "committed": {
+            budget_id: _amount_map_to_json(amounts) for budget_id, amounts in sorted(ledger._committed.items())
+        },
+        "overdraft": {
+            budget_id: _amount_map_to_json(amounts) for budget_id, amounts in sorted(ledger._overdraft.items())
+        },
+        "reservations": {
+            reservation_id: _reservation_to_json(reservation)
+            for reservation_id, reservation in sorted(ledger._reservations.items())
+        },
+        "reservation_holds": {
+            reservation_id: list(budget_ids)
+            for reservation_id, budget_ids in sorted(ledger._reservation_holds.items())
+        },
+        "permits": {
+            permit_id: _permit_to_json(permit) for permit_id, permit in sorted(ledger._permits.items())
+        },
+        "permit_spent": {
+            permit_id: _amount_map_to_json(amounts) for permit_id, amounts in sorted(ledger._permit_spent.items())
+        },
+        "completion_reserves": {
+            reserve_id: _completion_reserve_to_json(reserve)
+            for reserve_id, reserve in sorted(ledger._completion_reserves.items())
+        },
+        "completion_reserve_holds": {
+            reserve_id: list(budget_ids)
+            for reserve_id, budget_ids in sorted(ledger._completion_reserve_holds.items())
+        },
+        "reservation_counter": ledger._reservation_counter,
+        "fencing_counter": ledger._fencing_counter,
+    }
+
+
+def _budget_ledger_from_snapshot(snapshot: dict[str, object]) -> InMemoryBudgetLedger:
+    ledger = InMemoryBudgetLedger()
+    ledger._accounts = {
+        str(budget_id): _account_from_json(account)
+        for budget_id, account in snapshot.get("accounts", {}).items()
+    }
+    ledger._allocated = {
+        str(budget_id): _amount_map_from_json(amounts)
+        for budget_id, amounts in snapshot.get("allocated", {}).items()
+    }
+    ledger._reserved = {
+        str(budget_id): _amount_map_from_json(amounts)
+        for budget_id, amounts in snapshot.get("reserved", {}).items()
+    }
+    ledger._committed = {
+        str(budget_id): _amount_map_from_json(amounts)
+        for budget_id, amounts in snapshot.get("committed", {}).items()
+    }
+    ledger._overdraft = {
+        str(budget_id): _amount_map_from_json(amounts)
+        for budget_id, amounts in snapshot.get("overdraft", {}).items()
+    }
+    ledger._reservations = {
+        str(reservation_id): _reservation_from_json(reservation)
+        for reservation_id, reservation in snapshot.get("reservations", {}).items()
+    }
+    ledger._reservation_holds = {
+        str(reservation_id): tuple(str(budget_id) for budget_id in budget_ids)
+        for reservation_id, budget_ids in snapshot.get("reservation_holds", {}).items()
+    }
+    ledger._permits = {
+        str(permit_id): _permit_from_json(permit) for permit_id, permit in snapshot.get("permits", {}).items()
+    }
+    ledger._permit_spent = {
+        str(permit_id): _amount_map_from_json(amounts)
+        for permit_id, amounts in snapshot.get("permit_spent", {}).items()
+    }
+    ledger._completion_reserves = {
+        str(reserve_id): _completion_reserve_from_json(reserve)
+        for reserve_id, reserve in snapshot.get("completion_reserves", {}).items()
+    }
+    ledger._completion_reserve_holds = {
+        str(reserve_id): tuple(str(budget_id) for budget_id in budget_ids)
+        for reserve_id, budget_ids in snapshot.get("completion_reserve_holds", {}).items()
+    }
+    ledger._reservation_counter = int(snapshot.get("reservation_counter", 0))
+    ledger._fencing_counter = int(snapshot.get("fencing_counter", 0))
+    return ledger
+
+
+@dataclass(slots=True)
+class SQLiteBudgetLedger:
+    path: str | Path
+    _connection: sqlite3.Connection = field(init=False, repr=False)
+    _ledger: InMemoryBudgetLedger = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._connection = sqlite3.connect(str(self.path), isolation_level=None)
+        self._connection.row_factory = sqlite3.Row
+        self._connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS budget_ledger_snapshots (
+              snapshot_id TEXT PRIMARY KEY,
+              state_json TEXT NOT NULL
+            )
+            """
+        )
+        self._ledger = self._load_snapshot()
+
+    @classmethod
+    def in_memory(cls) -> SQLiteBudgetLedger:
+        return cls(":memory:")
+
+    @classmethod
+    def open(cls, path: str | Path) -> SQLiteBudgetLedger:
+        return cls(path)
+
+    def close(self) -> None:
+        self._connection.close()
+
+    def allocate(
+        self,
+        budget_id: str,
+        scope: ResourceRef,
+        amounts: list[UsageAmount],
+        *,
+        policy_ref: str,
+        parent_budget_id: str | None = None,
+    ) -> BudgetAccount:
+        return self._mutate(
+            lambda ledger: ledger.allocate(
+                budget_id,
+                scope,
+                amounts,
+                policy_ref=policy_ref,
+                parent_budget_id=parent_budget_id,
+            )
+        )
+
+    def reserve(
+        self,
+        budget_id: str,
+        owner: ResourceRef,
+        amounts: list[UsageAmount],
+        *,
+        purpose: ReservationPurpose,
+        expires_at: str,
+        reservation_id: str | None = None,
+    ) -> BudgetReservation:
+        return self._mutate(
+            lambda ledger: ledger.reserve(
+                budget_id,
+                owner,
+                amounts,
+                purpose=purpose,
+                expires_at=expires_at,
+                reservation_id=reservation_id,
+            )
+        )
+
+    def commit(
+        self,
+        reservation_id: str,
+        actual_amounts: list[UsageAmount],
+        *,
+        max_overdraft: list[UsageAmount] | None = None,
+    ) -> BudgetSettlement:
+        return self._mutate(
+            lambda ledger: ledger.commit(
+                reservation_id,
+                actual_amounts,
+                max_overdraft=max_overdraft,
+            )
+        )
+
+    def release(self, reservation_id: str) -> BudgetSettlement:
+        return self._mutate(lambda ledger: ledger.release(reservation_id))
+
+    def expire(self, reservation_id: str) -> BudgetSettlement:
+        return self._mutate(lambda ledger: ledger.expire(reservation_id))
+
+    def issue_permit(
+        self,
+        permit_id: str,
+        *,
+        reservation_ids: list[str],
+        owner: ResourceRef,
+        atomic_unit: ResourceRef,
+        admission_epoch: int,
+        continuation_profile: str,
+        policy_snapshot_digest: str,
+        expires_at: str,
+        low_watermark: list[UsageAmount] | None = None,
+    ) -> BudgetPermit:
+        return self._mutate(
+            lambda ledger: ledger.issue_permit(
+                permit_id,
+                reservation_ids=reservation_ids,
+                owner=owner,
+                atomic_unit=atomic_unit,
+                admission_epoch=admission_epoch,
+                continuation_profile=continuation_profile,
+                policy_snapshot_digest=policy_snapshot_digest,
+                expires_at=expires_at,
+                low_watermark=low_watermark,
+            )
+        )
+
+    def commit_with_permit(
+        self,
+        permit_id: str,
+        reservation_id: str,
+        actual_amounts: list[UsageAmount],
+        *,
+        max_overdraft: list[UsageAmount] | None = None,
+    ) -> BudgetSettlement:
+        return self._mutate(
+            lambda ledger: ledger.commit_with_permit(
+                permit_id,
+                reservation_id,
+                actual_amounts,
+                max_overdraft=max_overdraft,
+            )
+        )
+
+    def commit_with_permit_at(
+        self,
+        permit_id: str,
+        reservation_id: str,
+        actual_amounts: list[UsageAmount],
+        *,
+        now: str,
+        max_overdraft: list[UsageAmount] | None = None,
+    ) -> BudgetSettlement:
+        return self._mutate(
+            lambda ledger: ledger.commit_with_permit_at(
+                permit_id,
+                reservation_id,
+                actual_amounts,
+                now=now,
+                max_overdraft=max_overdraft,
+            )
+        )
+
+    def release_with_permit(self, permit_id: str, reservation_id: str) -> BudgetSettlement:
+        return self._mutate(lambda ledger: ledger.release_with_permit(permit_id, reservation_id))
+
+    def release_with_permit_at(self, permit_id: str, reservation_id: str, *, now: str) -> BudgetSettlement:
+        return self._mutate(lambda ledger: ledger.release_with_permit_at(permit_id, reservation_id, now=now))
+
+    def create_completion_reserve(
+        self,
+        reserve_id: str,
+        budget_id: str,
+        *,
+        purpose: CompletionReservePurpose,
+        amounts: list[UsageAmount],
+        spendable_by: tuple[str, ...],
+        expires_at: str | None = None,
+    ) -> CompletionReserve:
+        return self._mutate(
+            lambda ledger: ledger.create_completion_reserve(
+                reserve_id,
+                budget_id,
+                purpose=purpose,
+                amounts=amounts,
+                spendable_by=spendable_by,
+                expires_at=expires_at,
+            )
+        )
+
+    def completion_reserve(self, reserve_id: str) -> CompletionReserve:
+        self._ledger = self._load_snapshot()
+        return self._ledger.completion_reserve(reserve_id)
+
+    def spend_completion_reserve(
+        self,
+        reserve_id: str,
+        spender: str,
+        *,
+        expires_at: str,
+    ) -> BudgetReservation:
+        return self._mutate(
+            lambda ledger: ledger.spend_completion_reserve(
+                reserve_id,
+                spender,
+                expires_at=expires_at,
+            )
+        )
+
+    def release_completion_reserve(self, reserve_id: str) -> CompletionReserve:
+        return self._mutate(lambda ledger: ledger.release_completion_reserve(reserve_id))
+
+    def expire_completion_reserve(self, reserve_id: str) -> CompletionReserve:
+        return self._mutate(lambda ledger: ledger.expire_completion_reserve(reserve_id))
+
+    def balance(self, budget_id: str) -> BudgetBalance:
+        self._ledger = self._load_snapshot()
+        return self._ledger.balance(budget_id)
+
+    def _load_snapshot(self) -> InMemoryBudgetLedger:
+        row = self._connection.execute(
+            "SELECT state_json FROM budget_ledger_snapshots WHERE snapshot_id = ?",
+            ("default",),
+        ).fetchone()
+        if row is None:
+            return InMemoryBudgetLedger()
+        return _budget_ledger_from_snapshot(json.loads(row["state_json"]))
+
+    def _save_snapshot(self, ledger: InMemoryBudgetLedger) -> None:
+        self._connection.execute(
+            """
+            INSERT INTO budget_ledger_snapshots (snapshot_id, state_json)
+            VALUES (?, ?)
+            ON CONFLICT(snapshot_id) DO UPDATE SET state_json = excluded.state_json
+            """,
+            (
+                "default",
+                json.dumps(
+                    _budget_ledger_to_snapshot(ledger),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+            ),
+        )
+
+    def _mutate(self, action: Callable[[InMemoryBudgetLedger], BudgetLedgerResult]) -> BudgetLedgerResult:
+        self._connection.execute("BEGIN IMMEDIATE")
+        try:
+            self._ledger = self._load_snapshot()
+            result = action(self._ledger)
+            self._save_snapshot(self._ledger)
+            self._connection.commit()
+        except Exception:
+            self._connection.rollback()
+            self._ledger = self._load_snapshot()
+            raise
+        return result

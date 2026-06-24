@@ -27,6 +27,7 @@ from graphblocks.budget import (
     InMemoryBudgetLedger,
     ReservationPurpose,
     ReservationStatus,
+    SQLiteBudgetLedger,
     UsageAmount,
 )
 from graphblocks.policy import ResourceRef
@@ -59,6 +60,7 @@ __all__ = [
     "InMemoryBudgetLedger",
     "ReservationPurpose",
     "ReservationStatus",
+    "SQLiteBudgetLedger",
     "ResourceRef",
     "UsageAmount",
 ]

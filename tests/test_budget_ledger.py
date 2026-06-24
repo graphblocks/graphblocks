@@ -10,6 +10,7 @@ from graphblocks.budget import (
     BudgetExceededError,
     InMemoryBudgetLedger,
     BudgetReservationStateError,
+    SQLiteBudgetLedger,
     UsageAmount,
 )
 from graphblocks.policy import ResourceRef
@@ -256,3 +257,69 @@ def test_completion_reserve_rejects_unauthorized_spender() -> None:
     assert error.value.reserve_id == "cleanup-reserve"
     assert error.value.spender == "planner"
     assert ledger.completion_reserve("cleanup-reserve").status == "available"
+
+
+def test_sqlite_budget_ledger_persists_reserved_balance_and_permit_spend(tmp_path) -> None:
+    path = tmp_path / "budget.sqlite3"
+    ledger = SQLiteBudgetLedger(path)
+    ledger.allocate("budget-1", ResourceRef("tenant:acme"), [_tokens("100")], policy_ref="policy-1")
+    reservation = ledger.reserve(
+        "budget-1",
+        ResourceRef("run:1", resource_kind="run"),
+        [_tokens("40")],
+        purpose="provider_call",
+        expires_at="2026-06-22T01:00:00Z",
+    )
+    permit = ledger.issue_permit(
+        "permit-1",
+        reservation_ids=[reservation.reservation_id],
+        owner=ResourceRef("worker:1", resource_kind="worker"),
+        atomic_unit=ResourceRef("turn:1", resource_kind="turn"),
+        admission_epoch=1,
+        continuation_profile="finish_current_turn",
+        policy_snapshot_digest="sha256:policy",
+        expires_at="2026-06-22T02:00:00Z",
+    )
+    ledger.close()
+
+    reopened = SQLiteBudgetLedger(path)
+    assert reopened.balance("budget-1").reserved == [_tokens("40")]
+    settlement = reopened.commit_with_permit_at(
+        permit.permit_id,
+        reservation.reservation_id,
+        [_tokens("25")],
+        now="2026-06-22T01:30:00Z",
+    )
+
+    assert settlement.committed == [_tokens("25")]
+    assert settlement.released == [_tokens("15")]
+    assert reopened.balance("budget-1").available == [_tokens("75")]
+    reopened.close()
+
+
+def test_sqlite_budget_ledger_persists_completion_reserve_lifecycle(tmp_path) -> None:
+    path = tmp_path / "budget.sqlite3"
+    ledger = SQLiteBudgetLedger(path)
+    ledger.allocate("budget-1", ResourceRef("tenant:acme"), [_tokens("100")], policy_ref="policy-1")
+    reserve = ledger.create_completion_reserve(
+        "finalization-reserve",
+        "budget-1",
+        purpose="finalization",
+        amounts=[_tokens("20")],
+        spendable_by=("agent.finalize",),
+        expires_at="2026-06-22T00:05:00Z",
+    )
+    ledger.close()
+
+    reopened = SQLiteBudgetLedger(path)
+    assert reopened.completion_reserve("finalization-reserve") == reserve
+    assert reopened.balance("budget-1").available == [_tokens("80")]
+    reservation = reopened.spend_completion_reserve("finalization-reserve", "agent.finalize", expires_at="later")
+    assert reopened.completion_reserve("finalization-reserve").status == "spent"
+    reopened.close()
+
+    final = SQLiteBudgetLedger(path)
+    assert final.completion_reserve("finalization-reserve").reservation_id == reservation.reservation_id
+    assert final.commit(reservation.reservation_id, [_tokens("15")]).released == [_tokens("5")]
+    assert final.balance("budget-1").available == [_tokens("85")]
+    final.close()
