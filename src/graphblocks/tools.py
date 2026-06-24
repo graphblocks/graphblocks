@@ -1352,6 +1352,9 @@ def validate_tool_result_for_model(
     max_output_bytes: int | None = None,
     redactions: tuple[dict[str, object], ...] = (),
     capture_policy: dict[str, object] | None = None,
+    trust_designation: str = "untrusted_external",
+    prompt_injection_label: str = "untrusted_tool_output",
+    content_classification: str = "external_tool_output",
 ) -> tuple[ContentPart, ...]:
     if result.tool_call_id != call.tool_call_id:
         raise ToolResultValidationError(
@@ -1380,9 +1383,9 @@ def validate_tool_result_for_model(
     model_output: list[ContentPart] = []
     for part in result.output:
         metadata = dict(part.metadata)
-        metadata.setdefault("trust_designation", "untrusted_external")
-        metadata.setdefault("prompt_injection_label", "untrusted_tool_output")
-        metadata.setdefault("content_classification", "external_tool_output")
+        metadata["trust_designation"] = trust_designation
+        metadata["prompt_injection_label"] = prompt_injection_label
+        metadata["content_classification"] = content_classification
         model_output.append(replace(part, metadata=metadata))
 
     if redactions:

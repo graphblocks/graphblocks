@@ -335,11 +335,27 @@ impl ToolResult {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ToolResultContentPolicy {
     pub max_output_bytes: Option<usize>,
     pub redactions: Vec<RedactionInstruction>,
     pub capture_decision: Option<CaptureDecision>,
+    pub trust_designation: String,
+    pub prompt_injection_label: String,
+    pub content_classification: String,
+}
+
+impl Default for ToolResultContentPolicy {
+    fn default() -> Self {
+        Self {
+            max_output_bytes: None,
+            redactions: Vec::new(),
+            capture_decision: None,
+            trust_designation: "untrusted_external".to_string(),
+            prompt_injection_label: "untrusted_tool_output".to_string(),
+            content_classification: "external_tool_output".to_string(),
+        }
+    }
 }
 
 impl ToolResultContentPolicy {
@@ -362,6 +378,18 @@ impl ToolResultContentPolicy {
 
     pub fn with_capture_decision(mut self, capture_decision: CaptureDecision) -> Self {
         self.capture_decision = Some(capture_decision);
+        self
+    }
+
+    pub fn with_model_output_labels(
+        mut self,
+        trust_designation: impl Into<String>,
+        prompt_injection_label: impl Into<String>,
+        content_classification: impl Into<String>,
+    ) -> Self {
+        self.trust_designation = trust_designation.into();
+        self.prompt_injection_label = prompt_injection_label.into();
+        self.content_classification = content_classification.into();
         self
     }
 }
@@ -550,15 +578,18 @@ impl ToolResultValidation {
             .iter()
             .cloned()
             .map(|mut part| {
-                part.metadata
-                    .entry("trust_designation".to_string())
-                    .or_insert_with(|| json!("untrusted_external"));
-                part.metadata
-                    .entry("prompt_injection_label".to_string())
-                    .or_insert_with(|| json!("untrusted_tool_output"));
-                part.metadata
-                    .entry("content_classification".to_string())
-                    .or_insert_with(|| json!("external_tool_output"));
+                part.metadata.insert(
+                    "trust_designation".to_string(),
+                    Value::String(content_policy.trust_designation.clone()),
+                );
+                part.metadata.insert(
+                    "prompt_injection_label".to_string(),
+                    Value::String(content_policy.prompt_injection_label.clone()),
+                );
+                part.metadata.insert(
+                    "content_classification".to_string(),
+                    Value::String(content_policy.content_classification.clone()),
+                );
                 part
             })
             .collect::<Vec<_>>();

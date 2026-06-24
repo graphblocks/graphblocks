@@ -1069,7 +1069,7 @@ def test_completed_tool_result_validates_output_schema_before_model_return() -> 
     assert str(error.value) == "schemas/SearchResult@1 expected string at $.answer"
 
 
-def test_completed_tool_result_model_output_is_labeled_untrusted_by_default() -> None:
+def test_completed_tool_result_model_output_overrides_raw_trust_metadata_by_default() -> None:
     catalog = ToolCatalog(
         definitions=(
             ToolDefinition(
@@ -1109,7 +1109,11 @@ def test_completed_tool_result_model_output_is_labeled_untrusted_by_default() ->
             ContentPart(
                 kind="json",
                 data={"answer": "Use the runtime."},
-                metadata={"trust_designation": "trusted_internal", "content_classification": "support_docs"},
+                metadata={
+                    "trust_designation": "trusted_internal",
+                    "prompt_injection_label": "trusted_tool_output",
+                    "content_classification": "support_docs",
+                },
             ),
         ),
         started_at="2026-06-23T00:00:01Z",
@@ -1121,11 +1125,72 @@ def test_completed_tool_result_model_output_is_labeled_untrusted_by_default() ->
     assert output[0].metadata["trust_designation"] == "untrusted_external"
     assert output[0].metadata["prompt_injection_label"] == "untrusted_tool_output"
     assert output[0].metadata["content_classification"] == "external_tool_output"
-    assert output[1].metadata["trust_designation"] == "trusted_internal"
+    assert output[1].metadata["trust_designation"] == "untrusted_external"
     assert output[1].metadata["prompt_injection_label"] == "untrusted_tool_output"
-    assert output[1].metadata["content_classification"] == "support_docs"
+    assert output[1].metadata["content_classification"] == "external_tool_output"
     assert "trust_designation" not in result.output[0].metadata
     assert "content_classification" not in result.output[0].metadata
+    assert result.output[1].metadata["trust_designation"] == "trusted_internal"
+    assert result.output[1].metadata["prompt_injection_label"] == "trusted_tool_output"
+    assert result.output[1].metadata["content_classification"] == "support_docs"
+
+
+def test_completed_tool_result_model_output_accepts_runtime_configured_trust_labels() -> None:
+    catalog = ToolCatalog(
+        definitions=(
+            ToolDefinition(
+                name="knowledge.search",
+                description="Search documentation.",
+                input_schema="schemas/SearchRequest@1",
+            ),
+        ),
+        bindings=(
+            ToolBinding(
+                binding_id="binding-search",
+                tool_name="knowledge.search",
+                implementation=BlockToolImplementation(block="blocks.search"),
+            ),
+        ),
+    )
+    resolved = catalog.resolve(ToolResolutionScope(), effective_policy_snapshot_id="policy-snapshot-1")[0]
+    call = (
+        ToolCallDraft.proposed("response-1", "call-1", "knowledge.search")
+        .append_argument_fragment("{}")
+        .complete_arguments()
+        .into_tool_call(resolved.resolved_tool_id, created_at="2026-06-23T00:00:00Z")
+    )
+    registry = ToolSchemaRegistry(())
+    result = ToolResult.completed(
+        "call-1",
+        (
+            ContentPart(
+                kind="text",
+                text="classified output",
+                metadata={
+                    "trust_designation": "trusted_internal",
+                    "prompt_injection_label": "trusted_tool_output",
+                    "content_classification": "support_docs",
+                },
+            ),
+        ),
+        started_at="2026-06-23T00:00:01Z",
+        completed_at="2026-06-23T00:00:02Z",
+    )
+
+    output = validate_tool_result_for_model(
+        call,
+        result,
+        resolved,
+        registry,
+        trust_designation="policy_quarantined",
+        prompt_injection_label="classifier_flagged_tool_output",
+        content_classification="classified_external_tool_output",
+    )
+
+    assert output[0].metadata["trust_designation"] == "policy_quarantined"
+    assert output[0].metadata["prompt_injection_label"] == "classifier_flagged_tool_output"
+    assert output[0].metadata["content_classification"] == "classified_external_tool_output"
+    assert result.output[0].metadata["trust_designation"] == "trusted_internal"
 
 
 def test_completed_tool_result_model_output_enforces_byte_limit_before_model_return() -> None:
