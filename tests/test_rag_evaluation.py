@@ -11,9 +11,11 @@ from graphblocks.documents import (
     parse_plain_text_document,
 )
 from graphblocks.rag import (
+    Abstention,
     Answer,
     AuthContext,
     Citation,
+    CitationValidationResult,
     Claim,
     ContextPack,
     InMemoryChunkRetriever,
@@ -267,3 +269,39 @@ def test_evaluate_rag_answer_metrics_reports_unsupported_claim_rate() -> None:
     assert by_name["answer_relevance"].value is None
     assert by_name["faithfulness"].value == Decimal("0")
     assert by_name["unsupported_claim_rate"].value == Decimal("1")
+
+
+def test_evaluate_rag_answer_metrics_reports_abstention_precision_and_recall() -> None:
+    abstained = Answer(
+        answer_id="answer-1",
+        text="I do not have enough context.",
+        abstention=Abstention(
+            reason="insufficient_context",
+            user_message="I do not have enough context.",
+        ),
+        metadata={"expected_abstention": True},
+    )
+
+    abstained_metrics = {
+        metric.name: metric
+        for metric in evaluate_rag_answer_metrics(abstained, CitationValidationResult(ok=True))
+    }
+
+    assert abstained_metrics["abstention_precision"].value == Decimal("1")
+    assert abstained_metrics["abstention_precision"].direction == "maximize"
+    assert abstained_metrics["abstention_recall"].value == Decimal("1")
+    assert abstained_metrics["abstention_recall"].direction == "maximize"
+
+    missed = Answer(
+        answer_id="answer-2",
+        text="A direct answer.",
+        metadata={"expected_abstention": True},
+    )
+
+    missed_metrics = {
+        metric.name: metric
+        for metric in evaluate_rag_answer_metrics(missed, CitationValidationResult(ok=True))
+    }
+
+    assert missed_metrics["abstention_precision"].value is None
+    assert missed_metrics["abstention_recall"].value == Decimal("0")

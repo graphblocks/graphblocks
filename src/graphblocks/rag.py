@@ -1029,6 +1029,25 @@ def evaluate_rag_answer_metrics(
         )
         else None
     )
+    expected_abstention = answer.metadata.get(
+        "expected_abstention",
+        answer.metadata.get("should_abstain"),
+    )
+    actual_abstention = answer.abstention is not None
+    if isinstance(expected_abstention, bool):
+        abstention_precision = (
+            Decimal(1 if expected_abstention else 0)
+            if actual_abstention
+            else None
+        )
+        abstention_recall = (
+            Decimal(1 if actual_abstention else 0)
+            if expected_abstention
+            else None
+        )
+    else:
+        abstention_precision = None
+        abstention_recall = None
 
     return [
         MetricObservation(
@@ -1054,6 +1073,16 @@ def evaluate_rag_answer_metrics(
         MetricObservation(
             "faithfulness",
             faithfulness,
+            direction="maximize",
+        ),
+        MetricObservation(
+            "abstention_precision",
+            abstention_precision,
+            direction="maximize",
+        ),
+        MetricObservation(
+            "abstention_recall",
+            abstention_recall,
             direction="maximize",
         ),
         MetricObservation(

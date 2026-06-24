@@ -5,16 +5,17 @@ use graphblocks_runtime_core::documents::{
 };
 use graphblocks_runtime_core::evaluation::{MetricDirection, ResultBundle};
 use graphblocks_runtime_core::rag::{
-    Answer, AuthContext, Citation, CitationSeverity, Claim, ContextBuildOptions, ContextPack,
-    FailurePolicy, FederatedFailureMode, FederatedRetrievalOptions, FederatedRetrievalSource,
-    FusionOptions, FusionStrategy, InMemoryChunkRetriever, InMemoryKnowledgeIndex,
-    KnowledgeDeleteMode, KnowledgeItemRef, KnowledgeRecordStatus, QueryPlan, RagError,
-    RagResultBundle, RagResultPayload, RerankOptions, RetrievalResult, SearchHit, SearchRequest,
-    authorize_search_hits, build_abstention_answer, build_answer_from_model_response,
-    build_answer_from_model_response_with_context, build_context_pack, evaluate_context_metrics,
-    evaluate_rag_answer_metrics, evaluate_retrieval_metrics, evaluate_retrieval_metrics_with_auth,
-    federated_retrieve, fuse_search_hits, knowledge_item_from_chunk, render_context_pack,
-    rerank_search_hits, resolve_citation_source_trace, validate_answer_citation_authorization,
+    Answer, AuthContext, Citation, CitationSeverity, CitationValidationResult, Claim,
+    ContextBuildOptions, ContextPack, FailurePolicy, FederatedFailureMode,
+    FederatedRetrievalOptions, FederatedRetrievalSource, FusionOptions, FusionStrategy,
+    InMemoryChunkRetriever, InMemoryKnowledgeIndex, KnowledgeDeleteMode, KnowledgeItemRef,
+    KnowledgeRecordStatus, QueryPlan, RagError, RagResultBundle, RagResultPayload, RerankOptions,
+    RetrievalResult, SearchHit, SearchRequest, authorize_search_hits, build_abstention_answer,
+    build_answer_from_model_response, build_answer_from_model_response_with_context,
+    build_context_pack, evaluate_context_metrics, evaluate_rag_answer_metrics,
+    evaluate_retrieval_metrics, evaluate_retrieval_metrics_with_auth, federated_retrieve,
+    fuse_search_hits, knowledge_item_from_chunk, render_context_pack, rerank_search_hits,
+    resolve_citation_source_trace, validate_answer_citation_authorization,
     validate_answer_citations, validate_answer_grounding,
 };
 use serde_json::{Value, json};
@@ -1669,6 +1670,52 @@ fn evaluate_rag_answer_metrics_reports_unsupported_claim_rate() {
         .find(|metric| metric.name == "unsupported_claim_rate")
         .expect("unsupported claim rate metric exists");
     assert_eq!(unsupported_claim_rate.value, json!(1.0));
+}
+
+#[test]
+fn evaluate_rag_answer_metrics_reports_abstention_precision_and_recall() {
+    let mut abstained = build_abstention_answer(
+        "answer-1",
+        "insufficient_context",
+        "I do not have enough context.",
+        BTreeMap::new(),
+    );
+    abstained
+        .metadata
+        .insert("expected_abstention".to_owned(), json!(true));
+
+    let abstained_metrics =
+        evaluate_rag_answer_metrics(&abstained, &CitationValidationResult::ok());
+
+    let abstention_precision = abstained_metrics
+        .iter()
+        .find(|metric| metric.name == "abstention_precision")
+        .expect("abstention precision metric exists");
+    assert_eq!(abstention_precision.value, json!(1.0));
+    assert_eq!(abstention_precision.direction, MetricDirection::Maximize);
+    let abstention_recall = abstained_metrics
+        .iter()
+        .find(|metric| metric.name == "abstention_recall")
+        .expect("abstention recall metric exists");
+    assert_eq!(abstention_recall.value, json!(1.0));
+    assert_eq!(abstention_recall.direction, MetricDirection::Maximize);
+
+    let mut missed = Answer::new("answer-2", "A direct answer.");
+    missed
+        .metadata
+        .insert("expected_abstention".to_owned(), json!(true));
+    let missed_metrics = evaluate_rag_answer_metrics(&missed, &CitationValidationResult::ok());
+
+    let missed_precision = missed_metrics
+        .iter()
+        .find(|metric| metric.name == "abstention_precision")
+        .expect("abstention precision metric exists");
+    assert_eq!(missed_precision.value, Value::Null);
+    let missed_recall = missed_metrics
+        .iter()
+        .find(|metric| metric.name == "abstention_recall")
+        .expect("abstention recall metric exists");
+    assert_eq!(missed_recall.value, json!(0.0));
 }
 
 #[test]

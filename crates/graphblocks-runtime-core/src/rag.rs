@@ -2553,6 +2553,20 @@ pub fn evaluate_rag_answer_metrics(
         .and_then(Value::as_f64)
         .filter(|score| score.is_finite())
         .map_or(Value::Null, |score| json!(score));
+    let expected_abstention = answer
+        .metadata
+        .get("expected_abstention")
+        .or_else(|| answer.metadata.get("should_abstain"))
+        .and_then(Value::as_bool);
+    let actual_abstention = answer.abstention.is_some();
+    let abstention_precision = match (actual_abstention, expected_abstention) {
+        (true, Some(expected)) => json!(if expected { 1.0 } else { 0.0 }),
+        _ => Value::Null,
+    };
+    let abstention_recall = match expected_abstention {
+        Some(true) => json!(if actual_abstention { 1.0 } else { 0.0 }),
+        _ => Value::Null,
+    };
 
     vec![
         MetricObservation::new("citation_precision", citation_precision)
@@ -2564,6 +2578,10 @@ pub fn evaluate_rag_answer_metrics(
         MetricObservation::new("answer_relevance", answer_relevance)
             .with_direction(MetricDirection::Maximize),
         MetricObservation::new("faithfulness", faithfulness)
+            .with_direction(MetricDirection::Maximize),
+        MetricObservation::new("abstention_precision", abstention_precision)
+            .with_direction(MetricDirection::Maximize),
+        MetricObservation::new("abstention_recall", abstention_recall)
             .with_direction(MetricDirection::Maximize),
         MetricObservation::new("unsupported_claim_rate", unsupported_claim_rate)
             .with_direction(MetricDirection::Minimize),
