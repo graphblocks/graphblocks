@@ -979,6 +979,20 @@ def evaluate_rag_answer_metrics(
         else Decimal(len(answer.citations) - len(invalid_citation_ids))
         / Decimal(len(answer.citations))
     )
+    source_inaccurate_citation_ids = {
+        issue.citation_id
+        for issue in validation.issues
+        if issue.severity == "error"
+        and issue.code == "citation.source_not_in_context"
+        and issue.citation_id is not None
+        and issue.citation_id in citation_ids
+    }
+    citation_source_accuracy = (
+        None
+        if not answer.citations
+        else Decimal(len(answer.citations) - len(source_inaccurate_citation_ids))
+        / Decimal(len(answer.citations))
+    )
 
     claim_ids = {claim.claim_id for claim in answer.claims}
     unsupported_claim_ids = {
@@ -989,6 +1003,12 @@ def evaluate_rag_answer_metrics(
         and issue.claim_id is not None
         and issue.claim_id in claim_ids
     }
+    citation_recall = (
+        None
+        if not answer.claims
+        else Decimal(len(answer.claims) - len(unsupported_claim_ids))
+        / Decimal(len(answer.claims))
+    )
     unsupported_claim_rate = (
         None
         if not answer.claims
@@ -999,6 +1019,16 @@ def evaluate_rag_answer_metrics(
         MetricObservation(
             "citation_precision",
             citation_precision,
+            direction="maximize",
+        ),
+        MetricObservation(
+            "citation_recall",
+            citation_recall,
+            direction="maximize",
+        ),
+        MetricObservation(
+            "citation_source_accuracy",
+            citation_source_accuracy,
             direction="maximize",
         ),
         MetricObservation(

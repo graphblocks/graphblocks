@@ -2492,6 +2492,26 @@ pub fn evaluate_rag_answer_metrics(
                 / answer.citations.len() as f64
         )
     };
+    let source_inaccurate_citation_ids = validation
+        .issues
+        .iter()
+        .filter(|issue| issue.severity == CitationSeverity::Error)
+        .filter(|issue| issue.code == "citation.source_not_in_context")
+        .filter_map(|issue| issue.citation_id.as_ref())
+        .filter(|citation_id| citation_ids.contains(*citation_id))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let citation_source_accuracy = if answer.citations.is_empty() {
+        Value::Null
+    } else {
+        json!(
+            answer
+                .citations
+                .len()
+                .saturating_sub(source_inaccurate_citation_ids.len()) as f64
+                / answer.citations.len() as f64
+        )
+    };
 
     let claim_ids = answer
         .claims
@@ -2509,6 +2529,17 @@ pub fn evaluate_rag_answer_metrics(
         .filter(|claim_id| claim_ids.contains(*claim_id))
         .cloned()
         .collect::<BTreeSet<_>>();
+    let citation_recall = if answer.claims.is_empty() {
+        Value::Null
+    } else {
+        json!(
+            answer
+                .claims
+                .len()
+                .saturating_sub(unsupported_claim_ids.len()) as f64
+                / answer.claims.len() as f64
+        )
+    };
     let unsupported_claim_rate = if answer.claims.is_empty() {
         Value::Null
     } else {
@@ -2517,6 +2548,10 @@ pub fn evaluate_rag_answer_metrics(
 
     vec![
         MetricObservation::new("citation_precision", citation_precision)
+            .with_direction(MetricDirection::Maximize),
+        MetricObservation::new("citation_recall", citation_recall)
+            .with_direction(MetricDirection::Maximize),
+        MetricObservation::new("citation_source_accuracy", citation_source_accuracy)
             .with_direction(MetricDirection::Maximize),
         MetricObservation::new("unsupported_claim_rate", unsupported_claim_rate)
             .with_direction(MetricDirection::Minimize),

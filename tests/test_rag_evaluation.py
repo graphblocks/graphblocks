@@ -181,6 +181,10 @@ def test_evaluate_rag_answer_metrics_reports_citation_precision() -> None:
     assert [metric.name for metric in exported_metrics] == [metric.name for metric in metrics]
     assert by_name["citation_precision"].value == Decimal("0.5")
     assert by_name["citation_precision"].direction == "maximize"
+    assert by_name["citation_recall"].value == Decimal("1")
+    assert by_name["citation_recall"].direction == "maximize"
+    assert by_name["citation_source_accuracy"].value == Decimal("1")
+    assert by_name["citation_source_accuracy"].direction == "maximize"
     assert by_name["unsupported_claim_rate"].value == Decimal("0")
     assert by_name["unsupported_claim_rate"].direction == "minimize"
 
@@ -211,4 +215,6 @@ def test_evaluate_rag_answer_metrics_reports_unsupported_claim_rate() -> None:
     }
 
     assert by_name["citation_precision"].value == Decimal("0")
+    assert by_name["citation_recall"].value == Decimal("0")
+    assert by_name["citation_source_accuracy"].value == Decimal("1")
     assert by_name["unsupported_claim_rate"].value == Decimal("1")
