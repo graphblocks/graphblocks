@@ -85,6 +85,7 @@ class DocumentParserRegistry:
             media_type=media_type,
             filename=filename,
             artifact_checksum=artifact.checksum,
+            metadata=dict(descriptor.metadata),
         )
 
     def resolve_locked(self, lock: ParserSelectionLock) -> ParserDescriptor:

@@ -11,13 +11,23 @@ use serde_json::json;
 fn parser_registry_selects_by_media_type_and_records_lock_inputs()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut registry = DocumentParserRegistry::new();
-    registry.register(plain_text_parser_descriptor());
+    let mut descriptor = plain_text_parser_descriptor();
+    descriptor
+        .metadata
+        .insert("config_digest".to_owned(), json!("sha256:parser-config"));
+    descriptor
+        .metadata
+        .insert("profile".to_owned(), json!("plain-text-default"));
+    registry.register(descriptor.clone());
     let mut artifact = ArtifactRef::new("artifact-1", "file:///tmp/policy.txt");
     artifact.media_type = Some("text/plain".to_owned());
     artifact.checksum = Some("sha256:content".to_owned());
     artifact.filename = Some("policy.txt".to_owned());
 
     let lock = registry.select(&artifact)?;
+    descriptor
+        .metadata
+        .insert("profile".to_owned(), json!("mutated"));
 
     assert_eq!(lock.processor_id, "plain-text");
     assert_eq!(lock.processor_version, "1");
@@ -25,6 +35,14 @@ fn parser_registry_selects_by_media_type_and_records_lock_inputs()
     assert_eq!(lock.media_type.as_deref(), Some("text/plain"));
     assert_eq!(lock.filename.as_deref(), Some("policy.txt"));
     assert_eq!(lock.artifact_checksum.as_deref(), Some("sha256:content"));
+    assert_eq!(
+        lock.metadata.get("config_digest"),
+        Some(&json!("sha256:parser-config"))
+    );
+    assert_eq!(
+        lock.metadata.get("profile"),
+        Some(&json!("plain-text-default"))
+    );
     Ok(())
 }
 

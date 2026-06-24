@@ -487,7 +487,7 @@ impl DocumentParserRegistry {
             media_type,
             filename,
             artifact_checksum: artifact.checksum.clone(),
-            metadata: BTreeMap::new(),
+            metadata: descriptor.metadata.clone(),
         })
     }
 

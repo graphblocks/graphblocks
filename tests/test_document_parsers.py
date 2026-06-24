@@ -14,7 +14,10 @@ from graphblocks.documents import ArtifactRef, AssetRevision, SourceAsset
 
 def test_parser_registry_selects_by_media_type_and_records_lock_inputs() -> None:
     registry = DocumentParserRegistry()
-    registry.register(plain_text_parser_descriptor())
+    descriptor = plain_text_parser_descriptor()
+    descriptor.metadata["config_digest"] = "sha256:parser-config"
+    descriptor.metadata["profile"] = "plain-text-default"
+    registry.register(descriptor)
     artifact = ArtifactRef(
         artifact_id="artifact-1",
         uri="file:///tmp/policy.txt",
@@ -24,6 +27,7 @@ def test_parser_registry_selects_by_media_type_and_records_lock_inputs() -> None
     )
 
     lock = registry.select(artifact)
+    descriptor.metadata["profile"] = "mutated"
 
     assert lock.processor_id == "plain-text"
     assert lock.processor_version == "1"
@@ -31,6 +35,10 @@ def test_parser_registry_selects_by_media_type_and_records_lock_inputs() -> None
     assert lock.media_type == "text/plain"
     assert lock.filename == "policy.txt"
     assert lock.artifact_checksum == "sha256:content"
+    assert lock.metadata == {
+        "config_digest": "sha256:parser-config",
+        "profile": "plain-text-default",
+    }
 
 
 def test_parser_registry_uses_extension_when_media_type_is_missing() -> None:
