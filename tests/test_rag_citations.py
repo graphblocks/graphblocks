@@ -256,6 +256,74 @@ def test_validate_answer_citations_can_remove_invalid_citations() -> None:
     assert result.abstention is None
 
 
+def test_validate_answer_citations_can_repair_when_valid_support_remains() -> None:
+    context = _single_hit_context()
+    valid = Citation(
+        citation_id="cite-valid",
+        source=context.hits[0].item.source,
+        cited_text="requires audit logs",
+    )
+    invalid = Citation(
+        citation_id="cite-invalid",
+        source=context.hits[0].item.source,
+        cited_text="unrelated phrase",
+    )
+    answer = Answer(
+        answer_id="answer-1",
+        text="Alpha policy requires audit logs.",
+        claims=[
+            Claim(
+                claim_id="claim-1",
+                text="Alpha policy requires audit logs.",
+                citation_ids=["cite-valid", "cite-invalid"],
+            )
+        ],
+        citations=[valid, invalid],
+    )
+
+    result = validate_answer_citations(answer, context, failure_policy="repair")
+
+    assert result.ok is True
+    assert [issue.code for issue in result.issues] == ["citation.text_mismatch"]
+    assert result.repaired_answer is not None
+    assert [citation.citation_id for citation in result.repaired_answer.citations] == [
+        "cite-valid"
+    ]
+    assert result.repaired_answer.claims[0].citation_ids == ["cite-valid"]
+
+
+def test_validate_answer_citations_repair_fails_when_claim_loses_support() -> None:
+    context = _single_hit_context()
+    citation = Citation(
+        citation_id="cite-invalid",
+        source=context.hits[0].item.source,
+        cited_text="unrelated phrase",
+    )
+    answer = Answer(
+        answer_id="answer-1",
+        text="Alpha policy requires audit logs.",
+        claims=[
+            Claim(
+                claim_id="claim-1",
+                text="Alpha policy requires audit logs.",
+                citation_ids=["cite-invalid"],
+            )
+        ],
+        citations=[citation],
+    )
+
+    result = validate_answer_citations(answer, context, failure_policy="repair")
+
+    assert result.ok is False
+    assert [issue.code for issue in result.issues] == [
+        "citation.text_mismatch",
+        "claim.missing_citation",
+    ]
+    assert result.repaired_answer is not None
+    assert result.repaired_answer.citations == []
+    assert result.repaired_answer.claims[0].citation_ids == []
+
+
 def test_validate_answer_citation_authorization_rejects_unauthorized_source() -> None:
     context = _single_hit_context()
     hit = replace(

@@ -794,6 +794,7 @@ pub enum FailurePolicy {
     Warn,
     Fail,
     Abstain,
+    Repair,
     RemoveInvalid,
 }
 
@@ -2219,7 +2220,10 @@ pub fn validate_answer_citations(
             repaired_answer: None,
         });
     }
-    if failure_policy == FailurePolicy::RemoveInvalid {
+    if matches!(
+        failure_policy,
+        FailurePolicy::RemoveInvalid | FailurePolicy::Repair
+    ) {
         let invalid_citation_ids = issues
             .iter()
             .filter_map(|issue| issue.citation_id.clone())
@@ -2238,12 +2242,38 @@ pub fn validate_answer_citations(
                 .citation_ids
                 .retain(|citation_id| remaining_citation_ids.contains(citation_id));
         }
-        return Ok(CitationValidationResult {
-            ok: true,
-            issues,
-            abstention: None,
-            repaired_answer: Some(repaired_answer),
-        });
+        if failure_policy == FailurePolicy::RemoveInvalid {
+            return Ok(CitationValidationResult {
+                ok: true,
+                issues,
+                abstention: None,
+                repaired_answer: Some(repaired_answer),
+            });
+        }
+        if failure_policy == FailurePolicy::Repair {
+            let repaired_result = validate_answer_citations(
+                &repaired_answer,
+                context,
+                require_citations,
+                FailurePolicy::Fail,
+            )?;
+            let repaired_ok = repaired_result.ok;
+            for repaired_issue in repaired_result.issues {
+                if !issues.iter().any(|issue| {
+                    issue.code == repaired_issue.code
+                        && issue.citation_id == repaired_issue.citation_id
+                        && issue.claim_id == repaired_issue.claim_id
+                }) {
+                    issues.push(repaired_issue);
+                }
+            }
+            return Ok(CitationValidationResult {
+                ok: repaired_ok,
+                issues,
+                abstention: None,
+                repaired_answer: Some(repaired_answer),
+            });
+        }
     }
     if failure_policy == FailurePolicy::Abstain {
         let mut diagnostics = BTreeMap::new();

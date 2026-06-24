@@ -1365,6 +1365,100 @@ fn validate_answer_citations_can_remove_invalid_citations() {
 }
 
 #[test]
+fn validate_answer_citations_can_repair_when_valid_support_remains() {
+    let context = build_context_pack(
+        "ctx-1",
+        vec![hit(
+            "hit-1",
+            "chunk-1",
+            "doc-1",
+            "Alpha policy requires audit logs.",
+            1,
+        )],
+        ContextBuildOptions::new(10),
+    )
+    .expect("context build succeeds");
+    let valid = Citation::new("cite-valid", context.hits[0].item.source.clone())
+        .with_cited_text("requires audit logs");
+    let invalid = Citation::new("cite-invalid", context.hits[0].item.source.clone())
+        .with_cited_text("unrelated phrase");
+    let answer = Answer::new("answer-1", "Alpha policy requires audit logs.")
+        .with_claim(
+            Claim::new("claim-1", "Alpha policy requires audit logs.")
+                .with_citation_ids(["cite-valid", "cite-invalid"]),
+        )
+        .with_citation(valid)
+        .with_citation(invalid);
+
+    let result = validate_answer_citations(&answer, &context, true, FailurePolicy::Repair)
+        .expect("citation validation succeeds");
+
+    assert!(result.ok);
+    assert_eq!(
+        result
+            .issues
+            .iter()
+            .map(|issue| issue.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["citation.text_mismatch"]
+    );
+    let repaired = result
+        .repaired_answer
+        .expect("result includes repaired answer");
+    assert_eq!(
+        repaired
+            .citations
+            .iter()
+            .map(|citation| citation.citation_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["cite-valid"]
+    );
+    assert_eq!(repaired.claims[0].citation_ids, vec!["cite-valid"]);
+}
+
+#[test]
+fn validate_answer_citations_repair_fails_when_claim_loses_support() {
+    let context = build_context_pack(
+        "ctx-1",
+        vec![hit(
+            "hit-1",
+            "chunk-1",
+            "doc-1",
+            "Alpha policy requires audit logs.",
+            1,
+        )],
+        ContextBuildOptions::new(10),
+    )
+    .expect("context build succeeds");
+    let citation = Citation::new("cite-invalid", context.hits[0].item.source.clone())
+        .with_cited_text("unrelated phrase");
+    let answer = Answer::new("answer-1", "Alpha policy requires audit logs.")
+        .with_claim(
+            Claim::new("claim-1", "Alpha policy requires audit logs.")
+                .with_citation_ids(["cite-invalid"]),
+        )
+        .with_citation(citation);
+
+    let result = validate_answer_citations(&answer, &context, true, FailurePolicy::Repair)
+        .expect("citation validation succeeds");
+
+    assert!(!result.ok);
+    assert_eq!(
+        result
+            .issues
+            .iter()
+            .map(|issue| issue.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["citation.text_mismatch", "claim.missing_citation"]
+    );
+    let repaired = result
+        .repaired_answer
+        .expect("result includes repaired answer");
+    assert!(repaired.citations.is_empty());
+    assert!(repaired.claims[0].citation_ids.is_empty());
+}
+
+#[test]
 fn resolve_citation_source_trace_links_citation_to_context_hit_and_document_span()
 -> Result<(), Box<dyn std::error::Error>> {
     let source = SourceRef::document_chunk(
