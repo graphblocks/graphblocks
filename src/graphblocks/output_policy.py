@@ -476,6 +476,7 @@ class OutputCutoff:
 class OutputGateUpdate:
     deliverable: list[GenerationChunk]
     cutoff: OutputCutoff | None = None
+    provider_cancellation: ProviderCancellation | None = None
     pending_tool_calls: PendingToolCallsDisposition | None = None
 
 
@@ -650,6 +651,11 @@ class OutputDeliveryGate:
             )
             self.pending.clear()
             self.cutoff = cutoff
-            return OutputGateUpdate(deliverable=[], cutoff=cutoff, pending_tool_calls=decision.pending_tool_calls)
+            return OutputGateUpdate(
+                deliverable=[],
+                cutoff=cutoff,
+                provider_cancellation=decision.provider_cancellation,
+                pending_tool_calls=decision.pending_tool_calls,
+            )
 
         raise OutputGateError(f"unknown output policy disposition {decision.disposition}")

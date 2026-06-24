@@ -2,7 +2,8 @@ use graphblocks_runtime_core::output_policy::{
     DeclarativeOutputPolicyEvaluator, DeclarativeOutputPolicyRule, DraftDisposition, DurableResult,
     GenerationChunk, OutputCutoff, OutputDeliveryGate, OutputDeliveryPolicy,
     OutputDeliveryPolicyError, OutputDisposition, OutputGateError, OutputPolicyDecision,
-    PendingToolCallsDisposition, RedactionInstruction, TerminalReason, ViolationAction,
+    PendingToolCallsDisposition, ProviderCancellation, RedactionInstruction, TerminalReason,
+    ViolationAction,
 };
 
 #[test]
@@ -106,11 +107,16 @@ fn policy_abort_cuts_off_delivery_and_rejects_late_chunks() -> Result<(), Output
 
     let stopped = gate.apply_decision(
         OutputPolicyDecision::abort_response("decision-abort", "sha256:abort")
+            .with_provider_cancellation(ProviderCancellation::RequiredIfSupported)
             .with_draft_disposition(DraftDisposition::Retract)
             .with_pending_tool_calls(PendingToolCallsDisposition::Deny),
         1_100,
     )?;
     assert!(stopped.deliverable.is_empty());
+    assert_eq!(
+        stopped.provider_cancellation,
+        Some(ProviderCancellation::RequiredIfSupported)
+    );
     assert_eq!(
         stopped.pending_tool_calls,
         Some(PendingToolCallsDisposition::Deny)

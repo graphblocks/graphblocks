@@ -377,11 +377,15 @@ def test_output_delivery_gate_policy_abort_cuts_off_and_rejects_late_chunks() ->
     )
 
     stopped = gate.apply_decision(
-        OutputPolicyDecision.abort_response("decision-abort", input_digest="sha256:abort"),
+        OutputPolicyDecision.abort_response(
+            "decision-abort",
+            input_digest="sha256:abort",
+        ).with_provider_cancellation("required_if_supported"),
         occurred_at="2026-06-23T00:00:02Z",
     )
 
     assert stopped.deliverable == []
+    assert stopped.provider_cancellation == "required_if_supported"
     assert stopped.pending_tool_calls == "deny"
     assert stopped.cutoff is not None
     assert stopped.cutoff.turn_id == "turn-1"

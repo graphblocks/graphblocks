@@ -718,6 +718,7 @@ pub enum OutputGateError {
 pub struct OutputGateUpdate {
     pub deliverable: Vec<GenerationChunk>,
     pub cutoff: Option<OutputCutoff>,
+    pub provider_cancellation: Option<ProviderCancellation>,
     pub pending_tool_calls: Option<PendingToolCallsDisposition>,
 }
 
@@ -877,12 +878,14 @@ impl OutputDeliveryGate {
                 Ok(OutputGateUpdate {
                     deliverable,
                     cutoff: None,
+                    provider_cancellation: None,
                     pending_tool_calls: None,
                 })
             }
             OutputDisposition::Hold => Ok(OutputGateUpdate {
                 deliverable: Vec::new(),
                 cutoff: None,
+                provider_cancellation: None,
                 pending_tool_calls: None,
             }),
             OutputDisposition::Redact | OutputDisposition::Replace => {
@@ -893,6 +896,7 @@ impl OutputDeliveryGate {
                     return Ok(OutputGateUpdate {
                         deliverable: Vec::new(),
                         cutoff: None,
+                        provider_cancellation: None,
                         pending_tool_calls: None,
                     });
                 }
@@ -1021,6 +1025,7 @@ impl OutputDeliveryGate {
                 Ok(OutputGateUpdate {
                     deliverable,
                     cutoff: None,
+                    provider_cancellation: None,
                     pending_tool_calls: None,
                 })
             }
@@ -1045,6 +1050,7 @@ impl OutputDeliveryGate {
                 Ok(OutputGateUpdate {
                     deliverable: Vec::new(),
                     cutoff: Some(cutoff),
+                    provider_cancellation: Some(decision.provider_cancellation),
                     pending_tool_calls: Some(decision.pending_tool_calls),
                 })
             }
