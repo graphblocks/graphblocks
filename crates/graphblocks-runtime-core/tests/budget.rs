@@ -3,7 +3,7 @@ use graphblocks_runtime_core::budget::{
     InMemoryBudgetLedger, ReservationPurpose, ReservationStatus, SqliteBudgetLedger, UsageAmount,
 };
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     env, fs,
     path::PathBuf,
     sync::{Arc, Barrier},
@@ -551,6 +551,124 @@ fn sqlite_budget_ledger_commit_with_permit_rejects_usage_above_authorized_withou
     let settlement = ledger.release_with_permit(&permit.permit_id, &reservation.reservation_id)?;
     assert_eq!(settlement.released, vec![tokens(40)]);
     assert_eq!(ledger.balance("budget-1")?.available, vec![tokens(100)]);
+    Ok(())
+}
+
+#[test]
+fn sqlite_completion_reserve_holds_capacity_across_reopen() -> Result<(), BudgetError> {
+    let path = sqlite_budget_path("completion-reserve-persist");
+
+    {
+        let mut ledger = SqliteBudgetLedger::open(&path)?;
+        ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+        let reserve = ledger.create_completion_reserve(
+            "finalization-reserve",
+            "budget-1",
+            CompletionReservePurpose::Finalization,
+            [tokens(20)],
+            ["agent.finalize"],
+            Some("later".to_string()),
+        )?;
+
+        assert_eq!(reserve.status, CompletionReserveStatus::Available);
+        assert_eq!(reserve.fencing_token, 1);
+        assert_eq!(ledger.balance("budget-1")?.reserved, vec![tokens(20)]);
+        assert_eq!(ledger.balance("budget-1")?.available, vec![tokens(80)]);
+    }
+
+    let mut ledger = SqliteBudgetLedger::open(&path)?;
+    let reserve = ledger.completion_reserve("finalization-reserve")?;
+
+    assert_eq!(reserve.status, CompletionReserveStatus::Available);
+    assert_eq!(
+        reserve.spendable_by,
+        BTreeSet::from(["agent.finalize".to_string()])
+    );
+    assert_eq!(reserve.expires_at.as_deref(), Some("later"));
+    assert_eq!(ledger.balance("budget-1")?.available, vec![tokens(80)]);
+    assert_eq!(
+        ledger
+            .reserve(
+                "budget-1",
+                "planner",
+                [tokens(90)],
+                ReservationPurpose::Task,
+                "later",
+                None,
+            )
+            .expect_err("completion reserve capacity is not generally available"),
+        BudgetError::BudgetExceeded {
+            budget_id: "budget-1".to_string(),
+            kind: "model_total_tokens".to_string(),
+            unit: "tokens".to_string(),
+        }
+    );
+    fs::remove_file(path).ok();
+    Ok(())
+}
+
+#[test]
+fn sqlite_completion_reserve_spend_commits_held_capacity() -> Result<(), BudgetError> {
+    let mut ledger = SqliteBudgetLedger::open_in_memory()?;
+    ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+    ledger.create_completion_reserve(
+        "finalization-reserve",
+        "budget-1",
+        CompletionReservePurpose::Finalization,
+        [tokens(20)],
+        ["agent.finalize"],
+        None,
+    )?;
+
+    let reservation =
+        ledger.spend_completion_reserve("finalization-reserve", "agent.finalize", "later")?;
+    let reserve = ledger.completion_reserve("finalization-reserve")?;
+
+    assert_eq!(reservation.purpose, ReservationPurpose::Finalization);
+    assert_eq!(reservation.amounts, vec![tokens(20)]);
+    assert_eq!(reservation.fencing_token, reserve.fencing_token);
+    assert_eq!(reserve.status, CompletionReserveStatus::Spent);
+    assert_eq!(
+        reserve.reservation_id.as_deref(),
+        Some(reservation.reservation_id.as_str())
+    );
+    let settlement = ledger.commit(&reservation.reservation_id, [tokens(15)])?;
+    let balance = ledger.balance("budget-1")?;
+    assert_eq!(settlement.committed, vec![tokens(15)]);
+    assert_eq!(settlement.released, vec![tokens(5)]);
+    assert_eq!(balance.reserved, Vec::<UsageAmount>::new());
+    assert_eq!(balance.committed, vec![tokens(15)]);
+    assert_eq!(balance.available, vec![tokens(85)]);
+    Ok(())
+}
+
+#[test]
+fn sqlite_completion_reserve_rejects_unauthorized_spender() -> Result<(), BudgetError> {
+    let mut ledger = SqliteBudgetLedger::open_in_memory()?;
+    ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+    ledger.create_completion_reserve(
+        "cleanup-reserve",
+        "budget-1",
+        CompletionReservePurpose::Cleanup,
+        [tokens(10)],
+        ["cleanup.worker"],
+        None,
+    )?;
+
+    assert_eq!(
+        ledger
+            .spend_completion_reserve("cleanup-reserve", "planner", "later")
+            .expect_err("unauthorized completion reserve spender is rejected"),
+        BudgetError::CompletionReserveUnauthorized {
+            reserve_id: "cleanup-reserve".to_string(),
+            spender: "planner".to_string(),
+        }
+    );
+    assert_eq!(
+        ledger.completion_reserve("cleanup-reserve")?.status,
+        CompletionReserveStatus::Available,
+    );
+    assert_eq!(ledger.balance("budget-1")?.reserved, vec![tokens(10)]);
     Ok(())
 }
 

@@ -82,6 +82,25 @@ pub enum CompletionReservePurpose {
 }
 
 impl CompletionReservePurpose {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Finalization => "finalization",
+            Self::Checkpoint => "checkpoint",
+            Self::Cleanup => "cleanup",
+            Self::Compensation => "compensation",
+        }
+    }
+
+    fn from_str(purpose: &str) -> Option<Self> {
+        match purpose {
+            "finalization" => Some(Self::Finalization),
+            "checkpoint" => Some(Self::Checkpoint),
+            "cleanup" => Some(Self::Cleanup),
+            "compensation" => Some(Self::Compensation),
+            _ => None,
+        }
+    }
+
     fn reservation_purpose(self) -> ReservationPurpose {
         match self {
             Self::Finalization => ReservationPurpose::Finalization,
@@ -127,6 +146,27 @@ pub enum CompletionReserveStatus {
     Spent,
     Released,
     Expired,
+}
+
+impl CompletionReserveStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Available => "available",
+            Self::Spent => "spent",
+            Self::Released => "released",
+            Self::Expired => "expired",
+        }
+    }
+
+    fn from_str(status: &str) -> Option<Self> {
+        match status {
+            "available" => Some(Self::Available),
+            "spent" => Some(Self::Spent),
+            "released" => Some(Self::Released),
+            "expired" => Some(Self::Expired),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1071,6 +1111,12 @@ struct StoredBudgetPermit {
     spent: BTreeMap<AmountKey, i64>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct StoredCompletionReserve {
+    reserve: CompletionReserve,
+    held_budget_ids: Vec<String>,
+}
+
 impl StoredBudgetAccount {
     fn available(&self) -> BTreeMap<AmountKey, i64> {
         let mut keys = BTreeSet::new();
@@ -1161,6 +1207,18 @@ impl SqliteBudgetLedger {
                     low_watermark_json TEXT NOT NULL,
                     fencing_tokens_json TEXT NOT NULL,
                     spent_json TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS budget_completion_reserves (
+                    reserve_id TEXT PRIMARY KEY,
+                    budget_id TEXT NOT NULL,
+                    purpose TEXT NOT NULL,
+                    amounts_json TEXT NOT NULL,
+                    spendable_by_json TEXT NOT NULL,
+                    expires_at TEXT,
+                    status TEXT NOT NULL,
+                    reservation_id TEXT,
+                    fencing_token INTEGER NOT NULL,
+                    held_budget_ids_json TEXT NOT NULL
                 );
                 ",
             )
@@ -1548,6 +1606,180 @@ impl SqliteBudgetLedger {
         Ok(settlement)
     }
 
+    pub fn create_completion_reserve<I, S>(
+        &mut self,
+        reserve_id: impl Into<String>,
+        budget_id: impl AsRef<str>,
+        purpose: CompletionReservePurpose,
+        amounts: impl IntoIterator<Item = UsageAmount>,
+        spendable_by: I,
+        expires_at: Option<String>,
+    ) -> Result<CompletionReserve, BudgetError>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let reserve_id = reserve_id.into();
+        let budget_id = budget_id.as_ref();
+        let requested = amounts_to_map(amounts);
+        let spendable_by = spendable_by
+            .into_iter()
+            .map(Into::into)
+            .collect::<BTreeSet<_>>();
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(budget_storage_error)?;
+        if sqlite_completion_reserve_exists(&transaction, &reserve_id)? {
+            return Err(BudgetError::CompletionReserveConflict { reserve_id });
+        }
+        if !sqlite_account_exists(&transaction, budget_id)? {
+            return Err(BudgetError::BudgetNotFound {
+                budget_id: budget_id.to_string(),
+            });
+        }
+
+        let held_budget_ids = sqlite_budget_chain(&transaction, budget_id)?;
+        for held_budget_id in &held_budget_ids {
+            let account = sqlite_load_account(&transaction, held_budget_id)?
+                .expect("budget chain only returns existing accounts");
+            let available = account.available();
+            for (key, amount) in &requested {
+                if *amount > available.get(key).copied().unwrap_or(0) {
+                    return Err(BudgetError::BudgetExceeded {
+                        budget_id: held_budget_id.clone(),
+                        kind: key.0.clone(),
+                        unit: key.1.clone(),
+                    });
+                }
+            }
+        }
+
+        let fencing_token = sqlite_next_counter(&transaction, "fencing_counter")?;
+        for held_budget_id in &held_budget_ids {
+            let mut account = sqlite_load_account(&transaction, held_budget_id)?
+                .expect("budget chain only returns existing accounts");
+            add_amounts(&mut account.reserved, &requested);
+            account.account.revision += 1;
+            sqlite_update_account_balances(&transaction, &account)?;
+        }
+
+        let reserve = CompletionReserve {
+            reserve_id: reserve_id.clone(),
+            budget_id: budget_id.to_string(),
+            purpose,
+            amounts: map_to_amounts(&requested),
+            spendable_by,
+            expires_at,
+            status: CompletionReserveStatus::Available,
+            reservation_id: None,
+            fencing_token,
+        };
+        transaction
+            .execute(
+                "
+                INSERT INTO budget_completion_reserves (
+                    reserve_id,
+                    budget_id,
+                    purpose,
+                    amounts_json,
+                    spendable_by_json,
+                    expires_at,
+                    status,
+                    reservation_id,
+                    fencing_token,
+                    held_budget_ids_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ",
+                params![
+                    &reserve.reserve_id,
+                    &reserve.budget_id,
+                    reserve.purpose.as_str(),
+                    usage_amounts_json(&reserve.amounts)?,
+                    string_set_json(&reserve.spendable_by)?,
+                    &reserve.expires_at,
+                    reserve.status.as_str(),
+                    &reserve.reservation_id,
+                    budget_u64_to_i64(reserve.fencing_token, "completion reserve fencing token")?,
+                    string_list_json(&held_budget_ids)?,
+                ],
+            )
+            .map_err(budget_storage_error)?;
+        transaction.commit().map_err(budget_storage_error)?;
+        Ok(reserve)
+    }
+
+    pub fn completion_reserve(
+        &self,
+        reserve_id: impl AsRef<str>,
+    ) -> Result<CompletionReserve, BudgetError> {
+        let reserve_id = reserve_id.as_ref();
+        sqlite_load_completion_reserve(&self.connection, reserve_id)?
+            .map(|stored| stored.reserve)
+            .ok_or_else(|| BudgetError::CompletionReserveNotFound {
+                reserve_id: reserve_id.to_string(),
+            })
+    }
+
+    pub fn spend_completion_reserve(
+        &mut self,
+        reserve_id: impl AsRef<str>,
+        spender: impl AsRef<str>,
+        expires_at: impl Into<String>,
+    ) -> Result<BudgetReservation, BudgetError> {
+        let reserve_id = reserve_id.as_ref();
+        let spender = spender.as_ref();
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(budget_storage_error)?;
+        let stored_reserve =
+            sqlite_load_completion_reserve(&transaction, reserve_id)?.ok_or_else(|| {
+                BudgetError::CompletionReserveNotFound {
+                    reserve_id: reserve_id.to_string(),
+                }
+            })?;
+        let reserve = stored_reserve.reserve;
+        if reserve.status != CompletionReserveStatus::Available {
+            return Err(BudgetError::CompletionReserveState {
+                reserve_id: reserve_id.to_string(),
+                status: reserve.status,
+            });
+        }
+        if !reserve.spendable_by.contains(spender) {
+            return Err(BudgetError::CompletionReserveUnauthorized {
+                reserve_id: reserve_id.to_string(),
+                spender: spender.to_string(),
+            });
+        }
+
+        let next_reservation = sqlite_next_counter(&transaction, "reservation_counter")?;
+        let reservation_id = format!("reservation-{next_reservation:06}");
+        if sqlite_reservation_exists(&transaction, &reservation_id)? {
+            return Err(BudgetError::ReservationConflict { reservation_id });
+        }
+
+        let reservation = BudgetReservation {
+            reservation_id: reservation_id.clone(),
+            budget_id: reserve.budget_id.clone(),
+            owner: spender.to_string(),
+            amounts: reserve.amounts.clone(),
+            purpose: reserve.purpose.reservation_purpose(),
+            expires_at: expires_at.into(),
+            fencing_token: reserve.fencing_token,
+            status: ReservationStatus::Reserved,
+        };
+        sqlite_insert_reservation(&transaction, &reservation, &stored_reserve.held_budget_ids)?;
+        sqlite_update_completion_reserve_spent(
+            &transaction,
+            reserve_id,
+            &reservation.reservation_id,
+        )?;
+        transaction.commit().map_err(budget_storage_error)?;
+        Ok(reservation)
+    }
+
     pub fn balance(&self, budget_id: impl AsRef<str>) -> Result<BudgetBalance, BudgetError> {
         let budget_id = budget_id.as_ref();
         let account = sqlite_load_account(&self.connection, budget_id)?.ok_or_else(|| {
@@ -1713,6 +1945,43 @@ fn sqlite_load_reservation(
     }))
 }
 
+fn sqlite_insert_reservation(
+    connection: &Connection,
+    reservation: &BudgetReservation,
+    held_budget_ids: &[String],
+) -> Result<(), BudgetError> {
+    connection
+        .execute(
+            "
+            INSERT INTO budget_reservations (
+                reservation_id,
+                budget_id,
+                owner,
+                amounts_json,
+                purpose,
+                expires_at,
+                fencing_token,
+                status,
+                held_budget_ids_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ",
+            params![
+                &reservation.reservation_id,
+                &reservation.budget_id,
+                &reservation.owner,
+                usage_amounts_json(&reservation.amounts)?,
+                reservation.purpose.as_str(),
+                &reservation.expires_at,
+                budget_u64_to_i64(reservation.fencing_token, "reservation fencing token")?,
+                reservation.status.as_str(),
+                string_list_json(held_budget_ids)?,
+            ],
+        )
+        .map_err(budget_storage_error)?;
+    Ok(())
+}
+
 fn sqlite_update_reservation_status(
     connection: &Connection,
     reservation_id: &str,
@@ -1731,6 +2000,128 @@ fn sqlite_update_reservation_status(
     if updated == 0 {
         return Err(BudgetError::ReservationNotFound {
             reservation_id: reservation_id.to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn sqlite_completion_reserve_exists(
+    connection: &Connection,
+    reserve_id: &str,
+) -> Result<bool, BudgetError> {
+    connection
+        .query_row(
+            "SELECT 1 FROM budget_completion_reserves WHERE reserve_id = ?",
+            params![reserve_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map(|value| value.is_some())
+        .map_err(budget_storage_error)
+}
+
+fn sqlite_load_completion_reserve(
+    connection: &Connection,
+    reserve_id: &str,
+) -> Result<Option<StoredCompletionReserve>, BudgetError> {
+    let stored = connection
+        .query_row(
+            "
+            SELECT
+                reserve_id,
+                budget_id,
+                purpose,
+                amounts_json,
+                spendable_by_json,
+                expires_at,
+                status,
+                reservation_id,
+                fencing_token,
+                held_budget_ids_json
+            FROM budget_completion_reserves
+            WHERE reserve_id = ?
+            ",
+            params![reserve_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, Option<String>>(7)?,
+                    row.get::<_, i64>(8)?,
+                    row.get::<_, String>(9)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(budget_storage_error)?;
+
+    let Some((
+        reserve_id,
+        budget_id,
+        purpose,
+        amounts_json,
+        spendable_by_json,
+        expires_at,
+        status,
+        reservation_id,
+        fencing_token,
+        held_budget_ids_json,
+    )) = stored
+    else {
+        return Ok(None);
+    };
+    let purpose =
+        CompletionReservePurpose::from_str(&purpose).ok_or_else(|| BudgetError::Storage {
+            message: format!("unknown completion reserve purpose {purpose:?}"),
+        })?;
+    let status =
+        CompletionReserveStatus::from_str(&status).ok_or_else(|| BudgetError::Storage {
+            message: format!("unknown completion reserve status {status:?}"),
+        })?;
+
+    Ok(Some(StoredCompletionReserve {
+        reserve: CompletionReserve {
+            reserve_id,
+            budget_id,
+            purpose,
+            amounts: usage_amounts_from_json(&amounts_json)?,
+            spendable_by: string_set_from_json(&spendable_by_json)?,
+            expires_at,
+            status,
+            reservation_id,
+            fencing_token: budget_i64_to_u64(fencing_token, "completion reserve fencing token")?,
+        },
+        held_budget_ids: string_list_from_json(&held_budget_ids_json)?,
+    }))
+}
+
+fn sqlite_update_completion_reserve_spent(
+    connection: &Connection,
+    reserve_id: &str,
+    reservation_id: &str,
+) -> Result<(), BudgetError> {
+    let updated = connection
+        .execute(
+            "
+            UPDATE budget_completion_reserves
+            SET status = ?, reservation_id = ?
+            WHERE reserve_id = ?
+            ",
+            params![
+                CompletionReserveStatus::Spent.as_str(),
+                reservation_id,
+                reserve_id,
+            ],
+        )
+        .map_err(budget_storage_error)?;
+    if updated == 0 {
+        return Err(BudgetError::CompletionReserveNotFound {
+            reserve_id: reserve_id.to_string(),
         });
     }
     Ok(())
@@ -2291,6 +2682,35 @@ fn string_list_from_json(value: &str) -> Result<Vec<String>, BudgetError> {
             });
         };
         result.push(value);
+    }
+    Ok(result)
+}
+
+fn string_set_json(values: &BTreeSet<String>) -> Result<String, BudgetError> {
+    let values = values
+        .iter()
+        .map(|value| Value::String(value.clone()))
+        .collect::<Vec<_>>();
+    serde_json::to_string(&values).map_err(budget_storage_error)
+}
+
+fn string_set_from_json(value: &str) -> Result<BTreeSet<String>, BudgetError> {
+    let Value::Array(values) =
+        serde_json::from_str::<Value>(value).map_err(budget_storage_error)?
+    else {
+        return Err(BudgetError::Storage {
+            message: "budget string set must be an array".to_string(),
+        });
+    };
+
+    let mut result = BTreeSet::new();
+    for value in values {
+        let Value::String(value) = value else {
+            return Err(BudgetError::Storage {
+                message: "budget string set value must be a string".to_string(),
+            });
+        };
+        result.insert(value);
     }
     Ok(result)
 }
