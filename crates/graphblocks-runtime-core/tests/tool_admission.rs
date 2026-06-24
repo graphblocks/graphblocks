@@ -186,6 +186,35 @@ fn admission_requires_valid_approval_when_binding_requires_it() {
 }
 
 #[test]
+fn admission_rejects_stale_argument_digest() {
+    let resolved_tool = resolved_process_tool();
+    let mut call = process_call(&resolved_tool);
+    let schemas = process_schema_registry();
+    let policy_decision = allow_tool_policy_decision();
+    let request =
+        ToolApprovalRequest::for_call("approval-1", &resolved_tool, &call, "user-1", 1_100, 2_000)
+            .expect("approval request is valid");
+    let approval = ToolApprovalRecord::approve(request, "admin-1", 1_150);
+    call.arguments = json!({"cmd": ["echo", "hello", "mutated"]});
+
+    assert_eq!(
+        ToolAdmission::admit(ToolAdmissionRequest {
+            call,
+            resolved_tool: &resolved_tool,
+            schema_registry: &schemas,
+            policy_decision: &policy_decision,
+            approval: Some(&approval),
+            principal_id: "user-1",
+            idempotency_key: Some("idem-1".to_owned()),
+            admitted_at_unix_ms: 1_200,
+        }),
+        Err(ToolAdmissionError::ArgumentsDigestMismatch {
+            tool_call_id: "call-1".to_owned()
+        }),
+    );
+}
+
+#[test]
 fn admission_requires_approval_when_policy_obligates_it() {
     let mut resolved_tool = resolved_process_tool();
     resolved_tool.binding.approval = ToolApproval::Policy;

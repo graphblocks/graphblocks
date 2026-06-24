@@ -26,6 +26,7 @@ from graphblocks import (
     ToolApprovalRequest,
     ToolBinding,
     ToolCatalog,
+    ToolCall,
     ToolCallDraft,
     ToolCallError,
     ToolResult,
@@ -631,6 +632,35 @@ def test_tool_admission_validates_arguments_before_approval() -> None:
         )
 
     assert str(error.value) == "tool call call-1 arguments invalid: schemas/ProcessRun@1 expected array at $.cmd"
+
+
+def test_tool_admission_rejects_stale_argument_digest() -> None:
+    resolved = _resolved_process_tool()
+    call = ToolCall(
+        tool_call_id="call-1",
+        response_id="response-1",
+        resolved_tool_id=resolved.resolved_tool_id,
+        name="process.run",
+        arguments={"cmd": ["echo", "hello"]},
+        arguments_digest=canonical_hash({"cmd": ["echo"]}),
+        revision=1,
+        status="validated",
+        created_at="2026-06-23T00:00:00Z",
+    )
+
+    with pytest.raises(ToolAdmissionError) as error:
+        admit_tool_call(
+            call,
+            resolved,
+            _process_schema_registry(),
+            policy_decision=_allow_tool_policy_decision(),
+            principal_id="user-1",
+            idempotency_key="idem-1",
+            admitted_at="2026-06-23T00:00:01Z",
+            now=1_200,
+        )
+
+    assert str(error.value) == "tool call call-1 arguments digest does not match arguments"
 
 
 def test_tool_admission_denies_before_approval_when_policy_denies_tool_effect() -> None:

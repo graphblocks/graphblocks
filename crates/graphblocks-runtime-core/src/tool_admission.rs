@@ -1,3 +1,4 @@
+use graphblocks_compiler::canonical::canonical_hash;
 use serde_json::{Value, json};
 
 use crate::policy::{
@@ -75,6 +76,9 @@ pub enum ToolAdmissionError {
         schema_id: String,
         path: String,
         property: String,
+    },
+    ArgumentsDigestMismatch {
+        tool_call_id: String,
     },
     ResolvedToolNotAllowed {
         resolved_tool_id: String,
@@ -166,6 +170,11 @@ impl ToolAdmission {
             return Err(ToolAdmissionError::ToolNameMismatch {
                 expected: request.resolved_tool.definition.name.clone(),
                 actual: request.call.name,
+            });
+        }
+        if canonical_hash(&request.call.arguments) != request.call.arguments_digest {
+            return Err(ToolAdmissionError::ArgumentsDigestMismatch {
+                tool_call_id: request.call.tool_call_id,
             });
         }
 

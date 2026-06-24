@@ -887,6 +887,12 @@ def admit_tool_call(
         raise ToolAdmissionError("tool call references a different resolved tool")
     if call.name != resolved_tool.definition.name:
         raise ToolAdmissionError("tool call name does not match resolved tool")
+    try:
+        actual_arguments_digest = canonical_hash(call.arguments)
+    except (TypeError, ValueError) as error:
+        raise ToolAdmissionError(f"tool call {call.tool_call_id} arguments are invalid JSON") from error
+    if actual_arguments_digest != call.arguments_digest:
+        raise ToolAdmissionError(f"tool call {call.tool_call_id} arguments digest does not match arguments")
 
     try:
         schema_registry.validate(resolved_tool.definition.input_schema, call.arguments)
