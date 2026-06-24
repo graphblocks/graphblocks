@@ -2543,9 +2543,17 @@ where
         .filter(|hit| relevant_item_ids.contains(&hit.item.item_id))
         .count();
 
-    let (recall, precision, mrr) = if relevant_item_ids.is_empty() {
-        (Value::Null, Value::Null, Value::Null)
+    let (recall, precision, average_precision, mrr) = if relevant_item_ids.is_empty() {
+        (Value::Null, Value::Null, Value::Null, Value::Null)
     } else {
+        let mut relevant_seen = 0usize;
+        let mut precision_sum = 0.0;
+        for (index, hit) in hits_at_k.iter().enumerate() {
+            if relevant_item_ids.contains(&hit.item.item_id) {
+                relevant_seen += 1;
+                precision_sum += relevant_seen as f64 / (index + 1) as f64;
+            }
+        }
         let first_relevant_rank = hits_at_k
             .iter()
             .position(|hit| relevant_item_ids.contains(&hit.item.item_id))
@@ -2557,6 +2565,7 @@ where
             } else {
                 json!(relevant_hits_at_k as f64 / cutoff as f64)
             },
+            json!(precision_sum / relevant_item_ids.len() as f64),
             first_relevant_rank
                 .map(|rank| json!(1.0 / rank as f64))
                 .unwrap_or_else(|| json!(0.0)),
@@ -2567,6 +2576,8 @@ where
     let mut metrics = vec![
         MetricObservation::new("recall_at_k", recall).with_direction(MetricDirection::Maximize),
         MetricObservation::new("precision_at_k", precision)
+            .with_direction(MetricDirection::Maximize),
+        MetricObservation::new("average_precision_at_k", average_precision)
             .with_direction(MetricDirection::Maximize),
         MetricObservation::new("mrr", mrr).with_direction(MetricDirection::Maximize),
     ];

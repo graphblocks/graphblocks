@@ -67,6 +67,9 @@ def test_evaluate_retrieval_metrics_reports_recall_precision_and_mrr() -> None:
     assert [metric.name for metric in exported_metrics] == [metric.name for metric in metrics]
     assert by_name["recall_at_k"].value == Decimal("1")
     assert by_name["precision_at_k"].value == Decimal(2) / Decimal(3)
+    assert by_name["average_precision_at_k"].value == (
+        Decimal(1) + Decimal(2) / Decimal(3)
+    ) / Decimal(2)
     assert by_name["mrr"].value == Decimal("1")
     assert by_name["recall_at_k"].direction == "maximize"
     assert by_name["precision_at_k"].evaluator == {"k": 3}
@@ -86,6 +89,7 @@ def test_evaluate_retrieval_metrics_returns_no_data_without_relevant_items() -> 
 
     assert by_name["recall_at_k"].value is None
     assert by_name["precision_at_k"].value is None
+    assert by_name["average_precision_at_k"].value is None
     assert by_name["mrr"].value is None
 
 

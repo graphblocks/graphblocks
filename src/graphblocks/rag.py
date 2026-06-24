@@ -1021,10 +1021,18 @@ def evaluate_retrieval_metrics(
     if not relevant:
         recall = None
         precision = None
+        average_precision = None
         mrr = None
     else:
         recall = Decimal(relevant_hits_at_k) / Decimal(len(relevant))
         precision = None if cutoff == 0 else Decimal(relevant_hits_at_k) / Decimal(cutoff)
+        relevant_seen = 0
+        precision_sum = Decimal(0)
+        for index, hit in enumerate(hits_at_k, start=1):
+            if hit.item.item_id in relevant:
+                relevant_seen += 1
+                precision_sum += Decimal(relevant_seen) / Decimal(index)
+        average_precision = precision_sum / Decimal(len(relevant))
         first_relevant_rank = next(
             (
                 index + 1
@@ -1050,6 +1058,12 @@ def evaluate_retrieval_metrics(
         MetricObservation(
             "precision_at_k",
             precision,
+            direction="maximize",
+            evaluator=evaluator,
+        ),
+        MetricObservation(
+            "average_precision_at_k",
+            average_precision,
             direction="maximize",
             evaluator=evaluator,
         ),
