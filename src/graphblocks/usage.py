@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from decimal import Decimal
+import json
+from pathlib import Path
+import sqlite3
 from typing import Literal
 
 from .budget import UsageAmount
@@ -118,3 +121,210 @@ class InMemoryUsageLedger:
             metadata=dict(original.metadata),
         )
         return self.append(reconciled)
+
+
+@dataclass(slots=True)
+class SQLiteUsageLedger:
+    path: str | Path
+    _connection: sqlite3.Connection = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._connection = sqlite3.connect(str(self.path))
+        self._connection.row_factory = sqlite3.Row
+        self._connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS usage_records (
+              sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+              record_id TEXT NOT NULL UNIQUE,
+              source TEXT NOT NULL,
+              confidence TEXT NOT NULL,
+              amounts_json TEXT NOT NULL,
+              occurred_at TEXT NOT NULL,
+              run_id TEXT,
+              attempt_id TEXT,
+              provider_response_id TEXT,
+              pricing_ref TEXT,
+              quota_window_id TEXT,
+              execution_scope TEXT,
+              reconciliation_of TEXT,
+              metadata_json TEXT NOT NULL
+            )
+            """
+        )
+        self._connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS usage_records_provider_dedupe
+            ON usage_records(provider_response_id, attempt_id)
+            WHERE provider_response_id IS NOT NULL AND reconciliation_of IS NULL
+            """
+        )
+        self._connection.commit()
+
+    @classmethod
+    def in_memory(cls) -> SQLiteUsageLedger:
+        return cls(":memory:")
+
+    def close(self) -> None:
+        self._connection.close()
+
+    def append(self, record: UsageRecord) -> UsageRecord:
+        if record.provider_response_id is not None and record.reconciliation_of is None:
+            existing = self._provider_dedupe_record(record.provider_response_id, record.attempt_id)
+            if existing is not None:
+                return existing
+        try:
+            self._connection.execute(
+                """
+                INSERT INTO usage_records (
+                  record_id,
+                  source,
+                  confidence,
+                  amounts_json,
+                  occurred_at,
+                  run_id,
+                  attempt_id,
+                  provider_response_id,
+                  pricing_ref,
+                  quota_window_id,
+                  execution_scope,
+                  reconciliation_of,
+                  metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.record_id,
+                    record.source,
+                    record.confidence,
+                    json.dumps(
+                        [
+                            {
+                                "kind": amount.kind,
+                                "amount": str(amount.amount),
+                                "unit": amount.unit,
+                                "dimensions": dict(sorted(amount.dimensions.items())),
+                            }
+                            for amount in record.amounts
+                        ],
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    record.occurred_at,
+                    record.run_id,
+                    record.attempt_id,
+                    record.provider_response_id,
+                    record.pricing_ref,
+                    record.quota_window_id,
+                    record.execution_scope,
+                    record.reconciliation_of,
+                    json.dumps(dict(sorted(record.metadata.items())), sort_keys=True, separators=(",", ":")),
+                ),
+            )
+            self._connection.commit()
+        except sqlite3.IntegrityError as error:
+            if record.provider_response_id is not None and record.reconciliation_of is None:
+                existing = self._provider_dedupe_record(record.provider_response_id, record.attempt_id)
+                if existing is not None:
+                    return existing
+            raise UsageRecordConflictError(f"usage record {record.record_id!r} already exists") from error
+        return record
+
+    def get(self, record_id: str) -> UsageRecord:
+        row = self._connection.execute(
+            "SELECT * FROM usage_records WHERE record_id = ?",
+            (record_id,),
+        ).fetchone()
+        if row is None:
+            raise UsageRecordNotFoundError(f"usage record {record_id!r} does not exist")
+        return self._record_from_row(row)
+
+    def records_for_run(self, run_id: str) -> list[UsageRecord]:
+        rows = self._connection.execute(
+            "SELECT * FROM usage_records WHERE run_id = ? ORDER BY sequence",
+            (run_id,),
+        ).fetchall()
+        return [self._record_from_row(row) for row in rows]
+
+    def totals_for_run(self, run_id: str) -> list[UsageAmount]:
+        records = self.records_for_run(run_id)
+        superseded_record_ids = {
+            record.reconciliation_of for record in records if record.reconciliation_of is not None
+        }
+        totals: dict[tuple[str, str, tuple[tuple[str, str], ...]], Decimal] = {}
+        for record in records:
+            if record.record_id in superseded_record_ids:
+                continue
+            for amount in record.amounts:
+                key = (amount.kind, amount.unit, tuple(sorted(amount.dimensions.items())))
+                totals[key] = totals.get(key, Decimal("0")) + amount.amount
+        return [
+            UsageAmount(kind=kind, amount=totals[(kind, unit, dimensions)], unit=unit, dimensions=dict(dimensions))
+            for kind, unit, dimensions in sorted(totals)
+            if totals[(kind, unit, dimensions)] != 0
+        ]
+
+    def reconcile(
+        self,
+        source_record_id: str,
+        *,
+        amounts: list[UsageAmount],
+        occurred_at: str,
+        record_id: str | None = None,
+    ) -> UsageRecord:
+        original = self.get(source_record_id)
+        reconciled = UsageRecord(
+            record_id=record_id or f"{source_record_id}:reconciled",
+            source="reconciled",
+            confidence="exact",
+            amounts=amounts,
+            occurred_at=occurred_at,
+            run_id=original.run_id,
+            attempt_id=original.attempt_id,
+            provider_response_id=original.provider_response_id,
+            pricing_ref=original.pricing_ref,
+            quota_window_id=original.quota_window_id,
+            execution_scope=original.execution_scope,
+            reconciliation_of=original.record_id,
+            metadata=dict(original.metadata),
+        )
+        return self.append(reconciled)
+
+    def _provider_dedupe_record(self, provider_response_id: str, attempt_id: str | None) -> UsageRecord | None:
+        row = self._connection.execute(
+            """
+            SELECT * FROM usage_records
+            WHERE provider_response_id = ?
+              AND ((attempt_id IS NULL AND ? IS NULL) OR attempt_id = ?)
+              AND reconciliation_of IS NULL
+            ORDER BY sequence
+            LIMIT 1
+            """,
+            (provider_response_id, attempt_id, attempt_id),
+        ).fetchone()
+        return None if row is None else self._record_from_row(row)
+
+    def _record_from_row(self, row: sqlite3.Row) -> UsageRecord:
+        amounts = []
+        for amount in json.loads(row["amounts_json"]):
+            amounts.append(
+                UsageAmount(
+                    kind=str(amount["kind"]),
+                    amount=Decimal(str(amount["amount"])),
+                    unit=str(amount["unit"]),
+                    dimensions={str(key): str(value) for key, value in dict(amount.get("dimensions", {})).items()},
+                )
+            )
+        return UsageRecord(
+            record_id=str(row["record_id"]),
+            source=row["source"],
+            confidence=row["confidence"],
+            amounts=amounts,
+            occurred_at=str(row["occurred_at"]),
+            run_id=row["run_id"],
+            attempt_id=row["attempt_id"],
+            provider_response_id=row["provider_response_id"],
+            pricing_ref=row["pricing_ref"],
+            quota_window_id=row["quota_window_id"],
+            execution_scope=row["execution_scope"],
+            reconciliation_of=row["reconciliation_of"],
+            metadata=dict(json.loads(row["metadata_json"])),
+        )

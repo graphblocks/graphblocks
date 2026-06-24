@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from graphblocks.budget import UsageAmount
-from graphblocks.usage import InMemoryUsageLedger, UsageRecord
+from graphblocks.usage import InMemoryUsageLedger, SQLiteUsageLedger, UsageRecord
 
 
 def _tokens(value: str) -> UsageAmount:
@@ -127,3 +127,73 @@ def test_usage_ledger_totals_replace_provisional_with_reconciled_usage() -> None
     )
 
     assert ledger.totals_for_run("run-1") == [_tokens("23")]
+
+
+def test_sqlite_usage_ledger_persists_records_across_reopen(tmp_path) -> None:
+    path = tmp_path / "usage.sqlite3"
+    record = UsageRecord(
+        record_id="usage-1",
+        source="runtime_measured",
+        confidence="estimated",
+        amounts=[_tokens("12")],
+        occurred_at="2026-06-22T00:00:00Z",
+        run_id="run-1",
+        attempt_id="attempt-1",
+        quota_window_id="tenant-a:2026-06",
+        execution_scope="turn:turn-1/model:generate",
+        metadata={"phase": "generation"},
+    )
+
+    ledger = SQLiteUsageLedger(path)
+    assert ledger.append(record) == record
+    ledger.close()
+
+    reopened = SQLiteUsageLedger(path)
+    assert reopened.records_for_run("run-1") == [record]
+    assert reopened.get("usage-1") == record
+    reopened.close()
+
+
+def test_sqlite_usage_ledger_deduplicates_and_reconciles_late_usage() -> None:
+    ledger = SQLiteUsageLedger.in_memory()
+    first = UsageRecord(
+        record_id="usage-1",
+        source="provider_reported",
+        confidence="provider_exact",
+        amounts=[_tokens("20")],
+        occurred_at="2026-06-22T00:00:00Z",
+        run_id="run-1",
+        attempt_id="attempt-1",
+        provider_response_id="resp-1",
+        quota_window_id="tenant-a:2026-06",
+        execution_scope="turn:turn-1/tool:call-1",
+        metadata={"tool_call_id": "call-1", "tool_name": "ticket.create"},
+    )
+    duplicate = UsageRecord(
+        record_id="usage-duplicate",
+        source="provider_reported",
+        confidence="provider_exact",
+        amounts=[_tokens("20")],
+        occurred_at="2026-06-22T00:00:01Z",
+        run_id="run-1",
+        attempt_id="attempt-1",
+        provider_response_id="resp-1",
+    )
+
+    assert ledger.append(first) == first
+    assert ledger.append(duplicate) == first
+    reconciled = ledger.reconcile(
+        "usage-1",
+        amounts=[_tokens("21")],
+        occurred_at="2026-06-22T00:05:00Z",
+        record_id="usage-reconciled",
+    )
+
+    assert reconciled.source == "reconciled"
+    assert reconciled.reconciliation_of == "usage-1"
+    assert reconciled.quota_window_id == "tenant-a:2026-06"
+    assert reconciled.execution_scope == "turn:turn-1/tool:call-1"
+    assert reconciled.metadata == {"tool_call_id": "call-1", "tool_name": "ticket.create"}
+    assert ledger.records_for_run("run-1") == [first, reconciled]
+    assert ledger.totals_for_run("run-1") == [_tokens("21")]
+    ledger.close()

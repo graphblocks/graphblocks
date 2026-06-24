@@ -3,6 +3,7 @@ from __future__ import annotations
 from graphblocks.budget import UsageAmount
 from graphblocks.usage import (
     InMemoryUsageLedger,
+    SQLiteUsageLedger,
     UsageConfidence,
     UsageLedgerError,
     UsageRecord,
@@ -14,6 +15,7 @@ from graphblocks.usage import (
 
 __all__ = [
     "InMemoryUsageLedger",
+    "SQLiteUsageLedger",
     "UsageAmount",
     "UsageConfidence",
     "UsageLedgerError",

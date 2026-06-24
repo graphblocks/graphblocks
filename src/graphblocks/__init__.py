@@ -337,6 +337,7 @@ from .server import (
 )
 from .usage import (
     InMemoryUsageLedger,
+    SQLiteUsageLedger,
     UsageLedgerError,
     UsageRecord,
     UsageRecordConflictError,
@@ -580,6 +581,7 @@ __all__ = [
     "RunProvenance",
     "RuntimeRegistry",
     "SQLiteRunStore",
+    "SQLiteUsageLedger",
     "SQLiteExecutionJournal",
     "SchemaId",
     "SchemaIdError",

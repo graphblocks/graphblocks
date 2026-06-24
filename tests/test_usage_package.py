@@ -47,3 +47,4 @@ def test_usage_package_exposes_immutable_usage_reconciliation_contract(monkeypat
     assert ledger.totals_for_run("run-1") == [
         graphblocks_usage.UsageAmount("model_output_tokens", Decimal("21"), "tokens")
     ]
+    assert "SQLiteUsageLedger" in graphblocks_usage.__all__
