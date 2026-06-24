@@ -2691,6 +2691,33 @@ where
     } else {
         Value::Null
     };
+    let freshness_satisfaction = retrieval
+        .metadata
+        .get("minimum_source_modified_at")
+        .and_then(Value::as_str)
+        .map_or(Value::Null, |minimum_source_modified_at| {
+            if hits_at_k.is_empty() {
+                return Value::Null;
+            }
+            let fresh_hits = hits_at_k
+                .iter()
+                .filter(|hit| {
+                    hit.metadata
+                        .get("source_modified_at")
+                        .and_then(Value::as_str)
+                        .or_else(|| {
+                            hit.item
+                                .metadata
+                                .get("source_modified_at")
+                                .and_then(Value::as_str)
+                        })
+                        .is_some_and(|source_modified_at| {
+                            source_modified_at >= minimum_source_modified_at
+                        })
+                })
+                .count();
+            json!(fresh_hits as f64 / hits_at_k.len() as f64)
+        });
 
     let evaluator = Some(json!({ "k": cutoff }));
     let mut metrics = vec![
@@ -2703,6 +2730,8 @@ where
         MetricObservation::new("mrr", mrr).with_direction(MetricDirection::Maximize),
         MetricObservation::new("coverage_at_k", coverage).with_direction(MetricDirection::Maximize),
         MetricObservation::new("acl_precision", acl_precision)
+            .with_direction(MetricDirection::Maximize),
+        MetricObservation::new("freshness_satisfaction", freshness_satisfaction)
             .with_direction(MetricDirection::Maximize),
     ];
     for metric in &mut metrics {

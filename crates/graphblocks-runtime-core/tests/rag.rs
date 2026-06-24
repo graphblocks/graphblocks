@@ -1826,6 +1826,45 @@ fn evaluate_retrieval_metrics_returns_no_data_without_relevant_items() {
         .find(|metric| metric.name == "acl_precision")
         .expect("ACL precision metric exists");
     assert_eq!(acl_precision.value, Value::Null);
+    let freshness_satisfaction = metrics
+        .iter()
+        .find(|metric| metric.name == "freshness_satisfaction")
+        .expect("freshness satisfaction metric exists");
+    assert_eq!(freshness_satisfaction.value, Value::Null);
+}
+
+#[test]
+fn evaluate_retrieval_metrics_reports_freshness_satisfaction() {
+    let mut fresh = hit("hit-a", "doc-a", "doc-1", "alpha", 1);
+    fresh.metadata.insert(
+        "source_modified_at".to_owned(),
+        json!("2026-06-22T00:00:00Z"),
+    );
+    let mut stale = hit("hit-b", "doc-b", "doc-2", "beta", 2);
+    stale.metadata.insert(
+        "source_modified_at".to_owned(),
+        json!("2026-06-20T00:00:00Z"),
+    );
+    let unknown = hit("hit-c", "doc-c", "doc-3", "gamma", 3);
+    let mut retrieval = RetrievalResult::new(
+        "retrieval-1",
+        SearchRequest::new("policy").with_top_k(3),
+        vec![fresh, stale, unknown],
+    );
+    retrieval.metadata.insert(
+        "minimum_source_modified_at".to_owned(),
+        json!("2026-06-21T00:00:00Z"),
+    );
+
+    let metrics = evaluate_retrieval_metrics(&retrieval, ["doc-a"], Some(3));
+
+    let freshness_satisfaction = metrics
+        .iter()
+        .find(|metric| metric.name == "freshness_satisfaction")
+        .expect("freshness satisfaction metric exists");
+    assert_eq!(freshness_satisfaction.value, json!(1.0 / 3.0));
+    assert_eq!(freshness_satisfaction.direction, MetricDirection::Maximize);
+    assert_eq!(freshness_satisfaction.evaluator, Some(json!({ "k": 3 })));
 }
 
 #[test]

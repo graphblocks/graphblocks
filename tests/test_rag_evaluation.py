@@ -43,13 +43,19 @@ def _single_hit_context() -> ContextPack:
     return ContextPack(context_id="ctx-1", hits=hits)
 
 
-def _hit(item_id: str, rank: int, acl: dict[str, object] | None = None) -> SearchHit:
+def _hit(
+    item_id: str,
+    rank: int,
+    acl: dict[str, object] | None = None,
+    metadata: dict[str, object] | None = None,
+) -> SearchHit:
     source = SourceRef(source_id=item_id, source_kind="document_chunk")
     return SearchHit(
         hit_id=f"hit-{item_id}",
         item=KnowledgeItemRef(item_id, "document_chunk", source, acl=acl),
         rank=rank,
         retriever="local-test",
+        metadata=dict(metadata or {}),
     )
 
 
@@ -113,6 +119,29 @@ def test_evaluate_retrieval_metrics_returns_no_data_without_relevant_items() -> 
     assert by_name["mrr"].value is None
     assert by_name["coverage_at_k"].value == Decimal(1) / Decimal(3)
     assert by_name["acl_precision"].value is None
+    assert by_name["freshness_satisfaction"].value is None
+
+
+def test_evaluate_retrieval_metrics_reports_freshness_satisfaction() -> None:
+    retrieval = RetrievalResult(
+        retrieval_id="retrieval-1",
+        request=SearchRequest("policy", top_k=3),
+        hits=[
+            _hit("doc-a", 1, metadata={"source_modified_at": "2026-06-22T00:00:00Z"}),
+            _hit("doc-b", 2, metadata={"source_modified_at": "2026-06-20T00:00:00Z"}),
+            _hit("doc-c", 3),
+        ],
+        metadata={"minimum_source_modified_at": "2026-06-21T00:00:00Z"},
+    )
+
+    by_name = {
+        metric.name: metric
+        for metric in evaluate_retrieval_metrics(retrieval, {"doc-a"}, k=3)
+    }
+
+    assert by_name["freshness_satisfaction"].value == Decimal(1) / Decimal(3)
+    assert by_name["freshness_satisfaction"].direction == "maximize"
+    assert by_name["freshness_satisfaction"].evaluator == {"k": 3}
 
 
 def test_evaluate_context_metrics_reports_source_diversity_and_token_efficiency() -> None:

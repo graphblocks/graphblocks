@@ -1152,6 +1152,18 @@ def evaluate_retrieval_metrics(
         )
         / Decimal(len(hits_at_k))
     )
+    minimum_source_modified_at = retrieval.metadata.get("minimum_source_modified_at")
+    if isinstance(minimum_source_modified_at, str) and hits_at_k:
+        fresh_hits = 0
+        for hit in hits_at_k:
+            source_modified_at = hit.metadata.get("source_modified_at")
+            if not isinstance(source_modified_at, str):
+                source_modified_at = hit.item.metadata.get("source_modified_at")
+            if isinstance(source_modified_at, str) and source_modified_at >= minimum_source_modified_at:
+                fresh_hits += 1
+        freshness_satisfaction = Decimal(fresh_hits) / Decimal(len(hits_at_k))
+    else:
+        freshness_satisfaction = None
 
     evaluator = {"k": cutoff}
     return [
@@ -1194,6 +1206,12 @@ def evaluate_retrieval_metrics(
         MetricObservation(
             "acl_precision",
             acl_precision,
+            direction="maximize",
+            evaluator=evaluator,
+        ),
+        MetricObservation(
+            "freshness_satisfaction",
+            freshness_satisfaction,
             direction="maximize",
             evaluator=evaluator,
         ),
