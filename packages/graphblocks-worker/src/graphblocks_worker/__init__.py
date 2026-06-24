@@ -3,6 +3,12 @@ from __future__ import annotations
 from graphblocks.worker import (
     WORKER_PROTOCOL_VERSION,
     BlockCapability,
+    RemotePayloadError,
+    RemotePayloadInlineJsonEncodingError,
+    RemotePayloadInvalidArtifactRefError,
+    RemotePayloadInvalidModeError,
+    RemotePayloadLimits,
+    RemotePayloadOversizedInlineError,
     RunOwnershipLease,
     WorkerAdmissionDecision,
     WorkerAdmissionPolicy,
@@ -30,6 +36,7 @@ from graphblocks.worker import (
     admit_worker_with_policy,
     evaluate_worker_admission,
     select_worker_for_block,
+    validate_remote_payload,
     validate_worker_result,
 )
 
@@ -37,6 +44,12 @@ from graphblocks.worker import (
 __all__ = [
     "WORKER_PROTOCOL_VERSION",
     "BlockCapability",
+    "RemotePayloadError",
+    "RemotePayloadInlineJsonEncodingError",
+    "RemotePayloadInvalidArtifactRefError",
+    "RemotePayloadInvalidModeError",
+    "RemotePayloadLimits",
+    "RemotePayloadOversizedInlineError",
     "RunOwnershipLease",
     "WorkerAdmissionDecision",
     "WorkerAdmissionPolicy",
@@ -64,5 +77,6 @@ __all__ = [
     "admit_worker_with_policy",
     "evaluate_worker_admission",
     "select_worker_for_block",
+    "validate_remote_payload",
     "validate_worker_result",
 ]

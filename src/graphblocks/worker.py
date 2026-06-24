@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
+import json
 from typing import Literal
 
 
@@ -332,6 +334,71 @@ class RunOwnershipLease:
 
 
 @dataclass(frozen=True, slots=True)
+class RemotePayloadLimits:
+    max_inline_bytes: int
+
+
+class RemotePayloadError(ValueError):
+    """Base error for invalid remote payload contracts."""
+
+
+class RemotePayloadOversizedInlineError(RemotePayloadError):
+    def __init__(self, max_inline_bytes: int, actual_inline_bytes: int) -> None:
+        self.max_inline_bytes = max_inline_bytes
+        self.actual_inline_bytes = actual_inline_bytes
+        super().__init__(
+            f"remote inline payload is {actual_inline_bytes} bytes, exceeding limit {max_inline_bytes}"
+        )
+
+
+class RemotePayloadInvalidArtifactRefError(RemotePayloadError):
+    def __init__(self, field: str) -> None:
+        self.field = field
+        super().__init__(f"remote artifact reference has invalid {field}")
+
+
+class RemotePayloadInlineJsonEncodingError(RemotePayloadError):
+    pass
+
+
+class RemotePayloadInvalidModeError(RemotePayloadError):
+    def __init__(self, mode: object) -> None:
+        self.mode = mode
+        super().__init__(f"invalid remote payload mode {mode!r}")
+
+
+def validate_remote_payload(payload: Mapping[str, object], limits: RemotePayloadLimits) -> None:
+    mode = payload.get("mode")
+    if mode == "inline":
+        try:
+            actual_inline_bytes = len(
+                json.dumps(
+                    payload.get("value"),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                ).encode("utf-8")
+            )
+        except (TypeError, ValueError) as error:
+            raise RemotePayloadInlineJsonEncodingError("remote inline payload is not JSON serializable") from error
+        if actual_inline_bytes > limits.max_inline_bytes:
+            raise RemotePayloadOversizedInlineError(limits.max_inline_bytes, actual_inline_bytes)
+        return
+    if mode == "artifact_ref":
+        artifact = payload.get("artifact")
+        if not isinstance(artifact, Mapping):
+            raise RemotePayloadInvalidArtifactRefError("artifact")
+        artifact_id = artifact.get("artifact_id", artifact.get("artifactId"))
+        if not isinstance(artifact_id, str) or artifact_id == "":
+            raise RemotePayloadInvalidArtifactRefError("artifact_id")
+        uri = artifact.get("uri")
+        if not isinstance(uri, str) or uri == "":
+            raise RemotePayloadInvalidArtifactRefError("uri")
+        return
+    raise RemotePayloadInvalidModeError(mode)
+
+
+@dataclass(frozen=True, slots=True)
 class WorkerInvocationContext:
     release_id: str
     deployment_revision_id: str
@@ -508,6 +575,12 @@ def validate_worker_result(request: WorkerInvokeRequest, result: WorkerInvokeRes
 __all__ = [
     "WORKER_PROTOCOL_VERSION",
     "BlockCapability",
+    "RemotePayloadError",
+    "RemotePayloadInlineJsonEncodingError",
+    "RemotePayloadInvalidArtifactRefError",
+    "RemotePayloadInvalidModeError",
+    "RemotePayloadLimits",
+    "RemotePayloadOversizedInlineError",
     "RunOwnershipLease",
     "WorkerAdmissionDecision",
     "WorkerAdmissionPolicy",
@@ -535,5 +608,6 @@ __all__ = [
     "admit_worker_with_policy",
     "evaluate_worker_admission",
     "select_worker_for_block",
+    "validate_remote_payload",
     "validate_worker_result",
 ]

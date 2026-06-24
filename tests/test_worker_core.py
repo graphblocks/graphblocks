@@ -6,6 +6,9 @@ import graphblocks
 from graphblocks.worker import (
     WORKER_PROTOCOL_VERSION,
     BlockCapability,
+    RemotePayloadInvalidArtifactRefError,
+    RemotePayloadLimits,
+    RemotePayloadOversizedInlineError,
     RunOwnershipLease,
     WorkerAdmissionDecision,
     WorkerAdmissionPolicy,
@@ -22,6 +25,7 @@ from graphblocks.worker import (
     admit_worker_with_policy,
     evaluate_worker_admission,
     select_worker_for_block,
+    validate_remote_payload,
     validate_worker_result,
 )
 
@@ -228,6 +232,48 @@ def test_worker_invocation_envelopes_preserve_json_payloads_and_context() -> Non
     assert WorkerInvokeRequest.from_wire(encoded) == request
     assert WorkerInvokeResult.from_wire(result.to_wire()) == result
     assert validate_worker_result(request, result) is None
+
+
+def test_remote_payload_validator_rejects_oversized_inline_payload() -> None:
+    payload = {
+        "mode": "inline",
+        "schema": "graphblocks.ai/Message@1",
+        "value": {"body": "this inline payload is too large"},
+    }
+
+    with pytest.raises(RemotePayloadOversizedInlineError) as error:
+        validate_remote_payload(payload, RemotePayloadLimits(max_inline_bytes=8))
+
+    assert error.value.max_inline_bytes == 8
+    assert error.value.actual_inline_bytes > 8
+
+
+def test_remote_payload_validator_allows_artifact_reference_payload() -> None:
+    payload = {
+        "mode": "artifact_ref",
+        "schema": "graphblocks.ai/ArtifactRef@1",
+        "artifact": {
+            "artifact_id": "artifact-000001",
+            "uri": "s3://graphblocks/documents/source.pdf",
+            "size_bytes": 10_000_000,
+        },
+    }
+
+    assert validate_remote_payload(payload, RemotePayloadLimits(max_inline_bytes=8)) is None
+
+
+def test_remote_payload_validator_rejects_invalid_artifact_reference() -> None:
+    with pytest.raises(RemotePayloadInvalidArtifactRefError) as error:
+        validate_remote_payload(
+            {
+                "mode": "artifact_ref",
+                "schema": "graphblocks.ai/ArtifactRef@1",
+                "artifact": {"artifact_id": "", "uri": "s3://graphblocks/documents/source.pdf"},
+            },
+            RemotePayloadLimits(max_inline_bytes=8),
+        )
+
+    assert error.value.field == "artifact_id"
 
 
 def test_run_ownership_lease_round_trips_with_fencing_epoch() -> None:
