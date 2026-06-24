@@ -77,6 +77,8 @@ def test_evaluate_retrieval_metrics_reports_recall_precision_and_mrr() -> None:
     )
     assert by_name["ndcg_at_k"].value == Decimal(str(expected_ndcg))
     assert by_name["mrr"].value == Decimal("1")
+    assert by_name["coverage_at_k"].value == Decimal("1")
+    assert by_name["coverage_at_k"].direction == "maximize"
     assert by_name["recall_at_k"].direction == "maximize"
     assert by_name["precision_at_k"].evaluator == {"k": 3}
 
@@ -98,6 +100,7 @@ def test_evaluate_retrieval_metrics_returns_no_data_without_relevant_items() -> 
     assert by_name["average_precision_at_k"].value is None
     assert by_name["ndcg_at_k"].value is None
     assert by_name["mrr"].value is None
+    assert by_name["coverage_at_k"].value == Decimal(1) / Decimal(3)
 
 
 def test_evaluate_context_metrics_reports_source_diversity_and_token_efficiency() -> None:

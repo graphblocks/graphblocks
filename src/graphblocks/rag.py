@@ -1094,6 +1094,7 @@ def evaluate_retrieval_metrics(
             if first_relevant_rank is None
             else Decimal(1) / Decimal(first_relevant_rank)
         )
+    coverage = None if cutoff == 0 else Decimal(len(hits_at_k)) / Decimal(cutoff)
 
     evaluator = {"k": cutoff}
     return [
@@ -1124,6 +1125,12 @@ def evaluate_retrieval_metrics(
         MetricObservation(
             "mrr",
             mrr,
+            direction="maximize",
+            evaluator=evaluator,
+        ),
+        MetricObservation(
+            "coverage_at_k",
+            coverage,
             direction="maximize",
             evaluator=evaluator,
         ),

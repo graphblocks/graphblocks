@@ -2630,6 +2630,11 @@ where
                 .unwrap_or_else(|| json!(0.0)),
         )
     };
+    let coverage = if cutoff == 0 {
+        Value::Null
+    } else {
+        json!(hits_at_k.len() as f64 / cutoff as f64)
+    };
 
     let evaluator = Some(json!({ "k": cutoff }));
     let mut metrics = vec![
@@ -2640,6 +2645,7 @@ where
             .with_direction(MetricDirection::Maximize),
         MetricObservation::new("ndcg_at_k", ndcg).with_direction(MetricDirection::Maximize),
         MetricObservation::new("mrr", mrr).with_direction(MetricDirection::Maximize),
+        MetricObservation::new("coverage_at_k", coverage).with_direction(MetricDirection::Maximize),
     ];
     for metric in &mut metrics {
         metric.evaluator = evaluator.clone();

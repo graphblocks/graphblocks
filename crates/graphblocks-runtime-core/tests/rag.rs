@@ -1699,6 +1699,12 @@ fn evaluate_retrieval_metrics_reports_recall_precision_and_mrr() {
         .find(|metric| metric.name == "mrr")
         .expect("mrr metric exists");
     assert_eq!(mrr.value, json!(1.0));
+    let coverage = metrics
+        .iter()
+        .find(|metric| metric.name == "coverage_at_k")
+        .expect("coverage metric exists");
+    assert_eq!(coverage.value, json!(1.0));
+    assert_eq!(coverage.direction, MetricDirection::Maximize);
 }
 
 #[test]
@@ -1711,7 +1717,36 @@ fn evaluate_retrieval_metrics_returns_no_data_without_relevant_items() {
 
     let metrics = evaluate_retrieval_metrics(&retrieval, Vec::<String>::new(), None);
 
-    assert!(metrics.iter().all(|metric| metric.value == Value::Null));
+    let recall = metrics
+        .iter()
+        .find(|metric| metric.name == "recall_at_k")
+        .expect("recall metric exists");
+    assert_eq!(recall.value, Value::Null);
+    let precision = metrics
+        .iter()
+        .find(|metric| metric.name == "precision_at_k")
+        .expect("precision metric exists");
+    assert_eq!(precision.value, Value::Null);
+    let average_precision = metrics
+        .iter()
+        .find(|metric| metric.name == "average_precision_at_k")
+        .expect("average precision metric exists");
+    assert_eq!(average_precision.value, Value::Null);
+    let ndcg = metrics
+        .iter()
+        .find(|metric| metric.name == "ndcg_at_k")
+        .expect("NDCG metric exists");
+    assert_eq!(ndcg.value, Value::Null);
+    let mrr = metrics
+        .iter()
+        .find(|metric| metric.name == "mrr")
+        .expect("mrr metric exists");
+    assert_eq!(mrr.value, Value::Null);
+    let coverage = metrics
+        .iter()
+        .find(|metric| metric.name == "coverage_at_k")
+        .expect("coverage metric exists");
+    assert_eq!(coverage.value, json!(1.0 / 3.0));
 }
 
 #[test]
