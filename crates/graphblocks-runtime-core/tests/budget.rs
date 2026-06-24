@@ -643,6 +643,95 @@ fn sqlite_completion_reserve_spend_commits_held_capacity() -> Result<(), BudgetE
 }
 
 #[test]
+fn sqlite_completion_reserve_can_be_spent_after_reopen() -> Result<(), BudgetError> {
+    let path = sqlite_budget_path("completion-reserve-spend-reopen");
+
+    {
+        let mut ledger = SqliteBudgetLedger::open(&path)?;
+        ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+        ledger.create_completion_reserve(
+            "finalization-reserve",
+            "budget-1",
+            CompletionReservePurpose::Finalization,
+            [tokens(20)],
+            ["agent.finalize"],
+            None,
+        )?;
+    }
+
+    {
+        let mut ledger = SqliteBudgetLedger::open(&path)?;
+        let reservation =
+            ledger.spend_completion_reserve("finalization-reserve", "agent.finalize", "later")?;
+        let reserve = ledger.completion_reserve("finalization-reserve")?;
+        assert_eq!(reserve.status, CompletionReserveStatus::Spent);
+        assert_eq!(
+            reserve.reservation_id.as_deref(),
+            Some(reservation.reservation_id.as_str())
+        );
+        ledger.commit(&reservation.reservation_id, [tokens(18)])?;
+    }
+
+    let ledger = SqliteBudgetLedger::open(&path)?;
+    assert_eq!(ledger.balance("budget-1")?.committed, vec![tokens(18)]);
+    assert_eq!(ledger.balance("budget-1")?.available, vec![tokens(82)]);
+    fs::remove_file(path).ok();
+    Ok(())
+}
+
+#[test]
+fn sqlite_completion_reserve_serializes_competing_spenders() -> Result<(), BudgetError> {
+    let path = sqlite_budget_path("completion-reserve-race");
+    {
+        let mut ledger = SqliteBudgetLedger::open(&path)?;
+        ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+        ledger.create_completion_reserve(
+            "finalization-reserve",
+            "budget-1",
+            CompletionReservePurpose::Finalization,
+            [tokens(20)],
+            ["agent.finalize"],
+            None,
+        )?;
+    }
+
+    let barrier = Arc::new(Barrier::new(3));
+    let handles = ["agent.finalize", "agent.finalize"]
+        .into_iter()
+        .map(|spender| {
+            let path = path.clone();
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || -> Result<bool, BudgetError> {
+                let mut ledger = SqliteBudgetLedger::open(&path)?;
+                barrier.wait();
+                match ledger.spend_completion_reserve("finalization-reserve", spender, "later") {
+                    Ok(_) => Ok(true),
+                    Err(BudgetError::CompletionReserveState { .. }) => Ok(false),
+                    Err(error) => Err(error),
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+
+    barrier.wait();
+    let outcomes = handles
+        .into_iter()
+        .map(|handle| handle.join().expect("completion reserve worker joins"))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    assert_eq!(outcomes.iter().filter(|outcome| **outcome).count(), 1);
+    assert_eq!(outcomes.iter().filter(|outcome| !**outcome).count(), 1);
+
+    let ledger = SqliteBudgetLedger::open(&path)?;
+    let reserve = ledger.completion_reserve("finalization-reserve")?;
+    assert_eq!(reserve.status, CompletionReserveStatus::Spent);
+    assert!(reserve.reservation_id.is_some());
+    assert_eq!(ledger.balance("budget-1")?.reserved, vec![tokens(20)]);
+    fs::remove_file(path).ok();
+    Ok(())
+}
+
+#[test]
 fn sqlite_completion_reserve_rejects_unauthorized_spender() -> Result<(), BudgetError> {
     let mut ledger = SqliteBudgetLedger::open_in_memory()?;
     ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
