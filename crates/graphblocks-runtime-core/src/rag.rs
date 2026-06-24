@@ -154,6 +154,85 @@ impl RetrievalResult {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FederatedFailureMode {
+    Fail,
+    Partial,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FederatedRetrievalOptions {
+    pub failure_mode: FederatedFailureMode,
+    pub fusion_strategy: FusionStrategy,
+    pub k: usize,
+}
+
+impl FederatedRetrievalOptions {
+    pub fn new() -> Self {
+        Self {
+            failure_mode: FederatedFailureMode::Partial,
+            fusion_strategy: FusionStrategy::ReciprocalRankFusion,
+            k: 60,
+        }
+    }
+
+    pub fn with_failure_mode(mut self, failure_mode: FederatedFailureMode) -> Self {
+        self.failure_mode = failure_mode;
+        self
+    }
+
+    pub fn with_fusion_strategy(mut self, fusion_strategy: FusionStrategy) -> Self {
+        self.fusion_strategy = fusion_strategy;
+        self
+    }
+
+    pub fn with_k(mut self, k: usize) -> Self {
+        self.k = k;
+        self
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FederatedRetrievalSource {
+    pub source_id: String,
+    pub result: Option<RetrievalResult>,
+    pub error: Option<String>,
+    pub weight: f64,
+    pub metadata: BTreeMap<String, Value>,
+}
+
+impl FederatedRetrievalSource {
+    pub fn success(source_id: impl Into<String>, result: RetrievalResult) -> Self {
+        Self {
+            source_id: source_id.into(),
+            result: Some(result),
+            error: None,
+            weight: 1.0,
+            metadata: BTreeMap::new(),
+        }
+    }
+
+    pub fn failure(source_id: impl Into<String>, error: impl Into<String>) -> Self {
+        Self {
+            source_id: source_id.into(),
+            result: None,
+            error: Some(error.into()),
+            weight: 1.0,
+            metadata: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_weight(mut self, weight: f64) -> Self {
+        self.weight = weight;
+        self
+    }
+
+    pub fn with_metadata(mut self, metadata: BTreeMap<String, Value>) -> Self {
+        self.metadata = metadata;
+        self
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct KnowledgeItemRef {
     pub item_id: String,
@@ -907,6 +986,10 @@ pub enum RagError {
     InvalidFusionK,
     WeightCountMismatch,
     InvalidRerankInputLimit,
+    FederatedSourceFailed {
+        source_id: String,
+        message: String,
+    },
     KnowledgeItemNotFound {
         item_id: String,
     },
@@ -937,6 +1020,9 @@ impl fmt::Display for RagError {
             }
             Self::InvalidRerankInputLimit => {
                 write!(formatter, "rerank input limit must be at least 1")
+            }
+            Self::FederatedSourceFailed { source_id, message } => {
+                write!(formatter, "federated source {source_id} failed: {message}")
             }
             Self::KnowledgeItemNotFound { item_id } => {
                 write!(formatter, "knowledge item {item_id:?} was not found")
@@ -1217,6 +1303,88 @@ pub fn render_context_pack(context: &ContextPack) -> String {
     lines.join("\n")
 }
 
+pub fn federated_retrieve(
+    retriever_id: impl Into<String>,
+    request: SearchRequest,
+    sources: Vec<FederatedRetrievalSource>,
+    options: FederatedRetrievalOptions,
+) -> Result<RetrievalResult, RagError> {
+    let retriever_id = retriever_id.into();
+    let mut hit_sets = Vec::new();
+    let mut weights = Vec::new();
+    let mut successful_sources = Vec::new();
+    let mut failed_sources = Vec::new();
+    let mut warnings = Vec::new();
+    let mut total_candidates = 0usize;
+
+    for source in sources {
+        match (source.result, source.error) {
+            (Some(result), None) => {
+                total_candidates += result.hits.len();
+                weights.push(source.weight);
+                hit_sets.push(result.hits);
+                successful_sources.push(source.source_id);
+            }
+            (result, error) => {
+                let message = error.unwrap_or_else(|| "missing retrieval result".to_owned());
+                if options.failure_mode == FederatedFailureMode::Fail || result.is_some() {
+                    return Err(RagError::FederatedSourceFailed {
+                        source_id: source.source_id,
+                        message,
+                    });
+                }
+                warnings.push(format!(
+                    "federated source {} failed: {}",
+                    source.source_id, message
+                ));
+                failed_sources.push(json!({
+                    "source_id": source.source_id,
+                    "error": message,
+                }));
+            }
+        }
+    }
+
+    let mut hits = fuse_search_hits(
+        &hit_sets,
+        FusionOptions::new()
+            .with_strategy(options.fusion_strategy.clone())
+            .with_k(options.k)
+            .with_weights(weights)
+            .with_retriever_id(&retriever_id),
+    )?;
+    hits.truncate(request.top_k);
+    let retrieval_id = format!(
+        "{}:{}",
+        retriever_id,
+        canonical_hash(&json!({
+            "query_text": &request.query_text,
+            "top_k": request.top_k,
+            "filters": &request.filters,
+            "successful_sources": &successful_sources,
+            "failed_sources": &failed_sources,
+            "fusion_strategy": fusion_strategy_label(&options.fusion_strategy),
+        }))
+    );
+    let mut result = RetrievalResult::new(retrieval_id, request, hits);
+    result.total_candidates = Some(total_candidates);
+    result.warnings = warnings;
+    result
+        .metadata
+        .insert("successful_sources".to_owned(), json!(successful_sources));
+    result
+        .metadata
+        .insert("failed_sources".to_owned(), Value::Array(failed_sources));
+    result.metadata.insert(
+        "fusion_strategy".to_owned(),
+        json!(fusion_strategy_label(&options.fusion_strategy)),
+    );
+    result
+        .metadata
+        .insert("retriever_id".to_owned(), json!(retriever_id));
+    Ok(result)
+}
+
 pub fn fuse_search_hits(
     hit_sets: &[Vec<SearchHit>],
     options: FusionOptions,
@@ -1407,6 +1575,16 @@ pub fn fuse_search_hits(
         fused_hits.push(fused);
     }
     Ok(fused_hits)
+}
+
+fn fusion_strategy_label(strategy: &FusionStrategy) -> &'static str {
+    match strategy {
+        FusionStrategy::Concatenate => "concatenate",
+        FusionStrategy::ReciprocalRankFusion => "reciprocal_rank_fusion",
+        FusionStrategy::WeightedRank => "weighted_rank",
+        FusionStrategy::NormalizedScore => "normalized_score",
+        FusionStrategy::Interleave => "interleave",
+    }
 }
 
 pub fn rerank_search_hits(

@@ -4,6 +4,8 @@ import importlib
 from pathlib import Path
 
 from graphblocks import (
+    FederatedRetrievalError,
+    FederatedRetrievalSource,
     InMemoryKnowledgeIndex,
     KnowledgeDeleteMode,
     QueryPlan,
@@ -11,6 +13,7 @@ from graphblocks import (
     RagResultPayload,
     chunk_document_by_lines,
     create_local_text_revision,
+    federated_retrieve,
     parse_plain_text_document,
     render_context_pack,
 )
@@ -68,3 +71,12 @@ def test_rag_package_exposes_context_renderer(monkeypatch) -> None:
     graphblocks_rag = importlib.import_module("graphblocks_rag")
 
     assert graphblocks_rag.render_context_pack is render_context_pack
+
+
+def test_rag_package_exposes_federated_retrieval_contract(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-rag" / "src"))
+    graphblocks_rag = importlib.import_module("graphblocks_rag")
+
+    assert graphblocks_rag.FederatedRetrievalSource is FederatedRetrievalSource
+    assert graphblocks_rag.FederatedRetrievalError is FederatedRetrievalError
+    assert graphblocks_rag.federated_retrieve is federated_retrieve

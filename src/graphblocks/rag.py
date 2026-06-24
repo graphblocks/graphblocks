@@ -11,6 +11,7 @@ from .evaluation import ResultBundle
 
 KnowledgeDeleteMode: TypeAlias = Literal["tombstone", "hard"]
 KnowledgeRecordStatus: TypeAlias = Literal["active", "tombstoned"]
+FederatedFailureMode: TypeAlias = Literal["fail", "partial"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +48,19 @@ class RetrievalResult:
     total_candidates: int | None = None
     latency_ms: float | None = None
     warnings: list[str] = field(default_factory=list)
+    metadata: dict[str, object] = field(default_factory=dict)
+
+
+class FederatedRetrievalError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class FederatedRetrievalSource:
+    source_id: str
+    result: RetrievalResult | None = None
+    error: str | None = None
+    weight: float = 1.0
     metadata: dict[str, object] = field(default_factory=dict)
 
 
@@ -340,6 +354,78 @@ def render_context_pack(context: ContextPack) -> str:
 
 def _compact_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+
+
+def federated_retrieve(
+    retriever_id: str,
+    request: SearchRequest,
+    sources: list[FederatedRetrievalSource],
+    *,
+    failure_mode: FederatedFailureMode = "partial",
+    fusion_strategy: Literal[
+        "concatenate",
+        "reciprocal_rank_fusion",
+        "weighted_rank",
+        "normalized_score",
+        "interleave",
+    ] = "reciprocal_rank_fusion",
+    k: int = 60,
+) -> RetrievalResult:
+    if failure_mode not in {"fail", "partial"}:
+        raise ValueError("failure_mode must be fail or partial")
+
+    hit_sets: list[list[SearchHit]] = []
+    weights: list[float] = []
+    successful_sources: list[str] = []
+    failed_sources: list[dict[str, str]] = []
+    warnings: list[str] = []
+    total_candidates = 0
+
+    for source in sources:
+        if source.result is not None and source.error is None:
+            total_candidates += len(source.result.hits)
+            hit_sets.append(source.result.hits)
+            weights.append(source.weight)
+            successful_sources.append(source.source_id)
+            continue
+
+        message = source.error or "missing retrieval result"
+        if failure_mode == "fail" or source.result is not None:
+            raise FederatedRetrievalError(f"federated source {source.source_id} failed: {message}")
+        failed_sources.append({"source_id": source.source_id, "error": message})
+        warnings.append(f"federated source {source.source_id} failed: {message}")
+
+    hits = fuse_search_hits(
+        hit_sets,
+        strategy=fusion_strategy,
+        k=k,
+        weights=weights,
+        retriever_id=retriever_id,
+    )[: request.top_k]
+    retrieval_digest = canonical_hash(
+        {
+            "query_text": request.query_text,
+            "top_k": request.top_k,
+            "filters": request.filters,
+            "successful_sources": successful_sources,
+            "failed_sources": failed_sources,
+            "fusion_strategy": fusion_strategy,
+        }
+    )
+    retrieval_id = f"{retriever_id}:{retrieval_digest}"
+    return RetrievalResult(
+        retrieval_id=retrieval_id,
+        request=request,
+        hits=hits,
+        total_candidates=total_candidates,
+        warnings=warnings,
+        metadata={
+            "successful_sources": successful_sources,
+            "failed_sources": failed_sources,
+            "fusion_strategy": fusion_strategy,
+            "retriever_id": retriever_id,
+        },
+    )
 
 
 def fuse_search_hits(

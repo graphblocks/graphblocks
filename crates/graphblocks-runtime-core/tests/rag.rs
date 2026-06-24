@@ -6,12 +6,14 @@ use graphblocks_runtime_core::documents::{
 use graphblocks_runtime_core::evaluation::ResultBundle;
 use graphblocks_runtime_core::rag::{
     Answer, AuthContext, Citation, Claim, ContextBuildOptions, ContextPack, FailurePolicy,
-    FusionOptions, FusionStrategy, InMemoryChunkRetriever, InMemoryKnowledgeIndex,
-    KnowledgeDeleteMode, KnowledgeItemRef, KnowledgeRecordStatus, QueryPlan, RagError,
-    RagResultBundle, RagResultPayload, RerankOptions, RetrievalResult, SearchHit, SearchRequest,
-    authorize_search_hits, build_context_pack, fuse_search_hits, knowledge_item_from_chunk,
-    render_context_pack, rerank_search_hits, resolve_citation_source_trace,
-    validate_answer_citation_authorization, validate_answer_citations,
+    FederatedFailureMode, FederatedRetrievalOptions, FederatedRetrievalSource, FusionOptions,
+    FusionStrategy, InMemoryChunkRetriever, InMemoryKnowledgeIndex, KnowledgeDeleteMode,
+    KnowledgeItemRef, KnowledgeRecordStatus, QueryPlan, RagError, RagResultBundle,
+    RagResultPayload, RerankOptions, RetrievalResult, SearchHit, SearchRequest,
+    authorize_search_hits, build_context_pack, federated_retrieve, fuse_search_hits,
+    knowledge_item_from_chunk, render_context_pack, rerank_search_hits,
+    resolve_citation_source_trace, validate_answer_citation_authorization,
+    validate_answer_citations,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -657,6 +659,84 @@ fn render_context_pack_labels_retrieved_content_as_untrusted_data() {
     );
     assert_eq!(lines[3], "GRAPHBLOCKS_RETRIEVED_ITEM_END");
     assert_eq!(lines[4], "GRAPHBLOCKS_CONTEXT_PACK_END");
+}
+
+#[test]
+fn federated_retrieve_partially_fuses_successful_sources_and_records_failures()
+-> Result<(), Box<dyn std::error::Error>> {
+    let request = SearchRequest::new("password reset").with_top_k(2);
+    let policy = RetrievalResult::new(
+        "policy-ret",
+        request.clone(),
+        vec![
+            hit_from("policy-a", "chunk-a", "doc-1", "chunk-a", 1, "policy"),
+            hit_from("policy-b", "chunk-b", "doc-1", "chunk-b", 2, "policy"),
+        ],
+    );
+    let ticket = RetrievalResult::new(
+        "ticket-ret",
+        request.clone(),
+        vec![hit_from(
+            "ticket-b", "chunk-b", "doc-1", "chunk-b", 1, "ticket",
+        )],
+    );
+
+    let result = federated_retrieve(
+        "federated",
+        request,
+        vec![
+            FederatedRetrievalSource::success("policy", policy).with_weight(0.5),
+            FederatedRetrievalSource::success("ticket", ticket).with_weight(2.0),
+            FederatedRetrievalSource::failure("web", "timeout").with_weight(0.3),
+        ],
+        FederatedRetrievalOptions::new()
+            .with_failure_mode(FederatedFailureMode::Partial)
+            .with_fusion_strategy(FusionStrategy::WeightedRank),
+    )?;
+
+    assert_eq!(
+        result
+            .hits
+            .iter()
+            .map(|hit| hit.item.item_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["chunk-b", "chunk-a"]
+    );
+    assert_eq!(result.hits[0].raw_score, Some(2.25));
+    assert_eq!(result.total_candidates, Some(3));
+    assert_eq!(
+        result.warnings,
+        vec!["federated source web failed: timeout"]
+    );
+    assert_eq!(
+        result.metadata["failed_sources"],
+        json!([{"source_id": "web", "error": "timeout"}])
+    );
+    assert_eq!(
+        result.metadata["successful_sources"],
+        json!(["policy", "ticket"])
+    );
+    assert_eq!(result.metadata["fusion_strategy"], json!("weighted_rank"));
+    Ok(())
+}
+
+#[test]
+fn federated_retrieve_fail_mode_rejects_failed_source() {
+    let error = federated_retrieve(
+        "federated",
+        SearchRequest::new("password reset").with_top_k(2),
+        vec![FederatedRetrievalSource::failure("web", "timeout")],
+        FederatedRetrievalOptions::new().with_failure_mode(FederatedFailureMode::Fail),
+    )
+    .expect_err("failed source should fail the federated request");
+
+    assert_eq!(
+        error,
+        RagError::FederatedSourceFailed {
+            source_id: "web".to_owned(),
+            message: "timeout".to_owned()
+        }
+    );
 }
 
 #[test]
