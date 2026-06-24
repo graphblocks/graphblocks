@@ -426,6 +426,259 @@ impl InMemoryDurableSink {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DurableToolTerminalState {
+    Completed,
+    Failed,
+    Denied,
+    Cancelled,
+    PolicyStopped,
+    Expired,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DurableToolTerminalRecord {
+    pub run_id: String,
+    pub response_id: String,
+    pub tool_call_id: String,
+    pub revision: u32,
+    pub terminal_state: DurableToolTerminalState,
+    pub arguments_digest: String,
+    pub output_digest: Option<String>,
+    pub idempotency_key: Option<String>,
+    pub effect_committed: bool,
+    pub durable_result_committed: bool,
+    pub completed_at_unix_ms: u64,
+}
+
+impl DurableToolTerminalRecord {
+    pub fn new(
+        run_id: impl Into<String>,
+        response_id: impl Into<String>,
+        tool_call_id: impl Into<String>,
+        revision: u32,
+        terminal_state: DurableToolTerminalState,
+        arguments_digest: impl Into<String>,
+        completed_at_unix_ms: u64,
+    ) -> Self {
+        Self {
+            run_id: run_id.into(),
+            response_id: response_id.into(),
+            tool_call_id: tool_call_id.into(),
+            revision,
+            terminal_state,
+            arguments_digest: arguments_digest.into(),
+            output_digest: None,
+            idempotency_key: None,
+            effect_committed: false,
+            durable_result_committed: false,
+            completed_at_unix_ms,
+        }
+    }
+
+    pub fn with_output_digest(mut self, output_digest: impl Into<String>) -> Self {
+        self.output_digest = Some(output_digest.into());
+        self
+    }
+
+    pub fn with_idempotency_key(mut self, idempotency_key: impl Into<String>) -> Self {
+        self.idempotency_key = Some(idempotency_key.into());
+        self
+    }
+
+    pub fn with_effect_committed(mut self) -> Self {
+        self.effect_committed = true;
+        self
+    }
+
+    pub fn with_durable_result_committed(mut self) -> Self {
+        self.durable_result_committed = true;
+        self
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DurableToolTerminalCommit {
+    pub sequence: u64,
+    pub record: DurableToolTerminalRecord,
+    pub replayed: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DurableResponsePolicyStopRecord {
+    pub response_id: String,
+    pub policy_decision_id: String,
+    pub last_policy_accepted_sequence: u64,
+    pub occurred_at_unix_ms: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DurableResponsePolicyStopCommit {
+    pub sequence: u64,
+    pub record: DurableResponsePolicyStopRecord,
+    pub replayed: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ToolTerminalStoreError {
+    MissingRunId,
+    MissingResponseId,
+    MissingToolCallId,
+    MissingArgumentsDigest,
+    MissingPolicyDecisionId,
+    InvalidRevision,
+    InvalidCompletedAt,
+    TerminalStateConflict {
+        response_id: String,
+        tool_call_id: String,
+        revision: u32,
+    },
+    ResponsePolicyStopConflict {
+        response_id: String,
+    },
+    DurableResultAlreadyCommitted {
+        response_id: String,
+    },
+    ResponsePolicyStopped {
+        response_id: String,
+    },
+}
+
+#[derive(Default)]
+pub struct InMemoryDurableToolTerminalStore {
+    next_sequence: u64,
+    terminal_records: BTreeMap<(String, String, u32), DurableToolTerminalCommit>,
+    policy_stopped_responses: BTreeMap<String, DurableResponsePolicyStopCommit>,
+}
+
+impl InMemoryDurableToolTerminalStore {
+    pub fn new() -> Self {
+        Self {
+            next_sequence: 1,
+            terminal_records: BTreeMap::new(),
+            policy_stopped_responses: BTreeMap::new(),
+        }
+    }
+
+    pub fn record_tool_terminal(
+        &mut self,
+        record: DurableToolTerminalRecord,
+    ) -> Result<DurableToolTerminalCommit, ToolTerminalStoreError> {
+        if record.run_id.is_empty() {
+            return Err(ToolTerminalStoreError::MissingRunId);
+        }
+        if record.response_id.is_empty() {
+            return Err(ToolTerminalStoreError::MissingResponseId);
+        }
+        if record.tool_call_id.is_empty() {
+            return Err(ToolTerminalStoreError::MissingToolCallId);
+        }
+        if record.revision == 0 {
+            return Err(ToolTerminalStoreError::InvalidRevision);
+        }
+        if record.arguments_digest.is_empty() {
+            return Err(ToolTerminalStoreError::MissingArgumentsDigest);
+        }
+        if record.completed_at_unix_ms == 0 {
+            return Err(ToolTerminalStoreError::InvalidCompletedAt);
+        }
+
+        let key = (
+            record.response_id.clone(),
+            record.tool_call_id.clone(),
+            record.revision,
+        );
+        if let Some(committed) = self.terminal_records.get(&key) {
+            if committed.record != record {
+                return Err(ToolTerminalStoreError::TerminalStateConflict {
+                    response_id: record.response_id,
+                    tool_call_id: record.tool_call_id,
+                    revision: record.revision,
+                });
+            }
+            let mut replayed = committed.clone();
+            replayed.replayed = true;
+            return Ok(replayed);
+        }
+
+        if record.durable_result_committed
+            && self
+                .policy_stopped_responses
+                .contains_key(&record.response_id)
+        {
+            return Err(ToolTerminalStoreError::ResponsePolicyStopped {
+                response_id: record.response_id,
+            });
+        }
+
+        let committed = DurableToolTerminalCommit {
+            sequence: self.next_sequence,
+            record,
+            replayed: false,
+        };
+        self.next_sequence = self.next_sequence.saturating_add(1);
+        self.terminal_records.insert(key, committed.clone());
+        Ok(committed)
+    }
+
+    pub fn record_response_policy_stopped(
+        &mut self,
+        response_id: impl Into<String>,
+        policy_decision_id: impl Into<String>,
+        last_policy_accepted_sequence: u64,
+        occurred_at_unix_ms: u64,
+    ) -> Result<DurableResponsePolicyStopCommit, ToolTerminalStoreError> {
+        let record = DurableResponsePolicyStopRecord {
+            response_id: response_id.into(),
+            policy_decision_id: policy_decision_id.into(),
+            last_policy_accepted_sequence,
+            occurred_at_unix_ms,
+        };
+        if record.response_id.is_empty() {
+            return Err(ToolTerminalStoreError::MissingResponseId);
+        }
+        if record.policy_decision_id.is_empty() {
+            return Err(ToolTerminalStoreError::MissingPolicyDecisionId);
+        }
+        if record.occurred_at_unix_ms == 0 {
+            return Err(ToolTerminalStoreError::InvalidCompletedAt);
+        }
+
+        if let Some(committed) = self.policy_stopped_responses.get(&record.response_id) {
+            if committed.record != record {
+                return Err(ToolTerminalStoreError::ResponsePolicyStopConflict {
+                    response_id: record.response_id,
+                });
+            }
+            let mut replayed = committed.clone();
+            replayed.replayed = true;
+            return Ok(replayed);
+        }
+        if self.terminal_records.values().any(|commit| {
+            commit.record.response_id == record.response_id
+                && commit.record.durable_result_committed
+        }) {
+            return Err(ToolTerminalStoreError::DurableResultAlreadyCommitted {
+                response_id: record.response_id,
+            });
+        }
+
+        let committed = DurableResponsePolicyStopCommit {
+            sequence: self.next_sequence,
+            record,
+            replayed: false,
+        };
+        self.next_sequence = self.next_sequence.saturating_add(1);
+        self.policy_stopped_responses
+            .insert(committed.record.response_id.clone(), committed.clone());
+        Ok(committed)
+    }
+
+    pub fn tool_terminal_count(&self) -> usize {
+        self.terminal_records.len()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct SchemaRef {
     pub schema_id: String,
