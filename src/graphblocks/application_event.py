@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Literal
+from types import MappingProxyType
+from typing import Literal, Mapping
 
 from .output_policy import GenerationChunk, OutputCutoff, OutputPolicyDecision
 from .policy import PolicyDecision
@@ -122,8 +123,11 @@ class ApplicationEventMetadata:
 class ApplicationEvent:
     kind: ApplicationEventKind
     metadata: ApplicationEventMetadata
-    payload: dict[str, object] = field(default_factory=dict)
+    payload: Mapping[str, object] = field(default_factory=dict)
     tool_call_id: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "payload", MappingProxyType(dict(self.payload)))
 
     @classmethod
     def tool_call_draft(

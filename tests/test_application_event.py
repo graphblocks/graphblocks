@@ -98,6 +98,16 @@ def test_tool_events_carry_tool_call_id_and_required_envelope_fields() -> None:
     assert event.payload == {"status": "completed"}
 
 
+def test_application_event_payloads_are_copied_and_read_only() -> None:
+    payload = {"status": "running"}
+    event = ApplicationEvent.new("RunStarted", _metadata(), payload=payload)
+    payload["status"] = "mutated"
+
+    assert event.payload == {"status": "running"}
+    with pytest.raises(TypeError):
+        event.payload["status"] = "mutated"
+
+
 def test_tool_events_cannot_be_created_without_tool_call_id() -> None:
     with pytest.raises(ApplicationEventError) as error:
         ApplicationEvent.new("ToolCallStarted", _metadata(), payload={"status": "running"})
