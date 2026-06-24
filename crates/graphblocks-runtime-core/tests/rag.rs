@@ -1707,10 +1707,13 @@ fn evaluate_retrieval_metrics_returns_no_data_without_relevant_items() {
 fn evaluate_context_metrics_reports_source_diversity_and_token_efficiency() {
     let mut policy_a = hit("hit-a", "doc-a", "doc-1", "alpha", 1);
     policy_a.retriever = "policy".to_owned();
+    policy_a.normalized_score = Some(0.9);
     let mut ticket = hit("hit-b", "doc-b", "doc-2", "beta", 2);
     ticket.retriever = "ticket".to_owned();
+    ticket.normalized_score = Some(0.6);
     let mut policy_c = hit("hit-c", "doc-c", "doc-3", "gamma", 3);
     policy_c.retriever = "policy".to_owned();
+    policy_c.normalized_score = Some(0.75);
     let mut context = ContextPack::new("ctx-1", vec![policy_a, ticket, policy_c]);
     context.token_budget = Some(8);
     context.token_count = Some(6);
@@ -1736,11 +1739,19 @@ fn evaluate_context_metrics_reports_source_diversity_and_token_efficiency() {
         .expect("context precision metric exists");
     assert_eq!(context_precision.value, json!(2.0 / 3.0));
     assert_eq!(context_precision.direction, MetricDirection::Maximize);
+    let context_relevance = metrics
+        .iter()
+        .find(|metric| metric.name == "context_relevance")
+        .expect("context relevance metric exists");
+    assert_eq!(context_relevance.value, json!(0.75));
+    assert_eq!(context_relevance.direction, MetricDirection::Maximize);
 }
 
 #[test]
 fn evaluate_context_metrics_returns_no_data_without_token_budget() {
-    let context = ContextPack::new("ctx-1", vec![hit("hit-a", "doc-a", "doc-1", "alpha", 1)]);
+    let mut no_score = hit("hit-a", "doc-a", "doc-1", "alpha", 1);
+    no_score.normalized_score = None;
+    let context = ContextPack::new("ctx-1", vec![no_score]);
 
     let metrics = evaluate_context_metrics(&context, Option::<Vec<String>>::None);
 
@@ -1759,6 +1770,11 @@ fn evaluate_context_metrics_returns_no_data_without_token_budget() {
         .find(|metric| metric.name == "context_precision")
         .expect("context precision metric exists");
     assert_eq!(context_precision.value, Value::Null);
+    let context_relevance = metrics
+        .iter()
+        .find(|metric| metric.name == "context_relevance")
+        .expect("context relevance metric exists");
+    assert_eq!(context_relevance.value, Value::Null);
 }
 
 #[test]

@@ -2680,6 +2680,17 @@ where
         }
         None => Value::Null,
     };
+    let normalized_scores = context
+        .hits
+        .iter()
+        .filter_map(|hit| hit.normalized_score)
+        .filter(|score| score.is_finite())
+        .collect::<Vec<_>>();
+    let context_relevance = if normalized_scores.is_empty() {
+        Value::Null
+    } else {
+        json!(normalized_scores.iter().sum::<f64>() / normalized_scores.len() as f64)
+    };
 
     vec![
         MetricObservation::new("source_diversity", json!(source_diversity))
@@ -2688,6 +2699,8 @@ where
         MetricObservation::new("context_token_efficiency", token_efficiency)
             .with_direction(MetricDirection::Maximize),
         MetricObservation::new("context_precision", context_precision)
+            .with_direction(MetricDirection::Maximize),
+        MetricObservation::new("context_relevance", context_relevance)
             .with_direction(MetricDirection::Maximize),
     ]
 }

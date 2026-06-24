@@ -109,18 +109,21 @@ def test_evaluate_context_metrics_reports_source_diversity_and_token_efficiency(
                 item=_hit("doc-a", 1).item,
                 rank=1,
                 retriever="policy",
+                normalized_score=0.9,
             ),
             SearchHit(
                 hit_id="hit-b",
                 item=_hit("doc-b", 2).item,
                 rank=2,
                 retriever="ticket",
+                normalized_score=0.6,
             ),
             SearchHit(
                 hit_id="hit-c",
                 item=_hit("doc-c", 3).item,
                 rank=3,
                 retriever="policy",
+                normalized_score=0.75,
             ),
         ],
         token_budget=8,
@@ -139,6 +142,8 @@ def test_evaluate_context_metrics_reports_source_diversity_and_token_efficiency(
     assert by_name["context_token_efficiency"].direction == "maximize"
     assert by_name["context_precision"].value == Decimal(2) / Decimal(3)
     assert by_name["context_precision"].direction == "maximize"
+    assert by_name["context_relevance"].value == Decimal("0.75")
+    assert by_name["context_relevance"].direction == "maximize"
 
 
 def test_evaluate_context_metrics_returns_no_data_without_token_budget() -> None:
@@ -149,6 +154,7 @@ def test_evaluate_context_metrics_returns_no_data_without_token_budget() -> None
     assert by_name["source_diversity"].value == Decimal("1")
     assert by_name["context_token_efficiency"].value is None
     assert by_name["context_precision"].value is None
+    assert by_name["context_relevance"].value is None
 
 
 def test_evaluate_rag_answer_metrics_reports_citation_precision() -> None:

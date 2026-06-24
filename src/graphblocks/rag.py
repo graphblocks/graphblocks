@@ -1145,6 +1145,16 @@ def evaluate_context_metrics(
         else:
             relevant_hits = sum(1 for hit in context.hits if hit.item.item_id in relevant_item_id_set)
             context_precision = Decimal(relevant_hits) / Decimal(len(context.hits))
+    normalized_scores = [
+        Decimal(str(hit.normalized_score))
+        for hit in context.hits
+        if hit.normalized_score is not None and math.isfinite(hit.normalized_score)
+    ]
+    context_relevance = (
+        None
+        if not normalized_scores
+        else sum(normalized_scores, Decimal(0)) / Decimal(len(normalized_scores))
+    )
 
     return [
         MetricObservation(
@@ -1161,6 +1171,11 @@ def evaluate_context_metrics(
         MetricObservation(
             "context_precision",
             context_precision,
+            direction="maximize",
+        ),
+        MetricObservation(
+            "context_relevance",
+            context_relevance,
             direction="maximize",
         ),
     ]
