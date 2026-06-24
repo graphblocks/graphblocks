@@ -12,6 +12,7 @@ from graphblocks.documents import (
 )
 from graphblocks.rag import (
     Answer,
+    AuthContext,
     Citation,
     Claim,
     ContextPack,
@@ -40,11 +41,11 @@ def _single_hit_context() -> ContextPack:
     return ContextPack(context_id="ctx-1", hits=hits)
 
 
-def _hit(item_id: str, rank: int) -> SearchHit:
+def _hit(item_id: str, rank: int, acl: dict[str, object] | None = None) -> SearchHit:
     source = SourceRef(source_id=item_id, source_kind="document_chunk")
     return SearchHit(
         hit_id=f"hit-{item_id}",
-        item=KnowledgeItemRef(item_id, "document_chunk", source),
+        item=KnowledgeItemRef(item_id, "document_chunk", source, acl=acl),
         rank=rank,
         retriever="local-test",
     )
@@ -54,15 +55,21 @@ def test_evaluate_retrieval_metrics_reports_recall_precision_and_mrr() -> None:
     retrieval = RetrievalResult(
         retrieval_id="retrieval-1",
         request=SearchRequest("policy", top_k=3),
-        hits=[_hit("doc-a", 1), _hit("doc-b", 2), _hit("doc-c", 3)],
+        hits=[
+            _hit("doc-a", 1),
+            _hit("doc-b", 2, {"tenant_id": "acme", "groups": ["finance"]}),
+            _hit("doc-c", 3),
+        ],
         total_candidates=3,
     )
+    auth = AuthContext(tenant_id="acme", principal_id="user-1", groups={"support"})
 
-    metrics = evaluate_retrieval_metrics(retrieval, {"doc-a", "doc-c"}, k=3)
+    metrics = evaluate_retrieval_metrics(retrieval, {"doc-a", "doc-c"}, k=3, auth=auth)
     exported_metrics = graphblocks.evaluate_retrieval_metrics(
         retrieval,
         {"doc-a", "doc-c"},
         k=3,
+        auth=auth,
     )
     by_name = {metric.name: metric for metric in metrics}
 
@@ -79,6 +86,8 @@ def test_evaluate_retrieval_metrics_reports_recall_precision_and_mrr() -> None:
     assert by_name["mrr"].value == Decimal("1")
     assert by_name["coverage_at_k"].value == Decimal("1")
     assert by_name["coverage_at_k"].direction == "maximize"
+    assert by_name["acl_precision"].value == Decimal(2) / Decimal(3)
+    assert by_name["acl_precision"].direction == "maximize"
     assert by_name["recall_at_k"].direction == "maximize"
     assert by_name["precision_at_k"].evaluator == {"k": 3}
 
@@ -101,6 +110,7 @@ def test_evaluate_retrieval_metrics_returns_no_data_without_relevant_items() -> 
     assert by_name["ndcg_at_k"].value is None
     assert by_name["mrr"].value is None
     assert by_name["coverage_at_k"].value == Decimal(1) / Decimal(3)
+    assert by_name["acl_precision"].value is None
 
 
 def test_evaluate_context_metrics_reports_source_diversity_and_token_efficiency() -> None:

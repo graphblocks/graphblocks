@@ -1050,6 +1050,7 @@ def evaluate_retrieval_metrics(
     relevant_item_ids: Iterable[str],
     *,
     k: int | None = None,
+    auth: AuthContext | None = None,
 ) -> list[MetricObservation]:
     relevant = set(relevant_item_ids)
     cutoff = retrieval.request.top_k if k is None else k
@@ -1095,6 +1096,14 @@ def evaluate_retrieval_metrics(
             else Decimal(1) / Decimal(first_relevant_rank)
         )
     coverage = None if cutoff == 0 else Decimal(len(hits_at_k)) / Decimal(cutoff)
+    acl_precision = (
+        None
+        if auth is None or not hits_at_k
+        else Decimal(
+            sum(1 for hit in hits_at_k if _acl_allows(hit.hit_id, hit.item.acl, auth))
+        )
+        / Decimal(len(hits_at_k))
+    )
 
     evaluator = {"k": cutoff}
     return [
@@ -1131,6 +1140,12 @@ def evaluate_retrieval_metrics(
         MetricObservation(
             "coverage_at_k",
             coverage,
+            direction="maximize",
+            evaluator=evaluator,
+        ),
+        MetricObservation(
+            "acl_precision",
+            acl_precision,
             direction="maximize",
             evaluator=evaluator,
         ),

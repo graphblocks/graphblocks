@@ -12,9 +12,9 @@ use graphblocks_runtime_core::rag::{
     RagResultBundle, RagResultPayload, RerankOptions, RetrievalResult, SearchHit, SearchRequest,
     authorize_search_hits, build_abstention_answer, build_answer_from_model_response,
     build_answer_from_model_response_with_context, build_context_pack, evaluate_context_metrics,
-    evaluate_rag_answer_metrics, evaluate_retrieval_metrics, federated_retrieve, fuse_search_hits,
-    knowledge_item_from_chunk, render_context_pack, rerank_search_hits,
-    resolve_citation_source_trace, validate_answer_citation_authorization,
+    evaluate_rag_answer_metrics, evaluate_retrieval_metrics, evaluate_retrieval_metrics_with_auth,
+    federated_retrieve, fuse_search_hits, knowledge_item_from_chunk, render_context_pack,
+    rerank_search_hits, resolve_citation_source_trace, validate_answer_citation_authorization,
     validate_answer_citations, validate_answer_grounding,
 };
 use serde_json::{Value, json};
@@ -1658,18 +1658,24 @@ fn evaluate_rag_answer_metrics_reports_unsupported_claim_rate() {
 }
 
 #[test]
-fn evaluate_retrieval_metrics_reports_recall_precision_and_mrr() {
+fn evaluate_retrieval_metrics_reports_recall_precision_and_mrr()
+-> Result<(), Box<dyn std::error::Error>> {
+    let public_a = hit("hit-a", "doc-a", "doc-1", "alpha", 1);
+    let mut denied_b = hit("hit-b", "doc-b", "doc-2", "beta", 2);
+    denied_b.item.acl = Some(json!({
+        "tenant_id": "acme",
+        "groups": ["finance"],
+    }));
+    let public_c = hit("hit-c", "doc-c", "doc-3", "gamma", 3);
     let retrieval = RetrievalResult::new(
         "retrieval-1",
         SearchRequest::new("policy").with_top_k(3),
-        vec![
-            hit("hit-a", "doc-a", "doc-1", "alpha", 1),
-            hit("hit-b", "doc-b", "doc-2", "beta", 2),
-            hit("hit-c", "doc-c", "doc-3", "gamma", 3),
-        ],
+        vec![public_a, denied_b, public_c],
     );
+    let auth = AuthContext::new("acme", "user-1").with_groups(["support"]);
 
-    let metrics = evaluate_retrieval_metrics(&retrieval, ["doc-a", "doc-c"], Some(3));
+    let metrics =
+        evaluate_retrieval_metrics_with_auth(&retrieval, ["doc-a", "doc-c"], Some(3), Some(&auth))?;
 
     let recall = metrics
         .iter()
@@ -1705,6 +1711,13 @@ fn evaluate_retrieval_metrics_reports_recall_precision_and_mrr() {
         .expect("coverage metric exists");
     assert_eq!(coverage.value, json!(1.0));
     assert_eq!(coverage.direction, MetricDirection::Maximize);
+    let acl_precision = metrics
+        .iter()
+        .find(|metric| metric.name == "acl_precision")
+        .expect("ACL precision metric exists");
+    assert_eq!(acl_precision.value, json!(2.0 / 3.0));
+    assert_eq!(acl_precision.direction, MetricDirection::Maximize);
+    Ok(())
 }
 
 #[test]
@@ -1747,6 +1760,11 @@ fn evaluate_retrieval_metrics_returns_no_data_without_relevant_items() {
         .find(|metric| metric.name == "coverage_at_k")
         .expect("coverage metric exists");
     assert_eq!(coverage.value, json!(1.0 / 3.0));
+    let acl_precision = metrics
+        .iter()
+        .find(|metric| metric.name == "acl_precision")
+        .expect("ACL precision metric exists");
+    assert_eq!(acl_precision.value, Value::Null);
 }
 
 #[test]

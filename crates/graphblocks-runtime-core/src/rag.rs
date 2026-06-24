@@ -2570,6 +2570,20 @@ where
     I: IntoIterator<Item = S>,
     S: Into<String>,
 {
+    evaluate_retrieval_metrics_with_auth(retrieval, relevant_item_ids, k, None)
+        .expect("auth-free retrieval metrics cannot fail")
+}
+
+pub fn evaluate_retrieval_metrics_with_auth<I, S>(
+    retrieval: &RetrievalResult,
+    relevant_item_ids: I,
+    k: Option<usize>,
+    auth: Option<&AuthContext>,
+) -> Result<Vec<MetricObservation>, RagError>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
     let relevant_item_ids = relevant_item_ids
         .into_iter()
         .map(Into::into)
@@ -2635,6 +2649,21 @@ where
     } else {
         json!(hits_at_k.len() as f64 / cutoff as f64)
     };
+    let acl_precision = if let Some(auth) = auth {
+        if hits_at_k.is_empty() {
+            Value::Null
+        } else {
+            let mut authorized_hits = 0usize;
+            for hit in &hits_at_k {
+                if acl_allows(&hit.hit_id, &hit.item.acl, Some(auth))? {
+                    authorized_hits += 1;
+                }
+            }
+            json!(authorized_hits as f64 / hits_at_k.len() as f64)
+        }
+    } else {
+        Value::Null
+    };
 
     let evaluator = Some(json!({ "k": cutoff }));
     let mut metrics = vec![
@@ -2646,11 +2675,13 @@ where
         MetricObservation::new("ndcg_at_k", ndcg).with_direction(MetricDirection::Maximize),
         MetricObservation::new("mrr", mrr).with_direction(MetricDirection::Maximize),
         MetricObservation::new("coverage_at_k", coverage).with_direction(MetricDirection::Maximize),
+        MetricObservation::new("acl_precision", acl_precision)
+            .with_direction(MetricDirection::Maximize),
     ];
     for metric in &mut metrics {
         metric.evaluator = evaluator.clone();
     }
-    metrics
+    Ok(metrics)
 }
 
 pub fn evaluate_context_metrics<I, S>(
