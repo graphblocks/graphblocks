@@ -20,3 +20,15 @@ def test_deployment_package_reexports_release_and_upgrade_contracts(monkeypatch)
     assert policy.decide("new_request", None, False) == graphblocks_deployment.RevisionDecision.admit_on_new(
         "rev-new"
     )
+    bundle = graphblocks_deployment.ReleaseBundle("bundle-1", release)
+    deployment = graphblocks_deployment.GraphDeployment(
+        "support-prod",
+        release,
+        graph_name="turn",
+        deployment_revision_id="rev-1",
+    ).with_target(graphblocks_deployment.ExecutionTarget("control", "service", "rust")).with_default_target("control")
+
+    assert bundle.content_digest().startswith("sha256:")
+    assert deployment.to_physical_plan().default_target == "control"
+    assert "GraphDeployment" in graphblocks_deployment.__all__
+    assert "ReleaseBundle" in graphblocks_deployment.__all__

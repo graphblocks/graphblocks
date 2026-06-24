@@ -8,6 +8,7 @@ from graphblocks.deployment import (
     DeploymentObservabilityContext,
     DeploymentRevision,
     ExecutionTarget,
+    GraphDeployment,
     GraphRelease,
     GraphReleaseGraph,
     GraphReleaseMutableReferencesError,
@@ -18,6 +19,7 @@ from graphblocks.deployment import (
     PlacementRule,
     PlacementSelector,
     PromptLock,
+    ReleaseBundle,
     RevisionDecision,
     UpgradePolicy,
 )
@@ -89,6 +91,72 @@ def test_graph_release_validation_rejects_mutable_production_references() -> Non
         "knowledge.intranet_docs.index_revision",
         "prompts.answer",
     )
+
+
+def test_release_bundle_digest_is_stable_for_release_and_artifact_order() -> None:
+    release = (
+        GraphRelease("support-agent", "2026.06.23.1")
+        .with_bundle("sha256:bundle", "application/vnd.graphblocks.release.bundle.v1+tar")
+        .with_graph("turn", GraphReleaseGraph("sha256:graph", "sha256:plan"))
+    )
+    left = ReleaseBundle(
+        bundle_id="bundle-a",
+        release=release,
+        artifacts={
+            "sbom": "sha256:sbom",
+            "provenance": "sha256:provenance",
+        },
+        signatures={"cosign": "sha256:signature"},
+    )
+    right = ReleaseBundle(
+        bundle_id="bundle-b",
+        release=release,
+        artifacts={
+            "provenance": "sha256:provenance",
+            "sbom": "sha256:sbom",
+        },
+        signatures={"cosign": "sha256:signature"},
+    )
+
+    assert left.content_digest() == right.content_digest()
+    assert left.bundle_manifest() == {
+        "bundle_id": "bundle-a",
+        "release_digest": release.content_digest(),
+        "release_name": "support-agent",
+        "release_version": "2026.06.23.1",
+        "artifacts": {"provenance": "sha256:provenance", "sbom": "sha256:sbom"},
+        "signatures": {"cosign": "sha256:signature"},
+    }
+
+
+def test_graph_deployment_builds_physical_plan_from_release_graph() -> None:
+    release = GraphRelease("support-agent", "2026.06.23.1").with_graph(
+        "turn",
+        GraphReleaseGraph("sha256:graph-turn", "sha256:plan-turn"),
+    )
+    control = ExecutionTarget("control", "service", "rust").with_capabilities(["graph.coordinator"])
+    worker = ExecutionTarget("worker", "worker_pool", "python_worker").with_capabilities(["document.parse.pdf"])
+    deployment = (
+        GraphDeployment(
+            deployment_id="support-prod",
+            release=release,
+            graph_name="turn",
+            deployment_revision_id="rev-1",
+            environment="production",
+        )
+        .with_target(worker)
+        .with_target(control)
+        .with_default_target("control")
+        .with_placement(PlacementRule("docs", PlacementSelector.capabilities(["document.parse.pdf"]), "worker"))
+    )
+
+    plan = deployment.to_physical_plan(package_lock_hash="sha256:package")
+
+    assert plan.release_digest == release.content_digest()
+    assert plan.graph_hash == "sha256:graph-turn"
+    assert plan.package_lock_hash == "sha256:package"
+    assert plan.resolve_target("parse", None, "document.parse", ["document.parse.pdf"], [], None).target_id == "worker"
+    assert deployment.deployment_spec_hash().startswith("sha256:")
 
 
 def test_physical_plan_hash_and_resolution_are_stable() -> None:

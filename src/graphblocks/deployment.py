@@ -87,6 +87,10 @@ class GraphReleaseMutableReferencesError(GraphReleaseError):
         super().__init__(f"mutable release references: {self.references!r}")
 
 
+class GraphDeploymentError(ValueError):
+    """Base error for invalid graph deployment contracts."""
+
+
 @dataclass(frozen=True, slots=True)
 class GraphRelease:
     name: str
@@ -190,6 +194,37 @@ class GraphRelease:
                 references.append(f"prompts.{name}")
         if references:
             raise GraphReleaseMutableReferencesError(references)
+
+
+@dataclass(frozen=True, slots=True)
+class ReleaseBundle:
+    bundle_id: str
+    release: GraphRelease
+    artifacts: dict[str, str] = field(default_factory=dict)
+    signatures: dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "artifacts", {str(key): str(value) for key, value in self.artifacts.items()})
+        object.__setattr__(self, "signatures", {str(key): str(value) for key, value in self.signatures.items()})
+
+    def bundle_manifest(self) -> dict[str, object]:
+        return {
+            "bundle_id": self.bundle_id,
+            "release_digest": self.release.content_digest(),
+            "release_name": self.release.name,
+            "release_version": self.release.version,
+            "artifacts": {key: self.artifacts[key] for key in sorted(self.artifacts)},
+            "signatures": {key: self.signatures[key] for key in sorted(self.signatures)},
+        }
+
+    def content_digest(self) -> str:
+        return canonical_hash(
+            {
+                "release_digest": self.release.content_digest(),
+                "artifacts": {key: self.artifacts[key] for key in sorted(self.artifacts)},
+                "signatures": {key: self.signatures[key] for key in sorted(self.signatures)},
+            }
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -599,6 +634,64 @@ class PhysicalExecutionPlan:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class GraphDeployment:
+    deployment_id: str
+    release: GraphRelease
+    graph_name: str
+    deployment_revision_id: str
+    environment: str = "local"
+    targets: dict[str, ExecutionTarget] = field(default_factory=dict)
+    placements: tuple[PlacementRule, ...] = field(default_factory=tuple)
+    default_target: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "targets", dict(self.targets))
+        object.__setattr__(self, "placements", tuple(self.placements))
+
+    def with_target(self, target: ExecutionTarget) -> GraphDeployment:
+        targets = dict(self.targets)
+        targets[target.target_id] = target
+        return replace(self, targets=targets)
+
+    def with_placement(self, placement: PlacementRule) -> GraphDeployment:
+        return replace(self, placements=(*self.placements, placement))
+
+    def with_default_target(self, target_id: str) -> GraphDeployment:
+        return replace(self, default_target=target_id)
+
+    def deployment_spec_hash(self) -> str:
+        placements = [placement.canonical_value() for placement in self.placements]
+        placements.sort(key=canonical_dumps)
+        return canonical_hash(
+            {
+                "release_digest": self.release.content_digest(),
+                "graph_name": self.graph_name,
+                "environment": self.environment,
+                "targets": [target.canonical_value() for _, target in sorted(self.targets.items())],
+                "placements": placements,
+                "default_target": self.default_target,
+            }
+        )
+
+    def to_physical_plan(self, *, package_lock_hash: str | None = None) -> PhysicalExecutionPlan:
+        graph = self.release.graphs.get(self.graph_name)
+        if graph is None:
+            raise GraphDeploymentError(f"release {self.release.name!r} has no graph {self.graph_name!r}")
+        plan = PhysicalExecutionPlan(
+            release_digest=self.release.content_digest(),
+            deployment_revision_id=self.deployment_revision_id,
+            graph_hash=graph.graph_hash,
+            package_lock_hash=package_lock_hash,
+            default_target=self.default_target,
+        )
+        for _, target in sorted(self.targets.items()):
+            plan = plan.with_target(target)
+        for placement in self.placements:
+            plan = plan.with_placement(placement)
+        return plan
+
+
 __all__ = [
     "DeploymentEvent",
     "DeploymentEventKind",
@@ -606,6 +699,8 @@ __all__ = [
     "DeploymentRevision",
     "ExecutionTarget",
     "ExecutionTargetKind",
+    "GraphDeployment",
+    "GraphDeploymentError",
     "GraphRelease",
     "GraphReleaseError",
     "GraphReleaseGraph",
@@ -620,6 +715,7 @@ __all__ = [
     "PlacementSelector",
     "PlacementUnknownTargetError",
     "PromptLock",
+    "ReleaseBundle",
     "ResolvedPlacement",
     "RevisionDecision",
     "UpgradePolicy",
