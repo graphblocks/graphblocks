@@ -6,6 +6,7 @@ from math import nan
 import graphblocks
 import pytest
 
+from graphblocks.canonical import canonical_hash
 from graphblocks import (
     ArtifactRef,
     AdmittedToolCall,
@@ -927,6 +928,22 @@ def test_tool_call_argument_digest_is_stable_and_revision_resets_admission_state
     assert revised.admitted_at is None
     assert revised.completed_at is None
     assert revised.arguments_digest != left.arguments_digest
+
+
+def test_tool_call_arguments_are_immutable_after_digesting() -> None:
+    call = (
+        ToolCallDraft.proposed("response-1", "call-1", "process.run")
+        .append_argument_fragment('{"cmd":["echo","hello"],"env":{"SAFE":"1"}}')
+        .complete_arguments()
+        .into_tool_call("resolved-tool-1", created_at="2026-06-23T00:00:00Z")
+    )
+
+    with pytest.raises(TypeError):
+        call.arguments["env"]["SAFE"] = "0"  # type: ignore[index]
+    with pytest.raises(AttributeError):
+        call.arguments["cmd"].append("world")  # type: ignore[index,union-attr]
+
+    assert call.arguments_digest == canonical_hash({"cmd": ["echo", "hello"], "env": {"SAFE": "1"}})
 
 
 def test_tool_call_revise_arguments_rejects_non_canonical_json_values() -> None:

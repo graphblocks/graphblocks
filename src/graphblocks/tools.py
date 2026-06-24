@@ -170,6 +170,34 @@ class ToolResultValidationError(RuntimeError):
     pass
 
 
+class FrozenJsonDict(dict):
+    def __readonly(self, *args: object, **kwargs: object) -> None:
+        raise TypeError("tool call arguments are immutable")
+
+    __setitem__ = __readonly
+    __delitem__ = __readonly
+    clear = __readonly
+    pop = __readonly
+    popitem = __readonly
+    setdefault = __readonly
+    update = __readonly
+
+
+class FrozenJsonList(tuple):
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, list):
+            return tuple(self) == tuple(other)
+        return super().__eq__(other)
+
+
+def _freeze_json_value(value: object) -> object:
+    if isinstance(value, dict):
+        return FrozenJsonDict({key: _freeze_json_value(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return FrozenJsonList(_freeze_json_value(item) for item in value)
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class JsonSchemaNode:
     expected_type: JsonSchemaType | None = None
@@ -805,6 +833,7 @@ class ToolCall:
     def __post_init__(self) -> None:
         if self.status not in VALID_TOOL_CALL_STATUSES:
             raise ValueError(f"invalid tool call status {self.status}")
+        object.__setattr__(self, "arguments", _freeze_json_value(self.arguments))
         object.__setattr__(self, "depends_on", tuple(self.depends_on))
 
     def revise_arguments(self, arguments: object) -> ToolCall:
