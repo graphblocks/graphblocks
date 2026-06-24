@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from graphblocks.documents import DocumentSpan, SourceRef
 from graphblocks.rag import KnowledgeItemRef, SearchHit, build_context_pack
 
@@ -71,3 +73,30 @@ def test_build_context_pack_deduplicates_items_by_default() -> None:
     assert [hit.hit_id for hit in context.hits] == ["hit-1"]
     assert context.metadata["dropped_hit_ids"] == ["hit-1"]
     assert context.metadata["drop_reasons"] == {"hit-1": "duplicate"}
+
+
+def test_build_context_pack_filters_hits_by_minimum_source_modified_at() -> None:
+    fresh = replace(
+        _hit("hit-fresh", "doc-1", "fresh", 1),
+        metadata={"source_modified_at": "2026-06-22T00:00:00Z"},
+    )
+    stale = replace(
+        _hit("hit-stale", "doc-2", "stale", 2),
+        metadata={"source_modified_at": "2026-06-20T00:00:00Z"},
+    )
+    unknown = _hit("hit-unknown", "doc-3", "unknown", 3)
+
+    context = build_context_pack(
+        "ctx-1",
+        [fresh, stale, unknown],
+        token_budget=10,
+        minimum_source_modified_at="2026-06-21T00:00:00Z",
+    )
+
+    assert [hit.hit_id for hit in context.hits] == ["hit-fresh"]
+    assert context.metadata["dropped_hit_ids"] == ["hit-stale", "hit-unknown"]
+    assert context.metadata["drop_reasons"] == {
+        "hit-stale": "freshness",
+        "hit-unknown": "freshness",
+    }
+    assert context.metadata["minimum_source_modified_at"] == "2026-06-21T00:00:00Z"

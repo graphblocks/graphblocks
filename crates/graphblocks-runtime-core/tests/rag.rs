@@ -366,6 +366,52 @@ fn build_context_pack_limits_per_document_and_deduplicates_items() {
 }
 
 #[test]
+fn build_context_pack_filters_hits_by_minimum_source_modified_at() {
+    let mut fresh = hit("hit-fresh", "chunk-fresh", "doc-1", "fresh", 1);
+    fresh.metadata.insert(
+        "source_modified_at".to_owned(),
+        json!("2026-06-22T00:00:00Z"),
+    );
+    let mut stale = hit("hit-stale", "chunk-stale", "doc-2", "stale", 2);
+    stale.metadata.insert(
+        "source_modified_at".to_owned(),
+        json!("2026-06-20T00:00:00Z"),
+    );
+    let unknown = hit("hit-unknown", "chunk-unknown", "doc-3", "unknown", 3);
+
+    let context = build_context_pack(
+        "ctx-1",
+        vec![fresh, stale, unknown],
+        ContextBuildOptions::new(10).with_minimum_source_modified_at("2026-06-21T00:00:00Z"),
+    )
+    .expect("context build succeeds");
+
+    assert_eq!(
+        context
+            .hits
+            .iter()
+            .map(|hit| hit.hit_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["hit-fresh"]
+    );
+    assert_eq!(
+        context.metadata["dropped_hit_ids"],
+        json!(["hit-stale", "hit-unknown"])
+    );
+    assert_eq!(
+        context.metadata["drop_reasons"],
+        json!({
+            "hit-stale": "freshness",
+            "hit-unknown": "freshness",
+        })
+    );
+    assert_eq!(
+        context.metadata["minimum_source_modified_at"],
+        json!("2026-06-21T00:00:00Z")
+    );
+}
+
+#[test]
 fn fuse_search_hits_uses_reciprocal_rank_fusion_and_preserves_source_ranks() {
     let keyword_hits = vec![
         hit_from("kw-b", "chunk-b", "doc-1", "chunk-b", 1, "keyword"),

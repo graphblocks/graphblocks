@@ -255,6 +255,7 @@ def build_context_pack(
     token_budget: int,
     per_document_max_chunks: int | None = None,
     deduplicate: bool = True,
+    minimum_source_modified_at: str | None = None,
     metadata: dict[str, object] | None = None,
 ) -> ContextPack:
     if token_budget < 0:
@@ -287,6 +288,18 @@ def build_context_pack(
             drop_reasons[hit.hit_id] = "per_document_max_chunks"
             continue
 
+        if minimum_source_modified_at is not None:
+            source_modified_at = hit.metadata.get("source_modified_at")
+            if not isinstance(source_modified_at, str):
+                source_modified_at = hit.item.metadata.get("source_modified_at")
+            if (
+                not isinstance(source_modified_at, str)
+                or source_modified_at < minimum_source_modified_at
+            ):
+                dropped_hit_ids.append(hit.hit_id)
+                drop_reasons[hit.hit_id] = "freshness"
+                continue
+
         estimated_tokens = sum(len(preview.split()) for preview in hit.item.preview)
         if token_count + estimated_tokens > token_budget:
             dropped_hit_ids.append(hit.hit_id)
@@ -307,6 +320,8 @@ def build_context_pack(
             "drop_reasons": drop_reasons,
         }
     )
+    if minimum_source_modified_at is not None:
+        context_metadata["minimum_source_modified_at"] = minimum_source_modified_at
     return ContextPack(
         context_id=context_id,
         hits=selected,

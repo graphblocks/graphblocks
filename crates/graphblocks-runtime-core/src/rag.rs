@@ -361,6 +361,7 @@ pub struct ContextBuildOptions {
     pub token_budget: usize,
     pub per_document_max_chunks: Option<usize>,
     pub deduplicate: bool,
+    pub minimum_source_modified_at: Option<String>,
 }
 
 impl ContextBuildOptions {
@@ -369,11 +370,20 @@ impl ContextBuildOptions {
             token_budget,
             per_document_max_chunks: None,
             deduplicate: true,
+            minimum_source_modified_at: None,
         }
     }
 
     pub fn with_per_document_max_chunks(mut self, per_document_max_chunks: usize) -> Self {
         self.per_document_max_chunks = Some(per_document_max_chunks);
+        self
+    }
+
+    pub fn with_minimum_source_modified_at(
+        mut self,
+        minimum_source_modified_at: impl Into<String>,
+    ) -> Self {
+        self.minimum_source_modified_at = Some(minimum_source_modified_at.into());
         self
     }
 }
@@ -1222,6 +1232,23 @@ pub fn build_context_pack(
             drop_reasons.insert(hit.hit_id.clone(), json!("per_document_max_chunks"));
             continue;
         }
+        if let Some(minimum_source_modified_at) = &options.minimum_source_modified_at {
+            let source_modified_at = hit
+                .metadata
+                .get("source_modified_at")
+                .and_then(Value::as_str)
+                .or_else(|| {
+                    hit.item
+                        .metadata
+                        .get("source_modified_at")
+                        .and_then(Value::as_str)
+                });
+            if source_modified_at.is_none_or(|value| value < minimum_source_modified_at.as_str()) {
+                dropped_hit_ids.push(hit.hit_id.clone());
+                drop_reasons.insert(hit.hit_id.clone(), json!("freshness"));
+                continue;
+            }
+        }
         let estimated_tokens = hit
             .item
             .preview
@@ -1252,6 +1279,12 @@ pub fn build_context_pack(
     context
         .metadata
         .insert("drop_reasons".to_owned(), Value::Object(drop_reasons));
+    if let Some(minimum_source_modified_at) = options.minimum_source_modified_at {
+        context.metadata.insert(
+            "minimum_source_modified_at".to_owned(),
+            json!(minimum_source_modified_at),
+        );
+    }
     Ok(context)
 }
 
