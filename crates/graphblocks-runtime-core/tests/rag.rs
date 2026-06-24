@@ -1905,6 +1905,11 @@ fn evaluate_context_metrics_returns_no_data_without_token_budget() {
         .find(|metric| metric.name == "freshness_satisfaction")
         .expect("freshness satisfaction metric exists");
     assert_eq!(freshness_satisfaction.value, Value::Null);
+    let middle_sensitivity = metrics
+        .iter()
+        .find(|metric| metric.name == "lost_in_the_middle_sensitivity")
+        .expect("lost in the middle sensitivity metric exists");
+    assert_eq!(middle_sensitivity.value, Value::Null);
 }
 
 #[test]
@@ -1933,6 +1938,30 @@ fn evaluate_context_metrics_reports_freshness_satisfaction() {
         .expect("freshness satisfaction metric exists");
     assert_eq!(freshness_satisfaction.value, json!(0.5));
     assert_eq!(freshness_satisfaction.direction, MetricDirection::Maximize);
+}
+
+#[test]
+fn evaluate_context_metrics_reports_lost_in_the_middle_sensitivity() {
+    let mut context = ContextPack::new(
+        "ctx-1",
+        vec![
+            hit("hit-a", "doc-a", "doc-1", "alpha", 1),
+            hit("hit-b", "doc-b", "doc-2", "beta", 2),
+            hit("hit-c", "doc-c", "doc-3", "gamma", 3),
+        ],
+    );
+    context
+        .metadata
+        .insert("lost_in_the_middle_sensitivity".to_owned(), json!(0.25));
+
+    let metrics = evaluate_context_metrics(&context, Option::<Vec<String>>::None);
+
+    let middle_sensitivity = metrics
+        .iter()
+        .find(|metric| metric.name == "lost_in_the_middle_sensitivity")
+        .expect("lost in the middle sensitivity metric exists");
+    assert_eq!(middle_sensitivity.value, json!(0.25));
+    assert_eq!(middle_sensitivity.direction, MetricDirection::Minimize);
 }
 
 #[test]

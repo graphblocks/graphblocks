@@ -2779,6 +2779,13 @@ where
     } else {
         Value::Null
     };
+    let middle_sensitivity = context
+        .metadata
+        .get("lost_in_the_middle_sensitivity")
+        .or_else(|| context.metadata.get("lost_in_middle_sensitivity"))
+        .and_then(Value::as_f64)
+        .filter(|score| score.is_finite())
+        .map_or(Value::Null, |score| json!(score));
 
     vec![
         MetricObservation::new("source_diversity", json!(source_diversity))
@@ -2792,6 +2799,8 @@ where
             .with_direction(MetricDirection::Maximize),
         MetricObservation::new("freshness_satisfaction", freshness_satisfaction)
             .with_direction(MetricDirection::Maximize),
+        MetricObservation::new("lost_in_the_middle_sensitivity", middle_sensitivity)
+            .with_direction(MetricDirection::Minimize),
     ]
 }
 

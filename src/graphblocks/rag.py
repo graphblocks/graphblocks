@@ -1246,6 +1246,20 @@ def evaluate_context_metrics(
             if freshness_denominator == 0
             else Decimal(len(context.hits)) / Decimal(freshness_denominator)
         )
+    raw_middle_sensitivity = context.metadata.get(
+        "lost_in_the_middle_sensitivity",
+        context.metadata.get("lost_in_middle_sensitivity"),
+    )
+    middle_sensitivity = (
+        Decimal(str(raw_middle_sensitivity))
+        if not isinstance(raw_middle_sensitivity, bool)
+        and isinstance(raw_middle_sensitivity, int | float | Decimal)
+        and (
+            not isinstance(raw_middle_sensitivity, float)
+            or math.isfinite(raw_middle_sensitivity)
+        )
+        else None
+    )
 
     return [
         MetricObservation(
@@ -1273,6 +1287,11 @@ def evaluate_context_metrics(
             "freshness_satisfaction",
             freshness_satisfaction,
             direction="maximize",
+        ),
+        MetricObservation(
+            "lost_in_the_middle_sensitivity",
+            middle_sensitivity,
+            direction="minimize",
         ),
     ]
 

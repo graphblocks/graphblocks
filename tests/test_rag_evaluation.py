@@ -171,6 +171,7 @@ def test_evaluate_context_metrics_returns_no_data_without_token_budget() -> None
     assert by_name["context_precision"].value is None
     assert by_name["context_relevance"].value is None
     assert by_name["freshness_satisfaction"].value is None
+    assert by_name["lost_in_the_middle_sensitivity"].value is None
 
 
 def test_evaluate_context_metrics_reports_freshness_satisfaction() -> None:
@@ -190,6 +191,19 @@ def test_evaluate_context_metrics_reports_freshness_satisfaction() -> None:
 
     assert by_name["freshness_satisfaction"].value == Decimal("0.5")
     assert by_name["freshness_satisfaction"].direction == "maximize"
+
+
+def test_evaluate_context_metrics_reports_lost_in_the_middle_sensitivity() -> None:
+    context = ContextPack(
+        context_id="ctx-1",
+        hits=[_hit("doc-a", 1), _hit("doc-b", 2), _hit("doc-c", 3)],
+        metadata={"lost_in_the_middle_sensitivity": 0.25},
+    )
+
+    by_name = {metric.name: metric for metric in evaluate_context_metrics(context)}
+
+    assert by_name["lost_in_the_middle_sensitivity"].value == Decimal("0.25")
+    assert by_name["lost_in_the_middle_sensitivity"].direction == "minimize"
 
 
 def test_evaluate_rag_answer_metrics_reports_citation_precision() -> None:
