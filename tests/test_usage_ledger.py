@@ -2,8 +2,15 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import pytest
+
 from graphblocks.budget import UsageAmount
-from graphblocks.usage import InMemoryUsageLedger, SQLiteUsageLedger, UsageRecord
+from graphblocks.usage import (
+    InMemoryUsageLedger,
+    SQLiteUsageLedger,
+    UsageRecord,
+    UsageRecordConflictError,
+)
 
 
 def _tokens(value: str) -> UsageAmount:
@@ -27,6 +34,35 @@ def test_usage_ledger_appends_immutable_records_and_queries_by_run() -> None:
     assert appended == record
     assert ledger.records_for_run("run-1") == [record]
     assert ledger.records_for_run("missing") == []
+
+
+def test_usage_ledger_replays_identical_records_without_double_counting() -> None:
+    ledger = InMemoryUsageLedger()
+    record = UsageRecord(
+        record_id="usage-1",
+        source="runtime_measured",
+        confidence="estimated",
+        amounts=[_tokens("12")],
+        occurred_at="2026-06-22T00:00:00Z",
+        run_id="run-1",
+        attempt_id="attempt-1",
+    )
+    changed = UsageRecord(
+        record_id="usage-1",
+        source="runtime_measured",
+        confidence="estimated",
+        amounts=[_tokens("13")],
+        occurred_at="2026-06-22T00:00:00Z",
+        run_id="run-1",
+        attempt_id="attempt-1",
+    )
+
+    assert ledger.append(record) == record
+    assert ledger.append(record) == record
+    with pytest.raises(UsageRecordConflictError):
+        ledger.append(changed)
+    assert ledger.records_for_run("run-1") == [record]
+    assert ledger.totals_for_run("run-1") == [_tokens("12")]
 
 
 def test_usage_ledger_deduplicates_provider_response_for_same_attempt() -> None:
@@ -152,6 +188,36 @@ def test_sqlite_usage_ledger_persists_records_across_reopen(tmp_path) -> None:
     assert reopened.records_for_run("run-1") == [record]
     assert reopened.get("usage-1") == record
     reopened.close()
+
+
+def test_sqlite_usage_ledger_replays_identical_records_without_double_counting() -> None:
+    ledger = SQLiteUsageLedger.in_memory()
+    record = UsageRecord(
+        record_id="usage-1",
+        source="runtime_measured",
+        confidence="estimated",
+        amounts=[_tokens("12")],
+        occurred_at="2026-06-22T00:00:00Z",
+        run_id="run-1",
+        attempt_id="attempt-1",
+    )
+    changed = UsageRecord(
+        record_id="usage-1",
+        source="runtime_measured",
+        confidence="estimated",
+        amounts=[_tokens("13")],
+        occurred_at="2026-06-22T00:00:00Z",
+        run_id="run-1",
+        attempt_id="attempt-1",
+    )
+
+    assert ledger.append(record) == record
+    assert ledger.append(record) == record
+    with pytest.raises(UsageRecordConflictError):
+        ledger.append(changed)
+    assert ledger.records_for_run("run-1") == [record]
+    assert ledger.totals_for_run("run-1") == [_tokens("12")]
+    ledger.close()
 
 
 def test_sqlite_usage_ledger_deduplicates_and_reconciles_late_usage() -> None:

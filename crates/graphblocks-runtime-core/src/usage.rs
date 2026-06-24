@@ -189,6 +189,15 @@ impl InMemoryUsageLedger {
     }
 
     pub fn append(&mut self, record: UsageRecord) -> Result<UsageRecord, UsageLedgerError> {
+        if let Some(existing) = self.records.get(&record.record_id) {
+            if existing == &record {
+                return Ok(existing.clone());
+            }
+            return Err(UsageLedgerError::RecordConflict {
+                record_id: record.record_id,
+            });
+        }
+
         if record.reconciliation_of.is_none() {
             if let Some(provider_response_id) = &record.provider_response_id {
                 let dedupe_key = (provider_response_id.clone(), record.attempt_id.clone());
@@ -200,12 +209,6 @@ impl InMemoryUsageLedger {
                         .clone());
                 }
             }
-        }
-
-        if self.records.contains_key(&record.record_id) {
-            return Err(UsageLedgerError::RecordConflict {
-                record_id: record.record_id,
-            });
         }
 
         if record.reconciliation_of.is_none() {
@@ -358,6 +361,19 @@ impl SqliteUsageLedger {
     }
 
     pub fn append(&mut self, record: UsageRecord) -> Result<UsageRecord, UsageLedgerError> {
+        match self.get(&record.record_id) {
+            Ok(existing) => {
+                if existing == record {
+                    return Ok(existing);
+                }
+                return Err(UsageLedgerError::RecordConflict {
+                    record_id: record.record_id,
+                });
+            }
+            Err(UsageLedgerError::RecordNotFound { .. }) => {}
+            Err(error) => return Err(error),
+        }
+
         if record.reconciliation_of.is_none() {
             if let Some(provider_response_id) = &record.provider_response_id {
                 if let Some(existing) =
@@ -366,12 +382,6 @@ impl SqliteUsageLedger {
                     return Ok(existing);
                 }
             }
-        }
-
-        if self.record_exists(&record.record_id)? {
-            return Err(UsageLedgerError::RecordConflict {
-                record_id: record.record_id,
-            });
         }
 
         let transaction = self.connection.transaction().map_err(usage_storage_error)?;
@@ -532,18 +542,6 @@ impl SqliteUsageLedger {
         };
 
         self.append(reconciled)
-    }
-
-    fn record_exists(&self, record_id: &str) -> Result<bool, UsageLedgerError> {
-        self.connection
-            .query_row(
-                "SELECT 1 FROM usage_records WHERE record_id = ?",
-                params![record_id],
-                |row| row.get::<_, i64>(0),
-            )
-            .optional()
-            .map(|value| value.is_some())
-            .map_err(usage_storage_error)
     }
 
     fn provider_duplicate(

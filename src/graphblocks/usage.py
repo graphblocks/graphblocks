@@ -56,13 +56,16 @@ class InMemoryUsageLedger:
     _provider_dedupe: dict[tuple[str, str | None], str] = field(default_factory=dict)
 
     def append(self, record: UsageRecord) -> UsageRecord:
+        existing = self._records.get(record.record_id)
+        if existing is not None:
+            if existing == record:
+                return existing
+            raise UsageRecordConflictError(f"usage record {record.record_id!r} already exists")
         if record.provider_response_id is not None and record.reconciliation_of is None:
             dedupe_key = (record.provider_response_id, record.attempt_id)
             existing_id = self._provider_dedupe.get(dedupe_key)
             if existing_id is not None:
                 return self._records[existing_id]
-        if record.record_id in self._records:
-            raise UsageRecordConflictError(f"usage record {record.record_id!r} already exists")
         self._records[record.record_id] = record
         self._order.append(record.record_id)
         if record.provider_response_id is not None and record.reconciliation_of is None:
@@ -168,6 +171,14 @@ class SQLiteUsageLedger:
         self._connection.close()
 
     def append(self, record: UsageRecord) -> UsageRecord:
+        try:
+            existing = self.get(record.record_id)
+        except UsageRecordNotFoundError:
+            existing = None
+        if existing is not None:
+            if existing == record:
+                return existing
+            raise UsageRecordConflictError(f"usage record {record.record_id!r} already exists")
         if record.provider_response_id is not None and record.reconciliation_of is None:
             existing = self._provider_dedupe_record(record.provider_response_id, record.attempt_id)
             if existing is not None:

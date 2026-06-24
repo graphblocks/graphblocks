@@ -45,6 +45,42 @@ fn usage_ledger_appends_immutable_records_and_queries_by_run() -> Result<(), Usa
 }
 
 #[test]
+fn usage_ledger_replays_identical_records_without_double_counting() -> Result<(), UsageLedgerError>
+{
+    let mut ledger = InMemoryUsageLedger::new();
+    let record = UsageRecord::new(
+        "usage-1",
+        UsageSource::RuntimeMeasured,
+        UsageConfidence::Estimated,
+        [tokens(12)],
+        1_000,
+    )
+    .with_run_id("run-1")
+    .with_attempt_id("attempt-1");
+    let changed = UsageRecord::new(
+        "usage-1",
+        UsageSource::RuntimeMeasured,
+        UsageConfidence::Estimated,
+        [tokens(13)],
+        1_000,
+    )
+    .with_run_id("run-1")
+    .with_attempt_id("attempt-1");
+
+    assert_eq!(ledger.append(record.clone())?, record);
+    assert_eq!(ledger.append(record.clone())?, record);
+    assert_eq!(
+        ledger.append(changed),
+        Err(UsageLedgerError::RecordConflict {
+            record_id: "usage-1".to_string()
+        })
+    );
+    assert_eq!(ledger.records_for_run("run-1"), vec![record]);
+    assert_eq!(ledger.totals_for_run("run-1"), vec![tokens(12)]);
+    Ok(())
+}
+
+#[test]
 fn usage_ledger_deduplicates_provider_response_for_same_attempt() -> Result<(), UsageLedgerError> {
     let mut ledger = InMemoryUsageLedger::new();
     let first = UsageRecord::new(
@@ -196,6 +232,42 @@ fn sqlite_usage_ledger_persists_records_across_reopen() -> Result<(), UsageLedge
     let ledger = SqliteUsageLedger::open(&path)?;
     assert_eq!(ledger.records_for_run("run-1")?, vec![record]);
     fs::remove_file(path).ok();
+    Ok(())
+}
+
+#[test]
+fn sqlite_usage_ledger_replays_identical_records_without_double_counting()
+-> Result<(), UsageLedgerError> {
+    let mut ledger = SqliteUsageLedger::open_in_memory()?;
+    let record = UsageRecord::new(
+        "usage-1",
+        UsageSource::RuntimeMeasured,
+        UsageConfidence::Estimated,
+        [tokens(12)],
+        1_000,
+    )
+    .with_run_id("run-1")
+    .with_attempt_id("attempt-1");
+    let changed = UsageRecord::new(
+        "usage-1",
+        UsageSource::RuntimeMeasured,
+        UsageConfidence::Estimated,
+        [tokens(13)],
+        1_000,
+    )
+    .with_run_id("run-1")
+    .with_attempt_id("attempt-1");
+
+    assert_eq!(ledger.append(record.clone())?, record);
+    assert_eq!(ledger.append(record.clone())?, record);
+    assert_eq!(
+        ledger.append(changed),
+        Err(UsageLedgerError::RecordConflict {
+            record_id: "usage-1".to_string()
+        })
+    );
+    assert_eq!(ledger.records_for_run("run-1")?, vec![record]);
+    assert_eq!(ledger.totals_for_run("run-1")?, vec![tokens(12)]);
     Ok(())
 }
 
