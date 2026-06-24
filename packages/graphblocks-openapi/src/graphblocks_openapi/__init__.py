@@ -16,6 +16,7 @@ from graphblocks import (
     ToolSchemaRegistry,
     ToolSchemaValidationError,
     canonical_dumps,
+    canonical_hash,
     validate_tool_result_for_model,
 )
 
@@ -111,6 +112,12 @@ def prepare_openapi_operation_invocation(
         raise OpenApiToolAdapterError("tool call references a different resolved tool")
     if admitted.call.name != resolved_tool.definition.name:
         raise OpenApiToolAdapterError("tool call name does not match resolved tool")
+    try:
+        actual_arguments_digest = canonical_hash(admitted.call.arguments)
+    except (TypeError, ValueError) as error:
+        raise OpenApiToolAdapterError("tool arguments must be canonical JSON") from error
+    if actual_arguments_digest != admitted.call.arguments_digest:
+        raise OpenApiToolAdapterError("tool arguments digest does not match arguments")
 
     try:
         arguments_json = canonical_dumps(admitted.call.arguments)

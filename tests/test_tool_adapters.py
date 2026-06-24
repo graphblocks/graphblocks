@@ -140,6 +140,33 @@ def test_mcp_adapter_prepares_admitted_invocation_contract(monkeypatch) -> None:
     }
 
 
+def test_mcp_adapter_rejects_stale_argument_digest(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
+    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    admitted, resolved = _admitted_call_for(
+        McpToolImplementation(server="support-mcp", remote_name="search"),
+        tool_name="knowledge.search",
+        binding_id="binding-mcp-search",
+        arguments={"query": "billing"},
+    )
+    stale = AdmittedToolCall(
+        call=ToolCall(
+            tool_call_id=admitted.call.tool_call_id,
+            response_id=admitted.call.response_id,
+            resolved_tool_id=admitted.call.resolved_tool_id,
+            name=admitted.call.name,
+            arguments={"query": "mutated"},
+            arguments_digest=admitted.call.arguments_digest,
+            status="admitted",
+            admitted_at=admitted.call.admitted_at,
+        ),
+        idempotency_key=admitted.idempotency_key,
+    )
+
+    with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="arguments digest does not match"):
+        graphblocks_mcp.prepare_mcp_tool_invocation(stale, resolved)
+
+
 def test_mcp_adapter_rejects_non_mcp_binding(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
     graphblocks_mcp = importlib.import_module("graphblocks_mcp")
@@ -301,6 +328,33 @@ def test_openapi_adapter_prepares_admitted_invocation_contract(monkeypatch) -> N
         "arguments_digest": admitted.call.arguments_digest,
         "idempotency_key": "idem-1",
     }
+
+
+def test_openapi_adapter_rejects_stale_argument_digest(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
+    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    admitted, resolved = _admitted_call_for(
+        OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
+        tool_name="ticket.create",
+        binding_id="binding-ticket-create",
+        arguments={"title": "Need help"},
+    )
+    stale = AdmittedToolCall(
+        call=ToolCall(
+            tool_call_id=admitted.call.tool_call_id,
+            response_id=admitted.call.response_id,
+            resolved_tool_id=admitted.call.resolved_tool_id,
+            name=admitted.call.name,
+            arguments={"title": "mutated"},
+            arguments_digest=admitted.call.arguments_digest,
+            status="admitted",
+            admitted_at=admitted.call.admitted_at,
+        ),
+        idempotency_key=admitted.idempotency_key,
+    )
+
+    with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="arguments digest does not match"):
+        graphblocks_openapi.prepare_openapi_operation_invocation(stale, resolved)
 
 
 def test_openapi_adapter_rejects_non_openapi_binding(monkeypatch) -> None:
