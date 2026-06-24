@@ -6,6 +6,9 @@ use graphblocks_compiler::canonical::canonical_hash;
 use serde_json::{Value, json};
 
 use crate::policy::{PrincipalRef, ResourceRef};
+use crate::tool::{ResolvedTool, ToolEffect};
+use crate::tool_call::ToolCall;
+use crate::tool_result::{ToolEffectOutcome, ToolResult, ToolResultStatus};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AuditTargetKind {
@@ -22,6 +25,7 @@ pub enum AuditTargetKind {
     SecretAccess,
     PluginLoad,
     GraphDeployment,
+    ToolEffect,
 }
 
 impl AuditTargetKind {
@@ -40,9 +44,52 @@ impl AuditTargetKind {
             Self::SecretAccess => "secret_access",
             Self::PluginLoad => "plugin_load",
             Self::GraphDeployment => "graph_deployment",
+            Self::ToolEffect => "tool_effect",
         }
     }
 }
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ToolEffectAuditContext<'a> {
+    pub event_id: &'a str,
+    pub occurred_at: &'a str,
+    pub actor: PrincipalRef,
+    pub resolved_tool: &'a ResolvedTool,
+    pub call: &'a ToolCall,
+    pub result: &'a ToolResult,
+    pub effect_key: Option<&'a str>,
+    pub precondition_digest: Option<&'a str>,
+    pub idempotency_key: Option<&'a str>,
+    pub policy_decision_id: Option<&'a str>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ToolEffectAuditError {
+    ResolvedToolMismatch { expected: String, actual: String },
+    ToolNameMismatch { expected: String, actual: String },
+    ToolResultMismatch { expected: String, actual: String },
+}
+
+impl fmt::Display for ToolEffectAuditError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ResolvedToolMismatch { expected, actual } => write!(
+                formatter,
+                "tool call resolved tool {actual:?} does not match audited resolved tool {expected:?}"
+            ),
+            Self::ToolNameMismatch { expected, actual } => write!(
+                formatter,
+                "tool call name {actual:?} does not match audited tool {expected:?}"
+            ),
+            Self::ToolResultMismatch { expected, actual } => write!(
+                formatter,
+                "tool result call id {actual:?} does not match audited tool call {expected:?}"
+            ),
+        }
+    }
+}
+
+impl Error for ToolEffectAuditError {}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct AuditEvent {
@@ -97,6 +144,93 @@ impl AuditEvent {
     pub fn with_metadata(mut self, key: impl Into<String>, value: Value) -> Self {
         self.metadata.insert(key.into(), value);
         self
+    }
+
+    pub fn tool_effect_outcome(
+        context: ToolEffectAuditContext<'_>,
+    ) -> Result<Self, ToolEffectAuditError> {
+        if context.call.resolved_tool_id != context.resolved_tool.resolved_tool_id {
+            return Err(ToolEffectAuditError::ResolvedToolMismatch {
+                expected: context.resolved_tool.resolved_tool_id.clone(),
+                actual: context.call.resolved_tool_id.clone(),
+            });
+        }
+        if context.call.name != context.resolved_tool.definition.name {
+            return Err(ToolEffectAuditError::ToolNameMismatch {
+                expected: context.resolved_tool.definition.name.clone(),
+                actual: context.call.name.clone(),
+            });
+        }
+        if context.result.tool_call_id != context.call.tool_call_id {
+            return Err(ToolEffectAuditError::ToolResultMismatch {
+                expected: context.call.tool_call_id.clone(),
+                actual: context.result.tool_call_id.clone(),
+            });
+        }
+
+        let target_kind = if context
+            .resolved_tool
+            .binding
+            .effects
+            .contains(&ToolEffect::Destructive)
+        {
+            AuditTargetKind::DestructiveEffect
+        } else {
+            AuditTargetKind::ToolEffect
+        };
+        let effects = context
+            .resolved_tool
+            .binding
+            .effects
+            .iter()
+            .map(|effect| effect.as_str())
+            .collect::<Vec<_>>();
+        let result_status = match context.result.status {
+            ToolResultStatus::Completed => "completed",
+            ToolResultStatus::Failed => "failed",
+            ToolResultStatus::Denied => "denied",
+            ToolResultStatus::Cancelled => "cancelled",
+            ToolResultStatus::PolicyStopped => "policy_stopped",
+            ToolResultStatus::Incomplete => "incomplete",
+        };
+        let effect_outcome = match context.result.effect_outcome {
+            ToolEffectOutcome::NoExternalEffect => "no_external_effect",
+            ToolEffectOutcome::Committed => "committed",
+            ToolEffectOutcome::NotCommitted => "not_committed",
+            ToolEffectOutcome::Unknown => "unknown",
+        };
+
+        Ok(AuditEvent::new(context.event_id, target_kind, context.occurred_at)
+            .with_actor(context.actor)
+            .with_resource(
+                ResourceRef::new(format!(
+                    "tool:{}",
+                    context.resolved_tool.definition.name
+                ))
+                .with_resource_kind("tool"),
+            )
+            .with_reason_code(format!("tool_effect.{effect_outcome}"))
+            .with_payload(json!({
+                "tool_call_id": &context.call.tool_call_id,
+                "response_id": &context.call.response_id,
+                "resolved_tool_id": &context.resolved_tool.resolved_tool_id,
+                "tool_name": &context.resolved_tool.definition.name,
+                "tool_call_revision": context.call.revision,
+                "arguments_digest": &context.call.arguments_digest,
+                "definition_digest": &context.resolved_tool.definition_digest,
+                "binding_digest": &context.resolved_tool.binding_digest,
+                "effective_policy_snapshot_id": &context.resolved_tool.effective_policy_snapshot_id,
+                "effects": effects,
+                "effect_key": context.effect_key,
+                "precondition_digest": context.precondition_digest,
+                "idempotency_key": context.idempotency_key,
+                "policy_decision_id": context.policy_decision_id,
+                "result_status": result_status,
+                "effect_outcome": effect_outcome,
+                "output_digest": &context.result.output_digest,
+                "started_at_unix_ms": context.result.started_at_unix_ms,
+                "completed_at_unix_ms": context.result.completed_at_unix_ms,
+            })))
     }
 
     pub fn payload_digest(&self) -> String {
