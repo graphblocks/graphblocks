@@ -290,6 +290,19 @@ class ApplicationEventMetadata:
     occurred_at: str
     turn_id: str | None = None
 
+    def __post_init__(self) -> None:
+        for field_name, value in (
+            ("event_id", self.event_id),
+            ("run_id", self.run_id),
+            ("response_id", self.response_id),
+            ("release_id", self.release_id),
+            ("policy_snapshot_id", self.policy_snapshot_id),
+        ):
+            if not value.strip():
+                raise ApplicationEventError(f"application event {field_name} must not be empty")
+        if self.sequence < 0:
+            raise ApplicationEventError("application event sequence must be non-negative")
+
 
 @dataclass(frozen=True, slots=True)
 class ApplicationEvent:

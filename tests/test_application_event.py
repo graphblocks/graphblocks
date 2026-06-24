@@ -48,6 +48,29 @@ def _metadata() -> ApplicationEventMetadata:
     )
 
 
+def test_application_event_metadata_rejects_empty_required_ids_and_negative_sequence() -> None:
+    with pytest.raises(ApplicationEventError, match="application event event_id must not be empty"):
+        ApplicationEventMetadata(
+            event_id=" ",
+            run_id="run-1",
+            response_id="response-1",
+            sequence=1,
+            release_id="release-1",
+            policy_snapshot_id="policy-1",
+            occurred_at="2026-06-23T00:00:00Z",
+        )
+    with pytest.raises(ApplicationEventError, match="application event sequence must be non-negative"):
+        ApplicationEventMetadata(
+            event_id="event-1",
+            run_id="run-1",
+            response_id="response-1",
+            sequence=-1,
+            release_id="release-1",
+            policy_snapshot_id="policy-1",
+            occurred_at="2026-06-23T00:00:00Z",
+        )
+
+
 def test_standard_application_event_names_match_tool_and_output_policy_contract() -> None:
     assert STANDARD_APPLICATION_EVENT_KINDS == (
         "RunStarted",
