@@ -7,6 +7,16 @@ from .evaluation import ChangeSet, ResourceSnapshotRef
 from .policy import PrincipalRef
 
 
+def _copy_resource_snapshot_ref(resource: ResourceSnapshotRef) -> ResourceSnapshotRef:
+    return ResourceSnapshotRef(
+        resource_id=resource.resource_id,
+        digest=resource.digest,
+        resource_kind=resource.resource_kind,
+        uri=resource.uri,
+        metadata=dict(resource.metadata),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class WorkspaceSnapshot:
     workspace_id: str
@@ -22,7 +32,12 @@ class WorkspaceSnapshot:
         object.__setattr__(
             self,
             "resources",
-            tuple(sorted(self.resources, key=lambda resource: resource.resource_id)),
+            tuple(
+                sorted(
+                    (_copy_resource_snapshot_ref(resource) for resource in self.resources),
+                    key=lambda resource: resource.resource_id,
+                )
+            ),
         )
         object.__setattr__(self, "metadata", dict(self.metadata))
 
@@ -57,6 +72,19 @@ class WorkspaceSnapshot:
             base_snapshot_digest=self.content_digest(),
             metadata=self.metadata,
         )
+
+
+def _copy_workspace_snapshot(snapshot: WorkspaceSnapshot) -> WorkspaceSnapshot:
+    return WorkspaceSnapshot(
+        workspace_id=snapshot.workspace_id,
+        snapshot_id=snapshot.snapshot_id,
+        revision=snapshot.revision,
+        resources=tuple(_copy_resource_snapshot_ref(resource) for resource in snapshot.resources),
+        created_at=snapshot.created_at,
+        base_snapshot_id=snapshot.base_snapshot_id,
+        base_snapshot_digest=snapshot.base_snapshot_digest,
+        metadata=dict(snapshot.metadata),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,20 +166,32 @@ class WorkspaceCommit:
     change_set_id: str
 
 
+def _copy_workspace_commit(commit: WorkspaceCommit) -> WorkspaceCommit:
+    return WorkspaceCommit(
+        commit_id=commit.commit_id,
+        workspace_id=commit.workspace_id,
+        previous_snapshot_id=commit.previous_snapshot_id,
+        snapshot=_copy_workspace_snapshot(commit.snapshot),
+        committed_by=commit.committed_by,
+        committed_at=commit.committed_at,
+        change_set_id=commit.change_set_id,
+    )
+
+
 @dataclass(slots=True)
 class InMemoryWorkspaceStore:
     _snapshots: dict[str, WorkspaceSnapshot] = field(default_factory=dict)
     _commits: list[WorkspaceCommit] = field(default_factory=list)
 
     def put_snapshot(self, snapshot: WorkspaceSnapshot) -> InMemoryWorkspaceStore:
-        self._snapshots[snapshot.workspace_id] = snapshot
+        self._snapshots[snapshot.workspace_id] = _copy_workspace_snapshot(snapshot)
         return self
 
     def current(self, workspace_id: str) -> WorkspaceSnapshot:
         snapshot = self._snapshots.get(workspace_id)
         if snapshot is None:
             raise WorkspaceNotFoundError(workspace_id)
-        return snapshot
+        return _copy_workspace_snapshot(snapshot)
 
     def compare_and_swap_commit(
         self,
@@ -204,9 +244,9 @@ class InMemoryWorkspaceStore:
             committed_at=committed_at,
             change_set_id=change_set_id,
         )
-        self._snapshots[workspace_id] = candidate
-        self._commits.append(commit)
-        return commit
+        self._snapshots[workspace_id] = _copy_workspace_snapshot(candidate)
+        self._commits.append(_copy_workspace_commit(commit))
+        return _copy_workspace_commit(commit)
 
 
 __all__ = [

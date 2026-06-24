@@ -133,6 +133,49 @@ def test_workspace_store_compare_and_swap_commit_updates_revision() -> None:
     assert error.value.actual_snapshot_id == "snapshot-2"
 
 
+def test_workspace_store_copies_snapshots_and_resource_metadata_at_boundaries() -> None:
+    snapshot_metadata = {"phase": "initial"}
+    resource_metadata = {"path": "original"}
+    base = WorkspaceSnapshot(
+        workspace_id="workspace-1",
+        snapshot_id="snapshot-1",
+        revision=1,
+        resources=(ResourceSnapshotRef("a.txt", "sha256:a", resource_kind="file", metadata=resource_metadata),),
+        created_at="2026-06-24T00:00:00Z",
+        metadata=snapshot_metadata,
+    )
+    store = InMemoryWorkspaceStore().put_snapshot(base)
+    snapshot_metadata["phase"] = "mutated"
+    resource_metadata["path"] = "mutated"
+
+    current = store.current("workspace-1")
+
+    assert current.metadata == {"phase": "initial"}
+    assert current.resources[0].metadata == {"path": "original"}
+    current.metadata["phase"] = "returned-mutated"
+    current.resources[0].metadata["path"] = "returned-mutated"
+
+    fresh = store.current("workspace-1")
+    assert fresh.metadata == {"phase": "initial"}
+    assert fresh.resources[0].metadata == {"path": "original"}
+
+    committed = store.compare_and_swap_commit(
+        workspace_id="workspace-1",
+        expected_snapshot_id="snapshot-1",
+        new_snapshot_id="snapshot-2",
+        resources=(ResourceSnapshotRef("b.txt", "sha256:b", resource_kind="file", metadata={"path": "committed"}),),
+        committed_by=PrincipalRef("author-1"),
+        committed_at="2026-06-24T00:05:00Z",
+        change_set_id="change-1",
+    )
+    committed.snapshot.metadata["phase"] = "commit-mutated"
+    committed.snapshot.resources[0].metadata["path"] = "commit-mutated"
+
+    latest = store.current("workspace-1")
+    assert latest.metadata == {"phase": "initial"}
+    assert latest.resources[0].metadata == {"path": "committed"}
+
+
 def test_workspace_store_rejects_policy_denied_commit() -> None:
     base = WorkspaceSnapshot(
         workspace_id="workspace-1",
