@@ -31,6 +31,15 @@ def prepare_cedar_authorization_request(
         raise CedarPolicyAdapterError("Cedar authorization requires a principal")
 
     digested_request = request if request.input_digest else request.with_input_digest()
+    atomic_unit = None
+    if digested_request.atomic_unit is not None:
+        atomic_unit = {
+            "entity_type": "Resource",
+            "entity_id": digested_request.atomic_unit.resource_id,
+            "resource_kind": digested_request.atomic_unit.resource_kind,
+            "tenant_id": digested_request.atomic_unit.tenant_id,
+            "attributes": dict(digested_request.atomic_unit.attributes),
+        }
     authorization = {
         "principal": {
             "entity_type": "Principal",
@@ -51,7 +60,13 @@ def prepare_cedar_authorization_request(
         "context": {
             "request_id": request.request_id,
             "enforcement_point": request.enforcement_point,
+            "occurred_at": digested_request.occurred_at,
+            "release_id": digested_request.release_id,
+            "deployment_revision_id": digested_request.deployment_revision_id,
+            "run_id": digested_request.run_id,
+            "atomic_unit": atomic_unit,
             "data_labels": list(request.data_labels),
+            "requested_usage": [dict(usage) for usage in digested_request.requested_usage],
             "attributes": dict(request.attributes),
             "policy_snapshot_id": request.policy_snapshot_id,
             "input_digest": digested_request.input_digest,

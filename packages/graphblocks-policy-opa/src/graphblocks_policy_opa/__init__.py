@@ -28,6 +28,14 @@ class OpaPolicyInput:
 
 def prepare_opa_policy_input(request: PolicyRequest, *, package_ref: str | None = None) -> OpaPolicyInput:
     digested_request = request if request.input_digest else request.with_input_digest()
+    atomic_unit = None
+    if digested_request.atomic_unit is not None:
+        atomic_unit = {
+            "resource_id": digested_request.atomic_unit.resource_id,
+            "resource_kind": digested_request.atomic_unit.resource_kind,
+            "tenant_id": digested_request.atomic_unit.tenant_id,
+            "attributes": dict(digested_request.atomic_unit.attributes),
+        }
     input_document = {
         "request_id": digested_request.request_id,
         "enforcement_point": digested_request.enforcement_point,
@@ -55,6 +63,11 @@ def prepare_opa_policy_input(request: PolicyRequest, *, package_ref: str | None 
             "tenant_id": digested_request.tenant.tenant_id,
             "attributes": dict(digested_request.tenant.attributes),
         },
+        "occurred_at": digested_request.occurred_at,
+        "release_id": digested_request.release_id,
+        "deployment_revision_id": digested_request.deployment_revision_id,
+        "run_id": digested_request.run_id,
+        "atomic_unit": atomic_unit,
         "data_labels": list(digested_request.data_labels),
         "requested_usage": [dict(usage) for usage in digested_request.requested_usage],
         "attributes": dict(digested_request.attributes),
