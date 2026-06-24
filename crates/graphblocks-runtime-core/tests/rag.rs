@@ -11,10 +11,11 @@ use graphblocks_runtime_core::rag::{
     KnowledgeDeleteMode, KnowledgeItemRef, KnowledgeRecordStatus, QueryPlan, RagError,
     RagResultBundle, RagResultPayload, RerankOptions, RetrievalResult, SearchHit, SearchRequest,
     authorize_search_hits, build_abstention_answer, build_answer_from_model_response,
-    build_answer_from_model_response_with_context, build_context_pack, evaluate_rag_answer_metrics,
-    evaluate_retrieval_metrics, federated_retrieve, fuse_search_hits, knowledge_item_from_chunk,
-    render_context_pack, rerank_search_hits, resolve_citation_source_trace,
-    validate_answer_citation_authorization, validate_answer_citations, validate_answer_grounding,
+    build_answer_from_model_response_with_context, build_context_pack, evaluate_context_metrics,
+    evaluate_rag_answer_metrics, evaluate_retrieval_metrics, federated_retrieve, fuse_search_hits,
+    knowledge_item_from_chunk, render_context_pack, rerank_search_hits,
+    resolve_citation_source_trace, validate_answer_citation_authorization,
+    validate_answer_citations, validate_answer_grounding,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -1675,6 +1676,53 @@ fn evaluate_retrieval_metrics_returns_no_data_without_relevant_items() {
     let metrics = evaluate_retrieval_metrics(&retrieval, Vec::<String>::new(), None);
 
     assert!(metrics.iter().all(|metric| metric.value == Value::Null));
+}
+
+#[test]
+fn evaluate_context_metrics_reports_source_diversity_and_token_efficiency() {
+    let mut policy_a = hit("hit-a", "doc-a", "doc-1", "alpha", 1);
+    policy_a.retriever = "policy".to_owned();
+    let mut ticket = hit("hit-b", "doc-b", "doc-2", "beta", 2);
+    ticket.retriever = "ticket".to_owned();
+    let mut policy_c = hit("hit-c", "doc-c", "doc-3", "gamma", 3);
+    policy_c.retriever = "policy".to_owned();
+    let mut context = ContextPack::new("ctx-1", vec![policy_a, ticket, policy_c]);
+    context.token_budget = Some(8);
+    context.token_count = Some(6);
+
+    let metrics = evaluate_context_metrics(&context);
+
+    let source_diversity = metrics
+        .iter()
+        .find(|metric| metric.name == "source_diversity")
+        .expect("source diversity metric exists");
+    assert_eq!(source_diversity.value, json!(2));
+    assert_eq!(source_diversity.unit.as_deref(), Some("sources"));
+    assert_eq!(source_diversity.direction, MetricDirection::Maximize);
+    let token_efficiency = metrics
+        .iter()
+        .find(|metric| metric.name == "context_token_efficiency")
+        .expect("token efficiency metric exists");
+    assert_eq!(token_efficiency.value, json!(0.75));
+    assert_eq!(token_efficiency.direction, MetricDirection::Maximize);
+}
+
+#[test]
+fn evaluate_context_metrics_returns_no_data_without_token_budget() {
+    let context = ContextPack::new("ctx-1", vec![hit("hit-a", "doc-a", "doc-1", "alpha", 1)]);
+
+    let metrics = evaluate_context_metrics(&context);
+
+    let source_diversity = metrics
+        .iter()
+        .find(|metric| metric.name == "source_diversity")
+        .expect("source diversity metric exists");
+    assert_eq!(source_diversity.value, json!(1));
+    let token_efficiency = metrics
+        .iter()
+        .find(|metric| metric.name == "context_token_efficiency")
+        .expect("token efficiency metric exists");
+    assert_eq!(token_efficiency.value, Value::Null);
 }
 
 #[test]

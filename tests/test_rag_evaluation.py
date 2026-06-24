@@ -20,6 +20,7 @@ from graphblocks.rag import (
     RetrievalResult,
     SearchHit,
     SearchRequest,
+    evaluate_context_metrics,
     evaluate_rag_answer_metrics,
     evaluate_retrieval_metrics,
     validate_answer_citations,
@@ -97,6 +98,54 @@ def test_evaluate_retrieval_metrics_returns_no_data_without_relevant_items() -> 
     assert by_name["average_precision_at_k"].value is None
     assert by_name["ndcg_at_k"].value is None
     assert by_name["mrr"].value is None
+
+
+def test_evaluate_context_metrics_reports_source_diversity_and_token_efficiency() -> None:
+    context = ContextPack(
+        context_id="ctx-1",
+        hits=[
+            SearchHit(
+                hit_id="hit-a",
+                item=_hit("doc-a", 1).item,
+                rank=1,
+                retriever="policy",
+            ),
+            SearchHit(
+                hit_id="hit-b",
+                item=_hit("doc-b", 2).item,
+                rank=2,
+                retriever="ticket",
+            ),
+            SearchHit(
+                hit_id="hit-c",
+                item=_hit("doc-c", 3).item,
+                rank=3,
+                retriever="policy",
+            ),
+        ],
+        token_budget=8,
+        token_count=6,
+    )
+
+    metrics = evaluate_context_metrics(context)
+    exported_metrics = graphblocks.evaluate_context_metrics(context)
+    by_name = {metric.name: metric for metric in metrics}
+
+    assert [metric.name for metric in exported_metrics] == [metric.name for metric in metrics]
+    assert by_name["source_diversity"].value == Decimal("2")
+    assert by_name["source_diversity"].unit == "sources"
+    assert by_name["source_diversity"].direction == "maximize"
+    assert by_name["context_token_efficiency"].value == Decimal("0.75")
+    assert by_name["context_token_efficiency"].direction == "maximize"
+
+
+def test_evaluate_context_metrics_returns_no_data_without_token_budget() -> None:
+    context = ContextPack(context_id="ctx-1", hits=[_hit("doc-a", 1)])
+
+    by_name = {metric.name: metric for metric in evaluate_context_metrics(context)}
+
+    assert by_name["source_diversity"].value == Decimal("1")
+    assert by_name["context_token_efficiency"].value is None
 
 
 def test_evaluate_rag_answer_metrics_reports_citation_precision() -> None:

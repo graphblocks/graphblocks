@@ -2609,6 +2609,29 @@ where
     metrics
 }
 
+pub fn evaluate_context_metrics(context: &ContextPack) -> Vec<MetricObservation> {
+    let source_diversity = context
+        .hits
+        .iter()
+        .map(|hit| hit.retriever.clone())
+        .collect::<BTreeSet<_>>()
+        .len();
+    let token_efficiency = match (context.token_count, context.token_budget) {
+        (Some(token_count), Some(token_budget)) if token_budget > 0 => {
+            json!(token_count as f64 / token_budget as f64)
+        }
+        _ => Value::Null,
+    };
+
+    vec![
+        MetricObservation::new("source_diversity", json!(source_diversity))
+            .with_unit("sources")
+            .with_direction(MetricDirection::Maximize),
+        MetricObservation::new("context_token_efficiency", token_efficiency)
+            .with_direction(MetricDirection::Maximize),
+    ]
+}
+
 fn source_ref_matches(citation_source: &SourceRef, context_source: &SourceRef) -> bool {
     citation_source.source_id == context_source.source_id
         && citation_source

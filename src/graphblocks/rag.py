@@ -1094,6 +1094,31 @@ def evaluate_retrieval_metrics(
     ]
 
 
+def evaluate_context_metrics(context: ContextPack) -> list[MetricObservation]:
+    source_diversity = len({hit.retriever for hit in context.hits})
+    token_efficiency = (
+        None
+        if context.token_count is None
+        or context.token_budget is None
+        or context.token_budget <= 0
+        else Decimal(context.token_count) / Decimal(context.token_budget)
+    )
+
+    return [
+        MetricObservation(
+            "source_diversity",
+            Decimal(source_diversity),
+            unit="sources",
+            direction="maximize",
+        ),
+        MetricObservation(
+            "context_token_efficiency",
+            token_efficiency,
+            direction="maximize",
+        ),
+    ]
+
+
 def validate_answer_citations(
     answer: Answer,
     context: ContextPack,
