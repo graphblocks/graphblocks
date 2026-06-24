@@ -6,6 +6,7 @@ use graphblocks_protocol::{
     RemotePayload, RemotePayloadError, RemotePayloadLimits, WorkerAdmissionPolicy,
     WorkerAdvertisement, WorkerProtocolError, admit_worker_with_policy, validate_remote_payload,
 };
+use graphblocks_runtime_core::agent::{AgentLoopController, AgentLoopDecision, AgentSpec};
 use graphblocks_runtime_core::budget::{BudgetPermit, UsageAmount};
 use graphblocks_runtime_core::exhaustion::{
     ContinuationEnvelope, ExhaustionController, ExhaustionPolicy, ExhaustionPreset, ExhaustionUnit,
@@ -929,6 +930,76 @@ fn run_stdlib_graph_json(graph_json: &str, inputs_json: &str) -> PyResult<String
 }
 
 #[pyfunction]
+fn decide_agent_step_json(spec_json: &str, request_json: &str) -> PyResult<String> {
+    let spec_value = parse_json_argument(spec_json, "agent spec")?;
+    let request_value = parse_json_argument(request_json, "agent step request")?;
+    let spec_object = json_object(&spec_value, "agent spec")?;
+    let request_object = json_object(&request_value, "agent step request")?;
+
+    let mut spec = AgentSpec::new(required_string(spec_object, "modelPool", "agent spec")?);
+    if let Some(tools) = spec_object.get("tools") {
+        let tools = tools
+            .as_array()
+            .ok_or_else(|| PyValueError::new_err("agent spec.tools must be an array"))?;
+        let mut parsed_tools = Vec::new();
+        for (index, tool) in tools.iter().enumerate() {
+            let Some(tool) = tool.as_str() else {
+                return Err(PyValueError::new_err(format!(
+                    "agent spec.tools[{index}] must be a string"
+                )));
+            };
+            parsed_tools.push(tool.to_owned());
+        }
+        spec = spec.with_tools(parsed_tools);
+    }
+    if let Some(max_steps) = spec_object.get("maxSteps") {
+        let Some(max_steps) = max_steps.as_u64() else {
+            return Err(PyValueError::new_err(
+                "agent spec.maxSteps must be an unsigned integer",
+            ));
+        };
+        spec = spec
+            .with_max_steps(usize::try_from(max_steps).map_err(|_| {
+                PyValueError::new_err("agent spec.maxSteps exceeds platform usize")
+            })?);
+    }
+    if let Some(completion_reserve_units) = spec_object.get("completionReserveUnits") {
+        let Some(completion_reserve_units) = completion_reserve_units.as_i64() else {
+            return Err(PyValueError::new_err(
+                "agent spec.completionReserveUnits must be an integer",
+            ));
+        };
+        spec = spec.with_completion_reserve_units(completion_reserve_units);
+    }
+
+    let completed_steps = required_u64(request_object, "completedSteps", "agent step request")?;
+    let completed_steps = usize::try_from(completed_steps).map_err(|_| {
+        PyValueError::new_err("agent step request.completedSteps exceeds platform usize")
+    })?;
+    let remaining_budget_units = request_object
+        .get("remainingBudgetUnits")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| {
+            PyValueError::new_err("agent step request.remainingBudgetUnits must be an integer")
+        })?;
+
+    let decision =
+        AgentLoopController::new(spec).decide_next_step(completed_steps, remaining_budget_units);
+    let (disposition, reason) = match decision {
+        AgentLoopDecision::Continue { reason } => ("continue", reason),
+        AgentLoopDecision::Finalize { reason } => ("finalize", reason),
+        AgentLoopDecision::Stop { reason } => ("stop", reason),
+    };
+    let payload = json!({
+        "disposition": disposition,
+        "reason": reason,
+    });
+    serde_json::to_string(&payload).map_err(|error| {
+        PyRuntimeError::new_err(format!("failed to serialize agent step decision: {error}"))
+    })
+}
+
+#[pyfunction]
 fn admit_exhaustion_work_json(policy_json: &str, request_json: &str) -> PyResult<String> {
     let policy_value = parse_json_argument(policy_json, "exhaustion policy")?;
     let request_value = parse_json_argument(request_json, "exhaustion admission request")?;
@@ -1648,6 +1719,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(validate_remote_payload_json, module)?)?;
     module.add_function(wrap_pyfunction!(run_test_graph_json, module)?)?;
     module.add_function(wrap_pyfunction!(run_stdlib_graph_json, module)?)?;
+    module.add_function(wrap_pyfunction!(decide_agent_step_json, module)?)?;
     module.add_function(wrap_pyfunction!(admit_exhaustion_work_json, module)?)?;
     module.add_function(wrap_pyfunction!(evaluate_output_gate_json, module)?)?;
     module.add_function(wrap_pyfunction!(
@@ -1662,9 +1734,9 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{
-        admit_exhaustion_work_json, compile_graph_json, evaluate_declarative_output_policy_json,
-        evaluate_output_gate_json, run_stdlib_graph_json, run_test_graph_json,
-        validate_remote_payload_json, validate_worker_advertisement_json,
+        admit_exhaustion_work_json, compile_graph_json, decide_agent_step_json,
+        evaluate_declarative_output_policy_json, evaluate_output_gate_json, run_stdlib_graph_json,
+        run_test_graph_json, validate_remote_payload_json, validate_worker_advertisement_json,
     };
 
     #[test]
@@ -1853,6 +1925,69 @@ mod tests {
         assert_eq!(
             result.get("usedAdditionalSteps").and_then(Value::as_u64),
             Some(1),
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn decide_agent_step_json_uses_rust_agent_loop_boundaries() -> Result<(), String> {
+        let spec = json!({
+            "modelPool": "support-models",
+            "maxSteps": 4,
+            "completionReserveUnits": 100
+        });
+        let spec_json = serde_json::to_string(&spec).map_err(|error| error.to_string())?;
+
+        let stop_request = json!({"completedSteps": 4, "remainingBudgetUnits": 1_000});
+        let stop_json = serde_json::to_string(&stop_request).map_err(|error| error.to_string())?;
+        let stop = serde_json::from_str::<Value>(
+            &decide_agent_step_json(&spec_json, &stop_json).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            stop.get("disposition").and_then(Value::as_str),
+            Some("stop")
+        );
+        assert_eq!(
+            stop.get("reason").and_then(Value::as_str),
+            Some("max_steps_reached")
+        );
+
+        let finalize_request = json!({"completedSteps": 3, "remainingBudgetUnits": 100});
+        let finalize_json =
+            serde_json::to_string(&finalize_request).map_err(|error| error.to_string())?;
+        let finalize = serde_json::from_str::<Value>(
+            &decide_agent_step_json(&spec_json, &finalize_json)
+                .map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            finalize.get("disposition").and_then(Value::as_str),
+            Some("finalize")
+        );
+        assert_eq!(
+            finalize.get("reason").and_then(Value::as_str),
+            Some("completion_reserve_reached")
+        );
+
+        let continue_request = json!({"completedSteps": 3, "remainingBudgetUnits": 101});
+        let continue_json =
+            serde_json::to_string(&continue_request).map_err(|error| error.to_string())?;
+        let continued = serde_json::from_str::<Value>(
+            &decide_agent_step_json(&spec_json, &continue_json)
+                .map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            continued.get("disposition").and_then(Value::as_str),
+            Some("continue")
+        );
+        assert_eq!(
+            continued.get("reason").and_then(Value::as_str),
+            Some("admitted")
         );
         Ok(())
     }

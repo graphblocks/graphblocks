@@ -6,6 +6,7 @@ try:
         admit_exhaustion_work_json,
         binding_version,
         compile_graph_json,
+        decide_agent_step_json,
         evaluate_declarative_output_policy_json,
         evaluate_output_gate_json,
         run_stdlib_graph_json,
@@ -23,6 +24,9 @@ except ImportError:
         raise RuntimeError("graphblocks_runtime native extension is not built")
 
     def compile_graph_json(document_json: str, block_catalog_json: str | None = None) -> str:
+        raise RuntimeError("graphblocks_runtime native extension is not built")
+
+    def decide_agent_step_json(spec_json: str, request_json: str) -> str:
         raise RuntimeError("graphblocks_runtime native extension is not built")
 
     def evaluate_output_gate_json(gate_json: str, operations_json: str) -> str:
@@ -56,6 +60,7 @@ __all__ = [
     "admit_exhaustion_work_json",
     "binding_version",
     "compile_graph_json",
+    "decide_agent_step_json",
     "evaluate_declarative_output_policy_json",
     "evaluate_output_gate_json",
     "run_stdlib_graph_json",
