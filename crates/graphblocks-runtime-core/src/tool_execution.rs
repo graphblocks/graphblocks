@@ -26,6 +26,7 @@ pub enum ToolExecutionState {
     Failed,
     Denied,
     Cancelled,
+    Expired,
     Skipped,
 }
 
@@ -304,6 +305,24 @@ impl ToolExecutionPlan {
         Ok(())
     }
 
+    pub fn record_denied(
+        &mut self,
+        tool_call_id: impl AsRef<str>,
+    ) -> Result<(), ToolExecutionPlanError> {
+        self.enter_pending_terminal(tool_call_id.as_ref(), ToolExecutionState::Denied)?;
+        self.mark_blocked_dependents(ToolExecutionState::Skipped);
+        Ok(())
+    }
+
+    pub fn record_expired(
+        &mut self,
+        tool_call_id: impl AsRef<str>,
+    ) -> Result<(), ToolExecutionPlanError> {
+        self.enter_pending_terminal(tool_call_id.as_ref(), ToolExecutionState::Expired)?;
+        self.mark_blocked_dependents(ToolExecutionState::Skipped);
+        Ok(())
+    }
+
     pub fn record_cancelled(
         &mut self,
         tool_call_id: impl AsRef<str>,
@@ -382,6 +401,26 @@ impl ToolExecutionPlan {
         Ok(())
     }
 
+    fn enter_pending_terminal(
+        &mut self,
+        tool_call_id: &str,
+        terminal_state: ToolExecutionState,
+    ) -> Result<(), ToolExecutionPlanError> {
+        let current = self.states.get(tool_call_id).ok_or_else(|| {
+            ToolExecutionPlanError::UnknownToolCall {
+                tool_call_id: tool_call_id.to_owned(),
+            }
+        })?;
+        if *current != ToolExecutionState::Pending {
+            return Err(ToolExecutionPlanError::ToolCallNotPending {
+                tool_call_id: tool_call_id.to_owned(),
+                current: *current,
+            });
+        }
+        self.states.insert(tool_call_id.to_owned(), terminal_state);
+        Ok(())
+    }
+
     fn mark_blocked_dependents(&mut self, blocked_state: ToolExecutionState) {
         loop {
             let blocked = self
@@ -398,6 +437,7 @@ impl ToolExecutionPlan {
                                 ToolExecutionState::Failed
                                     | ToolExecutionState::Denied
                                     | ToolExecutionState::Cancelled
+                                    | ToolExecutionState::Expired
                                     | ToolExecutionState::Skipped
                             )
                         )

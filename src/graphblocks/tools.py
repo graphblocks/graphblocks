@@ -60,7 +60,16 @@ ToolResultEventKind = Literal[
 ToolEffectOutcome = Literal["no_external_effect", "committed", "not_committed", "unknown"]
 ToolExecutionFailurePolicy = Literal["fail_fast", "collect", "return_failures_to_model"]
 ToolExecutionCancellationPolicy = Literal["cancel_dependents", "cancel_all", "allow_independent_calls"]
-ToolExecutionState = Literal["pending", "running", "completed", "failed", "denied", "cancelled", "skipped"]
+ToolExecutionState = Literal[
+    "pending",
+    "running",
+    "completed",
+    "failed",
+    "denied",
+    "cancelled",
+    "expired",
+    "skipped",
+]
 PendingToolCallsDisposition = Literal["keep", "deny", "cancel_admitted"]
 JsonSchemaType = Literal["null", "boolean", "integer", "number", "string", "array", "object"]
 ToolApprovalStatus = Literal["requested", "approved", "denied", "invalidated"]
@@ -1017,6 +1026,14 @@ class ToolExecutionPlan:
                 if state == "pending":
                     self._states[candidate_id] = "cancelled"
 
+    def record_denied(self, tool_call_id: str) -> None:
+        self._enter_pending_terminal(tool_call_id, "denied")
+        self._mark_blocked_dependents("skipped")
+
+    def record_expired(self, tool_call_id: str) -> None:
+        self._enter_pending_terminal(tool_call_id, "expired")
+        self._mark_blocked_dependents("skipped")
+
     def record_cancelled(self, tool_call_id: str) -> None:
         self._enter_terminal(tool_call_id, "cancelled")
         if self.cancellation_policy == "cancel_dependents":
@@ -1040,7 +1057,7 @@ class ToolExecutionPlan:
                 if self._states[candidate_id] != "pending":
                     continue
                 if any(
-                    self._states.get(dependency) in {"failed", "denied", "cancelled", "skipped"}
+                    self._states.get(dependency) in {"failed", "denied", "cancelled", "expired", "skipped"}
                     for dependency in planned_call.call.depends_on
                 ):
                     blocked.append(candidate_id)
@@ -1078,6 +1095,14 @@ class ToolExecutionPlan:
             raise ToolExecutionPlanError(f"unknown tool call {tool_call_id}")
         if current != "running":
             raise ToolExecutionPlanError(f"tool call {tool_call_id} is {current}, not running")
+        self._states[tool_call_id] = terminal_state
+
+    def _enter_pending_terminal(self, tool_call_id: str, terminal_state: ToolExecutionState) -> None:
+        current = self._states.get(tool_call_id)
+        if current is None:
+            raise ToolExecutionPlanError(f"unknown tool call {tool_call_id}")
+        if current != "pending":
+            raise ToolExecutionPlanError(f"tool call {tool_call_id} is {current}, not pending")
         self._states[tool_call_id] = terminal_state
 
     def _running_count(self) -> int:

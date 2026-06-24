@@ -1535,6 +1535,47 @@ def test_tool_execution_plan_skips_dependents_after_dependency_failure() -> None
     assert plan.ready_call_ids() == []
 
 
+def test_tool_execution_plan_skips_dependents_after_pending_call_denied() -> None:
+    dependent = replace(_tool_call("call-b", '{"resource_id":"b"}'), depends_on=("call-a",))
+    independent = _tool_call("call-c", '{"resource_id":"c"}')
+    plan = ToolExecutionPlan(
+        plan_id="plan-1",
+        response_id="response-1",
+        calls=(
+            ToolPlanCall(_tool_call("call-a", '{"resource_id":"a"}')),
+            ToolPlanCall(dependent),
+            ToolPlanCall(independent),
+        ),
+        maximum_parallelism=3,
+    )
+
+    plan.record_denied("call-a")
+
+    assert plan.state("call-a") == "denied"
+    assert plan.state("call-b") == "skipped"
+    assert plan.state("call-c") == "pending"
+    assert plan.ready_call_ids() == ["call-c"]
+
+
+def test_tool_execution_plan_skips_dependents_after_pending_call_expired() -> None:
+    dependent = replace(_tool_call("call-b", '{"resource_id":"b"}'), depends_on=("call-a",))
+    plan = ToolExecutionPlan(
+        plan_id="plan-1",
+        response_id="response-1",
+        calls=(
+            ToolPlanCall(_tool_call("call-a", '{"resource_id":"a"}')),
+            ToolPlanCall(dependent),
+        ),
+        maximum_parallelism=2,
+    )
+
+    plan.record_expired("call-a")
+
+    assert plan.state("call-a") == "expired"
+    assert plan.state("call-b") == "skipped"
+    assert plan.ready_call_ids() == []
+
+
 def test_tool_execution_fail_fast_cancels_pending_calls_after_failure() -> None:
     plan = ToolExecutionPlan(
         plan_id="plan-1",
