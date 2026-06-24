@@ -9,6 +9,10 @@ from .tools import ToolApprovalRequest, ToolCall, ToolCallDraft, ToolResult, Too
 
 
 ApplicationEventKind = Literal[
+    "RunStarted",
+    "RunSucceeded",
+    "RunFailed",
+    "RunCancelled",
     "ToolCallProposed",
     "ToolCallArgumentsDelta",
     "ToolCallArgumentsCompleted",
@@ -35,6 +39,10 @@ ApplicationEventKind = Literal[
 
 
 STANDARD_APPLICATION_EVENT_KINDS: tuple[ApplicationEventKind, ...] = (
+    "RunStarted",
+    "RunSucceeded",
+    "RunFailed",
+    "RunCancelled",
     "ToolCallProposed",
     "ToolCallArgumentsDelta",
     "ToolCallArgumentsCompleted",

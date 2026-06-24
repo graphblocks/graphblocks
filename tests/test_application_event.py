@@ -43,6 +43,10 @@ def _metadata() -> ApplicationEventMetadata:
 
 def test_standard_application_event_names_match_tool_and_output_policy_contract() -> None:
     assert STANDARD_APPLICATION_EVENT_KINDS == (
+        "RunStarted",
+        "RunSucceeded",
+        "RunFailed",
+        "RunCancelled",
         "ToolCallProposed",
         "ToolCallArgumentsDelta",
         "ToolCallArgumentsCompleted",
