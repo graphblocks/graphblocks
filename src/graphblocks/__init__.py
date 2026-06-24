@@ -333,6 +333,7 @@ from .run_store import InMemoryRunStore, RunRecord, RunTerminalStateError, SQLit
 from .schema import SchemaId, SchemaIdError, TypedValue
 from .server import (
     ApplicationProtocolCapabilities,
+    GraphBlocksServerApp,
     ServerAuthDecision,
     ServerAuthHook,
     ServerAuthRequest,
@@ -340,6 +341,8 @@ from .server import (
     ServerHealth,
     ServerHealthStatus,
     ServerProtocolVersionMismatchError,
+    ServerRequest,
+    ServerResponse,
     ServerRouteManifest,
     ServerRouteNotFoundError,
     ServerTransport,
@@ -605,6 +608,7 @@ __all__ = [
     "SQLiteExecutionJournal",
     "SchemaId",
     "SchemaIdError",
+    "GraphBlocksServerApp",
     "ServerAuthDecision",
     "ServerAuthHook",
     "ServerAuthRequest",
@@ -612,6 +616,8 @@ __all__ = [
     "ServerHealth",
     "ServerHealthStatus",
     "ServerProtocolVersionMismatchError",
+    "ServerRequest",
+    "ServerResponse",
     "ServerRouteManifest",
     "ServerRouteNotFoundError",
     "ServerTransport",

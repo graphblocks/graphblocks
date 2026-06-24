@@ -18,3 +18,13 @@ def test_server_package_reexports_framework_neutral_contracts(monkeypatch) -> No
 
     assert manifest.lookup("GET", "/health").operation == "health"
     assert capabilities.protocol_version == "graphblocks.app.v1"
+    assert graphblocks_server.GraphBlocksServerApp().handle(
+        graphblocks_server.ServerRequest(
+            method="GET",
+            path="/health",
+            headers={},
+            query={},
+            cookies={},
+        )
+    ).status_code == 200
+    assert "ServerResponse" in graphblocks_server.__all__

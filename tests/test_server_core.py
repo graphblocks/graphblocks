@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import json
+
+import graphblocks
 import pytest
 
 from graphblocks.policy import PrincipalRef
 from graphblocks.server import (
     ApplicationProtocolCapabilities,
+    GraphBlocksServerApp,
     ServerAuthRequest,
     ServerHealth,
+    ServerRequest,
     ServerProtocolVersionMismatchError,
     ServerRouteManifest,
     StaticBearerAuthHook,
@@ -110,3 +115,93 @@ def test_application_protocol_capabilities_negotiate_intersection() -> None:
 
     assert error.value.left == "graphblocks.app.v1"
     assert error.value.right == "graphblocks.app.v2"
+
+
+def test_server_app_handles_health_auth_and_run_requests() -> None:
+    app = GraphBlocksServerApp(
+        auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}),
+        health=ServerHealth(
+            "graphblocks-api",
+            checks=(("runtime", "healthy", {"workers": 1}),),
+            observed_at="2026-06-24T00:00:00Z",
+        ),
+    )
+    health = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/health",
+            headers={},
+            query={},
+            cookies={},
+            body=b"",
+            requested_at="2026-06-24T00:00:00Z",
+        )
+    )
+
+    assert health.status_code == 200
+    assert json.loads(health.body.decode("utf-8"))["status"] == "healthy"
+
+    denied = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={},
+            query={},
+            cookies={},
+            body=b"{}",
+            requested_at="2026-06-24T00:00:01Z",
+        )
+    )
+
+    assert denied.status_code == 401
+    assert json.loads(denied.body.decode("utf-8")) == {
+        "ok": False,
+        "reasonCodes": ["auth.missing_bearer_token"],
+    }
+
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "server-run"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Server {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+    run = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "ok"}},
+                    "runId": "run-server-1",
+                    "responseId": "response-server-1",
+                    "releaseId": "release-1",
+                    "policySnapshotId": "policy-1",
+                    "occurredAt": "2026-06-24T00:00:02Z",
+                }
+            ).encode("utf-8"),
+            requested_at="2026-06-24T00:00:02Z",
+        )
+    )
+
+    payload = json.loads(run.body.decode("utf-8"))
+    assert run.status_code == 200
+    assert payload["runId"] == "run-server-1"
+    assert payload["status"] == "succeeded"
+    assert payload["outputs"] == {"prompt": "Server ok"}
+    assert [event["kind"] for event in payload["events"]] == ["RunStarted", "RunSucceeded"]
+    assert payload["events"][0]["metadata"]["responseId"] == "response-server-1"
+    assert graphblocks.GraphBlocksServerApp is GraphBlocksServerApp
+    assert "ServerResponse" in graphblocks.__all__

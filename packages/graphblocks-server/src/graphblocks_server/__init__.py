@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from graphblocks.server import (
     ApplicationProtocolCapabilities,
+    GraphBlocksServerApp,
     ServerAuthDecision,
     ServerAuthHook,
     ServerAuthRequest,
@@ -9,6 +10,8 @@ from graphblocks.server import (
     ServerHealth,
     ServerHealthStatus,
     ServerProtocolVersionMismatchError,
+    ServerRequest,
+    ServerResponse,
     ServerRouteManifest,
     ServerRouteNotFoundError,
     ServerTransport,
@@ -19,6 +22,7 @@ from graphblocks.server import (
 
 __all__ = [
     "ApplicationProtocolCapabilities",
+    "GraphBlocksServerApp",
     "ServerAuthDecision",
     "ServerAuthHook",
     "ServerAuthRequest",
@@ -26,6 +30,8 @@ __all__ = [
     "ServerHealth",
     "ServerHealthStatus",
     "ServerProtocolVersionMismatchError",
+    "ServerRequest",
+    "ServerResponse",
     "ServerRouteManifest",
     "ServerRouteNotFoundError",
     "ServerTransport",
