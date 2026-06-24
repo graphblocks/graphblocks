@@ -1307,7 +1307,45 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
                     "hold" => OutputPolicyDecision::hold(decision_id, input_digest),
                     "redact" | "replace" => {
                         let mut replacement_chunks = Vec::new();
-                        if let Some(chunks) = operation.get("replacementChunks") {
+                        if operation.get("replacementParts").is_some()
+                            && operation.get("replacementChunks").is_some()
+                        {
+                            return Err(PyValueError::new_err(format!(
+                                "{label} must not specify both replacementParts and replacementChunks"
+                            )));
+                        }
+                        if let Some(parts) = operation.get("replacementParts") {
+                            let Some(parts) = parts.as_array() else {
+                                return Err(PyValueError::new_err(format!(
+                                    "{label}.replacementParts must be an array"
+                                )));
+                            };
+                            let base_sequence = accepted_through_sequence
+                                .unwrap_or_else(|| gate.last_generated_sequence());
+                            for (part_index, part) in parts.iter().enumerate() {
+                                let part_label = format!("{label}.replacementParts[{part_index}]");
+                                let part = json_object(part, &part_label)?;
+                                let kind = required_string(part, "kind", &part_label)?;
+                                if kind != "text" {
+                                    return Err(PyValueError::new_err(format!(
+                                        "{part_label}.kind must be \"text\""
+                                    )));
+                                }
+                                let sequence = base_sequence
+                                    .checked_add(part_index as u64)
+                                    .ok_or_else(|| {
+                                        PyValueError::new_err(format!(
+                                            "{part_label} replacement sequence overflowed"
+                                        ))
+                                    })?;
+                                replacement_chunks.push(GenerationChunk::text(
+                                    stream_id,
+                                    response_id,
+                                    sequence,
+                                    required_string(part, "text", &part_label)?,
+                                ));
+                            }
+                        } else if let Some(chunks) = operation.get("replacementChunks") {
                             let Some(chunks) = chunks.as_array() else {
                                 return Err(PyValueError::new_err(format!(
                                     "{label}.replacementChunks must be an array"
@@ -1732,6 +1770,15 @@ fn evaluate_declarative_output_policy_json(
         "decisionId": decision.decision_id,
         "disposition": disposition,
         "acceptedThroughSequence": decision.accepted_through_sequence,
+        "replacementParts": decision
+            .replacement_chunks
+            .iter()
+            .map(|chunk| json!({
+                "kind": "text",
+                "text": chunk.text,
+                "metadata": {},
+            }))
+            .collect::<Vec<_>>(),
         "replacementChunks": decision
             .replacement_chunks
             .iter()
@@ -2518,6 +2565,81 @@ mod tests {
     }
 
     #[test]
+    fn evaluate_output_gate_json_accepts_replacement_parts() -> Result<(), String> {
+        let gate = json!({
+            "streamId": "stream-1",
+            "responseId": "response-1",
+            "deliveryPolicy": {
+                "mode": "bounded_holdback",
+                "holdbackMaxTokens": 8,
+                "onViolation": "abort_response"
+            }
+        });
+        let operations = json!([
+            {
+                "kind": "chunk",
+                "sequence": 1,
+                "text": "blocked draft"
+            },
+            {
+                "kind": "decision",
+                "decisionId": "decision-replace",
+                "disposition": "replace",
+                "acceptedThroughSequence": 1,
+                "inputDigest": "sha256:replace",
+                "replacementParts": [
+                    {"kind": "text", "text": "policy-approved "},
+                    {"kind": "text", "text": "replacement"}
+                ],
+                "occurredAtUnixMs": 1_000
+            }
+        ]);
+        let gate_json = serde_json::to_string(&gate).map_err(|error| error.to_string())?;
+        let operations_json =
+            serde_json::to_string(&operations).map_err(|error| error.to_string())?;
+
+        let result_json = evaluate_output_gate_json(&gate_json, &operations_json)
+            .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+        let chunks = result
+            .get("deliveries")
+            .and_then(Value::as_array)
+            .and_then(|deliveries| deliveries.first())
+            .and_then(|delivery| delivery.get("chunks"))
+            .and_then(Value::as_array)
+            .ok_or_else(|| "missing replacement delivery chunks".to_owned())?;
+
+        assert_eq!(
+            chunks
+                .iter()
+                .map(|chunk| (
+                    chunk.get("sequence").and_then(Value::as_u64),
+                    chunk.get("text").and_then(Value::as_str),
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                (Some(1), Some("policy-approved ")),
+                (Some(2), Some("replacement")),
+            ],
+        );
+        assert_eq!(
+            result
+                .get("lastPolicyAcceptedSequence")
+                .and_then(Value::as_u64),
+            Some(2)
+        );
+        assert_eq!(
+            result
+                .get("lastClientDeliveredSequence")
+                .and_then(Value::as_u64),
+            Some(2)
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn evaluate_output_gate_json_preserves_decision_metadata() -> Result<(), String> {
         let gate = json!({
             "streamId": "stream-1",
@@ -2661,6 +2783,66 @@ mod tests {
         assert_eq!(
             result.get("evaluatedAtUnixMs").and_then(Value::as_u64),
             Some(1_000)
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_declarative_output_policy_json_returns_replacement_parts() -> Result<(), String> {
+        let rules = json!([
+            {
+                "ruleId": "blocked",
+                "literal": "blocked",
+                "disposition": "replace",
+                "replacement": "policy-approved",
+                "reasonCodes": ["content.replaced"]
+            }
+        ]);
+        let chunk = json!({
+            "streamId": "stream-1",
+            "responseId": "response-1",
+            "sequence": 1,
+            "text": "blocked"
+        });
+        let rules_json = serde_json::to_string(&rules).map_err(|error| error.to_string())?;
+        let chunk_json = serde_json::to_string(&chunk).map_err(|error| error.to_string())?;
+
+        let result_json = evaluate_declarative_output_policy_json(&rules_json, &chunk_json, 1_000)
+            .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            result.get("disposition").and_then(Value::as_str),
+            Some("replace")
+        );
+        assert_eq!(
+            result
+                .get("replacementParts")
+                .and_then(Value::as_array)
+                .and_then(|parts| parts.first())
+                .and_then(|part| part.get("kind"))
+                .and_then(Value::as_str),
+            Some("text")
+        );
+        assert_eq!(
+            result
+                .get("replacementParts")
+                .and_then(Value::as_array)
+                .and_then(|parts| parts.first())
+                .and_then(|part| part.get("text"))
+                .and_then(Value::as_str),
+            Some("policy-approved")
+        );
+        assert_eq!(
+            result
+                .get("replacementChunks")
+                .and_then(Value::as_array)
+                .and_then(|chunks| chunks.first())
+                .and_then(|chunk| chunk.get("text"))
+                .and_then(Value::as_str),
+            Some("policy-approved")
         );
 
         Ok(())
