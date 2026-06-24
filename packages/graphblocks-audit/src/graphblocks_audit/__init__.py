@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+import json
+from pathlib import Path
+import sqlite3
 from types import MappingProxyType
+from typing import Literal
 
 from graphblocks.application_event import (
     STANDARD_APPLICATION_EVENT_KINDS,
@@ -27,6 +31,171 @@ from graphblocks.tools import (
 
 class ToolEffectAuditError(RuntimeError):
     pass
+
+
+class AuditOutboxError(RuntimeError):
+    pass
+
+
+class AuditOutboxConflictError(AuditOutboxError):
+    pass
+
+
+class AuditOutboxRecordNotFoundError(AuditOutboxError):
+    pass
+
+
+AuditOutboxStatus = Literal["pending", "published", "failed"]
+
+
+@dataclass(frozen=True, slots=True)
+class AuditOutboxRecord:
+    record_id: str
+    record_type: str
+    payload: Mapping[str, object]
+    payload_digest: str
+    occurred_at: str
+    status: AuditOutboxStatus = "pending"
+    attempts: int = 0
+    published_at: str | None = None
+    last_error: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "payload", MappingProxyType(dict(self.payload)))
+
+
+@dataclass(slots=True)
+class SQLiteAuditOutbox:
+    path: str | Path
+    _connection: sqlite3.Connection = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._connection = sqlite3.connect(str(self.path))
+        self._connection.row_factory = sqlite3.Row
+        self._connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS audit_outbox_records (
+              sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+              record_id TEXT NOT NULL UNIQUE,
+              record_type TEXT NOT NULL,
+              payload_json TEXT NOT NULL,
+              payload_digest TEXT NOT NULL,
+              occurred_at TEXT NOT NULL,
+              status TEXT NOT NULL,
+              attempts INTEGER NOT NULL,
+              published_at TEXT,
+              last_error TEXT
+            )
+            """
+        )
+        self._connection.commit()
+
+    @classmethod
+    def in_memory(cls) -> SQLiteAuditOutbox:
+        return cls(":memory:")
+
+    def close(self) -> None:
+        self._connection.close()
+
+    def append(
+        self,
+        record_type: str,
+        payload: Mapping[str, object],
+        *,
+        occurred_at: str,
+        record_id: str | None = None,
+    ) -> AuditOutboxRecord:
+        payload_json = json.dumps(dict(payload), sort_keys=True, separators=(",", ":"))
+        payload_digest = canonical_hash(json.loads(payload_json))
+        actual_record_id = record_id or f"audit:{payload_digest}"
+        try:
+            self._connection.execute(
+                """
+                INSERT INTO audit_outbox_records (
+                  record_id,
+                  record_type,
+                  payload_json,
+                  payload_digest,
+                  occurred_at,
+                  status,
+                  attempts,
+                  published_at,
+                  last_error
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    actual_record_id,
+                    record_type,
+                    payload_json,
+                    payload_digest,
+                    occurred_at,
+                    "pending",
+                    0,
+                    None,
+                    None,
+                ),
+            )
+            self._connection.commit()
+        except sqlite3.IntegrityError as error:
+            raise AuditOutboxConflictError(f"audit outbox record {actual_record_id!r} already exists") from error
+        return self.get(actual_record_id)
+
+    def get(self, record_id: str) -> AuditOutboxRecord:
+        row = self._connection.execute(
+            "SELECT * FROM audit_outbox_records WHERE record_id = ?",
+            (record_id,),
+        ).fetchone()
+        if row is None:
+            raise AuditOutboxRecordNotFoundError(f"audit outbox record {record_id!r} does not exist")
+        return self._record_from_row(row)
+
+    def pending(self, *, limit: int | None = None) -> list[AuditOutboxRecord]:
+        sql = "SELECT * FROM audit_outbox_records WHERE status IN ('pending', 'failed') ORDER BY sequence"
+        parameters: tuple[object, ...] = ()
+        if limit is not None:
+            sql += " LIMIT ?"
+            parameters = (limit,)
+        rows = self._connection.execute(sql, parameters).fetchall()
+        return [self._record_from_row(row) for row in rows]
+
+    def mark_published(self, record_id: str, *, published_at: str) -> AuditOutboxRecord:
+        if self._connection.execute(
+            """
+            UPDATE audit_outbox_records
+            SET status = ?, published_at = ?, last_error = NULL
+            WHERE record_id = ?
+            """,
+            ("published", published_at, record_id),
+        ).rowcount == 0:
+            raise AuditOutboxRecordNotFoundError(f"audit outbox record {record_id!r} does not exist")
+        self._connection.commit()
+        return self.get(record_id)
+
+    def mark_failed(self, record_id: str, *, error: str) -> AuditOutboxRecord:
+        if self._connection.execute(
+            """
+            UPDATE audit_outbox_records
+            SET status = ?, attempts = attempts + 1, last_error = ?
+            WHERE record_id = ?
+            """,
+            ("failed", error, record_id),
+        ).rowcount == 0:
+            raise AuditOutboxRecordNotFoundError(f"audit outbox record {record_id!r} does not exist")
+        self._connection.commit()
+        return self.get(record_id)
+
+    def _record_from_row(self, row: sqlite3.Row) -> AuditOutboxRecord:
+        return AuditOutboxRecord(
+            record_id=row["record_id"],
+            record_type=row["record_type"],
+            payload=json.loads(row["payload_json"]),
+            payload_digest=row["payload_digest"],
+            occurred_at=row["occurred_at"],
+            status=row["status"],
+            attempts=int(row["attempts"]),
+            published_at=row["published_at"],
+            last_error=row["last_error"],
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,6 +306,11 @@ __all__ = [
     "ApplicationEventError",
     "ApplicationEventKind",
     "ApplicationEventMetadata",
+    "AuditOutboxConflictError",
+    "AuditOutboxError",
+    "AuditOutboxRecord",
+    "AuditOutboxRecordNotFoundError",
+    "AuditOutboxStatus",
     "ApprovalRecord",
     "ApprovalRequest",
     "ApprovalStatus",
@@ -144,6 +318,7 @@ __all__ = [
     "PolicyEnforcementRecord",
     "PrincipalRef",
     "ResourceRef",
+    "SQLiteAuditOutbox",
     "ToolEffectAuditError",
     "ToolEffectAuditRecord",
     "ToolApprovalRecord",

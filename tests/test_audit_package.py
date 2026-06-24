@@ -176,3 +176,61 @@ def test_audit_package_rejects_mismatched_tool_effect_record_inputs(monkeypatch)
         assert "call-1" in str(error)
     else:
         raise AssertionError("mismatched tool result should be rejected")
+
+
+def test_audit_package_persists_outbox_records(monkeypatch, tmp_path) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-audit" / "src"))
+    graphblocks_audit = importlib.import_module("graphblocks_audit")
+    path = tmp_path / "audit.sqlite3"
+
+    outbox = graphblocks_audit.SQLiteAuditOutbox(path)
+    first = outbox.append(
+        "application_event",
+        {"event_id": "event-1", "kind": "OutputPolicyAllowed"},
+        occurred_at="2026-06-23T00:00:00Z",
+        record_id="audit-1",
+    )
+    second = outbox.append(
+        "policy_enforcement",
+        {"record_id": "enforcement-1", "status": "blocked"},
+        occurred_at="2026-06-23T00:00:01Z",
+        record_id="audit-2",
+    )
+    outbox.close()
+
+    reopened = graphblocks_audit.SQLiteAuditOutbox(path)
+    assert reopened.get("audit-1") == first
+    assert [record.record_id for record in reopened.pending()] == ["audit-1", "audit-2"]
+    assert reopened.pending(limit=1) == [first]
+
+    published = reopened.mark_published("audit-1", published_at="2026-06-23T00:00:02Z")
+    failed = reopened.mark_failed("audit-2", error="sink unavailable")
+
+    assert published.status == "published"
+    assert published.published_at == "2026-06-23T00:00:02Z"
+    assert failed.status == "failed"
+    assert failed.attempts == second.attempts + 1
+    assert failed.last_error == "sink unavailable"
+    assert reopened.pending() == [failed]
+    reopened.close()
+
+
+def test_audit_package_rejects_duplicate_outbox_record_ids(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-audit" / "src"))
+    graphblocks_audit = importlib.import_module("graphblocks_audit")
+    outbox = graphblocks_audit.SQLiteAuditOutbox.in_memory()
+    outbox.append("application_event", {"event_id": "event-1"}, occurred_at="2026-06-23T00:00:00Z", record_id="audit-1")
+
+    try:
+        outbox.append(
+            "application_event",
+            {"event_id": "event-2"},
+            occurred_at="2026-06-23T00:00:01Z",
+            record_id="audit-1",
+        )
+    except graphblocks_audit.AuditOutboxConflictError as error:
+        assert "audit-1" in str(error)
+    else:
+        raise AssertionError("duplicate audit outbox record should be rejected")
+    finally:
+        outbox.close()
