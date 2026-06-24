@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::output_policy::PendingToolCallsDisposition;
@@ -38,6 +39,13 @@ pub enum ToolExecutionPlanError {
         tool_call_id: String,
         expected_response_id: String,
         actual_response_id: String,
+    },
+    UnknownDependency {
+        tool_call_id: String,
+        dependency_id: String,
+    },
+    DependencyCycle {
+        tool_call_id: String,
     },
     UnknownToolCall {
         tool_call_id: String,
@@ -123,6 +131,52 @@ impl ToolExecutionPlan {
                 return Err(ToolExecutionPlanError::DuplicateToolCall { tool_call_id });
             }
             states.insert(tool_call_id, ToolExecutionState::Pending);
+        }
+        for (tool_call_id, planned_call) in &indexed_calls {
+            for dependency_id in &planned_call.call.depends_on {
+                if !indexed_calls.contains_key(dependency_id) {
+                    return Err(ToolExecutionPlanError::UnknownDependency {
+                        tool_call_id: tool_call_id.clone(),
+                        dependency_id: dependency_id.clone(),
+                    });
+                }
+            }
+        }
+
+        let mut remaining_dependencies = indexed_calls
+            .iter()
+            .map(|(tool_call_id, planned_call)| {
+                (
+                    tool_call_id.clone(),
+                    planned_call
+                        .call
+                        .depends_on
+                        .iter()
+                        .cloned()
+                        .collect::<BTreeSet<_>>(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let mut ready = remaining_dependencies
+            .iter()
+            .filter_map(|(tool_call_id, dependencies)| {
+                dependencies.is_empty().then(|| tool_call_id.clone())
+            })
+            .collect::<VecDeque<_>>();
+        while let Some(completed_id) = ready.pop_front() {
+            if remaining_dependencies.remove(&completed_id).is_none() {
+                continue;
+            }
+            for (candidate_id, dependencies) in &mut remaining_dependencies {
+                if dependencies.remove(&completed_id) && dependencies.is_empty() {
+                    ready.push_back(candidate_id.clone());
+                }
+            }
+        }
+        if let Some(tool_call_id) = remaining_dependencies.keys().next() {
+            return Err(ToolExecutionPlanError::DependencyCycle {
+                tool_call_id: tool_call_id.clone(),
+            });
         }
 
         Ok(Self {

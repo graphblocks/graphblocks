@@ -58,6 +58,48 @@ fn plan_rejects_tool_calls_from_different_response() {
 }
 
 #[test]
+fn plan_rejects_unknown_dependency() {
+    let mut dependent = tool_call("call-b", "{\"resource_id\":\"b\"}");
+    dependent.depends_on = vec!["call-missing".to_owned()];
+
+    assert_eq!(
+        ToolExecutionPlan::new(
+            "plan-1",
+            "response-1",
+            [
+                ToolPlanCall::new(tool_call("call-a", "{\"resource_id\":\"a\"}")),
+                ToolPlanCall::new(dependent),
+            ],
+            2,
+        ),
+        Err(ToolExecutionPlanError::UnknownDependency {
+            tool_call_id: "call-b".to_owned(),
+            dependency_id: "call-missing".to_owned(),
+        }),
+    );
+}
+
+#[test]
+fn plan_rejects_dependency_cycle() {
+    let mut first = tool_call("call-a", "{\"resource_id\":\"a\"}");
+    first.depends_on = vec!["call-b".to_owned()];
+    let mut second = tool_call("call-b", "{\"resource_id\":\"b\"}");
+    second.depends_on = vec!["call-a".to_owned()];
+
+    assert_eq!(
+        ToolExecutionPlan::new(
+            "plan-1",
+            "response-1",
+            [ToolPlanCall::new(first), ToolPlanCall::new(second)],
+            2,
+        ),
+        Err(ToolExecutionPlanError::DependencyCycle {
+            tool_call_id: "call-a".to_owned(),
+        }),
+    );
+}
+
+#[test]
 fn dependent_calls_wait_for_completed_dependencies() -> Result<(), ToolExecutionPlanError> {
     let mut dependent = tool_call("call-b", "{\"resource_id\":\"b\"}");
     dependent.depends_on = vec!["call-a".to_owned()];

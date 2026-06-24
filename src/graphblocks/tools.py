@@ -923,6 +923,35 @@ class ToolExecutionPlan:
                 raise ToolExecutionPlanError(f"duplicate tool call {tool_call_id}")
             self._calls_by_id[tool_call_id] = planned_call
             self._states[tool_call_id] = "pending"
+        for planned_call in self.calls:
+            tool_call_id = planned_call.call.tool_call_id
+            for dependency in planned_call.call.depends_on:
+                if dependency not in self._calls_by_id:
+                    raise ToolExecutionPlanError(
+                        f"tool call {tool_call_id} depends on unknown tool call {dependency}"
+                    )
+        remaining_dependencies = {
+            tool_call_id: set(planned_call.call.depends_on)
+            for tool_call_id, planned_call in self._calls_by_id.items()
+        }
+        ready = [tool_call_id for tool_call_id, dependencies in remaining_dependencies.items() if not dependencies]
+        while ready:
+            completed_id = ready.pop(0)
+            if completed_id not in remaining_dependencies:
+                continue
+            remaining_dependencies.pop(completed_id)
+            for candidate_id, dependencies in remaining_dependencies.items():
+                if completed_id in dependencies:
+                    dependencies.remove(completed_id)
+                    if not dependencies:
+                        ready.append(candidate_id)
+        if remaining_dependencies:
+            for planned_call in self.calls:
+                tool_call_id = planned_call.call.tool_call_id
+                if tool_call_id in remaining_dependencies:
+                    raise ToolExecutionPlanError(
+                        f"tool execution plan has a dependency cycle involving {tool_call_id}"
+                    )
 
     def state(self, tool_call_id: str) -> ToolExecutionState | None:
         return self._states.get(tool_call_id)

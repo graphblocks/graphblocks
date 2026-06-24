@@ -1431,6 +1431,35 @@ def test_tool_execution_plan_rejects_calls_from_different_response() -> None:
     assert str(error.value) == "tool call call-b belongs to response response-2, not response-1"
 
 
+def test_tool_execution_plan_rejects_unknown_dependency() -> None:
+    dependent = replace(_tool_call("call-b", '{"resource_id":"b"}'), depends_on=("call-missing",))
+
+    with pytest.raises(ToolExecutionPlanError) as error:
+        ToolExecutionPlan(
+            plan_id="plan-1",
+            response_id="response-1",
+            calls=(ToolPlanCall(_tool_call("call-a")), ToolPlanCall(dependent)),
+            maximum_parallelism=2,
+        )
+
+    assert str(error.value) == "tool call call-b depends on unknown tool call call-missing"
+
+
+def test_tool_execution_plan_rejects_dependency_cycle() -> None:
+    first = replace(_tool_call("call-a", '{"resource_id":"a"}'), depends_on=("call-b",))
+    second = replace(_tool_call("call-b", '{"resource_id":"b"}'), depends_on=("call-a",))
+
+    with pytest.raises(ToolExecutionPlanError) as error:
+        ToolExecutionPlan(
+            plan_id="plan-1",
+            response_id="response-1",
+            calls=(ToolPlanCall(first), ToolPlanCall(second)),
+            maximum_parallelism=2,
+        )
+
+    assert str(error.value) == "tool execution plan has a dependency cycle involving call-a"
+
+
 def test_tool_execution_plan_waits_for_dependencies_and_serializes_effect_keys() -> None:
     dependent = _tool_call("call-b", '{"resource_id":"ticket-1"}')
     dependent = replace(dependent, depends_on=("call-a",))
