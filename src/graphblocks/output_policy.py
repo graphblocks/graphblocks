@@ -511,6 +511,11 @@ class OutputDeliveryGate:
             raise OutputGateError(
                 f"chunk sequence {chunk.sequence} must be greater than {self.last_generated_sequence}"
             )
+        expected_sequence = self.last_generated_sequence + 1
+        if chunk.sequence != expected_sequence:
+            raise OutputGateError(
+                f"chunk sequence {chunk.sequence} must be next after {self.last_generated_sequence}"
+            )
         self.last_generated_sequence = chunk.sequence
         self.pending[chunk.sequence] = chunk
 
@@ -518,12 +523,10 @@ class OutputDeliveryGate:
         if self.cutoff is not None:
             return []
         deliverable: list[GenerationChunk] = []
-        for sequence in sorted(self.pending):
-            if sequence <= self.last_client_delivered_sequence:
-                continue
-            if sequence > self.last_policy_accepted_sequence:
-                break
-            deliverable.append(self.pending[sequence])
+        next_sequence = self.last_client_delivered_sequence + 1
+        while next_sequence <= self.last_policy_accepted_sequence and next_sequence in self.pending:
+            deliverable.append(self.pending[next_sequence])
+            next_sequence += 1
         for chunk in deliverable:
             self.pending.pop(chunk.sequence, None)
             self.last_client_delivered_sequence = chunk.sequence

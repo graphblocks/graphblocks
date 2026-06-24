@@ -284,6 +284,17 @@ def test_output_delivery_gate_releases_only_policy_accepted_chunks() -> None:
     assert gate.last_client_delivered_sequence == 2
 
 
+def test_output_delivery_gate_rejects_non_contiguous_generation_sequence() -> None:
+    gate = OutputDeliveryGate("stream-1", "response-1")
+
+    with pytest.raises(OutputGateError) as error:
+        gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 2, "late"))
+
+    assert str(error.value) == "chunk sequence 2 must be next after 0"
+    assert gate.last_generated_sequence == 0
+    assert gate.last_client_delivered_sequence == 0
+
+
 def test_output_delivery_gate_rejects_future_accepted_sequence() -> None:
     gate = OutputDeliveryGate("stream-1", "response-1")
     gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "hello"))

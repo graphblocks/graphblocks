@@ -48,6 +48,21 @@ fn bounded_holdback_releases_only_policy_accepted_chunks() -> Result<(), OutputG
 }
 
 #[test]
+fn output_gate_rejects_non_contiguous_generation_sequence() {
+    let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
+
+    assert_eq!(
+        gate.record_chunk(GenerationChunk::text("stream-1", "response-1", 2, "late")),
+        Err(OutputGateError::NonContiguousSequence {
+            last_generated_sequence: 0,
+            attempted_sequence: 2,
+        }),
+    );
+    assert_eq!(gate.last_generated_sequence(), 0);
+    assert_eq!(gate.last_client_delivered_sequence(), 0);
+}
+
+#[test]
 fn policy_decision_cannot_accept_future_generation_sequences() -> Result<(), OutputGateError> {
     let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
 

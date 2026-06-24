@@ -701,6 +701,10 @@ pub enum OutputGateError {
         last_generated_sequence: u64,
         attempted_sequence: u64,
     },
+    NonContiguousSequence {
+        last_generated_sequence: u64,
+        attempted_sequence: u64,
+    },
     AcceptedSequenceBeyondGenerated {
         last_generated_sequence: u64,
         accepted_through_sequence: u64,
@@ -797,11 +801,12 @@ impl OutputDeliveryGate {
             return Vec::new();
         }
 
-        let ready_sequences = self
-            .pending
-            .range(delivered_after..=accepted_through)
-            .map(|(sequence, _)| *sequence)
-            .collect::<Vec<_>>();
+        let mut ready_sequences = Vec::new();
+        let mut sequence = delivered_after;
+        while sequence <= accepted_through && self.pending.contains_key(&sequence) {
+            ready_sequences.push(sequence);
+            sequence += 1;
+        }
         let mut deliverable = Vec::new();
         for sequence in ready_sequences {
             if let Some(chunk) = self.pending.remove(&sequence) {
@@ -830,6 +835,12 @@ impl OutputDeliveryGate {
         }
         if chunk.sequence <= self.last_generated_sequence {
             return Err(OutputGateError::NonMonotonicSequence {
+                last_generated_sequence: self.last_generated_sequence,
+                attempted_sequence: chunk.sequence,
+            });
+        }
+        if chunk.sequence != self.last_generated_sequence + 1 {
+            return Err(OutputGateError::NonContiguousSequence {
                 last_generated_sequence: self.last_generated_sequence,
                 attempted_sequence: chunk.sequence,
             });
