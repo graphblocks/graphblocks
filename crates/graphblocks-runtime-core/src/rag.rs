@@ -6,7 +6,7 @@ use graphblocks_compiler::canonical::canonical_hash;
 use serde_json::{Map, Value, json};
 
 use crate::documents::{DocumentChunk, DocumentSpan, SourceRef};
-use crate::evaluation::ResultBundle;
+use crate::evaluation::{MetricDirection, MetricObservation, ResultBundle};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SearchRequest {
@@ -2462,6 +2462,65 @@ pub fn validate_answer_citation_authorization(
         abstention: None,
         repaired_answer: None,
     })
+}
+
+pub fn evaluate_rag_answer_metrics(
+    answer: &Answer,
+    validation: &CitationValidationResult,
+) -> Vec<MetricObservation> {
+    let citation_ids = answer
+        .citations
+        .iter()
+        .map(|citation| citation.citation_id.clone())
+        .collect::<BTreeSet<_>>();
+    let invalid_citation_ids = validation
+        .issues
+        .iter()
+        .filter(|issue| issue.severity == CitationSeverity::Error)
+        .filter_map(|issue| issue.citation_id.as_ref())
+        .filter(|citation_id| citation_ids.contains(*citation_id))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let citation_precision = if answer.citations.is_empty() {
+        Value::Null
+    } else {
+        json!(
+            answer
+                .citations
+                .len()
+                .saturating_sub(invalid_citation_ids.len()) as f64
+                / answer.citations.len() as f64
+        )
+    };
+
+    let claim_ids = answer
+        .claims
+        .iter()
+        .map(|claim| claim.claim_id.clone())
+        .collect::<BTreeSet<_>>();
+    let unsupported_claim_ids = validation
+        .issues
+        .iter()
+        .filter(|issue| issue.severity == CitationSeverity::Error)
+        .filter(|issue| {
+            issue.code == "claim.unsupported_by_citation" || issue.code == "claim.missing_citation"
+        })
+        .filter_map(|issue| issue.claim_id.as_ref())
+        .filter(|claim_id| claim_ids.contains(*claim_id))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let unsupported_claim_rate = if answer.claims.is_empty() {
+        Value::Null
+    } else {
+        json!(unsupported_claim_ids.len() as f64 / answer.claims.len() as f64)
+    };
+
+    vec![
+        MetricObservation::new("citation_precision", citation_precision)
+            .with_direction(MetricDirection::Maximize),
+        MetricObservation::new("unsupported_claim_rate", unsupported_claim_rate)
+            .with_direction(MetricDirection::Minimize),
+    ]
 }
 
 fn source_ref_matches(citation_source: &SourceRef, context_source: &SourceRef) -> bool {

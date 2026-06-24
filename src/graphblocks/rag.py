@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from decimal import Decimal
 import json
 import re
 from typing import Literal, TypeAlias
 
 from .canonical import canonical_hash
 from .documents import DocumentChunk, DocumentSpan, SourceRef
-from .evaluation import ResultBundle
+from .evaluation import MetricObservation, ResultBundle
 
 KnowledgeDeleteMode: TypeAlias = Literal["tombstone", "hard"]
 KnowledgeRecordStatus: TypeAlias = Literal["active", "tombstoned"]
@@ -956,6 +957,54 @@ def validate_answer_citation_authorization(
                 )
             )
     return CitationValidationResult(ok=not issues, issues=issues)
+
+
+def evaluate_rag_answer_metrics(
+    answer: Answer,
+    validation: CitationValidationResult,
+) -> list[MetricObservation]:
+    citation_ids = {citation.citation_id for citation in answer.citations}
+    invalid_citation_ids = {
+        issue.citation_id
+        for issue in validation.issues
+        if issue.severity == "error"
+        and issue.citation_id is not None
+        and issue.citation_id in citation_ids
+    }
+    citation_precision = (
+        None
+        if not answer.citations
+        else Decimal(len(answer.citations) - len(invalid_citation_ids))
+        / Decimal(len(answer.citations))
+    )
+
+    claim_ids = {claim.claim_id for claim in answer.claims}
+    unsupported_claim_ids = {
+        issue.claim_id
+        for issue in validation.issues
+        if issue.severity == "error"
+        and issue.code in {"claim.unsupported_by_citation", "claim.missing_citation"}
+        and issue.claim_id is not None
+        and issue.claim_id in claim_ids
+    }
+    unsupported_claim_rate = (
+        None
+        if not answer.claims
+        else Decimal(len(unsupported_claim_ids)) / Decimal(len(answer.claims))
+    )
+
+    return [
+        MetricObservation(
+            "citation_precision",
+            citation_precision,
+            direction="maximize",
+        ),
+        MetricObservation(
+            "unsupported_claim_rate",
+            unsupported_claim_rate,
+            direction="minimize",
+        ),
+    ]
 
 
 def validate_answer_citations(

@@ -3,7 +3,7 @@ use graphblocks_runtime_core::documents::{
     DocumentSpan, SourceRef, chunk_document_by_lines, create_local_text_revision,
     parse_plain_text_document,
 };
-use graphblocks_runtime_core::evaluation::ResultBundle;
+use graphblocks_runtime_core::evaluation::{MetricDirection, ResultBundle};
 use graphblocks_runtime_core::rag::{
     Answer, AuthContext, Citation, CitationSeverity, Claim, ContextBuildOptions, ContextPack,
     FailurePolicy, FederatedFailureMode, FederatedRetrievalOptions, FederatedRetrievalSource,
@@ -11,9 +11,9 @@ use graphblocks_runtime_core::rag::{
     KnowledgeDeleteMode, KnowledgeItemRef, KnowledgeRecordStatus, QueryPlan, RagError,
     RagResultBundle, RagResultPayload, RerankOptions, RetrievalResult, SearchHit, SearchRequest,
     authorize_search_hits, build_abstention_answer, build_answer_from_model_response,
-    build_answer_from_model_response_with_context, build_context_pack, federated_retrieve,
-    fuse_search_hits, knowledge_item_from_chunk, render_context_pack, rerank_search_hits,
-    resolve_citation_source_trace, validate_answer_citation_authorization,
+    build_answer_from_model_response_with_context, build_context_pack, evaluate_rag_answer_metrics,
+    federated_retrieve, fuse_search_hits, knowledge_item_from_chunk, render_context_pack,
+    rerank_search_hits, resolve_citation_source_trace, validate_answer_citation_authorization,
     validate_answer_citations, validate_answer_grounding,
 };
 use serde_json::{Value, json};
@@ -1536,6 +1536,88 @@ fn validate_answer_citations_repair_fails_when_claim_loses_support() {
         .expect("result includes repaired answer");
     assert!(repaired.citations.is_empty());
     assert!(repaired.claims[0].citation_ids.is_empty());
+}
+
+#[test]
+fn evaluate_rag_answer_metrics_reports_citation_precision() {
+    let context = build_context_pack(
+        "ctx-1",
+        vec![hit(
+            "hit-1",
+            "chunk-1",
+            "doc-1",
+            "Alpha policy requires audit logs.",
+            1,
+        )],
+        ContextBuildOptions::new(10),
+    )
+    .expect("context build succeeds");
+    let valid = Citation::new("cite-valid", context.hits[0].item.source.clone())
+        .with_cited_text("requires audit logs");
+    let invalid = Citation::new("cite-invalid", context.hits[0].item.source.clone())
+        .with_cited_text("unrelated phrase");
+    let answer = Answer::new("answer-1", "Alpha policy requires audit logs.")
+        .with_claim(
+            Claim::new("claim-1", "Alpha policy requires audit logs.")
+                .with_citation_ids(["cite-valid", "cite-invalid"]),
+        )
+        .with_citation(valid)
+        .with_citation(invalid);
+    let validation = validate_answer_citations(&answer, &context, true, FailurePolicy::Fail)
+        .expect("citation validation succeeds");
+
+    let metrics = evaluate_rag_answer_metrics(&answer, &validation);
+
+    let citation_precision = metrics
+        .iter()
+        .find(|metric| metric.name == "citation_precision")
+        .expect("citation precision metric exists");
+    assert_eq!(citation_precision.value, json!(0.5));
+    assert_eq!(citation_precision.direction, MetricDirection::Maximize);
+    let unsupported_claim_rate = metrics
+        .iter()
+        .find(|metric| metric.name == "unsupported_claim_rate")
+        .expect("unsupported claim rate metric exists");
+    assert_eq!(unsupported_claim_rate.value, json!(0.0));
+    assert_eq!(unsupported_claim_rate.direction, MetricDirection::Minimize);
+}
+
+#[test]
+fn evaluate_rag_answer_metrics_reports_unsupported_claim_rate() {
+    let context = build_context_pack(
+        "ctx-1",
+        vec![hit(
+            "hit-1",
+            "chunk-1",
+            "doc-1",
+            "Alpha policy requires audit logs.",
+            1,
+        )],
+        ContextBuildOptions::new(10),
+    )
+    .expect("context build succeeds");
+    let citation = Citation::new("cite-1", context.hits[0].item.source.clone())
+        .with_cited_text("requires audit logs");
+    let answer = Answer::new("answer-1", "Beta policy requires approval.")
+        .with_claim(
+            Claim::new("claim-1", "Beta policy requires approval.").with_citation_ids(["cite-1"]),
+        )
+        .with_citation(citation);
+    let validation = validate_answer_citations(&answer, &context, true, FailurePolicy::Fail)
+        .expect("citation validation succeeds");
+
+    let metrics = evaluate_rag_answer_metrics(&answer, &validation);
+
+    let citation_precision = metrics
+        .iter()
+        .find(|metric| metric.name == "citation_precision")
+        .expect("citation precision metric exists");
+    assert_eq!(citation_precision.value, json!(0.0));
+    let unsupported_claim_rate = metrics
+        .iter()
+        .find(|metric| metric.name == "unsupported_claim_rate")
+        .expect("unsupported claim rate metric exists");
+    assert_eq!(unsupported_claim_rate.value, json!(1.0));
 }
 
 #[test]
