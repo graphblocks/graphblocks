@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping
 import json
 from dataclasses import asdict
 from pathlib import Path
@@ -13,6 +14,18 @@ from .diagnostics import Diagnostic
 from .loader import load_documents
 from .migration import migrate_document
 from .packages import build_package_lock, doctor_package_catalog, load_package_catalog, package_rows
+from .policy import (
+    PolicyBundle,
+    PolicyObligation,
+    PolicyRequest,
+    PolicyRule,
+    PolicyTestCase,
+    PolicyTestExpectation,
+    PrincipalRef,
+    ResourceRef,
+    StaticPolicyEvaluator,
+    run_policy_tests,
+)
 from .plugins import BlockCatalog, discover_plugins, load_plugin_manifest, validate_plugin_manifest
 from .runtime import InProcessRuntime, stdlib_registry
 
@@ -26,6 +39,40 @@ STRUCTURAL_KINDS = {
     "PluginManifest",
     "PolicyProfile",
 }
+
+
+def _field(mapping: Mapping[str, object], *names: str, default: object = None) -> object:
+    for name in names:
+        if name in mapping:
+            return mapping[name]
+    return default
+
+
+def _tuple_field(mapping: Mapping[str, object], *names: str) -> tuple[str, ...]:
+    value = _field(mapping, *names, default=())
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        return (value,)
+    return tuple(str(item) for item in value)
+
+
+def _documents_from_path(path: Path) -> list[dict[str, object]]:
+    if not path.is_dir():
+        return load_documents(path)
+    documents: list[dict[str, object]] = []
+    for candidate in sorted([*path.glob("*.yaml"), *path.glob("*.yml")]):
+        documents.extend(load_documents(candidate))
+    return documents
+
+
+def _resource_ref_from_mapping(mapping: Mapping[str, object]) -> ResourceRef:
+    return ResourceRef(
+        resource_id=str(_field(mapping, "resourceId", "resource_id", "id")),
+        resource_kind=_field(mapping, "resourceKind", "resource_kind", "kind"),
+        tenant_id=_field(mapping, "tenantId", "tenant_id"),
+        attributes=dict(_field(mapping, "attributes", default={}) or {}),
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -75,6 +122,13 @@ def main(argv: list[str] | None = None) -> int:
     packages_doctor_parser = packages_subparsers.add_parser("doctor", help="validate package catalog closure")
     packages_doctor_parser.add_argument("--catalog", type=Path, help="override package-catalog.yaml")
     packages_doctor_parser.add_argument("--json", action="store_true", help="emit JSON")
+
+    policy_parser = subparsers.add_parser("policy", help="validate and test policy bundles")
+    policy_subparsers = policy_parser.add_subparsers(dest="policy_command")
+    policy_test_parser = policy_subparsers.add_parser("test", help="run static policy test cases")
+    policy_test_parser.add_argument("policy", type=Path)
+    policy_test_parser.add_argument("--cases", required=True, type=Path, help="case YAML file or directory")
+    policy_test_parser.add_argument("--json", action="store_true", help="emit JSON")
 
     lock_parser = subparsers.add_parser("lock", help="create a semantic graph lockfile")
     lock_parser.add_argument("path", type=Path)
@@ -303,6 +357,193 @@ def main(argv: list[str] | None = None) -> int:
                 print("OK")
             return 0 if diagnostics.ok else 1
         packages_parser.print_help()
+        return 0
+    if args.command == "policy":
+        if args.policy_command == "test":
+            try:
+                bundles: list[PolicyBundle] = []
+                for document in _documents_from_path(args.policy):
+                    if document.get("kind") != "PolicyBundle":
+                        continue
+                    metadata = document.get("metadata", {})
+                    spec = document.get("spec", {})
+                    if not isinstance(metadata, Mapping) or not isinstance(spec, Mapping):
+                        raise ValueError("PolicyBundle documents require metadata and spec mappings")
+                    rules: list[PolicyRule] = []
+                    for rule_data in spec.get("rules", []):
+                        if not isinstance(rule_data, Mapping):
+                            raise ValueError("PolicyBundle rules must be mappings")
+                        obligations: list[PolicyObligation] = []
+                        for obligation_data in rule_data.get("obligations", []):
+                            if not isinstance(obligation_data, Mapping):
+                                raise ValueError("PolicyRule obligations must be mappings")
+                            obligations.append(
+                                PolicyObligation(
+                                    obligation_id=str(
+                                        _field(obligation_data, "obligationId", "obligation_id", "id")
+                                    ),
+                                    obligation_type=str(
+                                        _field(obligation_data, "obligationType", "obligation_type", "type")
+                                    ),
+                                    parameters=dict(_field(obligation_data, "parameters", default={}) or {}),
+                                )
+                            )
+                        rules.append(
+                            PolicyRule(
+                                rule_id=str(_field(rule_data, "ruleId", "rule_id", "id")),
+                                effect=str(_field(rule_data, "effect")),
+                                actions=_tuple_field(rule_data, "actions"),
+                                resource_selectors=_tuple_field(
+                                    rule_data,
+                                    "resourceSelectors",
+                                    "resource_selectors",
+                                ),
+                                principal_selectors=_tuple_field(
+                                    rule_data,
+                                    "principalSelectors",
+                                    "principal_selectors",
+                                ),
+                                obligations=tuple(obligations),
+                                priority=int(_field(rule_data, "priority", default=0) or 0),
+                            )
+                        )
+                    bundles.append(
+                        PolicyBundle(
+                            bundle_id=str(_field(spec, "bundleId", "bundle_id", default=metadata.get("name"))),
+                            version=str(_field(spec, "version", default=metadata.get("version", "0.0.0"))),
+                            rule_language=str(_field(spec, "ruleLanguage", "rule_language", default="static")),
+                            rules=tuple(rules),
+                            obligation_schema_versions=_tuple_field(
+                                spec,
+                                "obligationSchemaVersions",
+                                "obligation_schema_versions",
+                            ),
+                            default_fail_modes=dict(
+                                _field(spec, "defaultFailModes", "default_fail_modes", default={}) or {}
+                            ),
+                            signature_ref=_field(spec, "signatureRef", "signature_ref"),
+                        )
+                    )
+                cases: list[PolicyTestCase] = []
+                for document in _documents_from_path(args.cases):
+                    if document.get("kind") != "PolicyTestCase":
+                        continue
+                    metadata = document.get("metadata", {})
+                    spec = document.get("spec", {})
+                    if not isinstance(metadata, Mapping) or not isinstance(spec, Mapping):
+                        raise ValueError("PolicyTestCase documents require metadata and spec mappings")
+                    request_data = _field(spec, "request")
+                    expectation_data = _field(spec, "expect", "expectation", default={})
+                    if not isinstance(request_data, Mapping) or not isinstance(expectation_data, Mapping):
+                        raise ValueError("PolicyTestCase spec requires request and expect mappings")
+                    resource_data = _field(request_data, "resource")
+                    if not isinstance(resource_data, Mapping):
+                        raise ValueError("PolicyTestCase request.resource must be a mapping")
+                    principal_data = _field(request_data, "principal")
+                    principal = None
+                    if principal_data is not None:
+                        if not isinstance(principal_data, Mapping):
+                            raise ValueError("PolicyTestCase request.principal must be a mapping")
+                        principal = PrincipalRef(
+                            principal_id=str(_field(principal_data, "principalId", "principal_id", "id")),
+                            tenant_id=_field(principal_data, "tenantId", "tenant_id"),
+                            groups=_tuple_field(principal_data, "groups"),
+                            roles=_tuple_field(principal_data, "roles"),
+                            attributes=dict(_field(principal_data, "attributes", default={}) or {}),
+                        )
+                    tenant_data = _field(request_data, "tenant")
+                    atomic_unit_data = _field(request_data, "atomicUnit", "atomic_unit")
+                    request = PolicyRequest(
+                        request_id=str(_field(request_data, "requestId", "request_id", "id")),
+                        enforcement_point=str(_field(request_data, "enforcementPoint", "enforcement_point")),
+                        action=str(_field(request_data, "action")),
+                        resource=_resource_ref_from_mapping(resource_data),
+                        occurred_at=str(_field(request_data, "occurredAt", "occurred_at")),
+                        principal=principal,
+                        tenant=_resource_ref_from_mapping(tenant_data) if isinstance(tenant_data, Mapping) else None,
+                        release_id=_field(request_data, "releaseId", "release_id"),
+                        deployment_revision_id=_field(
+                            request_data,
+                            "deploymentRevisionId",
+                            "deployment_revision_id",
+                        ),
+                        run_id=_field(request_data, "runId", "run_id"),
+                        atomic_unit=_resource_ref_from_mapping(atomic_unit_data)
+                        if isinstance(atomic_unit_data, Mapping)
+                        else None,
+                        data_labels=_tuple_field(request_data, "dataLabels", "data_labels"),
+                        requested_usage=tuple(_field(request_data, "requestedUsage", "requested_usage", default=()) or ()),
+                        attributes=dict(_field(request_data, "attributes", default={}) or {}),
+                        policy_snapshot_id=_field(request_data, "policySnapshotId", "policy_snapshot_id"),
+                    )
+                    expectation = PolicyTestExpectation(
+                        effect=_field(expectation_data, "effect"),
+                        reason_codes=_tuple_field(expectation_data, "reasonCodes", "reason_codes"),
+                        policy_refs=_tuple_field(expectation_data, "policyRefs", "policy_refs"),
+                        obligation_ids=_tuple_field(expectation_data, "obligationIds", "obligation_ids"),
+                        enforcement_status=_field(
+                            expectation_data,
+                            "enforcementStatus",
+                            "enforcement_status",
+                        ),
+                    )
+                    enforced_obligation_ids = None
+                    raw_enforced_obligation_ids = _field(
+                        spec,
+                        "enforcedObligationIds",
+                        "enforced_obligation_ids",
+                    )
+                    if raw_enforced_obligation_ids is not None:
+                        enforced_obligation_ids = _tuple_field(
+                            spec,
+                            "enforcedObligationIds",
+                            "enforced_obligation_ids",
+                        )
+                    cases.append(
+                        PolicyTestCase(
+                            str(_field(spec, "caseId", "case_id", default=metadata.get("name"))),
+                            request,
+                            expectation,
+                            evaluated_at=str(_field(spec, "evaluatedAt", "evaluated_at")),
+                            enforced_obligation_ids=enforced_obligation_ids,
+                        )
+                    )
+                if not bundles:
+                    print(f"{args.policy}: no PolicyBundle document found")
+                    return 1
+                if not cases:
+                    print(f"{args.cases}: no PolicyTestCase document found")
+                    return 1
+                report = run_policy_tests(StaticPolicyEvaluator.from_bundles(bundles), cases)
+                if args.json:
+                    print(
+                        json.dumps(
+                            {
+                                "ok": report.passed,
+                                "cases": [
+                                    {
+                                        "caseId": result.case_id,
+                                        "passed": result.passed,
+                                        "failures": list(result.failures),
+                                    }
+                                    for result in report.results
+                                ],
+                            },
+                            indent=2,
+                            sort_keys=True,
+                        )
+                    )
+                else:
+                    for result in report.results:
+                        status = "OK" if result.passed else "FAIL"
+                        print(f"{status} {result.case_id}")
+                        for failure in result.failures:
+                            print(f"  {failure}")
+                return 0 if report.passed else 1
+            except (KeyError, TypeError, ValueError) as error:
+                print(f"policy test error: {error}")
+                return 1
+        policy_parser.print_help()
         return 0
     parser.print_help()
     return 0

@@ -151,3 +151,98 @@ def test_validate_cli_uses_plugin_path_for_port_validation(tmp_path, capsys) -> 
 
     assert main(["validate", str(graph_path), "--plugin-path", str(manifest_path), "--json"]) == 1
     assert '"code": "GB1013"' in capsys.readouterr().out
+
+
+def test_policy_test_cli_runs_static_policy_cases(tmp_path, capsys) -> None:
+    policy = {
+        "apiVersion": "graphblocks.ai/v1alpha1",
+        "kind": "PolicyBundle",
+        "metadata": {"name": "support-policy", "version": "1.0.0"},
+        "spec": {
+            "ruleLanguage": "static",
+            "rules": [
+                {
+                    "ruleId": "allow-model",
+                    "effect": "allow",
+                    "actions": ["model.generate"],
+                    "resourceSelectors": ["model"],
+                }
+            ],
+        },
+    }
+    case = {
+        "apiVersion": "graphblocks.ai/v1alpha1",
+        "kind": "PolicyTestCase",
+        "metadata": {"name": "allow-support-model"},
+        "spec": {
+            "request": {
+                "requestId": "request-1",
+                "enforcementPoint": "before_provider_call",
+                "action": "model.generate",
+                "resource": {"resourceId": "model:support", "resourceKind": "model"},
+                "occurredAt": "2026-06-23T00:00:00Z",
+            },
+            "expect": {
+                "effect": "allow",
+                "reasonCodes": ["allow-model"],
+                "enforcementStatus": "enforced",
+            },
+            "evaluatedAt": "2026-06-23T00:00:01Z",
+        },
+    }
+    policy_path = tmp_path / "policy.yaml"
+    cases_path = tmp_path / "cases"
+    cases_path.mkdir()
+    policy_path.write_text(yaml.safe_dump(policy), encoding="utf-8")
+    (cases_path / "allow.yaml").write_text(yaml.safe_dump(case), encoding="utf-8")
+
+    assert main(["policy", "test", str(policy_path), "--cases", str(cases_path), "--json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["cases"] == [{"caseId": "allow-support-model", "passed": True, "failures": []}]
+
+
+def test_policy_test_cli_returns_failure_for_mismatched_case(tmp_path, capsys) -> None:
+    policy = {
+        "apiVersion": "graphblocks.ai/v1alpha1",
+        "kind": "PolicyBundle",
+        "metadata": {"name": "support-policy", "version": "1.0.0"},
+        "spec": {
+            "ruleLanguage": "static",
+            "rules": [
+                {
+                    "ruleId": "allow-model",
+                    "effect": "allow",
+                    "actions": ["model.generate"],
+                    "resourceSelectors": ["model"],
+                }
+            ],
+        },
+    }
+    case = {
+        "apiVersion": "graphblocks.ai/v1alpha1",
+        "kind": "PolicyTestCase",
+        "metadata": {"name": "deny-support-model"},
+        "spec": {
+            "request": {
+                "requestId": "request-1",
+                "enforcementPoint": "before_provider_call",
+                "action": "model.generate",
+                "resource": {"resourceId": "model:support", "resourceKind": "model"},
+                "occurredAt": "2026-06-23T00:00:00Z",
+            },
+            "expect": {"effect": "deny", "enforcementStatus": "blocked"},
+            "evaluatedAt": "2026-06-23T00:00:01Z",
+        },
+    }
+    policy_path = tmp_path / "policy.yaml"
+    case_path = tmp_path / "case.yaml"
+    policy_path.write_text(yaml.safe_dump(policy), encoding="utf-8")
+    case_path.write_text(yaml.safe_dump(case), encoding="utf-8")
+
+    assert main(["policy", "test", str(policy_path), "--cases", str(case_path)]) == 1
+
+    output = capsys.readouterr().out
+    assert "FAIL deny-support-model" in output
+    assert "expected effect deny but got allow" in output
