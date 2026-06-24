@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 from pathlib import Path
 
 
@@ -103,3 +104,76 @@ def test_client_package_runs_local_graph_command_and_emits_events(monkeypatch) -
     assert response.event_stream.accept(response.events[0]) == response.events[0]
     assert "RunStarted" in graphblocks_client.STANDARD_APPLICATION_EVENT_KINDS
     assert "LocalGraphBlocksClient" in graphblocks_client.__all__
+
+
+def test_client_package_posts_run_graph_command_over_http(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+    requests: list[object] = []
+
+    class FakeResponse:
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "runId": "run-http-1",
+                    "status": "succeeded",
+                    "outputs": {"answer": "ok"},
+                    "events": [
+                        {
+                            "kind": "RunStarted",
+                            "metadata": {
+                                "eventId": "event-1",
+                                "runId": "run-http-1",
+                                "responseId": "response-http-1",
+                                "turnId": None,
+                                "sequence": 1,
+                                "releaseId": "release-1",
+                                "policySnapshotId": "policy-1",
+                                "occurredAt": "2026-06-24T00:00:00Z",
+                            },
+                            "payload": {"status": "running"},
+                        }
+                    ],
+                }
+            ).encode("utf-8")
+
+    def transport(request: object, *, timeout: float) -> FakeResponse:
+        requests.append(request)
+        assert timeout == 5.0
+        return FakeResponse()
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        bearer_token="token-1",
+        timeout=5.0,
+        transport=transport,
+    )
+
+    response = client.run_graph(
+        graphblocks_client.RunGraphCommand(
+            graph={"kind": "Graph", "metadata": {"name": "remote-run"}},
+            inputs={"message": {"text": "hello"}},
+            run_id="run-http-1",
+            response_id="response-http-1",
+            release_id="release-1",
+            policy_snapshot_id="policy-1",
+            occurred_at="2026-06-24T00:00:00Z",
+        )
+    )
+
+    request = requests[0]
+    body = json.loads(request.data.decode("utf-8"))
+    headers = {key.lower(): value for key, value in request.headers.items()}
+    assert request.full_url == "https://graphblocks.example/api/runs"
+    assert request.get_method() == "POST"
+    assert headers["authorization"] == "Bearer token-1"
+    assert headers["content-type"] == "application/json"
+    assert body["runId"] == "run-http-1"
+    assert body["responseId"] == "response-http-1"
+    assert body["inputs"] == {"message": {"text": "hello"}}
+    assert response.run_id == "run-http-1"
+    assert response.status == "succeeded"
+    assert response.outputs == {"answer": "ok"}
+    assert response.events[0].kind == "RunStarted"
+    assert response.event_stream.accept(response.events[0]) == response.events[0]
+    assert "HttpGraphBlocksClient" in graphblocks_client.__all__
