@@ -27,6 +27,25 @@ spec:
         - {name: prompt, type: graphblocks.ai/Prompt@1}
       outputs:
         - {name: response, type: graphblocks.ai/ModelResponse@1}
+    - typeId: tools.resolve
+      version: 1
+      role: builder
+      implementation: graphblocks.stdlib.tools.resolve
+      inputs:
+        - {name: principal, type: graphblocks.ai/Principal@1, required: false}
+        - {name: conversation, type: graphblocks.ai/ConversationSnapshot@1, required: false}
+        - {name: policySnapshot, type: graphblocks.ai/PolicySnapshot@1, required: false}
+      outputs:
+        - {name: tools, type: List<graphblocks.ai/ResolvedTool@1>}
+    - typeId: agent.run
+      version: 1
+      role: agent
+      implementation: graphblocks.stdlib.agent.run
+      inputs:
+        - {name: messages, type: List<graphblocks.ai/Message@1>}
+        - {name: tools, type: List<graphblocks.ai/ResolvedTool@1>, required: false}
+      outputs:
+        - {name: candidate, type: graphblocks.ai/TurnCandidate@1}
     - typeId: conversation.begin_turn
       version: 1
       role: transform

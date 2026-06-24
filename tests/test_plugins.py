@@ -48,6 +48,8 @@ def test_builtin_plugin_exposes_stdlib_port_descriptors() -> None:
 
     prompt = catalog.get("prompt.render@1")
     model = catalog.get("model.generate@1")
+    resolve_tools = catalog.get("tools.resolve@1")
+    agent = catalog.get("agent.run@1")
     control_map = catalog.get("control.map@2")
 
     assert prompt is not None
@@ -56,6 +58,12 @@ def test_builtin_plugin_exposes_stdlib_port_descriptors() -> None:
     assert model is not None
     assert [port.name for port in model.inputs] == ["prompt"]
     assert [port.name for port in model.outputs] == ["response"]
+    assert resolve_tools is not None
+    assert [port.name for port in resolve_tools.inputs] == ["principal", "conversation", "policySnapshot"]
+    assert [port.name for port in resolve_tools.outputs] == ["tools"]
+    assert agent is not None
+    assert [port.name for port in agent.inputs] == ["messages", "tools"]
+    assert [port.name for port in agent.outputs] == ["candidate"]
     assert control_map is not None
     assert [port.name for port in control_map.inputs] == ["items"]
     assert [port.name for port in control_map.outputs] == ["values", "outcomes"]
