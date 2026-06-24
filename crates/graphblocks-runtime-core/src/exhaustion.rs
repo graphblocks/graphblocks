@@ -362,6 +362,7 @@ pub struct ExhaustionController {
     pub atomic_unit_id: String,
     pub admission_epoch: u64,
     pub continuation_permit: Option<BudgetPermit>,
+    pub validation_time: Option<String>,
     pub used_additional_steps: u32,
     pub used_additional_usage: Vec<UsageAmount>,
 }
@@ -377,6 +378,7 @@ impl ExhaustionController {
             atomic_unit_id: atomic_unit_id.into(),
             admission_epoch,
             continuation_permit: None,
+            validation_time: None,
             used_additional_steps: 0,
             used_additional_usage: Vec::new(),
         }
@@ -384,6 +386,11 @@ impl ExhaustionController {
 
     pub fn with_continuation_permit(mut self, permit: BudgetPermit) -> Self {
         self.continuation_permit = Some(permit);
+        self
+    }
+
+    pub fn with_validation_time(mut self, validation_time: impl Into<String>) -> Self {
+        self.validation_time = Some(validation_time.into());
         self
     }
 
@@ -558,6 +565,10 @@ impl ExhaustionController {
                 .map(|preset| permit.continuation_profile == preset.as_str())
                 .unwrap_or(false)
             && permit.admission_epoch == self.admission_epoch
+            && self
+                .validation_time
+                .as_ref()
+                .is_none_or(|validation_time| permit.expires_at.as_str() > validation_time.as_str())
     }
 }
 

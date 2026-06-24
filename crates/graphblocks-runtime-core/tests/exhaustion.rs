@@ -148,6 +148,26 @@ fn continuation_permit_must_match_atomic_unit_profile_and_epoch() {
 }
 
 #[test]
+fn continuation_permit_must_not_be_expired_at_validation_time() {
+    let policy = ExhaustionPolicy::from_preset(
+        ExhaustionPreset::FinishCurrentTurn,
+        ExhaustionUnit::Turn,
+        Some(
+            ContinuationEnvelope::new()
+                .with_max_additional_usage([tokens(100)])
+                .with_max_additional_steps(1),
+        ),
+    );
+    let mut controller =
+        ExhaustionController::new(policy, "turn:1", 7).with_validation_time("2026-06-22T01:00:00Z");
+
+    let decision = controller.admit(WorkKind::DeclaredFinalization, 8, Some(&permit()));
+
+    assert!(!decision.allowed);
+    assert_eq!(decision.reason, "invalid_permit");
+}
+
+#[test]
 fn continuation_usage_must_fit_permit_authorized_amounts() {
     let policy = ExhaustionPolicy::from_preset(
         ExhaustionPreset::FinishCurrentTurn,
