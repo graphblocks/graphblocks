@@ -58,3 +58,18 @@ def test_agents_package_exposes_tool_resolution_and_execution_plan_contracts(mon
     plan.record_started("call-a")
     plan.record_completed("call-a")
     assert plan.ready_call_ids() == ["call-b"]
+
+
+def test_agents_package_exposes_agent_loop_contracts(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-agents" / "src"))
+    graphblocks_agents = importlib.import_module("graphblocks_agents")
+
+    controller = graphblocks_agents.AgentLoopController(
+        graphblocks_agents.AgentSpec("support-models").with_completion_reserve_units(100)
+    )
+
+    assert graphblocks_agents.AgentSpec("support-models").max_steps == 12
+    assert controller.decide_next_step(3, 100) == graphblocks_agents.AgentLoopDecision.finalize(
+        "completion_reserve_reached"
+    )
+    assert "AgentStatePatch" in graphblocks_agents.__all__

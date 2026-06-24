@@ -1,5 +1,18 @@
 from __future__ import annotations
 
+from graphblocks.agent import (
+    AgentLoopController,
+    AgentLoopDecision,
+    AgentLoopDisposition,
+    AgentSpec,
+    AgentState,
+    AgentStateError,
+    AgentStatePatch,
+    AgentStatePatchOp,
+    AgentStatePatchOpKind,
+    AgentStateSchema,
+    ToolFailurePolicy,
+)
 from graphblocks.tools import (
     AdmittedToolCall,
     BlockToolImplementation,
@@ -57,6 +70,16 @@ from graphblocks.tools import (
 
 __all__ = [
     "AdmittedToolCall",
+    "AgentLoopController",
+    "AgentLoopDecision",
+    "AgentLoopDisposition",
+    "AgentSpec",
+    "AgentState",
+    "AgentStateError",
+    "AgentStatePatch",
+    "AgentStatePatchOp",
+    "AgentStatePatchOpKind",
+    "AgentStateSchema",
     "BlockToolImplementation",
     "GraphRef",
     "GraphToolImplementation",
@@ -89,6 +112,7 @@ __all__ = [
     "ToolExecutionFailurePolicy",
     "ToolExecutionPlan",
     "ToolExecutionPlanError",
+    "ToolFailurePolicy",
     "ToolExecutionState",
     "ToolIdempotency",
     "ToolImplementation",
