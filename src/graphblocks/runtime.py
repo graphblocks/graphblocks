@@ -11,6 +11,17 @@ from typing import Any, Callable, Literal, Protocol
 from .compiler import compile_graph
 from .leases import InMemoryLeasePool
 from .run_store import InMemoryRunStore
+from .tools import (
+    BlockToolImplementation,
+    GraphToolImplementation,
+    McpToolImplementation,
+    OpenApiToolImplementation,
+    RemoteToolImplementation,
+    ToolBinding,
+    ToolCatalog,
+    ToolDefinition,
+    ToolResolutionScope,
+)
 
 JournalKind = Literal[
     "run_started",
@@ -438,6 +449,169 @@ def stdlib_registry() -> RuntimeRegistry:
             text = str(config.get("response", prompt))
         return {"response": text}
 
+    def resolve_tools(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+        definitions = []
+        for item in config.get("definitions", []):
+            if not isinstance(item, dict):
+                raise TypeError("tools.resolve@1 config.definitions entries must be mappings")
+            definitions.append(
+                ToolDefinition(
+                    name=str(item["name"]),
+                    description=str(item.get("description", "")),
+                    input_schema=str(item.get("inputSchema", item.get("input_schema"))),
+                    output_schema=(
+                        str(item.get("outputSchema", item.get("output_schema")))
+                        if item.get("outputSchema", item.get("output_schema")) is not None
+                        else None
+                    ),
+                    tags=frozenset(str(tag) for tag in item.get("tags", ())),
+                    version=str(item["version"]) if item.get("version") is not None else None,
+                )
+            )
+
+        bindings = []
+        for item in config.get("bindings", []):
+            if not isinstance(item, dict):
+                raise TypeError("tools.resolve@1 config.bindings entries must be mappings")
+            implementation_config = item.get("implementation")
+            if not isinstance(implementation_config, dict):
+                raise TypeError("tools.resolve@1 binding implementation must be a mapping")
+            kind = implementation_config.get("kind")
+            if kind == "block":
+                implementation = BlockToolImplementation(
+                    block=str(implementation_config["block"]),
+                    input_mapping=dict(implementation_config.get("inputMapping", {})),
+                    output_mapping=dict(implementation_config.get("outputMapping", {})),
+                )
+            elif kind == "graph":
+                implementation = GraphToolImplementation(
+                    graph=str(implementation_config["graph"]),
+                    input_mapping=dict(implementation_config.get("inputMapping", {})),
+                    output_mapping=dict(implementation_config.get("outputMapping", {})),
+                )
+            elif kind == "remote":
+                implementation = RemoteToolImplementation(
+                    connection=str(implementation_config["connection"]),
+                    operation=str(implementation_config["operation"]),
+                )
+            elif kind == "mcp":
+                implementation = McpToolImplementation(
+                    server=str(implementation_config["server"]),
+                    remote_name=str(implementation_config.get("remoteName", implementation_config.get("remote_name"))),
+                )
+            elif kind == "openapi":
+                implementation = OpenApiToolImplementation(
+                    connection=str(implementation_config["connection"]),
+                    operation_id=str(implementation_config.get("operationId", implementation_config.get("operation_id"))),
+                )
+            else:
+                raise TypeError(f"tools.resolve@1 unsupported implementation kind {kind!r}")
+            bindings.append(
+                ToolBinding(
+                    binding_id=str(item.get("bindingId", item.get("binding_id"))),
+                    tool_name=str(item.get("toolName", item.get("tool_name"))),
+                    implementation=implementation,
+                    effects=frozenset(str(effect) for effect in item.get("effects", ())),
+                    approval=str(item.get("approval", "policy")),
+                    idempotency=str(item.get("idempotency", "optional")),
+                    cancellation=str(item.get("cancellation", "cooperative")),
+                    result_mode=str(item.get("resultMode", item.get("result_mode", "value"))),
+                    timeout_ms=int(item["timeoutMs"]) if item.get("timeoutMs") is not None else None,
+                    retry_policy_ref=(
+                        str(item.get("retryPolicyRef", item.get("retry_policy_ref")))
+                        if item.get("retryPolicyRef", item.get("retry_policy_ref")) is not None
+                        else None
+                    ),
+                    policy_profile_ref=(
+                        str(item.get("policyProfileRef", item.get("policy_profile_ref")))
+                        if item.get("policyProfileRef", item.get("policy_profile_ref")) is not None
+                        else None
+                    ),
+                    execution_class=(
+                        str(item.get("executionClass", item.get("execution_class")))
+                        if item.get("executionClass", item.get("execution_class")) is not None
+                        else None
+                    ),
+                )
+            )
+
+        scope_config = config.get("scope", {})
+        if not isinstance(scope_config, dict):
+            raise TypeError("tools.resolve@1 config.scope must be a mapping")
+        scope = ToolResolutionScope(
+            application_tools=_string_set(scope_config, "applicationTools", "application_tools"),
+            graph_tools=_string_set(scope_config, "graphTools", "graph_tools"),
+            principal_tools=_string_set(scope_config, "principalTools", "principal_tools"),
+            tenant_policy_tools=_string_set(scope_config, "tenantPolicyTools", "tenant_policy_tools"),
+            conversation_policy_tools=_string_set(
+                scope_config,
+                "conversationPolicyTools",
+                "conversation_policy_tools",
+            ),
+            data_classification_tools=_string_set(
+                scope_config,
+                "dataClassificationTools",
+                "data_classification_tools",
+            ),
+            deployment_tools=_string_set(scope_config, "deploymentTools", "deployment_tools"),
+            budget_tools=_string_set(scope_config, "budgetTools", "budget_tools"),
+        )
+        policy_snapshot = inputs.get("policySnapshot")
+        effective_policy_snapshot_id = str(config.get("effectivePolicySnapshotId") or "policy-snapshot-local")
+        if isinstance(policy_snapshot, dict):
+            effective_policy_snapshot_id = str(
+                policy_snapshot.get("snapshot_id")
+                or policy_snapshot.get("snapshotId")
+                or effective_policy_snapshot_id
+            )
+        resolved = ToolCatalog(tuple(definitions), tuple(bindings)).resolve(
+            scope,
+            effective_policy_snapshot_id=effective_policy_snapshot_id,
+        )
+        return {
+            "tools": [
+                {
+                    "resolved_tool_id": tool.resolved_tool_id,
+                    "definition": tool.definition.model_contract(),
+                    "binding": tool.binding.binding_contract(),
+                    "definition_digest": tool.definition_digest,
+                    "binding_digest": tool.binding_digest,
+                    "effective_policy_snapshot_id": tool.effective_policy_snapshot_id,
+                    "allowed_for_principal": tool.allowed_for_principal,
+                    "valid_until": tool.valid_until,
+                }
+                for tool in resolved
+            ]
+        }
+
+    def scripted_agent_run(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+        tools = inputs.get("tools", [])
+        if not isinstance(tools, list):
+            raise TypeError("agent.run@1 input 'tools' must be a list")
+        messages = inputs.get("messages", [])
+        if not isinstance(messages, list):
+            raise TypeError("agent.run@1 input 'messages' must be a list")
+        if "response" in config:
+            text = str(config["response"])
+            finish_reason = "scripted"
+        elif messages:
+            last_message = messages[-1]
+            if isinstance(last_message, dict):
+                text = str(last_message.get("content", last_message.get("text", "")))
+            else:
+                text = str(last_message)
+            finish_reason = "echo"
+        else:
+            text = ""
+            finish_reason = "empty"
+        return {
+            "candidate": {
+                "text": text,
+                "finishReason": finish_reason,
+                "toolCount": len(tools),
+            }
+        }
+
     def commit_turn(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         transaction = inputs["transaction"]
         candidate = inputs["candidate"]
@@ -495,9 +669,19 @@ def stdlib_registry() -> RuntimeRegistry:
             return {"value": config["default"], "selected": "default"}
         raise KeyError("control.select@1 found no present case")
 
+    def _string_set(config: dict[str, Any], camel_key: str, snake_key: str) -> frozenset[str] | None:
+        value = config.get(camel_key, config.get(snake_key))
+        if value is None:
+            return None
+        if not isinstance(value, list | tuple | set | frozenset):
+            raise TypeError(f"tools.resolve@1 scope {camel_key} must be a sequence")
+        return frozenset(str(item) for item in value)
+
     registry.register("conversation.begin_turn@1", begin_turn)
     registry.register("prompt.render@1", prompt_render)
     registry.register("model.generate@1", scripted_generate)
+    registry.register("tools.resolve@1", resolve_tools)
+    registry.register("agent.run@1", scripted_agent_run)
     registry.register("conversation.commit_turn@1", commit_turn)
     registry.register("control.map@2", control_map)
     registry.register("control.select@1", control_select)

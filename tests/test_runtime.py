@@ -72,6 +72,72 @@ def test_runtime_executes_conversation_vertical_slice() -> None:
     ]
 
 
+def test_stdlib_runtime_executes_tool_resolution_and_agent_run() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "agent-turn"},
+        "spec": {
+            "interface": {
+                "inputs": {"messages": "graphblocks.ai/Messages@1"},
+                "outputs": {
+                    "candidate": "graphblocks.ai/TurnCandidate@1",
+                    "tools": "graphblocks.ai/ResolvedTools@1",
+                },
+            },
+            "nodes": {
+                "resolve": {
+                    "block": "tools.resolve@1",
+                    "config": {
+                        "effectivePolicySnapshotId": "policy-snapshot-1",
+                        "definitions": [
+                            {
+                                "name": "knowledge.search",
+                                "description": "Search support documentation.",
+                                "inputSchema": "schemas/SearchRequest@1",
+                            }
+                        ],
+                        "bindings": [
+                            {
+                                "bindingId": "binding-search",
+                                "toolName": "knowledge.search",
+                                "implementation": {"kind": "block", "block": "knowledge.search@1"},
+                                "effects": ["external_read"],
+                                "approval": "never",
+                            }
+                        ],
+                        "scope": {"principalTools": ["knowledge.search"]},
+                    },
+                    "outputs": {"tools": "$output.tools"},
+                },
+                "agent": {
+                    "block": "agent.run@1",
+                    "config": {"response": "Hello from the agent."},
+                    "inputs": {
+                        "messages": "$input.messages",
+                        "tools": "resolve.tools",
+                    },
+                    "outputs": {"candidate": "$output.candidate"},
+                },
+            },
+        },
+    }
+
+    result = InProcessRuntime(stdlib_registry()).run(
+        graph,
+        {"messages": [{"role": "user", "content": "Hello"}]},
+    )
+
+    assert result.status == "succeeded"
+    assert result.outputs["candidate"] == {
+        "text": "Hello from the agent.",
+        "finishReason": "scripted",
+        "toolCount": 1,
+    }
+    assert result.outputs["tools"][0]["definition"]["name"] == "knowledge.search"
+    assert result.outputs["tools"][0]["allowed_for_principal"] is True
+
+
 def test_journal_rejects_second_terminal_record() -> None:
     journal = ExecutionJournal("run-test")
 
