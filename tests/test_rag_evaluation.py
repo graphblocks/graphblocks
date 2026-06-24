@@ -4,6 +4,7 @@ from decimal import Decimal
 
 import graphblocks
 from graphblocks.documents import (
+    SourceRef,
     chunk_document_by_lines,
     create_local_text_revision,
     parse_plain_text_document,
@@ -14,7 +15,12 @@ from graphblocks.rag import (
     Claim,
     ContextPack,
     InMemoryChunkRetriever,
+    KnowledgeItemRef,
+    RetrievalResult,
+    SearchHit,
+    SearchRequest,
     evaluate_rag_answer_metrics,
+    evaluate_retrieval_metrics,
     validate_answer_citations,
 )
 
@@ -30,6 +36,57 @@ def _single_hit_context() -> ContextPack:
     chunks = chunk_document_by_lines(document, revision, max_elements=1)
     hits = InMemoryChunkRetriever(chunks, retriever_id="local-test").search("audit", top_k=1)
     return ContextPack(context_id="ctx-1", hits=hits)
+
+
+def _hit(item_id: str, rank: int) -> SearchHit:
+    source = SourceRef(source_id=item_id, source_kind="document_chunk")
+    return SearchHit(
+        hit_id=f"hit-{item_id}",
+        item=KnowledgeItemRef(item_id, "document_chunk", source),
+        rank=rank,
+        retriever="local-test",
+    )
+
+
+def test_evaluate_retrieval_metrics_reports_recall_precision_and_mrr() -> None:
+    retrieval = RetrievalResult(
+        retrieval_id="retrieval-1",
+        request=SearchRequest("policy", top_k=3),
+        hits=[_hit("doc-a", 1), _hit("doc-b", 2), _hit("doc-c", 3)],
+        total_candidates=3,
+    )
+
+    metrics = evaluate_retrieval_metrics(retrieval, {"doc-a", "doc-c"}, k=3)
+    exported_metrics = graphblocks.evaluate_retrieval_metrics(
+        retrieval,
+        {"doc-a", "doc-c"},
+        k=3,
+    )
+    by_name = {metric.name: metric for metric in metrics}
+
+    assert [metric.name for metric in exported_metrics] == [metric.name for metric in metrics]
+    assert by_name["recall_at_k"].value == Decimal("1")
+    assert by_name["precision_at_k"].value == Decimal(2) / Decimal(3)
+    assert by_name["mrr"].value == Decimal("1")
+    assert by_name["recall_at_k"].direction == "maximize"
+    assert by_name["precision_at_k"].evaluator == {"k": 3}
+
+
+def test_evaluate_retrieval_metrics_returns_no_data_without_relevant_items() -> None:
+    retrieval = RetrievalResult(
+        retrieval_id="retrieval-1",
+        request=SearchRequest("policy", top_k=3),
+        hits=[_hit("doc-a", 1)],
+        total_candidates=1,
+    )
+
+    by_name = {
+        metric.name: metric for metric in evaluate_retrieval_metrics(retrieval, set())
+    }
+
+    assert by_name["recall_at_k"].value is None
+    assert by_name["precision_at_k"].value is None
+    assert by_name["mrr"].value is None
 
 
 def test_evaluate_rag_answer_metrics_reports_citation_precision() -> None:

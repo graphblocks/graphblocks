@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
 import json
@@ -1003,6 +1004,60 @@ def evaluate_rag_answer_metrics(
             "unsupported_claim_rate",
             unsupported_claim_rate,
             direction="minimize",
+        ),
+    ]
+
+
+def evaluate_retrieval_metrics(
+    retrieval: RetrievalResult,
+    relevant_item_ids: Iterable[str],
+    *,
+    k: int | None = None,
+) -> list[MetricObservation]:
+    relevant = set(relevant_item_ids)
+    cutoff = retrieval.request.top_k if k is None else k
+    hits_at_k = retrieval.hits[:cutoff]
+    relevant_hits_at_k = sum(1 for hit in hits_at_k if hit.item.item_id in relevant)
+    if not relevant:
+        recall = None
+        precision = None
+        mrr = None
+    else:
+        recall = Decimal(relevant_hits_at_k) / Decimal(len(relevant))
+        precision = None if cutoff == 0 else Decimal(relevant_hits_at_k) / Decimal(cutoff)
+        first_relevant_rank = next(
+            (
+                index + 1
+                for index, hit in enumerate(hits_at_k)
+                if hit.item.item_id in relevant
+            ),
+            None,
+        )
+        mrr = (
+            Decimal(0)
+            if first_relevant_rank is None
+            else Decimal(1) / Decimal(first_relevant_rank)
+        )
+
+    evaluator = {"k": cutoff}
+    return [
+        MetricObservation(
+            "recall_at_k",
+            recall,
+            direction="maximize",
+            evaluator=evaluator,
+        ),
+        MetricObservation(
+            "precision_at_k",
+            precision,
+            direction="maximize",
+            evaluator=evaluator,
+        ),
+        MetricObservation(
+            "mrr",
+            mrr,
+            direction="maximize",
+            evaluator=evaluator,
         ),
     ]
 

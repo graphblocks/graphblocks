@@ -12,9 +12,9 @@ use graphblocks_runtime_core::rag::{
     RagResultBundle, RagResultPayload, RerankOptions, RetrievalResult, SearchHit, SearchRequest,
     authorize_search_hits, build_abstention_answer, build_answer_from_model_response,
     build_answer_from_model_response_with_context, build_context_pack, evaluate_rag_answer_metrics,
-    federated_retrieve, fuse_search_hits, knowledge_item_from_chunk, render_context_pack,
-    rerank_search_hits, resolve_citation_source_trace, validate_answer_citation_authorization,
-    validate_answer_citations, validate_answer_grounding,
+    evaluate_retrieval_metrics, federated_retrieve, fuse_search_hits, knowledge_item_from_chunk,
+    render_context_pack, rerank_search_hits, resolve_citation_source_trace,
+    validate_answer_citation_authorization, validate_answer_citations, validate_answer_grounding,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -1618,6 +1618,52 @@ fn evaluate_rag_answer_metrics_reports_unsupported_claim_rate() {
         .find(|metric| metric.name == "unsupported_claim_rate")
         .expect("unsupported claim rate metric exists");
     assert_eq!(unsupported_claim_rate.value, json!(1.0));
+}
+
+#[test]
+fn evaluate_retrieval_metrics_reports_recall_precision_and_mrr() {
+    let retrieval = RetrievalResult::new(
+        "retrieval-1",
+        SearchRequest::new("policy").with_top_k(3),
+        vec![
+            hit("hit-a", "doc-a", "doc-1", "alpha", 1),
+            hit("hit-b", "doc-b", "doc-2", "beta", 2),
+            hit("hit-c", "doc-c", "doc-3", "gamma", 3),
+        ],
+    );
+
+    let metrics = evaluate_retrieval_metrics(&retrieval, ["doc-a", "doc-c"], Some(3));
+
+    let recall = metrics
+        .iter()
+        .find(|metric| metric.name == "recall_at_k")
+        .expect("recall metric exists");
+    assert_eq!(recall.value, json!(1.0));
+    assert_eq!(recall.direction, MetricDirection::Maximize);
+    assert_eq!(recall.evaluator, Some(json!({"k": 3})));
+    let precision = metrics
+        .iter()
+        .find(|metric| metric.name == "precision_at_k")
+        .expect("precision metric exists");
+    assert_eq!(precision.value, json!(2.0 / 3.0));
+    let mrr = metrics
+        .iter()
+        .find(|metric| metric.name == "mrr")
+        .expect("mrr metric exists");
+    assert_eq!(mrr.value, json!(1.0));
+}
+
+#[test]
+fn evaluate_retrieval_metrics_returns_no_data_without_relevant_items() {
+    let retrieval = RetrievalResult::new(
+        "retrieval-1",
+        SearchRequest::new("policy").with_top_k(3),
+        vec![hit("hit-a", "doc-a", "doc-1", "alpha", 1)],
+    );
+
+    let metrics = evaluate_retrieval_metrics(&retrieval, Vec::<String>::new(), None);
+
+    assert!(metrics.iter().all(|metric| metric.value == Value::Null));
 }
 
 #[test]

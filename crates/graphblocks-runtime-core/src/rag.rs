@@ -2523,6 +2523,59 @@ pub fn evaluate_rag_answer_metrics(
     ]
 }
 
+pub fn evaluate_retrieval_metrics<I, S>(
+    retrieval: &RetrievalResult,
+    relevant_item_ids: I,
+    k: Option<usize>,
+) -> Vec<MetricObservation>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
+    let relevant_item_ids = relevant_item_ids
+        .into_iter()
+        .map(Into::into)
+        .collect::<BTreeSet<_>>();
+    let cutoff = k.unwrap_or(retrieval.request.top_k);
+    let hits_at_k = retrieval.hits.iter().take(cutoff).collect::<Vec<_>>();
+    let relevant_hits_at_k = hits_at_k
+        .iter()
+        .filter(|hit| relevant_item_ids.contains(&hit.item.item_id))
+        .count();
+
+    let (recall, precision, mrr) = if relevant_item_ids.is_empty() {
+        (Value::Null, Value::Null, Value::Null)
+    } else {
+        let first_relevant_rank = hits_at_k
+            .iter()
+            .position(|hit| relevant_item_ids.contains(&hit.item.item_id))
+            .map(|index| index + 1);
+        (
+            json!(relevant_hits_at_k as f64 / relevant_item_ids.len() as f64),
+            if cutoff == 0 {
+                Value::Null
+            } else {
+                json!(relevant_hits_at_k as f64 / cutoff as f64)
+            },
+            first_relevant_rank
+                .map(|rank| json!(1.0 / rank as f64))
+                .unwrap_or_else(|| json!(0.0)),
+        )
+    };
+
+    let evaluator = Some(json!({ "k": cutoff }));
+    let mut metrics = vec![
+        MetricObservation::new("recall_at_k", recall).with_direction(MetricDirection::Maximize),
+        MetricObservation::new("precision_at_k", precision)
+            .with_direction(MetricDirection::Maximize),
+        MetricObservation::new("mrr", mrr).with_direction(MetricDirection::Maximize),
+    ];
+    for metric in &mut metrics {
+        metric.evaluator = evaluator.clone();
+    }
+    metrics
+}
+
 fn source_ref_matches(citation_source: &SourceRef, context_source: &SourceRef) -> bool {
     citation_source.source_id == context_source.source_id
         && citation_source
