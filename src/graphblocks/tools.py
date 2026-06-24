@@ -422,6 +422,10 @@ class ToolBinding:
             raise ValueError(f"invalid tool cancellation {self.cancellation}")
         if self.result_mode not in VALID_TOOL_RESULT_MODES:
             raise ValueError(f"invalid tool result mode {self.result_mode}")
+        if self.timeout_ms is not None and (
+            not isinstance(self.timeout_ms, int) or isinstance(self.timeout_ms, bool) or self.timeout_ms < 0
+        ):
+            raise ValueError("tool timeout_ms must be non-negative")
         object.__setattr__(self, "effects", effects)
 
     def binding_contract(self) -> dict[str, object]:

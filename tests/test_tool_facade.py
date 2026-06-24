@@ -153,6 +153,7 @@ def test_tool_binding_rejects_unknown_contract_values() -> None:
         ({"idempotency": "maybe"}, "invalid tool idempotency maybe"),
         ({"cancellation": "eventually"}, "invalid tool cancellation eventually"),
         ({"result_mode": "firehose"}, "invalid tool result mode firehose"),
+        ({"timeout_ms": -1}, "tool timeout_ms must be non-negative"),
     )
     for overrides, message in cases:
         with pytest.raises(ValueError, match=message):
