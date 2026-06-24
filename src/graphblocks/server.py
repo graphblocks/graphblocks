@@ -43,6 +43,15 @@ class ServerRouteNotFoundError(KeyError):
 
 
 @dataclass(frozen=True, slots=True)
+class ServerRouteMatch:
+    endpoint: ServerEndpoint
+    path_params: dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "path_params", dict(self.path_params))
+
+
+@dataclass(frozen=True, slots=True)
 class ServerRouteManifest:
     endpoints: tuple[ServerEndpoint, ...] = field(default_factory=tuple)
 
@@ -66,12 +75,30 @@ class ServerRouteManifest:
     def by_transport(self, transport: ServerTransport) -> tuple[ServerEndpoint, ...]:
         return tuple(endpoint for endpoint in self.endpoints if endpoint.transport == transport)
 
-    def lookup(self, method: str, path: str) -> ServerEndpoint:
+    def match(self, method: str, path: str) -> ServerRouteMatch:
         normalized_method = method.upper()
+        path_parts = [part for part in path.strip("/").split("/") if part]
         for endpoint in self.endpoints:
-            if endpoint.method == normalized_method and endpoint.path == path:
-                return endpoint
+            if endpoint.method != normalized_method:
+                continue
+            endpoint_parts = [part for part in endpoint.path.strip("/").split("/") if part]
+            if endpoint.path == path:
+                return ServerRouteMatch(endpoint)
+            if len(endpoint_parts) != len(path_parts):
+                continue
+            path_params: dict[str, str] = {}
+            for template_part, path_part in zip(endpoint_parts, path_parts, strict=True):
+                if template_part.startswith("{") and template_part.endswith("}"):
+                    path_params[template_part[1:-1]] = path_part
+                    continue
+                if template_part != path_part:
+                    break
+            else:
+                return ServerRouteMatch(endpoint, path_params)
         raise ServerRouteNotFoundError(method, path)
+
+    def lookup(self, method: str, path: str) -> ServerEndpoint:
+        return self.match(method, path).endpoint
 
     def content_digest(self) -> str:
         return canonical_hash(
@@ -226,7 +253,8 @@ class GraphBlocksServerApp:
 
     def handle(self, request: ServerRequest) -> ServerResponse:
         try:
-            route = self.route_manifest.lookup(request.method, request.path)
+            route_match = self.route_manifest.match(request.method, request.path)
+            route = route_match.endpoint
         except ServerRouteNotFoundError as error:
             return ServerResponse.json(
                 404,
@@ -257,6 +285,15 @@ class GraphBlocksServerApp:
 
         if route.operation == "health":
             return ServerResponse.json(200, self.health.to_payload())
+        if route.operation == "cancel_run":
+            return ServerResponse.json(
+                202,
+                {
+                    "ok": True,
+                    "runId": route_match.path_params.get("run_id", ""),
+                    "status": "cancel_requested",
+                },
+            )
         if route.operation == "invoke_graph":
             try:
                 payload = json.loads(request.body.decode("utf-8") or "{}")
@@ -411,6 +448,7 @@ __all__ = [
     "ServerProtocolVersionMismatchError",
     "ServerRequest",
     "ServerResponse",
+    "ServerRouteMatch",
     "ServerRouteManifest",
     "ServerRouteNotFoundError",
     "ServerTransport",

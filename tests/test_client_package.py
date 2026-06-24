@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import json
 from pathlib import Path
+from urllib.parse import urlparse
 
 
 ROOT = Path(__file__).parents[1]
@@ -218,4 +219,42 @@ def test_client_package_reads_server_health_over_http_transport(monkeypatch) -> 
         "status": "healthy",
         "observed_at": "2026-06-24T00:00:00Z",
         "checks": {"runtime": {"status": "healthy", "details": {"workers": 2}}},
+    }
+
+
+def test_client_package_sends_cancel_run_over_http_transport(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+    from graphblocks.policy import PrincipalRef
+    from graphblocks.server import GraphBlocksServerApp, ServerRequest, StaticBearerAuthHook
+
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+
+    def transport(request: object, *, timeout: float) -> object:
+        assert timeout == 4.0
+        path = urlparse(request.full_url).path.removeprefix("/api")
+        return app.handle(
+            ServerRequest(
+                method=request.get_method(),
+                path=path,
+                headers=dict(request.headers),
+                query={},
+                cookies={},
+                body=request.data or b"",
+            )
+        )
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        bearer_token="token-1",
+        timeout=4.0,
+        transport=transport,
+    )
+
+    response = client.cancel_run("run-http-1")
+
+    assert response == {
+        "ok": True,
+        "runId": "run-http-1",
+        "status": "cancel_requested",
     }

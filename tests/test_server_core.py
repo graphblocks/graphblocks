@@ -35,6 +35,14 @@ def test_server_route_manifest_groups_routes_and_hashes_stably() -> None:
     assert left.content_digest() == right.content_digest()
 
 
+def test_server_route_manifest_matches_templated_run_paths() -> None:
+    match = default_server_route_manifest().match("POST", "/runs/run-123/cancel")
+
+    assert match.endpoint.operation == "cancel_run"
+    assert match.path_params == {"run_id": "run-123"}
+    assert default_server_route_manifest().lookup("POST", "/runs/run-123/cancel").operation == "cancel_run"
+
+
 def test_static_bearer_auth_hook_authorizes_configured_principal() -> None:
     hook = StaticBearerAuthHook({"token-1": PrincipalRef("user-1", roles=("operator",))})
     route = default_server_route_manifest().lookup("POST", "/runs")
@@ -205,3 +213,25 @@ def test_server_app_handles_health_auth_and_run_requests() -> None:
     assert payload["events"][0]["metadata"]["responseId"] == "response-server-1"
     assert graphblocks.GraphBlocksServerApp is GraphBlocksServerApp
     assert "ServerResponse" in graphblocks.__all__
+
+
+def test_server_app_handles_authenticated_cancel_request() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-server-1/cancel",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            requested_at="2026-06-24T00:00:03Z",
+        )
+    )
+
+    assert response.status_code == 202
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": True,
+        "runId": "run-server-1",
+        "status": "cancel_requested",
+    }

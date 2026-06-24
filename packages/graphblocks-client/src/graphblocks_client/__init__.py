@@ -130,6 +130,22 @@ class HttpGraphBlocksClient:
             raise ValueError("GraphBlocks health response must be a JSON object")
         return payload
 
+    def cancel_run(self, run_id: str) -> dict[str, object]:
+        headers = {"Accept": "application/json"}
+        if self.bearer_token is not None:
+            headers["Authorization"] = f"Bearer {self.bearer_token}"
+        request = Request(
+            f"{self.base_url.rstrip('/')}/runs/{run_id}/cancel",
+            data=b"",
+            headers=headers,
+            method="POST",
+        )
+        response = (self.transport or urlopen)(request, timeout=self.timeout)
+        payload = json.loads(response.read().decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("GraphBlocks cancel response must be a JSON object")
+        return payload
+
     def run_graph(self, command: RunGraphCommand) -> RunGraphResponse:
         body = json.dumps(
             {
