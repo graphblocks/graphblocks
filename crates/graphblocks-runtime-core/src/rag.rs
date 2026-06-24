@@ -2700,6 +2700,27 @@ where
     } else {
         json!(normalized_scores.iter().sum::<f64>() / normalized_scores.len() as f64)
     };
+    let freshness_satisfaction = if context.metadata.contains_key("minimum_source_modified_at") {
+        let freshness_drops = context
+            .metadata
+            .get("drop_reasons")
+            .and_then(Value::as_object)
+            .map(|drop_reasons| {
+                drop_reasons
+                    .values()
+                    .filter(|reason| reason.as_str() == Some("freshness"))
+                    .count()
+            })
+            .unwrap_or(0);
+        let denominator = context.hits.len() + freshness_drops;
+        if denominator == 0 {
+            Value::Null
+        } else {
+            json!(context.hits.len() as f64 / denominator as f64)
+        }
+    } else {
+        Value::Null
+    };
 
     vec![
         MetricObservation::new("source_diversity", json!(source_diversity))
@@ -2710,6 +2731,8 @@ where
         MetricObservation::new("context_precision", context_precision)
             .with_direction(MetricDirection::Maximize),
         MetricObservation::new("context_relevance", context_relevance)
+            .with_direction(MetricDirection::Maximize),
+        MetricObservation::new("freshness_satisfaction", freshness_satisfaction)
             .with_direction(MetricDirection::Maximize),
     ]
 }

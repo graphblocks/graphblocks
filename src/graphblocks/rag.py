@@ -1168,6 +1168,21 @@ def evaluate_context_metrics(
         if not normalized_scores
         else sum(normalized_scores, Decimal(0)) / Decimal(len(normalized_scores))
     )
+    if "minimum_source_modified_at" not in context.metadata:
+        freshness_satisfaction = None
+    else:
+        drop_reasons = context.metadata.get("drop_reasons")
+        freshness_drops = (
+            sum(1 for reason in drop_reasons.values() if reason == "freshness")
+            if isinstance(drop_reasons, dict)
+            else 0
+        )
+        freshness_denominator = len(context.hits) + freshness_drops
+        freshness_satisfaction = (
+            None
+            if freshness_denominator == 0
+            else Decimal(len(context.hits)) / Decimal(freshness_denominator)
+        )
 
     return [
         MetricObservation(
@@ -1189,6 +1204,11 @@ def evaluate_context_metrics(
         MetricObservation(
             "context_relevance",
             context_relevance,
+            direction="maximize",
+        ),
+        MetricObservation(
+            "freshness_satisfaction",
+            freshness_satisfaction,
             direction="maximize",
         ),
     ]

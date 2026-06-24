@@ -158,6 +158,26 @@ def test_evaluate_context_metrics_returns_no_data_without_token_budget() -> None
     assert by_name["context_token_efficiency"].value is None
     assert by_name["context_precision"].value is None
     assert by_name["context_relevance"].value is None
+    assert by_name["freshness_satisfaction"].value is None
+
+
+def test_evaluate_context_metrics_reports_freshness_satisfaction() -> None:
+    context = ContextPack(
+        context_id="ctx-1",
+        hits=[_hit("doc-fresh", 1)],
+        metadata={
+            "minimum_source_modified_at": "2026-06-21T00:00:00Z",
+            "drop_reasons": {
+                "hit-stale": "freshness",
+                "hit-budget": "token_budget",
+            },
+        },
+    )
+
+    by_name = {metric.name: metric for metric in evaluate_context_metrics(context)}
+
+    assert by_name["freshness_satisfaction"].value == Decimal("0.5")
+    assert by_name["freshness_satisfaction"].direction == "maximize"
 
 
 def test_evaluate_rag_answer_metrics_reports_citation_precision() -> None:

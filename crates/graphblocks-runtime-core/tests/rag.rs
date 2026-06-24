@@ -1821,6 +1821,39 @@ fn evaluate_context_metrics_returns_no_data_without_token_budget() {
         .find(|metric| metric.name == "context_relevance")
         .expect("context relevance metric exists");
     assert_eq!(context_relevance.value, Value::Null);
+    let freshness_satisfaction = metrics
+        .iter()
+        .find(|metric| metric.name == "freshness_satisfaction")
+        .expect("freshness satisfaction metric exists");
+    assert_eq!(freshness_satisfaction.value, Value::Null);
+}
+
+#[test]
+fn evaluate_context_metrics_reports_freshness_satisfaction() {
+    let mut context = ContextPack::new(
+        "ctx-1",
+        vec![hit("hit-fresh", "doc-fresh", "doc-1", "fresh", 1)],
+    );
+    context.metadata.insert(
+        "minimum_source_modified_at".to_owned(),
+        json!("2026-06-21T00:00:00Z"),
+    );
+    context.metadata.insert(
+        "drop_reasons".to_owned(),
+        json!({
+            "hit-stale": "freshness",
+            "hit-budget": "token_budget",
+        }),
+    );
+
+    let metrics = evaluate_context_metrics(&context, Option::<Vec<String>>::None);
+
+    let freshness_satisfaction = metrics
+        .iter()
+        .find(|metric| metric.name == "freshness_satisfaction")
+        .expect("freshness satisfaction metric exists");
+    assert_eq!(freshness_satisfaction.value, json!(0.5));
+    assert_eq!(freshness_satisfaction.direction, MetricDirection::Maximize);
 }
 
 #[test]
