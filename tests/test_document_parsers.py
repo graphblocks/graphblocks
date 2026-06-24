@@ -62,6 +62,31 @@ def test_parser_registry_selection_is_deterministic_for_equal_priority() -> None
     assert lock.processor_version == "2"
 
 
+def test_parser_registry_ocr_fallback_is_explicit_and_deterministic() -> None:
+    registry = DocumentParserRegistry()
+    registry.register(ParserDescriptor("ocr-z", "1", supports_ocr=True, priority=10))
+    registry.register(ParserDescriptor("ocr-a", "2", supports_ocr=True, priority=10))
+    artifact = ArtifactRef(
+        "artifact-scan",
+        "file:///tmp/scan.bin",
+        media_type="application/octet-stream",
+        filename="scan.bin",
+        checksum="sha256:scan",
+    )
+
+    with pytest.raises(DocumentParserNotFoundError):
+        registry.select(artifact)
+
+    lock = registry.select(artifact, allow_ocr_fallback=True)
+
+    assert lock.processor_id == "ocr-a"
+    assert lock.processor_version == "2"
+    assert lock.reason == "ocr_fallback"
+    assert lock.media_type == "application/octet-stream"
+    assert lock.filename == "scan.bin"
+    assert lock.artifact_checksum == "sha256:scan"
+
+
 def test_parser_registry_parse_locked_uses_locked_parser_version() -> None:
     registry = DocumentParserRegistry()
     registry.register(plain_text_parser_descriptor())

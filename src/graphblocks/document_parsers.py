@@ -64,7 +64,7 @@ class DocumentParserRegistry:
             metadata=dict(descriptor.metadata),
         )
 
-    def select(self, artifact: ArtifactRef) -> ParserSelectionLock:
+    def select(self, artifact: ArtifactRef, *, allow_ocr_fallback: bool = False) -> ParserSelectionLock:
         media_type = artifact.media_type.lower() if artifact.media_type else None
         filename = artifact.filename or PurePosixPath(artifact.uri).name or None
         extension = PurePosixPath(filename).suffix.lower() if filename else None
@@ -74,6 +74,12 @@ class DocumentParserRegistry:
                 candidates.append(("media_type", descriptor))
             elif extension is not None and extension in descriptor.extensions:
                 candidates.append(("extension", descriptor))
+        if not candidates and allow_ocr_fallback:
+            candidates = [
+                ("ocr_fallback", descriptor)
+                for descriptor in self._descriptors.values()
+                if descriptor.supports_ocr
+            ]
         if not candidates:
             raise DocumentParserNotFoundError(f"no document parser for artifact {artifact.artifact_id!r}")
         candidates.sort(key=lambda item: (-item[1].priority, item[1].processor_id, item[1].version))
