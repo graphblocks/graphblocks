@@ -13,6 +13,10 @@ from graphblocks.orchestration import (
     ModelSelectionRequest,
     ModelSensitivityAboveCeilingError,
     ModelToolNotAllowedError,
+    TaskPlanCycleError,
+    TaskPlanDependencyError,
+    TaskPlanLimitError,
+    TaskPlanLimits,
     TaskPlan,
     TaskPlanPatch,
     TaskStep,
@@ -48,6 +52,71 @@ def test_task_plan_patch_is_order_stable_and_revises_steps() -> None:
     assert [step.step_id for step in updated.steps] == ["draft", "verify"]
     assert updated.step("draft").description == "Draft response with citations"
     assert updated.content_digest() == updated.apply_patch(TaskPlanPatch("noop", "plan-1", 2)).content_digest()
+
+
+def test_task_plan_rejects_missing_dependencies_and_patch_cycles() -> None:
+    with pytest.raises(TaskPlanDependencyError) as dependency_error:
+        TaskPlan(
+            plan_id="plan-1",
+            objective="answer support request",
+            steps=(TaskStep("verify", "Verify answer", depends_on=("draft",)),),
+        )
+
+    assert dependency_error.value.step_id == "verify"
+    assert dependency_error.value.dependency_id == "draft"
+
+    base = TaskPlan(
+        plan_id="plan-1",
+        objective="answer support request",
+        steps=(
+            TaskStep("draft", "Draft response"),
+            TaskStep("verify", "Verify answer", depends_on=("draft",)),
+        ),
+    )
+    patch = TaskPlanPatch(
+        patch_id="patch-cycle",
+        base_plan_id="plan-1",
+        base_revision=1,
+        upsert_steps=(TaskStep("draft", "Draft response", depends_on=("verify",)),),
+    )
+
+    with pytest.raises(TaskPlanCycleError) as cycle_error:
+        base.apply_patch(patch)
+
+    assert cycle_error.value.cycle == ("draft", "verify", "draft")
+
+
+def test_task_plan_limits_bound_steps_and_dependencies() -> None:
+    with pytest.raises(TaskPlanLimitError) as step_error:
+        TaskPlan(
+            plan_id="plan-1",
+            objective="answer support request",
+            steps=(
+                TaskStep("draft", "Draft response"),
+                TaskStep("verify", "Verify answer"),
+            ),
+            limits=TaskPlanLimits(max_steps=1),
+        )
+
+    assert step_error.value.limit_name == "max_steps"
+    assert step_error.value.limit == 1
+    assert step_error.value.actual == 2
+
+    with pytest.raises(TaskPlanLimitError) as dependency_error:
+        TaskPlan(
+            plan_id="plan-2",
+            objective="answer support request",
+            steps=(
+                TaskStep("a", "A"),
+                TaskStep("b", "B"),
+                TaskStep("combine", "Combine", depends_on=("a", "b")),
+            ),
+            limits=TaskPlanLimits(max_dependencies_per_step=1),
+        )
+
+    assert dependency_error.value.limit_name == "max_dependencies_per_step"
+    assert dependency_error.value.limit == 1
+    assert dependency_error.value.actual == 2
 
 
 def test_model_pool_selects_first_profile_matching_worker_policy_and_request() -> None:

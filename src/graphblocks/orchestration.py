@@ -44,8 +44,23 @@ class TaskPlanPatch:
         object.__setattr__(self, "metadata", dict(self.metadata))
 
 
+@dataclass(frozen=True, slots=True)
+class TaskPlanLimits:
+    max_steps: int = 128
+    max_dependencies_per_step: int = 16
+    max_description_chars: int = 4096
+
+
 class TaskPlanError(ValueError):
     """Base error for task-plan operations."""
+
+
+class TaskPlanLimitError(TaskPlanError):
+    def __init__(self, limit_name: str, limit: int, actual: int) -> None:
+        self.limit_name = limit_name
+        self.limit = limit
+        self.actual = actual
+        super().__init__(f"task plan exceeds {limit_name}: limit {limit}, actual {actual}")
 
 
 class TaskPlanPatchMismatchError(TaskPlanError):
@@ -66,6 +81,25 @@ class TaskStepNotFoundError(TaskPlanError):
         super().__init__(f"task step {step_id!r} does not exist")
 
 
+class TaskPlanDuplicateStepError(TaskPlanError):
+    def __init__(self, step_id: str) -> None:
+        self.step_id = step_id
+        super().__init__(f"task step {step_id!r} appears more than once")
+
+
+class TaskPlanDependencyError(TaskPlanError):
+    def __init__(self, step_id: str, dependency_id: str) -> None:
+        self.step_id = step_id
+        self.dependency_id = dependency_id
+        super().__init__(f"task step {step_id!r} depends on missing step {dependency_id!r}")
+
+
+class TaskPlanCycleError(TaskPlanError):
+    def __init__(self, cycle: tuple[str, ...]) -> None:
+        self.cycle = cycle
+        super().__init__(f"task plan dependency cycle: {' -> '.join(cycle)}")
+
+
 @dataclass(frozen=True, slots=True)
 class TaskPlan:
     plan_id: str
@@ -73,10 +107,54 @@ class TaskPlan:
     steps: tuple[TaskStep, ...] = field(default_factory=tuple)
     revision: int = 1
     metadata: dict[str, object] = field(default_factory=dict)
+    limits: TaskPlanLimits = field(default_factory=TaskPlanLimits)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "steps", tuple(sorted(self.steps, key=lambda step: step.step_id)))
         object.__setattr__(self, "metadata", dict(self.metadata))
+        if len(self.steps) > self.limits.max_steps:
+            raise TaskPlanLimitError("max_steps", self.limits.max_steps, len(self.steps))
+        steps_by_id: dict[str, TaskStep] = {}
+        for step in self.steps:
+            if step.step_id in steps_by_id:
+                raise TaskPlanDuplicateStepError(step.step_id)
+            steps_by_id[step.step_id] = step
+            if len(step.depends_on) > self.limits.max_dependencies_per_step:
+                raise TaskPlanLimitError(
+                    "max_dependencies_per_step",
+                    self.limits.max_dependencies_per_step,
+                    len(step.depends_on),
+                )
+            if len(step.description) > self.limits.max_description_chars:
+                raise TaskPlanLimitError(
+                    "max_description_chars",
+                    self.limits.max_description_chars,
+                    len(step.description),
+                )
+        for step in self.steps:
+            for dependency_id in step.depends_on:
+                if dependency_id not in steps_by_id:
+                    raise TaskPlanDependencyError(step.step_id, dependency_id)
+
+        visiting: set[str] = set()
+        visited: set[str] = set()
+        stack: list[str] = []
+
+        def visit(step_id: str) -> None:
+            if step_id in visited:
+                return
+            if step_id in visiting:
+                raise TaskPlanCycleError(tuple(stack[stack.index(step_id) :] + [step_id]))
+            visiting.add(step_id)
+            stack.append(step_id)
+            for dependency_id in steps_by_id[step_id].depends_on:
+                visit(dependency_id)
+            stack.pop()
+            visiting.remove(step_id)
+            visited.add(step_id)
+
+        for step_id in steps_by_id:
+            visit(step_id)
 
     def step(self, step_id: str) -> TaskStep:
         for step in self.steps:
@@ -106,6 +184,11 @@ class TaskPlan:
                 "objective": self.objective,
                 "steps": [step.canonical_value() for step in self.steps],
                 "metadata": self.metadata,
+                "limits": {
+                    "max_steps": self.limits.max_steps,
+                    "max_dependencies_per_step": self.limits.max_dependencies_per_step,
+                    "max_description_chars": self.limits.max_description_chars,
+                },
             }
         )
 
@@ -336,7 +419,12 @@ __all__ = [
     "ModelToolNotAllowedError",
     "NoEligibleModelError",
     "TaskPlan",
+    "TaskPlanCycleError",
+    "TaskPlanDependencyError",
+    "TaskPlanDuplicateStepError",
     "TaskPlanError",
+    "TaskPlanLimitError",
+    "TaskPlanLimits",
     "TaskPlanPatch",
     "TaskPlanPatchMismatchError",
     "TaskStep",
