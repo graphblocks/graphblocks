@@ -999,6 +999,61 @@ impl InMemoryBudgetLedger {
         Ok(reservation)
     }
 
+    pub fn release_completion_reserve(
+        &mut self,
+        reserve_id: impl AsRef<str>,
+    ) -> Result<CompletionReserve, BudgetError> {
+        self.settle_completion_reserve(reserve_id.as_ref(), CompletionReserveStatus::Released)
+    }
+
+    pub fn expire_completion_reserve(
+        &mut self,
+        reserve_id: impl AsRef<str>,
+    ) -> Result<CompletionReserve, BudgetError> {
+        self.settle_completion_reserve(reserve_id.as_ref(), CompletionReserveStatus::Expired)
+    }
+
+    fn settle_completion_reserve(
+        &mut self,
+        reserve_id: &str,
+        status: CompletionReserveStatus,
+    ) -> Result<CompletionReserve, BudgetError> {
+        let reserve = self
+            .completion_reserves
+            .get(reserve_id)
+            .cloned()
+            .ok_or_else(|| BudgetError::CompletionReserveNotFound {
+                reserve_id: reserve_id.to_string(),
+            })?;
+        if reserve.status != CompletionReserveStatus::Available {
+            return Err(BudgetError::CompletionReserveState {
+                reserve_id: reserve_id.to_string(),
+                status: reserve.status,
+            });
+        }
+
+        let reserved = amounts_to_map(reserve.amounts.clone());
+        let held_budget_ids = self
+            .completion_reserve_holds
+            .get(reserve_id)
+            .cloned()
+            .unwrap_or_else(|| vec![reserve.budget_id.clone()]);
+        for held_budget_id in &held_budget_ids {
+            subtract_amounts(
+                self.reserved
+                    .get_mut(held_budget_id)
+                    .expect("completion reserve hold points to an existing budget"),
+                &reserved,
+            );
+            self.bump_revision(held_budget_id);
+        }
+
+        let updated = CompletionReserve { status, ..reserve };
+        self.completion_reserves
+            .insert(reserve_id.to_string(), updated.clone());
+        Ok(updated)
+    }
+
     fn available_map(&self, budget_id: &str) -> Result<BTreeMap<AmountKey, i64>, BudgetError> {
         let allocated =
             self.allocated
@@ -1897,6 +1952,56 @@ impl SqliteBudgetLedger {
         Ok(reservation)
     }
 
+    pub fn release_completion_reserve(
+        &mut self,
+        reserve_id: impl AsRef<str>,
+    ) -> Result<CompletionReserve, BudgetError> {
+        self.settle_completion_reserve(reserve_id.as_ref(), CompletionReserveStatus::Released)
+    }
+
+    pub fn expire_completion_reserve(
+        &mut self,
+        reserve_id: impl AsRef<str>,
+    ) -> Result<CompletionReserve, BudgetError> {
+        self.settle_completion_reserve(reserve_id.as_ref(), CompletionReserveStatus::Expired)
+    }
+
+    fn settle_completion_reserve(
+        &mut self,
+        reserve_id: &str,
+        status: CompletionReserveStatus,
+    ) -> Result<CompletionReserve, BudgetError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(budget_storage_error)?;
+        let stored_reserve =
+            sqlite_load_completion_reserve(&transaction, reserve_id)?.ok_or_else(|| {
+                BudgetError::CompletionReserveNotFound {
+                    reserve_id: reserve_id.to_string(),
+                }
+            })?;
+        let reserve = stored_reserve.reserve;
+        if reserve.status != CompletionReserveStatus::Available {
+            return Err(BudgetError::CompletionReserveState {
+                reserve_id: reserve_id.to_string(),
+                status: reserve.status,
+            });
+        }
+
+        let reserved = amounts_to_map(reserve.amounts.clone());
+        for held_budget_id in &stored_reserve.held_budget_ids {
+            let mut account = sqlite_load_account(&transaction, held_budget_id)?
+                .expect("completion reserve hold points to an existing budget account");
+            subtract_amounts(&mut account.reserved, &reserved);
+            account.account.revision += 1;
+            sqlite_update_account_balances(&transaction, &account)?;
+        }
+        sqlite_update_completion_reserve_status(&transaction, reserve_id, status)?;
+        transaction.commit().map_err(budget_storage_error)?;
+        Ok(CompletionReserve { status, ..reserve })
+    }
+
     pub fn balance(&self, budget_id: impl AsRef<str>) -> Result<BudgetBalance, BudgetError> {
         let budget_id = budget_id.as_ref();
         let account = sqlite_load_account(&self.connection, budget_id)?.ok_or_else(|| {
@@ -2234,6 +2339,29 @@ fn sqlite_update_completion_reserve_spent(
                 reservation_id,
                 reserve_id,
             ],
+        )
+        .map_err(budget_storage_error)?;
+    if updated == 0 {
+        return Err(BudgetError::CompletionReserveNotFound {
+            reserve_id: reserve_id.to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn sqlite_update_completion_reserve_status(
+    connection: &Connection,
+    reserve_id: &str,
+    status: CompletionReserveStatus,
+) -> Result<(), BudgetError> {
+    let updated = connection
+        .execute(
+            "
+            UPDATE budget_completion_reserves
+            SET status = ?, reservation_id = NULL
+            WHERE reserve_id = ?
+            ",
+            params![status.as_str(), reserve_id],
         )
         .map_err(budget_storage_error)?;
     if updated == 0 {

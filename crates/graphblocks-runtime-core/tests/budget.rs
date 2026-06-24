@@ -740,6 +740,78 @@ fn sqlite_completion_reserve_spend_commits_held_capacity() -> Result<(), BudgetE
 }
 
 #[test]
+fn sqlite_completion_reserve_release_restores_held_capacity() -> Result<(), BudgetError> {
+    let mut ledger = SqliteBudgetLedger::open_in_memory()?;
+    ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+    ledger.create_completion_reserve(
+        "finalization-reserve",
+        "budget-1",
+        CompletionReservePurpose::Finalization,
+        [tokens(20)],
+        ["agent.finalize"],
+        None,
+    )?;
+
+    let reserve = ledger.release_completion_reserve("finalization-reserve")?;
+
+    assert_eq!(reserve.status, CompletionReserveStatus::Released);
+    assert_eq!(
+        ledger.balance("budget-1")?.reserved,
+        Vec::<UsageAmount>::new()
+    );
+    assert_eq!(ledger.balance("budget-1")?.available, vec![tokens(100)]);
+    assert_eq!(
+        ledger
+            .spend_completion_reserve("finalization-reserve", "agent.finalize", "later")
+            .expect_err("released reserve cannot be spent"),
+        BudgetError::CompletionReserveState {
+            reserve_id: "finalization-reserve".to_string(),
+            status: CompletionReserveStatus::Released,
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn sqlite_completion_reserve_expire_restores_held_capacity_after_reopen() -> Result<(), BudgetError>
+{
+    let path = sqlite_budget_path("completion-reserve-expire-reopen");
+    {
+        let mut ledger = SqliteBudgetLedger::open(&path)?;
+        ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+        ledger.create_completion_reserve(
+            "finalization-reserve",
+            "budget-1",
+            CompletionReservePurpose::Finalization,
+            [tokens(20)],
+            ["agent.finalize"],
+            Some("2026-06-22T00:05:00Z".to_string()),
+        )?;
+    }
+
+    {
+        let mut ledger = SqliteBudgetLedger::open(&path)?;
+        let reserve = ledger.expire_completion_reserve("finalization-reserve")?;
+
+        assert_eq!(reserve.status, CompletionReserveStatus::Expired);
+        assert_eq!(
+            ledger.balance("budget-1")?.reserved,
+            Vec::<UsageAmount>::new()
+        );
+        assert_eq!(ledger.balance("budget-1")?.available, vec![tokens(100)]);
+    }
+
+    let ledger = SqliteBudgetLedger::open(&path)?;
+    assert_eq!(
+        ledger.completion_reserve("finalization-reserve")?.status,
+        CompletionReserveStatus::Expired,
+    );
+    assert_eq!(ledger.balance("budget-1")?.available, vec![tokens(100)]);
+    fs::remove_file(path).ok();
+    Ok(())
+}
+
+#[test]
 fn sqlite_completion_reserve_can_be_spent_after_reopen() -> Result<(), BudgetError> {
     let path = sqlite_budget_path("completion-reserve-spend-reopen");
 
@@ -1661,6 +1733,63 @@ fn completion_reserve_can_be_spent_by_authorized_finalization_work() -> Result<(
     assert_eq!(balance.reserved, Vec::<UsageAmount>::new());
     assert_eq!(balance.committed, vec![tokens(15)]);
     assert_eq!(balance.available, vec![tokens(85)]);
+    Ok(())
+}
+
+#[test]
+fn completion_reserve_release_restores_held_capacity() -> Result<(), BudgetError> {
+    let mut ledger = InMemoryBudgetLedger::new();
+    ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+    ledger.create_completion_reserve(
+        "finalization-reserve",
+        "budget-1",
+        CompletionReservePurpose::Finalization,
+        [tokens(20)],
+        ["agent.finalize"],
+        None,
+    )?;
+
+    let reserve = ledger.release_completion_reserve("finalization-reserve")?;
+
+    assert_eq!(reserve.status, CompletionReserveStatus::Released);
+    assert_eq!(
+        ledger.balance("budget-1")?.reserved,
+        Vec::<UsageAmount>::new()
+    );
+    assert_eq!(ledger.balance("budget-1")?.available, vec![tokens(100)]);
+    assert_eq!(
+        ledger
+            .spend_completion_reserve("finalization-reserve", "agent.finalize", "later")
+            .expect_err("released reserve cannot be spent"),
+        BudgetError::CompletionReserveState {
+            reserve_id: "finalization-reserve".to_string(),
+            status: CompletionReserveStatus::Released,
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn completion_reserve_expire_restores_held_capacity() -> Result<(), BudgetError> {
+    let mut ledger = InMemoryBudgetLedger::new();
+    ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+    ledger.create_completion_reserve(
+        "finalization-reserve",
+        "budget-1",
+        CompletionReservePurpose::Finalization,
+        [tokens(20)],
+        ["agent.finalize"],
+        Some("2026-06-22T00:05:00Z".to_string()),
+    )?;
+
+    let reserve = ledger.expire_completion_reserve("finalization-reserve")?;
+
+    assert_eq!(reserve.status, CompletionReserveStatus::Expired);
+    assert_eq!(
+        ledger.balance("budget-1")?.reserved,
+        Vec::<UsageAmount>::new()
+    );
+    assert_eq!(ledger.balance("budget-1")?.available, vec![tokens(100)]);
     Ok(())
 }
 
