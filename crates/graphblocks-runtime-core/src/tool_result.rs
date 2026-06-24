@@ -759,6 +759,19 @@ pub enum ToolResultEvent {
     },
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ToolResultEventError {
+    ResultToolCallMismatch {
+        event_tool_call_id: String,
+        result_tool_call_id: String,
+    },
+    ResultStatusMismatch {
+        kind: String,
+        expected: ToolResultStatus,
+        actual: ToolResultStatus,
+    },
+}
+
 impl ToolResultEvent {
     pub fn started(
         tool_call_id: impl Into<String>,
@@ -871,6 +884,78 @@ impl ToolResultEvent {
                 | Self::PolicyStopped { .. }
                 | Self::Incomplete { .. }
         )
+    }
+
+    pub fn validate(&self) -> Result<(), ToolResultEventError> {
+        let Some((kind, expected, event_tool_call_id, result)) = (match self {
+            Self::Completed {
+                tool_call_id,
+                result,
+                ..
+            } => Some((
+                "completed",
+                ToolResultStatus::Completed,
+                tool_call_id,
+                result,
+            )),
+            Self::Failed {
+                tool_call_id,
+                result,
+                ..
+            } => Some(("failed", ToolResultStatus::Failed, tool_call_id, result)),
+            Self::Denied {
+                tool_call_id,
+                result,
+                ..
+            } => Some(("denied", ToolResultStatus::Denied, tool_call_id, result)),
+            Self::Cancelled {
+                tool_call_id,
+                result,
+                ..
+            } => Some((
+                "cancelled",
+                ToolResultStatus::Cancelled,
+                tool_call_id,
+                result,
+            )),
+            Self::PolicyStopped {
+                tool_call_id,
+                result,
+                ..
+            } => Some((
+                "policy_stopped",
+                ToolResultStatus::PolicyStopped,
+                tool_call_id,
+                result,
+            )),
+            Self::Incomplete {
+                tool_call_id,
+                result,
+                ..
+            } => Some((
+                "incomplete",
+                ToolResultStatus::Incomplete,
+                tool_call_id,
+                result,
+            )),
+            Self::Started { .. } | Self::Delta { .. } | Self::ArtifactReady { .. } => None,
+        }) else {
+            return Ok(());
+        };
+        if result.tool_call_id != *event_tool_call_id {
+            return Err(ToolResultEventError::ResultToolCallMismatch {
+                event_tool_call_id: event_tool_call_id.clone(),
+                result_tool_call_id: result.tool_call_id.clone(),
+            });
+        }
+        if result.status != expected {
+            return Err(ToolResultEventError::ResultStatusMismatch {
+                kind: kind.to_owned(),
+                expected,
+                actual: result.status,
+            });
+        }
+        Ok(())
     }
 
     pub fn into_result(self) -> Option<ToolResult> {

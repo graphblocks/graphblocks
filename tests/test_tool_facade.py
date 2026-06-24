@@ -1369,6 +1369,33 @@ def test_failed_and_denied_tool_result_events_are_final_results() -> None:
     assert denied_event.into_result() == denied
 
 
+def test_tool_result_event_rejects_mismatched_final_result() -> None:
+    failed = ToolResult.failed(
+        "call-1",
+        error={"code": "tool.failed", "message": "tool execution failed"},
+        started_at="2026-06-23T00:00:00Z",
+        completed_at="2026-06-23T00:00:01Z",
+    )
+    other_call = ToolResult.completed(
+        "call-2",
+        (ContentPart(kind="text", text="done"),),
+        started_at="2026-06-23T00:00:00Z",
+        completed_at="2026-06-23T00:00:01Z",
+    )
+
+    with pytest.raises(ValueError) as status_error:
+        ToolResultEvent.completed("call-1", 13, failed)
+    assert str(status_error.value) == "tool result event completed requires result status completed, got failed"
+
+    with pytest.raises(ValueError) as mismatch_error:
+        ToolResultEvent.completed("call-1", 14, other_call)
+    assert str(mismatch_error.value) == "tool result event completed for call-1 carries result for call-2"
+
+    with pytest.raises(ValueError) as draft_error:
+        ToolResultEvent(kind="delta", tool_call_id="call-1", sequence=15, result=other_call)
+    assert str(draft_error.value) == "tool result event delta must not carry a final result"
+
+
 def _tool_call(tool_call_id: str, arguments: str = '{"resource_id":"a"}'):
     return (
         ToolCallDraft.proposed("response-1", tool_call_id, "ticket.create")

@@ -113,6 +113,14 @@ VALID_TOOL_RESULT_EVENT_KINDS = frozenset(
         "incomplete",
     }
 )
+FINAL_TOOL_RESULT_EVENT_STATUSES = {
+    "completed": "completed",
+    "failed": "failed",
+    "denied": "denied",
+    "cancelled": "cancelled",
+    "policy_stopped": "policy_stopped",
+    "incomplete": "incomplete",
+}
 VALID_TOOL_EFFECT_OUTCOMES = frozenset({"no_external_effect", "committed", "not_committed", "unknown"})
 VALID_TOOL_EXECUTION_FAILURE_POLICIES = frozenset({"fail_fast", "collect", "return_failures_to_model"})
 VALID_TOOL_EXECUTION_CANCELLATION_POLICIES = frozenset(
@@ -1424,6 +1432,23 @@ class ToolResultEvent:
         if self.kind not in VALID_TOOL_RESULT_EVENT_KINDS:
             raise ValueError(f"invalid tool result event kind {self.kind}")
         object.__setattr__(self, "output", tuple(self.output))
+        expected_status = FINAL_TOOL_RESULT_EVENT_STATUSES.get(self.kind)
+        if expected_status is None:
+            if self.result is not None:
+                raise ValueError(f"tool result event {self.kind} must not carry a final result")
+            return
+        if self.result is None:
+            raise ValueError(f"tool result event {self.kind} requires a final result")
+        if self.result.tool_call_id != self.tool_call_id:
+            raise ValueError(
+                f"tool result event {self.kind} for {self.tool_call_id} "
+                f"carries result for {self.result.tool_call_id}"
+            )
+        if self.result.status != expected_status:
+            raise ValueError(
+                f"tool result event {self.kind} requires result status "
+                f"{expected_status}, got {self.result.status}"
+            )
 
     @classmethod
     def started(cls, tool_call_id: str, sequence: int, *, started_at: str) -> ToolResultEvent:

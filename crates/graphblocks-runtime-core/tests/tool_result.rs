@@ -8,8 +8,8 @@ use graphblocks_runtime_core::tool::{
 use graphblocks_runtime_core::tool_call::ToolCallDraft;
 use graphblocks_runtime_core::tool_result::{
     ArtifactRef, ContentPart, Diagnostic, ToolEffectOutcome, ToolResult, ToolResultContentPolicy,
-    ToolResultEvent, ToolResultStatus, ToolResultValidation, ToolResultValidationError,
-    ToolResultValidationRequest,
+    ToolResultEvent, ToolResultEventError, ToolResultStatus, ToolResultValidation,
+    ToolResultValidationError, ToolResultValidationRequest,
 };
 use graphblocks_runtime_core::tool_schema::{JsonSchema, JsonSchemaNode, ToolSchemaRegistry};
 use serde_json::{Value, json};
@@ -529,6 +529,42 @@ fn failed_and_denied_tool_result_events_are_final_results() {
     assert!(denied_event.is_final_durable_result());
     assert_eq!(failed_event.into_result(), Some(failed));
     assert_eq!(denied_event.into_result(), Some(denied));
+}
+
+#[test]
+fn final_tool_result_events_validate_result_status_and_call_identity() {
+    let failed = ToolResult::failed(
+        "call-1",
+        BlockError::new(
+            "tool.failed",
+            ErrorCategory::Permanent,
+            "tool execution failed",
+            true,
+        ),
+        1_000,
+        1_020,
+    );
+    let other_call = ToolResult::completed("call-2", [ContentPart::text("done")], 1_000, 1_020);
+
+    assert_eq!(
+        ToolResultEvent::completed("call-1", 13, failed).validate(),
+        Err(ToolResultEventError::ResultStatusMismatch {
+            kind: "completed".to_owned(),
+            expected: ToolResultStatus::Completed,
+            actual: ToolResultStatus::Failed,
+        }),
+    );
+    assert_eq!(
+        ToolResultEvent::completed("call-1", 14, other_call).validate(),
+        Err(ToolResultEventError::ResultToolCallMismatch {
+            event_tool_call_id: "call-1".to_owned(),
+            result_tool_call_id: "call-2".to_owned(),
+        }),
+    );
+    assert_eq!(
+        ToolResultEvent::delta("call-1", 15, [ContentPart::text("draft")]).validate(),
+        Ok(()),
+    );
 }
 
 #[test]
