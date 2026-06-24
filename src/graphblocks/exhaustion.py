@@ -222,6 +222,7 @@ class ExhaustionController:
     atomic_unit_id: str
     admission_epoch: int
     continuation_permit: BudgetPermit | None = None
+    validation_time: str | None = None
     used_additional_steps: int = 0
     used_additional_usage: list[UsageAmount] = field(default_factory=list)
 
@@ -280,6 +281,7 @@ class ExhaustionController:
             permit.atomic_unit.resource_id == self.atomic_unit_id
             and permit.continuation_profile == self.policy.preset
             and permit.admission_epoch == self.admission_epoch
+            and (self.validation_time is None or permit.expires_at > self.validation_time)
         )
 
 

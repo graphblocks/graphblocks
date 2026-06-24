@@ -133,6 +133,25 @@ def test_continuation_permit_must_match_atomic_unit_and_profile() -> None:
     assert controller.admit("declared_finalization", work_epoch=8, permit=wrong_unit).reason == "invalid_permit"
 
 
+def test_continuation_permit_must_not_be_expired_at_validation_time() -> None:
+    policy = ExhaustionPolicy.from_preset(
+        "finish_current_turn",
+        unit="turn",
+        continuation=ContinuationEnvelope(max_additional_usage=[_tokens("100")], max_additional_steps=1),
+    )
+    controller = ExhaustionController(
+        policy,
+        atomic_unit_id="turn:1",
+        admission_epoch=7,
+        validation_time="2026-06-22T01:00:00Z",
+    )
+
+    decision = controller.admit("declared_finalization", work_epoch=8, permit=_permit())
+
+    assert decision.allowed is False
+    assert decision.reason == "invalid_permit"
+
+
 def test_controller_level_continuation_permit_must_match_policy() -> None:
     policy = ExhaustionPolicy.from_preset(
         "finish_current_turn",
