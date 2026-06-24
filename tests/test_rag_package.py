@@ -3,7 +3,13 @@ from __future__ import annotations
 import importlib
 from pathlib import Path
 
-from graphblocks import chunk_document_by_lines, create_local_text_revision, parse_plain_text_document
+from graphblocks import (
+    InMemoryKnowledgeIndex,
+    KnowledgeDeleteMode,
+    chunk_document_by_lines,
+    create_local_text_revision,
+    parse_plain_text_document,
+)
 
 
 ROOT = Path(__file__).parents[1]
@@ -34,3 +40,11 @@ def test_rag_package_exposes_in_memory_retrieval_and_context_helpers(monkeypatch
     assert result.hits[0].retriever == "local-kb"
     assert context.context_id == "context-1"
     assert context.metadata["selected_hit_ids"] == [result.hits[0].hit_id]
+
+
+def test_rag_package_exposes_knowledge_index_facade(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-rag" / "src"))
+    graphblocks_rag = importlib.import_module("graphblocks_rag")
+
+    assert graphblocks_rag.InMemoryKnowledgeIndex is InMemoryKnowledgeIndex
+    assert graphblocks_rag.KnowledgeDeleteMode is KnowledgeDeleteMode

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import re
-from typing import Literal
+from typing import Literal, TypeAlias
 
 from .canonical import canonical_hash
 from .documents import DocumentChunk, DocumentSpan, SourceRef
+
+KnowledgeDeleteMode: TypeAlias = Literal["tombstone", "hard"]
+KnowledgeRecordStatus: TypeAlias = Literal["active", "tombstoned"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,6 +157,54 @@ class RerankResult:
     evaluated_count: int
     truncated_hit_ids: list[str] = field(default_factory=list)
     metadata: dict[str, object] = field(default_factory=dict)
+
+
+class KnowledgeIndexError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class KnowledgeIndexRecord:
+    chunk: DocumentChunk
+    status: KnowledgeRecordStatus
+
+
+@dataclass(frozen=True, slots=True)
+class KnowledgeWriteReport:
+    operation: str
+    affected_count: int
+    chunk_ids: list[str]
+    metadata: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class KnowledgePublishResult:
+    index_id: str
+    asset_id: str
+    revision_id: str
+    published_chunk_ids: list[str]
+    metadata: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class KnowledgeIndexCapabilities:
+    upsert: bool
+    delete: bool
+    metadata_update: bool
+    acl_update: bool
+    publish: bool
+    hard_delete: bool
+    tombstone: bool
+    retriever_adapter: bool
+
+
+@dataclass(frozen=True, slots=True)
+class KnowledgeIndexHealth:
+    healthy: bool
+    indexed_chunks: int
+    active_chunks: int
+    tombstoned_chunks: int
+    published_revisions: int
 
 
 def build_context_pack(
@@ -651,19 +702,167 @@ def _acl_allows(resource_id: str, acl: dict[str, object] | None, auth: AuthConte
 
 
 def knowledge_item_from_chunk(chunk: DocumentChunk) -> KnowledgeItemRef:
-    return KnowledgeItemRef(
-        item_id=chunk.chunk_id,
-        item_kind="document_chunk",
-        source=chunk.source_refs[0],
-        preview=[chunk.text],
-        acl=chunk.acl,
-        metadata={
+    source = (
+        chunk.source_refs[0]
+        if chunk.source_refs
+        else SourceRef(
+            source_id=chunk.chunk_id,
+            source_kind="document_chunk",
+            revision=chunk.revision_id,
+            digest="",
+            locator=DocumentSpan(
+                asset_id=chunk.asset_id,
+                revision_id=chunk.revision_id,
+                document_id=chunk.document_id,
+                chunk_id=chunk.chunk_id,
+            ),
+        )
+    )
+    metadata = dict(chunk.metadata)
+    metadata.update(
+        {
             "document_id": chunk.document_id,
             "asset_id": chunk.asset_id,
             "revision_id": chunk.revision_id,
             "element_ids": list(chunk.element_ids),
-        },
+        }
     )
+    return KnowledgeItemRef(
+        item_id=chunk.chunk_id,
+        item_kind="document_chunk",
+        source=source,
+        preview=[chunk.text],
+        acl=chunk.acl,
+        metadata=metadata,
+    )
+
+
+@dataclass(slots=True)
+class InMemoryKnowledgeIndex:
+    index_id: str
+    _records: dict[str, KnowledgeIndexRecord] = field(default_factory=dict)
+    _published_revisions: dict[str, str] = field(default_factory=dict)
+
+    def upsert_chunks(self, chunks: list[DocumentChunk]) -> KnowledgeWriteReport:
+        chunk_ids: list[str] = []
+        for chunk in chunks:
+            chunk_ids.append(chunk.chunk_id)
+            self._records[chunk.chunk_id] = KnowledgeIndexRecord(chunk=chunk, status="active")
+        return KnowledgeWriteReport(
+            operation="upsert",
+            affected_count=len(chunk_ids),
+            chunk_ids=chunk_ids,
+            metadata={"index_id": self.index_id},
+        )
+
+    def delete_asset(self, asset_id: str, mode: KnowledgeDeleteMode) -> KnowledgeWriteReport:
+        if mode not in {"hard", "tombstone"}:
+            raise ValueError("mode must be hard or tombstone")
+        chunk_ids = [
+            chunk_id
+            for chunk_id, record in sorted(self._records.items())
+            if record.chunk.asset_id == asset_id
+        ]
+        if mode == "hard":
+            for chunk_id in chunk_ids:
+                self._records.pop(chunk_id, None)
+        else:
+            for chunk_id in chunk_ids:
+                record = self._records.get(chunk_id)
+                if record is not None:
+                    self._records[chunk_id] = replace(record, status="tombstoned")
+        self._published_revisions.pop(asset_id, None)
+        return KnowledgeWriteReport(
+            operation="delete",
+            affected_count=len(chunk_ids),
+            chunk_ids=chunk_ids,
+            metadata={"asset_id": asset_id, "delete_mode": mode},
+        )
+
+    def update_chunk_metadata(self, chunk_id: str, metadata: dict[str, object]) -> KnowledgeWriteReport:
+        record = self._require_record(chunk_id)
+        merged_metadata = dict(record.chunk.metadata)
+        for key in sorted(metadata):
+            merged_metadata[key] = metadata[key]
+        self._records[chunk_id] = replace(record, chunk=replace(record.chunk, metadata=merged_metadata))
+        return KnowledgeWriteReport(
+            operation="update_metadata",
+            affected_count=1,
+            chunk_ids=[chunk_id],
+            metadata={"metadata_keys": sorted(metadata)},
+        )
+
+    def update_chunk_acl(self, chunk_id: str, acl: dict[str, object] | None) -> KnowledgeWriteReport:
+        record = self._require_record(chunk_id)
+        self._records[chunk_id] = replace(record, chunk=replace(record.chunk, acl=acl))
+        return KnowledgeWriteReport(
+            operation="update_acl",
+            affected_count=1,
+            chunk_ids=[chunk_id],
+        )
+
+    def publish_revision(self, asset_id: str, revision_id: str) -> KnowledgePublishResult:
+        published_chunk_ids = [
+            chunk_id
+            for chunk_id, record in sorted(self._records.items())
+            if record.status == "active"
+            and record.chunk.asset_id == asset_id
+            and record.chunk.revision_id == revision_id
+        ]
+        if not published_chunk_ids:
+            item_id = f"{asset_id}:{revision_id}"
+            raise KnowledgeIndexError(f"knowledge item {item_id!r} was not found")
+        self._published_revisions[asset_id] = revision_id
+        return KnowledgePublishResult(
+            index_id=self.index_id,
+            asset_id=asset_id,
+            revision_id=revision_id,
+            published_chunk_ids=published_chunk_ids,
+            metadata={"active_chunk_count": len(published_chunk_ids)},
+        )
+
+    def is_revision_published(self, asset_id: str, revision_id: str) -> bool:
+        return self._published_revisions.get(asset_id) == revision_id
+
+    def capabilities(self) -> KnowledgeIndexCapabilities:
+        return KnowledgeIndexCapabilities(
+            upsert=True,
+            delete=True,
+            metadata_update=True,
+            acl_update=True,
+            publish=True,
+            hard_delete=True,
+            tombstone=True,
+            retriever_adapter=True,
+        )
+
+    def health(self) -> KnowledgeIndexHealth:
+        tombstoned_chunks = sum(1 for record in self._records.values() if record.status == "tombstoned")
+        return KnowledgeIndexHealth(
+            healthy=True,
+            indexed_chunks=len(self._records),
+            active_chunks=len(self._records) - tombstoned_chunks,
+            tombstoned_chunks=tombstoned_chunks,
+            published_revisions=len(self._published_revisions),
+        )
+
+    def record(self, chunk_id: str) -> KnowledgeIndexRecord | None:
+        return self._records.get(chunk_id)
+
+    def retriever(self, retriever_id: str) -> InMemoryChunkRetriever:
+        chunks = [
+            record.chunk
+            for record in self._records.values()
+            if record.status == "active"
+        ]
+        chunks.sort(key=lambda chunk: (chunk.asset_id, chunk.revision_id, chunk.chunk_id))
+        return InMemoryChunkRetriever(chunks, retriever_id=retriever_id)
+
+    def _require_record(self, chunk_id: str) -> KnowledgeIndexRecord:
+        try:
+            return self._records[chunk_id]
+        except KeyError as error:
+            raise KnowledgeIndexError(f"knowledge item {chunk_id!r} was not found") from error
 
 
 @dataclass(slots=True)
