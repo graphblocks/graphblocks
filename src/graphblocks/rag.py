@@ -455,6 +455,52 @@ def render_context_pack(context: ContextPack) -> str:
     return "\n".join(lines)
 
 
+def build_answer_from_model_response(answer_id: str, model_response: dict[str, object]) -> Answer:
+    text = model_response.get("output_text")
+    if not isinstance(text, str):
+        text = model_response.get("text")
+    if not isinstance(text, str):
+        raise ValueError("model_response must contain string output_text or text")
+
+    claims: list[Claim] = []
+    raw_claims = model_response.get("claims", [])
+    if raw_claims is not None and not isinstance(raw_claims, list):
+        raise ValueError("model_response claims must be a list when present")
+    if isinstance(raw_claims, list):
+        for raw_claim in raw_claims:
+            if not isinstance(raw_claim, dict):
+                raise ValueError("model_response claims must contain mapping items")
+            claim_id = raw_claim.get("claim_id")
+            claim_text = raw_claim.get("text")
+            if not isinstance(claim_id, str) or not isinstance(claim_text, str):
+                raise ValueError("model_response claims must contain string claim_id and text")
+            raw_citation_ids = raw_claim.get("citation_ids", [])
+            citation_ids = (
+                [item for item in raw_citation_ids if isinstance(item, str)]
+                if isinstance(raw_citation_ids, list)
+                else []
+            )
+            claims.append(
+                Claim(
+                    claim_id=claim_id,
+                    text=claim_text,
+                    citation_ids=citation_ids,
+                )
+            )
+
+    metadata: dict[str, object] = {
+        "model_response_digest": canonical_hash(model_response),
+    }
+    response_id = model_response.get("response_id")
+    if isinstance(response_id, str):
+        metadata["provider_response_id"] = response_id
+    for key in ("provider", "model", "finish_reason"):
+        value = model_response.get(key)
+        if isinstance(value, str):
+            metadata[key] = value
+    return Answer(answer_id=answer_id, text=text, claims=claims, metadata=metadata)
+
+
 def _compact_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
 

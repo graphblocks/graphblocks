@@ -12,6 +12,7 @@ from graphblocks import (
     RagResultBundle,
     RagResultPayload,
     chunk_document_by_lines,
+    build_answer_from_model_response,
     create_local_text_revision,
     federated_retrieve,
     parse_plain_text_document,
@@ -88,3 +89,10 @@ def test_rag_package_exposes_grounding_validator(monkeypatch) -> None:
     graphblocks_rag = importlib.import_module("graphblocks_rag")
 
     assert graphblocks_rag.validate_answer_grounding is validate_answer_grounding
+
+
+def test_rag_package_exposes_answer_builder(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-rag" / "src"))
+    graphblocks_rag = importlib.import_module("graphblocks_rag")
+
+    assert graphblocks_rag.build_answer_from_model_response is build_answer_from_model_response

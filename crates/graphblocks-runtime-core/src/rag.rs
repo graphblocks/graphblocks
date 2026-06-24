@@ -1019,6 +1019,9 @@ pub enum RagError {
     InvalidFusionK,
     WeightCountMismatch,
     InvalidRerankInputLimit,
+    InvalidModelResponse {
+        message: String,
+    },
     FederatedSourceFailed {
         source_id: String,
         message: String,
@@ -1060,6 +1063,7 @@ impl fmt::Display for RagError {
             Self::InvalidRerankInputLimit => {
                 write!(formatter, "rerank input limit must be at least 1")
             }
+            Self::InvalidModelResponse { message } => write!(formatter, "{message}"),
             Self::FederatedSourceFailed { source_id, message } => {
                 write!(formatter, "federated source {source_id} failed: {message}")
             }
@@ -1470,6 +1474,67 @@ pub fn render_context_pack(context: &ContextPack) -> String {
     }
     lines.push("GRAPHBLOCKS_CONTEXT_PACK_END".to_owned());
     lines.join("\n")
+}
+
+pub fn build_answer_from_model_response(
+    answer_id: impl Into<String>,
+    model_response: &Value,
+) -> Result<Answer, RagError> {
+    let text = model_response
+        .get("output_text")
+        .and_then(Value::as_str)
+        .or_else(|| model_response.get("text").and_then(Value::as_str))
+        .ok_or_else(|| RagError::InvalidModelResponse {
+            message: "model_response must contain string output_text or text".to_owned(),
+        })?;
+    let mut answer = Answer::new(answer_id, text);
+    if let Some(claims) = model_response.get("claims").and_then(Value::as_array) {
+        for claim_value in claims {
+            let claim_id = claim_value
+                .get("claim_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| RagError::InvalidModelResponse {
+                    message: "model_response claims must contain string claim_id and text"
+                        .to_owned(),
+                })?;
+            let claim_text = claim_value
+                .get("text")
+                .and_then(Value::as_str)
+                .ok_or_else(|| RagError::InvalidModelResponse {
+                    message: "model_response claims must contain string claim_id and text"
+                        .to_owned(),
+                })?;
+            let citation_ids = claim_value
+                .get("citation_ids")
+                .and_then(Value::as_array)
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            answer
+                .claims
+                .push(Claim::new(claim_id, claim_text).with_citation_ids(citation_ids));
+        }
+    }
+    answer.metadata.insert(
+        "model_response_digest".to_owned(),
+        json!(canonical_hash(model_response)),
+    );
+    if let Some(response_id) = model_response.get("response_id").and_then(Value::as_str) {
+        answer
+            .metadata
+            .insert("provider_response_id".to_owned(), json!(response_id));
+    }
+    for key in ["provider", "model", "finish_reason"] {
+        if let Some(value) = model_response.get(key).and_then(Value::as_str) {
+            answer.metadata.insert(key.to_owned(), json!(value));
+        }
+    }
+    Ok(answer)
 }
 
 pub fn federated_retrieve(

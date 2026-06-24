@@ -10,9 +10,9 @@ use graphblocks_runtime_core::rag::{
     FusionStrategy, InMemoryChunkRetriever, InMemoryKnowledgeIndex, KnowledgeDeleteMode,
     KnowledgeItemRef, KnowledgeRecordStatus, QueryPlan, RagError, RagResultBundle,
     RagResultPayload, RerankOptions, RetrievalResult, SearchHit, SearchRequest,
-    authorize_search_hits, build_context_pack, federated_retrieve, fuse_search_hits,
-    knowledge_item_from_chunk, render_context_pack, rerank_search_hits,
-    resolve_citation_source_trace, validate_answer_citation_authorization,
+    authorize_search_hits, build_answer_from_model_response, build_context_pack,
+    federated_retrieve, fuse_search_hits, knowledge_item_from_chunk, render_context_pack,
+    rerank_search_hits, resolve_citation_source_trace, validate_answer_citation_authorization,
     validate_answer_citations, validate_answer_grounding,
 };
 use serde_json::{Value, json};
@@ -884,6 +884,59 @@ fn render_context_pack_labels_retrieved_content_as_untrusted_data() {
     );
     assert_eq!(lines[3], "GRAPHBLOCKS_RETRIEVED_ITEM_END");
     assert_eq!(lines[4], "GRAPHBLOCKS_CONTEXT_PACK_END");
+}
+
+#[test]
+fn build_answer_from_model_response_preserves_structured_output_metadata()
+-> Result<(), Box<dyn std::error::Error>> {
+    let model_response = json!({
+        "response_id": "response-1",
+        "provider": "scripted",
+        "model": "model-test",
+        "finish_reason": "stop",
+        "output_text": "Alpha policy requires audit logs.",
+        "claims": [
+            {
+                "claim_id": "claim-1",
+                "text": "Alpha policy requires audit logs.",
+                "citation_ids": ["cite-1"],
+            }
+        ],
+    });
+
+    let answer = build_answer_from_model_response("answer-1", &model_response)?;
+
+    assert_eq!(answer.answer_id, "answer-1");
+    assert_eq!(answer.text, "Alpha policy requires audit logs.");
+    assert_eq!(
+        answer
+            .claims
+            .iter()
+            .map(|claim| claim.claim_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["claim-1"]
+    );
+    assert_eq!(answer.claims[0].citation_ids, vec!["cite-1"]);
+    assert_eq!(
+        answer.metadata["model_response_digest"],
+        json!(canonical_hash(&model_response))
+    );
+    assert_eq!(answer.metadata["provider_response_id"], json!("response-1"));
+    assert_eq!(answer.metadata["provider"], json!("scripted"));
+    assert_eq!(answer.metadata["model"], json!("model-test"));
+    assert_eq!(answer.metadata["finish_reason"], json!("stop"));
+    Ok(())
+}
+
+#[test]
+fn build_answer_from_model_response_requires_text() {
+    let error = build_answer_from_model_response("answer-1", &json!({"response_id": "response-1"}))
+        .expect_err("answer assembly should require model output text");
+
+    assert_eq!(
+        error.to_string(),
+        "model_response must contain string output_text or text"
+    );
 }
 
 #[test]
