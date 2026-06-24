@@ -327,6 +327,51 @@ fn immediate_draft_requires_incomplete_or_retraction_semantics() {
 }
 
 #[test]
+fn immediate_draft_delivers_before_policy_and_retracts_on_abort() -> Result<(), OutputGateError> {
+    let mut gate = OutputDeliveryGate::new("stream-1", "response-1").with_delivery_policy(
+        OutputDeliveryPolicy::immediate_draft(
+            ViolationAction::AbortResponse,
+            DraftDisposition::Retract,
+        ),
+    )?;
+
+    let delivered = gate.record_chunk(GenerationChunk::text(
+        "stream-1",
+        "response-1",
+        1,
+        "provisional draft",
+    ))?;
+
+    assert_eq!(
+        delivered
+            .iter()
+            .map(|chunk| (chunk.sequence, chunk.text.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(1, "provisional draft")]
+    );
+    assert_eq!(gate.last_generated_sequence(), 1);
+    assert_eq!(gate.last_policy_accepted_sequence(), 0);
+    assert_eq!(gate.last_client_delivered_sequence(), 1);
+
+    let stopped = gate.apply_decision(
+        OutputPolicyDecision::abort_response("decision-abort", "sha256:blocked")
+            .with_draft_disposition(DraftDisposition::Retract),
+        1_050,
+    )?;
+    let cutoff = stopped.cutoff.expect("policy abort records cutoff");
+
+    assert_eq!(cutoff.last_generated_sequence, 1);
+    assert_eq!(cutoff.last_policy_accepted_sequence, 0);
+    assert_eq!(cutoff.last_client_delivered_sequence, 1);
+    assert_eq!(cutoff.draft_disposition, DraftDisposition::Retract);
+    assert_eq!(
+        gate.record_chunk(GenerationChunk::text("stream-1", "response-1", 2, "late",)),
+        Err(OutputGateError::PolicyStopped),
+    );
+    Ok(())
+}
+
+#[test]
 fn output_cutoff_accepts_only_already_delivered_output_for_its_response() {
     let cutoff = OutputCutoff {
         stream_id: "stream-1".to_owned(),

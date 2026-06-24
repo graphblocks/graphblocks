@@ -1194,17 +1194,33 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
                     .get("responseId")
                     .and_then(Value::as_str)
                     .unwrap_or(response_id);
-                gate.record_chunk(GenerationChunk::text(
-                    operation_stream_id,
-                    operation_response_id,
-                    sequence,
-                    text,
-                ))
-                .map_err(|error| {
-                    PyValueError::new_err(format!(
-                        "output gate operation {operation_index} failed: {error:?}"
+                let deliverable = gate
+                    .record_chunk(GenerationChunk::text(
+                        operation_stream_id,
+                        operation_response_id,
+                        sequence,
+                        text,
                     ))
-                })?;
+                    .map_err(|error| {
+                        PyValueError::new_err(format!(
+                            "output gate operation {operation_index} failed: {error:?}"
+                        ))
+                    })?;
+                if !deliverable.is_empty() {
+                    deliveries.push(json!({
+                        "operationIndex": operation_index,
+                        "draft": true,
+                        "chunks": deliverable
+                            .iter()
+                            .map(|chunk| json!({
+                                "streamId": chunk.stream_id,
+                                "responseId": chunk.response_id,
+                                "sequence": chunk.sequence,
+                                "text": chunk.text,
+                            }))
+                            .collect::<Vec<_>>(),
+                    }));
+                }
             }
             "commit" => {
                 let deliverable = gate.commit_accepted_output();
@@ -2306,6 +2322,93 @@ mod tests {
                 .get("lastClientDeliveredSequence")
                 .and_then(Value::as_u64),
             Some(1)
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_output_gate_json_emits_immediate_draft_before_retraction() -> Result<(), String> {
+        let gate = json!({
+            "streamId": "stream-1",
+            "responseId": "response-1",
+            "deliveryPolicy": {
+                "mode": "immediate_draft",
+                "onViolation": "abort_response",
+                "deliveredDraftDisposition": "retract"
+            }
+        });
+        let operations = json!([
+            {
+                "kind": "chunk",
+                "sequence": 1,
+                "text": "provisional draft"
+            },
+            {
+                "kind": "decision",
+                "decisionId": "decision-abort",
+                "disposition": "abort_response",
+                "inputDigest": "sha256:abort",
+                "occurredAtUnixMs": 1_010
+            }
+        ]);
+        let gate_json = serde_json::to_string(&gate).map_err(|error| error.to_string())?;
+        let operations_json =
+            serde_json::to_string(&operations).map_err(|error| error.to_string())?;
+
+        let result_json = evaluate_output_gate_json(&gate_json, &operations_json)
+            .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+        let deliveries = result
+            .get("deliveries")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "output gate result is missing deliveries".to_owned())?;
+
+        assert_eq!(
+            deliveries
+                .first()
+                .and_then(|delivery| delivery.get("operationIndex"))
+                .and_then(Value::as_u64),
+            Some(0)
+        );
+        assert_eq!(
+            deliveries
+                .first()
+                .and_then(|delivery| delivery.get("draft"))
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            deliveries
+                .first()
+                .and_then(|delivery| delivery.get("chunks"))
+                .and_then(Value::as_array)
+                .and_then(|chunks| chunks.first())
+                .and_then(|chunk| chunk.get("text"))
+                .and_then(Value::as_str),
+            Some("provisional draft")
+        );
+        assert_eq!(
+            result
+                .get("cutoff")
+                .and_then(|cutoff| cutoff.get("lastPolicyAcceptedSequence"))
+                .and_then(Value::as_u64),
+            Some(0)
+        );
+        assert_eq!(
+            result
+                .get("cutoff")
+                .and_then(|cutoff| cutoff.get("lastClientDeliveredSequence"))
+                .and_then(Value::as_u64),
+            Some(1)
+        );
+        assert_eq!(
+            result
+                .get("cutoff")
+                .and_then(|cutoff| cutoff.get("draftDisposition"))
+                .and_then(Value::as_str),
+            Some("retract")
         );
 
         Ok(())

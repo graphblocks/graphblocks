@@ -817,7 +817,10 @@ impl OutputDeliveryGate {
         deliverable
     }
 
-    pub fn record_chunk(&mut self, chunk: GenerationChunk) -> Result<(), OutputGateError> {
+    pub fn record_chunk(
+        &mut self,
+        chunk: GenerationChunk,
+    ) -> Result<Vec<GenerationChunk>, OutputGateError> {
         if self.stopped.is_some() {
             return Err(OutputGateError::PolicyStopped);
         }
@@ -848,7 +851,15 @@ impl OutputDeliveryGate {
 
         self.last_generated_sequence = chunk.sequence;
         self.pending.insert(chunk.sequence, chunk);
-        Ok(())
+        if self.delivery_policy.mode != DeliveryMode::ImmediateDraft {
+            return Ok(Vec::new());
+        }
+
+        let Some(deliverable) = self.pending.remove(&self.last_generated_sequence) else {
+            return Ok(Vec::new());
+        };
+        self.last_client_delivered_sequence = deliverable.sequence;
+        Ok(vec![deliverable])
     }
 
     pub fn apply_decision(
