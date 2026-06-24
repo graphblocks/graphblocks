@@ -279,6 +279,35 @@ impl BranchRequest {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RegenerateRequest {
+    pub conversation_id: String,
+    pub assistant_message_id: String,
+    pub new_conversation_id: Option<String>,
+    pub include_attachments: bool,
+    pub include_memory: bool,
+}
+
+impl RegenerateRequest {
+    pub fn new(
+        conversation_id: impl Into<String>,
+        assistant_message_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            conversation_id: conversation_id.into(),
+            assistant_message_id: assistant_message_id.into(),
+            new_conversation_id: None,
+            include_attachments: true,
+            include_memory: false,
+        }
+    }
+
+    pub fn with_new_conversation_id(mut self, conversation_id: impl Into<String>) -> Self {
+        self.new_conversation_id = Some(conversation_id.into());
+        self
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DeletePolicy {
     Tombstone,
@@ -384,6 +413,7 @@ impl Error for ConversationError {}
 pub enum MessageError {
     Conversation(ConversationError),
     NotFound { message_id: String },
+    Conflict { message_id: String, reason: String },
 }
 
 impl fmt::Display for MessageError {
@@ -393,6 +423,9 @@ impl fmt::Display for MessageError {
             Self::NotFound { message_id } => {
                 write!(formatter, "message {message_id:?} does not exist")
             }
+            Self::Conflict { message_id, reason } => {
+                write!(formatter, "message {message_id:?} conflicts: {reason}")
+            }
         }
     }
 }
@@ -401,7 +434,7 @@ impl Error for MessageError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Conversation(error) => Some(error),
-            Self::NotFound { .. } => None,
+            Self::NotFound { .. } | Self::Conflict { .. } => None,
         }
     }
 }
@@ -679,6 +712,12 @@ impl InMemoryConversationStore {
             .ok_or_else(|| ConversationError::NotFound {
                 conversation_id: request.conversation_id.clone(),
             })?;
+        if conversation.archived {
+            return Err(ConversationError::Archived {
+                conversation_id: request.conversation_id.clone(),
+            }
+            .into());
+        }
         let source_index = conversation
             .messages
             .iter()
@@ -743,6 +782,144 @@ impl InMemoryConversationStore {
             branched_from_message_id: Some(request.from_message_id),
             metadata,
         };
+        self.conversations.insert(branch_id, branch.clone());
+        Ok(branch)
+    }
+
+    pub fn regenerate(&mut self, request: RegenerateRequest) -> Result<Conversation, MessageError> {
+        let conversation = self
+            .conversations
+            .get(&request.conversation_id)
+            .cloned()
+            .ok_or_else(|| ConversationError::NotFound {
+                conversation_id: request.conversation_id.clone(),
+            })?;
+        if conversation.archived {
+            return Err(ConversationError::Archived {
+                conversation_id: request.conversation_id.clone(),
+            }
+            .into());
+        }
+
+        let branch_id = request.new_conversation_id.clone().unwrap_or_else(|| {
+            format!(
+                "{}:regenerate:{}",
+                request.conversation_id, request.assistant_message_id
+            )
+        });
+        if self.conversations.contains_key(&branch_id) {
+            return Err(ConversationError::AlreadyExists {
+                conversation_id: branch_id,
+            }
+            .into());
+        }
+
+        let assistant_index = conversation
+            .messages
+            .iter()
+            .position(|message| message.message_id == request.assistant_message_id)
+            .ok_or_else(|| MessageError::NotFound {
+                message_id: request.assistant_message_id.clone(),
+            })?;
+        let assistant_message = &conversation.messages[assistant_index];
+        if assistant_message.role != MessageRole::Assistant {
+            return Err(MessageError::Conflict {
+                message_id: request.assistant_message_id,
+                reason: "not an assistant message".to_owned(),
+            });
+        }
+        if assistant_message.status == MessageStatus::Superseded {
+            return Err(MessageError::Conflict {
+                message_id: request.assistant_message_id,
+                reason: "already superseded".to_owned(),
+            });
+        }
+
+        let parent_index = if let Some(parent_message_id) = &assistant_message.parent_message_id {
+            let parent_index = conversation
+                .messages
+                .iter()
+                .position(|message| message.message_id == *parent_message_id)
+                .ok_or_else(|| MessageError::NotFound {
+                    message_id: parent_message_id.clone(),
+                })?;
+            let parent_message = &conversation.messages[parent_index];
+            if parent_message.role != MessageRole::User {
+                return Err(MessageError::Conflict {
+                    message_id: parent_message_id.clone(),
+                    reason: "not a user message".to_owned(),
+                });
+            }
+            if parent_index >= assistant_index {
+                return Err(MessageError::Conflict {
+                    message_id: parent_message_id.clone(),
+                    reason: "parent must precede assistant message".to_owned(),
+                });
+            }
+            parent_index
+        } else {
+            conversation.messages[..assistant_index]
+                .iter()
+                .rposition(|message| message.role == MessageRole::User)
+                .ok_or_else(|| MessageError::NotFound {
+                    message_id: format!("parent user message for {}", request.assistant_message_id),
+                })?
+        };
+
+        let copied_message_ids = conversation.messages[..=parent_index]
+            .iter()
+            .map(|message| message.message_id.clone())
+            .collect::<BTreeSet<_>>();
+        let attachments = if request.include_attachments {
+            conversation
+                .attachments
+                .iter()
+                .filter(|attachment| {
+                    attachment.scope == AttachmentScope::Conversation
+                        || (attachment.scope == AttachmentScope::Message
+                            && attachment
+                                .message_id
+                                .as_ref()
+                                .is_some_and(|message_id| copied_message_ids.contains(message_id)))
+                })
+                .cloned()
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let compactions = if request.include_memory {
+            conversation.compactions.clone()
+        } else {
+            Vec::new()
+        };
+        let mut metadata = BTreeMap::new();
+        metadata.insert("source_revision".to_owned(), json!(conversation.revision));
+        metadata.insert(
+            "include_attachments".to_owned(),
+            json!(request.include_attachments),
+        );
+        metadata.insert("include_memory".to_owned(), json!(request.include_memory));
+        metadata.insert(
+            "regenerated_from_message_id".to_owned(),
+            json!(request.assistant_message_id),
+        );
+        let branch = Conversation {
+            conversation_id: branch_id.clone(),
+            messages: conversation.messages[..=parent_index].to_vec(),
+            attachments,
+            compactions,
+            revision: 0,
+            archived: false,
+            branch_of: Some(conversation.conversation_id.clone()),
+            branched_from_message_id: Some(conversation.messages[parent_index].message_id.clone()),
+            metadata,
+        };
+
+        let mut updated_conversation = conversation;
+        updated_conversation.messages[assistant_index].status = MessageStatus::Superseded;
+        updated_conversation.revision += 1;
+        self.conversations
+            .insert(request.conversation_id, updated_conversation);
         self.conversations.insert(branch_id, branch.clone());
         Ok(branch)
     }

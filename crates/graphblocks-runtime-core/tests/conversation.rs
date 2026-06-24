@@ -1,8 +1,8 @@
 use graphblocks_runtime_core::conversation::{
     AttachmentIngestionStatus, AttachmentPurpose, AttachmentScope, BranchRequest, CompactionRecord,
     ContentPart, Conversation, ConversationError, DeletePolicy, FileAttachment,
-    InMemoryConversationStore, Message, MessageError, MessageRole, MessageStatus, TurnError,
-    TurnStatus,
+    InMemoryConversationStore, Message, MessageError, MessageRole, MessageStatus,
+    RegenerateRequest, TurnError, TurnStatus,
 };
 use graphblocks_runtime_core::documents::ArtifactRef;
 use serde_json::json;
@@ -143,6 +143,115 @@ fn branch_preserves_lineage_and_copies_messages_through_source_message()
         Err(MessageError::NotFound {
             message_id: "missing".to_owned()
         }),
+    );
+    Ok(())
+}
+
+#[test]
+fn branch_rejects_archived_conversation() -> Result<(), Box<dyn std::error::Error>> {
+    let mut store = InMemoryConversationStore::new();
+    store.create(Conversation::new("conv-1"))?;
+    store.append_messages("conv-1", 0, [Message::new("msg-user", MessageRole::User)])?;
+    store.archive("conv-1")?;
+
+    assert_eq!(
+        store.branch(BranchRequest::new("conv-1", "msg-user")),
+        Err(MessageError::Conversation(ConversationError::Archived {
+            conversation_id: "conv-1".to_owned(),
+        })),
+    );
+    Ok(())
+}
+
+#[test]
+fn regenerate_supersedes_assistant_and_branches_from_parent_user()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut store = InMemoryConversationStore::new();
+    let user =
+        Message::new("msg-user", MessageRole::User).with_part(ContentPart::text("try again"));
+    let mut assistant = assistant_message("msg-assistant", "first answer");
+    assistant.parent_message_id = Some("msg-user".to_owned());
+    let later = Message::new("msg-later", MessageRole::User).with_part(ContentPart::text("later"));
+    store.create(Conversation::new("conv-1"))?;
+    store.append_messages("conv-1", 0, [user.clone(), assistant, later])?;
+
+    let branch = store.regenerate(
+        RegenerateRequest::new("conv-1", "msg-assistant")
+            .with_new_conversation_id("conv-regenerated"),
+    )?;
+
+    let snapshot = store.get("conv-1")?;
+    assert_eq!(snapshot.revision, 2);
+    assert_eq!(
+        snapshot
+            .conversation
+            .messages
+            .iter()
+            .map(|message| message.status)
+            .collect::<Vec<_>>(),
+        vec![
+            MessageStatus::Committed,
+            MessageStatus::Superseded,
+            MessageStatus::Committed
+        ]
+    );
+    assert_eq!(branch.conversation_id, "conv-regenerated");
+    assert_eq!(branch.branch_of.as_deref(), Some("conv-1"));
+    assert_eq!(branch.branched_from_message_id.as_deref(), Some("msg-user"));
+    assert_eq!(branch.messages, vec![user]);
+    assert_eq!(branch.metadata.get("source_revision"), Some(&json!(1)));
+    assert_eq!(
+        branch.metadata.get("regenerated_from_message_id"),
+        Some(&json!("msg-assistant"))
+    );
+    Ok(())
+}
+
+#[test]
+fn regenerate_uses_previous_user_message_when_parent_is_not_recorded()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut store = InMemoryConversationStore::new();
+    let user = Message::new("msg-1", MessageRole::User);
+    let assistant = assistant_message("msg-2", "first answer");
+    store.create(Conversation::new("conv-1"))?;
+    store.append_messages("conv-1", 0, [user.clone(), assistant])?;
+
+    let branch = store.regenerate(
+        RegenerateRequest::new("conv-1", "msg-2").with_new_conversation_id("conv-regenerated"),
+    )?;
+
+    assert_eq!(branch.branched_from_message_id.as_deref(), Some("msg-1"));
+    assert_eq!(branch.messages, vec![user]);
+    Ok(())
+}
+
+#[test]
+fn regenerate_branch_id_conflict_does_not_supersede_assistant()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut store = InMemoryConversationStore::new();
+    let user = Message::new("msg-1", MessageRole::User);
+    let mut assistant = assistant_message("msg-2", "first answer");
+    assistant.parent_message_id = Some("msg-1".to_owned());
+    store.create(Conversation::new("conv-1"))?;
+    store.create(Conversation::new("conv-regenerated"))?;
+    store.append_messages("conv-1", 0, [user, assistant])?;
+
+    assert_eq!(
+        store.regenerate(
+            RegenerateRequest::new("conv-1", "msg-2").with_new_conversation_id("conv-regenerated"),
+        ),
+        Err(MessageError::Conversation(
+            ConversationError::AlreadyExists {
+                conversation_id: "conv-regenerated".to_owned(),
+            }
+        )),
+    );
+
+    let snapshot = store.get("conv-1")?;
+    assert_eq!(snapshot.revision, 1);
+    assert_eq!(
+        snapshot.conversation.messages[1].status,
+        MessageStatus::Committed
     );
     Ok(())
 }
