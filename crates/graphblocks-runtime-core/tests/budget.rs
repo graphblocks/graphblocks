@@ -465,6 +465,48 @@ fn sqlite_budget_ledger_commit_with_permit_settles_authorized_reservation()
 }
 
 #[test]
+fn sqlite_budget_ledger_permit_survives_reopen() -> Result<(), BudgetError> {
+    let path = sqlite_budget_path("permit-persist");
+    let reservation_id;
+    let permit_id;
+
+    {
+        let mut ledger = SqliteBudgetLedger::open(&path)?;
+        ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+        let reservation = ledger.reserve(
+            "budget-1",
+            "run:1",
+            [tokens(40)],
+            ReservationPurpose::ProviderCall,
+            "later",
+            None,
+        )?;
+        let permit = ledger.issue_permit(
+            "permit-1",
+            vec![reservation.reservation_id.clone()],
+            "worker:1",
+            "turn:1",
+            1,
+            "finish_current_turn",
+            "sha256:policy",
+            "later",
+            Vec::new(),
+        )?;
+        reservation_id = reservation.reservation_id;
+        permit_id = permit.permit_id;
+    }
+
+    let mut ledger = SqliteBudgetLedger::open(&path)?;
+    let settlement = ledger.commit_with_permit(&permit_id, &reservation_id, [tokens(30)])?;
+
+    assert_eq!(settlement.committed, vec![tokens(30)]);
+    assert_eq!(settlement.released, vec![tokens(10)]);
+    assert_eq!(ledger.balance("budget-1")?.committed, vec![tokens(30)]);
+    fs::remove_file(path).ok();
+    Ok(())
+}
+
+#[test]
 fn sqlite_budget_ledger_commit_with_permit_rejects_usage_above_authorized_without_mutating()
 -> Result<(), BudgetError> {
     let mut ledger = SqliteBudgetLedger::open_in_memory()?;
