@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::output_policy::PendingToolCallsDisposition;
 use crate::tool::{ToolCancellation, ToolEffect};
 use crate::tool_call::ToolCall;
+use serde_json::Value;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ToolExecutionFailurePolicy {
@@ -67,6 +68,18 @@ pub enum ToolExecutionPlanError {
     EffectConflict {
         effect_key: String,
     },
+    InvalidEffectKeyTemplate {
+        template: String,
+    },
+    EffectKeyTemplateUnsupportedPlaceholder {
+        placeholder: String,
+    },
+    EffectKeyTemplateMissingValue {
+        placeholder: String,
+    },
+    EffectKeyTemplateNonScalarValue {
+        placeholder: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -90,6 +103,86 @@ impl ToolPlanCall {
     pub fn with_effect_key(mut self, effect_key: impl Into<String>) -> Self {
         self.effect_key = Some(effect_key.into());
         self
+    }
+
+    pub fn with_effect_key_template(
+        mut self,
+        template: &str,
+    ) -> Result<Self, ToolExecutionPlanError> {
+        let mut effect_key = String::new();
+        let mut rest = template;
+        while let Some(open_index) = rest.find('{') {
+            effect_key.push_str(&rest[..open_index]);
+            let after_open = &rest[open_index + 1..];
+            let Some(close_index) = after_open.find('}') else {
+                return Err(ToolExecutionPlanError::InvalidEffectKeyTemplate {
+                    template: template.to_owned(),
+                });
+            };
+            let placeholder = &after_open[..close_index];
+            if placeholder.is_empty() {
+                return Err(ToolExecutionPlanError::InvalidEffectKeyTemplate {
+                    template: template.to_owned(),
+                });
+            }
+            if placeholder == "tool.name" {
+                effect_key.push_str(&self.call.name);
+            } else if let Some(arguments_path) = placeholder.strip_prefix("arguments.") {
+                if arguments_path.is_empty() {
+                    return Err(
+                        ToolExecutionPlanError::EffectKeyTemplateUnsupportedPlaceholder {
+                            placeholder: placeholder.to_owned(),
+                        },
+                    );
+                }
+                let mut value = &self.call.arguments;
+                for segment in arguments_path.split('.') {
+                    if segment.is_empty() {
+                        return Err(
+                            ToolExecutionPlanError::EffectKeyTemplateUnsupportedPlaceholder {
+                                placeholder: placeholder.to_owned(),
+                            },
+                        );
+                    }
+                    let Some(next_value) = value.get(segment) else {
+                        return Err(ToolExecutionPlanError::EffectKeyTemplateMissingValue {
+                            placeholder: placeholder.to_owned(),
+                        });
+                    };
+                    value = next_value;
+                }
+                match value {
+                    Value::String(value) => effect_key.push_str(value),
+                    Value::Number(value) => effect_key.push_str(&value.to_string()),
+                    Value::Bool(value) => effect_key.push_str(&value.to_string()),
+                    Value::Null => {
+                        return Err(ToolExecutionPlanError::EffectKeyTemplateMissingValue {
+                            placeholder: placeholder.to_owned(),
+                        });
+                    }
+                    Value::Array(_) | Value::Object(_) => {
+                        return Err(ToolExecutionPlanError::EffectKeyTemplateNonScalarValue {
+                            placeholder: placeholder.to_owned(),
+                        });
+                    }
+                }
+            } else {
+                return Err(
+                    ToolExecutionPlanError::EffectKeyTemplateUnsupportedPlaceholder {
+                        placeholder: placeholder.to_owned(),
+                    },
+                );
+            }
+            rest = &after_open[close_index + 1..];
+        }
+        if rest.contains('}') {
+            return Err(ToolExecutionPlanError::InvalidEffectKeyTemplate {
+                template: template.to_owned(),
+            });
+        }
+        effect_key.push_str(rest);
+        self.effect_key = Some(effect_key);
+        Ok(self)
     }
 
     pub fn with_effects<I>(mut self, effects: I) -> Self

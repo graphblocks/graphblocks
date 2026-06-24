@@ -1511,6 +1511,40 @@ def test_tool_execution_plan_waits_for_dependencies_and_serializes_effect_keys()
     assert plan.ready_call_ids() == ["call-b", "call-c"]
 
 
+def test_tool_execution_plan_derives_effect_keys_from_template() -> None:
+    plan = ToolExecutionPlan(
+        plan_id="plan-1",
+        response_id="response-1",
+        calls=(
+            ToolPlanCall(_tool_call("call-a", '{"resource_id":"ticket-1"}')).with_effect_key_template(
+                "{tool.name}:{arguments.resource_id}"
+            ),
+            ToolPlanCall(_tool_call("call-b", '{"resource_id":"ticket-1"}')).with_effect_key_template(
+                "{tool.name}:{arguments.resource_id}"
+            ),
+            ToolPlanCall(_tool_call("call-c", '{"resource_id":"ticket-2"}')).with_effect_key_template(
+                "{tool.name}:{arguments.resource_id}"
+            ),
+        ),
+        maximum_parallelism=3,
+    )
+
+    assert plan.ready_call_ids() == ["call-a", "call-c"]
+    plan.record_started("call-a")
+    assert plan.ready_call_ids() == ["call-c"]
+    plan.record_completed("call-a")
+    assert plan.ready_call_ids() == ["call-b", "call-c"]
+
+
+def test_tool_execution_plan_effect_key_template_reports_missing_arguments() -> None:
+    with pytest.raises(ToolExecutionPlanError) as error:
+        ToolPlanCall(_tool_call("call-a", "{}")).with_effect_key_template(
+            "{tool.name}:{arguments.resource_id}"
+        )
+
+    assert str(error.value) == "effect key template placeholder arguments.resource_id has no value"
+
+
 def test_tool_execution_plan_skips_dependents_after_dependency_failure() -> None:
     dependent = replace(_tool_call("call-b", '{"resource_id":"b"}'), depends_on=("call-a",))
     transitive = replace(_tool_call("call-c", '{"resource_id":"c"}'), depends_on=("call-b",))

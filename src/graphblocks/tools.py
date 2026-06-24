@@ -918,6 +918,56 @@ class ToolPlanCall:
             raise ToolExecutionPlanError(f"invalid tool cancellation {self.cancellation}")
         object.__setattr__(self, "effects", effects)
 
+    def with_effect_key_template(self, template: str) -> ToolPlanCall:
+        output: list[str] = []
+        rest = template
+        while "{" in rest:
+            open_index = rest.index("{")
+            output.append(rest[:open_index])
+            after_open = rest[open_index + 1 :]
+            close_index = after_open.find("}")
+            if close_index == -1:
+                raise ToolExecutionPlanError(f"invalid effect key template {template!r}")
+            placeholder = after_open[:close_index]
+            if not placeholder:
+                raise ToolExecutionPlanError(f"invalid effect key template {template!r}")
+            if placeholder == "tool.name":
+                output.append(self.call.name)
+            elif placeholder.startswith("arguments."):
+                argument_path = placeholder.removeprefix("arguments.")
+                if not argument_path:
+                    raise ToolExecutionPlanError(f"unsupported effect key template placeholder {placeholder}")
+                value = self.call.arguments
+                for segment in argument_path.split("."):
+                    if not segment:
+                        raise ToolExecutionPlanError(f"unsupported effect key template placeholder {placeholder}")
+                    if not isinstance(value, Mapping) or segment not in value:
+                        raise ToolExecutionPlanError(
+                            f"effect key template placeholder {placeholder} has no value"
+                        )
+                    value = value[segment]
+                if isinstance(value, str):
+                    output.append(value)
+                elif isinstance(value, bool):
+                    output.append("true" if value else "false")
+                elif isinstance(value, int | float):
+                    output.append(str(value))
+                elif value is None:
+                    raise ToolExecutionPlanError(
+                        f"effect key template placeholder {placeholder} has no value"
+                    )
+                else:
+                    raise ToolExecutionPlanError(
+                        f"effect key template placeholder {placeholder} must resolve to a scalar"
+                    )
+            else:
+                raise ToolExecutionPlanError(f"unsupported effect key template placeholder {placeholder}")
+            rest = after_open[close_index + 1 :]
+        if "}" in rest:
+            raise ToolExecutionPlanError(f"invalid effect key template {template!r}")
+        output.append(rest)
+        return replace(self, effect_key="".join(output))
+
 
 @dataclass(slots=True)
 class ToolExecutionPlan:

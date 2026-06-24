@@ -245,6 +245,48 @@ fn conflicting_effect_keys_are_serialized() -> Result<(), ToolExecutionPlanError
 }
 
 #[test]
+fn effect_key_template_derives_keys_from_tool_name_and_arguments()
+-> Result<(), ToolExecutionPlanError> {
+    let mut plan = ToolExecutionPlan::new(
+        "plan-1",
+        "response-1",
+        [
+            ToolPlanCall::new(tool_call("call-a", "{\"resource_id\":\"ticket-1\"}"))
+                .with_effect_key_template("{tool.name}:{arguments.resource_id}")?,
+            ToolPlanCall::new(tool_call("call-b", "{\"resource_id\":\"ticket-1\"}"))
+                .with_effect_key_template("{tool.name}:{arguments.resource_id}")?,
+            ToolPlanCall::new(tool_call("call-c", "{\"resource_id\":\"ticket-2\"}"))
+                .with_effect_key_template("{tool.name}:{arguments.resource_id}")?,
+        ],
+        3,
+    )?;
+
+    assert_eq!(
+        plan.ready_call_ids(),
+        vec!["call-a".to_owned(), "call-c".to_owned()]
+    );
+    plan.record_started("call-a")?;
+    assert_eq!(plan.ready_call_ids(), vec!["call-c".to_owned()]);
+    plan.record_completed("call-a")?;
+    assert_eq!(
+        plan.ready_call_ids(),
+        vec!["call-b".to_owned(), "call-c".to_owned()]
+    );
+    Ok(())
+}
+
+#[test]
+fn effect_key_template_reports_missing_argument_path() {
+    assert_eq!(
+        ToolPlanCall::new(tool_call("call-a", "{}"))
+            .with_effect_key_template("{tool.name}:{arguments.resource_id}"),
+        Err(ToolExecutionPlanError::EffectKeyTemplateMissingValue {
+            placeholder: "arguments.resource_id".to_owned(),
+        }),
+    );
+}
+
+#[test]
 fn policy_stop_denies_pending_tool_calls() -> Result<(), ToolExecutionPlanError> {
     let mut plan = ToolExecutionPlan::new(
         "plan-1",
