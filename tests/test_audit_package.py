@@ -44,3 +44,135 @@ def test_audit_package_exposes_append_only_event_and_enforcement_records(monkeyp
     assert enforcement.decision_id == "decision-1"
     assert enforcement.enforcement_point == "before_client_delivery"
     assert enforcement.status == "enforced"
+
+
+def test_audit_package_records_tool_effect_precondition_and_outcome(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-audit" / "src"))
+    graphblocks = importlib.import_module("graphblocks")
+    graphblocks_audit = importlib.import_module("graphblocks_audit")
+
+    catalog = graphblocks.ToolCatalog(
+        definitions=(
+            graphblocks.ToolDefinition(
+                "ticket.create",
+                "Create a support ticket.",
+                "schemas/TicketCreate@1",
+            ),
+        ),
+        bindings=(
+            graphblocks.ToolBinding(
+                "binding-ticket-create",
+                "ticket.create",
+                graphblocks.BlockToolImplementation("blocks.ticket_create"),
+                effects=frozenset({"destructive", "external_write", "network"}),
+            ),
+        ),
+    )
+    resolved_tool = catalog.resolve(
+        graphblocks.ToolResolutionScope(),
+        effective_policy_snapshot_id="policy-snapshot-1",
+    )[0]
+    draft = graphblocks.ToolCallDraft.proposed("response-1", "call-1", "ticket.create")
+    call = draft.append_argument_fragment(
+        '{"customer_id":"cust-1","title":"Help"}'
+    ).complete_arguments().into_tool_call(
+        resolved_tool.resolved_tool_id,
+        created_at="2026-06-23T00:00:00Z",
+    )
+    result = graphblocks.ToolResult.completed(
+        "call-1",
+        (graphblocks.ContentPart(kind="json", data={"ticket_id": "T-1"}),),
+        started_at="2026-06-23T00:00:01Z",
+        completed_at="2026-06-23T00:00:02Z",
+    ).with_effect_outcome("committed")
+
+    record = graphblocks_audit.ToolEffectAuditRecord.from_tool_result(
+        event_id="audit-effect-1",
+        occurred_at="2026-06-23T00:00:03Z",
+        actor=graphblocks_audit.PrincipalRef("user-1", tenant_id="tenant-a"),
+        resolved_tool=resolved_tool,
+        call=call,
+        result=result,
+        effect_key="ticket.create:cust-1",
+        precondition_digest="sha256:precondition",
+        idempotency_key="idem-ticket-1",
+        policy_decision_id="decision-tool-1",
+    )
+
+    assert record.target_kind == "destructive_effect"
+    assert record.resource.resource_id == "tool:ticket.create"
+    assert record.reason_codes == ("tool_effect.committed",)
+    assert record.payload == {
+        "tool_call_id": "call-1",
+        "response_id": "response-1",
+        "resolved_tool_id": resolved_tool.resolved_tool_id,
+        "tool_name": "ticket.create",
+        "tool_call_revision": 1,
+        "arguments_digest": call.arguments_digest,
+        "definition_digest": resolved_tool.definition_digest,
+        "binding_digest": resolved_tool.binding_digest,
+        "effective_policy_snapshot_id": "policy-snapshot-1",
+        "effects": ["destructive", "external_write", "network"],
+        "effect_key": "ticket.create:cust-1",
+        "precondition_digest": "sha256:precondition",
+        "idempotency_key": "idem-ticket-1",
+        "policy_decision_id": "decision-tool-1",
+        "result_status": "completed",
+        "effect_outcome": "committed",
+        "output_digest": result.output_digest,
+        "started_at": "2026-06-23T00:00:01Z",
+        "completed_at": "2026-06-23T00:00:02Z",
+    }
+    assert record.payload_digest().startswith("sha256:")
+
+
+def test_audit_package_rejects_mismatched_tool_effect_record_inputs(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-audit" / "src"))
+    graphblocks = importlib.import_module("graphblocks")
+    graphblocks_audit = importlib.import_module("graphblocks_audit")
+
+    definition = graphblocks.ToolDefinition(
+        "knowledge.search",
+        "Search documentation.",
+        "schemas/Search@1",
+    )
+    binding = graphblocks.ToolBinding(
+        "binding-search",
+        "knowledge.search",
+        graphblocks.BlockToolImplementation("blocks.search"),
+    )
+    resolved_tool = graphblocks.ResolvedTool.from_definition_and_binding(
+        resolved_tool_id="resolved-search",
+        definition=definition,
+        binding=binding,
+        effective_policy_snapshot_id="policy-snapshot-1",
+        allowed_for_principal=True,
+    )
+    call = graphblocks.ToolCall(
+        tool_call_id="call-1",
+        response_id="response-1",
+        resolved_tool_id="resolved-search",
+        name="knowledge.search",
+        arguments={},
+        arguments_digest="sha256:arguments",
+    )
+
+    try:
+        graphblocks_audit.ToolEffectAuditRecord.from_tool_result(
+            event_id="audit-effect-1",
+            occurred_at="2026-06-23T00:00:03Z",
+            actor=graphblocks_audit.PrincipalRef("user-1"),
+            resolved_tool=resolved_tool,
+            call=call,
+            result=graphblocks.ToolResult.completed(
+                "other-call",
+                (graphblocks.ContentPart(kind="text", text="ok"),),
+                started_at="2026-06-23T00:00:01Z",
+                completed_at="2026-06-23T00:00:02Z",
+            ),
+        )
+    except graphblocks_audit.ToolEffectAuditError as error:
+        assert "other-call" in str(error)
+        assert "call-1" in str(error)
+    else:
+        raise AssertionError("mismatched tool result should be rejected")
