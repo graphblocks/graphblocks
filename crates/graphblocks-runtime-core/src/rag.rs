@@ -2644,7 +2644,14 @@ where
     metrics
 }
 
-pub fn evaluate_context_metrics(context: &ContextPack) -> Vec<MetricObservation> {
+pub fn evaluate_context_metrics<I, S>(
+    context: &ContextPack,
+    relevant_item_ids: Option<I>,
+) -> Vec<MetricObservation>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
     let source_diversity = context
         .hits
         .iter()
@@ -2657,12 +2664,30 @@ pub fn evaluate_context_metrics(context: &ContextPack) -> Vec<MetricObservation>
         }
         _ => Value::Null,
     };
+    let context_precision = match relevant_item_ids {
+        Some(ids) => {
+            let relevant_item_id_set = ids.into_iter().map(Into::into).collect::<BTreeSet<_>>();
+            if relevant_item_id_set.is_empty() || context.hits.is_empty() {
+                Value::Null
+            } else {
+                let relevant_hits = context
+                    .hits
+                    .iter()
+                    .filter(|hit| relevant_item_id_set.contains(&hit.item.item_id))
+                    .count();
+                json!(relevant_hits as f64 / context.hits.len() as f64)
+            }
+        }
+        None => Value::Null,
+    };
 
     vec![
         MetricObservation::new("source_diversity", json!(source_diversity))
             .with_unit("sources")
             .with_direction(MetricDirection::Maximize),
         MetricObservation::new("context_token_efficiency", token_efficiency)
+            .with_direction(MetricDirection::Maximize),
+        MetricObservation::new("context_precision", context_precision)
             .with_direction(MetricDirection::Maximize),
     ]
 }

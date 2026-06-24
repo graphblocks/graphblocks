@@ -127,8 +127,8 @@ def test_evaluate_context_metrics_reports_source_diversity_and_token_efficiency(
         token_count=6,
     )
 
-    metrics = evaluate_context_metrics(context)
-    exported_metrics = graphblocks.evaluate_context_metrics(context)
+    metrics = evaluate_context_metrics(context, {"doc-a", "doc-c"})
+    exported_metrics = graphblocks.evaluate_context_metrics(context, {"doc-a", "doc-c"})
     by_name = {metric.name: metric for metric in metrics}
 
     assert [metric.name for metric in exported_metrics] == [metric.name for metric in metrics]
@@ -137,6 +137,8 @@ def test_evaluate_context_metrics_reports_source_diversity_and_token_efficiency(
     assert by_name["source_diversity"].direction == "maximize"
     assert by_name["context_token_efficiency"].value == Decimal("0.75")
     assert by_name["context_token_efficiency"].direction == "maximize"
+    assert by_name["context_precision"].value == Decimal(2) / Decimal(3)
+    assert by_name["context_precision"].direction == "maximize"
 
 
 def test_evaluate_context_metrics_returns_no_data_without_token_budget() -> None:
@@ -146,6 +148,7 @@ def test_evaluate_context_metrics_returns_no_data_without_token_budget() -> None
 
     assert by_name["source_diversity"].value == Decimal("1")
     assert by_name["context_token_efficiency"].value is None
+    assert by_name["context_precision"].value is None
 
 
 def test_evaluate_rag_answer_metrics_reports_citation_precision() -> None:

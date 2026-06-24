@@ -1124,7 +1124,10 @@ def evaluate_retrieval_metrics(
     ]
 
 
-def evaluate_context_metrics(context: ContextPack) -> list[MetricObservation]:
+def evaluate_context_metrics(
+    context: ContextPack,
+    relevant_item_ids: Iterable[str] | None = None,
+) -> list[MetricObservation]:
     source_diversity = len({hit.retriever for hit in context.hits})
     token_efficiency = (
         None
@@ -1133,6 +1136,15 @@ def evaluate_context_metrics(context: ContextPack) -> list[MetricObservation]:
         or context.token_budget <= 0
         else Decimal(context.token_count) / Decimal(context.token_budget)
     )
+    if relevant_item_ids is None:
+        context_precision = None
+    else:
+        relevant_item_id_set = set(relevant_item_ids)
+        if not relevant_item_id_set or not context.hits:
+            context_precision = None
+        else:
+            relevant_hits = sum(1 for hit in context.hits if hit.item.item_id in relevant_item_id_set)
+            context_precision = Decimal(relevant_hits) / Decimal(len(context.hits))
 
     return [
         MetricObservation(
@@ -1144,6 +1156,11 @@ def evaluate_context_metrics(context: ContextPack) -> list[MetricObservation]:
         MetricObservation(
             "context_token_efficiency",
             token_efficiency,
+            direction="maximize",
+        ),
+        MetricObservation(
+            "context_precision",
+            context_precision,
             direction="maximize",
         ),
     ]

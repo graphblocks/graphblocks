@@ -1715,7 +1715,7 @@ fn evaluate_context_metrics_reports_source_diversity_and_token_efficiency() {
     context.token_budget = Some(8);
     context.token_count = Some(6);
 
-    let metrics = evaluate_context_metrics(&context);
+    let metrics = evaluate_context_metrics(&context, Some(["doc-a", "doc-c"]));
 
     let source_diversity = metrics
         .iter()
@@ -1730,13 +1730,19 @@ fn evaluate_context_metrics_reports_source_diversity_and_token_efficiency() {
         .expect("token efficiency metric exists");
     assert_eq!(token_efficiency.value, json!(0.75));
     assert_eq!(token_efficiency.direction, MetricDirection::Maximize);
+    let context_precision = metrics
+        .iter()
+        .find(|metric| metric.name == "context_precision")
+        .expect("context precision metric exists");
+    assert_eq!(context_precision.value, json!(2.0 / 3.0));
+    assert_eq!(context_precision.direction, MetricDirection::Maximize);
 }
 
 #[test]
 fn evaluate_context_metrics_returns_no_data_without_token_budget() {
     let context = ContextPack::new("ctx-1", vec![hit("hit-a", "doc-a", "doc-1", "alpha", 1)]);
 
-    let metrics = evaluate_context_metrics(&context);
+    let metrics = evaluate_context_metrics(&context, Option::<Vec<String>>::None);
 
     let source_diversity = metrics
         .iter()
@@ -1748,6 +1754,11 @@ fn evaluate_context_metrics_returns_no_data_without_token_budget() {
         .find(|metric| metric.name == "context_token_efficiency")
         .expect("token efficiency metric exists");
     assert_eq!(token_efficiency.value, Value::Null);
+    let context_precision = metrics
+        .iter()
+        .find(|metric| metric.name == "context_precision")
+        .expect("context precision metric exists");
+    assert_eq!(context_precision.value, Value::Null);
 }
 
 #[test]
