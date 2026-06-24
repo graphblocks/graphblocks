@@ -6,7 +6,7 @@ from decimal import Decimal
 import json
 from pathlib import Path
 import sqlite3
-from typing import Literal, TypeVar
+from typing import Literal, TypeVar, cast
 
 from .policy import ResourceRef
 
@@ -188,6 +188,94 @@ class CompletionReserve:
         object.__setattr__(self, "spendable_by", frozenset(self.spendable_by))
 
 
+BudgetRecord = TypeVar("BudgetRecord", BudgetAccount, BudgetReservation, BudgetPermit, CompletionReserve)
+
+
+def _copy_usage_amount(amount: UsageAmount) -> UsageAmount:
+    return UsageAmount(
+        kind=amount.kind,
+        amount=amount.amount,
+        unit=amount.unit,
+        dimensions=dict(amount.dimensions),
+    )
+
+
+def _copy_usage_amounts(amounts: list[UsageAmount]) -> list[UsageAmount]:
+    return [_copy_usage_amount(amount) for amount in amounts]
+
+
+def _copy_resource_ref(resource: ResourceRef) -> ResourceRef:
+    return ResourceRef(
+        resource_id=resource.resource_id,
+        resource_kind=resource.resource_kind,
+        tenant_id=resource.tenant_id,
+        attributes=dict(resource.attributes),
+    )
+
+
+def _copy_budget_record(record: BudgetRecord) -> BudgetRecord:
+    if isinstance(record, BudgetAccount):
+        return cast(
+            BudgetRecord,
+            BudgetAccount(
+                budget_id=record.budget_id,
+                scope=_copy_resource_ref(record.scope),
+                allocated=_copy_usage_amounts(record.allocated),
+                parent_budget_id=record.parent_budget_id,
+                status=record.status,
+                policy_ref=record.policy_ref,
+                revision=record.revision,
+            ),
+        )
+    if isinstance(record, BudgetReservation):
+        return cast(
+            BudgetRecord,
+            BudgetReservation(
+                reservation_id=record.reservation_id,
+                budget_id=record.budget_id,
+                owner=_copy_resource_ref(record.owner),
+                amounts=_copy_usage_amounts(record.amounts),
+                purpose=record.purpose,
+                expires_at=record.expires_at,
+                fencing_token=record.fencing_token,
+                status=record.status,
+            ),
+        )
+    if isinstance(record, BudgetPermit):
+        return cast(
+            BudgetRecord,
+            BudgetPermit(
+                permit_id=record.permit_id,
+                reservation_refs=tuple(record.reservation_refs),
+                owner=_copy_resource_ref(record.owner),
+                atomic_unit=_copy_resource_ref(record.atomic_unit),
+                admission_epoch=record.admission_epoch,
+                authorized_amounts=_copy_usage_amounts(record.authorized_amounts),
+                continuation_profile=record.continuation_profile,
+                policy_snapshot_digest=record.policy_snapshot_digest,
+                expires_at=record.expires_at,
+                low_watermark=_copy_usage_amounts(record.low_watermark),
+                fencing_tokens=dict(record.fencing_tokens),
+            ),
+        )
+    if isinstance(record, CompletionReserve):
+        return cast(
+            BudgetRecord,
+            CompletionReserve(
+                reserve_id=record.reserve_id,
+                budget_id=record.budget_id,
+                purpose=record.purpose,
+                amounts=_copy_usage_amounts(record.amounts),
+                spendable_by=frozenset(record.spendable_by),
+                expires_at=record.expires_at,
+                status=record.status,
+                reservation_id=record.reservation_id,
+                fencing_token=record.fencing_token,
+            ),
+        )
+    raise TypeError(f"unsupported budget record {type(record).__name__}")
+
+
 def _reservation_purpose_for_completion_reserve(purpose: CompletionReservePurpose) -> ReservationPurpose:
     if purpose in {"finalization", "checkpoint"}:
         return "finalization"
@@ -258,7 +346,7 @@ class InMemoryBudgetLedger:
         self._reserved[budget_id] = {}
         self._committed[budget_id] = {}
         self._overdraft[budget_id] = {}
-        return account
+        return _copy_budget_record(account)
 
     def reserve(
         self,
@@ -302,9 +390,9 @@ class InMemoryBudgetLedger:
             expires_at=expires_at,
             fencing_token=self._fencing_counter,
         )
-        self._reservations[actual_reservation_id] = reservation
+        self._reservations[actual_reservation_id] = _copy_budget_record(reservation)
         self._reservation_holds[actual_reservation_id] = held_budget_ids
-        return reservation
+        return _copy_budget_record(reservation)
 
     def commit(
         self,
@@ -460,9 +548,9 @@ class InMemoryBudgetLedger:
             expires_at=expires_at,
             fencing_tokens=fencing_tokens,
         )
-        self._permits[permit_id] = permit
+        self._permits[permit_id] = _copy_budget_record(permit)
         self._permit_spent[permit_id] = {}
-        return permit
+        return _copy_budget_record(permit)
 
     def commit_with_permit(
         self,
@@ -565,15 +653,15 @@ class InMemoryBudgetLedger:
             expires_at=expires_at,
             fencing_token=self._fencing_counter,
         )
-        self._completion_reserves[reserve_id] = reserve
+        self._completion_reserves[reserve_id] = _copy_budget_record(reserve)
         self._completion_reserve_holds[reserve_id] = held_budget_ids
-        return reserve
+        return _copy_budget_record(reserve)
 
     def completion_reserve(self, reserve_id: str) -> CompletionReserve:
         reserve = self._completion_reserves.get(reserve_id)
         if reserve is None:
             raise BudgetCompletionReserveNotFoundError(f"completion reserve {reserve_id!r} does not exist")
-        return reserve
+        return _copy_budget_record(reserve)
 
     def spend_completion_reserve(
         self,
@@ -603,14 +691,14 @@ class InMemoryBudgetLedger:
             expires_at=expires_at,
             fencing_token=reserve.fencing_token,
         )
-        self._reservations[reservation_id] = reservation
+        self._reservations[reservation_id] = _copy_budget_record(reservation)
         self._reservation_holds[reservation_id] = self._completion_reserve_holds.get(reserve_id, (reserve.budget_id,))
         self._completion_reserves[reserve_id] = replace(
             reserve,
             status="spent",
             reservation_id=reservation_id,
         )
-        return reservation
+        return _copy_budget_record(reservation)
 
     def release_completion_reserve(self, reserve_id: str) -> CompletionReserve:
         return self._settle_completion_reserve(reserve_id, "released")
@@ -641,7 +729,7 @@ class InMemoryBudgetLedger:
             )
         updated = replace(reserve, status=status)
         self._completion_reserves[reserve_id] = updated
-        return updated
+        return _copy_budget_record(updated)
 
     def balance(self, budget_id: str) -> BudgetBalance:
         account = self._accounts.get(budget_id)
