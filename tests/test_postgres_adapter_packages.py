@@ -186,6 +186,41 @@ def test_budget_postgres_settlement_statement(monkeypatch) -> None:
     assert statement.params["revision"] == 9
 
 
+def test_budget_postgres_settlement_statement_can_record_permit_link(monkeypatch) -> None:
+    _add_budget_postgres_paths(monkeypatch)
+    graphblocks_budget = importlib.import_module("graphblocks_budget")
+    graphblocks_budget_postgres = importlib.import_module("graphblocks_budget_postgres")
+    schema = graphblocks_budget_postgres.PostgresBudgetSchema(schema="gb_budget")
+    settlement = graphblocks_budget.BudgetSettlement(
+        reservation_id="reservation-1",
+        budget_id="budget-1",
+        committed=[
+            graphblocks_budget.UsageAmount(
+                "model_total_tokens",
+                Decimal("25"),
+                "tokens",
+                {"model": "gpt-test"},
+            )
+        ],
+        status="committed",
+        revision=9,
+    )
+
+    migrations = "\n".join(schema.migration_statements())
+    assert "permit_id text NULL REFERENCES gb_budget.budget_permits(permit_id)" in migrations
+
+    statement = graphblocks_budget_postgres.append_budget_settlement_statement(
+        settlement,
+        schema=schema,
+        permit_id="permit-1",
+    )
+
+    assert statement.name == "budget_settlement_append"
+    assert "permit_id" in statement.sql
+    assert "%(permit_id)s" in statement.sql
+    assert statement.params["permit_id"] == "permit-1"
+
+
 def test_budget_postgres_permit_statement(monkeypatch) -> None:
     _add_budget_postgres_paths(monkeypatch)
     graphblocks_budget = importlib.import_module("graphblocks_budget")

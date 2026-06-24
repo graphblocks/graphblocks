@@ -91,18 +91,6 @@ CREATE TABLE IF NOT EXISTS {self.schema}.budget_reservations (
 );
 """.strip(),
             f"""
-CREATE TABLE IF NOT EXISTS {self.schema}.budget_settlements (
-  reservation_id text PRIMARY KEY REFERENCES {self.schema}.budget_reservations(reservation_id),
-  budget_id text NOT NULL REFERENCES {self.schema}.budget_accounts(budget_id),
-  committed_json jsonb NOT NULL,
-  released_json jsonb NOT NULL,
-  overdraft_json jsonb NOT NULL,
-  status text NOT NULL,
-  revision bigint NOT NULL,
-  settled_at timestamptz NOT NULL DEFAULT now()
-);
-""".strip(),
-            f"""
 CREATE TABLE IF NOT EXISTS {self.schema}.budget_permits (
   permit_id text PRIMARY KEY,
   reservation_refs_json jsonb NOT NULL,
@@ -116,6 +104,19 @@ CREATE TABLE IF NOT EXISTS {self.schema}.budget_permits (
   low_watermark_json jsonb NOT NULL,
   fencing_tokens_json jsonb NOT NULL,
   issued_at timestamptz NOT NULL DEFAULT now()
+);
+""".strip(),
+            f"""
+CREATE TABLE IF NOT EXISTS {self.schema}.budget_settlements (
+  reservation_id text PRIMARY KEY REFERENCES {self.schema}.budget_reservations(reservation_id),
+  budget_id text NOT NULL REFERENCES {self.schema}.budget_accounts(budget_id),
+  permit_id text NULL REFERENCES {self.schema}.budget_permits(permit_id),
+  committed_json jsonb NOT NULL,
+  released_json jsonb NOT NULL,
+  overdraft_json jsonb NOT NULL,
+  status text NOT NULL,
+  revision bigint NOT NULL,
+  settled_at timestamptz NOT NULL DEFAULT now()
 );
 """.strip(),
             f"""
@@ -288,14 +289,18 @@ def append_budget_settlement_statement(
     settlement: BudgetSettlement,
     *,
     schema: PostgresBudgetSchema | None = None,
+    permit_id: str | None = None,
 ) -> PostgresStatement:
     schema = schema or PostgresBudgetSchema()
+    params = encode_budget_settlement(settlement)
+    params["permit_id"] = permit_id
     return PostgresStatement(
         name="budget_settlement_append",
         sql=f"""
 INSERT INTO {schema.schema}.budget_settlements (
   reservation_id,
   budget_id,
+  permit_id,
   committed_json,
   released_json,
   overdraft_json,
@@ -304,6 +309,7 @@ INSERT INTO {schema.schema}.budget_settlements (
 ) VALUES (
   %(reservation_id)s,
   %(budget_id)s,
+  %(permit_id)s,
   %(committed_json)s,
   %(released_json)s,
   %(overdraft_json)s,
@@ -312,7 +318,7 @@ INSERT INTO {schema.schema}.budget_settlements (
 )
 ON CONFLICT (reservation_id) DO NOTHING;
 """.strip(),
-        params=encode_budget_settlement(settlement),
+        params=params,
     )
 
 
