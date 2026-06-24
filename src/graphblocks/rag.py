@@ -164,6 +164,7 @@ class CitationValidationResult:
     ok: bool
     issues: list[CitationValidationIssue] = field(default_factory=list)
     abstention: Abstention | None = None
+    repaired_answer: Answer | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -962,10 +963,10 @@ def validate_answer_citations(
     context: ContextPack,
     *,
     require_citations: bool = True,
-    failure_policy: Literal["warn", "fail", "abstain"] = "fail",
+    failure_policy: Literal["warn", "fail", "abstain", "remove_invalid"] = "fail",
 ) -> CitationValidationResult:
-    if failure_policy not in {"warn", "fail", "abstain"}:
-        raise ValueError("failure_policy must be one of warn, fail, or abstain")
+    if failure_policy not in {"warn", "fail", "abstain", "remove_invalid"}:
+        raise ValueError("failure_policy must be one of warn, fail, abstain, or remove_invalid")
 
     severity: Literal["warning", "error"] = "warning" if failure_policy == "warn" else "error"
     issues: list[CitationValidationIssue] = []
@@ -1059,6 +1060,36 @@ def validate_answer_citations(
         return CitationValidationResult(ok=True)
     if failure_policy == "warn":
         return CitationValidationResult(ok=True, issues=issues)
+    if failure_policy == "remove_invalid":
+        invalid_citation_ids = {
+            issue.citation_id for issue in issues if issue.citation_id is not None
+        }
+        repaired_citations = [
+            citation
+            for citation in answer.citations
+            if citation.citation_id not in invalid_citation_ids
+        ]
+        remaining_citation_ids = {citation.citation_id for citation in repaired_citations}
+        repaired_claims = [
+            replace(
+                claim,
+                citation_ids=[
+                    citation_id
+                    for citation_id in claim.citation_ids
+                    if citation_id in remaining_citation_ids
+                ],
+            )
+            for claim in answer.claims
+        ]
+        return CitationValidationResult(
+            ok=True,
+            issues=issues,
+            repaired_answer=replace(
+                answer,
+                claims=repaired_claims,
+                citations=repaired_citations,
+            ),
+        )
     if failure_policy == "abstain":
         return CitationValidationResult(
             ok=False,
@@ -1077,10 +1108,10 @@ def validate_answer_grounding(
     context: ContextPack,
     *,
     require_citations: bool = True,
-    failure_policy: Literal["warn", "fail", "abstain"] = "abstain",
+    failure_policy: Literal["warn", "fail", "abstain", "remove_invalid"] = "abstain",
 ) -> CitationValidationResult:
-    if failure_policy not in {"warn", "fail", "abstain"}:
-        raise ValueError("failure_policy must be one of warn, fail, or abstain")
+    if failure_policy not in {"warn", "fail", "abstain", "remove_invalid"}:
+        raise ValueError("failure_policy must be one of warn, fail, abstain, or remove_invalid")
     if not context.hits and (answer.text.strip() or any(claim.text.strip() for claim in answer.claims)):
         severity: Literal["warning", "error"] = "warning" if failure_policy == "warn" else "error"
         issues = [

@@ -1312,6 +1312,59 @@ fn validate_answer_citations_rejects_wrong_locator_on_matching_source() {
 }
 
 #[test]
+fn validate_answer_citations_can_remove_invalid_citations() {
+    let context = build_context_pack(
+        "ctx-1",
+        vec![hit(
+            "hit-1",
+            "chunk-1",
+            "doc-1",
+            "Alpha policy requires audit logs.",
+            1,
+        )],
+        ContextBuildOptions::new(10),
+    )
+    .expect("context build succeeds");
+    let valid = Citation::new("cite-valid", context.hits[0].item.source.clone())
+        .with_cited_text("requires audit logs");
+    let invalid = Citation::new("cite-invalid", context.hits[0].item.source.clone())
+        .with_cited_text("unrelated phrase");
+    let answer = Answer::new("answer-1", "Alpha policy requires audit logs.")
+        .with_claim(
+            Claim::new("claim-1", "Alpha policy requires audit logs.")
+                .with_citation_ids(["cite-valid", "cite-invalid"]),
+        )
+        .with_citation(valid)
+        .with_citation(invalid);
+
+    let result = validate_answer_citations(&answer, &context, true, FailurePolicy::RemoveInvalid)
+        .expect("citation validation succeeds");
+
+    assert!(result.ok);
+    assert_eq!(
+        result
+            .issues
+            .iter()
+            .map(|issue| issue.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["citation.text_mismatch"]
+    );
+    let repaired = result
+        .repaired_answer
+        .expect("result includes repaired answer");
+    assert_eq!(
+        repaired
+            .citations
+            .iter()
+            .map(|citation| citation.citation_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["cite-valid"]
+    );
+    assert_eq!(repaired.claims[0].citation_ids, vec!["cite-valid"]);
+    assert!(result.abstention.is_none());
+}
+
+#[test]
 fn resolve_citation_source_trace_links_citation_to_context_hit_and_document_span()
 -> Result<(), Box<dyn std::error::Error>> {
     let source = SourceRef::document_chunk(

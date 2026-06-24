@@ -794,6 +794,7 @@ pub enum FailurePolicy {
     Warn,
     Fail,
     Abstain,
+    RemoveInvalid,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -984,6 +985,7 @@ pub struct CitationValidationResult {
     pub ok: bool,
     pub issues: Vec<CitationValidationIssue>,
     pub abstention: Option<Abstention>,
+    pub repaired_answer: Option<Answer>,
 }
 
 impl CitationValidationResult {
@@ -992,6 +994,7 @@ impl CitationValidationResult {
             ok: true,
             issues: Vec::new(),
             abstention: None,
+            repaired_answer: None,
         }
     }
 }
@@ -2213,6 +2216,33 @@ pub fn validate_answer_citations(
             ok: true,
             issues,
             abstention: None,
+            repaired_answer: None,
+        });
+    }
+    if failure_policy == FailurePolicy::RemoveInvalid {
+        let invalid_citation_ids = issues
+            .iter()
+            .filter_map(|issue| issue.citation_id.clone())
+            .collect::<BTreeSet<_>>();
+        let mut repaired_answer = answer.clone();
+        repaired_answer
+            .citations
+            .retain(|citation| !invalid_citation_ids.contains(&citation.citation_id));
+        let remaining_citation_ids = repaired_answer
+            .citations
+            .iter()
+            .map(|citation| citation.citation_id.clone())
+            .collect::<BTreeSet<_>>();
+        for claim in &mut repaired_answer.claims {
+            claim
+                .citation_ids
+                .retain(|citation_id| remaining_citation_ids.contains(citation_id));
+        }
+        return Ok(CitationValidationResult {
+            ok: true,
+            issues,
+            abstention: None,
+            repaired_answer: Some(repaired_answer),
         });
     }
     if failure_policy == FailurePolicy::Abstain {
@@ -2229,12 +2259,14 @@ pub fn validate_answer_citations(
                 user_message: "I do not have enough validated source support to answer.".to_owned(),
                 diagnostics,
             }),
+            repaired_answer: None,
         });
     }
     Ok(CitationValidationResult {
         ok: false,
         issues,
         abstention: None,
+        repaired_answer: None,
     })
 }
 
@@ -2266,6 +2298,7 @@ pub fn validate_answer_grounding(
                 ok: true,
                 issues,
                 abstention: None,
+                repaired_answer: None,
             });
         }
         if failure_policy == FailurePolicy::Abstain {
@@ -2282,12 +2315,14 @@ pub fn validate_answer_grounding(
                     user_message: "I do not have enough retrieved context to answer.".to_owned(),
                     diagnostics,
                 }),
+                repaired_answer: None,
             });
         }
         return Ok(CitationValidationResult {
             ok: false,
             issues,
             abstention: None,
+            repaired_answer: None,
         });
     }
 
@@ -2343,6 +2378,7 @@ pub fn validate_answer_citation_authorization(
         ok: issues.is_empty(),
         issues,
         abstention: None,
+        repaired_answer: None,
     })
 }
 
