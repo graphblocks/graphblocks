@@ -332,6 +332,40 @@ fn build_context_pack_respects_token_budget_and_records_drop_reasons() {
 }
 
 #[test]
+fn build_context_pack_reserves_output_tokens_from_budget() {
+    let hits = vec![
+        hit("hit-1", "chunk-1", "doc-1", "alpha beta", 1),
+        hit("hit-2", "chunk-2", "doc-2", "gamma delta", 2),
+        hit("hit-3", "chunk-3", "doc-3", "epsilon", 3),
+    ];
+
+    let context = build_context_pack(
+        "ctx-1",
+        hits,
+        ContextBuildOptions::new(4).with_reserve_output_tokens(1),
+    )
+    .expect("context build succeeds");
+
+    assert_eq!(
+        context
+            .hits
+            .iter()
+            .map(|hit| hit.hit_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["hit-1", "hit-3"]
+    );
+    assert_eq!(context.token_budget, Some(4));
+    assert_eq!(context.token_count, Some(3));
+    assert_eq!(context.metadata["reserve_output_tokens"], json!(1));
+    assert_eq!(context.metadata["effective_context_token_budget"], json!(3));
+    assert_eq!(context.metadata["dropped_hit_ids"], json!(["hit-2"]));
+    assert_eq!(
+        context.metadata["drop_reasons"],
+        json!({"hit-2": "token_budget"})
+    );
+}
+
+#[test]
 fn build_context_pack_limits_per_document_and_deduplicates_items() {
     let first = hit("hit-1", "chunk-1", "doc-1", "alpha", 1);
     let same_document = hit("hit-2", "chunk-2", "doc-1", "beta", 2);

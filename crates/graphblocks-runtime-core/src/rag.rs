@@ -359,6 +359,7 @@ impl ContextPack {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContextBuildOptions {
     pub token_budget: usize,
+    pub reserve_output_tokens: usize,
     pub per_document_max_chunks: Option<usize>,
     pub per_section_max_chunks: Option<usize>,
     pub deduplicate: bool,
@@ -369,6 +370,7 @@ impl ContextBuildOptions {
     pub fn new(token_budget: usize) -> Self {
         Self {
             token_budget,
+            reserve_output_tokens: 0,
             per_document_max_chunks: None,
             per_section_max_chunks: None,
             deduplicate: true,
@@ -378,6 +380,11 @@ impl ContextBuildOptions {
 
     pub fn with_per_document_max_chunks(mut self, per_document_max_chunks: usize) -> Self {
         self.per_document_max_chunks = Some(per_document_max_chunks);
+        self
+    }
+
+    pub fn with_reserve_output_tokens(mut self, reserve_output_tokens: usize) -> Self {
+        self.reserve_output_tokens = reserve_output_tokens;
         self
     }
 
@@ -1209,6 +1216,9 @@ pub fn build_context_pack(
             .cmp(&right.rank)
             .then_with(|| left.hit_id.cmp(&right.hit_id))
     });
+    let effective_context_token_budget = options
+        .token_budget
+        .saturating_sub(options.reserve_output_tokens);
     let mut selected = Vec::new();
     let mut selected_hit_ids = Vec::new();
     let mut dropped_hit_ids = Vec::new();
@@ -1305,7 +1315,7 @@ pub fn build_context_pack(
             .iter()
             .map(|preview| preview.split_whitespace().count())
             .sum::<usize>();
-        if token_count + estimated_tokens > options.token_budget {
+        if token_count + estimated_tokens > effective_context_token_budget {
             dropped_hit_ids.push(hit.hit_id.clone());
             drop_reasons.insert(hit.hit_id.clone(), json!("token_budget"));
             continue;
@@ -1342,6 +1352,16 @@ pub fn build_context_pack(
         context.metadata.insert(
             "per_section_max_chunks".to_owned(),
             json!(per_section_max_chunks),
+        );
+    }
+    if options.reserve_output_tokens > 0 {
+        context.metadata.insert(
+            "reserve_output_tokens".to_owned(),
+            json!(options.reserve_output_tokens),
+        );
+        context.metadata.insert(
+            "effective_context_token_budget".to_owned(),
+            json!(effective_context_token_budget),
         );
     }
     Ok(context)

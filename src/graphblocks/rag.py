@@ -253,6 +253,7 @@ def build_context_pack(
     hits: list[SearchHit],
     *,
     token_budget: int,
+    reserve_output_tokens: int = 0,
     per_document_max_chunks: int | None = None,
     per_section_max_chunks: int | None = None,
     deduplicate: bool = True,
@@ -261,11 +262,14 @@ def build_context_pack(
 ) -> ContextPack:
     if token_budget < 0:
         raise ValueError("token_budget must be non-negative")
+    if reserve_output_tokens < 0:
+        raise ValueError("reserve_output_tokens must be non-negative")
     if per_document_max_chunks is not None and per_document_max_chunks < 1:
         raise ValueError("per_document_max_chunks must be at least 1")
     if per_section_max_chunks is not None and per_section_max_chunks < 1:
         raise ValueError("per_section_max_chunks must be at least 1")
 
+    effective_context_token_budget = max(token_budget - reserve_output_tokens, 0)
     selected: list[SearchHit] = []
     selected_hit_ids: list[str] = []
     dropped_hit_ids: list[str] = []
@@ -335,7 +339,7 @@ def build_context_pack(
                 continue
 
         estimated_tokens = sum(len(preview.split()) for preview in hit.item.preview)
-        if token_count + estimated_tokens > token_budget:
+        if token_count + estimated_tokens > effective_context_token_budget:
             dropped_hit_ids.append(hit.hit_id)
             drop_reasons[hit.hit_id] = "token_budget"
             continue
@@ -360,6 +364,9 @@ def build_context_pack(
         context_metadata["minimum_source_modified_at"] = minimum_source_modified_at
     if per_section_max_chunks is not None:
         context_metadata["per_section_max_chunks"] = per_section_max_chunks
+    if reserve_output_tokens > 0:
+        context_metadata["reserve_output_tokens"] = reserve_output_tokens
+        context_metadata["effective_context_token_budget"] = effective_context_token_budget
     return ContextPack(
         context_id=context_id,
         hits=selected,

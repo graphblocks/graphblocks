@@ -50,6 +50,24 @@ def test_build_context_pack_respects_token_budget_and_records_provenance() -> No
     assert context.metadata["drop_reasons"] == {"hit-2": "token_budget"}
 
 
+def test_build_context_pack_reserves_output_tokens_from_budget() -> None:
+    hits = [
+        _hit("hit-1", "doc-1", "alpha beta", 1),
+        _hit("hit-2", "doc-2", "gamma delta", 2),
+        _hit("hit-3", "doc-3", "epsilon", 3),
+    ]
+
+    context = build_context_pack("ctx-1", hits, token_budget=4, reserve_output_tokens=1)
+
+    assert [hit.hit_id for hit in context.hits] == ["hit-1", "hit-3"]
+    assert context.token_budget == 4
+    assert context.token_count == 3
+    assert context.metadata["reserve_output_tokens"] == 1
+    assert context.metadata["effective_context_token_budget"] == 3
+    assert context.metadata["dropped_hit_ids"] == ["hit-2"]
+    assert context.metadata["drop_reasons"] == {"hit-2": "token_budget"}
+
+
 def test_build_context_pack_limits_chunks_per_document() -> None:
     hits = [
         _hit("hit-1", "doc-1", "alpha", 1),
