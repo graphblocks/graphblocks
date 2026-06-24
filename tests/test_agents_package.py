@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).parents[1]
 
@@ -58,6 +60,96 @@ def test_agents_package_exposes_tool_resolution_and_execution_plan_contracts(mon
     plan.record_started("call-a")
     plan.record_completed("call-a")
     assert plan.ready_call_ids() == ["call-b"]
+
+
+def test_agents_package_exposes_policy_obligated_tool_admission(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-agents" / "src"))
+    graphblocks_agents = importlib.import_module("graphblocks_agents")
+
+    catalog = graphblocks_agents.ToolCatalog(
+        definitions=(
+            graphblocks_agents.ToolDefinition(
+                name="process.run",
+                description="Run an approved process.",
+                input_schema="schemas/ProcessRun@1",
+            ),
+        ),
+        bindings=(
+            graphblocks_agents.ToolBinding(
+                binding_id="binding-process",
+                tool_name="process.run",
+                implementation=graphblocks_agents.BlockToolImplementation(block="blocks.process"),
+                effects=frozenset({"process"}),
+                approval="policy",
+                idempotency="required",
+            ),
+        ),
+    )
+    resolved = catalog.resolve(
+        graphblocks_agents.ToolResolutionScope(principal_tools=frozenset({"process.run"})),
+        effective_policy_snapshot_id="policy-snapshot-1",
+    )[0]
+    call = (
+        graphblocks_agents.ToolCallDraft.proposed("response-1", "call-1", "process.run")
+        .append_argument_fragment('{"cmd":["echo","hello"]}')
+        .complete_arguments()
+        .into_tool_call(resolved.resolved_tool_id, created_at="2026-06-23T00:00:00Z")
+    )
+    schemas = graphblocks_agents.ToolSchemaRegistry(
+        schemas=(
+            graphblocks_agents.JsonSchema(
+                "schemas/ProcessRun@1",
+                graphblocks_agents.JsonSchemaNode.object().required_property(
+                    "cmd",
+                    graphblocks_agents.JsonSchemaNode.array(graphblocks_agents.JsonSchemaNode.string()),
+                ),
+            ),
+        )
+    )
+    decision = graphblocks_agents.PolicyDecision(
+        decision_id="decision-allow-tool",
+        effect="allow_with_obligations",
+        reason_codes=("allow-process",),
+        policy_refs=("allow-process",),
+        obligations=(graphblocks_agents.PolicyObligation("obl-approval", "require_tool_approval"),),
+        evaluated_at="2026-06-23T00:00:01Z",
+        input_digest="sha256:before-tool",
+    )
+
+    with pytest.raises(graphblocks_agents.ToolAdmissionError, match="requires approval"):
+        graphblocks_agents.admit_tool_call(
+            call,
+            resolved,
+            schemas,
+            policy_decision=decision,
+            principal_id="user-1",
+            idempotency_key="idem-1",
+            admitted_at="2026-06-23T00:00:01Z",
+            now=1_200,
+        )
+
+    request = graphblocks_agents.ToolApprovalRequest.for_call(
+        "approval-1",
+        resolved,
+        call,
+        principal_id="user-1",
+        requested_at=1_100,
+        expires_at=2_000,
+    )
+    approval = graphblocks_agents.ToolApprovalRecord.approve(request, approver_id="admin-1", decided_at=1_150)
+    admitted = graphblocks_agents.admit_tool_call(
+        call,
+        resolved,
+        schemas,
+        approval=approval,
+        policy_decision=decision,
+        principal_id="user-1",
+        idempotency_key="idem-1",
+        admitted_at="2026-06-23T00:00:01Z",
+        now=1_200,
+    )
+
+    assert admitted.call.status == "admitted"
 
 
 def test_agents_package_exposes_agent_loop_contracts(monkeypatch) -> None:

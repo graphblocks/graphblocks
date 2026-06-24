@@ -13,6 +13,13 @@ from graphblocks.agent import (
     AgentStateSchema,
     ToolFailurePolicy,
 )
+from graphblocks.policy import (
+    PolicyDecision,
+    PolicyEffect,
+    PolicyObligation,
+    PolicyRequest,
+    PrincipalRef,
+)
 from graphblocks.tools import (
     AdmittedToolCall,
     BlockToolImplementation,
@@ -88,6 +95,11 @@ __all__ = [
     "JsonSchemaRef",
     "McpToolImplementation",
     "OpenApiToolImplementation",
+    "PolicyDecision",
+    "PolicyEffect",
+    "PolicyObligation",
+    "PolicyRequest",
+    "PrincipalRef",
     "RemoteToolImplementation",
     "ResolvedTool",
     "ResourceRef",
