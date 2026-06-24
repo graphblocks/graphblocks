@@ -28,6 +28,7 @@ from .policy import (
 )
 from .plugins import BlockCatalog, discover_plugins, load_plugin_manifest, validate_plugin_manifest
 from .runtime import InProcessRuntime, stdlib_registry
+from .run_store import SQLiteRunStore
 
 STRUCTURAL_KINDS = {
     "Application",
@@ -129,6 +130,13 @@ def main(argv: list[str] | None = None) -> int:
     policy_test_parser.add_argument("policy", type=Path)
     policy_test_parser.add_argument("--cases", required=True, type=Path, help="case YAML file or directory")
     policy_test_parser.add_argument("--json", action="store_true", help="emit JSON")
+
+    observe_parser = subparsers.add_parser("observe", help="inspect local runtime state")
+    observe_subparsers = observe_parser.add_subparsers(dest="observe_command")
+    observe_run_parser = observe_subparsers.add_parser("run", help="inspect one run from a SQLite run store")
+    observe_run_parser.add_argument("run_id")
+    observe_run_parser.add_argument("--store", required=True, type=Path, help="SQLite run store path")
+    observe_run_parser.add_argument("--json", action="store_true", help="emit JSON")
 
     lock_parser = subparsers.add_parser("lock", help="create a semantic graph lockfile")
     lock_parser.add_argument("path", type=Path)
@@ -357,6 +365,31 @@ def main(argv: list[str] | None = None) -> int:
                 print("OK")
             return 0 if diagnostics.ok else 1
         packages_parser.print_help()
+        return 0
+    if args.command == "observe":
+        if args.observe_command == "run":
+            store = SQLiteRunStore(args.store)
+            try:
+                record = store.get_run(args.run_id)
+            except KeyError:
+                store.close()
+                print(f"run not found: {args.run_id}")
+                return 1
+            store.close()
+            payload = {
+                "runId": record.run_id,
+                "graphHash": record.graph_hash,
+                "status": record.status,
+                "stateRevision": record.state_revision,
+                "inputs": record.inputs,
+                "state": record.state,
+            }
+            if args.json:
+                print(json.dumps(payload, indent=2, sort_keys=True))
+            else:
+                print(f"{record.run_id} {record.status} {record.graph_hash} stateRevision={record.state_revision}")
+            return 0
+        observe_parser.print_help()
         return 0
     if args.command == "policy":
         if args.policy_command == "test":

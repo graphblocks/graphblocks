@@ -4,6 +4,7 @@ import json
 import yaml
 
 from graphblocks.cli import main
+from graphblocks.run_store import SQLiteRunStore
 
 
 def test_validate_cli_accepts_valid_graph(tmp_path, capsys) -> None:
@@ -246,3 +247,33 @@ def test_policy_test_cli_returns_failure_for_mismatched_case(tmp_path, capsys) -
     output = capsys.readouterr().out
     assert "FAIL deny-support-model" in output
     assert "expected effect deny but got allow" in output
+
+
+def test_observe_run_cli_reads_sqlite_run_store_as_json(tmp_path, capsys) -> None:
+    store_path = tmp_path / "runs.sqlite3"
+    store = SQLiteRunStore(store_path)
+    record = store.create_run("sha256:graph", {"message": {"text": "hello"}})
+    store.patch_state(record.run_id, {"node": {"done": True}}, expected_revision=0)
+    store.set_status(record.run_id, "succeeded")
+    store.close()
+
+    assert main(["observe", "run", record.run_id, "--store", str(store_path), "--json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "runId": record.run_id,
+        "graphHash": "sha256:graph",
+        "status": "succeeded",
+        "stateRevision": 1,
+        "inputs": {"message": {"text": "hello"}},
+        "state": {"node": {"done": True}},
+    }
+
+
+def test_observe_run_cli_reports_missing_run(tmp_path, capsys) -> None:
+    store_path = tmp_path / "runs.sqlite3"
+    SQLiteRunStore(store_path).close()
+
+    assert main(["observe", "run", "run-missing", "--store", str(store_path)]) == 1
+
+    assert "run not found: run-missing" in capsys.readouterr().out
