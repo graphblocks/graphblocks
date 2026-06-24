@@ -410,6 +410,20 @@ def test_output_delivery_gate_policy_abort_cuts_off_and_rejects_late_chunks() ->
     assert str(error.value) == "output gate is policy stopped"
 
 
+def test_output_delivery_gate_policy_abort_denies_kept_pending_tool_calls() -> None:
+    gate = OutputDeliveryGate("stream-1", "response-1")
+    gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "blocked"))
+
+    stopped = gate.apply_decision(
+        OutputPolicyDecision.abort_response("decision-abort", input_digest="sha256:blocked").with_pending_tool_calls(
+            "keep"
+        ),
+        occurred_at="2026-06-23T00:00:02Z",
+    )
+
+    assert stopped.pending_tool_calls == "deny"
+
+
 def test_output_delivery_gate_immediate_draft_delivers_before_policy_and_retracts_on_abort() -> None:
     gate = OutputDeliveryGate(
         "stream-1",
