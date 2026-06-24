@@ -952,9 +952,20 @@ fn admit_exhaustion_work_json(policy_json: &str, request_json: &str) -> PyResult
         .get("continuationPermit")
         .map(|value| parse_budget_permit(value, "request.continuationPermit"))
         .transpose()?;
+    let validation_time = request
+        .get("validationTime")
+        .map(|value| {
+            value
+                .as_str()
+                .ok_or_else(|| PyValueError::new_err("request.validationTime must be a string"))
+        })
+        .transpose()?;
     let mut controller = ExhaustionController::new(policy, atomic_unit_id, admission_epoch);
     if let Some(continuation_permit) = continuation_permit {
         controller = controller.with_continuation_permit(continuation_permit);
+    }
+    if let Some(validation_time) = validation_time {
+        controller = controller.with_validation_time(validation_time);
     }
 
     let decision =
@@ -1868,6 +1879,55 @@ mod tests {
                 "reservationRefs": ["reservation-1"],
                 "owner": "worker:1",
                 "atomicUnit": "turn:other",
+                "admissionEpoch": 7,
+                "authorizedAmounts": [
+                    {"kind": "model_output_tokens", "amount": 100, "unit": "tokens"}
+                ],
+                "continuationProfile": "finish_current_turn",
+                "policySnapshotDigest": "sha256:policy",
+                "expiresAt": "2026-06-22T01:00:00Z",
+                "fencingTokens": {"budget-1": 1}
+            }
+        });
+        let policy_json = serde_json::to_string(&policy).map_err(|error| error.to_string())?;
+        let request_json = serde_json::to_string(&request).map_err(|error| error.to_string())?;
+        let result_json = admit_exhaustion_work_json(&policy_json, &request_json)
+            .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(result.get("allowed"), Some(&json!(false)));
+        assert_eq!(
+            result.get("reason").and_then(Value::as_str),
+            Some("invalid_permit"),
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn admit_exhaustion_work_json_rejects_expired_permit_at_validation_time() -> Result<(), String>
+    {
+        let policy = json!({
+            "preset": "finish_current_turn",
+            "unit": "turn",
+            "continuation": {
+                "maxAdditionalUsage": [
+                    {"kind": "model_output_tokens", "amount": 100, "unit": "tokens"}
+                ],
+                "maxAdditionalSteps": 1
+            }
+        });
+        let request = json!({
+            "atomicUnitId": "turn:1",
+            "admissionEpoch": 7,
+            "workKind": "declared_finalization",
+            "workEpoch": 8,
+            "validationTime": "2026-06-22T01:00:00Z",
+            "permit": {
+                "permitId": "permit-1",
+                "reservationRefs": ["reservation-1"],
+                "owner": "worker:1",
+                "atomicUnit": "turn:1",
                 "admissionEpoch": 7,
                 "authorizedAmounts": [
                     {"kind": "model_output_tokens", "amount": 100, "unit": "tokens"}
