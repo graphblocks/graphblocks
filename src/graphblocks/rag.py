@@ -278,13 +278,28 @@ def build_context_pack(
 def fuse_search_hits(
     hit_sets: list[list[SearchHit]],
     *,
-    strategy: Literal["concatenate", "reciprocal_rank_fusion"] = "reciprocal_rank_fusion",
+    strategy: Literal[
+        "concatenate",
+        "reciprocal_rank_fusion",
+        "weighted_rank",
+        "normalized_score",
+        "interleave",
+    ] = "reciprocal_rank_fusion",
     k: int = 60,
     weights: list[float] | None = None,
     retriever_id: str = "fused",
 ) -> list[SearchHit]:
-    if strategy not in {"concatenate", "reciprocal_rank_fusion"}:
-        raise ValueError("strategy must be concatenate or reciprocal_rank_fusion")
+    valid_strategies = {
+        "concatenate",
+        "reciprocal_rank_fusion",
+        "weighted_rank",
+        "normalized_score",
+        "interleave",
+    }
+    if strategy not in valid_strategies:
+        raise ValueError(
+            "strategy must be concatenate, reciprocal_rank_fusion, weighted_rank, normalized_score, or interleave"
+        )
     if k < 1:
         raise ValueError("k must be at least 1")
     if weights is not None and len(weights) != len(hit_sets):
@@ -292,7 +307,7 @@ def fuse_search_hits(
 
     grouped_hits: dict[str, list[SearchHit]] = {}
     first_seen_item_ids: list[str] = []
-    rrf_scores: dict[str, float] = {}
+    fusion_scores: dict[str, float] = {}
     for set_index, hit_set in enumerate(hit_sets):
         weight = weights[set_index] if weights is not None else 1.0
         for hit in hit_set:
@@ -302,19 +317,45 @@ def fuse_search_hits(
                 first_seen_item_ids.append(item_id)
             grouped_hits[item_id].append(hit)
             if strategy == "reciprocal_rank_fusion":
-                rrf_scores[item_id] = rrf_scores.get(item_id, 0.0) + weight / (k + hit.rank)
+                fusion_scores[item_id] = fusion_scores.get(item_id, 0.0) + weight / (k + hit.rank)
+            elif strategy == "weighted_rank":
+                fusion_scores[item_id] = fusion_scores.get(item_id, 0.0) + weight / max(hit.rank, 1)
+            elif strategy == "normalized_score":
+                fusion_scores[item_id] = (
+                    fusion_scores.get(item_id, 0.0) + weight * (hit.normalized_score or 0.0)
+                )
 
     if strategy == "concatenate":
         ordered_item_ids = first_seen_item_ids
         score_kind = "concatenate"
         max_score = None
+    elif strategy == "interleave":
+        sorted_hit_sets = [sorted(hit_set, key=lambda hit: (hit.rank, hit.hit_id)) for hit_set in hit_sets]
+        ordered_item_ids = []
+        seen_item_ids: set[str] = set()
+        max_len = max((len(hit_set) for hit_set in sorted_hit_sets), default=0)
+        for index in range(max_len):
+            for hit_set in sorted_hit_sets:
+                if index >= len(hit_set):
+                    continue
+                item_id = hit_set[index].item.item_id
+                if item_id in seen_item_ids:
+                    continue
+                ordered_item_ids.append(item_id)
+                seen_item_ids.add(item_id)
+        score_kind = "interleave"
+        max_score = None
     else:
         ordered_item_ids = sorted(
             grouped_hits,
-            key=lambda item_id: (-rrf_scores[item_id], min(hit.rank for hit in grouped_hits[item_id]), item_id),
+            key=lambda item_id: (
+                -fusion_scores.get(item_id, 0.0),
+                min(hit.rank for hit in grouped_hits[item_id]),
+                item_id,
+            ),
         )
-        score_kind = "reciprocal_rank_fusion"
-        max_score = rrf_scores[ordered_item_ids[0]] if ordered_item_ids else None
+        score_kind = strategy
+        max_score = fusion_scores.get(ordered_item_ids[0]) if ordered_item_ids else None
 
     fused_hits: list[SearchHit] = []
     for rank, item_id in enumerate(ordered_item_ids, start=1):
@@ -338,7 +379,11 @@ def fuse_search_hits(
                 "fusion_strategy": strategy,
             }
         )
-        raw_score = rrf_scores[item_id] if strategy == "reciprocal_rank_fusion" else None
+        raw_score = (
+            fusion_scores.get(item_id)
+            if strategy in {"reciprocal_rank_fusion", "weighted_rank", "normalized_score"}
+            else None
+        )
         metadata["fusion_score"] = raw_score
         fused_hits.append(
             SearchHit(
@@ -347,7 +392,11 @@ def fuse_search_hits(
                 rank=rank,
                 retriever=retriever_id,
                 raw_score=raw_score,
-                normalized_score=(raw_score / max_score) if raw_score is not None and max_score else None,
+                normalized_score=(
+                    (raw_score / max_score)
+                    if raw_score is not None and max_score and max_score > 0.0
+                    else None
+                ),
                 score_kind=score_kind,
                 highlights=highlights,
                 metadata=metadata,

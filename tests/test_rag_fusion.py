@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from graphblocks.documents import DocumentSpan, SourceRef
@@ -62,3 +64,60 @@ def test_fuse_search_hits_concatenate_keeps_first_duplicate() -> None:
 def test_fuse_search_hits_rejects_unknown_strategy() -> None:
     with pytest.raises(ValueError):
         fuse_search_hits([], strategy="unknown")
+
+
+def test_fuse_search_hits_supports_weighted_rank_strategy() -> None:
+    keyword_hits = [_hit("kw-a", "chunk-a", 1, "keyword"), _hit("kw-b", "chunk-b", 2, "keyword")]
+    dense_hits = [_hit("dense-b", "chunk-b", 1, "dense"), _hit("dense-a", "chunk-a", 2, "dense")]
+
+    fused = fuse_search_hits(
+        [keyword_hits, dense_hits],
+        strategy="weighted_rank",
+        weights=[0.5, 2.0],
+        retriever_id="weighted",
+    )
+
+    assert [hit.item.item_id for hit in fused] == ["chunk-b", "chunk-a"]
+    assert fused[0].raw_score == 2.25
+    assert fused[0].normalized_score == 1.0
+    assert fused[0].score_kind == "weighted_rank"
+    assert fused[0].metadata["fusion_strategy"] == "weighted_rank"
+
+
+def test_fuse_search_hits_supports_normalized_score_strategy() -> None:
+    keyword_hits = [
+        _hit("kw-a", "chunk-a", 1, "keyword"),
+        _hit("kw-b", "chunk-b", 2, "keyword"),
+    ]
+    keyword_hits[0] = replace(keyword_hits[0], normalized_score=0.1)
+    keyword_hits[1] = replace(keyword_hits[1], normalized_score=0.9)
+    dense_hits = [_hit("dense-a", "chunk-a", 1, "dense")]
+    dense_hits[0] = replace(dense_hits[0], normalized_score=0.6)
+
+    fused = fuse_search_hits(
+        [keyword_hits, dense_hits],
+        strategy="normalized_score",
+        retriever_id="score",
+    )
+
+    assert [hit.item.item_id for hit in fused] == ["chunk-b", "chunk-a"]
+    assert fused[0].raw_score == 0.9
+    assert fused[1].raw_score == 0.7
+    assert fused[0].normalized_score == 1.0
+    assert fused[0].score_kind == "normalized_score"
+
+
+def test_fuse_search_hits_supports_interleave_strategy() -> None:
+    keyword_hits = [_hit("kw-a", "chunk-a", 1, "keyword"), _hit("kw-c", "chunk-c", 2, "keyword")]
+    dense_hits = [_hit("dense-b", "chunk-b", 1, "dense"), _hit("dense-a", "chunk-a", 2, "dense")]
+
+    fused = fuse_search_hits(
+        [keyword_hits, dense_hits],
+        strategy="interleave",
+        retriever_id="interleave",
+    )
+
+    assert [hit.item.item_id for hit in fused] == ["chunk-a", "chunk-b", "chunk-c"]
+    assert fused[0].raw_score is None
+    assert fused[0].score_kind == "interleave"
+    assert fused[0].metadata["source_hit_ids"] == ["kw-a", "dense-a"]

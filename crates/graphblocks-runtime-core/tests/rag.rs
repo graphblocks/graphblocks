@@ -405,6 +405,104 @@ fn fuse_search_hits_uses_reciprocal_rank_fusion_and_preserves_source_ranks() {
 }
 
 #[test]
+fn fuse_search_hits_supports_weighted_rank_strategy() {
+    let keyword_hits = vec![
+        hit_from("kw-a", "chunk-a", "doc-1", "chunk-a", 1, "keyword"),
+        hit_from("kw-b", "chunk-b", "doc-1", "chunk-b", 2, "keyword"),
+    ];
+    let dense_hits = vec![
+        hit_from("dense-b", "chunk-b", "doc-1", "chunk-b", 1, "dense"),
+        hit_from("dense-a", "chunk-a", "doc-1", "chunk-a", 2, "dense"),
+    ];
+
+    let fused = fuse_search_hits(
+        &[keyword_hits, dense_hits],
+        FusionOptions::new()
+            .with_strategy(FusionStrategy::WeightedRank)
+            .with_weights([0.5, 2.0])
+            .with_retriever_id("weighted"),
+    )
+    .expect("fusion succeeds");
+
+    assert_eq!(
+        fused
+            .iter()
+            .map(|hit| hit.item.item_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["chunk-b", "chunk-a"]
+    );
+    assert_eq!(fused[0].raw_score, Some(2.25));
+    assert_eq!(fused[0].normalized_score, Some(1.0));
+    assert_eq!(fused[0].score_kind.as_deref(), Some("weighted_rank"));
+    assert_eq!(fused[0].metadata["fusion_strategy"], json!("weighted_rank"));
+}
+
+#[test]
+fn fuse_search_hits_supports_normalized_score_strategy() {
+    let keyword_hits = vec![
+        hit_from("kw-a", "chunk-a", "doc-1", "chunk-a", 1, "keyword").with_normalized_score(0.1),
+        hit_from("kw-b", "chunk-b", "doc-1", "chunk-b", 2, "keyword").with_normalized_score(0.9),
+    ];
+    let dense_hits = vec![
+        hit_from("dense-a", "chunk-a", "doc-1", "chunk-a", 1, "dense").with_normalized_score(0.6),
+    ];
+
+    let fused = fuse_search_hits(
+        &[keyword_hits, dense_hits],
+        FusionOptions::new()
+            .with_strategy(FusionStrategy::NormalizedScore)
+            .with_retriever_id("score"),
+    )
+    .expect("fusion succeeds");
+
+    assert_eq!(
+        fused
+            .iter()
+            .map(|hit| hit.item.item_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["chunk-b", "chunk-a"]
+    );
+    assert_eq!(fused[0].raw_score, Some(0.9));
+    assert_eq!(fused[1].raw_score, Some(0.7));
+    assert_eq!(fused[0].normalized_score, Some(1.0));
+    assert_eq!(fused[0].score_kind.as_deref(), Some("normalized_score"));
+}
+
+#[test]
+fn fuse_search_hits_supports_interleave_strategy() {
+    let keyword_hits = vec![
+        hit_from("kw-a", "chunk-a", "doc-1", "chunk-a", 1, "keyword"),
+        hit_from("kw-c", "chunk-c", "doc-1", "chunk-c", 2, "keyword"),
+    ];
+    let dense_hits = vec![
+        hit_from("dense-b", "chunk-b", "doc-1", "chunk-b", 1, "dense"),
+        hit_from("dense-a", "chunk-a", "doc-1", "chunk-a", 2, "dense"),
+    ];
+
+    let fused = fuse_search_hits(
+        &[keyword_hits, dense_hits],
+        FusionOptions::new()
+            .with_strategy(FusionStrategy::Interleave)
+            .with_retriever_id("interleave"),
+    )
+    .expect("fusion succeeds");
+
+    assert_eq!(
+        fused
+            .iter()
+            .map(|hit| hit.item.item_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["chunk-a", "chunk-b", "chunk-c"]
+    );
+    assert_eq!(fused[0].raw_score, None);
+    assert_eq!(fused[0].score_kind.as_deref(), Some("interleave"));
+    assert_eq!(
+        fused[0].metadata["source_hit_ids"],
+        json!(["kw-a", "dense-a"])
+    );
+}
+
+#[test]
 fn rerank_search_hits_scores_query_terms_and_records_provenance()
 -> Result<(), Box<dyn std::error::Error>> {
     let hits = vec![

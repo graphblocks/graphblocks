@@ -253,6 +253,9 @@ impl ContextBuildOptions {
 pub enum FusionStrategy {
     Concatenate,
     ReciprocalRankFusion,
+    WeightedRank,
+    NormalizedScore,
+    Interleave,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -280,6 +283,14 @@ impl FusionOptions {
 
     pub fn with_k(mut self, k: usize) -> Self {
         self.k = k;
+        self
+    }
+
+    pub fn with_weights<I>(mut self, weights: I) -> Self
+    where
+        I: IntoIterator<Item = f64>,
+    {
+        self.weights = Some(weights.into_iter().collect());
         self
     }
 
@@ -1081,7 +1092,7 @@ pub fn fuse_search_hits(
 
     let mut grouped_hits: BTreeMap<String, Vec<SearchHit>> = BTreeMap::new();
     let mut first_seen_item_ids = Vec::new();
-    let mut rrf_scores: BTreeMap<String, f64> = BTreeMap::new();
+    let mut fusion_scores: BTreeMap<String, f64> = BTreeMap::new();
     for (set_index, hit_set) in hit_sets.iter().enumerate() {
         let weight = options
             .weights
@@ -1097,20 +1108,62 @@ pub fn fuse_search_hits(
                 .entry(hit.item.item_id.clone())
                 .or_default()
                 .push(hit.clone());
-            if options.strategy == FusionStrategy::ReciprocalRankFusion {
-                *rrf_scores.entry(hit.item.item_id.clone()).or_insert(0.0) +=
-                    weight / (options.k + hit.rank) as f64;
+            let score = match options.strategy {
+                FusionStrategy::ReciprocalRankFusion => {
+                    Some(weight / (options.k + hit.rank) as f64)
+                }
+                FusionStrategy::WeightedRank => Some(weight / hit.rank.max(1) as f64),
+                FusionStrategy::NormalizedScore => {
+                    Some(weight * hit.normalized_score.unwrap_or(0.0))
+                }
+                FusionStrategy::Concatenate | FusionStrategy::Interleave => None,
+            };
+            if let Some(score) = score {
+                *fusion_scores.entry(hit.item.item_id.clone()).or_insert(0.0) += score;
             }
         }
     }
 
     let (ordered_item_ids, score_kind, max_score) = match options.strategy {
         FusionStrategy::Concatenate => (first_seen_item_ids, "concatenate", None),
-        FusionStrategy::ReciprocalRankFusion => {
+        FusionStrategy::Interleave => {
+            let mut sorted_hit_sets = hit_sets
+                .iter()
+                .map(|hit_set| {
+                    let mut hits = hit_set.iter().collect::<Vec<_>>();
+                    hits.sort_by(|left, right| {
+                        left.rank
+                            .cmp(&right.rank)
+                            .then_with(|| left.hit_id.cmp(&right.hit_id))
+                    });
+                    hits
+                })
+                .collect::<Vec<_>>();
+            let max_len = sorted_hit_sets
+                .iter()
+                .map(|hit_set| hit_set.len())
+                .max()
+                .unwrap_or(0);
+            let mut item_ids = Vec::new();
+            let mut seen_item_ids = BTreeSet::new();
+            for index in 0..max_len {
+                for hit_set in &mut sorted_hit_sets {
+                    if let Some(hit) = hit_set.get(index) {
+                        if seen_item_ids.insert(hit.item.item_id.clone()) {
+                            item_ids.push(hit.item.item_id.clone());
+                        }
+                    }
+                }
+            }
+            (item_ids, "interleave", None)
+        }
+        FusionStrategy::ReciprocalRankFusion
+        | FusionStrategy::WeightedRank
+        | FusionStrategy::NormalizedScore => {
             let mut item_ids = grouped_hits.keys().cloned().collect::<Vec<_>>();
             item_ids.sort_by(|left, right| {
-                let left_score = rrf_scores.get(left).copied().unwrap_or(0.0);
-                let right_score = rrf_scores.get(right).copied().unwrap_or(0.0);
+                let left_score = fusion_scores.get(left).copied().unwrap_or(0.0);
+                let right_score = fusion_scores.get(right).copied().unwrap_or(0.0);
                 right_score
                     .partial_cmp(&left_score)
                     .unwrap_or(std::cmp::Ordering::Equal)
@@ -1131,9 +1184,15 @@ pub fn fuse_search_hits(
             });
             let max_score = item_ids
                 .first()
-                .and_then(|item_id| rrf_scores.get(item_id))
+                .and_then(|item_id| fusion_scores.get(item_id))
                 .copied();
-            (item_ids, "reciprocal_rank_fusion", max_score)
+            let score_kind = match options.strategy {
+                FusionStrategy::ReciprocalRankFusion => "reciprocal_rank_fusion",
+                FusionStrategy::WeightedRank => "weighted_rank",
+                FusionStrategy::NormalizedScore => "normalized_score",
+                FusionStrategy::Concatenate | FusionStrategy::Interleave => unreachable!(),
+            };
+            (item_ids, score_kind, max_score)
         }
     };
 
@@ -1161,12 +1220,16 @@ pub fn fuse_search_hits(
             json!(match options.strategy {
                 FusionStrategy::Concatenate => "concatenate",
                 FusionStrategy::ReciprocalRankFusion => "reciprocal_rank_fusion",
+                FusionStrategy::WeightedRank => "weighted_rank",
+                FusionStrategy::NormalizedScore => "normalized_score",
+                FusionStrategy::Interleave => "interleave",
             }),
         );
-        let raw_score = if options.strategy == FusionStrategy::ReciprocalRankFusion {
-            rrf_scores.get(item_id).copied()
-        } else {
-            None
+        let raw_score = match options.strategy {
+            FusionStrategy::ReciprocalRankFusion
+            | FusionStrategy::WeightedRank
+            | FusionStrategy::NormalizedScore => fusion_scores.get(item_id).copied(),
+            FusionStrategy::Concatenate | FusionStrategy::Interleave => None,
         };
         metadata.insert(
             "fusion_score".to_owned(),
@@ -1196,7 +1259,8 @@ pub fn fuse_search_hits(
         .with_score_kind(score_kind)
         .with_highlights(highlights);
         fused.raw_score = raw_score;
-        fused.normalized_score = raw_score.and_then(|score| max_score.map(|max| score / max));
+        fused.normalized_score =
+            raw_score.and_then(|score| max_score.filter(|max| *max > 0.0).map(|max| score / max));
         fused.metadata = metadata;
         fused_hits.push(fused);
     }
