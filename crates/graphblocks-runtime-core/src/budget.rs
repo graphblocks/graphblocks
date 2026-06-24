@@ -199,6 +199,11 @@ pub enum BudgetError {
         required_token: u64,
         actual_token: Option<u64>,
     },
+    PermitExpired {
+        permit_id: String,
+        expires_at: String,
+        now: String,
+    },
     CompletionReserveNotFound {
         reserve_id: String,
     },
@@ -679,8 +684,39 @@ impl InMemoryBudgetLedger {
         reservation_id: impl AsRef<str>,
         actual_amounts: impl IntoIterator<Item = UsageAmount>,
     ) -> Result<BudgetSettlement, BudgetError> {
-        let permit_id = permit_id.as_ref();
-        let reservation_id = reservation_id.as_ref();
+        self.commit_with_permit_inner(
+            permit_id.as_ref(),
+            reservation_id.as_ref(),
+            actual_amounts,
+            None,
+        )
+    }
+
+    pub fn commit_with_permit_at(
+        &mut self,
+        permit_id: impl AsRef<str>,
+        reservation_id: impl AsRef<str>,
+        actual_amounts: impl IntoIterator<Item = UsageAmount>,
+        now: impl AsRef<str>,
+    ) -> Result<BudgetSettlement, BudgetError> {
+        self.commit_with_permit_inner(
+            permit_id.as_ref(),
+            reservation_id.as_ref(),
+            actual_amounts,
+            Some(now.as_ref()),
+        )
+    }
+
+    fn commit_with_permit_inner(
+        &mut self,
+        permit_id: &str,
+        reservation_id: &str,
+        actual_amounts: impl IntoIterator<Item = UsageAmount>,
+        now: Option<&str>,
+    ) -> Result<BudgetSettlement, BudgetError> {
+        if let Some(now) = now {
+            self.ensure_permit_not_expired(permit_id, now)?;
+        }
         let reservation = self.validate_permit_for_reservation(permit_id, reservation_id)?;
         let actual_amounts = actual_amounts.into_iter().collect::<Vec<_>>();
         let actual = amounts_to_map(actual_amounts.clone());
@@ -699,6 +735,18 @@ impl InMemoryBudgetLedger {
         reservation_id: impl AsRef<str>,
     ) -> Result<BudgetSettlement, BudgetError> {
         self.validate_permit_for_reservation(permit_id.as_ref(), reservation_id.as_ref())?;
+        self.release(reservation_id)
+    }
+
+    pub fn release_with_permit_at(
+        &mut self,
+        permit_id: impl AsRef<str>,
+        reservation_id: impl AsRef<str>,
+        now: impl AsRef<str>,
+    ) -> Result<BudgetSettlement, BudgetError> {
+        let permit_id = permit_id.as_ref();
+        self.ensure_permit_not_expired(permit_id, now.as_ref())?;
+        self.validate_permit_for_reservation(permit_id, reservation_id.as_ref())?;
         self.release(reservation_id)
     }
 
@@ -1053,6 +1101,23 @@ impl InMemoryBudgetLedger {
             }
         }
         Ok(reservation)
+    }
+
+    fn ensure_permit_not_expired(&self, permit_id: &str, now: &str) -> Result<(), BudgetError> {
+        let permit = self
+            .permits
+            .get(permit_id)
+            .ok_or_else(|| BudgetError::PermitNotFound {
+                permit_id: permit_id.to_string(),
+            })?;
+        if permit.expires_at.as_str() <= now {
+            return Err(BudgetError::PermitExpired {
+                permit_id: permit_id.to_string(),
+                expires_at: permit.expires_at.clone(),
+                now: now.to_string(),
+            });
+        }
+        Ok(())
     }
 
     fn ensure_permit_allows_additional(
@@ -1565,8 +1630,36 @@ impl SqliteBudgetLedger {
         reservation_id: impl AsRef<str>,
         actual_amounts: impl IntoIterator<Item = UsageAmount>,
     ) -> Result<BudgetSettlement, BudgetError> {
-        let permit_id = permit_id.as_ref();
-        let reservation_id = reservation_id.as_ref();
+        self.commit_with_permit_inner(
+            permit_id.as_ref(),
+            reservation_id.as_ref(),
+            actual_amounts,
+            None,
+        )
+    }
+
+    pub fn commit_with_permit_at(
+        &mut self,
+        permit_id: impl AsRef<str>,
+        reservation_id: impl AsRef<str>,
+        actual_amounts: impl IntoIterator<Item = UsageAmount>,
+        now: impl AsRef<str>,
+    ) -> Result<BudgetSettlement, BudgetError> {
+        self.commit_with_permit_inner(
+            permit_id.as_ref(),
+            reservation_id.as_ref(),
+            actual_amounts,
+            Some(now.as_ref()),
+        )
+    }
+
+    fn commit_with_permit_inner(
+        &mut self,
+        permit_id: &str,
+        reservation_id: &str,
+        actual_amounts: impl IntoIterator<Item = UsageAmount>,
+        now: Option<&str>,
+    ) -> Result<BudgetSettlement, BudgetError> {
         let actual_amounts = actual_amounts.into_iter().collect::<Vec<_>>();
         let actual = amounts_to_map(actual_amounts.clone());
         let transaction = self
@@ -1575,6 +1668,9 @@ impl SqliteBudgetLedger {
             .map_err(budget_storage_error)?;
         let (mut permit, reservation) =
             sqlite_validate_permit_for_reservation(&transaction, permit_id, reservation_id)?;
+        if let Some(now) = now {
+            sqlite_ensure_permit_not_expired(&permit, now)?;
+        }
         sqlite_ensure_permit_allows_additional(
             &permit,
             &actual,
@@ -1600,6 +1696,27 @@ impl SqliteBudgetLedger {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(budget_storage_error)?;
         sqlite_validate_permit_for_reservation(&transaction, permit_id, reservation_id)?;
+        let settlement =
+            sqlite_release_reserved(&transaction, reservation_id, ReservationStatus::Released)?;
+        transaction.commit().map_err(budget_storage_error)?;
+        Ok(settlement)
+    }
+
+    pub fn release_with_permit_at(
+        &mut self,
+        permit_id: impl AsRef<str>,
+        reservation_id: impl AsRef<str>,
+        now: impl AsRef<str>,
+    ) -> Result<BudgetSettlement, BudgetError> {
+        let permit_id = permit_id.as_ref();
+        let reservation_id = reservation_id.as_ref();
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(budget_storage_error)?;
+        let (permit, _) =
+            sqlite_validate_permit_for_reservation(&transaction, permit_id, reservation_id)?;
+        sqlite_ensure_permit_not_expired(&permit, now.as_ref())?;
         let settlement =
             sqlite_release_reserved(&transaction, reservation_id, ReservationStatus::Released)?;
         transaction.commit().map_err(budget_storage_error)?;
@@ -2400,6 +2517,20 @@ fn sqlite_validate_permit_for_reservation(
         }
     }
     Ok((permit, reservation))
+}
+
+fn sqlite_ensure_permit_not_expired(
+    permit: &StoredBudgetPermit,
+    now: &str,
+) -> Result<(), BudgetError> {
+    if permit.permit.expires_at.as_str() <= now {
+        return Err(BudgetError::PermitExpired {
+            permit_id: permit.permit.permit_id.clone(),
+            expires_at: permit.permit.expires_at.clone(),
+            now: now.to_string(),
+        });
+    }
+    Ok(())
 }
 
 fn sqlite_ensure_permit_allows_additional(
