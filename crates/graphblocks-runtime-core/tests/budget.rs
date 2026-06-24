@@ -2,7 +2,13 @@ use graphblocks_runtime_core::budget::{
     BudgetError, BudgetStatus, CompletionReservePurpose, CompletionReserveStatus,
     InMemoryBudgetLedger, ReservationPurpose, ReservationStatus, SqliteBudgetLedger, UsageAmount,
 };
-use std::{collections::BTreeMap, env, fs, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    env, fs,
+    path::PathBuf,
+    sync::{Arc, Barrier},
+    thread,
+};
 
 fn tokens(amount: i64) -> UsageAmount {
     UsageAmount::new("model_total_tokens", amount, "tokens")
@@ -365,6 +371,56 @@ fn sqlite_budget_ledger_release_and_expire_restore_available_balance() -> Result
             status: ReservationStatus::Expired,
         }
     );
+    Ok(())
+}
+
+#[test]
+fn sqlite_budget_ledger_serializes_competing_reservations() -> Result<(), BudgetError> {
+    let path = sqlite_budget_path("reservation-race");
+    {
+        let mut ledger = SqliteBudgetLedger::open(&path)?;
+        ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+    }
+
+    let barrier = Arc::new(Barrier::new(3));
+    let handles = ["run:1", "run:2"]
+        .into_iter()
+        .map(|owner| {
+            let path = path.clone();
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || -> Result<bool, BudgetError> {
+                let mut ledger = SqliteBudgetLedger::open(&path)?;
+                barrier.wait();
+                match ledger.reserve(
+                    "budget-1",
+                    owner,
+                    [tokens(70)],
+                    ReservationPurpose::ProviderCall,
+                    "later",
+                    None,
+                ) {
+                    Ok(_) => Ok(true),
+                    Err(BudgetError::BudgetExceeded { .. }) => Ok(false),
+                    Err(error) => Err(error),
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+
+    barrier.wait();
+    let outcomes = handles
+        .into_iter()
+        .map(|handle| handle.join().expect("reservation worker thread joins"))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    assert_eq!(outcomes.iter().filter(|outcome| **outcome).count(), 1);
+    assert_eq!(outcomes.iter().filter(|outcome| !**outcome).count(), 1);
+
+    let ledger = SqliteBudgetLedger::open(&path)?;
+    let balance = ledger.balance("budget-1")?;
+    assert_eq!(balance.reserved, vec![tokens(70)]);
+    assert_eq!(balance.available, vec![tokens(30)]);
+    fs::remove_file(path).ok();
     Ok(())
 }
 
