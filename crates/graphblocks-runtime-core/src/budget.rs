@@ -1,6 +1,11 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
 
 pub use crate::usage::UsageAmount;
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use serde_json::{Map, Number, Value};
 
 type AmountKey = (String, String, Vec<(String, String)>);
 
@@ -12,6 +17,27 @@ pub enum BudgetStatus {
     Closed,
 }
 
+impl BudgetStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Exhausted => "exhausted",
+            Self::Paused => "paused",
+            Self::Closed => "closed",
+        }
+    }
+
+    fn from_str(status: &str) -> Option<Self> {
+        match status {
+            "active" => Some(Self::Active),
+            "exhausted" => Some(Self::Exhausted),
+            "paused" => Some(Self::Paused),
+            "closed" => Some(Self::Closed),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReservationPurpose {
     ProviderCall,
@@ -20,6 +46,19 @@ pub enum ReservationPurpose {
     Tool,
     Finalization,
     Cleanup,
+}
+
+impl ReservationPurpose {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::ProviderCall => "provider_call",
+            Self::Task => "task",
+            Self::Trial => "trial",
+            Self::Tool => "tool",
+            Self::Finalization => "finalization",
+            Self::Cleanup => "cleanup",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -47,6 +86,17 @@ pub enum ReservationStatus {
     Committed,
     Released,
     Expired,
+}
+
+impl ReservationStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Reserved => "reserved",
+            Self::Committed => "committed",
+            Self::Released => "released",
+            Self::Expired => "expired",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -109,6 +159,9 @@ pub enum BudgetError {
         budget_id: String,
         kind: String,
         unit: String,
+    },
+    Storage {
+        message: String,
     },
 }
 
@@ -971,6 +1024,278 @@ impl InMemoryBudgetLedger {
     }
 }
 
+pub struct SqliteBudgetLedger {
+    connection: Connection,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct StoredBudgetAccount {
+    account: BudgetAccount,
+    allocated: BTreeMap<AmountKey, i64>,
+    reserved: BTreeMap<AmountKey, i64>,
+    committed: BTreeMap<AmountKey, i64>,
+    overdraft: BTreeMap<AmountKey, i64>,
+}
+
+impl StoredBudgetAccount {
+    fn available(&self) -> BTreeMap<AmountKey, i64> {
+        let mut keys = BTreeSet::new();
+        keys.extend(self.allocated.keys().cloned());
+        keys.extend(self.reserved.keys().cloned());
+        keys.extend(self.committed.keys().cloned());
+        let mut available = BTreeMap::new();
+        for key in keys {
+            let remaining = self.allocated.get(&key).copied().unwrap_or(0)
+                - self.reserved.get(&key).copied().unwrap_or(0)
+                - self.committed.get(&key).copied().unwrap_or(0);
+            if remaining > 0 {
+                available.insert(key, remaining);
+            }
+        }
+        available
+    }
+
+    fn balance(&self) -> BudgetBalance {
+        BudgetBalance {
+            budget_id: self.account.budget_id.clone(),
+            allocated: map_to_amounts(&self.allocated),
+            reserved: map_to_amounts(&self.reserved),
+            committed: map_to_amounts(&self.committed),
+            available: map_to_amounts(&self.available()),
+            overdraft: map_to_amounts(&self.overdraft),
+            revision: self.account.revision,
+        }
+    }
+}
+
+impl SqliteBudgetLedger {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, BudgetError> {
+        let connection = Connection::open(path).map_err(budget_storage_error)?;
+        let ledger = Self { connection };
+        ledger.initialize()?;
+        Ok(ledger)
+    }
+
+    pub fn open_in_memory() -> Result<Self, BudgetError> {
+        let connection = Connection::open_in_memory().map_err(budget_storage_error)?;
+        let ledger = Self { connection };
+        ledger.initialize()?;
+        Ok(ledger)
+    }
+
+    fn initialize(&self) -> Result<(), BudgetError> {
+        self.connection
+            .execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS budget_accounts (
+                    budget_id TEXT PRIMARY KEY,
+                    scope TEXT NOT NULL,
+                    allocated_json TEXT NOT NULL,
+                    reserved_json TEXT NOT NULL,
+                    committed_json TEXT NOT NULL,
+                    overdraft_json TEXT NOT NULL,
+                    parent_budget_id TEXT,
+                    status TEXT NOT NULL,
+                    policy_ref TEXT NOT NULL,
+                    revision INTEGER NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS budget_reservations (
+                    reservation_id TEXT PRIMARY KEY,
+                    budget_id TEXT NOT NULL,
+                    owner TEXT NOT NULL,
+                    amounts_json TEXT NOT NULL,
+                    purpose TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    fencing_token INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    held_budget_ids_json TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS budget_counters (
+                    counter_name TEXT PRIMARY KEY,
+                    value INTEGER NOT NULL
+                );
+                ",
+            )
+            .map_err(budget_storage_error)?;
+        Ok(())
+    }
+
+    pub fn allocate(
+        &mut self,
+        budget_id: impl Into<String>,
+        scope: impl Into<String>,
+        amounts: impl IntoIterator<Item = UsageAmount>,
+        policy_ref: impl Into<String>,
+        parent_budget_id: Option<String>,
+    ) -> Result<BudgetAccount, BudgetError> {
+        let budget_id = budget_id.into();
+        let allocated = amounts_to_map(amounts);
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(budget_storage_error)?;
+        if sqlite_account_exists(&transaction, &budget_id)? {
+            return Err(BudgetError::BudgetConflict { budget_id });
+        }
+        if let Some(parent_budget_id) = &parent_budget_id {
+            if !sqlite_account_exists(&transaction, parent_budget_id)? {
+                return Err(BudgetError::BudgetNotFound {
+                    budget_id: parent_budget_id.clone(),
+                });
+            }
+        }
+
+        let account = BudgetAccount {
+            budget_id: budget_id.clone(),
+            scope: scope.into(),
+            allocated: map_to_amounts(&allocated),
+            parent_budget_id,
+            status: BudgetStatus::Active,
+            policy_ref: policy_ref.into(),
+            revision: 1,
+        };
+        transaction
+            .execute(
+                "
+                INSERT INTO budget_accounts (
+                    budget_id,
+                    scope,
+                    allocated_json,
+                    reserved_json,
+                    committed_json,
+                    overdraft_json,
+                    parent_budget_id,
+                    status,
+                    policy_ref,
+                    revision
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ",
+                params![
+                    &account.budget_id,
+                    &account.scope,
+                    usage_amounts_json(&account.allocated)?,
+                    usage_amounts_json(&[])?,
+                    usage_amounts_json(&[])?,
+                    usage_amounts_json(&[])?,
+                    &account.parent_budget_id,
+                    account.status.as_str(),
+                    &account.policy_ref,
+                    budget_u64_to_i64(account.revision, "budget revision")?,
+                ],
+            )
+            .map_err(budget_storage_error)?;
+        transaction.commit().map_err(budget_storage_error)?;
+        Ok(account)
+    }
+
+    pub fn reserve(
+        &mut self,
+        budget_id: impl AsRef<str>,
+        owner: impl Into<String>,
+        amounts: impl IntoIterator<Item = UsageAmount>,
+        purpose: ReservationPurpose,
+        expires_at: impl Into<String>,
+        reservation_id: Option<String>,
+    ) -> Result<BudgetReservation, BudgetError> {
+        let budget_id = budget_id.as_ref();
+        let requested = amounts_to_map(amounts);
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(budget_storage_error)?;
+        if !sqlite_account_exists(&transaction, budget_id)? {
+            return Err(BudgetError::BudgetNotFound {
+                budget_id: budget_id.to_string(),
+            });
+        }
+
+        let held_budget_ids = sqlite_budget_chain(&transaction, budget_id)?;
+        for held_budget_id in &held_budget_ids {
+            let account = sqlite_load_account(&transaction, held_budget_id)?
+                .expect("budget chain only returns existing accounts");
+            let available = account.available();
+            for (key, amount) in &requested {
+                if *amount > available.get(key).copied().unwrap_or(0) {
+                    return Err(BudgetError::BudgetExceeded {
+                        budget_id: held_budget_id.clone(),
+                        kind: key.0.clone(),
+                        unit: key.1.clone(),
+                    });
+                }
+            }
+        }
+
+        let next_reservation = sqlite_next_counter(&transaction, "reservation_counter")?;
+        let fencing_token = sqlite_next_counter(&transaction, "fencing_counter")?;
+        let reservation_id =
+            reservation_id.unwrap_or_else(|| format!("reservation-{next_reservation:06}"));
+        if sqlite_reservation_exists(&transaction, &reservation_id)? {
+            return Err(BudgetError::ReservationConflict { reservation_id });
+        }
+
+        for held_budget_id in &held_budget_ids {
+            let mut account = sqlite_load_account(&transaction, held_budget_id)?
+                .expect("budget chain only returns existing accounts");
+            add_amounts(&mut account.reserved, &requested);
+            account.account.revision += 1;
+            sqlite_update_account_balances(&transaction, &account)?;
+        }
+
+        let reservation = BudgetReservation {
+            reservation_id: reservation_id.clone(),
+            budget_id: budget_id.to_string(),
+            owner: owner.into(),
+            amounts: map_to_amounts(&requested),
+            purpose,
+            expires_at: expires_at.into(),
+            fencing_token,
+            status: ReservationStatus::Reserved,
+        };
+        transaction
+            .execute(
+                "
+                INSERT INTO budget_reservations (
+                    reservation_id,
+                    budget_id,
+                    owner,
+                    amounts_json,
+                    purpose,
+                    expires_at,
+                    fencing_token,
+                    status,
+                    held_budget_ids_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ",
+                params![
+                    &reservation.reservation_id,
+                    &reservation.budget_id,
+                    &reservation.owner,
+                    usage_amounts_json(&reservation.amounts)?,
+                    reservation.purpose.as_str(),
+                    &reservation.expires_at,
+                    budget_u64_to_i64(reservation.fencing_token, "reservation fencing token")?,
+                    reservation.status.as_str(),
+                    string_list_json(&held_budget_ids)?,
+                ],
+            )
+            .map_err(budget_storage_error)?;
+        transaction.commit().map_err(budget_storage_error)?;
+        Ok(reservation)
+    }
+
+    pub fn balance(&self, budget_id: impl AsRef<str>) -> Result<BudgetBalance, BudgetError> {
+        let budget_id = budget_id.as_ref();
+        let account = sqlite_load_account(&self.connection, budget_id)?.ok_or_else(|| {
+            BudgetError::BudgetNotFound {
+                budget_id: budget_id.to_string(),
+            }
+        })?;
+        Ok(account.balance())
+    }
+}
+
 fn amount_key(amount: &UsageAmount) -> AmountKey {
     (
         amount.kind.clone(),
@@ -1022,4 +1347,320 @@ fn subtract_amounts(target: &mut BTreeMap<AmountKey, i64>, amounts: &BTreeMap<Am
         *target.entry(key.clone()).or_insert(0) -= amount;
     }
     target.retain(|_, value| *value != 0);
+}
+
+fn sqlite_account_exists(connection: &Connection, budget_id: &str) -> Result<bool, BudgetError> {
+    connection
+        .query_row(
+            "SELECT 1 FROM budget_accounts WHERE budget_id = ?",
+            params![budget_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map(|value| value.is_some())
+        .map_err(budget_storage_error)
+}
+
+fn sqlite_reservation_exists(
+    connection: &Connection,
+    reservation_id: &str,
+) -> Result<bool, BudgetError> {
+    connection
+        .query_row(
+            "SELECT 1 FROM budget_reservations WHERE reservation_id = ?",
+            params![reservation_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map(|value| value.is_some())
+        .map_err(budget_storage_error)
+}
+
+fn sqlite_load_account(
+    connection: &Connection,
+    budget_id: &str,
+) -> Result<Option<StoredBudgetAccount>, BudgetError> {
+    let stored = connection
+        .query_row(
+            "
+            SELECT
+                budget_id,
+                scope,
+                allocated_json,
+                reserved_json,
+                committed_json,
+                overdraft_json,
+                parent_budget_id,
+                status,
+                policy_ref,
+                revision
+            FROM budget_accounts
+            WHERE budget_id = ?
+            ",
+            params![budget_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, String>(8)?,
+                    row.get::<_, i64>(9)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(budget_storage_error)?;
+
+    let Some((
+        budget_id,
+        scope,
+        allocated_json,
+        reserved_json,
+        committed_json,
+        overdraft_json,
+        parent_budget_id,
+        status,
+        policy_ref,
+        revision,
+    )) = stored
+    else {
+        return Ok(None);
+    };
+
+    let status = BudgetStatus::from_str(&status).ok_or_else(|| BudgetError::Storage {
+        message: format!("unknown budget status {status:?}"),
+    })?;
+    let allocated = amounts_to_map(usage_amounts_from_json(&allocated_json)?);
+    let reserved = amounts_to_map(usage_amounts_from_json(&reserved_json)?);
+    let committed = amounts_to_map(usage_amounts_from_json(&committed_json)?);
+    let overdraft = amounts_to_map(usage_amounts_from_json(&overdraft_json)?);
+
+    Ok(Some(StoredBudgetAccount {
+        account: BudgetAccount {
+            budget_id,
+            scope,
+            allocated: map_to_amounts(&allocated),
+            parent_budget_id,
+            status,
+            policy_ref,
+            revision: budget_i64_to_u64(revision, "budget revision")?,
+        },
+        allocated,
+        reserved,
+        committed,
+        overdraft,
+    }))
+}
+
+fn sqlite_update_account_balances(
+    connection: &Connection,
+    account: &StoredBudgetAccount,
+) -> Result<(), BudgetError> {
+    let updated = connection
+        .execute(
+            "
+            UPDATE budget_accounts
+            SET
+                allocated_json = ?,
+                reserved_json = ?,
+                committed_json = ?,
+                overdraft_json = ?,
+                revision = ?
+            WHERE budget_id = ?
+            ",
+            params![
+                usage_amounts_json(&map_to_amounts(&account.allocated))?,
+                usage_amounts_json(&map_to_amounts(&account.reserved))?,
+                usage_amounts_json(&map_to_amounts(&account.committed))?,
+                usage_amounts_json(&map_to_amounts(&account.overdraft))?,
+                budget_u64_to_i64(account.account.revision, "budget revision")?,
+                &account.account.budget_id,
+            ],
+        )
+        .map_err(budget_storage_error)?;
+    if updated == 0 {
+        return Err(BudgetError::BudgetNotFound {
+            budget_id: account.account.budget_id.clone(),
+        });
+    }
+    Ok(())
+}
+
+fn sqlite_budget_chain(
+    connection: &Connection,
+    budget_id: &str,
+) -> Result<Vec<String>, BudgetError> {
+    let mut chain = Vec::new();
+    let mut seen = BTreeSet::new();
+    let mut current_id = Some(budget_id.to_string());
+    while let Some(id) = current_id {
+        if !seen.insert(id.clone()) {
+            return Err(BudgetError::BudgetConflict { budget_id: id });
+        }
+        let account =
+            sqlite_load_account(connection, &id)?.ok_or_else(|| BudgetError::BudgetNotFound {
+                budget_id: id.clone(),
+            })?;
+        chain.push(id);
+        current_id = account.account.parent_budget_id;
+    }
+    Ok(chain)
+}
+
+fn sqlite_next_counter(connection: &Connection, counter_name: &str) -> Result<u64, BudgetError> {
+    let current = connection
+        .query_row(
+            "SELECT value FROM budget_counters WHERE counter_name = ?",
+            params![counter_name],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(budget_storage_error)?;
+    let next = current
+        .unwrap_or(0)
+        .checked_add(1)
+        .ok_or_else(|| BudgetError::Storage {
+            message: format!("budget counter {counter_name:?} exceeds SQLite integer range"),
+        })?;
+    connection
+        .execute(
+            "
+            INSERT INTO budget_counters (counter_name, value)
+            VALUES (?, ?)
+            ON CONFLICT(counter_name) DO UPDATE SET value = excluded.value
+            ",
+            params![counter_name, next],
+        )
+        .map_err(budget_storage_error)?;
+    budget_i64_to_u64(next, "budget counter")
+}
+
+fn usage_amounts_json(amounts: &[UsageAmount]) -> Result<String, BudgetError> {
+    let values = amounts
+        .iter()
+        .map(|amount| {
+            let mut value = Map::new();
+            value.insert("kind".to_string(), Value::String(amount.kind.clone()));
+            value.insert(
+                "amount".to_string(),
+                Value::Number(Number::from(amount.amount)),
+            );
+            value.insert("unit".to_string(), Value::String(amount.unit.clone()));
+            value.insert(
+                "dimensions".to_string(),
+                string_map_value(&amount.dimensions),
+            );
+            Value::Object(value)
+        })
+        .collect::<Vec<_>>();
+    serde_json::to_string(&values).map_err(budget_storage_error)
+}
+
+fn usage_amounts_from_json(value: &str) -> Result<Vec<UsageAmount>, BudgetError> {
+    let Value::Array(values) =
+        serde_json::from_str::<Value>(value).map_err(budget_storage_error)?
+    else {
+        return Err(BudgetError::Storage {
+            message: "budget usage amounts must be an array".to_string(),
+        });
+    };
+
+    let mut amounts = Vec::new();
+    for value in values {
+        let Value::Object(mut object) = value else {
+            return Err(BudgetError::Storage {
+                message: "budget usage amount must be an object".to_string(),
+            });
+        };
+        let Some(kind) = object.remove("kind").and_then(|value| match value {
+            Value::String(value) => Some(value),
+            _ => None,
+        }) else {
+            return Err(BudgetError::Storage {
+                message: "budget usage amount kind must be a string".to_string(),
+            });
+        };
+        let Some(amount) = object.remove("amount").and_then(|value| value.as_i64()) else {
+            return Err(BudgetError::Storage {
+                message: "budget usage amount must be an integer".to_string(),
+            });
+        };
+        let Some(unit) = object.remove("unit").and_then(|value| match value {
+            Value::String(value) => Some(value),
+            _ => None,
+        }) else {
+            return Err(BudgetError::Storage {
+                message: "budget usage amount unit must be a string".to_string(),
+            });
+        };
+        let dimensions = match object.remove("dimensions") {
+            Some(value) => string_map_from_value(value)?,
+            None => BTreeMap::new(),
+        };
+        amounts.push(UsageAmount {
+            kind,
+            amount,
+            unit,
+            dimensions,
+        });
+    }
+    Ok(amounts)
+}
+
+fn string_list_json(values: &[String]) -> Result<String, BudgetError> {
+    let values = values
+        .iter()
+        .map(|value| Value::String(value.clone()))
+        .collect::<Vec<_>>();
+    serde_json::to_string(&values).map_err(budget_storage_error)
+}
+
+fn string_map_value(value: &BTreeMap<String, String>) -> Value {
+    Value::Object(
+        value
+            .iter()
+            .map(|(key, value)| (key.clone(), Value::String(value.clone())))
+            .collect(),
+    )
+}
+
+fn string_map_from_value(value: Value) -> Result<BTreeMap<String, String>, BudgetError> {
+    let Value::Object(object) = value else {
+        return Err(BudgetError::Storage {
+            message: "budget string map must be an object".to_string(),
+        });
+    };
+    let mut result = BTreeMap::new();
+    for (key, value) in object {
+        let Value::String(value) = value else {
+            return Err(BudgetError::Storage {
+                message: format!("budget string map value for {key:?} must be a string"),
+            });
+        };
+        result.insert(key, value);
+    }
+    Ok(result)
+}
+
+fn budget_u64_to_i64(value: u64, label: &'static str) -> Result<i64, BudgetError> {
+    i64::try_from(value).map_err(|_| BudgetError::Storage {
+        message: format!("{label} exceeds SQLite integer range"),
+    })
+}
+
+fn budget_i64_to_u64(value: i64, label: &'static str) -> Result<u64, BudgetError> {
+    u64::try_from(value).map_err(|_| BudgetError::Storage {
+        message: format!("{label} must be non-negative"),
+    })
+}
+
+fn budget_storage_error(error: impl std::fmt::Display) -> BudgetError {
+    BudgetError::Storage {
+        message: error.to_string(),
+    }
 }

@@ -1,11 +1,21 @@
 use graphblocks_runtime_core::budget::{
     BudgetError, BudgetStatus, CompletionReservePurpose, CompletionReserveStatus,
-    InMemoryBudgetLedger, ReservationPurpose, ReservationStatus, UsageAmount,
+    InMemoryBudgetLedger, ReservationPurpose, ReservationStatus, SqliteBudgetLedger, UsageAmount,
 };
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, env, fs, path::PathBuf};
 
 fn tokens(amount: i64) -> UsageAmount {
     UsageAmount::new("model_total_tokens", amount, "tokens")
+}
+
+fn sqlite_budget_path(label: &str) -> PathBuf {
+    let mut path = env::temp_dir();
+    path.push(format!(
+        "graphblocks-sqlite-budget-{label}-{}.sqlite3",
+        std::process::id()
+    ));
+    fs::remove_file(&path).ok();
+    path
 }
 
 #[test]
@@ -187,6 +197,91 @@ fn budget_ledger_expired_reservation_cannot_be_settled_or_authorize_permit()
         BudgetError::ReservationState {
             reservation_id: reservation.reservation_id,
             status: ReservationStatus::Expired,
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn sqlite_budget_ledger_persists_reserved_balance_across_reopen() -> Result<(), BudgetError> {
+    let path = sqlite_budget_path("reserve-persist");
+
+    {
+        let mut ledger = SqliteBudgetLedger::open(&path)?;
+        ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+        let reservation = ledger.reserve(
+            "budget-1",
+            "run:1",
+            [tokens(40)],
+            ReservationPurpose::ProviderCall,
+            "later",
+            None,
+        )?;
+
+        assert_eq!(reservation.fencing_token, 1);
+        assert_eq!(ledger.balance("budget-1")?.available, vec![tokens(60)]);
+    }
+
+    let ledger = SqliteBudgetLedger::open(&path)?;
+    let balance = ledger.balance("budget-1")?;
+
+    assert_eq!(balance.reserved, vec![tokens(40)]);
+    assert_eq!(balance.committed, Vec::<UsageAmount>::new());
+    assert_eq!(balance.available, vec![tokens(60)]);
+    assert_eq!(balance.revision, 2);
+    fs::remove_file(path).ok();
+    Ok(())
+}
+
+#[test]
+fn sqlite_budget_ledger_hierarchical_reserve_holds_parent_capacity() -> Result<(), BudgetError> {
+    let mut ledger = SqliteBudgetLedger::open_in_memory()?;
+    ledger.allocate(
+        "tenant-budget",
+        "tenant:acme",
+        [tokens(100)],
+        "policy-1",
+        None,
+    )?;
+    ledger.allocate(
+        "run-budget",
+        "run:1",
+        [tokens(80)],
+        "policy-1",
+        Some("tenant-budget".to_string()),
+    )?;
+
+    ledger.reserve(
+        "run-budget",
+        "run:1",
+        [tokens(40)],
+        ReservationPurpose::ProviderCall,
+        "later",
+        None,
+    )?;
+
+    assert_eq!(ledger.balance("run-budget")?.reserved, vec![tokens(40)]);
+    assert_eq!(ledger.balance("run-budget")?.available, vec![tokens(40)]);
+    assert_eq!(ledger.balance("tenant-budget")?.reserved, vec![tokens(40)]);
+    assert_eq!(ledger.balance("tenant-budget")?.available, vec![tokens(60)]);
+
+    let error = ledger
+        .reserve(
+            "run-budget",
+            "run:2",
+            [tokens(45)],
+            ReservationPurpose::ProviderCall,
+            "later",
+            None,
+        )
+        .expect_err("child budget reservation cannot exceed its own available balance");
+
+    assert_eq!(
+        error,
+        BudgetError::BudgetExceeded {
+            budget_id: "run-budget".to_string(),
+            kind: "model_total_tokens".to_string(),
+            unit: "tokens".to_string(),
         }
     );
     Ok(())
