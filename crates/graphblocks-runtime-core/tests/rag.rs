@@ -847,9 +847,36 @@ fn render_context_pack_labels_retrieved_content_as_untrusted_data() {
     .expect("item metadata is json");
     assert_eq!(item_metadata["trust"], json!("retrieved_untrusted"));
     assert_eq!(item_metadata["hit_id"], json!("hit-1"));
+    assert_eq!(item_metadata["sources"][0]["source_id"], json!("chunk-1"));
     assert_eq!(
-        item_metadata["sources"],
-        json!([{"source_id": "chunk-1", "source_kind": "document_chunk", "trust": "retrieved_untrusted"}])
+        item_metadata["sources"][0]["source_kind"],
+        json!("document_chunk")
+    );
+    assert_eq!(item_metadata["sources"][0]["revision"], json!("rev-1"));
+    assert_eq!(
+        item_metadata["sources"][0]["digest"],
+        json!("sha256:content")
+    );
+    assert_eq!(
+        item_metadata["sources"][0]["trust"],
+        json!("retrieved_untrusted")
+    );
+    assert_eq!(
+        item_metadata["sources"][0]["locator"],
+        json!({
+            "asset_id": "asset-1",
+            "revision_id": "rev-1",
+            "document_id": "doc-1",
+            "element_id": null,
+            "chunk_id": "chunk-1",
+            "page": null,
+            "bbox": null,
+            "char_start": null,
+            "char_end": null,
+            "sheet": null,
+            "cell_range": null,
+            "slide": null,
+        })
     );
     assert_eq!(
         serde_json::from_str::<String>(lines[2]).expect("content is json string"),

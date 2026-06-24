@@ -404,14 +404,38 @@ def render_context_pack(context: ContextPack) -> str:
     ]
     for hit in context.hits:
         source_refs = hit.highlights or [hit.item.source]
-        sources = [
-            {
-                "source_id": source.source_id,
-                "source_kind": source.source_kind,
-                "trust": "retrieved_untrusted",
-            }
-            for source in source_refs
-        ]
+        sources = []
+        for source in source_refs:
+            locator = source.locator
+            sources.append(
+                {
+                    "source_id": source.source_id,
+                    "source_kind": source.source_kind,
+                    "revision": source.revision,
+                    "digest": source.digest,
+                    "locator": (
+                        {
+                            "asset_id": locator.asset_id,
+                            "revision_id": locator.revision_id,
+                            "document_id": locator.document_id,
+                            "element_id": locator.element_id,
+                            "chunk_id": locator.chunk_id,
+                            "page": locator.page,
+                            "bbox": locator.bbox,
+                            "char_start": locator.char_start,
+                            "char_end": locator.char_end,
+                            "sheet": locator.sheet,
+                            "cell_range": locator.cell_range,
+                            "slide": locator.slide,
+                        }
+                        if locator is not None
+                        else None
+                    ),
+                    "observed_at": source.observed_at,
+                    "relevant_as_of": source.relevant_as_of,
+                    "trust": "retrieved_untrusted",
+                }
+            )
         lines.append(
             "GRAPHBLOCKS_RETRIEVED_ITEM_BEGIN "
             + _compact_json(

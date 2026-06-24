@@ -1426,6 +1426,26 @@ pub fn render_context_pack(context: &ContextPack) -> String {
                 json!({
                     "source_id": &source.source_id,
                     "source_kind": &source.source_kind,
+                    "revision": &source.revision,
+                    "digest": &source.digest,
+                    "locator": source.locator.as_ref().map(|locator| {
+                        json!({
+                            "asset_id": &locator.asset_id,
+                            "revision_id": &locator.revision_id,
+                            "document_id": &locator.document_id,
+                            "element_id": &locator.element_id,
+                            "chunk_id": &locator.chunk_id,
+                            "page": locator.page,
+                            "bbox": &locator.bbox,
+                            "char_start": locator.char_start,
+                            "char_end": locator.char_end,
+                            "sheet": &locator.sheet,
+                            "cell_range": &locator.cell_range,
+                            "slide": locator.slide,
+                        })
+                    }),
+                    "observed_at": &source.observed_at,
+                    "relevant_as_of": &source.relevant_as_of,
                     "trust": "retrieved_untrusted",
                 })
             })
