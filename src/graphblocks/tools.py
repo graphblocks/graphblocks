@@ -9,7 +9,7 @@ from typing import Literal
 from .canonical import canonical_hash
 from .conversation import ContentPart
 from .documents import ArtifactRef
-from .policy import PolicyRequest, PrincipalRef, ResourceRef as PolicyResourceRef
+from .policy import PolicyDecision, PolicyRequest, PrincipalRef, ResourceRef as PolicyResourceRef
 from .schema import SchemaId, SchemaIdError
 
 
@@ -824,6 +824,7 @@ def admit_tool_call(
     resolved_tool: ResolvedTool,
     schema_registry: ToolSchemaRegistry,
     *,
+    policy_decision: PolicyDecision,
     approval: ToolApprovalRecord | None = None,
     principal_id: str,
     idempotency_key: str | None = None,
@@ -849,6 +850,23 @@ def admit_tool_call(
 
     if resolved_tool.valid_until is not None and admitted_at > resolved_tool.valid_until:
         raise ToolAdmissionError(f"resolved tool {resolved_tool.definition.name} expired at {resolved_tool.valid_until}")
+
+    if not policy_decision.input_digest:
+        raise ToolAdmissionError(f"policy decision {policy_decision.decision_id} has no input digest")
+    if policy_decision.effect == "deny":
+        reason = ", ".join(policy_decision.reason_codes) or "deny"
+        raise ToolAdmissionError(
+            f"policy decision {policy_decision.decision_id} denied tool call {call.tool_call_id}: {reason}"
+        )
+    if policy_decision.effect == "defer":
+        reason = ", ".join(policy_decision.reason_codes) or "defer"
+        raise ToolAdmissionError(
+            f"policy decision {policy_decision.decision_id} deferred tool call {call.tool_call_id}: {reason}"
+        )
+    if policy_decision.effect not in {"allow", "allow_with_obligations"}:
+        raise ToolAdmissionError(
+            f"policy decision {policy_decision.decision_id} has unsupported effect {policy_decision.effect}"
+        )
 
     if resolved_tool.binding.approval == "always":
         if approval is None:

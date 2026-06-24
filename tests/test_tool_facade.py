@@ -14,6 +14,7 @@ from graphblocks import (
     JsonSchema,
     JsonSchemaNode,
     OpenApiToolImplementation,
+    PolicyDecision,
     PrincipalRef,
     ResolvedTool,
     ToolAdmissionError,
@@ -528,6 +529,28 @@ def _process_schema_registry() -> ToolSchemaRegistry:
     )
 
 
+def _allow_tool_policy_decision() -> PolicyDecision:
+    return PolicyDecision(
+        decision_id="decision-allow-tool",
+        effect="allow",
+        reason_codes=("allow-process",),
+        policy_refs=("allow-process",),
+        evaluated_at="2026-06-23T00:00:01Z",
+        input_digest="sha256:before-tool",
+    )
+
+
+def _deny_tool_policy_decision() -> PolicyDecision:
+    return PolicyDecision(
+        decision_id="decision-deny-tool",
+        effect="deny",
+        reason_codes=("process_not_allowed",),
+        policy_refs=("deny-process",),
+        evaluated_at="2026-06-23T00:00:01Z",
+        input_digest="sha256:before-tool",
+    )
+
+
 def test_before_tool_or_effect_policy_request_carries_tool_admission_context() -> None:
     resolved = _resolved_process_tool()
     call = _process_call(resolved)
@@ -566,6 +589,7 @@ def test_tool_admission_validates_arguments_before_approval() -> None:
             call,
             resolved,
             _process_schema_registry(),
+            policy_decision=_allow_tool_policy_decision(),
             principal_id="user-1",
             idempotency_key="idem-1",
             admitted_at="2026-06-23T00:00:01Z",
@@ -573,6 +597,68 @@ def test_tool_admission_validates_arguments_before_approval() -> None:
         )
 
     assert str(error.value) == "tool call call-1 arguments invalid: schemas/ProcessRun@1 expected array at $.cmd"
+
+
+def test_tool_admission_denies_before_approval_when_policy_denies_tool_effect() -> None:
+    resolved = _resolved_process_tool()
+    call = _process_call(resolved)
+
+    with pytest.raises(ToolAdmissionError) as error:
+        admit_tool_call(
+            call,
+            resolved,
+            _process_schema_registry(),
+            policy_decision=_deny_tool_policy_decision(),
+            principal_id="user-1",
+            idempotency_key="idem-1",
+            admitted_at="2026-06-23T00:00:01Z",
+            now=1_200,
+        )
+
+    assert str(error.value) == "policy decision decision-deny-tool denied tool call call-1: process_not_allowed"
+
+
+def test_tool_admission_rejects_policy_decision_without_input_digest() -> None:
+    resolved = _resolved_process_tool()
+    call = _process_call(resolved)
+
+    with pytest.raises(ToolAdmissionError) as error:
+        admit_tool_call(
+            call,
+            resolved,
+            _process_schema_registry(),
+            policy_decision=replace(_allow_tool_policy_decision(), input_digest=""),
+            principal_id="user-1",
+            idempotency_key="idem-1",
+            admitted_at="2026-06-23T00:00:01Z",
+            now=1_200,
+        )
+
+    assert str(error.value) == "policy decision decision-allow-tool has no input digest"
+
+
+def test_tool_admission_defers_before_approval_when_policy_defers_tool_effect() -> None:
+    resolved = _resolved_process_tool()
+    call = _process_call(resolved)
+
+    with pytest.raises(ToolAdmissionError) as error:
+        admit_tool_call(
+            call,
+            resolved,
+            _process_schema_registry(),
+            policy_decision=replace(
+                _allow_tool_policy_decision(),
+                decision_id="decision-defer-tool",
+                effect="defer",
+                reason_codes=("needs_external_pdp",),
+            ),
+            principal_id="user-1",
+            idempotency_key="idem-1",
+            admitted_at="2026-06-23T00:00:01Z",
+            now=1_200,
+        )
+
+    assert str(error.value) == "policy decision decision-defer-tool deferred tool call call-1: needs_external_pdp"
 
 
 def test_tool_admission_denies_tool_no_longer_allowed_for_principal() -> None:
@@ -584,6 +670,7 @@ def test_tool_admission_denies_tool_no_longer_allowed_for_principal() -> None:
             call,
             resolved,
             _process_schema_registry(),
+            policy_decision=_allow_tool_policy_decision(),
             principal_id="user-1",
             idempotency_key="idem-1",
             admitted_at="2026-06-23T00:00:01Z",
@@ -602,6 +689,7 @@ def test_tool_admission_denies_expired_resolved_tool() -> None:
             call,
             resolved,
             _process_schema_registry(),
+            policy_decision=_allow_tool_policy_decision(),
             principal_id="user-1",
             idempotency_key="idem-1",
             admitted_at="2026-06-23T00:00:01Z",
@@ -620,6 +708,7 @@ def test_tool_admission_requires_approval_and_idempotency_key() -> None:
             call,
             resolved,
             _process_schema_registry(),
+            policy_decision=_allow_tool_policy_decision(),
             principal_id="user-1",
             idempotency_key="idem-1",
             admitted_at="2026-06-23T00:00:01Z",
@@ -643,6 +732,7 @@ def test_tool_admission_requires_approval_and_idempotency_key() -> None:
             resolved,
             _process_schema_registry(),
             approval=approval,
+            policy_decision=_allow_tool_policy_decision(),
             principal_id="user-1",
             admitted_at="2026-06-23T00:00:01Z",
             now=1_200,
@@ -668,6 +758,7 @@ def test_tool_admission_returns_admitted_call_with_idempotency_key() -> None:
         resolved,
         _process_schema_registry(),
         approval=approval,
+        policy_decision=_allow_tool_policy_decision(),
         principal_id="user-1",
         idempotency_key="idem-1",
         admitted_at="2026-06-23T00:00:01Z",
