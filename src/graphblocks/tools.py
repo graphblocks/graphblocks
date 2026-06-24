@@ -906,6 +906,17 @@ def admit_tool_call(
 class ToolPlanCall:
     call: ToolCall
     effect_key: str | None = None
+    effects: frozenset[ToolEffect] = field(default_factory=frozenset)
+    cancellation: ToolCancellation = "cooperative"
+
+    def __post_init__(self) -> None:
+        effects = frozenset(self.effects)
+        invalid_effects = sorted(effect for effect in effects if effect not in VALID_TOOL_EFFECTS)
+        if invalid_effects:
+            raise ToolExecutionPlanError(f"invalid tool effect {invalid_effects[0]}")
+        if self.cancellation not in VALID_TOOL_CANCELLATIONS:
+            raise ToolExecutionPlanError(f"invalid tool cancellation {self.cancellation}")
+        object.__setattr__(self, "effects", effects)
 
 
 @dataclass(slots=True)
@@ -1081,8 +1092,13 @@ class ToolExecutionPlan:
             for planned_call in self.calls:
                 tool_call_id = planned_call.call.tool_call_id
                 if self._states[tool_call_id] == "running":
-                    self._states[tool_call_id] = "cancelled"
-                    affected.append(tool_call_id)
+                    can_cancel_running = planned_call.cancellation == "force_terminable" or all(
+                        effect in {"none", "external_read", "filesystem_read", "network"}
+                        for effect in planned_call.effects
+                    )
+                    if can_cancel_running:
+                        self._states[tool_call_id] = "cancelled"
+                        affected.append(tool_call_id)
                 elif self._states[tool_call_id] == "pending":
                     self._states[tool_call_id] = "denied"
                     affected.append(tool_call_id)

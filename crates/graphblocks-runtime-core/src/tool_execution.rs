@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::output_policy::PendingToolCallsDisposition;
+use crate::tool::{ToolCancellation, ToolEffect};
 use crate::tool_call::ToolCall;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -72,6 +73,8 @@ pub enum ToolExecutionPlanError {
 pub struct ToolPlanCall {
     pub call: ToolCall,
     pub effect_key: Option<String>,
+    pub effects: BTreeSet<ToolEffect>,
+    pub cancellation: ToolCancellation,
 }
 
 impl ToolPlanCall {
@@ -79,11 +82,26 @@ impl ToolPlanCall {
         Self {
             call,
             effect_key: None,
+            effects: BTreeSet::new(),
+            cancellation: ToolCancellation::Cooperative,
         }
     }
 
     pub fn with_effect_key(mut self, effect_key: impl Into<String>) -> Self {
         self.effect_key = Some(effect_key.into());
+        self
+    }
+
+    pub fn with_effects<I>(mut self, effects: I) -> Self
+    where
+        I: IntoIterator<Item = ToolEffect>,
+    {
+        self.effects = effects.into_iter().collect();
+        self
+    }
+
+    pub fn with_cancellation(mut self, cancellation: ToolCancellation) -> Self {
+        self.cancellation = cancellation;
         self
     }
 }
@@ -369,8 +387,23 @@ impl ToolExecutionPlan {
             PendingToolCallsDisposition::CancelAdmitted => {
                 for (tool_call_id, state) in &mut self.states {
                     if *state == ToolExecutionState::Running {
-                        *state = ToolExecutionState::Cancelled;
-                        affected.push(tool_call_id.clone());
+                        let can_cancel_running =
+                            self.calls.get(tool_call_id).is_some_and(|planned_call| {
+                                planned_call.cancellation == ToolCancellation::ForceTerminable
+                                    || planned_call.effects.iter().all(|effect| {
+                                        matches!(
+                                            effect,
+                                            ToolEffect::None
+                                                | ToolEffect::ExternalRead
+                                                | ToolEffect::FilesystemRead
+                                                | ToolEffect::Network
+                                        )
+                                    })
+                            });
+                        if can_cancel_running {
+                            *state = ToolExecutionState::Cancelled;
+                            affected.push(tool_call_id.clone());
+                        }
                     } else if *state == ToolExecutionState::Pending {
                         *state = ToolExecutionState::Denied;
                         affected.push(tool_call_id.clone());

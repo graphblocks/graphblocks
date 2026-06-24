@@ -1628,6 +1628,45 @@ def test_tool_execution_plan_policy_stop_denies_pending_and_can_cancel_running()
     assert cancel_plan.state("call-b") == "denied"
 
 
+def test_tool_execution_plan_policy_stop_preserves_unsafe_running_state_changing_calls() -> None:
+    plan = ToolExecutionPlan(
+        plan_id="plan-1",
+        response_id="response-1",
+        calls=(
+            ToolPlanCall(
+                _tool_call("call-a", '{"resource_id":"ticket-1"}'),
+                effects=frozenset({"external_write"}),
+                cancellation="cooperative",
+            ),
+            ToolPlanCall(_tool_call("call-b", '{"resource_id":"ticket-2"}')),
+        ),
+        maximum_parallelism=2,
+    )
+
+    plan.record_started("call-a")
+
+    assert plan.apply_policy_stop("cancel_admitted") == ["call-b"]
+    assert plan.state("call-a") == "running"
+    assert plan.state("call-b") == "denied"
+
+    force_terminable = ToolExecutionPlan(
+        plan_id="plan-2",
+        response_id="response-1",
+        calls=(
+            ToolPlanCall(
+                _tool_call("call-a", '{"resource_id":"ticket-1"}'),
+                effects=frozenset({"external_write"}),
+                cancellation="force_terminable",
+            ),
+        ),
+        maximum_parallelism=1,
+    )
+    force_terminable.record_started("call-a")
+
+    assert force_terminable.apply_policy_stop("cancel_admitted") == ["call-a"]
+    assert force_terminable.state("call-a") == "cancelled"
+
+
 def test_tool_execution_cancelled_call_cancels_dependents_by_default() -> None:
     dependent = replace(_tool_call("call-b", '{"resource_id":"b"}'), depends_on=("call-a",))
     plan = ToolExecutionPlan(

@@ -1,4 +1,5 @@
 use graphblocks_runtime_core::output_policy::PendingToolCallsDisposition;
+use graphblocks_runtime_core::tool::{ToolCancellation, ToolEffect};
 use graphblocks_runtime_core::tool_call::{ToolCall, ToolCallDraft};
 use graphblocks_runtime_core::tool_execution::{
     ToolExecutionCancellationPolicy, ToolExecutionFailurePolicy, ToolExecutionPlan,
@@ -299,6 +300,56 @@ fn policy_stop_can_cancel_admitted_tool_calls() -> Result<(), ToolExecutionPlanE
             current: ToolExecutionState::Cancelled
         }),
     );
+    Ok(())
+}
+
+#[test]
+fn policy_stop_preserves_running_state_changing_calls_without_safe_cancellation()
+-> Result<(), ToolExecutionPlanError> {
+    let mut plan = ToolExecutionPlan::new(
+        "plan-1",
+        "response-1",
+        [
+            ToolPlanCall::new(tool_call("call-a", "{\"resource_id\":\"ticket-1\"}"))
+                .with_effects([ToolEffect::ExternalWrite])
+                .with_cancellation(ToolCancellation::Cooperative),
+            ToolPlanCall::new(tool_call("call-b", "{\"resource_id\":\"ticket-2\"}")),
+        ],
+        2,
+    )?;
+
+    plan.record_started("call-a")?;
+
+    assert_eq!(
+        plan.apply_policy_stop(PendingToolCallsDisposition::CancelAdmitted),
+        vec!["call-b".to_owned()],
+    );
+    assert_eq!(plan.state("call-a"), Some(ToolExecutionState::Running));
+    assert_eq!(plan.state("call-b"), Some(ToolExecutionState::Denied));
+    Ok(())
+}
+
+#[test]
+fn policy_stop_can_cancel_running_state_changing_calls_when_force_terminable()
+-> Result<(), ToolExecutionPlanError> {
+    let mut plan = ToolExecutionPlan::new(
+        "plan-1",
+        "response-1",
+        [
+            ToolPlanCall::new(tool_call("call-a", "{\"resource_id\":\"ticket-1\"}"))
+                .with_effects([ToolEffect::ExternalWrite])
+                .with_cancellation(ToolCancellation::ForceTerminable),
+        ],
+        1,
+    )?;
+
+    plan.record_started("call-a")?;
+
+    assert_eq!(
+        plan.apply_policy_stop(PendingToolCallsDisposition::CancelAdmitted),
+        vec!["call-a".to_owned()],
+    );
+    assert_eq!(plan.state("call-a"), Some(ToolExecutionState::Cancelled));
     Ok(())
 }
 
