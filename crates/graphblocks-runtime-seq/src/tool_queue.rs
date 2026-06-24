@@ -108,6 +108,22 @@ impl SequentialToolQueue {
         Ok(())
     }
 
+    pub fn record_denied(
+        &mut self,
+        tool_call_id: impl AsRef<str>,
+    ) -> Result<(), SequentialToolQueueError> {
+        self.plan.record_denied(tool_call_id)?;
+        Ok(())
+    }
+
+    pub fn record_expired(
+        &mut self,
+        tool_call_id: impl AsRef<str>,
+    ) -> Result<(), SequentialToolQueueError> {
+        self.plan.record_expired(tool_call_id)?;
+        Ok(())
+    }
+
     pub fn record_cancelled(
         &mut self,
         tool_call_id: impl AsRef<str>,

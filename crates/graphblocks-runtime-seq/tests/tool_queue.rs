@@ -77,6 +77,52 @@ fn sequential_tool_queue_waits_for_dependencies() -> Result<(), SequentialToolQu
 }
 
 #[test]
+fn sequential_tool_queue_denies_pending_call_and_skips_dependents()
+-> Result<(), SequentialToolQueueError> {
+    let mut dependent = tool_call("call-b", ToolCallStatus::Admitted);
+    dependent.depends_on = vec!["call-a".to_owned()];
+    let mut queue = SequentialToolQueue::new(
+        "plan-1",
+        "response-1",
+        [
+            ToolPlanCall::new(tool_call("call-a", ToolCallStatus::Admitted)),
+            ToolPlanCall::new(dependent),
+            ToolPlanCall::new(tool_call("call-c", ToolCallStatus::Admitted)),
+        ],
+    )?;
+
+    queue.record_denied("call-a")?;
+
+    assert_eq!(queue.state("call-a"), Some(ToolExecutionState::Denied));
+    assert_eq!(queue.state("call-b"), Some(ToolExecutionState::Skipped));
+    assert_eq!(queue.state("call-c"), Some(ToolExecutionState::Pending));
+    assert_eq!(queue.start_next_ready()?, Some("call-c".to_owned()));
+    Ok(())
+}
+
+#[test]
+fn sequential_tool_queue_expires_pending_call_and_skips_dependents()
+-> Result<(), SequentialToolQueueError> {
+    let mut dependent = tool_call("call-b", ToolCallStatus::Admitted);
+    dependent.depends_on = vec!["call-a".to_owned()];
+    let mut queue = SequentialToolQueue::new(
+        "plan-1",
+        "response-1",
+        [
+            ToolPlanCall::new(tool_call("call-a", ToolCallStatus::Admitted)),
+            ToolPlanCall::new(dependent),
+        ],
+    )?;
+
+    queue.record_expired("call-a")?;
+
+    assert_eq!(queue.state("call-a"), Some(ToolExecutionState::Expired));
+    assert_eq!(queue.state("call-b"), Some(ToolExecutionState::Skipped));
+    assert_eq!(queue.start_next_ready()?, None);
+    Ok(())
+}
+
+#[test]
 fn sequential_tool_queue_rejects_terminal_update_for_different_running_call()
 -> Result<(), SequentialToolQueueError> {
     let mut queue = SequentialToolQueue::new(
