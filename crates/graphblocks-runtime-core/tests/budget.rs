@@ -604,6 +604,54 @@ fn sqlite_budget_ledger_commit_with_expired_permit_rejects_without_mutating()
 }
 
 #[test]
+fn sqlite_budget_ledger_release_with_expired_permit_rejects_without_mutating()
+-> Result<(), BudgetError> {
+    let mut ledger = SqliteBudgetLedger::open_in_memory()?;
+    ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+    let reservation = ledger.reserve(
+        "budget-1",
+        "run:1",
+        [tokens(40)],
+        ReservationPurpose::ProviderCall,
+        "2026-06-22T00:10:00Z",
+        None,
+    )?;
+    let permit = ledger.issue_permit(
+        "permit-1",
+        vec![reservation.reservation_id.clone()],
+        "worker:1",
+        "turn:1",
+        1,
+        "finish_current_turn",
+        "sha256:policy",
+        "2026-06-22T00:05:00Z",
+        Vec::new(),
+    )?;
+
+    let error = ledger
+        .release_with_permit_at(
+            &permit.permit_id,
+            &reservation.reservation_id,
+            "2026-06-22T00:05:00Z",
+        )
+        .expect_err("expired permit cannot release a SQLite reservation");
+
+    assert_eq!(
+        error,
+        BudgetError::PermitExpired {
+            permit_id: "permit-1".to_string(),
+            expires_at: "2026-06-22T00:05:00Z".to_string(),
+            now: "2026-06-22T00:05:00Z".to_string(),
+        }
+    );
+    let balance = ledger.balance("budget-1")?;
+    assert_eq!(balance.reserved, vec![tokens(40)]);
+    assert_eq!(balance.committed, Vec::<UsageAmount>::new());
+    assert_eq!(balance.available, vec![tokens(60)]);
+    Ok(())
+}
+
+#[test]
 fn sqlite_completion_reserve_holds_capacity_across_reopen() -> Result<(), BudgetError> {
     let path = sqlite_budget_path("completion-reserve-persist");
 
@@ -1437,6 +1485,53 @@ fn budget_ledger_commit_with_expired_permit_rejects_without_mutating() -> Result
             "2026-06-22T00:05:00Z",
         )
         .expect_err("expired permit cannot settle a reservation");
+
+    assert_eq!(
+        error,
+        BudgetError::PermitExpired {
+            permit_id: "permit-1".to_string(),
+            expires_at: "2026-06-22T00:05:00Z".to_string(),
+            now: "2026-06-22T00:05:00Z".to_string(),
+        }
+    );
+    let balance = ledger.balance("budget-1")?;
+    assert_eq!(balance.reserved, vec![tokens(40)]);
+    assert_eq!(balance.committed, Vec::<UsageAmount>::new());
+    assert_eq!(balance.available, vec![tokens(60)]);
+    Ok(())
+}
+
+#[test]
+fn budget_ledger_release_with_expired_permit_rejects_without_mutating() -> Result<(), BudgetError> {
+    let mut ledger = InMemoryBudgetLedger::new();
+    ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+    let reservation = ledger.reserve(
+        "budget-1",
+        "run:1",
+        [tokens(40)],
+        ReservationPurpose::ProviderCall,
+        "2026-06-22T00:10:00Z",
+        None,
+    )?;
+    let permit = ledger.issue_permit(
+        "permit-1",
+        vec![reservation.reservation_id.clone()],
+        "worker:1",
+        "turn:1",
+        1,
+        "finish_current_turn",
+        "sha256:policy",
+        "2026-06-22T00:05:00Z",
+        Vec::new(),
+    )?;
+
+    let error = ledger
+        .release_with_permit_at(
+            &permit.permit_id,
+            &reservation.reservation_id,
+            "2026-06-22T00:05:00Z",
+        )
+        .expect_err("expired permit cannot release a reservation");
 
     assert_eq!(
         error,
