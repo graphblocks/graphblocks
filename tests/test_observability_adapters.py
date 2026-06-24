@@ -73,6 +73,50 @@ def test_telemetry_export_failure_is_non_fatal_to_run(monkeypatch) -> None:
     }
 
 
+def test_metric_cardinality_linter_flags_unbounded_labels(monkeypatch) -> None:
+    _add_observability_package_paths(monkeypatch)
+    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
+    linter = graphblocks_telemetry.MetricCardinalityLinter(max_distinct_values_per_label=2)
+
+    result = linter.lint_samples(
+        (
+            {
+                "name": "graphblocks_generation_usage_tokens_total",
+                "labels": {"provider": "openai-compatible", "model": "small", "run_id": "run-1"},
+                "value": 1,
+            },
+            {
+                "name": "graphblocks_generation_usage_tokens_total",
+                "labels": {"provider": "openai-compatible", "model": "medium"},
+                "value": 1,
+            },
+            {
+                "name": "graphblocks_generation_usage_tokens_total",
+                "labels": {"provider": "openai-compatible", "model": "large"},
+                "value": 1,
+            },
+        )
+    )
+
+    assert not result.passed
+    assert result.issue_contracts() == [
+        {
+            "metric_name": "graphblocks_generation_usage_tokens_total",
+            "label": "model",
+            "distinct_values": 3,
+            "limit": 2,
+            "reason": "too_many_values",
+        },
+        {
+            "metric_name": "graphblocks_generation_usage_tokens_total",
+            "label": "run_id",
+            "distinct_values": 1,
+            "limit": 0,
+            "reason": "blocked_label",
+        },
+    ]
+
+
 def test_otel_projection_uses_versioned_schema_without_importing_sdk(monkeypatch) -> None:
     _add_observability_package_paths(monkeypatch)
     graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
