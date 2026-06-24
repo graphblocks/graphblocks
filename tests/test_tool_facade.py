@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from math import nan
 
+import graphblocks
 import pytest
 
 from graphblocks import (
@@ -42,6 +43,36 @@ from graphblocks import (
     build_before_tool_or_effect_policy_request,
     validate_tool_result_for_model,
 )
+
+
+def test_root_facade_exports_tool_schema_aliases() -> None:
+    expected_aliases = {
+        "GraphRef",
+        "JsonSchemaRef",
+        "JsonSchemaType",
+        "PendingToolCallsDisposition",
+        "ToolApproval",
+        "ToolApprovalStatus",
+        "ToolCallDraftStatus",
+        "ToolCallStatus",
+        "ToolCancellation",
+        "ToolEffect",
+        "ToolEffectOutcome",
+        "ToolExecutionCancellationPolicy",
+        "ToolExecutionFailurePolicy",
+        "ToolExecutionState",
+        "ToolIdempotency",
+        "ToolImplementation",
+        "ToolResultEventKind",
+        "ToolResultMode",
+        "ToolResultStatus",
+    }
+
+    missing = sorted(name for name in expected_aliases if name not in graphblocks.__all__)
+
+    assert missing == []
+    for name in expected_aliases:
+        assert hasattr(graphblocks, name)
 
 
 def test_tool_definition_is_model_visible_contract_only() -> None:
