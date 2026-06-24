@@ -179,6 +179,16 @@ def main(argv: list[str] | None = None) -> int:
     deploy_plan_parser.add_argument("--revision", required=True, help="immutable deployment revision id")
     deploy_plan_parser.add_argument("--graph", help="release graph name; inferred when the release has one graph")
     deploy_plan_parser.add_argument("--json", action="store_true", help="emit JSON")
+    deploy_render_parser = deploy_subparsers.add_parser(
+        "render",
+        help="render manifests from a deploy plan JSON payload",
+    )
+    deploy_render_parser.add_argument("path", type=Path)
+    deploy_render_parser.add_argument("--target", default="kubernetes", choices=["kubernetes"])
+    deploy_render_parser.add_argument("--namespace", default="default")
+    deploy_render_parser.add_argument("--name", help="manifest name prefix; defaults to deployment id")
+    deploy_render_parser.add_argument("--replicas", type=int, default=1)
+    deploy_render_parser.add_argument("--json", action="store_true", help="emit JSON")
 
     lock_parser = subparsers.add_parser("lock", help="create a semantic graph lockfile")
     lock_parser.add_argument("path", type=Path)
@@ -783,6 +793,78 @@ def main(argv: list[str] | None = None) -> int:
         release_parser.print_help()
         return 0
     if args.command == "deploy":
+        if args.deploy_command == "render":
+            try:
+                from graphblocks_kubernetes import (
+                    KubernetesManifestSet,
+                    KubernetesRenderOptions,
+                    render_target_manifests,
+                )
+
+                payload = json.loads(args.path.read_text(encoding="utf-8"))
+                if not isinstance(payload, Mapping):
+                    raise ValueError("deploy plan payload must be a JSON object")
+                if payload.get("ok") is False:
+                    raise ValueError("deploy plan payload is not successful")
+                plan_payload = payload.get("plan")
+                if not isinstance(plan_payload, Mapping):
+                    raise ValueError("deploy plan payload requires plan mapping")
+                targets_payload = plan_payload.get("targets")
+                if not isinstance(targets_payload, Mapping) or not targets_payload:
+                    raise ValueError("deploy plan payload requires non-empty plan.targets")
+
+                options = KubernetesRenderOptions(namespace=args.namespace)
+                manifest_documents: list[dict[str, object]] = []
+                name_prefix = str(args.name or payload.get("deploymentId") or "graphblocks")
+                for target_id, target_payload in sorted(targets_payload.items()):
+                    if not isinstance(target_payload, Mapping):
+                        raise ValueError(f"deploy plan target {target_id!r} must be a mapping")
+                    target = ExecutionTarget(
+                        target_id=str(target_id),
+                        kind=str(target_payload.get("kind", "")),
+                        execution_host=str(target_payload.get("executionHost", "")),
+                        capabilities=tuple(str(item) for item in target_payload.get("capabilities", ()) or ()),
+                        effects=tuple(str(item) for item in target_payload.get("effects", ()) or ()),
+                        package_lock=(
+                            str(target_payload.get("packageLock"))
+                            if target_payload.get("packageLock") is not None
+                            else None
+                        ),
+                        image=(
+                            str(target_payload.get("image"))
+                            if target_payload.get("image") is not None
+                            else None
+                        ),
+                    )
+                    manifest_set = render_target_manifests(
+                        f"{name_prefix}-{target.target_id}",
+                        target,
+                        options=options,
+                        replicas=args.replicas,
+                    )
+                    manifest_documents.extend(manifest_set.documents)
+
+                manifest_set = KubernetesManifestSet(tuple(manifest_documents))
+                output = {
+                    "ok": True,
+                    "target": args.target,
+                    "deploymentId": payload.get("deploymentId"),
+                    "deploymentRevisionId": payload.get("deploymentRevisionId"),
+                    "planHash": payload.get("planHash"),
+                    "manifestDigest": manifest_set.content_digest(),
+                    "manifests": manifest_set.documents,
+                }
+                if args.json:
+                    print(json.dumps(output, indent=2, sort_keys=True))
+                else:
+                    print(yaml.safe_dump_all(manifest_set.documents, sort_keys=True), end="")
+                return 0
+            except (ImportError, OSError, TypeError, ValueError, json.JSONDecodeError) as error:
+                if args.json:
+                    print(json.dumps({"ok": False, "error": str(error)}, indent=2, sort_keys=True))
+                else:
+                    print(f"FAIL {error}")
+                return 1
         if args.deploy_command == "plan":
             assert release is not None
             try:

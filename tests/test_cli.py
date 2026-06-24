@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import tarfile
 import yaml
 
@@ -454,6 +455,47 @@ def test_deploy_plan_cli_builds_physical_execution_plan(tmp_path, capsys) -> Non
             "target": "docs",
         }
     ]
+
+
+def test_deploy_render_cli_renders_kubernetes_manifest_set(tmp_path, capsys, monkeypatch) -> None:
+    root = Path(__file__).parents[1]
+    monkeypatch.syspath_prepend(str(root / "packages" / "graphblocks-deployment" / "src"))
+    monkeypatch.syspath_prepend(str(root / "packages" / "graphblocks-kubernetes" / "src"))
+    plan = {
+        "ok": True,
+        "deploymentId": "support-production",
+        "deploymentRevisionId": "rev-1",
+        "releaseDigest": "sha256:release",
+        "planHash": "sha256:plan",
+        "plan": {
+            "targets": {
+                "control": {
+                    "kind": "service",
+                    "executionHost": "rust",
+                    "capabilities": ["graph.coordinator"],
+                    "effects": [],
+                    "packageLock": None,
+                    "image": "registry.example.com/graphblocks/control@sha256:control",
+                }
+            }
+        },
+    }
+    path = tmp_path / "plan.json"
+    path.write_text(json.dumps(plan), encoding="utf-8")
+
+    assert main(["deploy", "render", str(path), "--target", "kubernetes", "--namespace", "support", "--json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["target"] == "kubernetes"
+    assert payload["manifestDigest"].startswith("sha256:")
+    assert payload["manifests"][0]["kind"] == "Deployment"
+    assert payload["manifests"][0]["metadata"]["name"] == "support-production-control"
+    assert payload["manifests"][0]["metadata"]["namespace"] == "support"
+    assert payload["manifests"][0]["metadata"]["annotations"]["graphblocks.ai/target-id"] == "control"
+    assert payload["manifests"][0]["spec"]["template"]["spec"]["containers"][0]["image"] == (
+        "registry.example.com/graphblocks/control@sha256:control"
+    )
 
 
 def test_deploy_plan_cli_rejects_mismatched_release_reference(tmp_path, capsys) -> None:
