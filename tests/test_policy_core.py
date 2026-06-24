@@ -8,13 +8,17 @@ import pytest
 from graphblocks.policy import (
     EnforcementPoint,
     PolicyDecision,
+    PolicyEnforcer,
     PolicyEnforcementRecord,
     PolicyObligation,
     PolicyRequest,
     PolicyRule,
+    PolicyTestCase,
+    PolicyTestExpectation,
     PrincipalRef,
     ResourceRef,
     StaticPolicyEvaluator,
+    run_policy_tests,
 )
 
 
@@ -236,3 +240,78 @@ def test_policy_enforcement_record_from_decision_validates_obligations() -> None
 
     assert record.decision_id == decision.decision_id
     assert record.enforced_obligation_ids == ("obl-1",)
+
+
+def test_policy_enforcer_records_decision_and_enforcement_status() -> None:
+    obligation = PolicyObligation("obl-1", "capture_audit", {"mode": "strict"})
+    evaluator = StaticPolicyEvaluator(
+        rules=[
+            PolicyRule("allow-tool", "allow", actions=("tool.run",), resource_selectors=("tool",)),
+            PolicyRule(
+                "audit-tool",
+                "obligate",
+                actions=("tool.run",),
+                resource_selectors=("tool",),
+                obligations=(obligation,),
+            ),
+        ]
+    )
+    request = PolicyRequest(
+        request_id="req-enforce",
+        enforcement_point="before_tool_or_effect",
+        action="tool.run",
+        principal=PrincipalRef("user-1"),
+        resource=ResourceRef("tool:search", resource_kind="tool"),
+        occurred_at="2026-06-23T00:00:00Z",
+    )
+
+    result = PolicyEnforcer(evaluator).enforce(request, evaluated_at="2026-06-23T00:00:01Z")
+    failed = PolicyEnforcer(evaluator).enforce(
+        request,
+        evaluated_at="2026-06-23T00:00:02Z",
+        enforced_obligation_ids=(),
+    )
+
+    assert result.allowed is True
+    assert result.decision.effect == "allow_with_obligations"
+    assert result.record.status == "enforced"
+    assert result.record.enforced_obligation_ids == ("obl-1",)
+    assert failed.allowed is False
+    assert failed.record.status == "failed"
+    assert failed.record.metadata["missing_obligation_ids"] == ("obl-1",)
+
+
+def test_policy_test_dsl_reports_expectation_failures() -> None:
+    evaluator = StaticPolicyEvaluator(
+        rules=[PolicyRule("allow-model", "allow", actions=("model.generate",), resource_selectors=("model",))]
+    )
+    request = PolicyRequest(
+        request_id="req-case",
+        enforcement_point="before_provider_call",
+        action="model.generate",
+        resource=ResourceRef("model:support", resource_kind="model"),
+        occurred_at="2026-06-23T00:00:00Z",
+    )
+    passing = PolicyTestCase(
+        "allow-case",
+        request,
+        PolicyTestExpectation(effect="allow", reason_codes=("allow-model",), enforcement_status="enforced"),
+        evaluated_at="2026-06-23T00:00:01Z",
+    )
+    failing = PolicyTestCase(
+        "deny-case",
+        request,
+        PolicyTestExpectation(effect="deny", reason_codes=("deny-model",), enforcement_status="blocked"),
+        evaluated_at="2026-06-23T00:00:01Z",
+    )
+
+    report = run_policy_tests(evaluator, [passing, failing])
+
+    assert report.passed is False
+    assert report.results[0].passed is True
+    assert report.results[1].passed is False
+    assert report.failures == (
+        "deny-case: expected effect deny but got allow",
+        "deny-case: expected reason code deny-model",
+        "deny-case: expected enforcement status blocked but got enforced",
+    )

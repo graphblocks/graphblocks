@@ -68,3 +68,37 @@ def test_policy_package_exposes_declarative_output_policy_evaluator(monkeypatch)
         {"path": "/chunks/1/text", "start": 6, "end": 12, "replacement": "[redacted]"},
     )
     assert "DeclarativeOutputPolicyEvaluator" in graphblocks_policy.__all__
+
+
+def test_policy_package_exposes_policy_test_dsl(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy" / "src"))
+    graphblocks_policy = importlib.import_module("graphblocks_policy")
+    evaluator = graphblocks_policy.StaticPolicyEvaluator(
+        rules=[
+            graphblocks_policy.PolicyRule(
+                "deny-tool",
+                "deny",
+                actions=("tool.run",),
+                resource_selectors=("tool",),
+            )
+        ]
+    )
+    request = graphblocks_policy.PolicyRequest(
+        request_id="request-1",
+        enforcement_point="before_tool_or_effect",
+        action="tool.run",
+        resource=graphblocks_policy.ResourceRef("tool:shell", resource_kind="tool"),
+        occurred_at="2026-06-23T00:00:00Z",
+    )
+    case = graphblocks_policy.PolicyTestCase(
+        "deny-shell",
+        request,
+        graphblocks_policy.PolicyTestExpectation(effect="deny", enforcement_status="blocked"),
+        evaluated_at="2026-06-23T00:00:01Z",
+    )
+
+    report = graphblocks_policy.run_policy_tests(evaluator, [case])
+
+    assert report.passed is True
+    assert "PolicyEnforcer" in graphblocks_policy.__all__
+    assert "run_policy_tests" in graphblocks_policy.__all__

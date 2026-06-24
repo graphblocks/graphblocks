@@ -10,6 +10,7 @@ from .canonical import canonical_hash
 
 PolicyEffect = Literal["allow", "deny", "allow_with_obligations", "defer"]
 RuleEffect = Literal["allow", "deny", "obligate"]
+PolicyEnforcementStatus = Literal["enforced", "blocked", "deferred", "failed"]
 EnforcementPoint = Literal[
     "compile",
     "release",
@@ -265,7 +266,7 @@ class PolicyEnforcementRecord:
     record_id: str
     decision_id: str
     enforcement_point: EnforcementPoint
-    status: Literal["enforced", "blocked", "deferred", "failed"]
+    status: PolicyEnforcementStatus
     enforced_obligation_ids: tuple[str, ...] = field(default_factory=tuple)
     occurred_at: str = ""
     metadata: dict[str, object] = field(default_factory=dict)
@@ -277,7 +278,7 @@ class PolicyEnforcementRecord:
         record_id: str,
         decision: PolicyDecision,
         enforcement_point: EnforcementPoint,
-        status: Literal["enforced", "blocked", "deferred", "failed"],
+        status: PolicyEnforcementStatus,
         enforced_obligation_ids: tuple[str, ...] = (),
         occurred_at: str = "",
         metadata: dict[str, object] | None = None,
@@ -381,6 +382,163 @@ class StaticPolicyEvaluator:
             evaluated_at=evaluated_at,
             input_digest=digested_request.input_digest,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class PolicyEnforcementResult:
+    decision: PolicyDecision
+    record: PolicyEnforcementRecord
+
+    @property
+    def allowed(self) -> bool:
+        return self.record.status == "enforced" and self.decision.effect in {"allow", "allow_with_obligations"}
+
+
+@dataclass(frozen=True, slots=True)
+class PolicyEnforcer:
+    evaluator: StaticPolicyEvaluator
+
+    def enforce(
+        self,
+        request: PolicyRequest,
+        *,
+        evaluated_at: str,
+        record_id: str | None = None,
+        enforced_obligation_ids: tuple[str, ...] | None = None,
+    ) -> PolicyEnforcementResult:
+        decision = self.evaluator.evaluate(request, evaluated_at=evaluated_at)
+        required_obligation_ids = tuple(obligation.obligation_id for obligation in decision.obligations)
+        actual_obligation_ids = tuple(enforced_obligation_ids or ())
+        missing_obligation_ids: tuple[str, ...] = ()
+
+        if decision.effect in {"allow", "allow_with_obligations"}:
+            if enforced_obligation_ids is None:
+                actual_obligation_ids = required_obligation_ids
+            actual_obligation_set = set(actual_obligation_ids)
+            missing_obligation_ids = tuple(
+                obligation_id for obligation_id in required_obligation_ids if obligation_id not in actual_obligation_set
+            )
+            status: PolicyEnforcementStatus = "failed" if missing_obligation_ids else "enforced"
+        elif decision.effect == "defer":
+            status = "deferred"
+        else:
+            status = "blocked"
+
+        metadata: dict[str, object] = {}
+        if missing_obligation_ids:
+            metadata["missing_obligation_ids"] = missing_obligation_ids
+        record = PolicyEnforcementRecord.from_decision(
+            record_id=record_id
+            or "enforcement:"
+            + canonical_hash(
+                {
+                    "decision_id": decision.decision_id,
+                    "enforcement_point": request.enforcement_point,
+                    "status": status,
+                    "enforced_obligation_ids": list(actual_obligation_ids),
+                }
+            ),
+            decision=decision,
+            enforcement_point=request.enforcement_point,
+            status=status,
+            enforced_obligation_ids=actual_obligation_ids,
+            occurred_at=evaluated_at,
+            metadata=metadata,
+        )
+        return PolicyEnforcementResult(decision=decision, record=record)
+
+
+@dataclass(frozen=True, slots=True)
+class PolicyTestExpectation:
+    effect: PolicyEffect | None = None
+    reason_codes: tuple[str, ...] = field(default_factory=tuple)
+    policy_refs: tuple[str, ...] = field(default_factory=tuple)
+    obligation_ids: tuple[str, ...] = field(default_factory=tuple)
+    enforcement_status: PolicyEnforcementStatus | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "reason_codes", tuple(self.reason_codes))
+        object.__setattr__(self, "policy_refs", tuple(self.policy_refs))
+        object.__setattr__(self, "obligation_ids", tuple(self.obligation_ids))
+
+
+@dataclass(frozen=True, slots=True)
+class PolicyTestCase:
+    case_id: str
+    request: PolicyRequest
+    expectation: PolicyTestExpectation
+    evaluated_at: str
+    enforced_obligation_ids: tuple[str, ...] | None = None
+
+    def __post_init__(self) -> None:
+        if not self.case_id.strip():
+            raise ValueError("policy test case_id must not be empty")
+        if self.enforced_obligation_ids is not None:
+            object.__setattr__(self, "enforced_obligation_ids", tuple(self.enforced_obligation_ids))
+
+
+@dataclass(frozen=True, slots=True)
+class PolicyTestResult:
+    case_id: str
+    decision: PolicyDecision
+    record: PolicyEnforcementRecord
+    failures: tuple[str, ...] = field(default_factory=tuple)
+
+    @property
+    def passed(self) -> bool:
+        return not self.failures
+
+
+@dataclass(frozen=True, slots=True)
+class PolicyTestReport:
+    results: tuple[PolicyTestResult, ...]
+
+    @property
+    def passed(self) -> bool:
+        return all(result.passed for result in self.results)
+
+    @property
+    def failures(self) -> tuple[str, ...]:
+        return tuple(failure for result in self.results for failure in result.failures)
+
+
+def run_policy_tests(evaluator: StaticPolicyEvaluator, cases: list[PolicyTestCase]) -> PolicyTestReport:
+    enforcer = PolicyEnforcer(evaluator)
+    results: list[PolicyTestResult] = []
+    for case in cases:
+        enforcement = enforcer.enforce(
+            case.request,
+            evaluated_at=case.evaluated_at,
+            enforced_obligation_ids=case.enforced_obligation_ids,
+        )
+        expectation = case.expectation
+        failures: list[str] = []
+        if expectation.effect is not None and enforcement.decision.effect != expectation.effect:
+            failures.append(f"{case.case_id}: expected effect {expectation.effect} but got {enforcement.decision.effect}")
+        for reason_code in expectation.reason_codes:
+            if reason_code not in enforcement.decision.reason_codes:
+                failures.append(f"{case.case_id}: expected reason code {reason_code}")
+        for policy_ref in expectation.policy_refs:
+            if policy_ref not in enforcement.decision.policy_refs:
+                failures.append(f"{case.case_id}: expected policy ref {policy_ref}")
+        actual_obligation_ids = {obligation.obligation_id for obligation in enforcement.decision.obligations}
+        for obligation_id in expectation.obligation_ids:
+            if obligation_id not in actual_obligation_ids:
+                failures.append(f"{case.case_id}: expected obligation {obligation_id}")
+        if expectation.enforcement_status is not None and enforcement.record.status != expectation.enforcement_status:
+            failures.append(
+                f"{case.case_id}: expected enforcement status {expectation.enforcement_status} "
+                f"but got {enforcement.record.status}"
+            )
+        results.append(
+            PolicyTestResult(
+                case_id=case.case_id,
+                decision=enforcement.decision,
+                record=enforcement.record,
+                failures=tuple(failures),
+            )
+        )
+    return PolicyTestReport(results=tuple(results))
 
 
 def resolve_policy_snapshot(
