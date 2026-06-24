@@ -304,6 +304,7 @@ pub struct SinkCommitRequest {
     pub node_id: String,
     pub node_attempt_id: String,
     pub idempotency_key: String,
+    pub precondition_digest: Option<String>,
     pub payload: Value,
 }
 
@@ -320,8 +321,14 @@ impl SinkCommitRequest {
             node_id: node_id.into(),
             node_attempt_id: node_attempt_id.into(),
             idempotency_key: idempotency_key.into(),
+            precondition_digest: None,
             payload,
         }
+    }
+
+    pub fn with_precondition_digest(mut self, precondition_digest: impl Into<String>) -> Self {
+        self.precondition_digest = Some(precondition_digest.into());
+        self
     }
 }
 
@@ -329,6 +336,7 @@ impl SinkCommitRequest {
 pub struct SinkCommitResult {
     pub sink_id: String,
     pub idempotency_key: String,
+    pub precondition_digest: Option<String>,
     pub sequence: u64,
     pub metadata: Value,
     pub replayed: bool,
@@ -397,6 +405,7 @@ impl InMemoryDurableSink {
         let result = SinkCommitResult {
             sink_id: self.sink_id.clone(),
             idempotency_key: request.idempotency_key.clone(),
+            precondition_digest: request.precondition_digest.clone(),
             sequence: self.next_sequence,
             metadata: request.payload.clone(),
             replayed: false,

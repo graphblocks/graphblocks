@@ -28,12 +28,71 @@ fn sink_commit_records_metadata_and_replays_duplicate_idempotency_key() {
         SinkCommitResult {
             sink_id: "warehouse".to_owned(),
             idempotency_key: "warehouse-tx-1".to_owned(),
+            precondition_digest: None,
             sequence: 1,
             metadata: json!({"rows": 2}),
             replayed: false,
         },
     );
     assert_eq!(sink.committed_count(), 1);
+}
+
+#[test]
+fn sink_commit_records_effect_precondition_and_replays_matching_request() {
+    let mut sink = InMemoryDurableSink::new("ticket-system");
+    let request = SinkCommitRequest::new(
+        "run-000001",
+        "ticket-create",
+        "ticket-create-attempt-1",
+        "ticket-create-tx-1",
+        json!({"ticketId": "ticket-1"}),
+    )
+    .with_precondition_digest("sha256:conversation-revision-1");
+
+    let committed = sink.commit(request.clone()).expect("sink should commit");
+    let duplicate = sink
+        .commit(request)
+        .expect("duplicate precondition should replay");
+
+    assert_eq!(
+        committed.precondition_digest.as_deref(),
+        Some("sha256:conversation-revision-1")
+    );
+    assert_eq!(duplicate.precondition_digest, committed.precondition_digest);
+    assert!(duplicate.replayed);
+    assert_eq!(sink.committed_count(), 1);
+}
+
+#[test]
+fn sink_commit_rejects_idempotency_reuse_with_different_precondition() {
+    let mut sink = InMemoryDurableSink::new("ticket-system");
+    sink.commit(
+        SinkCommitRequest::new(
+            "run-000001",
+            "ticket-create",
+            "ticket-create-attempt-1",
+            "ticket-create-tx-1",
+            json!({"ticketId": "ticket-1"}),
+        )
+        .with_precondition_digest("sha256:conversation-revision-1"),
+    )
+    .expect("initial commit should succeed");
+
+    assert_eq!(
+        sink.commit(
+            SinkCommitRequest::new(
+                "run-000001",
+                "ticket-create",
+                "ticket-create-attempt-1",
+                "ticket-create-tx-1",
+                json!({"ticketId": "ticket-1"}),
+            )
+            .with_precondition_digest("sha256:conversation-revision-2"),
+        ),
+        Err(SinkCommitError::IdempotencyConflict {
+            idempotency_key: "ticket-create-tx-1".to_owned(),
+        }),
+    );
 }
 
 #[test]
