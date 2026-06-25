@@ -26,6 +26,11 @@ def test_deployment_package_reexports_release_and_upgrade_contracts(monkeypatch)
         provenance_ref="oci://registry/provenance@sha256:provenance",
         signature_policy="production-publishers",
     )
+    lock = graphblocks_deployment.ReleaseLockRef(
+        ref="locks/pylock.toml",
+        digest="sha256:pylock",
+        lock_type="package",
+    )
     deployment = graphblocks_deployment.GraphDeployment(
         "support-prod",
         release,
@@ -35,8 +40,10 @@ def test_deployment_package_reexports_release_and_upgrade_contracts(monkeypatch)
 
     assert bundle.content_digest().startswith("sha256:")
     assert supply_chain.canonical_value()["signature_policy"] == "production-publishers"
+    assert lock.canonical_value()["digest"] == "sha256:pylock"
     assert deployment.to_physical_plan().default_target == "control"
     assert "GraphDeployment" in graphblocks_deployment.__all__
+    assert "ReleaseLockRef" in graphblocks_deployment.__all__
     assert "ReleaseBundle" in graphblocks_deployment.__all__
     assert "SupplyChainLock" in graphblocks_deployment.__all__
 

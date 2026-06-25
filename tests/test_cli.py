@@ -301,6 +301,14 @@ def test_release_verify_cli_accepts_immutable_release(tmp_path, capsys) -> None:
             "images": {
                 "control": "registry.example.com/graphblocks/control@sha256:image-control",
             },
+            "locks": {
+                "python": {
+                    "ref": "locks/pylock.toml",
+                    "digest": "sha256:pylock",
+                    "type": "package",
+                },
+                "policies": "oci://registry.example.com/graphblocks/policies@sha256:policy-lock",
+            },
             "prompts": {
                 "answer": {
                     "name": "support.answer",
@@ -351,6 +359,14 @@ def test_release_verify_cli_rejects_mutable_production_references(tmp_path, caps
             "images": {
                 "control": "registry.example.com/graphblocks/control:latest",
             },
+            "locks": {
+                "python": "locks/pylock.toml",
+                "policies": {
+                    "ref": "locks/policies.lock",
+                    "digest": "latest",
+                    "type": "policy",
+                },
+            },
             "prompts": {
                 "answer": {
                     "name": "support.answer",
@@ -380,6 +396,8 @@ def test_release_verify_cli_rejects_mutable_production_references(tmp_path, caps
         "bundle.digest",
         "graphs.turn.graph_hash",
         "images.control",
+        "locks.policies.digest",
+        "locks.python.digest",
         "knowledge.support_docs.index_revision",
         "prompts.answer",
         "supply_chain.provenance_ref",

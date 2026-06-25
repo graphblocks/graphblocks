@@ -26,6 +26,7 @@ from .deployment import (
     PlacementRule,
     PlacementSelector,
     PromptLock,
+    ReleaseLockRef,
     SupplyChainLock,
 )
 from .diagnostics import Diagnostic
@@ -598,6 +599,27 @@ def main(argv: list[str] | None = None) -> int:
                 else:
                     image_value = image_data
                 release = release.with_image(str(image_name), ImageRef(str(image_value)))
+
+            locks_data = _field(spec, "locks", default={})
+            if not isinstance(locks_data, Mapping):
+                raise ValueError("GraphRelease spec.locks must be a mapping")
+            for lock_name, lock_data in locks_data.items():
+                if isinstance(lock_data, Mapping):
+                    lock_ref = _field(lock_data, "ref", "path", "uri", default=lock_name)
+                    lock_digest = _field(lock_data, "digest")
+                    lock_type = _field(lock_data, "type", "lockType", "lock_type")
+                else:
+                    lock_ref = lock_data
+                    lock_digest = None
+                    lock_type = None
+                release = release.with_lock(
+                    str(lock_name),
+                    ReleaseLockRef(
+                        ref=str(lock_ref),
+                        digest=str(lock_digest) if lock_digest is not None else None,
+                        lock_type=str(lock_type) if lock_type is not None else None,
+                    ),
+                )
 
             prompts_data = _field(
                 spec,

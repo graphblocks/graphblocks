@@ -84,6 +84,20 @@ class KnowledgeBinding:
 
 
 @dataclass(frozen=True, slots=True)
+class ReleaseLockRef:
+    ref: str
+    digest: str | None = None
+    lock_type: str | None = None
+
+    def canonical_value(self) -> dict[str, str | None]:
+        return {
+            "ref": self.ref,
+            "digest": self.digest,
+            "lock_type": self.lock_type,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class SupplyChainLock:
     sbom_ref: str | None = None
     provenance_ref: str | None = None
@@ -124,6 +138,7 @@ class GraphRelease:
     application_hash: str | None = None
     graphs: dict[str, GraphReleaseGraph] = field(default_factory=dict)
     images: dict[str, ImageRef] = field(default_factory=dict)
+    locks: dict[str, ReleaseLockRef] = field(default_factory=dict)
     prompt_locks: dict[str, PromptLock] = field(default_factory=dict)
     knowledge: dict[str, KnowledgeBinding] = field(default_factory=dict)
     supply_chain: SupplyChainLock | None = None
@@ -131,6 +146,7 @@ class GraphRelease:
     def __post_init__(self) -> None:
         object.__setattr__(self, "graphs", dict(self.graphs))
         object.__setattr__(self, "images", dict(self.images))
+        object.__setattr__(self, "locks", dict(self.locks))
         object.__setattr__(self, "prompt_locks", dict(self.prompt_locks))
         object.__setattr__(self, "knowledge", dict(self.knowledge))
 
@@ -149,6 +165,11 @@ class GraphRelease:
         images = dict(self.images)
         images[image_name] = image
         return replace(self, images=images)
+
+    def with_lock(self, lock_name: str, lock: ReleaseLockRef) -> GraphRelease:
+        locks = dict(self.locks)
+        locks[lock_name] = lock
+        return replace(self, locks=locks)
 
     def with_prompt_lock(self, prompt_name: str, prompt_lock: PromptLock) -> GraphRelease:
         prompt_locks = dict(self.prompt_locks)
@@ -179,6 +200,10 @@ class GraphRelease:
                 "images": {
                     name: image.canonical_value()
                     for name, image in sorted(self.images.items())
+                },
+                "locks": {
+                    name: lock.canonical_value()
+                    for name, lock in sorted(self.locks.items())
                 },
                 "prompt_locks": {
                     name: prompt.canonical_value()
@@ -213,6 +238,12 @@ class GraphRelease:
         for name, image in sorted(self.images.items()):
             if "@sha256:" not in image.image:
                 references.append(f"images.{name}")
+        for name, lock in sorted(self.locks.items()):
+            if (
+                lock.digest is None
+                or not (lock.digest.startswith("sha256:") and len(lock.digest) > len("sha256:"))
+            ) and "@sha256:" not in lock.ref:
+                references.append(f"locks.{name}.digest")
         for name, binding in sorted(self.knowledge.items()):
             if binding.index_revision.strip() == "" or binding.index_revision in {
                 "latest",
@@ -1352,6 +1383,7 @@ __all__ = [
     "PlacementSelector",
     "PlacementUnknownTargetError",
     "PromptLock",
+    "ReleaseLockRef",
     "RecoveryObjective",
     "ReleaseBundle",
     "ResolvedPlacement",
