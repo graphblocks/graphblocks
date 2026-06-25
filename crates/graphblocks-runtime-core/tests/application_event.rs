@@ -116,6 +116,37 @@ fn run_events_use_the_common_application_event_envelope() {
 }
 
 #[test]
+fn application_events_reject_empty_required_metadata_fields() {
+    let empty_event_id = ApplicationEventMetadata {
+        event_id: " ".to_owned(),
+        ..metadata()
+    };
+    let empty_policy_snapshot_id = ApplicationEventMetadata {
+        policy_snapshot_id: "".to_owned(),
+        ..metadata()
+    };
+
+    assert_eq!(
+        ApplicationEvent::new(
+            ApplicationEventKind::RunStarted,
+            empty_event_id,
+            json!({"status": "running"}),
+        ),
+        Err(ApplicationEventError::EmptyMetadataField { field: "event_id" })
+    );
+    assert_eq!(
+        ApplicationEvent::new(
+            ApplicationEventKind::RunStarted,
+            empty_policy_snapshot_id,
+            json!({"status": "running"}),
+        ),
+        Err(ApplicationEventError::EmptyMetadataField {
+            field: "policy_snapshot_id",
+        })
+    );
+}
+
+#[test]
 fn tool_events_carry_tool_call_id_and_required_envelope_fields() {
     let event = ApplicationEvent::tool(
         ApplicationEventKind::ToolCallCompleted,

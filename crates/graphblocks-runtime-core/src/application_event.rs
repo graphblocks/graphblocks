@@ -128,6 +128,7 @@ pub struct ApplicationEvent {
 pub enum ApplicationEventError {
     ToolEventRequiresToolCallId { kind: ApplicationEventKind },
     NotToolEvent { kind: ApplicationEventKind },
+    EmptyMetadataField { field: &'static str },
     EmptyToolCallId,
     InvalidOutputCutoff { source: OutputCutoffError },
     InvalidOutputPolicyDecision { source: OutputPolicyDecisionError },
@@ -535,6 +536,21 @@ impl ApplicationEvent {
         }
     }
 
+    fn validate_metadata(metadata: &ApplicationEventMetadata) -> Result<(), ApplicationEventError> {
+        for (field, value) in [
+            ("event_id", metadata.event_id.as_str()),
+            ("run_id", metadata.run_id.as_str()),
+            ("response_id", metadata.response_id.as_str()),
+            ("release_id", metadata.release_id.as_str()),
+            ("policy_snapshot_id", metadata.policy_snapshot_id.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(ApplicationEventError::EmptyMetadataField { field });
+            }
+        }
+        Ok(())
+    }
+
     pub fn new(
         kind: ApplicationEventKind,
         metadata: ApplicationEventMetadata,
@@ -543,6 +559,7 @@ impl ApplicationEvent {
         if kind.is_tool_event() {
             return Err(ApplicationEventError::ToolEventRequiresToolCallId { kind });
         }
+        Self::validate_metadata(&metadata)?;
 
         Ok(Self {
             kind,
@@ -561,6 +578,7 @@ impl ApplicationEvent {
         if !kind.is_tool_event() {
             return Err(ApplicationEventError::NotToolEvent { kind });
         }
+        Self::validate_metadata(&metadata)?;
 
         let tool_call_id = tool_call_id.into();
         if tool_call_id.trim().is_empty() {
