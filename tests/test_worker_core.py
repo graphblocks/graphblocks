@@ -13,6 +13,9 @@ from graphblocks.worker import (
     WorkerAdmissionDecision,
     WorkerAdmissionPolicy,
     WorkerAdvertisement,
+    WorkerDrainPlan,
+    WorkerDrainPolicy,
+    WorkerDrainTask,
     WorkerIncompatiblePackageLockError,
     WorkerIncompatibleVersionError,
     WorkerInvocationContext,
@@ -136,6 +139,26 @@ def test_top_level_package_exports_worker_admission_decision_api() -> None:
 
     assert isinstance(decision, graphblocks.WorkerAdmissionDecision)
     assert decision.admitted is True
+    request = graphblocks.WorkerInvokeRequest(
+        invocation_id="invoke-1",
+        run_id="run-1",
+        node_id="render",
+        node_attempt_id="render-attempt-1",
+        lease_epoch=3,
+        block="prompt.render@1",
+        context=graphblocks.WorkerInvocationContext("release-1", "rev-old"),
+        inputs={},
+        config={},
+    )
+    drain_plan = graphblocks.WorkerDrainPlan.for_worker(
+        advertisement,
+        graphblocks.WorkerDrainPolicy(),
+        (graphblocks.WorkerDrainTask("online_request", request, started_at_unix_ms=0),),
+        drain_started_at_unix_ms=1,
+        now_unix_ms=1,
+    )
+    assert isinstance(drain_plan, graphblocks.WorkerDrainPlan)
+    assert drain_plan.decisions[0].deployment_revision_id == "rev-old"
 
 
 def test_worker_selection_skips_draining_and_saturated_workers() -> None:
@@ -232,6 +255,61 @@ def test_worker_invocation_envelopes_preserve_json_payloads_and_context() -> Non
     assert WorkerInvokeRequest.from_wire(encoded) == request
     assert WorkerInvokeResult.from_wire(result.to_wire()) == result
     assert validate_worker_result(request, result) is None
+
+
+def test_worker_drain_plan_closes_admission_and_preserves_inflight_affinity() -> None:
+    worker = WorkerAdvertisement.new(
+        "worker-a",
+        "model-cpu",
+        "sha256:package-lock",
+        "sha256:image-a",
+        [BlockCapability("model.generate@1")],
+    )
+    online_request = WorkerInvokeRequest(
+        invocation_id="invoke-online",
+        run_id="run-online",
+        node_id="model",
+        node_attempt_id="model-attempt-1",
+        lease_epoch=7,
+        block="model.generate@1",
+        context=WorkerInvocationContext("release-1", "rev-old"),
+        inputs={"prompt": "hello"},
+        config={},
+    )
+    durable_request = WorkerInvokeRequest(
+        invocation_id="invoke-durable",
+        run_id="run-durable",
+        node_id="embed",
+        node_attempt_id="embed-attempt-2",
+        lease_epoch=13,
+        block="embedding.generate@1",
+        context=WorkerInvocationContext("release-1", "rev-old"),
+        inputs={"text": "hello"},
+        config={},
+    )
+
+    plan = WorkerDrainPlan.for_worker(
+        worker,
+        WorkerDrainPolicy(),
+        (
+            WorkerDrainTask("online_request", online_request, started_at_unix_ms=1_000),
+            WorkerDrainTask("durable_task", durable_request, started_at_unix_ms=1_000, checkpointable=True),
+        ),
+        drain_started_at_unix_ms=2_000,
+        now_unix_ms=302_000,
+    )
+
+    assert plan.worker_id == "worker-a"
+    assert plan.worker_state == "draining"
+    assert plan.admission_closed is True
+    assert plan.decisions[0].run_id == "run-online"
+    assert plan.decisions[0].lease_epoch == 7
+    assert plan.decisions[0].deployment_revision_id == "rev-old"
+    assert plan.decisions[0].disposition == "cancel"
+    assert plan.decisions[1].run_id == "run-durable"
+    assert plan.decisions[1].lease_epoch == 13
+    assert plan.decisions[1].disposition == "checkpoint"
+    assert WorkerDrainPlan.from_wire(plan.to_wire()) == plan
 
 
 def test_remote_payload_validator_rejects_oversized_inline_payload() -> None:

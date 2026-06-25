@@ -28,3 +28,25 @@ def test_worker_package_reexports_worker_protocol_contracts(monkeypatch) -> None
         ).admitted
         is True
     )
+    request = graphblocks_worker.WorkerInvokeRequest(
+        invocation_id="invoke-1",
+        run_id="run-1",
+        node_id="render",
+        node_attempt_id="render-attempt-1",
+        lease_epoch=3,
+        block="prompt.render@1",
+        context=graphblocks_worker.WorkerInvocationContext("release-1", "rev-old"),
+        inputs={},
+        config={},
+    )
+    drain_plan = graphblocks_worker.WorkerDrainPlan.for_worker(
+        advertisement,
+        graphblocks_worker.WorkerDrainPolicy(),
+        (graphblocks_worker.WorkerDrainTask("online_request", request, started_at_unix_ms=0),),
+        drain_started_at_unix_ms=1,
+        now_unix_ms=1,
+    )
+
+    assert drain_plan.worker_state == "draining"
+    assert drain_plan.decisions[0].disposition == "finish_in_place"
+    assert "WorkerDrainPlan" in graphblocks_worker.__all__
