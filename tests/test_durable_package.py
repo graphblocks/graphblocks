@@ -24,6 +24,25 @@ def _order_event(graphblocks_durable, offset: int):
     )
 
 
+def _checkpoint(graphblocks_durable, checkpoint_id: str, state_revision: int, plan_hash: str):
+    return graphblocks_durable.CheckpointBarrier(
+        checkpoint_id=checkpoint_id,
+        run_id="run-000001",
+        release_id="release-2026-06-23",
+        deployment_revision_id="deployment-rev-1",
+        plan_hash=plan_hash,
+        checkpoint_schema=graphblocks_durable.SchemaRef("graphblocks.ai/Checkpoint", 1),
+        state_revision=state_revision,
+        completed_nodes=("extract",),
+        pending_nodes=("load",),
+        source_cursors={"orders": graphblocks_durable.SourceCursor("orders", 0, 42)},
+        operator_state={"dedupe": {"seen": state_revision}},
+        sink_commit_metadata={"warehouse": {"tx": checkpoint_id}},
+        schema_versions={"checkpoint": 1},
+        created_at_unix_ms=1_820_000_000_000 + state_revision,
+    )
+
+
 def test_durable_source_replays_from_committed_or_explicit_cursor(monkeypatch) -> None:
     graphblocks_durable = _import_durable(monkeypatch)
     source = graphblocks_durable.InMemoryDurableSource(
@@ -114,6 +133,90 @@ def test_durable_sink_commit_replays_same_idempotency_key_and_rejects_conflict(m
                 precondition_digest=request.precondition_digest,
             )
         )
+
+
+def test_durable_checkpoint_barrier_validates_and_builds_source_commit_plan(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    missing_plan = _checkpoint(graphblocks_durable, "checkpoint-000001", 1, "")
+
+    with pytest.raises(graphblocks_durable.CheckpointBarrierError) as plan_error:
+        missing_plan.validate()
+
+    assert plan_error.value.reason == "missing_plan_hash"
+
+    invalid_schema = graphblocks_durable.CheckpointBarrier(
+        checkpoint_id="checkpoint-000001",
+        run_id="run-000001",
+        release_id="release-2026-06-23",
+        deployment_revision_id="deployment-rev-1",
+        plan_hash="sha256:plan",
+        checkpoint_schema=graphblocks_durable.SchemaRef("", 1),
+        state_revision=1,
+        completed_nodes=(),
+        pending_nodes=(),
+        source_cursors={},
+        operator_state={},
+        sink_commit_metadata={},
+        schema_versions={"checkpoint": 1},
+        created_at_unix_ms=1_820_000_000_001,
+    )
+    with pytest.raises(graphblocks_durable.CheckpointBarrierError) as schema_error:
+        invalid_schema.validate()
+
+    assert schema_error.value.reason == "invalid_checkpoint_schema"
+
+    barrier = _checkpoint(graphblocks_durable, "checkpoint-000002", 2, "sha256:plan").with_source_cursor(
+        "payments",
+        graphblocks_durable.SourceCursor("payments", 1, 7),
+    )
+
+    plan = barrier.validate().source_commit_plan()
+
+    assert plan.cursors == (
+        ("orders", graphblocks_durable.SourceCursor("orders", 0, 42)),
+        ("payments", graphblocks_durable.SourceCursor("payments", 1, 7)),
+    )
+
+
+def test_durable_checkpoint_store_replays_latest_compatible_checkpoint(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    store = graphblocks_durable.InMemoryCheckpointStore()
+    store.put(_checkpoint(graphblocks_durable, "checkpoint-000001", 1, "sha256:plan"))
+    store.put(_checkpoint(graphblocks_durable, "checkpoint-000002", 2, "sha256:plan"))
+    store.put(_checkpoint(graphblocks_durable, "checkpoint-000003", 3, "sha256:other-plan"))
+
+    replay = store.latest_compatible(
+        run_id="run-000001",
+        release_id="release-2026-06-23",
+        deployment_revision_id="deployment-rev-1",
+        plan_hash="sha256:plan",
+    )
+
+    assert replay is not None
+    assert replay.checkpoint_id == "checkpoint-000002"
+    assert replay.state_revision == 2
+    assert (
+        store.latest_compatible(
+            run_id="run-000001",
+            release_id="release-2026-06-23",
+            deployment_revision_id="deployment-rev-2",
+            plan_hash="sha256:plan",
+        )
+        is None
+    )
+
+
+def test_durable_checkpoint_store_rejects_stale_state_revision(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    store = graphblocks_durable.InMemoryCheckpointStore()
+    store.put(_checkpoint(graphblocks_durable, "checkpoint-000002", 2, "sha256:plan"))
+
+    with pytest.raises(graphblocks_durable.StaleCheckpointError) as error:
+        store.put(_checkpoint(graphblocks_durable, "checkpoint-000001", 1, "sha256:plan"))
+
+    assert error.value.run_id == "run-000001"
+    assert error.value.current == 2
+    assert error.value.attempted == 1
 
 
 def test_durable_package_is_cataloged_as_optional_extension(monkeypatch) -> None:
