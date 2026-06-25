@@ -116,6 +116,27 @@ def test_tool_definition_digest_is_stable_for_tag_order() -> None:
     assert left.digest() == right.digest()
 
 
+def test_tool_definition_rejects_empty_identity_fields() -> None:
+    with pytest.raises(ValueError, match="tool definition name must not be empty"):
+        ToolDefinition(
+            name=" ",
+            description="Search support documentation.",
+            input_schema="schemas/SearchRequest@1",
+        )
+    with pytest.raises(ValueError, match="tool definition description must not be empty"):
+        ToolDefinition(
+            name="knowledge.search",
+            description="",
+            input_schema="schemas/SearchRequest@1",
+        )
+    with pytest.raises(ValueError, match="tool definition input_schema must not be empty"):
+        ToolDefinition(
+            name="knowledge.search",
+            description="Search support documentation.",
+            input_schema=" ",
+        )
+
+
 def test_tool_binding_digest_includes_execution_contract_not_definition_text() -> None:
     binding = ToolBinding(
         binding_id="binding-ticket-create",

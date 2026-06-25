@@ -49,6 +49,19 @@ impl ToolDefinition {
         self
     }
 
+    pub fn validate(&self) -> Result<(), ToolResolutionError> {
+        for (field, value) in [
+            ("name", self.name.as_str()),
+            ("description", self.description.as_str()),
+            ("input_schema", self.input_schema.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(ToolResolutionError::EmptyToolDefinitionField { field });
+            }
+        }
+        Ok(())
+    }
+
     pub fn digest(&self) -> String {
         canonical_hash(&json!({
             "name": self.name,
@@ -423,6 +436,9 @@ impl ResolvedTool {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ToolResolutionError {
+    EmptyToolDefinitionField {
+        field: &'static str,
+    },
     DuplicateToolDefinition {
         tool_name: String,
     },
@@ -577,6 +593,7 @@ impl ToolCatalog {
     {
         let mut indexed_definitions = BTreeMap::new();
         for definition in definitions {
+            definition.validate()?;
             let tool_name = definition.name.clone();
             if let Err(error) = SchemaId::parse(&definition.input_schema) {
                 return Err(ToolResolutionError::InvalidToolSchemaId {

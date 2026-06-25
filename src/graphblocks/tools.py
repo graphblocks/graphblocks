@@ -315,6 +315,9 @@ class ToolDefinition:
     version: str | None = None
 
     def __post_init__(self) -> None:
+        for field_name in ("name", "description", "input_schema"):
+            if not getattr(self, field_name).strip():
+                raise ValueError(f"tool definition {field_name} must not be empty")
         object.__setattr__(self, "tags", frozenset(self.tags))
 
     def model_contract(self) -> dict[str, object]:

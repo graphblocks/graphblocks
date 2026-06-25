@@ -105,6 +105,42 @@ fn catalog_rejects_invalid_tool_definition_schema_ids() {
 }
 
 #[test]
+fn tool_definition_validates_identity_fields() {
+    assert_eq!(
+        ToolDefinition::new(
+            " ",
+            "Search internal documentation.",
+            "schemas/KnowledgeSearchRequest@1",
+        )
+        .validate(),
+        Err(ToolResolutionError::EmptyToolDefinitionField { field: "name" })
+    );
+    assert_eq!(
+        ToolDefinition::new("knowledge.search", "", "schemas/KnowledgeSearchRequest@1").validate(),
+        Err(ToolResolutionError::EmptyToolDefinitionField {
+            field: "description",
+        })
+    );
+    assert_eq!(
+        ToolDefinition::new("knowledge.search", "Search internal documentation.", " ").validate(),
+        Err(ToolResolutionError::EmptyToolDefinitionField {
+            field: "input_schema",
+        })
+    );
+    assert_eq!(
+        ToolCatalog::new(
+            [ToolDefinition::new(
+                " ",
+                "Search internal documentation.",
+                "schemas/KnowledgeSearchRequest@1",
+            )],
+            [],
+        ),
+        Err(ToolResolutionError::EmptyToolDefinitionField { field: "name" })
+    );
+}
+
+#[test]
 fn resolved_tool_rejects_definition_binding_name_mismatch() {
     assert_eq!(
         graphblocks_runtime_core::tool::ResolvedTool::from_definition_and_binding(
