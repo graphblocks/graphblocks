@@ -24,6 +24,59 @@ fn sqlite_usage_path(test_name: &str) -> PathBuf {
 }
 
 #[test]
+fn usage_ledgers_reject_invalid_usage_records() -> Result<(), UsageLedgerError> {
+    let mut memory = InMemoryUsageLedger::new();
+    let mut sqlite = SqliteUsageLedger::open_in_memory()?;
+    let blank_record_id = UsageRecord::new(
+        "   ",
+        UsageSource::RuntimeMeasured,
+        UsageConfidence::Estimated,
+        [tokens(12)],
+        1_000,
+    );
+    let blank_amount_kind = UsageRecord::new(
+        "usage-1",
+        UsageSource::RuntimeMeasured,
+        UsageConfidence::Estimated,
+        [UsageAmount::new("   ", 12, "tokens")],
+        1_000,
+    );
+    let blank_amount_unit = UsageRecord::new(
+        "usage-2",
+        UsageSource::RuntimeMeasured,
+        UsageConfidence::Estimated,
+        [UsageAmount::new("model_output_tokens", 12, "   ")],
+        1_000,
+    );
+
+    assert_eq!(
+        memory.append(blank_record_id.clone()),
+        Err(UsageLedgerError::InvalidRecord {
+            message: "usage record_id must not be empty".to_string()
+        })
+    );
+    assert_eq!(
+        sqlite.append(blank_record_id),
+        Err(UsageLedgerError::InvalidRecord {
+            message: "usage record_id must not be empty".to_string()
+        })
+    );
+    assert_eq!(
+        memory.append(blank_amount_kind),
+        Err(UsageLedgerError::InvalidRecord {
+            message: "usage amount kind must not be empty".to_string()
+        })
+    );
+    assert_eq!(
+        sqlite.append(blank_amount_unit),
+        Err(UsageLedgerError::InvalidRecord {
+            message: "usage amount unit must not be empty".to_string()
+        })
+    );
+    Ok(())
+}
+
+#[test]
 fn usage_ledger_appends_immutable_records_and_queries_by_run() -> Result<(), UsageLedgerError> {
     let mut ledger = InMemoryUsageLedger::new();
     let record = UsageRecord::new(

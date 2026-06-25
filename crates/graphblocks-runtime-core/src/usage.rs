@@ -173,6 +173,7 @@ impl UsageRecord {
 pub enum UsageLedgerError {
     RecordNotFound { record_id: String },
     RecordConflict { record_id: String },
+    InvalidRecord { message: String },
     Storage { message: String },
 }
 
@@ -189,6 +190,8 @@ impl InMemoryUsageLedger {
     }
 
     pub fn append(&mut self, record: UsageRecord) -> Result<UsageRecord, UsageLedgerError> {
+        validate_usage_record(&record)?;
+
         if let Some(existing) = self.records.get(&record.record_id) {
             if existing == &record {
                 return Ok(existing.clone());
@@ -361,6 +364,8 @@ impl SqliteUsageLedger {
     }
 
     pub fn append(&mut self, record: UsageRecord) -> Result<UsageRecord, UsageLedgerError> {
+        validate_usage_record(&record)?;
+
         match self.get(&record.record_id) {
             Ok(existing) => {
                 if existing == record {
@@ -581,6 +586,27 @@ impl SqliteUsageLedger {
             .map(usage_record_from_storage)
             .transpose()
     }
+}
+
+fn validate_usage_record(record: &UsageRecord) -> Result<(), UsageLedgerError> {
+    if record.record_id.trim().is_empty() {
+        return Err(UsageLedgerError::InvalidRecord {
+            message: "usage record_id must not be empty".to_string(),
+        });
+    }
+    for amount in &record.amounts {
+        if amount.kind.trim().is_empty() {
+            return Err(UsageLedgerError::InvalidRecord {
+                message: "usage amount kind must not be empty".to_string(),
+            });
+        }
+        if amount.unit.trim().is_empty() {
+            return Err(UsageLedgerError::InvalidRecord {
+                message: "usage amount unit must not be empty".to_string(),
+            });
+        }
+    }
+    Ok(())
 }
 
 fn usage_totals(records: &[UsageRecord]) -> Vec<UsageAmount> {
