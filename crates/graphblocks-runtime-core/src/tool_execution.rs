@@ -71,6 +71,9 @@ pub enum ToolExecutionPlanError {
     EffectConflict {
         effect_key: String,
     },
+    EmptyEffectKey {
+        tool_call_id: String,
+    },
     InvalidEffectKeyTemplate {
         template: String,
     },
@@ -242,6 +245,13 @@ impl ToolExecutionPlan {
                     expected_response_id: response_id,
                     actual_response_id: planned_call.call.response_id,
                 });
+            }
+            if planned_call
+                .effect_key
+                .as_ref()
+                .is_some_and(|effect_key| effect_key.trim().is_empty())
+            {
+                return Err(ToolExecutionPlanError::EmptyEffectKey { tool_call_id });
             }
             if indexed_calls
                 .insert(tool_call_id.clone(), planned_call)

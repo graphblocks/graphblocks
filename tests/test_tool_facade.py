@@ -1988,6 +1988,23 @@ def test_tool_execution_plan_waits_for_dependencies_and_serializes_effect_keys()
     assert plan.ready_call_ids() == ["call-b", "call-c"]
 
 
+def test_tool_execution_plan_rejects_empty_effect_key() -> None:
+    with pytest.raises(ToolExecutionPlanError) as error:
+        ToolExecutionPlan(
+            plan_id="plan-1",
+            response_id="response-1",
+            calls=(
+                ToolPlanCall(
+                    _tool_call("call-a", '{"resource_id":"ticket-1"}'),
+                    effect_key=" ",
+                ),
+            ),
+            maximum_parallelism=1,
+        )
+
+    assert str(error.value) == "tool call call-a effect_key must not be empty"
+
+
 def test_tool_execution_plan_derives_effect_keys_from_template() -> None:
     plan = ToolExecutionPlan(
         plan_id="plan-1",

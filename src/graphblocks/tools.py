@@ -1064,6 +1064,8 @@ class ToolPlanCall:
         invalid_effects = sorted(effect for effect in effects if effect not in VALID_TOOL_EFFECTS)
         if invalid_effects:
             raise ToolExecutionPlanError(f"invalid tool effect {invalid_effects[0]}")
+        if self.effect_key is not None and not self.effect_key.strip():
+            raise ToolExecutionPlanError(f"tool call {self.call.tool_call_id} effect_key must not be empty")
         if self.cancellation not in VALID_TOOL_CANCELLATIONS:
             raise ToolExecutionPlanError(f"invalid tool cancellation {self.cancellation}")
         object.__setattr__(self, "effects", effects)

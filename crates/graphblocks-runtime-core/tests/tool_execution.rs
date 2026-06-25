@@ -258,6 +258,24 @@ fn conflicting_effect_keys_are_serialized() -> Result<(), ToolExecutionPlanError
 }
 
 #[test]
+fn plan_rejects_empty_effect_key() {
+    assert_eq!(
+        ToolExecutionPlan::new(
+            "plan-1",
+            "response-1",
+            [
+                ToolPlanCall::new(tool_call("call-a", "{\"resource_id\":\"ticket-1\"}"))
+                    .with_effect_key(" ")
+            ],
+            1,
+        ),
+        Err(ToolExecutionPlanError::EmptyEffectKey {
+            tool_call_id: "call-a".to_owned(),
+        }),
+    );
+}
+
+#[test]
 fn effect_key_template_derives_keys_from_tool_name_and_arguments()
 -> Result<(), ToolExecutionPlanError> {
     let mut plan = ToolExecutionPlan::new(
