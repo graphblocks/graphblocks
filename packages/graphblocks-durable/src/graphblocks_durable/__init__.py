@@ -23,6 +23,12 @@ class SourcePausedError(DurableError):
     pass
 
 
+class UnknownSourceCursorError(DurableError):
+    def __init__(self, cursor: SourceCursor) -> None:
+        self.cursor = cursor
+        super().__init__(f"source cursor stream is not known to this source: {cursor.stream!r}")
+
+
 class DemandExceededError(DurableError):
     def __init__(self, demand: int, actual: int) -> None:
         self.demand = demand
@@ -176,13 +182,19 @@ class InMemoryDurableSource:
     events: list[SourceEvent]
     committed_cursor: SourceCursor | None = None
     paused: bool = False
+    _known_streams: frozenset[str] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.events = sorted(self.events, key=lambda event: event.cursor)
+        self._known_streams = frozenset(event.cursor.stream for event in self.events)
+        if self.committed_cursor is not None:
+            self._validate_cursor(self.committed_cursor)
 
     def poll(self, cursor: SourceCursor | None, *, demand: int) -> SourceBatch:
         if self.paused:
             raise SourcePausedError("source is paused")
+        if cursor is not None:
+            self._validate_cursor(cursor)
         replay_cursor = cursor if cursor is not None else self.committed_cursor
         events = [
             event
@@ -194,6 +206,7 @@ class InMemoryDurableSource:
         return SourceBatch.new(self.guarantee, tuple(events), watermark, demand)
 
     def commit(self, cursor: SourceCursor) -> None:
+        self._validate_cursor(cursor)
         if self.committed_cursor is not None and cursor < self.committed_cursor:
             raise StaleCommitError(self.committed_cursor, cursor)
         self.committed_cursor = cursor
@@ -203,6 +216,10 @@ class InMemoryDurableSource:
 
     def resume(self) -> None:
         self.paused = False
+
+    def _validate_cursor(self, cursor: SourceCursor) -> None:
+        if self._known_streams and cursor.stream not in self._known_streams:
+            raise UnknownSourceCursorError(cursor)
 
 
 @dataclass(frozen=True, slots=True)
@@ -519,6 +536,7 @@ __all__ = [
     "SourcePausedError",
     "StaleCommitError",
     "StaleCheckpointError",
+    "UnknownSourceCursorError",
     "Watermark",
     "WatermarkKind",
     "WindowAccumulator",

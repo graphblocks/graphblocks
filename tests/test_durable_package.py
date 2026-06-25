@@ -80,6 +80,20 @@ def test_durable_source_pause_and_stale_commit(monkeypatch) -> None:
     assert error.value.attempted == graphblocks_durable.SourceCursor("orders", 0, 9)
 
 
+def test_durable_source_rejects_unknown_cursor_stream(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    source = graphblocks_durable.InMemoryDurableSource("at_least_once", [_order_event(graphblocks_durable, 10)])
+    unknown_cursor = graphblocks_durable.SourceCursor("payments", 0, 10)
+
+    with pytest.raises(graphblocks_durable.UnknownSourceCursorError) as commit_error:
+        source.commit(unknown_cursor)
+    with pytest.raises(graphblocks_durable.UnknownSourceCursorError) as poll_error:
+        source.poll(unknown_cursor, demand=1)
+
+    assert commit_error.value.cursor == unknown_cursor
+    assert poll_error.value.cursor == unknown_cursor
+
+
 def test_durable_event_time_window_closes_after_watermark_and_rejects_late_events(monkeypatch) -> None:
     graphblocks_durable = _import_durable(monkeypatch)
     policy = graphblocks_durable.WindowPolicy.tumbling_event_time(

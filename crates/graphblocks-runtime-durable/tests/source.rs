@@ -107,6 +107,25 @@ fn in_memory_source_rejects_stale_cursor_commit() {
 }
 
 #[test]
+fn in_memory_source_rejects_unknown_cursor_stream() {
+    let mut source = InMemoryDurableSource::new(DeliveryGuarantee::AtLeastOnce, [order_event(10)]);
+    let unknown_cursor = SourceCursor::new("payments", 0, 10);
+
+    assert_eq!(
+        source.commit(unknown_cursor.clone()),
+        Err(DurableError::UnknownSourceCursor {
+            cursor: unknown_cursor.clone(),
+        }),
+    );
+    assert_eq!(
+        source.poll(Some(unknown_cursor.clone()), 1),
+        Err(DurableError::UnknownSourceCursor {
+            cursor: unknown_cursor,
+        }),
+    );
+}
+
+#[test]
 fn source_batch_rejects_empty_demand_and_preserves_high_watermark() {
     assert_eq!(
         SourceBatch::new(

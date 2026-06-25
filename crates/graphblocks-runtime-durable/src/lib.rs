@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
@@ -20,6 +20,9 @@ pub enum DurableError {
     StaleCommit {
         current: SourceCursor,
         attempted: SourceCursor,
+    },
+    UnknownSourceCursor {
+        cursor: SourceCursor,
     },
     InvalidWindowSize,
     LateEvent {
@@ -137,6 +140,7 @@ impl SourceBatch {
 pub struct InMemoryDurableSource {
     guarantee: DeliveryGuarantee,
     events: Vec<SourceEvent>,
+    known_streams: BTreeSet<String>,
     committed_cursor: Option<SourceCursor>,
     paused: bool,
 }
@@ -148,9 +152,14 @@ impl InMemoryDurableSource {
     {
         let mut events = events.into_iter().collect::<Vec<_>>();
         events.sort_by(|left, right| left.cursor.cmp(&right.cursor));
+        let known_streams = events
+            .iter()
+            .map(|event| event.cursor.stream.clone())
+            .collect::<BTreeSet<_>>();
         Self {
             guarantee,
             events,
+            known_streams,
             committed_cursor: None,
             paused: false,
         }
@@ -163,6 +172,9 @@ impl InMemoryDurableSource {
     ) -> Result<SourceBatch, DurableError> {
         if self.paused {
             return Err(DurableError::SourcePaused);
+        }
+        if let Some(cursor) = cursor.as_ref() {
+            self.validate_cursor(cursor)?;
         }
         let replay_cursor = cursor.as_ref().or(self.committed_cursor.as_ref());
         let events = self
@@ -181,6 +193,7 @@ impl InMemoryDurableSource {
     }
 
     pub fn commit(&mut self, cursor: SourceCursor) -> Result<(), DurableError> {
+        self.validate_cursor(&cursor)?;
         if let Some(current) = &self.committed_cursor
             && cursor < *current
         {
@@ -199,6 +212,15 @@ impl InMemoryDurableSource {
 
     pub fn resume(&mut self) {
         self.paused = false;
+    }
+
+    fn validate_cursor(&self, cursor: &SourceCursor) -> Result<(), DurableError> {
+        if !self.known_streams.is_empty() && !self.known_streams.contains(&cursor.stream) {
+            return Err(DurableError::UnknownSourceCursor {
+                cursor: cursor.clone(),
+            });
+        }
+        Ok(())
     }
 }
 
