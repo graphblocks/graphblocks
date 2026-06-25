@@ -295,7 +295,10 @@ impl ToolAdmission {
             });
         }
         if request.resolved_tool.binding.idempotency == ToolIdempotency::Required
-            && request.idempotency_key.is_none()
+            && request
+                .idempotency_key
+                .as_deref()
+                .is_none_or(|idempotency_key| idempotency_key.trim().is_empty())
         {
             return Err(ToolAdmissionError::IdempotencyKeyRequired {
                 tool_call_id: request.call.tool_call_id,

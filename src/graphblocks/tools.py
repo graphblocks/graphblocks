@@ -947,7 +947,9 @@ def admit_tool_call(
     elif approval is not None and not approval.is_valid_for(resolved_tool, call, principal_id=principal_id, now=now):
         raise ToolAdmissionError(f"approval {approval.approval_id} is not valid for tool call {call.tool_call_id}")
 
-    if resolved_tool.binding.idempotency == "required" and idempotency_key is None:
+    if resolved_tool.binding.idempotency == "required" and (
+        idempotency_key is None or not idempotency_key.strip()
+    ):
         raise ToolAdmissionError(f"tool call {call.tool_call_id} requires an idempotency key")
 
     return AdmittedToolCall(

@@ -380,13 +380,29 @@ fn admission_rejects_required_idempotency_without_key() {
 
     assert_eq!(
         ToolAdmission::admit(ToolAdmissionRequest {
-            call,
+            call: call.clone(),
             resolved_tool: &resolved_tool,
             schema_registry: &schemas,
             policy_decision: &policy_decision,
             approval: Some(&approval),
             principal_id: "user-1",
             idempotency_key: None,
+            admitted_at_unix_ms: 1_200,
+        }),
+        Err(ToolAdmissionError::IdempotencyKeyRequired {
+            tool_call_id: "call-1".to_owned()
+        }),
+    );
+
+    assert_eq!(
+        ToolAdmission::admit(ToolAdmissionRequest {
+            call,
+            resolved_tool: &resolved_tool,
+            schema_registry: &schemas,
+            policy_decision: &policy_decision,
+            approval: Some(&approval),
+            principal_id: "user-1",
+            idempotency_key: Some(" ".to_owned()),
             admitted_at_unix_ms: 1_200,
         }),
         Err(ToolAdmissionError::IdempotencyKeyRequired {
