@@ -703,6 +703,24 @@ packages:
   - provider reconciliation
   implementationPhase: integration-defined
   stability: adapter
+- distribution: graphblocks-voice
+  import: graphblocks_voice
+  layer: voice
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-core
+  responsibility:
+  - DuplexSession contract
+  - VAD authority and interruption classifier
+  - playback ledger
+  - provider realtime request projection
+  forbiddenDependencies:
+  - WebRTC SDK
+  - provider realtime SDK
+  - VAD model runtime
+  implementationPhase: 7
+  stability: experimental-extension
 integrationRules:
   distributionPattern: graphblocks-<technology>
   importPattern: graphblocks_<technology>
