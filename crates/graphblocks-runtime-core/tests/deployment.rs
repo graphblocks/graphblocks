@@ -1,9 +1,9 @@
 use graphblocks_runtime_core::deployment::{
     DeploymentEvent, DeploymentEventKind, DeploymentObservabilityContext, DeploymentRevision,
-    ExecutionTarget, ExecutionTargetKind, GraphRelease, GraphReleaseError, GraphReleaseGraph,
-    ImageRef, KnowledgeBinding, PhysicalExecutionPlan, PlacementError, PlacementRule,
-    PlacementSelector, PromptLock, RevisionDecision, RolloutAnalysisResult, RolloutPlan,
-    RolloutStep, UpgradePolicy, WorkloadKind,
+    DeploymentTargetProfileSet, ExecutionTarget, ExecutionTargetKind, GraphRelease,
+    GraphReleaseError, GraphReleaseGraph, ImageRef, KnowledgeBinding, PhysicalExecutionPlan,
+    PlacementError, PlacementRule, PlacementSelector, PromptLock, RevisionDecision,
+    RolloutAnalysisResult, RolloutPlan, RolloutStep, UpgradePolicy, WorkloadKind,
 };
 use serde_json::json;
 
@@ -69,6 +69,189 @@ fn physical_plan_hash_is_stable_for_target_and_rule_order() {
         ));
 
     assert_eq!(left.plan_hash(), right.plan_hash());
+}
+
+#[test]
+fn deployment_target_profiles_cover_phase_five_image_roles() {
+    let target_set = DeploymentTargetProfileSet::from_document(&json!({
+        "kind": "DeploymentTargetProfileSet",
+        "spec": {
+            "targets": [
+                {
+                    "id": "control",
+                    "imageRole": "control-plane",
+                    "kind": "service",
+                    "executionHost": "rust",
+                    "capabilities": [
+                        "graph.coordinator",
+                        "model.remote_call",
+                        "retrieval.remote_call"
+                    ],
+                    "effects": ["network"],
+                    "packageLock": "locks/control.lock",
+                    "defaultReplicas": 2
+                },
+                {
+                    "id": "rag-cpu",
+                    "imageRole": "rag-cpu",
+                    "kind": "worker_pool",
+                    "executionHost": "python_worker",
+                    "capabilities": ["rag.context", "retrieval.local", "rerank.local"],
+                    "effects": ["network"],
+                    "packageLock": "locks/rag-cpu.lock",
+                    "defaultReplicas": 2
+                },
+                {
+                    "id": "document-cpu",
+                    "imageRole": "document-cpu",
+                    "kind": "worker_pool",
+                    "executionHost": "python_worker",
+                    "capabilities": [
+                        "document.normalize",
+                        "document.parse.office",
+                        "document.parse.pdf",
+                        "document.split"
+                    ],
+                    "effects": ["filesystem_read"],
+                    "packageLock": "locks/document-cpu.lock",
+                    "defaultReplicas": 2
+                },
+                {
+                    "id": "ocr-gpu",
+                    "imageRole": "ocr-gpu",
+                    "kind": "worker_pool",
+                    "executionHost": "python_worker",
+                    "capabilities": ["document.ocr", "document.parse.image"],
+                    "effects": ["filesystem_read"],
+                    "packageLock": "locks/ocr-gpu.lock",
+                    "defaultReplicas": 1
+                },
+                {
+                    "id": "sandbox",
+                    "imageRole": "sandbox",
+                    "kind": "sandbox_pool",
+                    "executionHost": "python_worker",
+                    "capabilities": ["code.exec", "tool.sandbox"],
+                    "effects": ["filesystem_write", "process_execution"],
+                    "packageLock": "locks/sandbox.lock",
+                    "defaultReplicas": 1
+                }
+            ]
+        }
+    }))
+    .unwrap();
+
+    let coverage = target_set.coverage_for_required_image_roles([
+        "control-plane",
+        "rag-cpu",
+        "document-cpu",
+        "ocr-gpu",
+        "sandbox",
+    ]);
+
+    assert!(coverage.ok());
+    assert!(coverage.issue_contracts().is_empty());
+    assert_eq!(
+        target_set.image_roles(),
+        vec![
+            "control-plane",
+            "rag-cpu",
+            "document-cpu",
+            "ocr-gpu",
+            "sandbox",
+        ]
+    );
+    assert_eq!(
+        target_set.target_ids(),
+        vec!["control", "document-cpu", "ocr-gpu", "rag-cpu", "sandbox"]
+    );
+}
+
+#[test]
+fn deployment_target_profiles_project_to_execution_targets() {
+    let target_set = DeploymentTargetProfileSet::from_document(&json!({
+        "kind": "DeploymentTargetProfileSet",
+        "spec": {
+            "targets": [{
+                "id": "control",
+                "imageRole": "control-plane",
+                "kind": "service",
+                "executionHost": "rust",
+                "capabilities": [
+                    "retrieval.remote_call",
+                    "graph.coordinator",
+                    "model.remote_call"
+                ],
+                "effects": ["network"],
+                "packageLock": "locks/control.lock",
+                "defaultReplicas": 2
+            }]
+        }
+    }))
+    .unwrap();
+    let control = target_set.by_id("control").unwrap();
+
+    let target = control
+        .to_execution_target("registry.example.com/gb/control@sha256:control")
+        .unwrap();
+
+    assert_eq!(
+        control.profile_contract(),
+        json!({
+            "target_id": "control",
+            "image_role": "control-plane",
+            "kind": "service",
+            "execution_host": "rust",
+            "capabilities": [
+                "graph.coordinator",
+                "model.remote_call",
+                "retrieval.remote_call"
+            ],
+            "effects": ["network"],
+            "package_lock": "locks/control.lock",
+            "default_replicas": 2
+        })
+    );
+    assert_eq!(target.target_id, "control");
+    assert_eq!(target.kind, ExecutionTargetKind::Service);
+    assert_eq!(target.execution_host, "rust");
+    assert_eq!(
+        target.capabilities.into_iter().collect::<Vec<_>>(),
+        vec![
+            "graph.coordinator".to_owned(),
+            "model.remote_call".to_owned(),
+            "retrieval.remote_call".to_owned(),
+        ]
+    );
+    assert_eq!(
+        target.effects.into_iter().collect::<Vec<_>>(),
+        vec!["network"]
+    );
+    assert_eq!(target.package_lock.as_deref(), Some("locks/control.lock"));
+    assert_eq!(
+        target.image.as_deref(),
+        Some("registry.example.com/gb/control@sha256:control")
+    );
+    assert!(target_set.content_digest().starts_with("sha256:"));
+}
+
+#[test]
+fn deployment_target_coverage_reports_missing_image_role() {
+    let target_set = DeploymentTargetProfileSet::new([]);
+
+    let coverage = target_set.coverage_for_required_image_roles(["control-plane"]);
+
+    assert!(!coverage.ok());
+    assert_eq!(
+        coverage.issue_contracts(),
+        vec![json!({
+            "code": "DeploymentTargetRoleMissing",
+            "image_role": "control-plane",
+            "target_id": "",
+            "path": "$.spec.targets",
+            "message": "required production image role has no deployment target profile",
+        })]
+    );
 }
 
 #[test]

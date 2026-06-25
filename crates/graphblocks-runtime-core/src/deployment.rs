@@ -957,6 +957,20 @@ impl ExecutionTargetKind {
             Self::External => "external",
         }
     }
+
+    fn from_manifest(value: &str) -> Result<Self, DeploymentTargetProfileError> {
+        match value {
+            "service" => Ok(Self::Service),
+            "worker_pool" => Ok(Self::WorkerPool),
+            "job_pool" => Ok(Self::JobPool),
+            "sandbox_pool" => Ok(Self::SandboxPool),
+            "stateful_service" => Ok(Self::StatefulService),
+            "external" => Ok(Self::External),
+            _ => Err(DeploymentTargetProfileError::new(format!(
+                "invalid deployment target kind {value:?}"
+            ))),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1025,6 +1039,429 @@ impl ExecutionTarget {
             "package_lock": self.package_lock,
             "image": self.image,
         })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeploymentTargetProfileError {
+    pub message: String,
+}
+
+impl DeploymentTargetProfileError {
+    fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for DeploymentTargetProfileError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl Error for DeploymentTargetProfileError {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeploymentTargetProfile {
+    pub target_id: String,
+    pub image_role: String,
+    pub kind: ExecutionTargetKind,
+    pub execution_host: String,
+    pub capabilities: BTreeSet<String>,
+    pub effects: BTreeSet<String>,
+    pub package_lock: Option<String>,
+    pub default_replicas: u32,
+}
+
+impl DeploymentTargetProfile {
+    pub fn new(
+        target_id: impl Into<String>,
+        image_role: impl Into<String>,
+        kind: ExecutionTargetKind,
+        execution_host: impl Into<String>,
+    ) -> Result<Self, DeploymentTargetProfileError> {
+        Self {
+            target_id: target_id.into(),
+            image_role: image_role.into(),
+            kind,
+            execution_host: execution_host.into(),
+            capabilities: BTreeSet::new(),
+            effects: BTreeSet::new(),
+            package_lock: None,
+            default_replicas: 1,
+        }
+        .validate()
+    }
+
+    pub fn with_capabilities<I, S>(mut self, capabilities: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.capabilities = capabilities.into_iter().map(Into::into).collect();
+        self
+    }
+
+    pub fn with_effects<I, S>(mut self, effects: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.effects = effects.into_iter().map(Into::into).collect();
+        self
+    }
+
+    pub fn with_package_lock(mut self, package_lock: impl Into<String>) -> Self {
+        self.package_lock = Some(package_lock.into());
+        self
+    }
+
+    pub fn with_default_replicas(mut self, default_replicas: u32) -> Self {
+        self.default_replicas = default_replicas;
+        self
+    }
+
+    pub fn from_value(value: &Value) -> Result<Self, DeploymentTargetProfileError> {
+        let object = value.as_object().ok_or_else(|| {
+            DeploymentTargetProfileError::new("deployment target manifest target must be a mapping")
+        })?;
+        let target_id = required_string_field(object, &["id", "targetId", "target_id"], "id")?;
+        let image_role = required_string_field(object, &["imageRole", "image_role"], "imageRole")?;
+        let kind = required_string_field(object, &["kind"], "kind")?;
+        let execution_host = required_string_field(
+            object,
+            &["executionHost", "execution_host"],
+            "executionHost",
+        )?;
+        let package_lock = optional_string_field(object, &["packageLock", "package_lock"])?;
+        let default_replicas =
+            optional_positive_u32_field(object, &["defaultReplicas", "default_replicas"])?
+                .unwrap_or(1);
+
+        Self {
+            target_id,
+            image_role,
+            kind: ExecutionTargetKind::from_manifest(&kind)?,
+            execution_host,
+            capabilities: string_set_field(object, "capabilities")?,
+            effects: string_set_field(object, "effects")?,
+            package_lock,
+            default_replicas,
+        }
+        .validate()
+    }
+
+    pub fn to_execution_target(
+        &self,
+        image: impl Into<String>,
+    ) -> Result<ExecutionTarget, DeploymentTargetProfileError> {
+        let image = image.into();
+        if !image.contains("@sha256:") {
+            return Err(DeploymentTargetProfileError::new(
+                "deployment target image must be digest-pinned",
+            ));
+        }
+        let mut target = ExecutionTarget::new(&self.target_id, self.kind, &self.execution_host)
+            .with_capabilities(self.capabilities.iter().cloned())
+            .with_effects(self.effects.iter().cloned())
+            .with_image(image);
+        if let Some(package_lock) = &self.package_lock {
+            target = target.with_package_lock(package_lock);
+        }
+        Ok(target)
+    }
+
+    pub fn profile_contract(&self) -> Value {
+        json!({
+            "target_id": self.target_id,
+            "image_role": self.image_role,
+            "kind": self.kind.as_str(),
+            "execution_host": self.execution_host,
+            "capabilities": self.capabilities,
+            "effects": self.effects,
+            "package_lock": self.package_lock,
+            "default_replicas": self.default_replicas,
+        })
+    }
+
+    fn validate(self) -> Result<Self, DeploymentTargetProfileError> {
+        if self.target_id.trim().is_empty() {
+            return Err(DeploymentTargetProfileError::new(
+                "deployment target profile id must not be empty",
+            ));
+        }
+        if self.image_role.trim().is_empty() {
+            return Err(DeploymentTargetProfileError::new(
+                "deployment target image_role must not be empty",
+            ));
+        }
+        if self.execution_host.trim().is_empty() {
+            return Err(DeploymentTargetProfileError::new(
+                "deployment target execution_host must not be empty",
+            ));
+        }
+        if self.default_replicas == 0 {
+            return Err(DeploymentTargetProfileError::new(
+                "deployment target default_replicas must be positive",
+            ));
+        }
+        Ok(self)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeploymentTargetCoverageIssue {
+    pub code: String,
+    pub image_role: String,
+    pub target_id: String,
+    pub path: String,
+    pub message: String,
+}
+
+impl DeploymentTargetCoverageIssue {
+    pub fn issue_contract(&self) -> Value {
+        json!({
+            "code": self.code,
+            "image_role": self.image_role,
+            "target_id": self.target_id,
+            "path": self.path,
+            "message": self.message,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeploymentTargetCoverageResult {
+    pub issues: Vec<DeploymentTargetCoverageIssue>,
+}
+
+impl DeploymentTargetCoverageResult {
+    pub fn ok(&self) -> bool {
+        self.issues.is_empty()
+    }
+
+    pub fn issue_contracts(&self) -> Vec<Value> {
+        self.issues
+            .iter()
+            .map(DeploymentTargetCoverageIssue::issue_contract)
+            .collect()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeploymentTargetProfileSet {
+    pub targets: Vec<DeploymentTargetProfile>,
+}
+
+impl DeploymentTargetProfileSet {
+    pub fn new<I>(targets: I) -> Self
+    where
+        I: IntoIterator<Item = DeploymentTargetProfile>,
+    {
+        let targets = targets.into_iter().collect::<Vec<_>>();
+        assert_unique_deployment_targets(&targets).expect("deployment target set must be valid");
+        Self { targets }
+    }
+
+    pub fn from_document(document: &Value) -> Result<Self, DeploymentTargetProfileError> {
+        let object = document.as_object().ok_or_else(|| {
+            DeploymentTargetProfileError::new("deployment target manifest must be a mapping")
+        })?;
+        if object.get("kind").and_then(Value::as_str) != Some("DeploymentTargetProfileSet") {
+            return Err(DeploymentTargetProfileError::new(
+                "deployment target manifest kind must be DeploymentTargetProfileSet",
+            ));
+        }
+        let spec = object
+            .get("spec")
+            .and_then(Value::as_object)
+            .ok_or_else(|| {
+                DeploymentTargetProfileError::new(
+                    "deployment target manifest spec must be a mapping",
+                )
+            })?;
+        let raw_targets = spec
+            .get("targets")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                DeploymentTargetProfileError::new(
+                    "deployment target manifest spec.targets must be a list",
+                )
+            })?;
+        let mut targets = Vec::with_capacity(raw_targets.len());
+        for raw_target in raw_targets {
+            targets.push(DeploymentTargetProfile::from_value(raw_target)?);
+        }
+        assert_unique_deployment_targets(&targets)?;
+        Ok(Self { targets })
+    }
+
+    pub fn by_id(&self, target_id: &str) -> Option<&DeploymentTargetProfile> {
+        self.targets
+            .iter()
+            .find(|target| target.target_id == target_id)
+    }
+
+    pub fn target_ids(&self) -> Vec<String> {
+        let mut target_ids = self
+            .targets
+            .iter()
+            .map(|target| target.target_id.clone())
+            .collect::<Vec<_>>();
+        target_ids.sort();
+        target_ids
+    }
+
+    pub fn image_roles(&self) -> Vec<String> {
+        self.targets
+            .iter()
+            .map(|target| target.image_role.clone())
+            .collect()
+    }
+
+    pub fn coverage_for_required_image_roles<I, S>(
+        &self,
+        required_image_roles: I,
+    ) -> DeploymentTargetCoverageResult
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let known_roles = self
+            .targets
+            .iter()
+            .map(|target| target.image_role.as_str())
+            .collect::<BTreeSet<_>>();
+        let issues = required_image_roles
+            .into_iter()
+            .map(Into::into)
+            .filter(|image_role| !known_roles.contains(image_role.as_str()))
+            .map(|image_role| DeploymentTargetCoverageIssue {
+                code: "DeploymentTargetRoleMissing".to_owned(),
+                image_role,
+                target_id: String::new(),
+                path: "$.spec.targets".to_owned(),
+                message: "required production image role has no deployment target profile"
+                    .to_owned(),
+            })
+            .collect();
+        DeploymentTargetCoverageResult { issues }
+    }
+
+    pub fn manifest_contract(&self) -> Value {
+        let mut targets = self.targets.iter().collect::<Vec<_>>();
+        targets.sort_by(|left, right| left.target_id.cmp(&right.target_id));
+        json!({
+            "targets": targets
+                .into_iter()
+                .map(DeploymentTargetProfile::profile_contract)
+                .collect::<Vec<_>>(),
+        })
+    }
+
+    pub fn content_digest(&self) -> String {
+        canonical_hash(&self.manifest_contract())
+    }
+}
+
+fn assert_unique_deployment_targets(
+    targets: &[DeploymentTargetProfile],
+) -> Result<(), DeploymentTargetProfileError> {
+    let mut seen_ids = BTreeSet::new();
+    let mut seen_roles = BTreeSet::new();
+    for target in targets {
+        if !seen_ids.insert(target.target_id.as_str()) {
+            return Err(DeploymentTargetProfileError::new(format!(
+                "duplicate deployment target id {:?}",
+                target.target_id
+            )));
+        }
+        if !seen_roles.insert(target.image_role.as_str()) {
+            return Err(DeploymentTargetProfileError::new(format!(
+                "duplicate deployment target image role {:?}",
+                target.image_role
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn required_string_field(
+    object: &serde_json::Map<String, Value>,
+    keys: &[&str],
+    label: &str,
+) -> Result<String, DeploymentTargetProfileError> {
+    keys.iter()
+        .find_map(|key| object.get(*key))
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| {
+            DeploymentTargetProfileError::new(format!(
+                "deployment target profile {label} must be a string"
+            ))
+        })
+}
+
+fn optional_string_field(
+    object: &serde_json::Map<String, Value>,
+    keys: &[&str],
+) -> Result<Option<String>, DeploymentTargetProfileError> {
+    match keys.iter().find_map(|key| object.get(*key)) {
+        Some(Value::String(value)) => Ok(Some(value.clone())),
+        Some(_) => Err(DeploymentTargetProfileError::new(
+            "deployment target profile packageLock must be a string",
+        )),
+        None => Ok(None),
+    }
+}
+
+fn optional_positive_u32_field(
+    object: &serde_json::Map<String, Value>,
+    keys: &[&str],
+) -> Result<Option<u32>, DeploymentTargetProfileError> {
+    match keys.iter().find_map(|key| object.get(*key)) {
+        Some(Value::Number(value)) => {
+            let Some(value) = value.as_u64() else {
+                return Err(DeploymentTargetProfileError::new(
+                    "deployment target profile defaultReplicas must be a positive integer",
+                ));
+            };
+            if value == 0 || value > u64::from(u32::MAX) {
+                return Err(DeploymentTargetProfileError::new(
+                    "deployment target profile defaultReplicas must be a positive integer",
+                ));
+            }
+            Ok(Some(value as u32))
+        }
+        Some(_) => Err(DeploymentTargetProfileError::new(
+            "deployment target profile defaultReplicas must be an integer",
+        )),
+        None => Ok(None),
+    }
+}
+
+fn string_set_field(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<BTreeSet<String>, DeploymentTargetProfileError> {
+    match object.get(key) {
+        Some(Value::String(value)) => Ok(BTreeSet::from([value.clone()])),
+        Some(Value::Array(values)) => values
+            .iter()
+            .map(|value| {
+                value.as_str().map(ToOwned::to_owned).ok_or_else(|| {
+                    DeploymentTargetProfileError::new(format!(
+                        "deployment target profile {key} must contain only strings"
+                    ))
+                })
+            })
+            .collect(),
+        Some(_) => Err(DeploymentTargetProfileError::new(format!(
+            "deployment target profile {key} must be a string or list"
+        ))),
+        None => Ok(BTreeSet::new()),
     }
 }
 
