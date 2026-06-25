@@ -99,6 +99,41 @@ impl KnowledgeBinding {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReleaseLockRef {
+    pub reference: String,
+    pub digest: Option<String>,
+    pub lock_type: Option<String>,
+}
+
+impl ReleaseLockRef {
+    pub fn new(reference: impl Into<String>) -> Self {
+        Self {
+            reference: reference.into(),
+            digest: None,
+            lock_type: None,
+        }
+    }
+
+    pub fn with_digest(mut self, digest: impl Into<String>) -> Self {
+        self.digest = Some(digest.into());
+        self
+    }
+
+    pub fn with_lock_type(mut self, lock_type: impl Into<String>) -> Self {
+        self.lock_type = Some(lock_type.into());
+        self
+    }
+
+    pub fn canonical_value(&self) -> Value {
+        json!({
+            "ref": self.reference,
+            "digest": self.digest,
+            "lock_type": self.lock_type,
+        })
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SupplyChainLock {
     pub sbom_ref: Option<String>,
@@ -142,6 +177,7 @@ pub struct GraphRelease {
     pub application_hash: Option<String>,
     pub graphs: BTreeMap<String, GraphReleaseGraph>,
     pub images: BTreeMap<String, ImageRef>,
+    pub locks: BTreeMap<String, ReleaseLockRef>,
     pub prompt_locks: BTreeMap<String, PromptLock>,
     pub knowledge: BTreeMap<String, KnowledgeBinding>,
     pub supply_chain: Option<SupplyChainLock>,
@@ -157,6 +193,7 @@ impl GraphRelease {
             application_hash: None,
             graphs: BTreeMap::new(),
             images: BTreeMap::new(),
+            locks: BTreeMap::new(),
             prompt_locks: BTreeMap::new(),
             knowledge: BTreeMap::new(),
             supply_chain: None,
@@ -181,6 +218,11 @@ impl GraphRelease {
 
     pub fn with_image(mut self, image_name: impl Into<String>, image: ImageRef) -> Self {
         self.images.insert(image_name.into(), image);
+        self
+    }
+
+    pub fn with_lock(mut self, lock_name: impl Into<String>, lock: ReleaseLockRef) -> Self {
+        self.locks.insert(lock_name.into(), lock);
         self
     }
 
@@ -213,6 +255,7 @@ impl GraphRelease {
             "application_hash": self.application_hash,
             "graphs": self.graphs.iter().map(|(name, graph)| (name, graph.canonical_value())).collect::<BTreeMap<_, _>>(),
             "images": self.images.iter().map(|(name, image)| (name, image.canonical_value())).collect::<BTreeMap<_, _>>(),
+            "locks": self.locks.iter().map(|(name, lock)| (name, lock.canonical_value())).collect::<BTreeMap<_, _>>(),
             "prompt_locks": self.prompt_locks.iter().map(|(name, prompt)| (name, prompt.canonical_value())).collect::<BTreeMap<_, _>>(),
             "knowledge": self.knowledge.iter().map(|(name, binding)| (name, binding.canonical_value())).collect::<BTreeMap<_, _>>(),
             "supply_chain": self.supply_chain.as_ref().map(SupplyChainLock::canonical_value),
@@ -239,6 +282,16 @@ impl GraphRelease {
         for (name, image) in &self.images {
             if !image.image.contains("@sha256:") {
                 references.push(format!("images.{name}"));
+            }
+        }
+        for (name, lock) in &self.locks {
+            if lock
+                .digest
+                .as_deref()
+                .is_none_or(|digest| !is_sha256_digest(digest))
+                && !lock.reference.contains("@sha256:")
+            {
+                references.push(format!("locks.{name}.digest"));
             }
         }
         for (name, binding) in &self.knowledge {

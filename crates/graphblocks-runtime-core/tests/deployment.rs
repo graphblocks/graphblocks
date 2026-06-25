@@ -3,7 +3,7 @@ use graphblocks_runtime_core::deployment::{
     DeploymentRecoveryProfile, DeploymentRevision, DeploymentSloProfile, DeploymentSloReport,
     DeploymentTargetProfileSet, ExecutionTarget, ExecutionTargetKind, GraphRelease,
     GraphReleaseError, GraphReleaseGraph, ImageRef, KnowledgeBinding, PhysicalExecutionPlan,
-    PlacementError, PlacementRule, PlacementSelector, PromptLock, RevisionDecision,
+    PlacementError, PlacementRule, PlacementSelector, PromptLock, ReleaseLockRef, RevisionDecision,
     RolloutAnalysisResult, RolloutPlan, RolloutStep, SupplyChainLock, UpgradePolicy, WorkloadKind,
 };
 use serde_json::json;
@@ -427,6 +427,7 @@ fn graph_release_validation_rejects_mutable_production_references() {
         )
         .with_prompt_lock("answer", PromptLock::label("support.answer", "production"))
         .with_knowledge(KnowledgeBinding::new("intranet_docs", "current"))
+        .with_lock("python", ReleaseLockRef::new("pylock.toml"))
         .with_supply_chain(SupplyChainLock::new(
             Some("oci://registry/sbom:latest"),
             Some("oci://registry/provenance:latest"),
@@ -440,6 +441,7 @@ fn graph_release_validation_rejects_mutable_production_references() {
                 "bundle.digest".to_owned(),
                 "graphs.chat.graph_hash".to_owned(),
                 "images.control".to_owned(),
+                "locks.python.digest".to_owned(),
                 "knowledge.intranet_docs.index_revision".to_owned(),
                 "prompts.answer".to_owned(),
                 "supply_chain.provenance_ref".to_owned(),
@@ -480,6 +482,46 @@ fn graph_release_supply_chain_lock_is_part_of_release_digest_and_production_pins
         }))
     );
     assert_ne!(base.content_digest(), changed_policy.content_digest());
+}
+
+#[test]
+fn graph_release_lock_refs_are_part_of_release_digest_and_production_pins() {
+    let base = GraphRelease::new("enterprise-rag", "2026.06.23.1")
+        .with_bundle("sha256:bundle", "application/vnd.graphblocks.release.v1")
+        .with_graph(
+            "chat",
+            GraphReleaseGraph::new("sha256:graph-chat", "sha256:plan-chat"),
+        )
+        .with_lock(
+            "python",
+            ReleaseLockRef::new("locks/pylock.toml")
+                .with_digest("sha256:pylock")
+                .with_lock_type("package"),
+        )
+        .with_lock(
+            "policies",
+            ReleaseLockRef::new("oci://registry/policies@sha256:policy-lock")
+                .with_lock_type("policy"),
+        );
+    let changed_lock = base.clone().with_lock(
+        "python",
+        ReleaseLockRef::new("locks/pylock.toml")
+            .with_digest("sha256:other-pylock")
+            .with_lock_type("package"),
+    );
+
+    assert_eq!(base.validate_production_pins(), Ok(()));
+    assert_eq!(
+        base.locks
+            .get("python")
+            .map(ReleaseLockRef::canonical_value),
+        Some(json!({
+            "ref": "locks/pylock.toml",
+            "digest": "sha256:pylock",
+            "lock_type": "package",
+        }))
+    );
+    assert_ne!(base.content_digest(), changed_lock.content_digest());
 }
 
 #[test]
