@@ -1796,6 +1796,15 @@ class ToolResultEvent:
         if any(not isinstance(part, ContentPart) for part in output):
             raise ValueError("tool result event output entries must be ContentPart")
         object.__setattr__(self, "output", output)
+        if self.kind == "started":
+            if self.started_at is None:
+                raise ValueError("tool result event started requires started_at")
+            if output:
+                raise ValueError("tool result event started must not carry output")
+        elif self.started_at is not None:
+            raise ValueError(f"tool result event {self.kind} must not carry started_at")
+        elif self.kind != "delta" and output:
+            raise ValueError(f"tool result event {self.kind} must not carry output")
         if self.kind == "artifact_ready":
             if self.artifact is None:
                 raise ValueError("tool result event artifact_ready requires an artifact")

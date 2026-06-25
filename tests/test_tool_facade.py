@@ -2071,6 +2071,38 @@ def test_tool_result_artifact_ready_event_requires_artifact() -> None:
             sequence=5,
             artifact=ArtifactRef("artifact-1", "file:///tmp/out.txt"),
         )
+    with pytest.raises(ValueError, match="tool result event started requires started_at"):
+        ToolResultEvent(kind="started", tool_call_id="call-1", sequence=6)
+    with pytest.raises(ValueError, match="tool result event started must not carry output"):
+        ToolResultEvent(
+            kind="started",
+            tool_call_id="call-1",
+            sequence=7,
+            started_at="2026-06-23T00:00:00Z",
+            output=(ContentPart(kind="text", text="draft"),),
+        )
+    result = ToolResult.completed(
+        "call-1",
+        (ContentPart(kind="text", text="done"),),
+        started_at="2026-06-23T00:00:00Z",
+        completed_at="2026-06-23T00:00:01Z",
+    )
+    with pytest.raises(ValueError, match="tool result event completed must not carry output"):
+        ToolResultEvent(
+            kind="completed",
+            tool_call_id="call-1",
+            sequence=8,
+            output=(ContentPart(kind="text", text="draft"),),
+            result=result,
+        )
+    with pytest.raises(ValueError, match="tool result event delta must not carry started_at"):
+        ToolResultEvent(
+            kind="delta",
+            tool_call_id="call-1",
+            sequence=9,
+            started_at="2026-06-23T00:00:00Z",
+            output=(ContentPart(kind="text", text="draft"),),
+        )
 
 
 def test_terminal_tool_result_events_preserve_partial_terminal_kind() -> None:
