@@ -2,7 +2,8 @@ use graphblocks_runtime_core::deployment::{
     DeploymentEvent, DeploymentEventKind, DeploymentObservabilityContext, DeploymentRevision,
     ExecutionTarget, ExecutionTargetKind, GraphRelease, GraphReleaseError, GraphReleaseGraph,
     ImageRef, KnowledgeBinding, PhysicalExecutionPlan, PlacementError, PlacementRule,
-    PlacementSelector, PromptLock, RevisionDecision, UpgradePolicy, WorkloadKind,
+    PlacementSelector, PromptLock, RevisionDecision, RolloutAnalysisResult, RolloutPlan,
+    RolloutStep, UpgradePolicy, WorkloadKind,
 };
 use serde_json::json;
 
@@ -375,5 +376,137 @@ fn upgrade_policy_migrates_compatible_durable_jobs_and_drains_realtime_on_old() 
         RevisionDecision::DrainOnOld {
             revision_id: "rev-old".to_owned(),
         }
+    );
+}
+
+#[test]
+fn rollout_plan_builds_validate_shadow_canary_and_promote_sequence() {
+    let plan = RolloutPlan::canary(
+        "rollout-1",
+        "rev-stable",
+        "rev-canary",
+        [
+            RolloutStep::canary("canary-1", 1).with_minimum_samples(200),
+            RolloutStep::canary("canary-10", 10).with_minimum_duration_seconds(1800),
+        ],
+    )
+    .with_affinity("conversation_id")
+    .with_analysis_profile("rag-production-rollout");
+
+    assert_eq!(
+        plan.steps
+            .iter()
+            .map(|step| step.step_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["validate", "shadow", "canary-1", "canary-10", "promote"]
+    );
+    assert_eq!(plan.steps[1].effects, "suppress");
+    assert_eq!(plan.steps[2].traffic_percent, 1);
+    assert_eq!(plan.current_step(2).unwrap().step_id, "canary-1");
+    assert_eq!(
+        plan.analysis_profile_ref.as_deref(),
+        Some("rag-production-rollout")
+    );
+    assert_eq!(plan.affinity.as_deref(), Some("conversation_id"));
+}
+
+#[test]
+fn rollout_gate_holds_until_minimum_samples_and_duration_are_met() {
+    let plan = RolloutPlan::canary(
+        "rollout-1",
+        "rev-stable",
+        "rev-canary",
+        [RolloutStep::canary("canary-10", 10)
+            .with_minimum_samples(20)
+            .with_minimum_duration_seconds(60)],
+    );
+    let state = plan.initial_state().advance_for_test(2).unwrap();
+
+    let held = state
+        .evaluate_gate(
+            RolloutAnalysisResult::passed("canary-10")
+                .with_sample_count(19)
+                .with_duration_seconds(120),
+        )
+        .unwrap();
+    let advanced = state
+        .evaluate_gate(
+            RolloutAnalysisResult::passed("canary-10")
+                .with_sample_count(20)
+                .with_duration_seconds(60),
+        )
+        .unwrap();
+
+    assert_eq!(held.decision, "hold");
+    assert_eq!(held.reason, "minimum_samples_not_met");
+    assert_eq!(held.next_state.current_step_index, 2);
+    assert_eq!(advanced.decision, "advance");
+    assert_eq!(advanced.next_state.current_step_index, 3);
+}
+
+#[test]
+fn rollout_gate_promotes_after_final_promote_step_passes() {
+    let plan = RolloutPlan::canary(
+        "rollout-1",
+        "rev-stable",
+        "rev-canary",
+        [RolloutStep::canary("canary-50", 50)],
+    );
+    let state = plan.initial_state().advance_for_test(3).unwrap();
+
+    let decision = state
+        .evaluate_gate(RolloutAnalysisResult::passed("promote"))
+        .unwrap();
+
+    assert_eq!(decision.decision, "promote");
+    assert_eq!(decision.next_state.status, "promoted");
+    assert_eq!(decision.next_state.current_step_index, 3);
+}
+
+#[test]
+fn rollout_gate_aborts_without_automatic_rollback_for_non_reversible_effects() {
+    let plan = RolloutPlan::canary(
+        "rollout-1",
+        "rev-stable",
+        "rev-canary",
+        [RolloutStep::canary("canary-10", 10)],
+    );
+    let state = plan.initial_state().advance_for_test(2).unwrap();
+
+    let decision = state
+        .evaluate_gate(
+            RolloutAnalysisResult::failed("canary-10", "quality_gate_failed")
+                .with_non_reversible_effect_observed(true),
+        )
+        .unwrap();
+
+    assert_eq!(decision.decision, "abort");
+    assert_eq!(decision.reason, "quality_gate_failed");
+    assert!(!decision.automatic_rollback_allowed);
+    assert_eq!(decision.next_state.status, "aborted");
+}
+
+#[test]
+fn rollout_traffic_assignment_is_deterministic_and_sticky_by_affinity() {
+    let plan = RolloutPlan::canary(
+        "rollout-1",
+        "rev-stable",
+        "rev-canary",
+        [RolloutStep::canary("canary-10", 10)],
+    )
+    .with_affinity("conversation_id");
+    let step = plan.current_step(2).unwrap();
+
+    let first = plan.assign_revision("conversation-1", step);
+    let second = plan.assign_revision("conversation-1", step);
+
+    assert_eq!(first, second);
+    assert_eq!(
+        plan.assign_revision("conversation-1", &RolloutStep::canary("stable", 0)),
+        "rev-stable"
+    );
+    assert_eq!(
+        plan.assign_revision("conversation-1", &RolloutStep::canary("candidate", 100)),
+        "rev-canary"
     );
 }

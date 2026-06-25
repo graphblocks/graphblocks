@@ -22,6 +22,10 @@ WorkloadKind = Literal[
     "durable_job",
     "realtime_session",
 ]
+RolloutStepKind = Literal["validate", "shadow", "canary", "blue_green", "promote"]
+RolloutEffectsMode = Literal["normal", "suppress", "sandbox"]
+RolloutDecisionKind = Literal["hold", "advance", "promote", "abort"]
+RolloutStatus = Literal["running", "promoted", "aborted"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +93,10 @@ class GraphReleaseMutableReferencesError(GraphReleaseError):
 
 class GraphDeploymentError(ValueError):
     """Base error for invalid graph deployment contracts."""
+
+
+class RolloutError(ValueError):
+    """Base error for rollout planning and gate decisions."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -319,6 +327,222 @@ class DeploymentEvent:
         if self.context.cohort is not None:
             attributes["graphblocks.rollout.cohort"] = self.context.cohort
         return attributes
+
+
+@dataclass(frozen=True, slots=True)
+class RolloutStep:
+    step_id: str
+    kind: RolloutStepKind
+    traffic_percent: int = 0
+    minimum_samples: int | None = None
+    minimum_duration_seconds: int | None = None
+    effects: RolloutEffectsMode = "normal"
+
+    def __post_init__(self) -> None:
+        if not self.step_id.strip():
+            raise RolloutError("rollout step_id must not be empty")
+        if self.kind not in {"validate", "shadow", "canary", "blue_green", "promote"}:
+            raise RolloutError(f"invalid rollout step kind {self.kind!r}")
+        if isinstance(self.traffic_percent, bool) or not 0 <= self.traffic_percent <= 100:
+            raise RolloutError("rollout traffic_percent must be between 0 and 100")
+        if self.minimum_samples is not None and (
+            isinstance(self.minimum_samples, bool) or self.minimum_samples < 1
+        ):
+            raise RolloutError("rollout minimum_samples must be positive")
+        if self.minimum_duration_seconds is not None and (
+            isinstance(self.minimum_duration_seconds, bool) or self.minimum_duration_seconds < 1
+        ):
+            raise RolloutError("rollout minimum_duration_seconds must be positive")
+        if self.effects not in {"normal", "suppress", "sandbox"}:
+            raise RolloutError(f"invalid rollout effects mode {self.effects!r}")
+
+    @classmethod
+    def validate(cls, step_id: str = "validate") -> RolloutStep:
+        return cls(step_id=step_id, kind="validate", traffic_percent=0)
+
+    @classmethod
+    def shadow(cls, step_id: str = "shadow", *, effects: RolloutEffectsMode = "suppress") -> RolloutStep:
+        return cls(step_id=step_id, kind="shadow", traffic_percent=0, effects=effects)
+
+    @classmethod
+    def canary(
+        cls,
+        step_id: str,
+        *,
+        traffic_percent: int,
+        minimum_samples: int | None = None,
+        minimum_duration_seconds: int | None = None,
+        effects: RolloutEffectsMode = "normal",
+    ) -> RolloutStep:
+        return cls(
+            step_id=step_id,
+            kind="canary",
+            traffic_percent=traffic_percent,
+            minimum_samples=minimum_samples,
+            minimum_duration_seconds=minimum_duration_seconds,
+            effects=effects,
+        )
+
+    @classmethod
+    def promote(cls, step_id: str = "promote") -> RolloutStep:
+        return cls(step_id=step_id, kind="promote", traffic_percent=100)
+
+
+@dataclass(frozen=True, slots=True)
+class RolloutAnalysisResult:
+    step_id: str
+    passed: bool
+    sample_count: int = 0
+    duration_seconds: int = 0
+    metrics: dict[str, object] = field(default_factory=dict)
+    reason: str | None = None
+    non_reversible_effect_observed: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.step_id.strip():
+            raise RolloutError("rollout analysis step_id must not be empty")
+        if isinstance(self.sample_count, bool) or self.sample_count < 0:
+            raise RolloutError("rollout analysis sample_count must be non-negative")
+        if isinstance(self.duration_seconds, bool) or self.duration_seconds < 0:
+            raise RolloutError("rollout analysis duration_seconds must be non-negative")
+        object.__setattr__(self, "metrics", dict(self.metrics))
+
+
+@dataclass(frozen=True, slots=True)
+class RolloutDecision:
+    decision: RolloutDecisionKind
+    reason: str
+    next_state: RolloutState
+    automatic_rollback_allowed: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class RolloutPlan:
+    rollout_id: str
+    stable_revision_id: str
+    candidate_revision_id: str
+    strategy: Literal["canary", "blue_green"] = "canary"
+    affinity: str | None = None
+    analysis_profile_ref: str | None = None
+    steps: tuple[RolloutStep, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        if not self.rollout_id.strip():
+            raise RolloutError("rollout_id must not be empty")
+        if not self.stable_revision_id.strip():
+            raise RolloutError("stable_revision_id must not be empty")
+        if not self.candidate_revision_id.strip():
+            raise RolloutError("candidate_revision_id must not be empty")
+        if self.strategy not in {"canary", "blue_green"}:
+            raise RolloutError(f"invalid rollout strategy {self.strategy!r}")
+        steps = tuple(self.steps)
+        if not steps:
+            raise RolloutError("rollout plan requires at least one step")
+        if steps[0].kind != "validate":
+            raise RolloutError("rollout plan must start with validate")
+        if steps[-1].kind != "promote":
+            raise RolloutError("rollout plan must end with promote")
+        object.__setattr__(self, "steps", steps)
+
+    @classmethod
+    def canary(
+        cls,
+        rollout_id: str,
+        stable_revision_id: str,
+        candidate_revision_id: str,
+        *,
+        canary_steps: tuple[RolloutStep, ...],
+        affinity: str | None = None,
+        analysis_profile_ref: str | None = None,
+    ) -> RolloutPlan:
+        if not canary_steps:
+            raise RolloutError("canary rollout requires at least one canary step")
+        if any(step.kind != "canary" for step in canary_steps):
+            raise RolloutError("canary rollout canary_steps must all have kind 'canary'")
+        return cls(
+            rollout_id=rollout_id,
+            stable_revision_id=stable_revision_id,
+            candidate_revision_id=candidate_revision_id,
+            strategy="canary",
+            affinity=affinity,
+            analysis_profile_ref=analysis_profile_ref,
+            steps=(RolloutStep.validate(), RolloutStep.shadow(), *canary_steps, RolloutStep.promote()),
+        )
+
+    def initial_state(self) -> RolloutState:
+        return RolloutState(plan=self)
+
+    def current_step(self, index: int) -> RolloutStep:
+        if index < 0 or index >= len(self.steps):
+            raise RolloutError("rollout step index out of range")
+        return self.steps[index]
+
+    def assign_revision(self, affinity_key: str, step: RolloutStep) -> str:
+        if step.traffic_percent <= 0:
+            return self.stable_revision_id
+        if step.traffic_percent >= 100:
+            return self.candidate_revision_id
+        bucket_digest = canonical_hash(
+            {
+                "rollout_id": self.rollout_id,
+                "affinity": self.affinity,
+                "affinity_key": affinity_key,
+            }
+        )
+        bucket = int(bucket_digest.removeprefix("sha256:")[:8], 16) % 100
+        if bucket < step.traffic_percent:
+            return self.candidate_revision_id
+        return self.stable_revision_id
+
+
+@dataclass(frozen=True, slots=True)
+class RolloutState:
+    plan: RolloutPlan
+    current_step_index: int = 0
+    status: RolloutStatus = "running"
+
+    def __post_init__(self) -> None:
+        if self.current_step_index < 0 or self.current_step_index >= len(self.plan.steps):
+            raise RolloutError("current_step_index out of range")
+        if self.status not in {"running", "promoted", "aborted"}:
+            raise RolloutError(f"invalid rollout status {self.status!r}")
+
+    @property
+    def current_step(self) -> RolloutStep:
+        return self.plan.steps[self.current_step_index]
+
+    def advance_for_test(self, current_step_index: int) -> RolloutState:
+        return replace(self, current_step_index=current_step_index, status="running")
+
+    def evaluate_gate(self, result: RolloutAnalysisResult) -> RolloutDecision:
+        if self.status != "running":
+            return RolloutDecision(
+                decision="hold",
+                reason=f"rollout_{self.status}",
+                next_state=self,
+                automatic_rollback_allowed=self.status != "aborted",
+            )
+        step = self.current_step
+        if result.step_id != step.step_id:
+            raise RolloutError(
+                f"analysis step {result.step_id!r} does not match current rollout step {step.step_id!r}"
+            )
+        if step.minimum_samples is not None and result.sample_count < step.minimum_samples:
+            return RolloutDecision("hold", "minimum_samples_not_met", self)
+        if step.minimum_duration_seconds is not None and result.duration_seconds < step.minimum_duration_seconds:
+            return RolloutDecision("hold", "minimum_duration_not_met", self)
+        if not result.passed:
+            reason = result.reason or "analysis_failed"
+            return RolloutDecision(
+                decision="abort",
+                reason=reason,
+                next_state=replace(self, status="aborted"),
+                automatic_rollback_allowed=not result.non_reversible_effect_observed,
+            )
+        if step.kind == "promote":
+            return RolloutDecision("promote", "promote_gate_passed", replace(self, status="promoted"))
+        next_index = min(self.current_step_index + 1, len(self.plan.steps) - 1)
+        return RolloutDecision("advance", "gate_passed", replace(self, current_step_index=next_index))
 
 
 @dataclass(frozen=True, slots=True)
@@ -718,6 +942,13 @@ __all__ = [
     "ReleaseBundle",
     "ResolvedPlacement",
     "RevisionDecision",
+    "RolloutAnalysisResult",
+    "RolloutDecision",
+    "RolloutError",
+    "RolloutPlan",
+    "RolloutState",
+    "RolloutStep",
+    "RolloutStepKind",
     "UpgradePolicy",
     "WorkloadKind",
 ]

@@ -430,6 +430,415 @@ impl DeploymentEvent {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RolloutError {
+    pub message: String,
+}
+
+impl RolloutError {
+    fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for RolloutError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl Error for RolloutError {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RolloutStep {
+    pub step_id: String,
+    pub kind: String,
+    pub traffic_percent: u8,
+    pub minimum_samples: Option<u64>,
+    pub minimum_duration_seconds: Option<u64>,
+    pub effects: String,
+}
+
+impl RolloutStep {
+    pub fn validate(step_id: impl Into<String>) -> Self {
+        Self::new(step_id, "validate", 0, None, None, "normal")
+    }
+
+    pub fn shadow(step_id: impl Into<String>) -> Self {
+        Self::new(step_id, "shadow", 0, None, None, "suppress")
+    }
+
+    pub fn canary(step_id: impl Into<String>, traffic_percent: u8) -> Self {
+        assert!(
+            traffic_percent <= 100,
+            "rollout traffic_percent must be between 0 and 100"
+        );
+        Self::new(step_id, "canary", traffic_percent, None, None, "normal")
+    }
+
+    pub fn promote(step_id: impl Into<String>) -> Self {
+        Self::new(step_id, "promote", 100, None, None, "normal")
+    }
+
+    pub fn with_minimum_samples(mut self, minimum_samples: u64) -> Self {
+        assert!(
+            minimum_samples > 0,
+            "rollout minimum_samples must be positive"
+        );
+        self.minimum_samples = Some(minimum_samples);
+        self
+    }
+
+    pub fn with_minimum_duration_seconds(mut self, minimum_duration_seconds: u64) -> Self {
+        assert!(
+            minimum_duration_seconds > 0,
+            "rollout minimum_duration_seconds must be positive"
+        );
+        self.minimum_duration_seconds = Some(minimum_duration_seconds);
+        self
+    }
+
+    pub fn with_effects(mut self, effects: impl Into<String>) -> Self {
+        let effects = effects.into();
+        assert!(
+            matches!(effects.as_str(), "normal" | "suppress" | "sandbox"),
+            "invalid rollout effects mode {effects:?}"
+        );
+        self.effects = effects;
+        self
+    }
+
+    fn new(
+        step_id: impl Into<String>,
+        kind: impl Into<String>,
+        traffic_percent: u8,
+        minimum_samples: Option<u64>,
+        minimum_duration_seconds: Option<u64>,
+        effects: impl Into<String>,
+    ) -> Self {
+        let step_id = step_id.into();
+        let kind = kind.into();
+        let effects = effects.into();
+        assert!(
+            !step_id.trim().is_empty(),
+            "rollout step_id must not be empty"
+        );
+        assert!(
+            matches!(
+                kind.as_str(),
+                "validate" | "shadow" | "canary" | "blue_green" | "promote"
+            ),
+            "invalid rollout step kind {kind:?}"
+        );
+        assert!(
+            matches!(effects.as_str(), "normal" | "suppress" | "sandbox"),
+            "invalid rollout effects mode {effects:?}"
+        );
+        Self {
+            step_id,
+            kind,
+            traffic_percent,
+            minimum_samples,
+            minimum_duration_seconds,
+            effects,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RolloutAnalysisResult {
+    pub step_id: String,
+    pub passed: bool,
+    pub sample_count: u64,
+    pub duration_seconds: u64,
+    pub metrics: BTreeMap<String, Value>,
+    pub reason: Option<String>,
+    pub non_reversible_effect_observed: bool,
+}
+
+impl RolloutAnalysisResult {
+    pub fn passed(step_id: impl Into<String>) -> Self {
+        Self {
+            step_id: step_id.into(),
+            passed: true,
+            sample_count: 0,
+            duration_seconds: 0,
+            metrics: BTreeMap::new(),
+            reason: None,
+            non_reversible_effect_observed: false,
+        }
+    }
+
+    pub fn failed(step_id: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self {
+            step_id: step_id.into(),
+            passed: false,
+            sample_count: 0,
+            duration_seconds: 0,
+            metrics: BTreeMap::new(),
+            reason: Some(reason.into()),
+            non_reversible_effect_observed: false,
+        }
+    }
+
+    pub fn with_sample_count(mut self, sample_count: u64) -> Self {
+        self.sample_count = sample_count;
+        self
+    }
+
+    pub fn with_duration_seconds(mut self, duration_seconds: u64) -> Self {
+        self.duration_seconds = duration_seconds;
+        self
+    }
+
+    pub fn with_metric(mut self, key: impl Into<String>, value: Value) -> Self {
+        self.metrics.insert(key.into(), value);
+        self
+    }
+
+    pub fn with_non_reversible_effect_observed(
+        mut self,
+        non_reversible_effect_observed: bool,
+    ) -> Self {
+        self.non_reversible_effect_observed = non_reversible_effect_observed;
+        self
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RolloutDecision {
+    pub decision: String,
+    pub reason: String,
+    pub next_state: RolloutState,
+    pub automatic_rollback_allowed: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RolloutPlan {
+    pub rollout_id: String,
+    pub stable_revision_id: String,
+    pub candidate_revision_id: String,
+    pub strategy: String,
+    pub affinity: Option<String>,
+    pub analysis_profile_ref: Option<String>,
+    pub steps: Vec<RolloutStep>,
+}
+
+impl RolloutPlan {
+    pub fn canary<I>(
+        rollout_id: impl Into<String>,
+        stable_revision_id: impl Into<String>,
+        candidate_revision_id: impl Into<String>,
+        canary_steps: I,
+    ) -> Self
+    where
+        I: IntoIterator<Item = RolloutStep>,
+    {
+        let canary_steps = canary_steps.into_iter().collect::<Vec<_>>();
+        assert!(
+            !canary_steps.is_empty(),
+            "canary rollout requires at least one canary step"
+        );
+        assert!(
+            canary_steps.iter().all(|step| step.kind == "canary"),
+            "canary rollout canary_steps must all have kind 'canary'"
+        );
+
+        let mut steps = vec![
+            RolloutStep::validate("validate"),
+            RolloutStep::shadow("shadow"),
+        ];
+        steps.extend(canary_steps);
+        steps.push(RolloutStep::promote("promote"));
+
+        let rollout_id = rollout_id.into();
+        let stable_revision_id = stable_revision_id.into();
+        let candidate_revision_id = candidate_revision_id.into();
+        assert!(
+            !rollout_id.trim().is_empty(),
+            "rollout_id must not be empty"
+        );
+        assert!(
+            !stable_revision_id.trim().is_empty(),
+            "stable_revision_id must not be empty"
+        );
+        assert!(
+            !candidate_revision_id.trim().is_empty(),
+            "candidate_revision_id must not be empty"
+        );
+
+        Self {
+            rollout_id,
+            stable_revision_id,
+            candidate_revision_id,
+            strategy: "canary".to_owned(),
+            affinity: None,
+            analysis_profile_ref: None,
+            steps,
+        }
+    }
+
+    pub fn with_affinity(mut self, affinity: impl Into<String>) -> Self {
+        self.affinity = Some(affinity.into());
+        self
+    }
+
+    pub fn with_analysis_profile(mut self, analysis_profile_ref: impl Into<String>) -> Self {
+        self.analysis_profile_ref = Some(analysis_profile_ref.into());
+        self
+    }
+
+    pub fn initial_state(&self) -> RolloutState {
+        RolloutState {
+            plan: self.clone(),
+            current_step_index: 0,
+            status: "running".to_owned(),
+        }
+    }
+
+    pub fn current_step(&self, index: usize) -> Result<&RolloutStep, RolloutError> {
+        self.steps
+            .get(index)
+            .ok_or_else(|| RolloutError::new("rollout step index out of range"))
+    }
+
+    pub fn assign_revision(&self, affinity_key: &str, step: &RolloutStep) -> String {
+        if step.traffic_percent == 0 {
+            return self.stable_revision_id.clone();
+        }
+        if step.traffic_percent >= 100 {
+            return self.candidate_revision_id.clone();
+        }
+
+        let bucket_digest = canonical_hash(&json!({
+            "rollout_id": self.rollout_id,
+            "affinity": self.affinity,
+            "affinity_key": affinity_key,
+        }));
+        let bucket_hex = bucket_digest
+            .strip_prefix("sha256:")
+            .unwrap_or(bucket_digest.as_str());
+        let bucket = bucket_hex
+            .get(..8)
+            .and_then(|prefix| u32::from_str_radix(prefix, 16).ok())
+            .unwrap_or(0)
+            % 100;
+        if bucket < u32::from(step.traffic_percent) {
+            self.candidate_revision_id.clone()
+        } else {
+            self.stable_revision_id.clone()
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RolloutState {
+    pub plan: RolloutPlan,
+    pub current_step_index: usize,
+    pub status: String,
+}
+
+impl RolloutState {
+    pub fn current_step(&self) -> Result<&RolloutStep, RolloutError> {
+        self.plan.current_step(self.current_step_index)
+    }
+
+    pub fn advance_for_test(&self, current_step_index: usize) -> Result<Self, RolloutError> {
+        self.plan.current_step(current_step_index)?;
+        Ok(Self {
+            plan: self.plan.clone(),
+            current_step_index,
+            status: "running".to_owned(),
+        })
+    }
+
+    pub fn evaluate_gate(
+        &self,
+        result: RolloutAnalysisResult,
+    ) -> Result<RolloutDecision, RolloutError> {
+        if self.status != "running" {
+            return Ok(RolloutDecision {
+                decision: "hold".to_owned(),
+                reason: format!("rollout_{}", self.status),
+                next_state: self.clone(),
+                automatic_rollback_allowed: self.status != "aborted",
+            });
+        }
+
+        let step = self.current_step()?;
+        if result.step_id != step.step_id {
+            return Err(RolloutError::new(format!(
+                "analysis step {:?} does not match current rollout step {:?}",
+                result.step_id, step.step_id
+            )));
+        }
+        if step
+            .minimum_samples
+            .is_some_and(|minimum_samples| result.sample_count < minimum_samples)
+        {
+            return Ok(RolloutDecision {
+                decision: "hold".to_owned(),
+                reason: "minimum_samples_not_met".to_owned(),
+                next_state: self.clone(),
+                automatic_rollback_allowed: true,
+            });
+        }
+        if step
+            .minimum_duration_seconds
+            .is_some_and(|minimum_duration_seconds| {
+                result.duration_seconds < minimum_duration_seconds
+            })
+        {
+            return Ok(RolloutDecision {
+                decision: "hold".to_owned(),
+                reason: "minimum_duration_not_met".to_owned(),
+                next_state: self.clone(),
+                automatic_rollback_allowed: true,
+            });
+        }
+        if !result.passed {
+            return Ok(RolloutDecision {
+                decision: "abort".to_owned(),
+                reason: result
+                    .reason
+                    .unwrap_or_else(|| "analysis_failed".to_owned()),
+                next_state: Self {
+                    plan: self.plan.clone(),
+                    current_step_index: self.current_step_index,
+                    status: "aborted".to_owned(),
+                },
+                automatic_rollback_allowed: !result.non_reversible_effect_observed,
+            });
+        }
+        if step.kind == "promote" {
+            return Ok(RolloutDecision {
+                decision: "promote".to_owned(),
+                reason: "promote_gate_passed".to_owned(),
+                next_state: Self {
+                    plan: self.plan.clone(),
+                    current_step_index: self.current_step_index,
+                    status: "promoted".to_owned(),
+                },
+                automatic_rollback_allowed: true,
+            });
+        }
+
+        let next_step_index = (self.current_step_index + 1).min(self.plan.steps.len() - 1);
+        Ok(RolloutDecision {
+            decision: "advance".to_owned(),
+            reason: "gate_passed".to_owned(),
+            next_state: Self {
+                plan: self.plan.clone(),
+                current_step_index: next_step_index,
+                status: "running".to_owned(),
+            },
+            automatic_rollback_allowed: true,
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WorkloadKind {
     NewRequest,

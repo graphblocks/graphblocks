@@ -21,6 +21,9 @@ from graphblocks.deployment import (
     PromptLock,
     ReleaseBundle,
     RevisionDecision,
+    RolloutAnalysisResult,
+    RolloutPlan,
+    RolloutStep,
     UpgradePolicy,
 )
 
@@ -253,3 +256,122 @@ def test_upgrade_policy_is_workload_aware() -> None:
         "rev-old", "rev-new"
     )
     assert policy.decide("realtime_session", "rev-old", True) == RevisionDecision.drain_on_old("rev-old")
+
+
+def test_rollout_plan_builds_validate_shadow_canary_and_promote_sequence() -> None:
+    plan = RolloutPlan.canary(
+        rollout_id="rollout-1",
+        stable_revision_id="rev-stable",
+        candidate_revision_id="rev-canary",
+        analysis_profile_ref="rag-production-rollout",
+        affinity="conversation_id",
+        canary_steps=(
+            RolloutStep.canary("canary-1", traffic_percent=1, minimum_samples=200),
+            RolloutStep.canary("canary-10", traffic_percent=10, minimum_duration_seconds=1800),
+        ),
+    )
+
+    assert [step.step_id for step in plan.steps] == [
+        "validate",
+        "shadow",
+        "canary-1",
+        "canary-10",
+        "promote",
+    ]
+    assert plan.steps[1].effects == "suppress"
+    assert plan.steps[2].traffic_percent == 1
+    assert plan.current_step(2).step_id == "canary-1"
+    assert plan.analysis_profile_ref == "rag-production-rollout"
+    assert plan.affinity == "conversation_id"
+
+
+def test_rollout_gate_holds_until_minimum_samples_and_duration_are_met() -> None:
+    plan = RolloutPlan.canary(
+        "rollout-1",
+        "rev-stable",
+        "rev-canary",
+        canary_steps=(RolloutStep.canary("canary-10", traffic_percent=10, minimum_samples=20, minimum_duration_seconds=60),),
+    )
+    state = plan.initial_state().advance_for_test(2)
+
+    held = state.evaluate_gate(
+        RolloutAnalysisResult(
+            step_id="canary-10",
+            passed=True,
+            sample_count=19,
+            duration_seconds=120,
+            metrics={"quality": 0.98},
+        )
+    )
+    advanced = state.evaluate_gate(
+        RolloutAnalysisResult(
+            step_id="canary-10",
+            passed=True,
+            sample_count=20,
+            duration_seconds=60,
+            metrics={"quality": 0.98},
+        )
+    )
+
+    assert held.decision == "hold"
+    assert held.reason == "minimum_samples_not_met"
+    assert held.next_state.current_step_index == 2
+    assert advanced.decision == "advance"
+    assert advanced.next_state.current_step_index == 3
+
+
+def test_rollout_gate_promotes_after_final_promote_step_passes() -> None:
+    plan = RolloutPlan.canary(
+        "rollout-1",
+        "rev-stable",
+        "rev-canary",
+        canary_steps=(RolloutStep.canary("canary-50", traffic_percent=50),),
+    )
+    state = plan.initial_state().advance_for_test(3)
+
+    decision = state.evaluate_gate(RolloutAnalysisResult(step_id="promote", passed=True))
+
+    assert decision.decision == "promote"
+    assert decision.next_state.status == "promoted"
+    assert decision.next_state.current_step_index == 3
+
+
+def test_rollout_gate_aborts_without_automatic_rollback_for_non_reversible_effects() -> None:
+    plan = RolloutPlan.canary(
+        "rollout-1",
+        "rev-stable",
+        "rev-canary",
+        canary_steps=(RolloutStep.canary("canary-10", traffic_percent=10),),
+    )
+    state = plan.initial_state().advance_for_test(2)
+
+    decision = state.evaluate_gate(
+        RolloutAnalysisResult(
+            step_id="canary-10",
+            passed=False,
+            reason="quality_gate_failed",
+            non_reversible_effect_observed=True,
+        )
+    )
+
+    assert decision.decision == "abort"
+    assert decision.reason == "quality_gate_failed"
+    assert decision.automatic_rollback_allowed is False
+    assert decision.next_state.status == "aborted"
+
+
+def test_rollout_traffic_assignment_is_deterministic_and_sticky_by_affinity() -> None:
+    plan = RolloutPlan.canary(
+        "rollout-1",
+        "rev-stable",
+        "rev-canary",
+        canary_steps=(RolloutStep.canary("canary-25", traffic_percent=25),),
+    )
+    step = plan.steps[2]
+
+    first = plan.assign_revision("conversation-1", step)
+    second = plan.assign_revision("conversation-1", step)
+
+    assert first == second
+    assert plan.assign_revision("conversation-1", RolloutStep.canary("stable", traffic_percent=0)) == "rev-stable"
+    assert plan.assign_revision("conversation-1", RolloutStep.canary("candidate", traffic_percent=100)) == "rev-canary"
