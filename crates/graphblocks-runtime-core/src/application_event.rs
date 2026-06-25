@@ -3,8 +3,9 @@ use std::error::Error;
 use std::fmt;
 
 use crate::output_policy::{
-    DraftDisposition, DurableResult, GenerationChunk, OutputCutoff, OutputDisposition,
-    OutputPolicyDecision, PendingToolCallsDisposition, ProviderCancellation, TerminalReason,
+    DraftDisposition, DurableResult, GenerationChunk, OutputCutoff, OutputCutoffError,
+    OutputDisposition, OutputPolicyDecision, PendingToolCallsDisposition, ProviderCancellation,
+    TerminalReason,
 };
 use crate::policy::PolicyDecision;
 use crate::tool_approval::ToolApprovalRequest;
@@ -128,6 +129,7 @@ pub enum ApplicationEventError {
     ToolEventRequiresToolCallId { kind: ApplicationEventKind },
     NotToolEvent { kind: ApplicationEventKind },
     EmptyToolCallId,
+    InvalidOutputCutoff { source: OutputCutoffError },
 }
 
 impl ApplicationEvent {
@@ -412,6 +414,9 @@ impl ApplicationEvent {
         metadata: ApplicationEventMetadata,
         cutoff: &OutputCutoff,
     ) -> Result<Vec<Self>, ApplicationEventError> {
+        cutoff
+            .validate()
+            .map_err(|source| ApplicationEventError::InvalidOutputCutoff { source })?;
         let terminal_reason = match cutoff.terminal_reason {
             TerminalReason::PolicyDenied => "policy_denied",
             TerminalReason::BudgetExhausted => "budget_exhausted",
@@ -605,7 +610,7 @@ impl ApplicationEventStreamState {
                     "partial" => DurableResult::Partial,
                     _ => return None,
                 };
-                OutputCutoff {
+                let cutoff = OutputCutoff {
                     stream_id: payload.get("stream_id")?.as_str()?.to_owned(),
                     response_id,
                     turn_id: payload
@@ -627,7 +632,9 @@ impl ApplicationEventStreamState {
                         .and_then(Value::as_str)
                         .map(str::to_owned),
                     occurred_at_unix_ms: payload.get("occurred_at_unix_ms")?.as_u64()?,
-                }
+                };
+                cutoff.validate().ok()?;
+                cutoff
             };
             self.cutoffs.insert(cutoff.response_id.clone(), cutoff);
             self.accepted_events.push(event.clone());

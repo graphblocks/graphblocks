@@ -672,7 +672,35 @@ pub struct OutputCutoff {
     pub occurred_at_unix_ms: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OutputCutoffError {
+    PolicyAcceptedSequenceBeyondGenerated {
+        last_generated_sequence: u64,
+        last_policy_accepted_sequence: u64,
+    },
+    ClientDeliveredSequenceBeyondGenerated {
+        last_generated_sequence: u64,
+        last_client_delivered_sequence: u64,
+    },
+}
+
 impl OutputCutoff {
+    pub fn validate(&self) -> Result<(), OutputCutoffError> {
+        if self.last_policy_accepted_sequence > self.last_generated_sequence {
+            return Err(OutputCutoffError::PolicyAcceptedSequenceBeyondGenerated {
+                last_generated_sequence: self.last_generated_sequence,
+                last_policy_accepted_sequence: self.last_policy_accepted_sequence,
+            });
+        }
+        if self.last_client_delivered_sequence > self.last_generated_sequence {
+            return Err(OutputCutoffError::ClientDeliveredSequenceBeyondGenerated {
+                last_generated_sequence: self.last_generated_sequence,
+                last_client_delivered_sequence: self.last_client_delivered_sequence,
+            });
+        }
+        Ok(())
+    }
+
     pub fn accepts(&self, chunk: &GenerationChunk) -> bool {
         chunk.stream_id == self.stream_id
             && chunk.response_id == self.response_id

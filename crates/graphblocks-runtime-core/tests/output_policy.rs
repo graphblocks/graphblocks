@@ -1,6 +1,6 @@
 use graphblocks_runtime_core::output_policy::{
     DeclarativeOutputPolicyEvaluator, DeclarativeOutputPolicyRule, DraftDisposition, DurableResult,
-    GenerationChunk, OutputCutoff, OutputDeliveryGate, OutputDeliveryPolicy,
+    GenerationChunk, OutputCutoff, OutputCutoffError, OutputDeliveryGate, OutputDeliveryPolicy,
     OutputDeliveryPolicyError, OutputDisposition, OutputGateError, OutputPolicyDecision,
     PendingToolCallsDisposition, ProviderCancellation, RedactionInstruction, TerminalReason,
     ViolationAction,
@@ -81,6 +81,53 @@ fn policy_decision_cannot_accept_future_generation_sequences() -> Result<(), Out
     assert_eq!(gate.last_policy_accepted_sequence(), 0);
     assert_eq!(gate.last_client_delivered_sequence(), 0);
     Ok(())
+}
+
+#[test]
+fn output_cutoff_rejects_sequences_beyond_generated() {
+    let policy_accepted_after_generated = OutputCutoff {
+        stream_id: "stream-1".to_owned(),
+        response_id: "response-1".to_owned(),
+        turn_id: None,
+        last_generated_sequence: 1,
+        last_policy_accepted_sequence: 2,
+        last_client_delivered_sequence: 1,
+        terminal_reason: TerminalReason::PolicyDenied,
+        draft_disposition: DraftDisposition::Retract,
+        durable_result: DurableResult::None,
+        policy_decision_id: Some("decision-1".to_owned()),
+        occurred_at_unix_ms: 1_000,
+    };
+
+    assert_eq!(
+        policy_accepted_after_generated.validate(),
+        Err(OutputCutoffError::PolicyAcceptedSequenceBeyondGenerated {
+            last_generated_sequence: 1,
+            last_policy_accepted_sequence: 2,
+        })
+    );
+
+    let client_delivered_after_generated = OutputCutoff {
+        stream_id: "stream-1".to_owned(),
+        response_id: "response-1".to_owned(),
+        turn_id: None,
+        last_generated_sequence: 1,
+        last_policy_accepted_sequence: 1,
+        last_client_delivered_sequence: 2,
+        terminal_reason: TerminalReason::PolicyDenied,
+        draft_disposition: DraftDisposition::Retract,
+        durable_result: DurableResult::None,
+        policy_decision_id: Some("decision-1".to_owned()),
+        occurred_at_unix_ms: 1_000,
+    };
+
+    assert_eq!(
+        client_delivered_after_generated.validate(),
+        Err(OutputCutoffError::ClientDeliveredSequenceBeyondGenerated {
+            last_generated_sequence: 1,
+            last_client_delivered_sequence: 2,
+        })
+    );
 }
 
 #[test]

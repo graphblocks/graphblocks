@@ -6,8 +6,8 @@ use graphblocks_runtime_core::application_event::{
 };
 use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory};
 use graphblocks_runtime_core::output_policy::{
-    DraftDisposition, DurableResult, GenerationChunk, OutputCutoff, OutputPolicyDecision,
-    TerminalReason,
+    DraftDisposition, DurableResult, GenerationChunk, OutputCutoff, OutputCutoffError,
+    OutputPolicyDecision, TerminalReason,
 };
 use graphblocks_runtime_core::policy::{PolicyDecision, PolicyEffect};
 use graphblocks_runtime_core::tool::{
@@ -590,6 +590,60 @@ fn output_cutoff_events_mark_incomplete_when_retraction_is_not_required() {
         events[1].payload.get("last_client_delivered_sequence"),
         Some(&json!(1))
     );
+}
+
+#[test]
+fn output_cutoff_events_reject_invalid_sequence_order() {
+    let cutoff = OutputCutoff {
+        stream_id: "stream-1".to_owned(),
+        response_id: "response-1".to_owned(),
+        turn_id: None,
+        last_generated_sequence: 1,
+        last_policy_accepted_sequence: 1,
+        last_client_delivered_sequence: 2,
+        terminal_reason: TerminalReason::PolicyDenied,
+        draft_disposition: DraftDisposition::Retract,
+        durable_result: DurableResult::None,
+        policy_decision_id: Some("decision-abort".to_owned()),
+        occurred_at_unix_ms: 1_700_010,
+    };
+
+    assert_eq!(
+        ApplicationEvent::output_cutoff(metadata(), &cutoff),
+        Err(ApplicationEventError::InvalidOutputCutoff {
+            source: OutputCutoffError::ClientDeliveredSequenceBeyondGenerated {
+                last_generated_sequence: 1,
+                last_client_delivered_sequence: 2,
+            }
+        })
+    );
+}
+
+#[test]
+fn application_event_stream_state_rejects_invalid_output_cutoff_payload() {
+    let mut state = ApplicationEventStreamState::default();
+    let invalid_cutoff = ApplicationEvent::new(
+        ApplicationEventKind::OutputCutoff,
+        metadata(),
+        json!({
+            "stream_id": "stream-1",
+            "response_id": "response-1",
+            "turn_id": "turn-1",
+            "last_generated_sequence": 1,
+            "last_policy_accepted_sequence": 1,
+            "last_client_delivered_sequence": 2,
+            "terminal_reason": "policy_denied",
+            "draft_disposition": "retract",
+            "durable_result": "none",
+            "policy_decision_id": "decision-abort",
+            "occurred_at_unix_ms": 1_700_020,
+        }),
+    )
+    .expect("raw output cutoff event envelope is valid");
+
+    assert_eq!(state.accept(invalid_cutoff), None);
+    assert_eq!(state.cutoff_for_response("response-1"), None);
+    assert!(state.accepted_events().is_empty());
 }
 
 #[test]
