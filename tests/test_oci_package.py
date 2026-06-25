@@ -90,6 +90,48 @@ def test_oci_release_manifest_includes_provenance_and_signature_descriptors(monk
     assert contract["annotations"]["graphblocks.ai/signature-digest"] == "sha256:signature"
 
 
+def test_oci_release_manifest_includes_sbom_descriptor(monkeypatch) -> None:
+    graphblocks_oci = _import_oci(monkeypatch)
+    graphblocks_deployment = importlib.import_module("graphblocks_deployment")
+    release = (
+        graphblocks_deployment.GraphRelease("support-agent", "2026.06.23.1")
+        .with_bundle("sha256:bundle", "application/vnd.graphblocks.release.bundle.v1+tar")
+        .with_graph("turn", graphblocks_deployment.GraphReleaseGraph("sha256:graph", "sha256:plan"))
+    )
+    bundle = graphblocks_oci.OciDescriptor(
+        media_type="application/vnd.graphblocks.release.bundle.v1+tar",
+        digest="sha256:bundle",
+        size=4096,
+    )
+    sbom = graphblocks_oci.OciDescriptor(
+        media_type="application/vnd.cyclonedx+json",
+        digest="sha256:sbom",
+        size=1024,
+        annotations={"graphblocks.ai/artifact-kind": "sbom"},
+    )
+    provenance = graphblocks_oci.OciDescriptor(
+        media_type="application/vnd.in-toto+json",
+        digest="sha256:provenance",
+        size=512,
+    )
+
+    manifest = graphblocks_oci.build_release_manifest(
+        release,
+        bundle_descriptor=bundle,
+        sbom_descriptor=sbom,
+        provenance_descriptor=provenance,
+    )
+    contract = manifest.manifest_contract()
+
+    assert contract["layers"] == [
+        bundle.descriptor_contract(),
+        sbom.descriptor_contract(),
+        provenance.descriptor_contract(),
+    ]
+    assert contract["annotations"]["graphblocks.ai/sbom-digest"] == "sha256:sbom"
+    assert contract["annotations"]["graphblocks.ai/provenance-digest"] == "sha256:provenance"
+
+
 def test_oci_build_provenance_attestation_is_canonical_and_descriptor_ready(monkeypatch) -> None:
     graphblocks_oci = _import_oci(monkeypatch)
     graphblocks_deployment = importlib.import_module("graphblocks_deployment")

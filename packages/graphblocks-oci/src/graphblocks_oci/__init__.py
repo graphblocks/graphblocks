@@ -299,6 +299,7 @@ def build_release_manifest(
     release: GraphRelease,
     *,
     bundle_descriptor: OciDescriptor,
+    sbom_descriptor: OciDescriptor | None = None,
     provenance_descriptor: OciDescriptor | None = None,
     signature_descriptor: OciDescriptor | None = None,
     config_descriptor: OciDescriptor | None = None,
@@ -315,6 +316,9 @@ def build_release_manifest(
     if release.bundle_media_type is not None:
         release_annotations["graphblocks.ai/bundle-media-type"] = release.bundle_media_type
     layers = [bundle_descriptor]
+    if sbom_descriptor is not None:
+        layers.append(sbom_descriptor)
+        release_annotations["graphblocks.ai/sbom-digest"] = sbom_descriptor.digest
     if provenance_descriptor is not None:
         layers.append(provenance_descriptor)
         release_annotations["graphblocks.ai/provenance-digest"] = provenance_descriptor.digest
