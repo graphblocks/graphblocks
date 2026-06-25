@@ -42,6 +42,7 @@ from graphblocks.deployment import (
     RolloutState,
     RolloutStep,
     RolloutStepKind,
+    SupplyChainLock,
     UpgradePolicy,
     WorkloadKind,
 )
@@ -89,6 +90,7 @@ __all__ = [
     "RolloutState",
     "RolloutStep",
     "RolloutStepKind",
+    "SupplyChainLock",
     "UpgradePolicy",
     "WorkloadKind",
 ]

@@ -21,6 +21,11 @@ def test_deployment_package_reexports_release_and_upgrade_contracts(monkeypatch)
         "rev-new"
     )
     bundle = graphblocks_deployment.ReleaseBundle("bundle-1", release)
+    supply_chain = graphblocks_deployment.SupplyChainLock(
+        sbom_ref="oci://registry/sbom@sha256:sbom",
+        provenance_ref="oci://registry/provenance@sha256:provenance",
+        signature_policy="production-publishers",
+    )
     deployment = graphblocks_deployment.GraphDeployment(
         "support-prod",
         release,
@@ -29,9 +34,11 @@ def test_deployment_package_reexports_release_and_upgrade_contracts(monkeypatch)
     ).with_target(graphblocks_deployment.ExecutionTarget("control", "service", "rust")).with_default_target("control")
 
     assert bundle.content_digest().startswith("sha256:")
+    assert supply_chain.canonical_value()["signature_policy"] == "production-publishers"
     assert deployment.to_physical_plan().default_target == "control"
     assert "GraphDeployment" in graphblocks_deployment.__all__
     assert "ReleaseBundle" in graphblocks_deployment.__all__
+    assert "SupplyChainLock" in graphblocks_deployment.__all__
 
 
 def test_deployment_package_reexports_rollout_gate_contracts(monkeypatch) -> None:

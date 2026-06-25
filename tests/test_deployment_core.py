@@ -22,6 +22,7 @@ from graphblocks.deployment import (
     PlacementRule,
     PlacementSelector,
     PromptLock,
+    SupplyChainLock,
     ReleaseBundle,
     RevisionDecision,
     RolloutAnalysisResult,
@@ -86,6 +87,7 @@ def test_graph_release_validation_rejects_mutable_production_references() -> Non
         .with_image("control", ImageRef("registry.example.com/gb/control:latest"))
         .with_prompt_lock("answer", PromptLock.label("support.answer", "production"))
         .with_knowledge(KnowledgeBinding("intranet_docs", "current"))
+        .with_supply_chain(SupplyChainLock(sbom_ref="oci://registry/sbom:latest", provenance_ref="oci://registry/provenance:latest"))
     )
 
     with pytest.raises(GraphReleaseMutableReferencesError) as error:
@@ -97,7 +99,41 @@ def test_graph_release_validation_rejects_mutable_production_references() -> Non
         "images.control",
         "knowledge.intranet_docs.index_revision",
         "prompts.answer",
+        "supply_chain.provenance_ref",
+        "supply_chain.sbom_ref",
     )
+
+
+def test_graph_release_supply_chain_lock_is_part_of_release_digest_and_production_pins() -> None:
+    base = (
+        GraphRelease(name="enterprise-rag", version="2026.06.23.1")
+        .with_bundle("sha256:bundle", "application/vnd.graphblocks.release.v1")
+        .with_graph("chat", GraphReleaseGraph("sha256:graph-chat", "sha256:plan-chat"))
+        .with_supply_chain(
+            SupplyChainLock(
+                sbom_ref="oci://registry/sbom@sha256:sbom",
+                provenance_ref="oci://registry/provenance@sha256:provenance",
+                signature_policy="production-publishers",
+            )
+        )
+    )
+    changed_policy = base.with_supply_chain(
+        SupplyChainLock(
+            sbom_ref="oci://registry/sbom@sha256:sbom",
+            provenance_ref="oci://registry/provenance@sha256:provenance",
+            signature_policy="staging-publishers",
+        )
+    )
+
+    base.validate_production_pins()
+
+    assert base.supply_chain is not None
+    assert base.supply_chain.canonical_value() == {
+        "sbom_ref": "oci://registry/sbom@sha256:sbom",
+        "provenance_ref": "oci://registry/provenance@sha256:provenance",
+        "signature_policy": "production-publishers",
+    }
+    assert base.content_digest() != changed_policy.content_digest()
 
 
 def test_release_bundle_digest_is_stable_for_release_and_artifact_order() -> None:

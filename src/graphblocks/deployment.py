@@ -83,6 +83,20 @@ class KnowledgeBinding:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class SupplyChainLock:
+    sbom_ref: str | None = None
+    provenance_ref: str | None = None
+    signature_policy: str | None = None
+
+    def canonical_value(self) -> dict[str, str | None]:
+        return {
+            "sbom_ref": self.sbom_ref,
+            "provenance_ref": self.provenance_ref,
+            "signature_policy": self.signature_policy,
+        }
+
+
 class GraphReleaseError(ValueError):
     """Base error for invalid graph release contracts."""
 
@@ -112,6 +126,7 @@ class GraphRelease:
     images: dict[str, ImageRef] = field(default_factory=dict)
     prompt_locks: dict[str, PromptLock] = field(default_factory=dict)
     knowledge: dict[str, KnowledgeBinding] = field(default_factory=dict)
+    supply_chain: SupplyChainLock | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "graphs", dict(self.graphs))
@@ -145,6 +160,9 @@ class GraphRelease:
         knowledge[binding.index_id] = binding
         return replace(self, knowledge=knowledge)
 
+    def with_supply_chain(self, supply_chain: SupplyChainLock) -> GraphRelease:
+        return replace(self, supply_chain=supply_chain)
+
     def content_digest(self) -> str:
         return canonical_hash(
             {
@@ -170,6 +188,11 @@ class GraphRelease:
                     name: binding.canonical_value()
                     for name, binding in sorted(self.knowledge.items())
                 },
+                "supply_chain": (
+                    self.supply_chain.canonical_value()
+                    if self.supply_chain is not None
+                    else None
+                ),
             }
         )
 
@@ -202,6 +225,11 @@ class GraphRelease:
         for name, prompt in sorted(self.prompt_locks.items()):
             if prompt.kind == "label":
                 references.append(f"prompts.{name}")
+        if self.supply_chain is not None:
+            if self.supply_chain.provenance_ref is not None and "@sha256:" not in self.supply_chain.provenance_ref:
+                references.append("supply_chain.provenance_ref")
+            if self.supply_chain.sbom_ref is not None and "@sha256:" not in self.supply_chain.sbom_ref:
+                references.append("supply_chain.sbom_ref")
         if references:
             raise GraphReleaseMutableReferencesError(references)
 
@@ -1335,6 +1363,7 @@ __all__ = [
     "RolloutState",
     "RolloutStep",
     "RolloutStepKind",
+    "SupplyChainLock",
     "UpgradePolicy",
     "WorkloadKind",
 ]

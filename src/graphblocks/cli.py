@@ -26,6 +26,7 @@ from .deployment import (
     PlacementRule,
     PlacementSelector,
     PromptLock,
+    SupplyChainLock,
 )
 from .diagnostics import Diagnostic
 from .loader import load_documents
@@ -667,6 +668,29 @@ def main(argv: list[str] | None = None) -> int:
                             ),
                         )
                     )
+            supply_chain_data = _field(spec, "supplyChain", "supply_chain")
+            if supply_chain_data is not None:
+                if not isinstance(supply_chain_data, Mapping):
+                    raise ValueError("GraphRelease spec.supplyChain must be a mapping")
+                release = release.with_supply_chain(
+                    SupplyChainLock(
+                        sbom_ref=(
+                            str(_field(supply_chain_data, "sbomRef", "sbom_ref"))
+                            if _field(supply_chain_data, "sbomRef", "sbom_ref") is not None
+                            else None
+                        ),
+                        provenance_ref=(
+                            str(_field(supply_chain_data, "provenanceRef", "provenance_ref"))
+                            if _field(supply_chain_data, "provenanceRef", "provenance_ref") is not None
+                            else None
+                        ),
+                        signature_policy=(
+                            str(_field(supply_chain_data, "signaturePolicy", "signature_policy"))
+                            if _field(supply_chain_data, "signaturePolicy", "signature_policy") is not None
+                            else None
+                        ),
+                    )
+                )
             if archive_manifest is not None:
                 if archive_release_bytes is None:
                     raise ValueError("GraphRelease bundle release content is missing")

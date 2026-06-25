@@ -312,6 +312,11 @@ def test_release_verify_cli_accepts_immutable_release(tmp_path, capsys) -> None:
                     "indexRevision": "support-docs-v17",
                 }
             },
+            "supplyChain": {
+                "sbomRef": "oci://registry.example.com/graphblocks/sbom@sha256:sbom",
+                "provenanceRef": "oci://registry.example.com/graphblocks/provenance@sha256:provenance",
+                "signaturePolicy": "production-publishers",
+            },
         },
     }
     path = tmp_path / "release.yaml"
@@ -357,6 +362,11 @@ def test_release_verify_cli_rejects_mutable_production_references(tmp_path, caps
                     "indexRevision": "current",
                 }
             },
+            "supplyChain": {
+                "sbomRef": "oci://registry.example.com/graphblocks/sbom:latest",
+                "provenanceRef": "oci://registry.example.com/graphblocks/provenance:latest",
+                "signaturePolicy": "production-publishers",
+            },
         },
     }
     path = tmp_path / "release.yaml"
@@ -372,6 +382,8 @@ def test_release_verify_cli_rejects_mutable_production_references(tmp_path, caps
         "images.control",
         "knowledge.support_docs.index_revision",
         "prompts.answer",
+        "supply_chain.provenance_ref",
+        "supply_chain.sbom_ref",
     ]
 
 
