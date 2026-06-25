@@ -305,6 +305,40 @@ fn output_gate_rejects_policy_decision_without_input_digest() -> Result<(), Outp
 }
 
 #[test]
+fn replace_decision_requires_policy_approved_replacement_content() -> Result<(), OutputGateError> {
+    let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
+    let decision = OutputPolicyDecision::replace(
+        "decision-replace",
+        Some(1),
+        Vec::<GenerationChunk>::new(),
+        "sha256:replace",
+    );
+
+    gate.record_chunk(GenerationChunk::text(
+        "stream-1",
+        "response-1",
+        1,
+        "blocked draft",
+    ))?;
+
+    assert_eq!(
+        decision.validate(),
+        Err(OutputPolicyDecisionError::ReplacementContentMissing {
+            decision_id: "decision-replace".to_owned(),
+        }),
+    );
+    assert_eq!(
+        gate.apply_decision(decision, 1_000),
+        Err(OutputGateError::ReplacementContentMissing {
+            decision_id: "decision-replace".to_owned(),
+        }),
+    );
+    assert_eq!(gate.last_policy_accepted_sequence(), 0);
+    assert_eq!(gate.last_client_delivered_sequence(), 0);
+    Ok(())
+}
+
+#[test]
 fn policy_abort_cuts_off_delivery_and_rejects_late_chunks() -> Result<(), OutputGateError> {
     let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
 

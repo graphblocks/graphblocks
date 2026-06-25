@@ -251,6 +251,9 @@ class OutputPolicyDecision:
             raise ValueError("output policy decisions require an input digest")
         if self.accepted_through_sequence is not None and self.accepted_through_sequence < 0:
             raise ValueError("accepted_through_sequence must be non-negative")
+        replacement_parts = tuple(self.replacement_parts)
+        if self.disposition == "replace" and not replacement_parts:
+            raise ValueError("replace output policy decisions require replacement content")
         redactions: list[MappingProxyType[str, object]] = []
         for redaction in self.redactions:
             redaction_copy = dict(redaction)
@@ -267,7 +270,7 @@ class OutputPolicyDecision:
                 if start > end:
                     raise ValueError("redaction range must not be reversed")
             redactions.append(MappingProxyType(redaction_copy))
-        object.__setattr__(self, "replacement_parts", tuple(self.replacement_parts))
+        object.__setattr__(self, "replacement_parts", replacement_parts)
         object.__setattr__(self, "redactions", tuple(redactions))
         object.__setattr__(self, "reason_codes", tuple(self.reason_codes))
         object.__setattr__(self, "policy_refs", tuple(self.policy_refs))

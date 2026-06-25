@@ -260,6 +260,7 @@ pub struct OutputPolicyDecision {
 pub enum OutputPolicyDecisionError {
     MissingDecisionId,
     MissingInputDigest { decision_id: String },
+    ReplacementContentMissing { decision_id: String },
     InvalidRedactionInstruction { path: String },
 }
 
@@ -270,6 +271,11 @@ impl OutputPolicyDecision {
         }
         if self.input_digest.trim().is_empty() {
             return Err(OutputPolicyDecisionError::MissingInputDigest {
+                decision_id: self.decision_id.clone(),
+            });
+        }
+        if self.disposition == OutputDisposition::Replace && self.replacement_chunks.is_empty() {
+            return Err(OutputPolicyDecisionError::ReplacementContentMissing {
                 decision_id: self.decision_id.clone(),
             });
         }
@@ -879,6 +885,9 @@ pub enum OutputGateError {
     MissingInputDigest {
         decision_id: String,
     },
+    ReplacementContentMissing {
+        decision_id: String,
+    },
     PolicyStopped,
 }
 
@@ -1047,6 +1056,9 @@ impl OutputDeliveryGate {
                 }
                 OutputPolicyDecisionError::MissingInputDigest { decision_id } => {
                     Err(OutputGateError::MissingInputDigest { decision_id })
+                }
+                OutputPolicyDecisionError::ReplacementContentMissing { decision_id } => {
+                    Err(OutputGateError::ReplacementContentMissing { decision_id })
                 }
                 OutputPolicyDecisionError::InvalidRedactionInstruction { path } => {
                     Err(OutputGateError::InvalidRedactionInstruction { path })
