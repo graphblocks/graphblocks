@@ -537,7 +537,34 @@ fn admission_rejects_required_idempotency_without_key() {
             idempotency_key: Some(" ".to_owned()),
             admitted_at_unix_ms: 1_200,
         }),
-        Err(ToolAdmissionError::IdempotencyKeyRequired {
+        Err(ToolAdmissionError::EmptyIdempotencyKey {
+            tool_call_id: "call-1".to_owned()
+        }),
+    );
+}
+
+#[test]
+fn admission_rejects_blank_provided_optional_idempotency_key() {
+    let mut resolved_tool = resolved_process_tool();
+    resolved_tool.binding.approval = ToolApproval::Never;
+    resolved_tool.binding.idempotency = ToolIdempotency::Optional;
+    let call = process_call(&resolved_tool);
+    let schemas = process_schema_registry();
+    let policy_decision = allow_tool_policy_decision();
+
+    assert_eq!(
+        ToolAdmission::admit(ToolAdmissionRequest {
+            call,
+            resolved_tool: &resolved_tool,
+            schema_registry: &schemas,
+            policy_decision: &policy_decision,
+            expected_policy_input_digest: &policy_decision.input_digest,
+            approval: None,
+            principal_id: "user-1",
+            idempotency_key: Some(" ".to_owned()),
+            admitted_at_unix_ms: 1_200,
+        }),
+        Err(ToolAdmissionError::EmptyIdempotencyKey {
             tool_call_id: "call-1".to_owned()
         }),
     );

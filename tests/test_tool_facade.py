@@ -1116,7 +1116,31 @@ def test_tool_admission_requires_approval_and_idempotency_key() -> None:
             admitted_at="2026-06-23T00:00:01Z",
             now=1_200,
         )
-    assert str(blank_idempotency_error.value) == "tool call call-1 requires an idempotency key"
+    assert str(blank_idempotency_error.value) == "tool call call-1 requires a non-empty idempotency key"
+
+
+def test_tool_admission_rejects_blank_provided_optional_idempotency_key() -> None:
+    base_resolved = _resolved_process_tool()
+    resolved = replace(
+        base_resolved,
+        binding=replace(base_resolved.binding, approval="never", idempotency="optional"),
+    )
+    call = _process_call(resolved)
+
+    with pytest.raises(ToolAdmissionError) as error:
+        admit_tool_call(
+            call,
+            resolved,
+            _process_schema_registry(),
+            policy_decision=_allow_tool_policy_decision(),
+            expected_policy_input_digest=_allow_tool_policy_decision().input_digest,
+            principal_id="user-1",
+            idempotency_key=" ",
+            admitted_at="2026-06-23T00:00:01Z",
+            now=1_200,
+        )
+
+    assert str(error.value) == "tool call call-1 requires a non-empty idempotency key"
 
 
 def test_tool_admission_requires_approval_when_policy_obligates_it() -> None:

@@ -67,6 +67,9 @@ pub enum ToolAdmissionError {
     IdempotencyKeyRequired {
         tool_call_id: String,
     },
+    EmptyIdempotencyKey {
+        tool_call_id: String,
+    },
     InputSchemaMissing {
         schema_id: String,
     },
@@ -311,15 +314,18 @@ impl ToolAdmission {
                 tool_call_id: request.call.tool_call_id,
             });
         }
-        if request.resolved_tool.binding.idempotency == ToolIdempotency::Required
-            && request
-                .idempotency_key
-                .as_deref()
-                .is_none_or(|idempotency_key| idempotency_key.trim().is_empty())
-        {
-            return Err(ToolAdmissionError::IdempotencyKeyRequired {
-                tool_call_id: request.call.tool_call_id,
-            });
+        match request.idempotency_key.as_deref() {
+            Some(idempotency_key) if idempotency_key.trim().is_empty() => {
+                return Err(ToolAdmissionError::EmptyIdempotencyKey {
+                    tool_call_id: request.call.tool_call_id,
+                });
+            }
+            None if request.resolved_tool.binding.idempotency == ToolIdempotency::Required => {
+                return Err(ToolAdmissionError::IdempotencyKeyRequired {
+                    tool_call_id: request.call.tool_call_id,
+                });
+            }
+            _ => {}
         }
 
         let mut call = request.call;
