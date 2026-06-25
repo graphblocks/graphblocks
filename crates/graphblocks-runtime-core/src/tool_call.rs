@@ -177,6 +177,15 @@ impl ToolCall {
                 revision: self.revision,
             });
         }
+        if self
+            .depends_on
+            .iter()
+            .any(|dependency| dependency.trim().is_empty())
+        {
+            return Err(ToolCallError::EmptyField {
+                field: "depends_on",
+            });
+        }
         Ok(())
     }
 

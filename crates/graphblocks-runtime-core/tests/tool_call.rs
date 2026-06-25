@@ -173,4 +173,18 @@ fn tool_call_validates_revision_and_required_identity_fields() {
             field: "arguments_digest"
         })
     );
+
+    let empty_dependency = ToolCall {
+        revision: 1,
+        arguments_digest: "sha256:args".to_owned(),
+        depends_on: vec!["call-a".to_owned(), " ".to_owned()],
+        ..empty_arguments_digest
+    };
+
+    assert_eq!(
+        empty_dependency.validate(),
+        Err(ToolCallError::EmptyField {
+            field: "depends_on"
+        })
+    );
 }

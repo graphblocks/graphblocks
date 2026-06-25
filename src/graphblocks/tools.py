@@ -874,6 +874,8 @@ class ToolCall:
             raise ValueError("tool call revision must be positive")
         object.__setattr__(self, "arguments", _freeze_json_value(self.arguments))
         object.__setattr__(self, "depends_on", tuple(self.depends_on))
+        if any(not dependency.strip() for dependency in self.depends_on):
+            raise ValueError("tool call dependency ids must not be empty")
 
     def revise_arguments(self, arguments: object) -> ToolCall:
         if self.status != "validated":
