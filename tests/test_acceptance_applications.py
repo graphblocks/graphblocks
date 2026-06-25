@@ -94,3 +94,96 @@ def test_acceptance_manifest_reports_missing_profile_application(monkeypatch) ->
             "message": "profile references an acceptance application with no manifest entry",
         }
     ]
+
+
+def test_conformance_profile_set_resolves_inherited_tck_and_acceptance_requirements(monkeypatch) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    profile_set = graphblocks_testing.ConformanceProfileSet.from_document(
+        _load_yaml(ROOT / "src" / "graphblocks" / "data" / "conformance-profiles.yaml")
+    )
+
+    claim = profile_set.claim_requirements(("GB-C2-AI-APPLICATION",))
+
+    assert claim.profile_ids == ("GB-C0-SCHEMA", "GB-C1-LOCAL-RUNTIME", "GB-C2-AI-APPLICATION")
+    assert claim.tck_suites == ("compiler", "runtime", "schema", "sequence")
+    assert claim.acceptance_applications == (
+        "direct-file-analysis",
+        "document-ingestion",
+        "enterprise-rag",
+        "multi-turn-chat",
+    )
+    assert "ConformanceProfileSet" in graphblocks_testing.__all__
+
+
+def test_conformance_profile_claim_validates_tck_and_acceptance_evidence(monkeypatch) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    profile_set = graphblocks_testing.ConformanceProfileSet.from_document(
+        _load_yaml(ROOT / "src" / "graphblocks" / "data" / "conformance-profiles.yaml")
+    )
+    manifest = graphblocks_testing.AcceptanceManifest.from_document(
+        _load_yaml(ROOT / "acceptance" / "applications.yaml")
+    )
+    acceptance_coverage = manifest.coverage_for_conformance(
+        _load_yaml(ROOT / "src" / "graphblocks" / "data" / "conformance-profiles.yaml"),
+        root=ROOT,
+    )
+    passing_reports = {
+        suite: graphblocks_testing.TckReport(
+            profile=suite,
+            results=(graphblocks_testing.TckResult(suite, "compiler", "passed"),),
+        )
+        for suite in ("compiler", "runtime", "schema", "sequence")
+    }
+
+    validation = profile_set.validate_claim(
+        ("GB-C2-AI-APPLICATION",),
+        tck_reports=passing_reports,
+        acceptance_coverage=acceptance_coverage,
+    )
+
+    assert validation.ok
+    assert validation.issue_contracts() == []
+    assert validation.claim.profile_ids == ("GB-C0-SCHEMA", "GB-C1-LOCAL-RUNTIME", "GB-C2-AI-APPLICATION")
+
+
+def test_conformance_profile_claim_reports_missing_inherited_tck(monkeypatch) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    profile_set = graphblocks_testing.ConformanceProfileSet.from_document(
+        _load_yaml(ROOT / "src" / "graphblocks" / "data" / "conformance-profiles.yaml")
+    )
+
+    validation = profile_set.validate_claim(
+        ("GB-C2-AI-APPLICATION",),
+        tck_reports={
+            "compiler": graphblocks_testing.TckReport(
+                profile="compiler",
+                results=(graphblocks_testing.TckResult("compiler", "compiler", "passed"),),
+            )
+        },
+        acceptance_coverage=graphblocks_testing.AcceptanceCoverageResult(),
+    )
+
+    assert not validation.ok
+    assert validation.issue_contracts() == [
+        {
+            "code": "ConformanceTckMissing",
+            "profile_id": "GB-C2-AI-APPLICATION",
+            "suite": "runtime",
+            "path": "$.profiles.GB-C2-AI-APPLICATION.tck.runtime",
+            "message": "claimed conformance profile requires a passing TCK suite with no report",
+        },
+        {
+            "code": "ConformanceTckMissing",
+            "profile_id": "GB-C2-AI-APPLICATION",
+            "suite": "schema",
+            "path": "$.profiles.GB-C2-AI-APPLICATION.tck.schema",
+            "message": "claimed conformance profile requires a passing TCK suite with no report",
+        },
+        {
+            "code": "ConformanceTckMissing",
+            "profile_id": "GB-C2-AI-APPLICATION",
+            "suite": "sequence",
+            "path": "$.profiles.GB-C2-AI-APPLICATION.tck.sequence",
+            "message": "claimed conformance profile requires a passing TCK suite with no report",
+        },
+    ]

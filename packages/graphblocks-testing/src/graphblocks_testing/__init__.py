@@ -34,6 +34,14 @@ TckCaseKind = Literal["compiler", "runtime"]
 TckResultStatus = Literal["passed", "failed"]
 
 
+def _string_tuple(value: object) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        return (value,)
+    return tuple(str(item) for item in value or ())
+
+
 @dataclass(frozen=True, slots=True)
 class TckCase:
     case_id: str
@@ -279,6 +287,211 @@ class AcceptanceCoverageResult:
 
 
 @dataclass(frozen=True, slots=True)
+class ConformanceProfile:
+    profile_id: str
+    status: str
+    extends: tuple[str, ...] = field(default_factory=tuple)
+    requires: tuple[str, ...] = field(default_factory=tuple)
+    tck_suites: tuple[str, ...] = field(default_factory=tuple)
+    acceptance_applications: tuple[str, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        if not self.profile_id.strip():
+            raise ValueError("conformance profile id must not be empty")
+        object.__setattr__(self, "extends", tuple(str(profile_id) for profile_id in self.extends))
+        object.__setattr__(self, "requires", tuple(str(requirement) for requirement in self.requires))
+        object.__setattr__(self, "tck_suites", tuple(str(suite) for suite in self.tck_suites))
+        object.__setattr__(
+            self,
+            "acceptance_applications",
+            tuple(str(application_id) for application_id in self.acceptance_applications),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ConformanceClaimRequirements:
+    profile_ids: tuple[str, ...]
+    tck_suites: tuple[str, ...]
+    acceptance_applications: tuple[str, ...]
+
+    def claim_contract(self) -> dict[str, object]:
+        return {
+            "profile_ids": list(self.profile_ids),
+            "tck_suites": list(self.tck_suites),
+            "acceptance_applications": list(self.acceptance_applications),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ConformanceClaimIssue:
+    code: str
+    profile_id: str
+    suite: str
+    path: str
+    message: str
+
+    def issue_contract(self) -> dict[str, str]:
+        return {
+            "code": self.code,
+            "profile_id": self.profile_id,
+            "suite": self.suite,
+            "path": self.path,
+            "message": self.message,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ConformanceClaimValidation:
+    claim: ConformanceClaimRequirements
+    issues: tuple[ConformanceClaimIssue, ...] = field(default_factory=tuple)
+
+    @property
+    def ok(self) -> bool:
+        return not self.issues
+
+    def issue_contracts(self) -> list[dict[str, str]]:
+        return [issue.issue_contract() for issue in self.issues]
+
+
+@dataclass(frozen=True, slots=True)
+class ConformanceProfileSet:
+    profiles: tuple[ConformanceProfile, ...]
+
+    def __post_init__(self) -> None:
+        seen: set[str] = set()
+        for profile in self.profiles:
+            if profile.profile_id in seen:
+                raise ValueError(f"duplicate conformance profile id {profile.profile_id!r}")
+            seen.add(profile.profile_id)
+
+    @classmethod
+    def from_document(cls, document: Mapping[str, object]) -> ConformanceProfileSet:
+        if document.get("kind") != "ConformanceProfileSet":
+            raise ValueError("conformance profile document kind must be ConformanceProfileSet")
+        spec = document.get("spec")
+        if not isinstance(spec, Mapping):
+            raise ValueError("conformance profile document spec must be a mapping")
+        raw_profiles = spec.get("profiles", ())
+        if not isinstance(raw_profiles, list):
+            raise ValueError("conformance profile spec.profiles must be a list")
+        profiles: list[ConformanceProfile] = []
+        for index, raw_profile in enumerate(raw_profiles):
+            if not isinstance(raw_profile, Mapping):
+                raise ValueError(f"conformance profile {index} must be a mapping")
+            profile_id = raw_profile.get("id")
+            if not isinstance(profile_id, str):
+                raise ValueError(f"conformance profile {index} id must be a string")
+            status = raw_profile.get("status", "")
+            raw_extends = raw_profile.get("extends", ())
+            raw_requires = raw_profile.get("requires", ())
+            raw_tck = raw_profile.get("tck", ())
+            raw_acceptance = raw_profile.get("acceptanceApplications", ())
+            profiles.append(
+                ConformanceProfile(
+                    profile_id=profile_id,
+                    status=str(status),
+                    extends=_string_tuple(raw_extends),
+                    requires=_string_tuple(raw_requires),
+                    tck_suites=_string_tuple(raw_tck),
+                    acceptance_applications=_string_tuple(raw_acceptance),
+                )
+            )
+        return cls(tuple(profiles))
+
+    def by_id(self, profile_id: str) -> ConformanceProfile:
+        for profile in self.profiles:
+            if profile.profile_id == profile_id:
+                return profile
+        raise KeyError(profile_id)
+
+    def claim_requirements(self, profile_ids: tuple[str, ...]) -> ConformanceClaimRequirements:
+        included: set[str] = set()
+
+        def include(profile_id: str) -> None:
+            if profile_id in included:
+                return
+            profile = self.by_id(profile_id)
+            for parent_id in profile.extends:
+                include(parent_id)
+            included.add(profile.profile_id)
+
+        for profile_id in profile_ids:
+            include(profile_id)
+
+        ordered_profiles = tuple(profile.profile_id for profile in self.profiles if profile.profile_id in included)
+        tck_suites = tuple(
+            sorted(
+                {
+                    suite
+                    for profile in self.profiles
+                    if profile.profile_id in included
+                    for suite in profile.tck_suites
+                    if suite
+                }
+            )
+        )
+        acceptance_applications: list[str] = []
+        seen_acceptance: set[str] = set()
+        for profile in self.profiles:
+            if profile.profile_id not in included:
+                continue
+            for application_id in profile.acceptance_applications:
+                if application_id not in seen_acceptance:
+                    acceptance_applications.append(application_id)
+                    seen_acceptance.add(application_id)
+        return ConformanceClaimRequirements(
+            profile_ids=ordered_profiles,
+            tck_suites=tck_suites,
+            acceptance_applications=tuple(acceptance_applications),
+        )
+
+    def validate_claim(
+        self,
+        profile_ids: tuple[str, ...],
+        *,
+        tck_reports: Mapping[str, TckReport],
+        acceptance_coverage: AcceptanceCoverageResult,
+    ) -> ConformanceClaimValidation:
+        claim = self.claim_requirements(profile_ids)
+        issues: list[ConformanceClaimIssue] = []
+        claimed_profile = profile_ids[-1] if profile_ids else ""
+        for suite in claim.tck_suites:
+            report = tck_reports.get(suite)
+            if report is None:
+                issues.append(
+                    ConformanceClaimIssue(
+                        code="ConformanceTckMissing",
+                        profile_id=claimed_profile,
+                        suite=suite,
+                        path=f"$.profiles.{claimed_profile}.tck.{suite}",
+                        message="claimed conformance profile requires a passing TCK suite with no report",
+                    )
+                )
+            elif not report.ok:
+                issues.append(
+                    ConformanceClaimIssue(
+                        code="ConformanceTckFailed",
+                        profile_id=claimed_profile,
+                        suite=suite,
+                        path=f"$.profiles.{claimed_profile}.tck.{suite}",
+                        message="claimed conformance profile requires a passing TCK suite but the report failed",
+                    )
+                )
+        if claim.acceptance_applications and not acceptance_coverage.ok:
+            for coverage_issue in acceptance_coverage.issues:
+                issues.append(
+                    ConformanceClaimIssue(
+                        code="ConformanceAcceptanceCoverageFailed",
+                        profile_id=coverage_issue.profile_id or claimed_profile,
+                        suite="acceptance",
+                        path=coverage_issue.path,
+                        message=coverage_issue.message,
+                    )
+                )
+        return ConformanceClaimValidation(claim=claim, issues=tuple(issues))
+
+
+@dataclass(frozen=True, slots=True)
 class AcceptanceManifest:
     applications: tuple[AcceptanceApplication, ...]
 
@@ -502,6 +715,11 @@ __all__ = [
     "AcceptanceCoverageResult",
     "AcceptanceManifest",
     "CancellationToken",
+    "ConformanceClaimIssue",
+    "ConformanceClaimRequirements",
+    "ConformanceClaimValidation",
+    "ConformanceProfile",
+    "ConformanceProfileSet",
     "ExecutionJournal",
     "InMemoryRunStore",
     "InProcessRuntime",
