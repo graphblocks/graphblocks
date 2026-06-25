@@ -31,6 +31,7 @@ from graphblocks.policy import (
     PolicyEnforcementRecord,
     PolicyEnforcementStatus,
     PolicyEnforcer,
+    PolicyFailMode,
     PolicyObligation,
     PolicyProfile,
     PolicyRequest,
@@ -40,12 +41,14 @@ from graphblocks.policy import (
     PolicyTestExpectation,
     PolicyTestReport,
     PolicyTestResult,
+    PolicyUnavailableError,
     PrincipalRef,
     ResourceRef,
     RuleEffect,
     StaticPolicyEvaluator,
     resolve_policy_snapshot,
     run_policy_tests,
+    unavailable_policy_decision,
 )
 
 
@@ -75,6 +78,7 @@ __all__ = [
     "PolicyEnforcementRecord",
     "PolicyEnforcementStatus",
     "PolicyEnforcer",
+    "PolicyFailMode",
     "PolicyObligation",
     "PolicyProfile",
     "PolicyRequest",
@@ -84,6 +88,7 @@ __all__ = [
     "PolicyTestExpectation",
     "PolicyTestReport",
     "PolicyTestResult",
+    "PolicyUnavailableError",
     "PrincipalRef",
     "ProviderCancellation",
     "ResourceRef",
@@ -93,4 +98,5 @@ __all__ = [
     "ViolationAction",
     "resolve_policy_snapshot",
     "run_policy_tests",
+    "unavailable_policy_decision",
 ]

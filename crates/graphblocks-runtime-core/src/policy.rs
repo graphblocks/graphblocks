@@ -154,6 +154,25 @@ impl PolicyEffect {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PolicyFailMode {
+    FailClosed,
+    FailOpenWithAudit,
+    UseCachedDecision,
+    Defer,
+}
+
+impl PolicyFailMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::FailClosed => "fail_closed",
+            Self::FailOpenWithAudit => "fail_open_with_audit",
+            Self::UseCachedDecision => "use_cached_decision",
+            Self::Defer => "defer",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RuleEffect {
     Allow,
     Deny,
@@ -839,6 +858,70 @@ fn policy_decision(
         valid_until: None,
         input_digest,
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PolicyUnavailableError {
+    CachedDecisionRequired,
+    CachedDecisionInputDigestMismatch,
+    CachedDecisionExpired,
+}
+
+pub fn unavailable_policy_decision(
+    request: &PolicyRequest,
+    fail_mode: PolicyFailMode,
+    evaluated_at: impl Into<String>,
+    cached_decision: Option<&PolicyDecision>,
+) -> Result<PolicyDecision, PolicyUnavailableError> {
+    let evaluated_at = evaluated_at.into();
+    let digested_request = request.clone().with_input_digest();
+
+    if fail_mode == PolicyFailMode::UseCachedDecision {
+        let Some(cached_decision) = cached_decision else {
+            return Err(PolicyUnavailableError::CachedDecisionRequired);
+        };
+        if cached_decision.input_digest != digested_request.input_digest {
+            return Err(PolicyUnavailableError::CachedDecisionInputDigestMismatch);
+        }
+        if cached_decision
+            .valid_until
+            .as_ref()
+            .is_none_or(|valid_until| valid_until.as_str() <= evaluated_at.as_str())
+        {
+            return Err(PolicyUnavailableError::CachedDecisionExpired);
+        }
+        return Ok(cached_decision.clone());
+    }
+
+    let (effect, obligations) = match fail_mode {
+        PolicyFailMode::FailClosed => (PolicyEffect::Deny, Vec::new()),
+        PolicyFailMode::FailOpenWithAudit => (
+            PolicyEffect::AllowWithObligations,
+            vec![
+                PolicyObligation::new("policy_unavailable_audit", "capture_audit")
+                    .with_parameter("fail_mode", json!(fail_mode.as_str()))
+                    .with_parameter(
+                        "enforcement_point",
+                        json!(request.enforcement_point.as_str()),
+                    ),
+            ],
+        ),
+        PolicyFailMode::Defer => (PolicyEffect::Defer, Vec::new()),
+        PolicyFailMode::UseCachedDecision => {
+            return Err(PolicyUnavailableError::CachedDecisionRequired);
+        }
+    };
+
+    Ok(policy_decision(
+        effect,
+        vec![
+            "policy_unavailable".to_string(),
+            fail_mode.as_str().to_string(),
+        ],
+        obligations,
+        evaluated_at,
+        digested_request.input_digest,
+    ))
 }
 
 #[derive(Clone, Debug, PartialEq)]

@@ -1,7 +1,8 @@
 use graphblocks_runtime_core::policy::{
-    EnforcementPoint, EntitlementSnapshot, PolicyBundle, PolicyEnforcementRecord,
-    PolicyEnforcementRecordError, PolicyObligation, PolicyProfile, PolicyRequest, PolicyRule,
-    PrincipalRef, ResourceRef, RuleEffect, StaticPolicyEvaluator, resolve_policy_snapshot,
+    EnforcementPoint, EntitlementSnapshot, PolicyBundle, PolicyDecision, PolicyEffect,
+    PolicyEnforcementRecord, PolicyEnforcementRecordError, PolicyFailMode, PolicyObligation,
+    PolicyProfile, PolicyRequest, PolicyRule, PolicyUnavailableError, PrincipalRef, ResourceRef,
+    RuleEffect, StaticPolicyEvaluator, resolve_policy_snapshot, unavailable_policy_decision,
 };
 use serde_json::json;
 
@@ -237,6 +238,128 @@ fn static_policy_evaluator_defaults_to_deny_without_matching_rule() {
 
     assert_eq!(decision.effect.as_str(), "deny");
     assert_eq!(decision.reason_codes, vec!["default_deny"]);
+}
+
+#[test]
+fn unavailable_external_policy_applies_declared_fail_modes() {
+    let request = PolicyRequest::new(
+        "req-pdp-down",
+        EnforcementPoint::BeforeToolOrEffect,
+        "tool.run",
+        ResourceRef::new("tool:ticket.create").with_resource_kind("tool"),
+        "2026-06-23T00:00:00Z",
+    )
+    .with_principal(PrincipalRef::new("user-1"));
+
+    let closed = unavailable_policy_decision(
+        &request,
+        PolicyFailMode::FailClosed,
+        "2026-06-23T00:00:01Z",
+        None,
+    )
+    .expect("fail closed produces a policy decision");
+    let fail_open = unavailable_policy_decision(
+        &request,
+        PolicyFailMode::FailOpenWithAudit,
+        "2026-06-23T00:00:01Z",
+        None,
+    )
+    .expect("fail open with audit produces a policy decision");
+    let deferred = unavailable_policy_decision(
+        &request,
+        PolicyFailMode::Defer,
+        "2026-06-23T00:00:01Z",
+        None,
+    )
+    .expect("defer produces a policy decision");
+
+    assert_eq!(closed.effect, PolicyEffect::Deny);
+    assert_eq!(
+        closed.reason_codes,
+        vec!["policy_unavailable", "fail_closed"]
+    );
+    assert_eq!(
+        closed.input_digest,
+        request.clone().with_input_digest().input_digest
+    );
+    assert_eq!(fail_open.effect, PolicyEffect::AllowWithObligations);
+    assert_eq!(fail_open.obligations.len(), 1);
+    assert_eq!(
+        fail_open.obligations[0].obligation_id,
+        "policy_unavailable_audit"
+    );
+    assert_eq!(
+        fail_open.obligations[0].parameters.get("enforcement_point"),
+        Some(&json!("before_tool_or_effect"))
+    );
+    assert_eq!(deferred.effect, PolicyEffect::Defer);
+    assert_eq!(deferred.reason_codes, vec!["policy_unavailable", "defer"]);
+}
+
+#[test]
+fn unavailable_policy_cache_reuse_requires_matching_digest_and_ttl() {
+    let request = PolicyRequest::new(
+        "req-cache",
+        EnforcementPoint::BeforeProviderCall,
+        "model.generate",
+        ResourceRef::new("model:support").with_resource_kind("model"),
+        "2026-06-23T00:00:00Z",
+    );
+    let digested_request = request.clone().with_input_digest();
+    let cached = PolicyDecision {
+        decision_id: "decision:cached".to_string(),
+        effect: PolicyEffect::Allow,
+        reason_codes: vec!["cached_allow".to_string()],
+        policy_refs: vec!["bundle-1".to_string()],
+        obligations: Vec::new(),
+        advice: Vec::new(),
+        evaluated_at: "2026-06-23T00:00:00Z".to_string(),
+        valid_until: Some("2026-06-23T00:05:00Z".to_string()),
+        input_digest: digested_request.input_digest,
+    };
+
+    let reused = unavailable_policy_decision(
+        &request,
+        PolicyFailMode::UseCachedDecision,
+        "2026-06-23T00:01:00Z",
+        Some(&cached),
+    )
+    .expect("matching unexpired cached decision is accepted");
+
+    assert_eq!(reused, cached);
+    assert_eq!(
+        unavailable_policy_decision(
+            &request,
+            PolicyFailMode::UseCachedDecision,
+            "2026-06-23T00:01:00Z",
+            None,
+        ),
+        Err(PolicyUnavailableError::CachedDecisionRequired)
+    );
+    assert_eq!(
+        unavailable_policy_decision(
+            &PolicyRequest::new(
+                "req-cache-changed",
+                EnforcementPoint::BeforeProviderCall,
+                "tool.run",
+                ResourceRef::new("tool:search").with_resource_kind("tool"),
+                "2026-06-23T00:00:00Z",
+            ),
+            PolicyFailMode::UseCachedDecision,
+            "2026-06-23T00:01:00Z",
+            Some(&cached),
+        ),
+        Err(PolicyUnavailableError::CachedDecisionInputDigestMismatch)
+    );
+    assert_eq!(
+        unavailable_policy_decision(
+            &request,
+            PolicyFailMode::UseCachedDecision,
+            "2026-06-23T00:05:00Z",
+            Some(&cached),
+        ),
+        Err(PolicyUnavailableError::CachedDecisionExpired)
+    );
 }
 
 #[test]

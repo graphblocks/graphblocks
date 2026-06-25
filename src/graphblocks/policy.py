@@ -9,6 +9,7 @@ from .canonical import canonical_hash
 
 
 PolicyEffect = Literal["allow", "deny", "allow_with_obligations", "defer"]
+PolicyFailMode = Literal["fail_closed", "fail_open_with_audit", "use_cached_decision", "defer"]
 RuleEffect = Literal["allow", "deny", "obligate"]
 PolicyEnforcementStatus = Literal["enforced", "blocked", "deferred", "failed"]
 EnforcementPoint = Literal[
@@ -28,9 +29,14 @@ EnforcementPoint = Literal[
 ]
 
 VALID_POLICY_EFFECTS = frozenset(get_args(PolicyEffect))
+VALID_POLICY_FAIL_MODES = frozenset(get_args(PolicyFailMode))
 VALID_RULE_EFFECTS = frozenset(get_args(RuleEffect))
 VALID_ENFORCEMENT_STATUSES = frozenset(get_args(PolicyEnforcementStatus))
 VALID_ENFORCEMENT_POINTS = frozenset(get_args(EnforcementPoint))
+
+
+class PolicyUnavailableError(RuntimeError):
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -471,6 +477,64 @@ class PolicyEnforcer:
             metadata=metadata,
         )
         return PolicyEnforcementResult(decision=decision, record=record)
+
+
+def unavailable_policy_decision(
+    request: PolicyRequest,
+    *,
+    fail_mode: PolicyFailMode,
+    evaluated_at: str,
+    cached_decision: PolicyDecision | None = None,
+) -> PolicyDecision:
+    if fail_mode not in VALID_POLICY_FAIL_MODES:
+        raise ValueError(f"unknown policy fail mode {fail_mode!r}")
+    digested_request = request if request.input_digest else request.with_input_digest()
+
+    if fail_mode == "use_cached_decision":
+        if cached_decision is None:
+            raise PolicyUnavailableError("cached policy decision is required")
+        if cached_decision.input_digest != digested_request.input_digest:
+            raise PolicyUnavailableError("cached policy decision input digest does not match request")
+        if cached_decision.valid_until is None or cached_decision.valid_until <= evaluated_at:
+            raise PolicyUnavailableError("cached policy decision expired")
+        return cached_decision
+
+    if fail_mode == "fail_closed":
+        effect: PolicyEffect = "deny"
+        obligations: tuple[PolicyObligation, ...] = ()
+    elif fail_mode == "fail_open_with_audit":
+        effect = "allow_with_obligations"
+        obligations = (
+            PolicyObligation(
+                "policy_unavailable_audit",
+                "capture_audit",
+                {
+                    "fail_mode": fail_mode,
+                    "enforcement_point": request.enforcement_point,
+                },
+            ),
+        )
+    else:
+        effect = "defer"
+        obligations = ()
+
+    reason_codes = ("policy_unavailable", fail_mode)
+    decision_id = "decision:" + canonical_hash(
+        {
+            "input_digest": digested_request.input_digest,
+            "effect": effect,
+            "reason_codes": reason_codes,
+        }
+    )
+    return PolicyDecision(
+        decision_id=decision_id,
+        effect=effect,
+        reason_codes=reason_codes,
+        policy_refs=("policy_unavailable",),
+        obligations=obligations,
+        evaluated_at=evaluated_at,
+        input_digest=digested_request.input_digest,
+    )
 
 
 @dataclass(frozen=True, slots=True)

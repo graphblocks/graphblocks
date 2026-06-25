@@ -42,6 +42,8 @@ def test_policy_package_exposes_static_evaluator_and_output_gate_contract(monkey
     assert update.cutoff is not None
     assert update.cutoff.policy_decision_id == "output-decision-1"
     assert update.pending_tool_calls == "deny"
+    assert "PolicyUnavailableError" in graphblocks_policy.__all__
+    assert "unavailable_policy_decision" in graphblocks_policy.__all__
 
 
 def test_policy_package_exposes_declarative_output_policy_evaluator(monkeypatch) -> None:

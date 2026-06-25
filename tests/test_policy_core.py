@@ -15,10 +15,12 @@ from graphblocks.policy import (
     PolicyRule,
     PolicyTestCase,
     PolicyTestExpectation,
+    PolicyUnavailableError,
     PrincipalRef,
     ResourceRef,
     StaticPolicyEvaluator,
     run_policy_tests,
+    unavailable_policy_decision,
 )
 
 
@@ -278,6 +280,102 @@ def test_policy_enforcement_record_from_decision_validates_obligations() -> None
 
     assert record.decision_id == decision.decision_id
     assert record.enforced_obligation_ids == ("obl-1",)
+
+
+def test_unavailable_external_policy_applies_declared_fail_modes() -> None:
+    request = PolicyRequest(
+        request_id="req-pdp-down",
+        enforcement_point="before_tool_or_effect",
+        action="tool.run",
+        principal=PrincipalRef("user-1"),
+        resource=ResourceRef("tool:ticket.create", resource_kind="tool"),
+        occurred_at="2026-06-23T00:00:00Z",
+    )
+
+    closed = unavailable_policy_decision(
+        request,
+        fail_mode="fail_closed",
+        evaluated_at="2026-06-23T00:00:01Z",
+    )
+    fail_open = unavailable_policy_decision(
+        request,
+        fail_mode="fail_open_with_audit",
+        evaluated_at="2026-06-23T00:00:01Z",
+    )
+    deferred = unavailable_policy_decision(
+        request,
+        fail_mode="defer",
+        evaluated_at="2026-06-23T00:00:01Z",
+    )
+
+    assert closed.effect == "deny"
+    assert closed.reason_codes == ("policy_unavailable", "fail_closed")
+    assert closed.input_digest == request.with_input_digest().input_digest
+    assert fail_open.effect == "allow_with_obligations"
+    assert fail_open.obligations == (
+        PolicyObligation(
+            "policy_unavailable_audit",
+            "capture_audit",
+            {"fail_mode": "fail_open_with_audit", "enforcement_point": "before_tool_or_effect"},
+        ),
+    )
+    assert deferred.effect == "defer"
+    assert deferred.reason_codes == ("policy_unavailable", "defer")
+
+
+def test_unavailable_policy_cache_reuse_requires_matching_digest_and_ttl() -> None:
+    request = PolicyRequest(
+        request_id="req-cache",
+        enforcement_point="before_provider_call",
+        action="model.generate",
+        resource=ResourceRef("model:support", resource_kind="model"),
+        occurred_at="2026-06-23T00:00:00Z",
+    )
+    digested_request = request.with_input_digest()
+    cached = PolicyDecision(
+        decision_id="decision:cached",
+        effect="allow",
+        reason_codes=("cached_allow",),
+        policy_refs=("bundle-1",),
+        evaluated_at="2026-06-23T00:00:00Z",
+        valid_until="2026-06-23T00:05:00Z",
+        input_digest=digested_request.input_digest,
+    )
+
+    reused = unavailable_policy_decision(
+        request,
+        fail_mode="use_cached_decision",
+        evaluated_at="2026-06-23T00:01:00Z",
+        cached_decision=cached,
+    )
+
+    assert reused == cached
+    with pytest.raises(PolicyUnavailableError, match="cached policy decision is required"):
+        unavailable_policy_decision(
+            request,
+            fail_mode="use_cached_decision",
+            evaluated_at="2026-06-23T00:01:00Z",
+        )
+    with pytest.raises(PolicyUnavailableError, match="input digest"):
+        unavailable_policy_decision(
+            PolicyRequest(
+                request_id="req-cache-changed",
+                enforcement_point="before_provider_call",
+                action="tool.run",
+                resource=ResourceRef("tool:search", resource_kind="tool"),
+                occurred_at="2026-06-23T00:00:00Z",
+            ),
+            fail_mode="use_cached_decision",
+            evaluated_at="2026-06-23T00:01:00Z",
+            cached_decision=cached,
+        )
+    with pytest.raises(PolicyUnavailableError, match="expired"):
+        unavailable_policy_decision(
+            request,
+            fail_mode="use_cached_decision",
+            evaluated_at="2026-06-23T00:05:00Z",
+            cached_decision=cached,
+        )
 
 
 def test_policy_enforcer_records_decision_and_enforcement_status() -> None:
