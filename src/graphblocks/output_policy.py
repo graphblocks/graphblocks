@@ -233,6 +233,8 @@ class OutputPolicyDecision:
     input_digest: str = ""
 
     def __post_init__(self) -> None:
+        if not self.decision_id.strip():
+            raise ValueError("output policy decisions require a decision id")
         if self.disposition not in VALID_OUTPUT_DISPOSITIONS:
             raise ValueError(f"invalid output disposition {self.disposition}")
         if self.provider_cancellation not in VALID_PROVIDER_CANCELLATIONS:

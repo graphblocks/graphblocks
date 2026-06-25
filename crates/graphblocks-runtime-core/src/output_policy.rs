@@ -241,11 +241,15 @@ pub struct OutputPolicyDecision {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OutputPolicyDecisionError {
+    MissingDecisionId,
     MissingInputDigest { decision_id: String },
 }
 
 impl OutputPolicyDecision {
     pub fn validate(&self) -> Result<(), OutputPolicyDecisionError> {
+        if self.decision_id.trim().is_empty() {
+            return Err(OutputPolicyDecisionError::MissingDecisionId);
+        }
         if self.input_digest.trim().is_empty() {
             return Err(OutputPolicyDecisionError::MissingInputDigest {
                 decision_id: self.decision_id.clone(),
@@ -754,6 +758,7 @@ pub enum OutputGateError {
     InvalidRedactionInstruction {
         path: String,
     },
+    MissingDecisionId,
     MissingInputDigest {
         decision_id: String,
     },
@@ -912,10 +917,15 @@ impl OutputDeliveryGate {
         if self.stopped.is_some() {
             return Err(OutputGateError::PolicyStopped);
         }
-        if decision.input_digest.trim().is_empty() {
-            return Err(OutputGateError::MissingInputDigest {
-                decision_id: decision.decision_id,
-            });
+        if let Err(source) = decision.validate() {
+            return match source {
+                OutputPolicyDecisionError::MissingDecisionId => {
+                    Err(OutputGateError::MissingDecisionId)
+                }
+                OutputPolicyDecisionError::MissingInputDigest { decision_id } => {
+                    Err(OutputGateError::MissingInputDigest { decision_id })
+                }
+            };
         }
 
         match decision.disposition {

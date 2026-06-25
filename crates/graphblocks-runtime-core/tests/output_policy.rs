@@ -84,6 +84,26 @@ fn policy_decision_cannot_accept_future_generation_sequences() -> Result<(), Out
 }
 
 #[test]
+fn output_policy_decision_requires_a_decision_id() -> Result<(), OutputGateError> {
+    let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
+    let decision = OutputPolicyDecision::allow(" ", Some(1), "sha256:input");
+
+    gate.record_chunk(GenerationChunk::text("stream-1", "response-1", 1, "hello"))?;
+
+    assert_eq!(
+        decision.validate(),
+        Err(OutputPolicyDecisionError::MissingDecisionId)
+    );
+    assert_eq!(
+        gate.apply_decision(decision, 1_000),
+        Err(OutputGateError::MissingDecisionId)
+    );
+    assert_eq!(gate.last_policy_accepted_sequence(), 0);
+    assert_eq!(gate.last_client_delivered_sequence(), 0);
+    Ok(())
+}
+
+#[test]
 fn output_cutoff_rejects_sequences_beyond_generated() {
     let policy_accepted_after_generated = OutputCutoff {
         stream_id: "stream-1".to_owned(),

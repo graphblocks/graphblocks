@@ -95,6 +95,13 @@ def test_output_policy_contract_rejects_unknown_literals() -> None:
     with pytest.raises(ValueError, match="invalid output disposition stream"):
         OutputPolicyDecision("decision-1", disposition="stream")
 
+    with pytest.raises(ValueError, match="output policy decisions require a decision id"):
+        OutputPolicyDecision.allow(
+            " ",
+            accepted_through_sequence=1,
+            input_digest="sha256:input",
+        )
+
     with pytest.raises(ValueError, match="output policy decisions require an input digest"):
         OutputPolicyDecision("decision-1", disposition="allow")
 
