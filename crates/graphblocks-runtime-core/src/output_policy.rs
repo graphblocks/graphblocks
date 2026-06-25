@@ -239,7 +239,21 @@ pub struct OutputPolicyDecision {
     pub input_digest: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum OutputPolicyDecisionError {
+    MissingInputDigest { decision_id: String },
+}
+
 impl OutputPolicyDecision {
+    pub fn validate(&self) -> Result<(), OutputPolicyDecisionError> {
+        if self.input_digest.trim().is_empty() {
+            return Err(OutputPolicyDecisionError::MissingInputDigest {
+                decision_id: self.decision_id.clone(),
+            });
+        }
+        Ok(())
+    }
+
     pub fn allow(
         decision_id: impl Into<String>,
         accepted_through_sequence: Option<u64>,

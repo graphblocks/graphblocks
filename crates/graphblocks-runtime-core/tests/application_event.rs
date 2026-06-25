@@ -7,7 +7,7 @@ use graphblocks_runtime_core::application_event::{
 use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory};
 use graphblocks_runtime_core::output_policy::{
     DraftDisposition, DurableResult, GenerationChunk, OutputCutoff, OutputCutoffError,
-    OutputPolicyDecision, TerminalReason,
+    OutputPolicyDecision, OutputPolicyDecisionError, TerminalReason,
 };
 use graphblocks_runtime_core::policy::{PolicyDecision, PolicyEffect};
 use graphblocks_runtime_core::tool::{
@@ -506,6 +506,20 @@ fn output_policy_termination_decision_maps_to_violation_event() {
     assert_eq!(
         event.payload.get("pending_tool_calls"),
         Some(&json!("deny"))
+    );
+}
+
+#[test]
+fn output_policy_decision_event_rejects_missing_input_digest() {
+    let decision = OutputPolicyDecision::hold("decision-hold", "");
+
+    assert_eq!(
+        ApplicationEvent::output_policy_decision(metadata(), &decision),
+        Err(ApplicationEventError::InvalidOutputPolicyDecision {
+            source: OutputPolicyDecisionError::MissingInputDigest {
+                decision_id: "decision-hold".to_owned(),
+            }
+        })
     );
 }
 

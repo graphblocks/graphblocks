@@ -4,8 +4,8 @@ use std::fmt;
 
 use crate::output_policy::{
     DraftDisposition, DurableResult, GenerationChunk, OutputCutoff, OutputCutoffError,
-    OutputDisposition, OutputPolicyDecision, PendingToolCallsDisposition, ProviderCancellation,
-    TerminalReason,
+    OutputDisposition, OutputPolicyDecision, OutputPolicyDecisionError,
+    PendingToolCallsDisposition, ProviderCancellation, TerminalReason,
 };
 use crate::policy::PolicyDecision;
 use crate::tool_approval::ToolApprovalRequest;
@@ -130,6 +130,7 @@ pub enum ApplicationEventError {
     NotToolEvent { kind: ApplicationEventKind },
     EmptyToolCallId,
     InvalidOutputCutoff { source: OutputCutoffError },
+    InvalidOutputPolicyDecision { source: OutputPolicyDecisionError },
 }
 
 impl ApplicationEvent {
@@ -474,6 +475,9 @@ impl ApplicationEvent {
         metadata: ApplicationEventMetadata,
         decision: &OutputPolicyDecision,
     ) -> Result<Self, ApplicationEventError> {
+        decision
+            .validate()
+            .map_err(|source| ApplicationEventError::InvalidOutputPolicyDecision { source })?;
         let (kind, disposition) = match decision.disposition {
             OutputDisposition::Allow => (ApplicationEventKind::OutputPolicyAllowed, "allow"),
             OutputDisposition::Hold => (ApplicationEventKind::OutputPolicyHeld, "hold"),

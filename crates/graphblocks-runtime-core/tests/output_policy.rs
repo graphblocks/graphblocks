@@ -2,8 +2,8 @@ use graphblocks_runtime_core::output_policy::{
     DeclarativeOutputPolicyEvaluator, DeclarativeOutputPolicyRule, DraftDisposition, DurableResult,
     GenerationChunk, OutputCutoff, OutputCutoffError, OutputDeliveryGate, OutputDeliveryPolicy,
     OutputDeliveryPolicyError, OutputDisposition, OutputGateError, OutputPolicyDecision,
-    PendingToolCallsDisposition, ProviderCancellation, RedactionInstruction, TerminalReason,
-    ViolationAction,
+    OutputPolicyDecisionError, PendingToolCallsDisposition, ProviderCancellation,
+    RedactionInstruction, TerminalReason, ViolationAction,
 };
 
 #[test]
@@ -301,6 +301,18 @@ fn output_policy_decision_preserves_metadata_and_redaction_instructions() {
             17,
             "[redacted]",
         )]
+    );
+}
+
+#[test]
+fn output_policy_decision_requires_input_digest() {
+    let decision = OutputPolicyDecision::allow("decision-1", Some(1), " ");
+
+    assert_eq!(
+        decision.validate(),
+        Err(OutputPolicyDecisionError::MissingInputDigest {
+            decision_id: "decision-1".to_owned(),
+        })
     );
 }
 
