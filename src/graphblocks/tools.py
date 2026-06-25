@@ -198,6 +198,20 @@ def _freeze_json_value(value: object) -> object:
     return value
 
 
+def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{owner} {field_name} must be a string")
+    if not value.strip():
+        raise ValueError(f"{owner} {field_name} must not be empty")
+    return value
+
+
+def _validate_optional_non_empty_string(owner: str, field_name: str, value: object) -> str | None:
+    if value is None:
+        return None
+    return _validate_non_empty_string(owner, field_name, value)
+
+
 def _validate_string_mapping(kind: str, field_name: str, value: object) -> MappingProxyType[str, str]:
     if not isinstance(value, Mapping):
         raise ValueError(f"{kind} tool implementation {field_name} must be a mapping")
@@ -325,12 +339,9 @@ class ToolDefinition:
 
     def __post_init__(self) -> None:
         for field_name in ("name", "description", "input_schema"):
-            if not getattr(self, field_name).strip():
-                raise ValueError(f"tool definition {field_name} must not be empty")
-        if self.output_schema is not None and not self.output_schema.strip():
-            raise ValueError("tool definition output_schema must not be empty")
-        if self.version is not None and not self.version.strip():
-            raise ValueError("tool definition version must not be empty")
+            _validate_non_empty_string("tool definition", field_name, getattr(self, field_name))
+        _validate_optional_non_empty_string("tool definition", "output_schema", self.output_schema)
+        _validate_optional_non_empty_string("tool definition", "version", self.version)
         if isinstance(self.tags, str):
             raise ValueError("tool definition tags must be a collection of strings")
         tags = frozenset(self.tags)
@@ -362,8 +373,7 @@ class BlockToolImplementation:
     kind: Literal["block"] = field(default="block", init=False)
 
     def __post_init__(self) -> None:
-        if not self.block.strip():
-            raise ValueError("block tool implementation block must not be empty")
+        _validate_non_empty_string("block tool implementation", "block", self.block)
         object.__setattr__(
             self,
             "input_mapping",
@@ -392,8 +402,7 @@ class GraphToolImplementation:
     kind: Literal["graph"] = field(default="graph", init=False)
 
     def __post_init__(self) -> None:
-        if not self.graph.strip():
-            raise ValueError("graph tool implementation graph must not be empty")
+        _validate_non_empty_string("graph tool implementation", "graph", self.graph)
         object.__setattr__(
             self,
             "input_mapping",
@@ -421,10 +430,8 @@ class RemoteToolImplementation:
     kind: Literal["remote"] = field(default="remote", init=False)
 
     def __post_init__(self) -> None:
-        if not self.connection.strip():
-            raise ValueError("remote tool implementation connection must not be empty")
-        if not self.operation.strip():
-            raise ValueError("remote tool implementation operation must not be empty")
+        _validate_non_empty_string("remote tool implementation", "connection", self.connection)
+        _validate_non_empty_string("remote tool implementation", "operation", self.operation)
 
     def canonical_value(self) -> dict[str, object]:
         return {
@@ -441,10 +448,8 @@ class McpToolImplementation:
     kind: Literal["mcp"] = field(default="mcp", init=False)
 
     def __post_init__(self) -> None:
-        if not self.server.strip():
-            raise ValueError("mcp tool implementation server must not be empty")
-        if not self.remote_name.strip():
-            raise ValueError("mcp tool implementation remote_name must not be empty")
+        _validate_non_empty_string("mcp tool implementation", "server", self.server)
+        _validate_non_empty_string("mcp tool implementation", "remote_name", self.remote_name)
 
     def canonical_value(self) -> dict[str, object]:
         return {
@@ -461,10 +466,8 @@ class OpenApiToolImplementation:
     kind: Literal["openapi"] = field(default="openapi", init=False)
 
     def __post_init__(self) -> None:
-        if not self.connection.strip():
-            raise ValueError("openapi tool implementation connection must not be empty")
-        if not self.operation_id.strip():
-            raise ValueError("openapi tool implementation operation_id must not be empty")
+        _validate_non_empty_string("openapi tool implementation", "connection", self.connection)
+        _validate_non_empty_string("openapi tool implementation", "operation_id", self.operation_id)
 
     def canonical_value(self) -> dict[str, object]:
         return {
@@ -500,8 +503,7 @@ class ToolBinding:
 
     def __post_init__(self) -> None:
         for field_name in ("binding_id", "tool_name"):
-            if not getattr(self, field_name).strip():
-                raise ValueError(f"tool binding {field_name} must not be empty")
+            _validate_non_empty_string("tool binding", field_name, getattr(self, field_name))
         effects = frozenset(self.effects)
         invalid_effects = sorted(effect for effect in effects if effect not in VALID_TOOL_EFFECTS)
         if invalid_effects:
@@ -521,9 +523,7 @@ class ToolBinding:
         ):
             raise ValueError("tool timeout_ms must be non-negative")
         for field_name in ("retry_policy_ref", "policy_profile_ref", "execution_class"):
-            value = getattr(self, field_name)
-            if value is not None and not value.strip():
-                raise ValueError(f"tool binding {field_name} must not be empty")
+            _validate_optional_non_empty_string("tool binding", field_name, getattr(self, field_name))
         object.__setattr__(self, "effects", effects)
 
     def binding_contract(self) -> dict[str, object]:

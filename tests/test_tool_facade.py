@@ -174,6 +174,25 @@ def test_tool_definition_rejects_empty_identity_fields() -> None:
         )
 
 
+def test_tool_definition_rejects_non_string_identity_fields() -> None:
+    base = {
+        "name": "knowledge.search",
+        "description": "Search support documentation.",
+        "input_schema": "schemas/SearchRequest@1",
+    }
+    cases = (
+        ({"name": 1}, "tool definition name must be a string"),
+        ({"description": object()}, "tool definition description must be a string"),
+        ({"input_schema": 1}, "tool definition input_schema must be a string"),
+        ({"output_schema": 1}, "tool definition output_schema must be a string"),
+        ({"version": 1}, "tool definition version must be a string"),
+    )
+
+    for overrides, message in cases:
+        with pytest.raises(ValueError, match=message):
+            ToolDefinition(**{**base, **overrides})  # type: ignore[arg-type]
+
+
 def test_tool_binding_digest_includes_execution_contract_not_definition_text() -> None:
     binding = ToolBinding(
         binding_id="binding-ticket-create",
@@ -232,6 +251,25 @@ def test_tool_binding_rejects_unknown_contract_values() -> None:
             ToolBinding(**base, **overrides)
 
 
+def test_tool_binding_rejects_non_string_identity_fields() -> None:
+    base = {
+        "binding_id": "binding-search",
+        "tool_name": "knowledge.search",
+        "implementation": BlockToolImplementation(block="knowledge.search@1"),
+    }
+    cases = (
+        ({"binding_id": 1}, "tool binding binding_id must be a string"),
+        ({"tool_name": object()}, "tool binding tool_name must be a string"),
+        ({"retry_policy_ref": 1}, "tool binding retry_policy_ref must be a string"),
+        ({"policy_profile_ref": object()}, "tool binding policy_profile_ref must be a string"),
+        ({"execution_class": 1}, "tool binding execution_class must be a string"),
+    )
+
+    for overrides, message in cases:
+        with pytest.raises(ValueError, match=message):
+            ToolBinding(**{**base, **overrides})  # type: ignore[arg-type]
+
+
 def test_tool_implementations_reject_empty_execution_targets() -> None:
     with pytest.raises(ValueError, match="block tool implementation block must not be empty"):
         BlockToolImplementation(block=" ")
@@ -249,6 +287,47 @@ def test_tool_implementations_reject_empty_execution_targets() -> None:
         OpenApiToolImplementation(connection=" ", operation_id="createTicket")
     with pytest.raises(ValueError, match="openapi tool implementation operation_id must not be empty"):
         OpenApiToolImplementation(connection="ticket-system", operation_id="")
+
+
+def test_tool_implementations_reject_non_string_execution_targets() -> None:
+    cases = (
+        (
+            lambda: BlockToolImplementation(block=1),  # type: ignore[arg-type]
+            "block tool implementation block must be a string",
+        ),
+        (
+            lambda: GraphToolImplementation(graph=object()),  # type: ignore[arg-type]
+            "graph tool implementation graph must be a string",
+        ),
+        (
+            lambda: RemoteToolImplementation(connection=1, operation="search"),  # type: ignore[arg-type]
+            "remote tool implementation connection must be a string",
+        ),
+        (
+            lambda: RemoteToolImplementation(connection="support-api", operation=1),  # type: ignore[arg-type]
+            "remote tool implementation operation must be a string",
+        ),
+        (
+            lambda: McpToolImplementation(server=1, remote_name="tool.search"),  # type: ignore[arg-type]
+            "mcp tool implementation server must be a string",
+        ),
+        (
+            lambda: McpToolImplementation(server="support-mcp", remote_name=object()),  # type: ignore[arg-type]
+            "mcp tool implementation remote_name must be a string",
+        ),
+        (
+            lambda: OpenApiToolImplementation(connection=1, operation_id="createTicket"),  # type: ignore[arg-type]
+            "openapi tool implementation connection must be a string",
+        ),
+        (
+            lambda: OpenApiToolImplementation(connection="ticket-system", operation_id=1),  # type: ignore[arg-type]
+            "openapi tool implementation operation_id must be a string",
+        ),
+    )
+
+    for construct, message in cases:
+        with pytest.raises(ValueError, match=message):
+            construct()
 
 
 def test_block_and_graph_tool_implementations_reject_invalid_mappings() -> None:
