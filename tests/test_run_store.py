@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from graphblocks.run_store import InMemoryRunStore, RunTerminalStateError, SQLiteRunStore, StateConflictError
+from graphblocks.run_store import (
+    InMemoryRunStore,
+    RunDeploymentProvenance,
+    RunTerminalStateError,
+    SQLiteRunStore,
+    StateConflictError,
+)
 
 
 def test_run_store_applies_state_patch_with_revision_cas() -> None:
@@ -13,6 +19,29 @@ def test_run_store_applies_state_patch_with_revision_cas() -> None:
 
     assert updated.state_revision == 1
     assert updated.state == {"conversation": {"turns": 1}}
+
+
+def test_run_store_records_deployment_provenance_and_preserves_it_across_mutations() -> None:
+    store = InMemoryRunStore()
+    provenance = RunDeploymentProvenance(
+        release_digest="sha256:release",
+        deployment_revision_id="rev-1",
+        physical_plan_hash="sha256:physical",
+        release_signature_digest="sha256:signature",
+    )
+
+    record = store.create_run("sha256:test", {}, deployment_provenance=provenance)
+    patched = store.patch_state(record.run_id, {"step": 1}, expected_revision=0)
+    running = store.set_status(record.run_id, "running")
+
+    assert record.deployment_provenance.canonical_value() == {
+        "release_digest": "sha256:release",
+        "deployment_revision_id": "rev-1",
+        "physical_plan_hash": "sha256:physical",
+        "release_signature_digest": "sha256:signature",
+    }
+    assert patched.deployment_provenance == provenance
+    assert running.deployment_provenance == provenance
 
 
 def test_run_store_rejects_stale_state_patch() -> None:
@@ -80,7 +109,17 @@ def test_run_store_treats_policy_stopped_as_terminal_status() -> None:
 def test_sqlite_run_store_persists_records_across_instances(tmp_path) -> None:
     database = tmp_path / "runs.sqlite3"
     first = SQLiteRunStore(database)
-    record = first.create_run("sha256:test", {"message": {"text": "hello"}})
+    provenance = RunDeploymentProvenance(
+        release_digest="sha256:release",
+        deployment_revision_id="rev-1",
+        physical_plan_hash="sha256:physical",
+        release_signature_digest="sha256:signature",
+    )
+    record = first.create_run(
+        "sha256:test",
+        {"message": {"text": "hello"}},
+        deployment_provenance=provenance,
+    )
     first.patch_state(record.run_id, {"conversation": {"turns": 1}}, expected_revision=0)
     first.set_status(record.run_id, "succeeded")
     first.close()
@@ -93,6 +132,7 @@ def test_sqlite_run_store_persists_records_across_instances(tmp_path) -> None:
     assert loaded.status == "succeeded"
     assert loaded.state == {"conversation": {"turns": 1}}
     assert loaded.state_revision == 1
+    assert loaded.deployment_provenance == provenance
 
 
 def test_sqlite_run_store_enforces_state_revision_cas(tmp_path) -> None:

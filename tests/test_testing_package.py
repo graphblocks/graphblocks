@@ -119,12 +119,17 @@ def test_testing_package_exposes_terminal_run_store_error(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
     store = graphblocks_testing.InMemoryRunStore()
-    record = store.create_run("sha256:test", {})
+    provenance = graphblocks_testing.RunDeploymentProvenance(
+        release_digest="sha256:release",
+        physical_plan_hash="sha256:physical",
+    )
+    record = store.create_run("sha256:test", {}, deployment_provenance=provenance)
     store.set_status(record.run_id, "succeeded")
 
     try:
         store.patch_state(record.run_id, {"late": True}, expected_revision=0)
     except graphblocks_testing.RunTerminalStateError as error:
         assert error.status == "succeeded"
+        assert "RunDeploymentProvenance" in graphblocks_testing.__all__
     else:  # pragma: no cover - test should fail before this branch.
         raise AssertionError("terminal run state mutation was allowed")

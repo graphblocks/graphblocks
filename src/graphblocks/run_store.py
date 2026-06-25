@@ -31,10 +31,50 @@ class RunTerminalStateError(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
+class RunDeploymentProvenance:
+    release_digest: str | None = None
+    deployment_revision_id: str | None = None
+    physical_plan_hash: str | None = None
+    release_signature_digest: str | None = None
+
+    def canonical_value(self) -> dict[str, str | None]:
+        return {
+            "release_digest": self.release_digest,
+            "deployment_revision_id": self.deployment_revision_id,
+            "physical_plan_hash": self.physical_plan_hash,
+            "release_signature_digest": self.release_signature_digest,
+        }
+
+    @classmethod
+    def from_mapping(cls, value: dict[str, Any]) -> RunDeploymentProvenance:
+        return cls(
+            release_digest=(
+                str(value["release_digest"]) if value.get("release_digest") is not None else None
+            ),
+            deployment_revision_id=(
+                str(value["deployment_revision_id"])
+                if value.get("deployment_revision_id") is not None
+                else None
+            ),
+            physical_plan_hash=(
+                str(value["physical_plan_hash"])
+                if value.get("physical_plan_hash") is not None
+                else None
+            ),
+            release_signature_digest=(
+                str(value["release_signature_digest"])
+                if value.get("release_signature_digest") is not None
+                else None
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class RunRecord:
     run_id: str
     graph_hash: str
     inputs: dict[str, Any]
+    deployment_provenance: RunDeploymentProvenance = field(default_factory=RunDeploymentProvenance)
     status: RunStatus = "created"
     state: dict[str, Any] = field(default_factory=dict)
     state_revision: int = 0
@@ -45,10 +85,21 @@ class InMemoryRunStore:
     runs: dict[str, RunRecord] = field(default_factory=dict)
     next_id: int = 1
 
-    def create_run(self, graph_hash: str, inputs: dict[str, Any]) -> RunRecord:
+    def create_run(
+        self,
+        graph_hash: str,
+        inputs: dict[str, Any],
+        *,
+        deployment_provenance: RunDeploymentProvenance | None = None,
+    ) -> RunRecord:
         run_id = f"run-{self.next_id:06d}"
         self.next_id += 1
-        record = RunRecord(run_id=run_id, graph_hash=graph_hash, inputs=deepcopy(inputs))
+        record = RunRecord(
+            run_id=run_id,
+            graph_hash=graph_hash,
+            inputs=deepcopy(inputs),
+            deployment_provenance=deployment_provenance or RunDeploymentProvenance(),
+        )
         self.runs[run_id] = record
         return deepcopy(record)
 
@@ -78,6 +129,7 @@ class InMemoryRunStore:
             run_id=current.run_id,
             graph_hash=current.graph_hash,
             inputs=deepcopy(current.inputs),
+            deployment_provenance=current.deployment_provenance,
             status=current.status,
             state=next_state,
             state_revision=current.state_revision + 1,
@@ -93,6 +145,7 @@ class InMemoryRunStore:
             run_id=current.run_id,
             graph_hash=current.graph_hash,
             inputs=deepcopy(current.inputs),
+            deployment_provenance=current.deployment_provenance,
             status=status,
             state=deepcopy(current.state),
             state_revision=current.state_revision,
@@ -117,32 +170,68 @@ class SQLiteRunStore:
               sequence INTEGER NOT NULL UNIQUE,
               graph_hash TEXT NOT NULL,
               inputs_json TEXT NOT NULL,
+              deployment_provenance_json TEXT NOT NULL,
               status TEXT NOT NULL,
               state_json TEXT NOT NULL,
               state_revision INTEGER NOT NULL
             )
             """
         )
+        columns = {
+            str(row["name"])
+            for row in self.connection.execute("PRAGMA table_info(runs)").fetchall()
+        }
+        if "deployment_provenance_json" not in columns:
+            self.connection.execute("ALTER TABLE runs ADD COLUMN deployment_provenance_json TEXT")
+            self.connection.execute(
+                """
+                UPDATE runs
+                SET deployment_provenance_json = ?
+                WHERE deployment_provenance_json IS NULL
+                """,
+                (_deployment_provenance_json(RunDeploymentProvenance()),),
+            )
         self.connection.commit()
 
     def close(self) -> None:
         self.connection.close()
 
-    def create_run(self, graph_hash: str, inputs: dict[str, Any]) -> RunRecord:
+    def create_run(
+        self,
+        graph_hash: str,
+        inputs: dict[str, Any],
+        *,
+        deployment_provenance: RunDeploymentProvenance | None = None,
+    ) -> RunRecord:
         row = self.connection.execute("SELECT COALESCE(MAX(sequence), 0) + 1 FROM runs").fetchone()
         sequence = int(row[0])
         run_id = f"run-{sequence:06d}"
-        record = RunRecord(run_id=run_id, graph_hash=graph_hash, inputs=deepcopy(inputs))
+        record = RunRecord(
+            run_id=run_id,
+            graph_hash=graph_hash,
+            inputs=deepcopy(inputs),
+            deployment_provenance=deployment_provenance or RunDeploymentProvenance(),
+        )
         self.connection.execute(
             """
-            INSERT INTO runs (run_id, sequence, graph_hash, inputs_json, status, state_json, state_revision)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO runs (
+              run_id,
+              sequence,
+              graph_hash,
+              inputs_json,
+              deployment_provenance_json,
+              status,
+              state_json,
+              state_revision
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record.run_id,
                 sequence,
                 record.graph_hash,
                 json.dumps(record.inputs, sort_keys=True, separators=(",", ":")),
+                _deployment_provenance_json(record.deployment_provenance),
                 record.status,
                 json.dumps(record.state, sort_keys=True, separators=(",", ":")),
                 record.state_revision,
@@ -154,7 +243,14 @@ class SQLiteRunStore:
     def get_run(self, run_id: str) -> RunRecord:
         row = self.connection.execute(
             """
-            SELECT run_id, graph_hash, inputs_json, status, state_json, state_revision
+            SELECT
+              run_id,
+              graph_hash,
+              inputs_json,
+              deployment_provenance_json,
+              status,
+              state_json,
+              state_revision
             FROM runs
             WHERE run_id = ?
             """,
@@ -166,6 +262,9 @@ class SQLiteRunStore:
             run_id=str(row["run_id"]),
             graph_hash=str(row["graph_hash"]),
             inputs=json.loads(str(row["inputs_json"])),
+            deployment_provenance=_parse_deployment_provenance_json(
+                str(row["deployment_provenance_json"] or "{}")
+            ),
             status=row["status"],
             state=json.loads(str(row["state_json"])),
             state_revision=int(row["state_revision"]),
@@ -219,3 +318,14 @@ class SQLiteRunStore:
             raise KeyError(run_id)
         self.connection.commit()
         return self.get_run(run_id)
+
+
+def _deployment_provenance_json(provenance: RunDeploymentProvenance) -> str:
+    return json.dumps(provenance.canonical_value(), sort_keys=True, separators=(",", ":"))
+
+
+def _parse_deployment_provenance_json(value: str) -> RunDeploymentProvenance:
+    parsed = json.loads(value)
+    if not isinstance(parsed, dict):
+        return RunDeploymentProvenance()
+    return RunDeploymentProvenance.from_mapping(parsed)

@@ -406,7 +406,14 @@ from .review import (
     ReviewerCredential,
     ReviewerCredentialProvider,
 )
-from .run_store import InMemoryRunStore, RunRecord, RunTerminalStateError, SQLiteRunStore, StateConflictError
+from .run_store import (
+    InMemoryRunStore,
+    RunDeploymentProvenance,
+    RunRecord,
+    RunTerminalStateError,
+    SQLiteRunStore,
+    StateConflictError,
+)
 from .schema import SchemaId, SchemaIdError, TypedValue
 from .server import (
     ApplicationProtocolCapabilities,
@@ -688,6 +695,7 @@ __all__ = [
     "RerankResult",
     "RunOwnershipLease",
     "RunResult",
+    "RunDeploymentProvenance",
     "RunRecord",
     "RunTerminalStateError",
     "S3CompatibleBlobStore",

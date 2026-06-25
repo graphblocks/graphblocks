@@ -9,6 +9,7 @@ from graphblocks.canonical import canonical_hash
 from graphblocks.compiler import compile_graph
 from graphblocks.run_store import (
     InMemoryRunStore,
+    RunDeploymentProvenance,
     RunRecord,
     RunTerminalStateError,
     SQLiteRunStore,
@@ -425,6 +426,7 @@ __all__ = [
     "RuntimeRegistry",
     "SQLiteExecutionJournal",
     "SQLiteRunStore",
+    "RunDeploymentProvenance",
     "StateConflictError",
     "TckCase",
     "TckReport",
