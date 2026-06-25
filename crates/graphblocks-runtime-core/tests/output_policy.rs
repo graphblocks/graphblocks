@@ -64,6 +64,29 @@ fn output_gate_rejects_non_contiguous_generation_sequence() {
 }
 
 #[test]
+fn bounded_holdback_rejects_pending_output_over_byte_limit() -> Result<(), OutputGateError> {
+    let mut gate = OutputDeliveryGate::new("stream-1", "response-1").with_delivery_policy(
+        OutputDeliveryPolicy::bounded_holdback(
+            ViolationAction::AbortResponse,
+            DraftDisposition::Retract,
+        )
+        .with_holdback_max_bytes(8),
+    )?;
+
+    gate.record_chunk(GenerationChunk::text("stream-1", "response-1", 1, "safe"))?;
+    gate.record_chunk(GenerationChunk::text("stream-1", "response-1", 2, "text"))?;
+
+    assert_eq!(
+        gate.record_chunk(GenerationChunk::text("stream-1", "response-1", 3, "!")),
+        Err(OutputGateError::BoundedHoldbackExceeded { max_bytes: 8 }),
+    );
+    assert_eq!(gate.last_generated_sequence(), 2);
+    assert_eq!(gate.last_policy_accepted_sequence(), 0);
+    assert_eq!(gate.last_client_delivered_sequence(), 0);
+    Ok(())
+}
+
+#[test]
 fn generation_chunk_requires_stream_and_response_ids() {
     let empty_stream = GenerationChunk::text(" ", "response-1", 1, "late");
     assert_eq!(

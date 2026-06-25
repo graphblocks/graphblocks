@@ -924,6 +924,9 @@ pub enum OutputGateError {
         last_generated_sequence: u64,
         accepted_through_sequence: u64,
     },
+    BoundedHoldbackExceeded {
+        max_bytes: u64,
+    },
     InvalidRedactionInstruction {
         path: String,
     },
@@ -1077,6 +1080,20 @@ impl OutputDeliveryGate {
                 last_generated_sequence: self.last_generated_sequence,
                 attempted_sequence: chunk.sequence,
             });
+        }
+        if self.delivery_policy.mode == DeliveryMode::BoundedHoldback
+            && let Some(max_bytes) = self.delivery_policy.holdback_max_bytes
+        {
+            let mut pending_bytes = chunk.text.len() as u64;
+            for pending in self.pending.values() {
+                pending_bytes = pending_bytes.saturating_add(pending.text.len() as u64);
+                if pending_bytes > max_bytes {
+                    return Err(OutputGateError::BoundedHoldbackExceeded { max_bytes });
+                }
+            }
+            if pending_bytes > max_bytes {
+                return Err(OutputGateError::BoundedHoldbackExceeded { max_bytes });
+            }
         }
 
         self.last_generated_sequence = chunk.sequence;
