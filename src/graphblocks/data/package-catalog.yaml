@@ -756,6 +756,23 @@ packages:
   - aiokafka
   implementationPhase: integration-defined
   stability: integration
+- distribution: graphblocks-nats
+  import: graphblocks_nats
+  layer: durable_stream_adapter
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-durable
+  responsibility:
+  - NATS JetStream message to durable SourceEvent projection
+  - durable consumer sequence cursor mapping
+  - idempotent publish message projection
+  forbiddenDependencies:
+  - nats-py
+  - pynats
+  - asyncio-nats
+  implementationPhase: integration-defined
+  stability: integration
 integrationRules:
   distributionPattern: graphblocks-<technology>
   importPattern: graphblocks_<technology>
