@@ -4,7 +4,7 @@ use graphblocks_runtime_core::deployment::{
     DeploymentTargetProfileSet, ExecutionTarget, ExecutionTargetKind, GraphRelease,
     GraphReleaseError, GraphReleaseGraph, ImageRef, KnowledgeBinding, PhysicalExecutionPlan,
     PlacementError, PlacementRule, PlacementSelector, PromptLock, RevisionDecision,
-    RolloutAnalysisResult, RolloutPlan, RolloutStep, UpgradePolicy, WorkloadKind,
+    RolloutAnalysisResult, RolloutPlan, RolloutStep, SupplyChainLock, UpgradePolicy, WorkloadKind,
 };
 use serde_json::json;
 
@@ -426,7 +426,12 @@ fn graph_release_validation_rejects_mutable_production_references() {
             ImageRef::new("registry.example.com/gb/control:latest"),
         )
         .with_prompt_lock("answer", PromptLock::label("support.answer", "production"))
-        .with_knowledge(KnowledgeBinding::new("intranet_docs", "current"));
+        .with_knowledge(KnowledgeBinding::new("intranet_docs", "current"))
+        .with_supply_chain(SupplyChainLock::new(
+            Some("oci://registry/sbom:latest"),
+            Some("oci://registry/provenance:latest"),
+            Some("production-publishers"),
+        ));
 
     assert_eq!(
         release.validate_production_pins(),
@@ -437,9 +442,44 @@ fn graph_release_validation_rejects_mutable_production_references() {
                 "images.control".to_owned(),
                 "knowledge.intranet_docs.index_revision".to_owned(),
                 "prompts.answer".to_owned(),
+                "supply_chain.provenance_ref".to_owned(),
+                "supply_chain.sbom_ref".to_owned(),
             ],
         })
     );
+}
+
+#[test]
+fn graph_release_supply_chain_lock_is_part_of_release_digest_and_production_pins() {
+    let base = GraphRelease::new("enterprise-rag", "2026.06.23.1")
+        .with_bundle("sha256:bundle", "application/vnd.graphblocks.release.v1")
+        .with_graph(
+            "chat",
+            GraphReleaseGraph::new("sha256:graph-chat", "sha256:plan-chat"),
+        )
+        .with_supply_chain(SupplyChainLock::new(
+            Some("oci://registry/sbom@sha256:sbom"),
+            Some("oci://registry/provenance@sha256:provenance"),
+            Some("production-publishers"),
+        ));
+    let changed_policy = base.clone().with_supply_chain(SupplyChainLock::new(
+        Some("oci://registry/sbom@sha256:sbom"),
+        Some("oci://registry/provenance@sha256:provenance"),
+        Some("staging-publishers"),
+    ));
+
+    assert_eq!(base.validate_production_pins(), Ok(()));
+    assert_eq!(
+        base.supply_chain
+            .as_ref()
+            .map(SupplyChainLock::canonical_value),
+        Some(json!({
+            "sbom_ref": "oci://registry/sbom@sha256:sbom",
+            "provenance_ref": "oci://registry/provenance@sha256:provenance",
+            "signature_policy": "production-publishers",
+        }))
+    );
+    assert_ne!(base.content_digest(), changed_policy.content_digest());
 }
 
 #[test]

@@ -99,6 +99,40 @@ impl KnowledgeBinding {
     }
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct SupplyChainLock {
+    pub sbom_ref: Option<String>,
+    pub provenance_ref: Option<String>,
+    pub signature_policy: Option<String>,
+}
+
+impl SupplyChainLock {
+    pub fn new<S, P, I>(
+        sbom_ref: Option<S>,
+        provenance_ref: Option<P>,
+        signature_policy: Option<I>,
+    ) -> Self
+    where
+        S: Into<String>,
+        P: Into<String>,
+        I: Into<String>,
+    {
+        Self {
+            sbom_ref: sbom_ref.map(Into::into),
+            provenance_ref: provenance_ref.map(Into::into),
+            signature_policy: signature_policy.map(Into::into),
+        }
+    }
+
+    pub fn canonical_value(&self) -> Value {
+        json!({
+            "sbom_ref": self.sbom_ref,
+            "provenance_ref": self.provenance_ref,
+            "signature_policy": self.signature_policy,
+        })
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GraphRelease {
     pub name: String,
@@ -110,6 +144,7 @@ pub struct GraphRelease {
     pub images: BTreeMap<String, ImageRef>,
     pub prompt_locks: BTreeMap<String, PromptLock>,
     pub knowledge: BTreeMap<String, KnowledgeBinding>,
+    pub supply_chain: Option<SupplyChainLock>,
 }
 
 impl GraphRelease {
@@ -124,6 +159,7 @@ impl GraphRelease {
             images: BTreeMap::new(),
             prompt_locks: BTreeMap::new(),
             knowledge: BTreeMap::new(),
+            supply_chain: None,
         }
     }
 
@@ -162,6 +198,11 @@ impl GraphRelease {
         self
     }
 
+    pub fn with_supply_chain(mut self, supply_chain: SupplyChainLock) -> Self {
+        self.supply_chain = Some(supply_chain);
+        self
+    }
+
     pub fn content_digest(&self) -> String {
         canonical_hash(&json!({
             "version": self.version,
@@ -174,6 +215,7 @@ impl GraphRelease {
             "images": self.images.iter().map(|(name, image)| (name, image.canonical_value())).collect::<BTreeMap<_, _>>(),
             "prompt_locks": self.prompt_locks.iter().map(|(name, prompt)| (name, prompt.canonical_value())).collect::<BTreeMap<_, _>>(),
             "knowledge": self.knowledge.iter().map(|(name, binding)| (name, binding.canonical_value())).collect::<BTreeMap<_, _>>(),
+            "supply_chain": self.supply_chain.as_ref().map(SupplyChainLock::canonical_value),
         }))
     }
 
@@ -207,6 +249,22 @@ impl GraphRelease {
         for (name, prompt) in &self.prompt_locks {
             if matches!(prompt, PromptLock::Label { .. }) {
                 references.push(format!("prompts.{name}"));
+            }
+        }
+        if let Some(supply_chain) = &self.supply_chain {
+            if supply_chain
+                .provenance_ref
+                .as_deref()
+                .is_some_and(|reference| !reference.contains("@sha256:"))
+            {
+                references.push("supply_chain.provenance_ref".to_owned());
+            }
+            if supply_chain
+                .sbom_ref
+                .as_deref()
+                .is_some_and(|reference| !reference.contains("@sha256:"))
+            {
+                references.push("supply_chain.sbom_ref".to_owned());
             }
         }
         if references.is_empty() {
