@@ -65,6 +65,43 @@ def test_kubernetes_adapter_renders_worker_deployment_and_service(monkeypatch) -
     assert service["spec"]["ports"] == [{"name": "http", "port": 80, "targetPort": "http", "protocol": "TCP"}]
 
 
+def test_kubernetes_adapter_renders_secret_env_references(monkeypatch) -> None:
+    graphblocks_kubernetes = _import_kubernetes(monkeypatch)
+    graphblocks_deployment = importlib.import_module("graphblocks_deployment")
+    target = graphblocks_deployment.ExecutionTarget(
+        "agent-workers",
+        "worker_pool",
+        "rust",
+        image="ghcr.io/acme/support-agent@sha256:runtime",
+    )
+
+    deployment = graphblocks_kubernetes.render_target_deployment(
+        "support-agent",
+        target,
+        env=(
+            graphblocks_kubernetes.KubernetesEnv("GRAPHBLOCKS_RELEASE", "release-1"),
+            graphblocks_kubernetes.KubernetesSecretEnv(
+                "OPENAI_API_KEY",
+                secret_name="model-provider-secrets",
+                secret_key="openai-api-key",
+            ),
+        ),
+    )
+
+    assert deployment["spec"]["template"]["spec"]["containers"][0]["env"] == [
+        {"name": "GRAPHBLOCKS_RELEASE", "value": "release-1"},
+        {
+            "name": "OPENAI_API_KEY",
+            "valueFrom": {
+                "secretKeyRef": {
+                    "name": "model-provider-secrets",
+                    "key": "openai-api-key",
+                }
+            },
+        },
+    ]
+
+
 def test_kubernetes_adapter_renders_canary_rollout_manifests(monkeypatch) -> None:
     graphblocks_kubernetes = _import_kubernetes(monkeypatch)
     graphblocks_deployment = importlib.import_module("graphblocks_deployment")

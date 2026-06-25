@@ -79,7 +79,7 @@ def _object_metadata(
     }
 
 
-def _env_contracts(env: Mapping[str, str] | Iterable[KubernetesEnv]) -> list[dict[str, str]]:
+def _env_contracts(env: Mapping[str, str] | Iterable[KubernetesEnv | KubernetesSecretEnv]) -> list[dict[str, object]]:
     if isinstance(env, Mapping):
         return [
             KubernetesEnv(str(key), str(value)).env_contract()
@@ -156,6 +156,35 @@ class KubernetesEnv:
 
     def env_contract(self) -> dict[str, str]:
         return {"name": self.name, "value": self.value}
+
+
+@dataclass(frozen=True, slots=True)
+class KubernetesSecretEnv:
+    name: str
+    secret_name: str
+    secret_key: str
+    optional: bool = False
+
+    def __post_init__(self) -> None:
+        for field_name, value in (
+            ("name", self.name),
+            ("secret_name", self.secret_name),
+            ("secret_key", self.secret_key),
+        ):
+            if not value.strip():
+                raise KubernetesAdapterError(f"{field_name} must not be empty")
+
+    def env_contract(self) -> dict[str, object]:
+        secret_key_ref: dict[str, object] = {
+            "name": self.secret_name,
+            "key": self.secret_key,
+        }
+        if self.optional:
+            secret_key_ref["optional"] = True
+        return {
+            "name": self.name,
+            "valueFrom": {"secretKeyRef": secret_key_ref},
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,7 +274,7 @@ def render_target_deployment(
     replicas: int = 1,
     image: str | None = None,
     ports: Iterable[KubernetesPort] = (),
-    env: Mapping[str, str] | Iterable[KubernetesEnv] = (),
+    env: Mapping[str, str] | Iterable[KubernetesEnv | KubernetesSecretEnv] = (),
     command: Iterable[str] = (),
     args: Iterable[str] = (),
     resources: Mapping[str, object] | None = None,
@@ -351,7 +380,7 @@ def render_rollout_manifests(
     active_step_index: int,
     options: KubernetesRenderOptions | None = None,
     ports: Iterable[KubernetesPort] = (),
-    env: Mapping[str, str] | Iterable[KubernetesEnv] = (),
+    env: Mapping[str, str] | Iterable[KubernetesEnv | KubernetesSecretEnv] = (),
     stable_replicas: int = 1,
     candidate_replicas: int | None = None,
 ) -> KubernetesManifestSet:
@@ -513,7 +542,7 @@ def render_target_manifests(
     replicas: int = 1,
     image: str | None = None,
     ports: Iterable[KubernetesPort] = (),
-    env: Mapping[str, str] | Iterable[KubernetesEnv] = (),
+    env: Mapping[str, str] | Iterable[KubernetesEnv | KubernetesSecretEnv] = (),
 ) -> KubernetesManifestSet:
     options = options or KubernetesRenderOptions()
     ports = tuple(ports)
@@ -543,6 +572,7 @@ __all__ = [
     "KubernetesPort",
     "KubernetesProtocol",
     "KubernetesRenderOptions",
+    "KubernetesSecretEnv",
     "render_rollout_manifests",
     "render_target_deployment",
     "render_target_manifests",
