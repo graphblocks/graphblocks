@@ -414,7 +414,7 @@ from .run_store import (
     SQLiteRunStore,
     StateConflictError,
 )
-from .schema import SchemaId, SchemaIdError, TypedValue
+from .schema import SchemaId, SchemaIdError, SchemaManifest, SchemaManifestEntry, SchemaManifestError, TypedValue
 from .server import (
     ApplicationProtocolCapabilities,
     GraphBlocksServerApp,
@@ -734,6 +734,9 @@ __all__ = [
     "SQLiteExecutionJournal",
     "SchemaId",
     "SchemaIdError",
+    "SchemaManifest",
+    "SchemaManifestEntry",
+    "SchemaManifestError",
     "GraphBlocksServerApp",
     "ServerAuthDecision",
     "ServerAuthHook",

@@ -51,6 +51,20 @@ def test_packages_cli_doctor_accepts_catalog(capsys) -> None:
     assert capsys.readouterr().out.strip() == "OK"
 
 
+def test_schemas_manifest_cli_emits_deterministic_manifest(capsys) -> None:
+    assert main(["schemas", "manifest", "schemas"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["manifestVersion"] == 1
+    assert payload["contentDigest"] == "sha256:3bcd67f34d6c22940158b7c3d3290fb33620fa32de72c177533d7f20188a013e"
+    assert [entry["schemaId"] for entry in payload["schemas"]] == [
+        "graphblocks.ai/v1alpha1/application.schema.json",
+        "graphblocks.ai/v1alpha1/binding.schema.json",
+        "graphblocks.ai/v1alpha1/plugin-manifest.schema.json",
+        "graphblocks.ai/v1alpha3/graph.schema.json",
+    ]
+
+
 def test_lock_cli_emits_graph_hash_and_default_package_closure(tmp_path, capsys) -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",

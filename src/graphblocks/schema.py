@@ -2,12 +2,21 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+import json
+from pathlib import Path
 
-from .canonical import canonical_dumps
+from .canonical import canonical_dumps, canonical_hash
+
+
+SCHEMA_MANIFEST_VERSION = 1
 
 
 class SchemaIdError(ValueError):
     """Raised when a schema identity is not canonical."""
+
+
+class SchemaManifestError(ValueError):
+    """Raised when a JSON Schema manifest cannot be built deterministically."""
 
 
 @dataclass(frozen=True, slots=True, order=True)
@@ -84,3 +93,94 @@ class TypedValue:
 
     def to_json(self) -> str:
         return canonical_dumps(self.canonical_value())
+
+
+@dataclass(frozen=True, slots=True)
+class SchemaManifestEntry:
+    schema_id: str
+    path: str
+    digest: str
+    draft: str | None = None
+    title: str | None = None
+
+    def manifest_entry(self) -> dict[str, object]:
+        entry: dict[str, object] = {
+            "schemaId": self.schema_id,
+            "path": self.path,
+            "digest": self.digest,
+        }
+        if self.draft is not None:
+            entry["draft"] = self.draft
+        if self.title is not None:
+            entry["title"] = self.title
+        return entry
+
+
+@dataclass(frozen=True, slots=True)
+class SchemaManifest:
+    entries: tuple[SchemaManifestEntry, ...]
+
+    def __post_init__(self) -> None:
+        entries = tuple(sorted(self.entries, key=lambda entry: (entry.schema_id, entry.path)))
+        seen: set[str] = set()
+        for entry in entries:
+            if not entry.schema_id.strip():
+                raise SchemaManifestError("schema manifest entries require a non-empty schema id")
+            if not entry.path.strip():
+                raise SchemaManifestError(f"schema manifest entry {entry.schema_id} requires a relative path")
+            if not entry.digest.startswith("sha256:"):
+                raise SchemaManifestError(f"schema manifest entry {entry.schema_id} requires a sha256 digest")
+            if entry.schema_id in seen:
+                raise SchemaManifestError(f"duplicate schema id {entry.schema_id}")
+            seen.add(entry.schema_id)
+        object.__setattr__(self, "entries", entries)
+
+    @classmethod
+    def from_directory(cls, root: str | Path) -> SchemaManifest:
+        root_path = Path(root)
+        if not root_path.is_dir():
+            raise SchemaManifestError(f"schema root is not a directory: {root_path}")
+        entries: list[SchemaManifestEntry] = []
+        for path in sorted(root_path.rglob("*.json")):
+            try:
+                document = json.loads(path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError as error:
+                raise SchemaManifestError(f"{path}: invalid JSON schema document: {error.msg}") from error
+            if not isinstance(document, Mapping):
+                raise SchemaManifestError(f"{path}: JSON schema document must be an object")
+            schema_id = document.get("$id")
+            if not isinstance(schema_id, str) or not schema_id.strip():
+                raise SchemaManifestError(f"{path}: JSON schema document must declare a string $id")
+            draft = document.get("$schema")
+            if draft is not None and not isinstance(draft, str):
+                raise SchemaManifestError(f"{path}: JSON schema $schema must be a string")
+            title = document.get("title")
+            if title is not None and not isinstance(title, str):
+                raise SchemaManifestError(f"{path}: JSON schema title must be a string")
+            entries.append(
+                SchemaManifestEntry(
+                    schema_id=schema_id,
+                    path=path.relative_to(root_path).as_posix(),
+                    digest=canonical_hash(document),
+                    draft=draft,
+                    title=title,
+                )
+            )
+        if not entries:
+            raise SchemaManifestError(f"schema root contains no JSON schema documents: {root_path}")
+        return cls(tuple(entries))
+
+    def manifest_contract(self) -> dict[str, object]:
+        return {
+            "manifestVersion": SCHEMA_MANIFEST_VERSION,
+            "schemas": [entry.manifest_entry() for entry in self.entries],
+        }
+
+    def content_digest(self) -> str:
+        return canonical_hash(self.manifest_contract())
+
+    def manifest_payload(self) -> dict[str, object]:
+        return self.manifest_contract() | {"contentDigest": self.content_digest()}
+
+    def to_json(self) -> str:
+        return canonical_dumps(self.manifest_payload())

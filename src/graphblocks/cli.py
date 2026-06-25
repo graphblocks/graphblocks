@@ -48,6 +48,7 @@ from .policy import (
 from .plugins import BlockCatalog, discover_plugins, load_plugin_manifest, validate_plugin_manifest
 from .runtime import InProcessRuntime, stdlib_registry
 from .run_store import SQLiteRunStore
+from .schema import SchemaManifest, SchemaManifestError
 
 STRUCTURAL_KINDS = {
     "Application",
@@ -150,6 +151,14 @@ def main(argv: list[str] | None = None) -> int:
     packages_doctor_parser = packages_subparsers.add_parser("doctor", help="validate package catalog closure")
     packages_doctor_parser.add_argument("--catalog", type=Path, help="override package-catalog.yaml")
     packages_doctor_parser.add_argument("--json", action="store_true", help="emit JSON")
+
+    schemas_parser = subparsers.add_parser("schemas", help="inspect checked-in JSON Schema documents")
+    schemas_subparsers = schemas_parser.add_subparsers(dest="schemas_command")
+    schemas_manifest_parser = schemas_subparsers.add_parser(
+        "manifest",
+        help="emit a deterministic schema generation manifest",
+    )
+    schemas_manifest_parser.add_argument("path", nargs="?", type=Path, default=Path("schemas"))
 
     policy_parser = subparsers.add_parser("policy", help="validate and test policy bundles")
     policy_subparsers = policy_parser.add_subparsers(dest="policy_command")
@@ -442,6 +451,17 @@ def main(argv: list[str] | None = None) -> int:
                 print("OK")
             return 0 if diagnostics.ok else 1
         packages_parser.print_help()
+        return 0
+    if args.command == "schemas":
+        if args.schemas_command == "manifest":
+            try:
+                manifest = SchemaManifest.from_directory(args.path)
+            except SchemaManifestError as error:
+                print(str(error))
+                return 1
+            print(json.dumps(manifest.manifest_payload(), indent=2, sort_keys=True))
+            return 0
+        schemas_parser.print_help()
         return 0
     if args.command == "observe":
         if args.observe_command == "run":

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
-from graphblocks import SchemaId, SchemaIdError, TypedValue
+from graphblocks import SchemaId, SchemaIdError, SchemaManifest, SchemaManifestError, TypedValue
+from graphblocks.canonical import canonical_hash
 
 
 def test_schema_id_accepts_canonical_major_version_reference() -> None:
@@ -46,3 +49,94 @@ def test_typed_value_preserves_schema_id_and_round_trips_canonical_json() -> Non
 def test_typed_value_rejects_invalid_schema_id() -> None:
     with pytest.raises(SchemaIdError, match="include a major version"):
         TypedValue.new("schemas/Message", {})
+
+
+def test_schema_manifest_scans_schema_documents_deterministically(tmp_path: Path) -> None:
+    schema_b = tmp_path / "v1" / "b.schema.json"
+    schema_a = tmp_path / "v1" / "a.schema.json"
+    schema_b.parent.mkdir()
+    document_b = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "example.com/v1/b.schema.json",
+        "title": "B",
+        "type": "object",
+        "properties": {"z": {"type": "string"}},
+    }
+    document_a = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "example.com/v1/a.schema.json",
+        "title": "A",
+        "type": "object",
+        "properties": {"a": {"type": "integer"}},
+    }
+    schema_b.write_text(
+        '{"properties":{"z":{"type":"string"}},"type":"object","title":"B",'
+        '"$id":"example.com/v1/b.schema.json","$schema":"https://json-schema.org/draft/2020-12/schema"}',
+        encoding="utf-8",
+    )
+    schema_a.write_text(
+        '{"type":"object","properties":{"a":{"type":"integer"}},"$id":"example.com/v1/a.schema.json",'
+        '"title":"A","$schema":"https://json-schema.org/draft/2020-12/schema"}',
+        encoding="utf-8",
+    )
+
+    manifest = SchemaManifest.from_directory(tmp_path)
+
+    assert [entry.schema_id for entry in manifest.entries] == [
+        "example.com/v1/a.schema.json",
+        "example.com/v1/b.schema.json",
+    ]
+    assert [entry.path for entry in manifest.entries] == ["v1/a.schema.json", "v1/b.schema.json"]
+    assert [entry.digest for entry in manifest.entries] == [
+        canonical_hash(document_a),
+        canonical_hash(document_b),
+    ]
+    assert manifest.manifest_contract() == {
+        "manifestVersion": 1,
+        "schemas": [
+            {
+                "schemaId": "example.com/v1/a.schema.json",
+                "path": "v1/a.schema.json",
+                "digest": canonical_hash(document_a),
+                "draft": "https://json-schema.org/draft/2020-12/schema",
+                "title": "A",
+            },
+            {
+                "schemaId": "example.com/v1/b.schema.json",
+                "path": "v1/b.schema.json",
+                "digest": canonical_hash(document_b),
+                "draft": "https://json-schema.org/draft/2020-12/schema",
+                "title": "B",
+            },
+        ],
+    }
+    assert manifest.content_digest() == canonical_hash(manifest.manifest_contract())
+
+
+def test_schema_manifest_rejects_missing_and_duplicate_schema_ids(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.schema.json"
+    missing.write_text('{"type":"object"}', encoding="utf-8")
+
+    with pytest.raises(SchemaManifestError, match="must declare a string \\$id"):
+        SchemaManifest.from_directory(tmp_path)
+
+    missing.unlink()
+    (tmp_path / "first.schema.json").write_text('{"$id":"example.com/Duplicate.schema.json"}', encoding="utf-8")
+    (tmp_path / "second.schema.json").write_text('{"$id":"example.com/Duplicate.schema.json"}', encoding="utf-8")
+
+    with pytest.raises(SchemaManifestError, match="duplicate schema id example.com/Duplicate.schema.json"):
+        SchemaManifest.from_directory(tmp_path)
+
+
+def test_checked_in_schema_manifest_digest_is_golden() -> None:
+    schema_root = Path(__file__).resolve().parents[1] / "schemas"
+
+    manifest = SchemaManifest.from_directory(schema_root)
+
+    assert [entry.schema_id for entry in manifest.entries] == [
+        "graphblocks.ai/v1alpha1/application.schema.json",
+        "graphblocks.ai/v1alpha1/binding.schema.json",
+        "graphblocks.ai/v1alpha1/plugin-manifest.schema.json",
+        "graphblocks.ai/v1alpha3/graph.schema.json",
+    ]
+    assert manifest.content_digest() == "sha256:3bcd67f34d6c22940158b7c3d3290fb33620fa32de72c177533d7f20188a013e"
