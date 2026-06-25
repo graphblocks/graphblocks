@@ -1,6 +1,6 @@
 use graphblocks_runtime_core::audit::{
-    AuditEvent, AuditQuery, AuditSinkError, AuditTargetKind, InMemoryAuditSink,
-    ToolEffectAuditContext, ToolEffectAuditError,
+    AuditEvent, AuditOutboxError, AuditQuery, AuditSinkError, AuditTargetKind, InMemoryAuditOutbox,
+    InMemoryAuditSink, ToolEffectAuditContext, ToolEffectAuditError,
 };
 use graphblocks_runtime_core::policy::{PrincipalRef, ResourceRef};
 use graphblocks_runtime_core::tool::{
@@ -142,6 +142,70 @@ fn audit_query_filters_by_target_actor_and_resource() -> Result<(), AuditSinkErr
             .collect::<Vec<_>>(),
         vec!["audit-2"]
     );
+    Ok(())
+}
+
+#[test]
+fn in_memory_audit_outbox_publishes_failed_records_and_excludes_published_from_pending()
+-> Result<(), AuditOutboxError> {
+    let mut outbox = InMemoryAuditOutbox::new();
+    let first = outbox.append(
+        "application_event",
+        json!({"event_id": "event-1", "kind": "OutputPolicyAllowed"}),
+        "2026-06-23T00:00:00Z",
+        Some("audit-1".to_owned()),
+    )?;
+    let second = outbox.append(
+        "policy_enforcement",
+        json!({"record_id": "enforcement-1", "status": "blocked"}),
+        "2026-06-23T00:00:01Z",
+        Some("audit-2".to_owned()),
+    )?;
+
+    assert_eq!(first.status.as_str(), "pending");
+    assert_eq!(
+        outbox
+            .pending(None)
+            .iter()
+            .map(|record| record.record_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["audit-1", "audit-2"]
+    );
+
+    let published = outbox.mark_published("audit-1", "2026-06-23T00:00:02Z")?;
+    let failed = outbox.mark_failed("audit-2", "sink unavailable")?;
+
+    assert_eq!(published.status.as_str(), "published");
+    assert_eq!(
+        published.published_at.as_deref(),
+        Some("2026-06-23T00:00:02Z")
+    );
+    assert_eq!(failed.status.as_str(), "failed");
+    assert_eq!(failed.attempts, second.attempts + 1);
+    assert_eq!(failed.last_error.as_deref(), Some("sink unavailable"));
+    assert_eq!(outbox.pending(None), vec![failed]);
+    Ok(())
+}
+
+#[test]
+fn in_memory_audit_outbox_treats_published_records_as_terminal() -> Result<(), AuditOutboxError> {
+    let mut outbox = InMemoryAuditOutbox::new();
+    outbox.append(
+        "application_event",
+        json!({"event_id": "event-1"}),
+        "2026-06-23T00:00:00Z",
+        Some("audit-1".to_owned()),
+    )?;
+    outbox.mark_published("audit-1", "2026-06-23T00:00:01Z")?;
+
+    assert_eq!(
+        outbox.mark_failed("audit-1", "sink unavailable"),
+        Err(AuditOutboxError::RecordAlreadyPublished {
+            record_id: "audit-1".to_owned(),
+        })
+    );
+    assert_eq!(outbox.get("audit-1")?.status.as_str(), "published");
+    assert!(outbox.pending(None).is_empty());
     Ok(())
 }
 

@@ -267,6 +267,173 @@ impl fmt::Display for AuditSinkError {
 
 impl Error for AuditSinkError {}
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AuditOutboxStatus {
+    Pending,
+    Published,
+    Failed,
+}
+
+impl AuditOutboxStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Published => "published",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AuditOutboxRecord {
+    pub record_id: String,
+    pub record_type: String,
+    pub payload: Value,
+    pub payload_digest: String,
+    pub occurred_at: String,
+    pub status: AuditOutboxStatus,
+    pub attempts: u32,
+    pub published_at: Option<String>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AuditOutboxError {
+    DuplicateRecord { record_id: String },
+    RecordNotFound { record_id: String },
+    RecordAlreadyPublished { record_id: String },
+}
+
+impl fmt::Display for AuditOutboxError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DuplicateRecord { record_id } => {
+                write!(
+                    formatter,
+                    "audit outbox record {record_id:?} already exists"
+                )
+            }
+            Self::RecordNotFound { record_id } => {
+                write!(
+                    formatter,
+                    "audit outbox record {record_id:?} does not exist"
+                )
+            }
+            Self::RecordAlreadyPublished { record_id } => {
+                write!(
+                    formatter,
+                    "audit outbox record {record_id:?} is already published"
+                )
+            }
+        }
+    }
+}
+
+impl Error for AuditOutboxError {}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct InMemoryAuditOutbox {
+    records: Vec<AuditOutboxRecord>,
+    record_indexes: BTreeMap<String, usize>,
+}
+
+impl InMemoryAuditOutbox {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn append(
+        &mut self,
+        record_type: impl Into<String>,
+        payload: Value,
+        occurred_at: impl Into<String>,
+        record_id: Option<String>,
+    ) -> Result<AuditOutboxRecord, AuditOutboxError> {
+        let payload_digest = canonical_hash(&payload);
+        let actual_record_id = record_id.unwrap_or_else(|| format!("audit:{payload_digest}"));
+        if self.record_indexes.contains_key(&actual_record_id) {
+            return Err(AuditOutboxError::DuplicateRecord {
+                record_id: actual_record_id,
+            });
+        }
+        let record = AuditOutboxRecord {
+            record_id: actual_record_id.clone(),
+            record_type: record_type.into(),
+            payload,
+            payload_digest,
+            occurred_at: occurred_at.into(),
+            status: AuditOutboxStatus::Pending,
+            attempts: 0,
+            published_at: None,
+            last_error: None,
+        };
+        self.record_indexes
+            .insert(actual_record_id, self.records.len());
+        self.records.push(record.clone());
+        Ok(record)
+    }
+
+    pub fn get(&self, record_id: impl AsRef<str>) -> Result<AuditOutboxRecord, AuditOutboxError> {
+        Ok(self.records[self.record_index(record_id.as_ref())?].clone())
+    }
+
+    pub fn pending(&self, limit: Option<usize>) -> Vec<AuditOutboxRecord> {
+        let records = self
+            .records
+            .iter()
+            .filter(|record| {
+                matches!(
+                    record.status,
+                    AuditOutboxStatus::Pending | AuditOutboxStatus::Failed
+                )
+            })
+            .cloned();
+        match limit {
+            Some(limit) => records.take(limit).collect(),
+            None => records.collect(),
+        }
+    }
+
+    pub fn mark_published(
+        &mut self,
+        record_id: impl AsRef<str>,
+        published_at: impl Into<String>,
+    ) -> Result<AuditOutboxRecord, AuditOutboxError> {
+        let index = self.record_index(record_id.as_ref())?;
+        let record = &mut self.records[index];
+        record.status = AuditOutboxStatus::Published;
+        record.published_at = Some(published_at.into());
+        record.last_error = None;
+        Ok(record.clone())
+    }
+
+    pub fn mark_failed(
+        &mut self,
+        record_id: impl AsRef<str>,
+        error: impl Into<String>,
+    ) -> Result<AuditOutboxRecord, AuditOutboxError> {
+        let index = self.record_index(record_id.as_ref())?;
+        let record = &mut self.records[index];
+        if record.status == AuditOutboxStatus::Published {
+            return Err(AuditOutboxError::RecordAlreadyPublished {
+                record_id: record.record_id.clone(),
+            });
+        }
+        record.status = AuditOutboxStatus::Failed;
+        record.attempts += 1;
+        record.last_error = Some(error.into());
+        Ok(record.clone())
+    }
+
+    fn record_index(&self, record_id: &str) -> Result<usize, AuditOutboxError> {
+        self.record_indexes.get(record_id).copied().ok_or_else(|| {
+            AuditOutboxError::RecordNotFound {
+                record_id: record_id.to_owned(),
+            }
+        })
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct AuditQuery {
     pub target_kind: Option<AuditTargetKind>,
