@@ -55,3 +55,21 @@ def test_deployment_package_reexports_rollout_gate_contracts(monkeypatch) -> Non
     assert "RolloutPlan" in graphblocks_deployment.__all__
     assert "RolloutStep" in graphblocks_deployment.__all__
     assert "RolloutAnalysisResult" in graphblocks_deployment.__all__
+
+
+def test_deployment_package_reexports_slo_and_recovery_contracts(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-deployment" / "src"))
+    graphblocks_deployment = importlib.import_module("graphblocks_deployment")
+
+    slo_profile = graphblocks_deployment.DeploymentSloProfile("rag-production", ("availability",))
+    recovery_profile = graphblocks_deployment.DeploymentRecoveryProfile("production-recovery").with_objective(
+        "service",
+        rto="15m",
+        rpo="5m",
+    )
+
+    assert slo_profile.content_digest().startswith("sha256:")
+    assert recovery_profile.content_digest().startswith("sha256:")
+    assert "DeploymentCondition" in graphblocks_deployment.__all__
+    assert "DeploymentSloProfile" in graphblocks_deployment.__all__
+    assert "DeploymentRecoveryProfile" in graphblocks_deployment.__all__

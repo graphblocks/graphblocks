@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from graphblocks.deployment import (
+    DeploymentCondition,
+    DeploymentConditionStatus,
     DeploymentEvent,
     DeploymentEventKind,
     DeploymentObservabilityContext,
+    DeploymentRecoveryProfile,
     DeploymentRevision,
+    DeploymentSloProfile,
     DeploymentTargetCoverageIssue,
     DeploymentTargetCoverageResult,
     DeploymentTargetProfile,
@@ -27,6 +31,7 @@ from graphblocks.deployment import (
     PlacementSelector,
     PlacementUnknownTargetError,
     PromptLock,
+    RecoveryObjective,
     ReleaseBundle,
     ResolvedPlacement,
     RevisionDecision,
@@ -43,10 +48,14 @@ from graphblocks.deployment import (
 
 
 __all__ = [
+    "DeploymentCondition",
+    "DeploymentConditionStatus",
     "DeploymentEvent",
     "DeploymentEventKind",
     "DeploymentObservabilityContext",
+    "DeploymentRecoveryProfile",
     "DeploymentRevision",
+    "DeploymentSloProfile",
     "DeploymentTargetCoverageIssue",
     "DeploymentTargetCoverageResult",
     "DeploymentTargetProfile",
@@ -69,6 +78,7 @@ __all__ = [
     "PlacementSelector",
     "PlacementUnknownTargetError",
     "PromptLock",
+    "RecoveryObjective",
     "ReleaseBundle",
     "ResolvedPlacement",
     "RevisionDecision",

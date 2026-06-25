@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Literal
@@ -27,6 +27,7 @@ RolloutStepKind = Literal["validate", "shadow", "canary", "blue_green", "promote
 RolloutEffectsMode = Literal["normal", "suppress", "sandbox"]
 RolloutDecisionKind = Literal["hold", "advance", "promote", "abort"]
 RolloutStatus = Literal["running", "promoted", "aborted"]
+DeploymentConditionStatus = Literal["true", "false", "unknown"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -328,6 +329,177 @@ class DeploymentEvent:
         if self.context.cohort is not None:
             attributes["graphblocks.rollout.cohort"] = self.context.cohort
         return attributes
+
+
+@dataclass(frozen=True, slots=True)
+class DeploymentCondition:
+    condition_type: str
+    status: DeploymentConditionStatus
+    reason: str
+    message: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.condition_type.strip():
+            raise GraphDeploymentError("deployment condition type must not be empty")
+        if self.status not in {"true", "false", "unknown"}:
+            raise GraphDeploymentError(f"invalid deployment condition status {self.status!r}")
+        if not self.reason.strip():
+            raise GraphDeploymentError("deployment condition reason must not be empty")
+
+    def condition_contract(self) -> dict[str, str]:
+        return {
+            "type": self.condition_type,
+            "status": self.status,
+            "reason": self.reason,
+            "message": self.message,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class DeploymentSloProfile:
+    profile_id: str
+    slo_objective_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not self.profile_id.strip():
+            raise GraphDeploymentError("deployment SLO profile id must not be empty")
+        objective_ids = tuple(sorted({str(item) for item in self.slo_objective_ids if str(item).strip()}))
+        if not objective_ids:
+            raise GraphDeploymentError("deployment SLO profile requires at least one SLO objective")
+        object.__setattr__(self, "slo_objective_ids", objective_ids)
+
+    def evaluate_slo_reports(self, reports: Iterable[object]) -> DeploymentCondition:
+        reports_by_id = {
+            str(slo_id): report
+            for report in reports
+            if (slo_id := getattr(report, "slo_id", None)) is not None
+        }
+        failed: list[str] = []
+        missing_or_no_data: list[str] = []
+        for objective_id in self.slo_objective_ids:
+            report = reports_by_id.get(objective_id)
+            status = getattr(report, "status", None) if report is not None else None
+            if report is None or status == "no_data":
+                missing_or_no_data.append(objective_id)
+            elif status != "pass":
+                failed.append(objective_id)
+
+        if failed:
+            return DeploymentCondition(
+                "SLOWithinBudget",
+                "false",
+                "slo_failed",
+                f"failed SLO objectives: {', '.join(failed)}",
+            )
+        if missing_or_no_data:
+            return DeploymentCondition(
+                "SLOWithinBudget",
+                "unknown",
+                "slo_no_data",
+                f"missing or no-data SLO objectives: {', '.join(missing_or_no_data)}",
+            )
+        return DeploymentCondition("SLOWithinBudget", "true", "slo_within_budget")
+
+    def profile_contract(self) -> dict[str, object]:
+        return {
+            "profile_id": self.profile_id,
+            "slo_objective_ids": list(self.slo_objective_ids),
+        }
+
+    def content_digest(self) -> str:
+        return canonical_hash(self.profile_contract())
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveryObjective:
+    target: str
+    rto: str
+    rpo: str
+
+    def __post_init__(self) -> None:
+        if not self.target.strip():
+            raise GraphDeploymentError("recovery objective target must not be empty")
+        if not self.rto.strip():
+            raise GraphDeploymentError("recovery objective rto must not be empty")
+        if not self.rpo.strip():
+            raise GraphDeploymentError("recovery objective rpo must not be empty")
+
+    def objective_contract(self) -> dict[str, str]:
+        return {"target": self.target, "rto": self.rto, "rpo": self.rpo}
+
+
+@dataclass(frozen=True, slots=True)
+class DeploymentRecoveryProfile:
+    profile_id: str
+    objectives: tuple[RecoveryObjective, ...] = field(default_factory=tuple)
+    knowledge_index_rebuildable_from: tuple[str, ...] = field(default_factory=tuple)
+    regional_failover_mode: str | None = None
+    max_restore_test_age_seconds: int | None = None
+
+    def __post_init__(self) -> None:
+        if not self.profile_id.strip():
+            raise GraphDeploymentError("deployment recovery profile id must not be empty")
+        if self.max_restore_test_age_seconds is not None and (
+            isinstance(self.max_restore_test_age_seconds, bool) or self.max_restore_test_age_seconds <= 0
+        ):
+            raise GraphDeploymentError("restore test max age must be positive")
+        object.__setattr__(self, "objectives", tuple(sorted(self.objectives, key=lambda item: item.target)))
+        object.__setattr__(
+            self,
+            "knowledge_index_rebuildable_from",
+            tuple(sorted({str(item) for item in self.knowledge_index_rebuildable_from if str(item).strip()})),
+        )
+
+    def with_objective(self, target: str, *, rto: str, rpo: str) -> DeploymentRecoveryProfile:
+        objectives = {objective.target: objective for objective in self.objectives}
+        objectives[target] = RecoveryObjective(target, rto, rpo)
+        return replace(self, objectives=tuple(objectives.values()))
+
+    def with_knowledge_index_sources(self, sources: Iterable[str]) -> DeploymentRecoveryProfile:
+        return replace(self, knowledge_index_rebuildable_from=tuple(str(item) for item in sources))
+
+    def with_regional_failover(self, mode: str) -> DeploymentRecoveryProfile:
+        if not mode.strip():
+            raise GraphDeploymentError("regional failover mode must not be empty")
+        return replace(self, regional_failover_mode=mode)
+
+    def with_max_restore_test_age_seconds(self, max_restore_test_age_seconds: int) -> DeploymentRecoveryProfile:
+        return replace(self, max_restore_test_age_seconds=max_restore_test_age_seconds)
+
+    def evaluate_restore_test(
+        self,
+        *,
+        tested_at_unix_seconds: int | None,
+        now_unix_seconds: int,
+        passed: bool,
+    ) -> DeploymentCondition:
+        if not passed:
+            return DeploymentCondition("RecoveryTestCurrent", "false", "restore_test_failed")
+        if tested_at_unix_seconds is None:
+            return DeploymentCondition("RecoveryTestCurrent", "unknown", "restore_test_missing")
+        age_seconds = now_unix_seconds - tested_at_unix_seconds
+        if age_seconds < 0:
+            return DeploymentCondition("RecoveryTestCurrent", "unknown", "restore_test_in_future")
+        if self.max_restore_test_age_seconds is not None and age_seconds > self.max_restore_test_age_seconds:
+            return DeploymentCondition(
+                "RecoveryTestCurrent",
+                "false",
+                "restore_test_stale",
+                f"last restore test age {age_seconds}s exceeds {self.max_restore_test_age_seconds}s",
+            )
+        return DeploymentCondition("RecoveryTestCurrent", "true", "restore_test_current")
+
+    def recovery_contract(self) -> dict[str, object]:
+        return {
+            "profile_id": self.profile_id,
+            "objectives": [objective.objective_contract() for objective in self.objectives],
+            "knowledge_index_rebuildable_from": list(self.knowledge_index_rebuildable_from),
+            "regional_failover_mode": self.regional_failover_mode,
+            "max_restore_test_age_seconds": self.max_restore_test_age_seconds,
+        }
+
+    def content_digest(self) -> str:
+        return canonical_hash(self.recovery_contract())
 
 
 @dataclass(frozen=True, slots=True)
@@ -1122,10 +1294,14 @@ class GraphDeployment:
 
 
 __all__ = [
+    "DeploymentCondition",
+    "DeploymentConditionStatus",
     "DeploymentEvent",
     "DeploymentEventKind",
     "DeploymentObservabilityContext",
+    "DeploymentRecoveryProfile",
     "DeploymentRevision",
+    "DeploymentSloProfile",
     "DeploymentTargetCoverageIssue",
     "DeploymentTargetCoverageResult",
     "DeploymentTargetProfile",
@@ -1148,6 +1324,7 @@ __all__ = [
     "PlacementSelector",
     "PlacementUnknownTargetError",
     "PromptLock",
+    "RecoveryObjective",
     "ReleaseBundle",
     "ResolvedPlacement",
     "RevisionDecision",

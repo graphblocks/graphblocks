@@ -3,10 +3,13 @@ from __future__ import annotations
 import pytest
 
 from graphblocks.deployment import (
+    DeploymentCondition,
     DeploymentEvent,
     DeploymentEventKind,
     DeploymentObservabilityContext,
+    DeploymentRecoveryProfile,
     DeploymentRevision,
+    DeploymentSloProfile,
     ExecutionTarget,
     GraphDeployment,
     GraphRelease,
@@ -26,6 +29,7 @@ from graphblocks.deployment import (
     RolloutStep,
     UpgradePolicy,
 )
+from graphblocks.evaluation import SloMeasurement, SloObjective
 
 
 def test_deployment_revision_digest_is_stable_without_record_identity() -> None:
@@ -359,6 +363,87 @@ def test_rollout_gate_aborts_without_automatic_rollback_for_non_reversible_effec
     assert decision.reason == "quality_gate_failed"
     assert decision.automatic_rollback_allowed is False
     assert decision.next_state.status == "aborted"
+
+
+def test_deployment_slo_profile_evaluates_slo_within_budget_condition() -> None:
+    profile = DeploymentSloProfile(
+        profile_id="rag-production",
+        slo_objective_ids=("availability", "p95-latency"),
+    )
+    availability = SloObjective.at_least("availability", "request_success_ratio", 0.995, "5m").evaluate(
+        SloMeasurement("request_success_ratio", 0.997, "5m")
+    )
+    latency = SloObjective.at_most("p95-latency", "p95_latency_ms", 800, "5m").with_unit("ms").evaluate(
+        SloMeasurement("p95_latency_ms", 900, "5m", unit="ms")
+    )
+
+    condition = profile.evaluate_slo_reports([availability, latency])
+
+    assert condition == DeploymentCondition(
+        condition_type="SLOWithinBudget",
+        status="false",
+        reason="slo_failed",
+        message="failed SLO objectives: p95-latency",
+    )
+    assert profile.content_digest().startswith("sha256:")
+
+
+def test_deployment_slo_profile_reports_missing_or_no_data_as_unknown() -> None:
+    profile = DeploymentSloProfile(
+        profile_id="rag-production",
+        slo_objective_ids=("availability", "p95-latency"),
+    )
+    availability = SloObjective.at_least("availability", "request_success_ratio", 0.995, "5m").evaluate(
+        SloMeasurement("other_indicator", 0.997, "5m")
+    )
+
+    condition = profile.evaluate_slo_reports([availability])
+
+    assert condition.condition_type == "SLOWithinBudget"
+    assert condition.status == "unknown"
+    assert condition.reason == "slo_no_data"
+    assert condition.message == "missing or no-data SLO objectives: availability, p95-latency"
+
+
+def test_deployment_recovery_profile_evaluates_restore_test_freshness() -> None:
+    profile = (
+        DeploymentRecoveryProfile(profile_id="production-recovery")
+        .with_objective("service", rto="15m", rpo="5m")
+        .with_objective("durable_jobs", rto="1h", rpo="checkpoint")
+        .with_knowledge_index_sources(["source_assets", "manifests", "release_bundle"])
+        .with_regional_failover("active_passive")
+        .with_max_restore_test_age_seconds(86_400)
+    )
+
+    current = profile.evaluate_restore_test(
+        tested_at_unix_seconds=1_000,
+        now_unix_seconds=80_000,
+        passed=True,
+    )
+    stale = profile.evaluate_restore_test(
+        tested_at_unix_seconds=1_000,
+        now_unix_seconds=90_000,
+        passed=True,
+    )
+
+    assert current == DeploymentCondition("RecoveryTestCurrent", "true", "restore_test_current")
+    assert stale == DeploymentCondition(
+        "RecoveryTestCurrent",
+        "false",
+        "restore_test_stale",
+        "last restore test age 89000s exceeds 86400s",
+    )
+    assert profile.recovery_contract() == {
+        "profile_id": "production-recovery",
+        "objectives": [
+            {"target": "durable_jobs", "rto": "1h", "rpo": "checkpoint"},
+            {"target": "service", "rto": "15m", "rpo": "5m"},
+        ],
+        "knowledge_index_rebuildable_from": ["manifests", "release_bundle", "source_assets"],
+        "regional_failover_mode": "active_passive",
+        "max_restore_test_age_seconds": 86_400,
+    }
+    assert profile.content_digest().startswith("sha256:")
 
 
 def test_rollout_traffic_assignment_is_deterministic_and_sticky_by_affinity() -> None:
