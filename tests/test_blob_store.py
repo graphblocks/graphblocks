@@ -14,11 +14,17 @@ from graphblocks.blob_store import (
 
 def test_local_blob_store_put_head_and_get_round_trip(tmp_path) -> None:
     store = LocalBlobStore(tmp_path)
+    put_metadata = {"tenant": "acme"}
+    options = PutOptions(media_type="text/plain", filename="policy.txt", metadata=put_metadata)
+    put_metadata["tenant"] = "mutated"
+
+    with pytest.raises(TypeError):
+        options.metadata["tenant"] = "changed"
 
     artifact = store.put(
         BlobKey("docs/policy.txt"),
         b"alpha policy",
-        PutOptions(media_type="text/plain", filename="policy.txt", metadata={"tenant": "acme"}),
+        options,
     )
 
     metadata = store.head(BlobKey("docs/policy.txt"))
@@ -40,6 +46,10 @@ def test_local_blob_store_supports_range_reads(tmp_path) -> None:
 
     assert store.get(BlobKey("data.bin"), ByteRange(offset=2, length=3)) == b"cde"
     assert store.get(BlobKey("data.bin"), ByteRange(offset=4)) == b"ef"
+    with pytest.raises(ValueError, match="byte range offset and length must be non-negative"):
+        ByteRange(offset=-1)
+    with pytest.raises(ValueError, match="byte range offset and length must be non-negative"):
+        ByteRange(offset=0, length=-1)
 
 
 def test_local_blob_store_lists_sorted_prefix_with_cursor(tmp_path) -> None:
@@ -55,6 +65,8 @@ def test_local_blob_store_lists_sorted_prefix_with_cursor(tmp_path) -> None:
     assert first_page.next_cursor == "1"
     assert [item.key.key for item in second_page.items] == ["docs/b.txt"]
     assert second_page.next_cursor is None
+    with pytest.raises(AttributeError):
+        first_page.items.append(second_page.items[0])
 
 
 def test_local_blob_store_delete_removes_blob(tmp_path) -> None:

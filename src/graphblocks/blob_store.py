@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass, field
 import hashlib
 import json
 from pathlib import Path, PurePosixPath
+from types import MappingProxyType
 
 from .documents import ArtifactRef
 
@@ -30,12 +31,19 @@ class ByteRange:
     offset: int
     length: int | None = None
 
+    def __post_init__(self) -> None:
+        if self.offset < 0 or (self.length is not None and self.length < 0):
+            raise ValueError("byte range offset and length must be non-negative")
+
 
 @dataclass(frozen=True, slots=True)
 class PutOptions:
     media_type: str | None = None
     filename: str | None = None
     metadata: dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,8 +61,11 @@ class BlobListItem:
 
 @dataclass(frozen=True, slots=True)
 class ListPage:
-    items: list[BlobListItem]
+    items: tuple[BlobListItem, ...]
     next_cursor: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "items", tuple(self.items))
 
 
 @dataclass(slots=True)
@@ -136,8 +147,6 @@ class LocalBlobStore:
         data = path.read_bytes()
         if byte_range is None:
             return data
-        if byte_range.offset < 0 or (byte_range.length is not None and byte_range.length < 0):
-            raise ValueError("byte range offset and length must be non-negative")
         if byte_range.length is None:
             return data[byte_range.offset :]
         return data[byte_range.offset : byte_range.offset + byte_range.length]
