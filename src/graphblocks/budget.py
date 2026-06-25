@@ -192,6 +192,10 @@ class BudgetPermit:
     low_watermark: list[UsageAmount] = field(default_factory=list)
     fencing_tokens: dict[str, int] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "reservation_refs", tuple(self.reservation_refs))
+        object.__setattr__(self, "fencing_tokens", MappingProxyType(dict(self.fencing_tokens)))
+
     def allows(self, amounts: list[UsageAmount]) -> bool:
         authorized = _amounts_to_dict(self.authorized_amounts)
         requested = _amounts_to_dict(amounts)

@@ -39,6 +39,8 @@ def test_budget_ledger_issues_bounded_permit_from_reservations() -> None:
     assert permit.reservation_refs == (reservation.reservation_id,)
     assert permit.authorized_amounts == [_tokens("40")]
     assert permit.fencing_tokens == {"budget-1": reservation.fencing_token}
+    with pytest.raises(TypeError):
+        permit.fencing_tokens["budget-1"] = 0
     assert permit.owner.resource_id == "worker:1"
     assert permit.atomic_unit.resource_id == "turn:1"
     assert permit.allows([_tokens("25")]) is True
