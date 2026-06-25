@@ -269,6 +269,35 @@ pub enum ToolImplementation {
 }
 
 impl ToolImplementation {
+    pub fn validate(&self) -> Result<(), ToolResolutionError> {
+        let validate_field = |kind: &'static str,
+                              field: &'static str,
+                              value: &str|
+         -> Result<(), ToolResolutionError> {
+            if value.trim().is_empty() {
+                return Err(ToolResolutionError::EmptyToolImplementationField { kind, field });
+            }
+            Ok(())
+        };
+
+        match self {
+            Self::Block(implementation) => validate_field("block", "block", &implementation.block),
+            Self::Graph(implementation) => validate_field("graph", "graph", &implementation.graph),
+            Self::Remote(implementation) => {
+                validate_field("remote", "connection", &implementation.connection)?;
+                validate_field("remote", "operation", &implementation.operation)
+            }
+            Self::Mcp(implementation) => {
+                validate_field("mcp", "server", &implementation.server)?;
+                validate_field("mcp", "remote_name", &implementation.remote_name)
+            }
+            Self::OpenApi(implementation) => {
+                validate_field("openapi", "connection", &implementation.connection)?;
+                validate_field("openapi", "operation_id", &implementation.operation_id)
+            }
+        }
+    }
+
     fn canonical_value(&self) -> Value {
         match self {
             Self::Block(implementation) => json!({
@@ -382,6 +411,7 @@ impl ToolBinding {
                 return Err(ToolResolutionError::EmptyToolBindingField { field });
             }
         }
+        self.implementation.validate()?;
         Ok(())
     }
 
@@ -452,6 +482,10 @@ pub enum ToolResolutionError {
         field: &'static str,
     },
     EmptyToolBindingField {
+        field: &'static str,
+    },
+    EmptyToolImplementationField {
+        kind: &'static str,
         field: &'static str,
     },
     DuplicateToolDefinition {

@@ -342,6 +342,8 @@ class BlockToolImplementation:
     kind: Literal["block"] = field(default="block", init=False)
 
     def __post_init__(self) -> None:
+        if not self.block.strip():
+            raise ValueError("block tool implementation block must not be empty")
         object.__setattr__(self, "input_mapping", MappingProxyType(dict(self.input_mapping)))
         object.__setattr__(self, "output_mapping", MappingProxyType(dict(self.output_mapping)))
 
@@ -362,6 +364,8 @@ class GraphToolImplementation:
     kind: Literal["graph"] = field(default="graph", init=False)
 
     def __post_init__(self) -> None:
+        if not self.graph.strip():
+            raise ValueError("graph tool implementation graph must not be empty")
         object.__setattr__(self, "input_mapping", MappingProxyType(dict(self.input_mapping)))
         object.__setattr__(self, "output_mapping", MappingProxyType(dict(self.output_mapping)))
 
@@ -380,6 +384,12 @@ class RemoteToolImplementation:
     operation: str
     kind: Literal["remote"] = field(default="remote", init=False)
 
+    def __post_init__(self) -> None:
+        if not self.connection.strip():
+            raise ValueError("remote tool implementation connection must not be empty")
+        if not self.operation.strip():
+            raise ValueError("remote tool implementation operation must not be empty")
+
     def canonical_value(self) -> dict[str, object]:
         return {
             "kind": self.kind,
@@ -394,6 +404,12 @@ class McpToolImplementation:
     remote_name: str
     kind: Literal["mcp"] = field(default="mcp", init=False)
 
+    def __post_init__(self) -> None:
+        if not self.server.strip():
+            raise ValueError("mcp tool implementation server must not be empty")
+        if not self.remote_name.strip():
+            raise ValueError("mcp tool implementation remote_name must not be empty")
+
     def canonical_value(self) -> dict[str, object]:
         return {
             "kind": self.kind,
@@ -407,6 +423,12 @@ class OpenApiToolImplementation:
     connection: ResourceRef
     operation_id: str
     kind: Literal["openapi"] = field(default="openapi", init=False)
+
+    def __post_init__(self) -> None:
+        if not self.connection.strip():
+            raise ValueError("openapi tool implementation connection must not be empty")
+        if not self.operation_id.strip():
+            raise ValueError("openapi tool implementation operation_id must not be empty")
 
     def canonical_value(self) -> dict[str, object]:
         return {

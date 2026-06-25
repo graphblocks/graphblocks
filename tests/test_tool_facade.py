@@ -15,10 +15,12 @@ from graphblocks import (
     GraphToolImplementation,
     JsonSchema,
     JsonSchemaNode,
+    McpToolImplementation,
     OpenApiToolImplementation,
     PolicyDecision,
     PolicyObligation,
     PrincipalRef,
+    RemoteToolImplementation,
     ResolvedTool,
     ToolAdmissionError,
     ToolApprovalError,
@@ -186,6 +188,25 @@ def test_tool_binding_rejects_unknown_contract_values() -> None:
     for overrides, message in cases:
         with pytest.raises(ValueError, match=message):
             ToolBinding(**base, **overrides)
+
+
+def test_tool_implementations_reject_empty_execution_targets() -> None:
+    with pytest.raises(ValueError, match="block tool implementation block must not be empty"):
+        BlockToolImplementation(block=" ")
+    with pytest.raises(ValueError, match="graph tool implementation graph must not be empty"):
+        GraphToolImplementation(graph="")
+    with pytest.raises(ValueError, match="remote tool implementation connection must not be empty"):
+        RemoteToolImplementation(connection=" ", operation="search")
+    with pytest.raises(ValueError, match="remote tool implementation operation must not be empty"):
+        RemoteToolImplementation(connection="support-api", operation="")
+    with pytest.raises(ValueError, match="mcp tool implementation server must not be empty"):
+        McpToolImplementation(server="", remote_name="tool.search")
+    with pytest.raises(ValueError, match="mcp tool implementation remote_name must not be empty"):
+        McpToolImplementation(server="support-mcp", remote_name=" ")
+    with pytest.raises(ValueError, match="openapi tool implementation connection must not be empty"):
+        OpenApiToolImplementation(connection=" ", operation_id="createTicket")
+    with pytest.raises(ValueError, match="openapi tool implementation operation_id must not be empty"):
+        OpenApiToolImplementation(connection="ticket-system", operation_id="")
 
 
 def test_tool_implementation_mapping_mutation_cannot_change_binding_digest() -> None:

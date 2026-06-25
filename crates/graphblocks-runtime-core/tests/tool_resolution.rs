@@ -1,6 +1,7 @@
 use graphblocks_compiler::canonical::canonical_hash;
 use graphblocks_runtime_core::tool::{
-    BlockToolImplementation, OpenApiToolImplementation, ToolBinding, ToolCatalog, ToolDefinition,
+    BlockToolImplementation, GraphToolImplementation, McpToolImplementation,
+    OpenApiToolImplementation, RemoteToolImplementation, ToolBinding, ToolCatalog, ToolDefinition,
     ToolEffect, ToolImplementation, ToolResolutionError, ToolResolutionScope,
 };
 use graphblocks_schema::SchemaIdError;
@@ -166,6 +167,78 @@ fn tool_binding_validates_identity_fields() {
         ),
         Err(ToolResolutionError::EmptyToolBindingField {
             field: "binding_id",
+        })
+    );
+}
+
+#[test]
+fn tool_implementations_validate_execution_targets() {
+    assert_eq!(
+        ToolImplementation::Block(BlockToolImplementation::new(" ")).validate(),
+        Err(ToolResolutionError::EmptyToolImplementationField {
+            kind: "block",
+            field: "block",
+        })
+    );
+    assert_eq!(
+        ToolImplementation::Graph(GraphToolImplementation::new("")).validate(),
+        Err(ToolResolutionError::EmptyToolImplementationField {
+            kind: "graph",
+            field: "graph",
+        })
+    );
+    assert_eq!(
+        ToolImplementation::Remote(RemoteToolImplementation::new(" ", "search")).validate(),
+        Err(ToolResolutionError::EmptyToolImplementationField {
+            kind: "remote",
+            field: "connection",
+        })
+    );
+    assert_eq!(
+        ToolImplementation::Remote(RemoteToolImplementation::new("support-api", "")).validate(),
+        Err(ToolResolutionError::EmptyToolImplementationField {
+            kind: "remote",
+            field: "operation",
+        })
+    );
+    assert_eq!(
+        ToolImplementation::Mcp(McpToolImplementation::new("", "tool.search")).validate(),
+        Err(ToolResolutionError::EmptyToolImplementationField {
+            kind: "mcp",
+            field: "server",
+        })
+    );
+    assert_eq!(
+        ToolImplementation::Mcp(McpToolImplementation::new("support-mcp", " ")).validate(),
+        Err(ToolResolutionError::EmptyToolImplementationField {
+            kind: "mcp",
+            field: "remote_name",
+        })
+    );
+    assert_eq!(
+        ToolImplementation::OpenApi(OpenApiToolImplementation::new(" ", "createTicket")).validate(),
+        Err(ToolResolutionError::EmptyToolImplementationField {
+            kind: "openapi",
+            field: "connection",
+        })
+    );
+    assert_eq!(
+        ToolImplementation::OpenApi(OpenApiToolImplementation::new("ticket-system", "")).validate(),
+        Err(ToolResolutionError::EmptyToolImplementationField {
+            kind: "openapi",
+            field: "operation_id",
+        })
+    );
+    assert_eq!(
+        ToolBinding::new(
+            "binding-search",
+            "knowledge.search",
+            ToolImplementation::Block(BlockToolImplementation::new(" ")),
+        )
+        .validate(),
+        Err(ToolResolutionError::EmptyToolImplementationField {
+            kind: "block",
+            field: "block",
         })
     );
 }
