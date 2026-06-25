@@ -756,6 +756,24 @@ packages:
   - wsproto
   implementationPhase: integration-defined
   stability: integration
+- distribution: graphblocks-openai-realtime
+  import: graphblocks_openai_realtime
+  layer: voice_provider_adapter
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-voice
+  responsibility:
+  - OpenAI Realtime session payload projection
+  - WebRTC unified call and ephemeral client secret request contracts
+  - WebSocket connection and client event contracts
+  forbiddenDependencies:
+  - openai
+  - websockets
+  - aiortc
+  - httpx
+  implementationPhase: integration-defined
+  stability: integration
 - distribution: graphblocks-silero-vad
   import: graphblocks_silero_vad
   layer: voice_vad_adapter
