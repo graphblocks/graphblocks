@@ -141,6 +141,36 @@ fn tool_definition_validates_identity_fields() {
 }
 
 #[test]
+fn tool_binding_validates_identity_fields() {
+    let valid_implementation =
+        ToolImplementation::Block(BlockToolImplementation::new("blocks.search"));
+
+    assert_eq!(
+        ToolBinding::new(" ", "knowledge.search", valid_implementation.clone()).validate(),
+        Err(ToolResolutionError::EmptyToolBindingField {
+            field: "binding_id",
+        })
+    );
+    assert_eq!(
+        ToolBinding::new("binding-search", "", valid_implementation.clone()).validate(),
+        Err(ToolResolutionError::EmptyToolBindingField { field: "tool_name" })
+    );
+    assert_eq!(
+        ToolCatalog::new(
+            [search_definition()],
+            [ToolBinding::new(
+                " ",
+                "knowledge.search",
+                valid_implementation
+            )],
+        ),
+        Err(ToolResolutionError::EmptyToolBindingField {
+            field: "binding_id",
+        })
+    );
+}
+
+#[test]
 fn resolved_tool_rejects_definition_binding_name_mismatch() {
     assert_eq!(
         graphblocks_runtime_core::tool::ResolvedTool::from_definition_and_binding(

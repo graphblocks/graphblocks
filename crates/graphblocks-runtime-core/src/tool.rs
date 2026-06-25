@@ -373,6 +373,18 @@ impl ToolBinding {
         self
     }
 
+    pub fn validate(&self) -> Result<(), ToolResolutionError> {
+        for (field, value) in [
+            ("binding_id", self.binding_id.as_str()),
+            ("tool_name", self.tool_name.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(ToolResolutionError::EmptyToolBindingField { field });
+            }
+        }
+        Ok(())
+    }
+
     pub fn digest(&self) -> String {
         canonical_hash(&json!({
             "binding_id": self.binding_id,
@@ -437,6 +449,9 @@ impl ResolvedTool {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ToolResolutionError {
     EmptyToolDefinitionField {
+        field: &'static str,
+    },
+    EmptyToolBindingField {
         field: &'static str,
     },
     DuplicateToolDefinition {
@@ -620,6 +635,7 @@ impl ToolCatalog {
         let mut binding_ids = BTreeSet::new();
         let mut bindings_by_tool = BTreeMap::new();
         for binding in bindings {
+            binding.validate()?;
             let binding_id = binding.binding_id.clone();
             let tool_name = binding.tool_name.clone();
             if !binding_ids.insert(binding_id.clone()) {

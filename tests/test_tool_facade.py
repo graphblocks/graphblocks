@@ -170,6 +170,11 @@ def test_tool_binding_rejects_unknown_contract_values() -> None:
         "implementation": BlockToolImplementation(block="knowledge.search@1"),
     }
 
+    with pytest.raises(ValueError, match="tool binding binding_id must not be empty"):
+        ToolBinding(**{**base, "binding_id": " "})
+    with pytest.raises(ValueError, match="tool binding tool_name must not be empty"):
+        ToolBinding(**{**base, "tool_name": ""})
+
     cases = (
         ({"effects": frozenset({"external_read", "telepathy"})}, "invalid tool effect telepathy"),
         ({"approval": "sometimes"}, "invalid tool approval sometimes"),

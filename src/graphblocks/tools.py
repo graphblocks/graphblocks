@@ -441,6 +441,9 @@ class ToolBinding:
     execution_class: str | None = None
 
     def __post_init__(self) -> None:
+        for field_name in ("binding_id", "tool_name"):
+            if not getattr(self, field_name).strip():
+                raise ValueError(f"tool binding {field_name} must not be empty")
         effects = frozenset(self.effects)
         invalid_effects = sorted(effect for effect in effects if effect not in VALID_TOOL_EFFECTS)
         if invalid_effects:
