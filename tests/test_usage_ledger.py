@@ -62,6 +62,44 @@ def test_usage_record_deep_copies_mutable_amounts_and_metadata() -> None:
         record.metadata["phase"] = "direct"
 
 
+def test_usage_record_rejects_invalid_identity_source_and_confidence() -> None:
+    with pytest.raises(ValueError, match="usage record_id must not be empty"):
+        UsageRecord(
+            record_id=" ",
+            source="runtime_measured",
+            confidence="estimated",
+            amounts=[_tokens("12")],
+            occurred_at="2026-06-22T00:00:00Z",
+        )
+
+    with pytest.raises(ValueError, match="invalid usage source manual"):
+        UsageRecord(
+            record_id="usage-1",
+            source="manual",  # type: ignore[arg-type]
+            confidence="estimated",
+            amounts=[_tokens("12")],
+            occurred_at="2026-06-22T00:00:00Z",
+        )
+
+    with pytest.raises(ValueError, match="invalid usage confidence guessed"):
+        UsageRecord(
+            record_id="usage-1",
+            source="runtime_measured",
+            confidence="guessed",  # type: ignore[arg-type]
+            amounts=[_tokens("12")],
+            occurred_at="2026-06-22T00:00:00Z",
+        )
+
+    with pytest.raises(ValueError, match="usage occurred_at must not be empty"):
+        UsageRecord(
+            record_id="usage-1",
+            source="runtime_measured",
+            confidence="estimated",
+            amounts=[_tokens("12")],
+            occurred_at="",
+        )
+
+
 def test_usage_ledger_replays_identical_records_without_double_counting() -> None:
     ledger = InMemoryUsageLedger()
     record = UsageRecord(

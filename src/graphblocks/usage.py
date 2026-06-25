@@ -19,6 +19,16 @@ UsageSource = Literal[
     "reconciled",
 ]
 UsageConfidence = Literal["exact", "provider_exact", "estimated", "unknown"]
+VALID_USAGE_SOURCES = frozenset(
+    {
+        "provider_reported",
+        "runtime_measured",
+        "tokenizer_estimated",
+        "pricing_estimated",
+        "reconciled",
+    }
+)
+VALID_USAGE_CONFIDENCES = frozenset({"exact", "provider_exact", "estimated", "unknown"})
 
 
 class UsageLedgerError(RuntimeError):
@@ -50,6 +60,14 @@ class UsageRecord:
     metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        if not self.record_id.strip():
+            raise ValueError("usage record_id must not be empty")
+        if self.source not in VALID_USAGE_SOURCES:
+            raise ValueError(f"invalid usage source {self.source}")
+        if self.confidence not in VALID_USAGE_CONFIDENCES:
+            raise ValueError(f"invalid usage confidence {self.confidence}")
+        if not self.occurred_at.strip():
+            raise ValueError("usage occurred_at must not be empty")
         amounts = tuple(
             UsageAmount(
                 kind=amount.kind,
