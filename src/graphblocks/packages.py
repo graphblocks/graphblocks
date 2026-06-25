@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from importlib import resources
 from pathlib import Path
+import tomllib
 from typing import Any
 
 import yaml
@@ -36,6 +37,32 @@ class PackageLock:
             if entry.distribution == distribution:
                 return entry
         return None
+
+
+@dataclass(frozen=True, slots=True)
+class PackageManifestAuditPolicy:
+    allowed_licenses: tuple[str, ...] = ("Apache-2.0",)
+    blocked_dependencies: tuple[str, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "allowed_licenses",
+            tuple(sorted({license.strip() for license in self.allowed_licenses if license.strip()})),
+        )
+        object.__setattr__(
+            self,
+            "blocked_dependencies",
+            tuple(
+                sorted(
+                    {
+                        dependency.strip().lower().replace("_", "-")
+                        for dependency in self.blocked_dependencies
+                        if dependency.strip()
+                    }
+                )
+            ),
+        )
 
 
 def load_package_catalog(path: str | Path | None = None) -> dict[str, Any]:
@@ -166,6 +193,206 @@ def build_package_lock(
         entries=tuple(entries),
         excluded_categories=excluded_categories,
     )
+
+
+def audit_package_manifests(
+    root: str | Path,
+    *,
+    policy: PackageManifestAuditPolicy = PackageManifestAuditPolicy(),
+) -> DiagnosticSet:
+    diagnostics: list[Diagnostic] = []
+    root_path = Path(root)
+    allowed_licenses = set(policy.allowed_licenses)
+    blocked_dependencies = set(policy.blocked_dependencies)
+    if not root_path.is_dir():
+        return DiagnosticSet(
+            (
+                Diagnostic(
+                    "PackageAuditRootMissing",
+                    f"package audit root is not a directory: {root_path}",
+                    "$",
+                ),
+            )
+        )
+
+    pyproject_paths = [root_path / "pyproject.toml", *sorted(root_path.glob("packages/*/pyproject.toml"))]
+    for manifest_path in pyproject_paths:
+        if not manifest_path.exists():
+            continue
+        relative_path = manifest_path.relative_to(root_path).as_posix()
+        try:
+            manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
+        except tomllib.TOMLDecodeError as error:
+            diagnostics.append(
+                Diagnostic(
+                    "PackageManifestInvalid",
+                    f"invalid Python package manifest: {error}",
+                    f"$.{relative_path}",
+                )
+            )
+            continue
+        project = manifest.get("project")
+        if not isinstance(project, dict):
+            diagnostics.append(
+                Diagnostic(
+                    "PackageManifestInvalid",
+                    "Python package manifests require a project table",
+                    f"$.{relative_path}.project",
+                )
+            )
+            continue
+        license_value = project.get("license")
+        if isinstance(license_value, dict):
+            raw_license = license_value.get("text")
+            license_text = raw_license if isinstance(raw_license, str) else None
+        else:
+            license_text = license_value if isinstance(license_value, str) else None
+        if not license_text or not license_text.strip():
+            diagnostics.append(
+                Diagnostic(
+                    "PackageLicenseMissing",
+                    "Python package manifest must declare a license",
+                    f"$.{relative_path}.project.license",
+                )
+            )
+        elif allowed_licenses and license_text.strip() not in allowed_licenses:
+            diagnostics.append(
+                Diagnostic(
+                    "PackageLicenseDenied",
+                    f"license {license_text.strip()!r} is not in the allowed license policy",
+                    f"$.{relative_path}.project.license",
+                )
+            )
+        dependencies = project.get("dependencies", [])
+        if isinstance(dependencies, list):
+            for index, dependency in enumerate(dependencies):
+                if not isinstance(dependency, str):
+                    continue
+                dependency_name = dependency.strip().split(";", 1)[0].strip()
+                for marker in ("[", "~=", "==", ">=", "<=", "!=", ">", "<"):
+                    marker_index = dependency_name.find(marker)
+                    if marker_index > 0:
+                        dependency_name = dependency_name[:marker_index]
+                        break
+                dependency_name = dependency_name.strip().lower().replace("_", "-")
+                if dependency_name in blocked_dependencies:
+                    diagnostics.append(
+                        Diagnostic(
+                            "PackageBlockedDependency",
+                            f"dependency {dependency_name!r} is blocked by vulnerability policy",
+                            f"$.{relative_path}.project.dependencies[{index}]",
+                        )
+                    )
+        optional_dependencies = project.get("optional-dependencies", {})
+        if isinstance(optional_dependencies, dict):
+            for extra in sorted(optional_dependencies):
+                dependencies = optional_dependencies[extra]
+                if not isinstance(dependencies, list):
+                    continue
+                for index, dependency in enumerate(dependencies):
+                    if not isinstance(dependency, str):
+                        continue
+                    dependency_name = dependency.strip().split(";", 1)[0].strip()
+                    for marker in ("[", "~=", "==", ">=", "<=", "!=", ">", "<"):
+                        marker_index = dependency_name.find(marker)
+                        if marker_index > 0:
+                            dependency_name = dependency_name[:marker_index]
+                            break
+                    dependency_name = dependency_name.strip().lower().replace("_", "-")
+                    if dependency_name in blocked_dependencies:
+                        diagnostics.append(
+                            Diagnostic(
+                                "PackageBlockedDependency",
+                                f"dependency {dependency_name!r} is blocked by vulnerability policy",
+                                f"$.{relative_path}.project.optional-dependencies.{extra}[{index}]",
+                            )
+                        )
+
+    workspace_license: str | None = None
+    workspace_manifest_path = root_path / "Cargo.toml"
+    if workspace_manifest_path.exists():
+        try:
+            workspace_manifest = tomllib.loads(workspace_manifest_path.read_text(encoding="utf-8"))
+        except tomllib.TOMLDecodeError as error:
+            diagnostics.append(
+                Diagnostic(
+                    "PackageManifestInvalid",
+                    f"invalid Rust workspace manifest: {error}",
+                    "$.Cargo.toml",
+                )
+            )
+            workspace_manifest = {}
+        workspace_package = workspace_manifest.get("workspace", {}).get("package")
+        if isinstance(workspace_package, dict):
+            raw_workspace_license = workspace_package.get("license")
+            workspace_license = raw_workspace_license if isinstance(raw_workspace_license, str) else None
+
+    for manifest_path in sorted(root_path.glob("crates/*/Cargo.toml")):
+        relative_path = manifest_path.relative_to(root_path).as_posix()
+        try:
+            manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
+        except tomllib.TOMLDecodeError as error:
+            diagnostics.append(
+                Diagnostic(
+                    "PackageManifestInvalid",
+                    f"invalid Rust package manifest: {error}",
+                    f"$.{relative_path}",
+                )
+            )
+            continue
+        package = manifest.get("package")
+        if not isinstance(package, dict):
+            diagnostics.append(
+                Diagnostic(
+                    "PackageManifestInvalid",
+                    "Rust package manifests require a package table",
+                    f"$.{relative_path}.package",
+                )
+            )
+            continue
+        raw_license = package.get("license")
+        if isinstance(raw_license, str):
+            license_text = raw_license
+        elif isinstance(raw_license, dict) and raw_license.get("workspace") is True:
+            license_text = workspace_license
+        else:
+            license_text = None
+        if not license_text or not license_text.strip():
+            diagnostics.append(
+                Diagnostic(
+                    "PackageLicenseMissing",
+                    "Rust package manifest must declare a license",
+                    f"$.{relative_path}.package.license",
+                )
+            )
+        elif allowed_licenses and license_text.strip() not in allowed_licenses:
+            diagnostics.append(
+                Diagnostic(
+                    "PackageLicenseDenied",
+                    f"license {license_text.strip()!r} is not in the allowed license policy",
+                    f"$.{relative_path}.package.license",
+                )
+            )
+        for table_name in ("dependencies", "dev-dependencies", "build-dependencies"):
+            dependencies = manifest.get(table_name, {})
+            if not isinstance(dependencies, dict):
+                continue
+            for dependency, dependency_spec in sorted(dependencies.items()):
+                dependency_name = str(dependency).strip().lower().replace("_", "-")
+                if isinstance(dependency_spec, dict):
+                    package_name = dependency_spec.get("package")
+                    if isinstance(package_name, str) and package_name.strip():
+                        dependency_name = package_name.strip().lower().replace("_", "-")
+                if dependency_name in blocked_dependencies:
+                    diagnostics.append(
+                        Diagnostic(
+                            "PackageBlockedDependency",
+                            f"dependency {dependency_name!r} is blocked by vulnerability policy",
+                            f"$.{relative_path}.{table_name}.{dependency}",
+                        )
+                    )
+
+    return DiagnosticSet(tuple(diagnostics))
 
 
 def doctor_package_catalog(catalog: dict[str, Any]) -> DiagnosticSet:

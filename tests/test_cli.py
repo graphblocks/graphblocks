@@ -51,6 +51,33 @@ def test_packages_cli_doctor_accepts_catalog(capsys) -> None:
     assert capsys.readouterr().out.strip() == "OK"
 
 
+def test_packages_audit_cli_accepts_repo_manifests(capsys) -> None:
+    assert main(["packages", "audit", "--root", "."]) == 0
+
+    assert capsys.readouterr().out.strip() == "OK"
+
+
+def test_packages_audit_cli_reports_blocked_dependency(tmp_path, capsys) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        """
+[project]
+name = "unsafe-python"
+version = "0.1.0"
+license = "Apache-2.0"
+dependencies = ["vulnerable-sdk>=0"]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    assert main(["packages", "audit", "--root", str(tmp_path), "--blocked-dependency", "vulnerable-sdk", "--json"]) == 1
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["diagnostics"][0]["code"] == "PackageBlockedDependency"
+    assert payload["diagnostics"][0]["path"] == "$.pyproject.toml.project.dependencies[0]"
+
+
 def test_schemas_manifest_cli_emits_deterministic_manifest(capsys) -> None:
     assert main(["schemas", "manifest", "schemas"]) == 0
 

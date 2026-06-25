@@ -32,7 +32,14 @@ from .deployment import (
 from .diagnostics import Diagnostic
 from .loader import load_documents
 from .migration import migrate_document
-from .packages import build_package_lock, doctor_package_catalog, load_package_catalog, package_rows
+from .packages import (
+    PackageManifestAuditPolicy,
+    audit_package_manifests,
+    build_package_lock,
+    doctor_package_catalog,
+    load_package_catalog,
+    package_rows,
+)
 from .policy import (
     PolicyBundle,
     PolicyObligation,
@@ -151,6 +158,14 @@ def main(argv: list[str] | None = None) -> int:
     packages_doctor_parser = packages_subparsers.add_parser("doctor", help="validate package catalog closure")
     packages_doctor_parser.add_argument("--catalog", type=Path, help="override package-catalog.yaml")
     packages_doctor_parser.add_argument("--json", action="store_true", help="emit JSON")
+    packages_audit_parser = packages_subparsers.add_parser(
+        "audit",
+        help="audit local package manifests for license and blocked dependencies",
+    )
+    packages_audit_parser.add_argument("--root", type=Path, default=Path("."))
+    packages_audit_parser.add_argument("--allowed-license", action="append", default=["Apache-2.0"])
+    packages_audit_parser.add_argument("--blocked-dependency", action="append", default=[])
+    packages_audit_parser.add_argument("--json", action="store_true", help="emit JSON")
 
     schemas_parser = subparsers.add_parser("schemas", help="inspect checked-in JSON Schema documents")
     schemas_subparsers = schemas_parser.add_subparsers(dest="schemas_command")
@@ -442,6 +457,22 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.packages_command == "doctor":
             diagnostics = doctor_package_catalog(load_package_catalog(args.catalog))
+            if args.json:
+                print(json.dumps({"ok": diagnostics.ok, "diagnostics": diagnostics.to_list()}, indent=2, sort_keys=True))
+            elif diagnostics.diagnostics:
+                for item in diagnostics.diagnostics:
+                    print(f"{item.severity} {item.code} {item.path}: {item.message}")
+            else:
+                print("OK")
+            return 0 if diagnostics.ok else 1
+        if args.packages_command == "audit":
+            diagnostics = audit_package_manifests(
+                args.root,
+                policy=PackageManifestAuditPolicy(
+                    allowed_licenses=tuple(args.allowed_license),
+                    blocked_dependencies=tuple(args.blocked_dependency),
+                ),
+            )
             if args.json:
                 print(json.dumps({"ok": diagnostics.ok, "diagnostics": diagnostics.to_list()}, indent=2, sort_keys=True))
             elif diagnostics.diagnostics:

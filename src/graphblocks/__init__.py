@@ -202,8 +202,10 @@ from .loader import load_documents
 from .leases import InMemoryLeasePool, Lease, LeaseUnavailableError
 from .migration import migrate_document
 from .packages import (
+    PackageManifestAuditPolicy,
     PackageLock,
     PackageLockEntry,
+    audit_package_manifests,
     build_package_lock,
     doctor_package_catalog,
     load_package_catalog,
@@ -776,6 +778,7 @@ __all__ = [
     "Outcome",
     "PackageLock",
     "PackageLockEntry",
+    "PackageManifestAuditPolicy",
     "PartialOutputPolicy",
     "PendingToolCallsDisposition",
     "PhysicalExecutionPlan",
@@ -855,6 +858,7 @@ __all__ = [
     "ToolSchemaRegistryError",
     "ToolSchemaValidationError",
     "admit_tool_call",
+    "audit_package_manifests",
     "build_before_tool_or_effect_policy_request",
     "build_package_lock",
     "doctor_package_catalog",

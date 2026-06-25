@@ -3,7 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 import tomllib
 
-from graphblocks.packages import build_package_lock, doctor_package_catalog, load_package_catalog, package_rows
+from graphblocks.packages import (
+    PackageManifestAuditPolicy,
+    audit_package_manifests,
+    build_package_lock,
+    doctor_package_catalog,
+    load_package_catalog,
+    package_rows,
+)
 
 
 ROOT = Path(__file__).parents[1]
@@ -1051,3 +1058,49 @@ def test_package_catalog_doctor_reports_dependency_cycles() -> None:
     )
 
     assert [item.code for item in diagnostics.diagnostics] == ["PackageDependencyCycle"]
+
+
+def test_package_manifest_audit_accepts_repo_manifest_licenses() -> None:
+    diagnostics = audit_package_manifests(ROOT)
+
+    assert diagnostics.ok
+    assert diagnostics.diagnostics == ()
+
+
+def test_package_manifest_audit_reports_denied_license_and_blocked_dependency(tmp_path) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        """
+[project]
+name = "unsafe-python"
+version = "0.1.0"
+license = "Proprietary"
+dependencies = ["safe>=1", "vulnerable-sdk>=0"]
+""".strip(),
+        encoding="utf-8",
+    )
+    crate = tmp_path / "crates" / "unsafe-rust"
+    crate.mkdir(parents=True)
+    (crate / "Cargo.toml").write_text(
+        """
+[package]
+name = "unsafe-rust"
+version = "0.1.0"
+license = "Apache-2.0"
+
+[dependencies]
+vulnerable-crate = "0.1"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    diagnostics = audit_package_manifests(
+        tmp_path,
+        policy=PackageManifestAuditPolicy(blocked_dependencies=("vulnerable-sdk", "vulnerable-crate")),
+    )
+
+    assert [(item.code, item.path) for item in diagnostics.diagnostics] == [
+        ("PackageLicenseDenied", "$.pyproject.toml.project.license"),
+        ("PackageBlockedDependency", "$.pyproject.toml.project.dependencies[1]"),
+        ("PackageBlockedDependency", "$.crates/unsafe-rust/Cargo.toml.dependencies.vulnerable-crate"),
+    ]
