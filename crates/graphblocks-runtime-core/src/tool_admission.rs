@@ -15,6 +15,7 @@ pub struct ToolAdmissionRequest<'a> {
     pub resolved_tool: &'a ResolvedTool,
     pub schema_registry: &'a ToolSchemaRegistry,
     pub policy_decision: &'a PolicyDecision,
+    pub expected_policy_input_digest: &'a str,
     pub approval: Option<&'a ToolApprovalRecord>,
     pub principal_id: &'a str,
     pub idempotency_key: Option<String>,
@@ -95,6 +96,11 @@ pub enum ToolAdmissionError {
     },
     PolicyDecisionMissingInputDigest {
         decision_id: String,
+    },
+    PolicyInputDigestMismatch {
+        decision_id: String,
+        expected: String,
+        actual: String,
     },
     PolicyDenied {
         decision_id: String,
@@ -240,6 +246,13 @@ impl ToolAdmission {
         if request.policy_decision.input_digest.trim().is_empty() {
             return Err(ToolAdmissionError::PolicyDecisionMissingInputDigest {
                 decision_id: request.policy_decision.decision_id.clone(),
+            });
+        }
+        if request.policy_decision.input_digest != request.expected_policy_input_digest {
+            return Err(ToolAdmissionError::PolicyInputDigestMismatch {
+                decision_id: request.policy_decision.decision_id.clone(),
+                expected: request.expected_policy_input_digest.to_owned(),
+                actual: request.policy_decision.input_digest.clone(),
             });
         }
         match request.policy_decision.effect {
