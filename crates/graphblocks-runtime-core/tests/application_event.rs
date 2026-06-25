@@ -497,6 +497,18 @@ fn output_policy_evaluation_start_event_identifies_chunk_without_text_payload() 
 }
 
 #[test]
+fn output_policy_evaluation_start_event_requires_input_digest() {
+    let chunk = GenerationChunk::text("stream-1", "response-1", 4, "sensitive text");
+
+    assert_eq!(
+        ApplicationEvent::output_policy_evaluation_started(metadata(), &chunk, " "),
+        Err(ApplicationEventError::EmptyPayloadField {
+            field: "input_digest",
+        })
+    );
+}
+
+#[test]
 fn output_policy_decision_event_maps_disposition_and_metadata_payload() {
     let decision = OutputPolicyDecision::redact(
         "decision-redact",

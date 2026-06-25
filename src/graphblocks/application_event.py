@@ -578,6 +578,8 @@ class ApplicationEvent:
         *,
         input_digest: str,
     ) -> ApplicationEvent:
+        if not input_digest.strip():
+            raise ApplicationEventError("output policy evaluation input_digest must not be empty")
         return cls.new(
             "OutputPolicyEvaluationStarted",
             metadata,

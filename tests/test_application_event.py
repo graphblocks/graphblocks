@@ -685,6 +685,13 @@ def test_output_policy_evaluation_start_event_identifies_chunk_without_text_payl
     }
     assert "text" not in event.payload
 
+    with pytest.raises(ApplicationEventError, match="output policy evaluation input_digest must not be empty"):
+        ApplicationEvent.output_policy_evaluation_started(
+            _metadata(),
+            chunk,
+            input_digest=" ",
+        )
+
 
 def test_output_policy_decision_event_maps_disposition_and_metadata_payload() -> None:
     decision = (

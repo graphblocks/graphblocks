@@ -132,6 +132,7 @@ pub enum ApplicationEventError {
     ToolEventRequiresToolCallId { kind: ApplicationEventKind },
     NotToolEvent { kind: ApplicationEventKind },
     EmptyMetadataField { field: &'static str },
+    EmptyPayloadField { field: &'static str },
     EmptyToolCallId,
     InvalidToolCall { source: ToolCallError },
     InvalidToolResultEvent { source: ToolResultEventError },
@@ -409,6 +410,12 @@ impl ApplicationEvent {
         chunk: &GenerationChunk,
         input_digest: impl AsRef<str>,
     ) -> Result<Self, ApplicationEventError> {
+        let input_digest = input_digest.as_ref();
+        if input_digest.trim().is_empty() {
+            return Err(ApplicationEventError::EmptyPayloadField {
+                field: "input_digest",
+            });
+        }
         Self::new(
             ApplicationEventKind::OutputPolicyEvaluationStarted,
             metadata,
@@ -416,7 +423,7 @@ impl ApplicationEvent {
                 "stream_id": &chunk.stream_id,
                 "response_id": &chunk.response_id,
                 "chunk_sequence": chunk.sequence,
-                "input_digest": input_digest.as_ref(),
+                "input_digest": input_digest,
                 "chunk_text_bytes": chunk.text.len(),
             }),
         )
