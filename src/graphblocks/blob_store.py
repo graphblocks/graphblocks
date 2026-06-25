@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 import hashlib
 import json
@@ -68,6 +69,48 @@ class ListPage:
         object.__setattr__(self, "items", tuple(self.items))
 
 
+_GRAPHBLOCKS_CHECKSUM_METADATA = "graphblocks-checksum"
+_GRAPHBLOCKS_FILENAME_METADATA = "graphblocks-filename"
+_RESERVED_METADATA_KEYS = {
+    _GRAPHBLOCKS_CHECKSUM_METADATA,
+    _GRAPHBLOCKS_FILENAME_METADATA,
+}
+
+
+def _validate_blob_key(key: BlobKey) -> None:
+    parsed = PurePosixPath(key.key)
+    if not key.key or parsed.is_absolute() or "\\" in key.key or any(part in {"", ".", ".."} for part in parsed.parts):
+        raise InvalidBlobKeyError(f"invalid blob key {key.key!r}")
+
+
+def _validate_blob_prefix(prefix: str) -> None:
+    if prefix == "":
+        return
+    if prefix.startswith("/") or "\\" in prefix:
+        raise InvalidBlobKeyError(f"invalid blob prefix {prefix!r}")
+    parts = [part for part in prefix.split("/") if part]
+    if any(part in {".", ".."} for part in parts):
+        raise InvalidBlobKeyError(f"invalid blob prefix {prefix!r}")
+
+
+def _normalise_etag(value: object) -> str | None:
+    if value is None:
+        return None
+    return str(value).strip('"')
+
+
+def _is_not_found_error(error: BaseException) -> bool:
+    response = getattr(error, "response", None)
+    code: object = None
+    if isinstance(response, Mapping):
+        raw_error = response.get("Error")
+        if isinstance(raw_error, Mapping):
+            code = raw_error.get("Code")
+    if code is None:
+        code = getattr(error, "code", None)
+    return str(code) in {"404", "NoSuchKey", "NotFound", "NotFoundException"}
+
+
 @dataclass(slots=True)
 class LocalBlobStore:
     root: str | Path
@@ -78,9 +121,8 @@ class LocalBlobStore:
         (self.root / ".graphblocks-metadata").mkdir(parents=True, exist_ok=True)
 
     def _path_for(self, key: BlobKey) -> Path:
+        _validate_blob_key(key)
         parsed = PurePosixPath(key.key)
-        if not key.key or parsed.is_absolute() or "\\" in key.key or any(part in {"", ".", ".."} for part in parsed.parts):
-            raise InvalidBlobKeyError(f"invalid blob key {key.key!r}")
         path = (self.root / Path(*parsed.parts)).resolve()
         try:
             path.relative_to(self.root)
@@ -186,3 +228,185 @@ class LocalBlobStore:
             items=[BlobListItem(key=BlobKey(key), metadata=self.head(BlobKey(key))) for key in page_keys],
             next_cursor=next_cursor,
         )
+
+
+@dataclass(slots=True)
+class S3CompatibleBlobStore:
+    bucket: str
+    client: object
+    uri_scheme: str = "s3"
+
+    def __post_init__(self) -> None:
+        if not self.bucket.strip():
+            raise ValueError("bucket must not be empty")
+        if not self.uri_scheme.strip():
+            raise ValueError("uri_scheme must not be empty")
+
+    def put(self, key: BlobKey, body: bytes, options: PutOptions) -> ArtifactRef:
+        self._validate_key(key)
+        checksum = "sha256:" + hashlib.sha256(body).hexdigest()
+        user_metadata = self._user_metadata(options.metadata)
+        metadata = {
+            **user_metadata,
+            _GRAPHBLOCKS_CHECKSUM_METADATA: checksum,
+        }
+        if options.filename is not None:
+            metadata[_GRAPHBLOCKS_FILENAME_METADATA] = options.filename
+        kwargs: dict[str, object] = {
+            "Bucket": self.bucket,
+            "Key": key.key,
+            "Body": body,
+            "Metadata": metadata,
+        }
+        if options.media_type is not None:
+            kwargs["ContentType"] = options.media_type
+        response = self._invoke("put_object", **kwargs)
+        etag = _normalise_etag(response.get("ETag")) if isinstance(response, Mapping) else None
+        return ArtifactRef(
+            artifact_id=self._artifact_id(key),
+            uri=self._uri(key),
+            media_type=options.media_type,
+            size_bytes=len(body),
+            checksum=checksum,
+            etag=etag or checksum,
+            version=etag or checksum,
+            filename=options.filename,
+            metadata=user_metadata,
+        )
+
+    def get(self, key: BlobKey, byte_range: ByteRange | None = None) -> bytes:
+        self._validate_key(key)
+        kwargs: dict[str, object] = {"Bucket": self.bucket, "Key": key.key}
+        if byte_range is not None:
+            kwargs["Range"] = self._range_header(byte_range)
+        response = self._invoke("get_object", **kwargs)
+        if not isinstance(response, Mapping) or "Body" not in response:
+            raise BlobStoreError("s3 get_object response must include Body")
+        return self._read_body(response["Body"])
+
+    def head(self, key: BlobKey) -> BlobMetadata:
+        self._validate_key(key)
+        response = self._invoke("head_object", Bucket=self.bucket, Key=key.key)
+        if not isinstance(response, Mapping):
+            raise BlobStoreError("s3 head_object response must be a mapping")
+        metadata = self._response_metadata(response.get("Metadata"))
+        checksum = metadata.get(_GRAPHBLOCKS_CHECKSUM_METADATA)
+        filename = metadata.get(_GRAPHBLOCKS_FILENAME_METADATA)
+        etag = _normalise_etag(response.get("ETag")) or checksum
+        artifact = ArtifactRef(
+            artifact_id=self._artifact_id(key),
+            uri=self._uri(key),
+            media_type=str(response["ContentType"]) if response.get("ContentType") is not None else None,
+            size_bytes=self._content_length(response.get("ContentLength")),
+            checksum=checksum,
+            etag=etag,
+            version=etag,
+            filename=filename,
+            metadata={
+                name: value
+                for name, value in metadata.items()
+                if name not in _RESERVED_METADATA_KEYS
+            },
+        )
+        return BlobMetadata(key=key, artifact=artifact, etag=etag)
+
+    def delete(self, key: BlobKey) -> None:
+        self._validate_key(key)
+        self.head(key)
+        self._invoke("delete_object", Bucket=self.bucket, Key=key.key)
+
+    def list(self, prefix: str = "", cursor: str | None = None, limit: int = 100) -> ListPage:
+        if limit < 1:
+            raise ValueError("limit must be at least 1")
+        _validate_blob_prefix(prefix)
+        kwargs: dict[str, object] = {
+            "Bucket": self.bucket,
+            "Prefix": prefix,
+            "MaxKeys": limit,
+        }
+        if cursor is not None:
+            kwargs["ContinuationToken"] = cursor
+        response = self._invoke("list_objects_v2", **kwargs)
+        if not isinstance(response, Mapping):
+            raise BlobStoreError("s3 list_objects_v2 response must be a mapping")
+        contents = response.get("Contents", ())
+        if contents is None:
+            contents = ()
+        if not isinstance(contents, list | tuple):
+            raise BlobStoreError("s3 list_objects_v2 Contents must be a sequence")
+        items: list[BlobListItem] = []
+        for index, item in enumerate(contents):
+            if not isinstance(item, Mapping) or not isinstance(item.get("Key"), str):
+                raise BlobStoreError(f"s3 list_objects_v2 Contents[{index}] must include string Key")
+            item_key = BlobKey(item["Key"])
+            items.append(BlobListItem(key=item_key, metadata=self.head(item_key)))
+        next_cursor = response.get("NextContinuationToken")
+        return ListPage(
+            items=items,
+            next_cursor=str(next_cursor) if next_cursor is not None else None,
+        )
+
+    def _validate_key(self, key: BlobKey) -> None:
+        _validate_blob_key(key)
+
+    def _artifact_id(self, key: BlobKey) -> str:
+        return f"{self.uri_scheme}:{self.bucket}:{key.key}"
+
+    def _uri(self, key: BlobKey) -> str:
+        return f"{self.uri_scheme}://{self.bucket}/{key.key}"
+
+    def _invoke(self, method_name: str, **kwargs: object) -> object:
+        method = getattr(self.client, method_name)
+        try:
+            return method(**kwargs)
+        except Exception as error:
+            if _is_not_found_error(error):
+                key = kwargs.get("Key")
+                if isinstance(key, str):
+                    raise BlobNotFoundError(f"blob {key!r} does not exist") from error
+                raise BlobNotFoundError("blob does not exist") from error
+            raise
+
+    def _user_metadata(self, metadata: Mapping[str, str]) -> dict[str, str]:
+        normalized: dict[str, str] = {}
+        for name, value in metadata.items():
+            normalized_name = str(name).lower()
+            if normalized_name in _RESERVED_METADATA_KEYS:
+                raise ValueError(f"metadata key {name!r} is reserved")
+            normalized[normalized_name] = str(value)
+        return normalized
+
+    def _response_metadata(self, metadata: object) -> dict[str, str]:
+        if metadata is None:
+            return {}
+        if not isinstance(metadata, Mapping):
+            raise BlobStoreError("s3 response Metadata must be a mapping")
+        return {str(name).lower(): str(value) for name, value in metadata.items()}
+
+    def _content_length(self, value: object) -> int | None:
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError) as error:
+            raise BlobStoreError("s3 ContentLength must be an integer") from error
+
+    def _range_header(self, byte_range: ByteRange) -> str:
+        if byte_range.length is None:
+            return f"bytes={byte_range.offset}-"
+        end = byte_range.offset + byte_range.length - 1
+        return f"bytes={byte_range.offset}-{end}"
+
+    def _read_body(self, body: object) -> bytes:
+        if isinstance(body, bytes):
+            return body
+        if isinstance(body, bytearray):
+            return bytes(body)
+        read = getattr(body, "read", None)
+        if callable(read):
+            data = read()
+            if isinstance(data, bytes):
+                return data
+            if isinstance(data, bytearray):
+                return bytes(data)
+        raise BlobStoreError("s3 response Body must be bytes or a readable stream")

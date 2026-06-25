@@ -77,8 +77,98 @@ pub struct ListPage {
     pub next_cursor: Option<String>,
 }
 
+pub const GRAPHBLOCKS_CHECKSUM_METADATA: &str = "graphblocks-checksum";
+pub const GRAPHBLOCKS_FILENAME_METADATA: &str = "graphblocks-filename";
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct S3PutObjectRequest {
+    pub bucket: String,
+    pub key: String,
+    pub body: Vec<u8>,
+    pub content_type: Option<String>,
+    pub metadata: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct S3PutObjectResponse {
+    pub etag: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct S3GetObjectRequest {
+    pub bucket: String,
+    pub key: String,
+    pub range_header: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct S3GetObjectResponse {
+    pub body: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct S3HeadObjectRequest {
+    pub bucket: String,
+    pub key: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct S3HeadObjectResponse {
+    pub content_length: Option<usize>,
+    pub content_type: Option<String>,
+    pub metadata: BTreeMap<String, String>,
+    pub etag: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct S3DeleteObjectRequest {
+    pub bucket: String,
+    pub key: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct S3ListObjectsRequest {
+    pub bucket: String,
+    pub prefix: String,
+    pub cursor: Option<String>,
+    pub limit: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct S3ListObjectsResponse {
+    pub keys: Vec<String>,
+    pub next_cursor: Option<String>,
+}
+
+pub trait S3CompatibleClient {
+    fn put_object(
+        &self,
+        request: S3PutObjectRequest,
+    ) -> Result<S3PutObjectResponse, BlobStoreError>;
+
+    fn get_object(
+        &self,
+        request: S3GetObjectRequest,
+    ) -> Result<S3GetObjectResponse, BlobStoreError>;
+
+    fn head_object(
+        &self,
+        request: S3HeadObjectRequest,
+    ) -> Result<S3HeadObjectResponse, BlobStoreError>;
+
+    fn delete_object(&self, request: S3DeleteObjectRequest) -> Result<(), BlobStoreError>;
+
+    fn list_objects(
+        &self,
+        request: S3ListObjectsRequest,
+    ) -> Result<S3ListObjectsResponse, BlobStoreError>;
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BlobStoreError {
+    InvalidBucket {
+        bucket: String,
+    },
     InvalidKey {
         key: String,
     },
@@ -103,6 +193,7 @@ pub enum BlobStoreError {
 impl fmt::Display for BlobStoreError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidBucket { bucket } => write!(formatter, "invalid blob bucket {bucket:?}"),
             Self::InvalidKey { key } => write!(formatter, "invalid blob key {key:?}"),
             Self::NotFound { key } => write!(formatter, "blob {key:?} does not exist"),
             Self::InvalidCursor { cursor } => write!(formatter, "invalid blob cursor {cursor:?}"),
@@ -124,6 +215,171 @@ impl fmt::Display for BlobStoreError {
 }
 
 impl Error for BlobStoreError {}
+
+pub struct S3CompatibleBlobStore<C> {
+    pub bucket: String,
+    pub client: C,
+    pub uri_scheme: String,
+}
+
+impl<C> S3CompatibleBlobStore<C> {
+    pub fn new(bucket: impl Into<String>, client: C) -> Result<Self, BlobStoreError> {
+        Self::new_with_uri_scheme(bucket, client, "s3")
+    }
+
+    pub fn new_with_uri_scheme(
+        bucket: impl Into<String>,
+        client: C,
+        uri_scheme: impl Into<String>,
+    ) -> Result<Self, BlobStoreError> {
+        let bucket = bucket.into();
+        if bucket.trim().is_empty() {
+            return Err(BlobStoreError::InvalidBucket { bucket });
+        }
+        let uri_scheme = uri_scheme.into();
+        if uri_scheme.trim().is_empty() {
+            return Err(BlobStoreError::InvalidBucket { bucket: uri_scheme });
+        }
+        Ok(Self {
+            bucket,
+            client,
+            uri_scheme,
+        })
+    }
+}
+
+impl<C: S3CompatibleClient> S3CompatibleBlobStore<C> {
+    pub fn put(
+        &self,
+        key: &BlobKey,
+        body: &[u8],
+        options: PutOptions,
+    ) -> Result<ArtifactRef, BlobStoreError> {
+        validate_blob_key(key)?;
+        let checksum = sha256_digest(body);
+        let user_metadata = user_metadata(&options.metadata, key)?;
+        let mut metadata = user_metadata.clone();
+        metadata.insert(GRAPHBLOCKS_CHECKSUM_METADATA.to_owned(), checksum.clone());
+        if let Some(filename) = &options.filename {
+            metadata.insert(GRAPHBLOCKS_FILENAME_METADATA.to_owned(), filename.clone());
+        }
+        let response = self.client.put_object(S3PutObjectRequest {
+            bucket: self.bucket.clone(),
+            key: key.key.clone(),
+            body: body.to_vec(),
+            content_type: options.media_type.clone(),
+            metadata,
+        })?;
+        let etag = normalize_etag(response.etag).or_else(|| Some(checksum.clone()));
+        Ok(ArtifactRef {
+            artifact_id: self.artifact_id(key),
+            uri: self.uri(key),
+            media_type: options.media_type,
+            size_bytes: Some(body.len()),
+            checksum: Some(checksum),
+            etag: etag.clone(),
+            version: etag,
+            filename: options.filename,
+            metadata: user_metadata,
+        })
+    }
+
+    pub fn get(
+        &self,
+        key: &BlobKey,
+        byte_range: Option<ByteRange>,
+    ) -> Result<Vec<u8>, BlobStoreError> {
+        validate_blob_key(key)?;
+        Ok(self
+            .client
+            .get_object(S3GetObjectRequest {
+                bucket: self.bucket.clone(),
+                key: key.key.clone(),
+                range_header: byte_range.map(range_header),
+            })?
+            .body)
+    }
+
+    pub fn head(&self, key: &BlobKey) -> Result<BlobMetadata, BlobStoreError> {
+        validate_blob_key(key)?;
+        let response = self.client.head_object(S3HeadObjectRequest {
+            bucket: self.bucket.clone(),
+            key: key.key.clone(),
+        })?;
+        let metadata = normalize_metadata(response.metadata);
+        let checksum = metadata.get(GRAPHBLOCKS_CHECKSUM_METADATA).cloned();
+        let filename = metadata.get(GRAPHBLOCKS_FILENAME_METADATA).cloned();
+        let etag = normalize_etag(response.etag).or_else(|| checksum.clone());
+        let artifact_metadata = metadata
+            .iter()
+            .filter_map(|(name, value)| {
+                (!is_reserved_metadata_key(name)).then_some((name.clone(), value.clone()))
+            })
+            .collect::<BTreeMap<_, _>>();
+        let artifact = ArtifactRef {
+            artifact_id: self.artifact_id(key),
+            uri: self.uri(key),
+            media_type: response.content_type,
+            size_bytes: response.content_length,
+            checksum,
+            etag: etag.clone(),
+            version: etag.clone(),
+            filename,
+            metadata: artifact_metadata,
+        };
+        Ok(BlobMetadata {
+            key: key.clone(),
+            artifact,
+            etag,
+        })
+    }
+
+    pub fn delete(&self, key: &BlobKey) -> Result<(), BlobStoreError> {
+        validate_blob_key(key)?;
+        self.head(key)?;
+        self.client.delete_object(S3DeleteObjectRequest {
+            bucket: self.bucket.clone(),
+            key: key.key.clone(),
+        })
+    }
+
+    pub fn list(
+        &self,
+        prefix: &str,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> Result<ListPage, BlobStoreError> {
+        if limit < 1 {
+            return Err(BlobStoreError::InvalidLimit);
+        }
+        validate_blob_prefix(prefix)?;
+        let response = self.client.list_objects(S3ListObjectsRequest {
+            bucket: self.bucket.clone(),
+            prefix: prefix.to_owned(),
+            cursor: cursor.map(str::to_owned),
+            limit,
+        })?;
+        let mut items = Vec::new();
+        for key in response.keys {
+            let key = BlobKey::new(key);
+            validate_blob_key(&key)?;
+            let metadata = self.head(&key)?;
+            items.push(BlobListItem { key, metadata });
+        }
+        Ok(ListPage {
+            items,
+            next_cursor: response.next_cursor,
+        })
+    }
+
+    fn artifact_id(&self, key: &BlobKey) -> String {
+        format!("{}:{}:{}", self.uri_scheme, self.bucket, key.key)
+    }
+
+    fn uri(&self, key: &BlobKey) -> String {
+        format!("{}://{}/{}", self.uri_scheme, self.bucket, key.key)
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LocalBlobStore {
@@ -461,6 +717,91 @@ impl LocalBlobStore {
             });
         }
         Ok(parts)
+    }
+}
+
+fn validate_blob_key(key: &BlobKey) -> Result<(), BlobStoreError> {
+    if key.key.is_empty() || key.key.starts_with('/') || key.key.contains('\\') {
+        return Err(BlobStoreError::InvalidKey {
+            key: key.key.clone(),
+        });
+    }
+    let parts = key.key.split('/').collect::<Vec<_>>();
+    if parts
+        .iter()
+        .any(|part| part.is_empty() || *part == "." || *part == "..")
+    {
+        return Err(BlobStoreError::InvalidKey {
+            key: key.key.clone(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_blob_prefix(prefix: &str) -> Result<(), BlobStoreError> {
+    if prefix.is_empty() {
+        return Ok(());
+    }
+    if prefix.starts_with('/') || prefix.contains('\\') {
+        return Err(BlobStoreError::InvalidKey {
+            key: prefix.to_owned(),
+        });
+    }
+    if prefix
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .any(|part| part == "." || part == "..")
+    {
+        return Err(BlobStoreError::InvalidKey {
+            key: prefix.to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn user_metadata(
+    metadata: &BTreeMap<String, String>,
+    key: &BlobKey,
+) -> Result<BTreeMap<String, String>, BlobStoreError> {
+    let mut normalized = BTreeMap::new();
+    for (name, value) in metadata {
+        let name = name.to_lowercase();
+        if is_reserved_metadata_key(&name) {
+            return Err(BlobStoreError::Metadata {
+                key: key.key.clone(),
+                message: format!("metadata key {name:?} is reserved"),
+            });
+        }
+        normalized.insert(name, value.clone());
+    }
+    Ok(normalized)
+}
+
+fn normalize_metadata(metadata: BTreeMap<String, String>) -> BTreeMap<String, String> {
+    metadata
+        .into_iter()
+        .map(|(name, value)| (name.to_lowercase(), value))
+        .collect()
+}
+
+fn normalize_etag(etag: Option<String>) -> Option<String> {
+    etag.map(|etag| etag.trim_matches('"').to_owned())
+}
+
+fn is_reserved_metadata_key(name: &str) -> bool {
+    matches!(
+        name,
+        GRAPHBLOCKS_CHECKSUM_METADATA | GRAPHBLOCKS_FILENAME_METADATA
+    )
+}
+
+fn range_header(byte_range: ByteRange) -> String {
+    match byte_range.length {
+        Some(length) => {
+            let end = byte_range.offset.saturating_add(length).saturating_sub(1);
+            format!("bytes={}-{}", byte_range.offset, end)
+        }
+        None => format!("bytes={}-", byte_range.offset),
     }
 }
 

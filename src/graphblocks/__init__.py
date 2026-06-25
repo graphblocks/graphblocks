@@ -45,6 +45,7 @@ from .blob_store import (
     ListPage,
     LocalBlobStore,
     PutOptions,
+    S3CompatibleBlobStore,
 )
 from .budget import (
     BudgetAccount,
@@ -668,6 +669,7 @@ __all__ = [
     "RunResult",
     "RunRecord",
     "RunTerminalStateError",
+    "S3CompatibleBlobStore",
     "ModelVisibleToolRef",
     "ModelPool",
     "ModelPoolMismatchError",
