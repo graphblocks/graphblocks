@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+import json
 from pathlib import Path
 from typing import Literal
 
 from graphblocks.canonical import canonical_hash
 from graphblocks.compiler import compile_graph
+from graphblocks.plugins import BlockCatalog
 from graphblocks.run_store import (
     InMemoryRunStore,
     RunDeploymentProvenance,
@@ -39,9 +41,12 @@ class TckCase:
     graph: dict[str, object]
     inputs: dict[str, object] = field(default_factory=dict)
     expected_hash: str | None = None
+    expected_error_codes: tuple[str, ...] = field(default_factory=tuple)
+    expected_warning_codes: tuple[str, ...] = field(default_factory=tuple)
     expected_outputs: dict[str, object] | None = None
     expected_ok: bool = True
     expected_status: str = "succeeded"
+    block_catalog: tuple[dict[str, object], ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         if not self.case_id.strip():
@@ -50,6 +55,9 @@ class TckCase:
             raise ValueError(f"invalid TCK case kind {self.kind}")
         object.__setattr__(self, "graph", dict(self.graph))
         object.__setattr__(self, "inputs", dict(self.inputs))
+        object.__setattr__(self, "expected_error_codes", tuple(self.expected_error_codes))
+        object.__setattr__(self, "expected_warning_codes", tuple(self.expected_warning_codes))
+        object.__setattr__(self, "block_catalog", tuple(dict(block) for block in self.block_catalog))
         if self.expected_outputs is not None:
             object.__setattr__(self, "expected_outputs", dict(self.expected_outputs))
 
@@ -60,14 +68,20 @@ class TckCase:
         case_id: str,
         graph: dict[str, object],
         expected_hash: str | None = None,
+        expected_error_codes: tuple[str, ...] = (),
+        expected_warning_codes: tuple[str, ...] = (),
         expected_ok: bool = True,
+        block_catalog: tuple[dict[str, object], ...] = (),
     ) -> TckCase:
         return cls(
             case_id=case_id,
             kind="compiler",
             graph=graph,
             expected_hash=expected_hash,
+            expected_error_codes=expected_error_codes,
+            expected_warning_codes=expected_warning_codes,
             expected_ok=expected_ok,
+            block_catalog=block_catalog,
         )
 
     @classmethod
@@ -130,6 +144,49 @@ class TckReport:
 
     def content_digest(self) -> str:
         return canonical_hash(self.report_contract())
+
+
+def load_compiler_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
+    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(raw_cases, list):
+        raise ValueError("compiler TCK root must be a list")
+    cases: list[TckCase] = []
+    for index, raw_case in enumerate(raw_cases):
+        if not isinstance(raw_case, Mapping):
+            raise ValueError(f"compiler TCK case {index} must be a mapping")
+        case_id = raw_case.get("name")
+        if not isinstance(case_id, str) or not case_id.strip():
+            raise ValueError(f"compiler TCK case {index} requires name")
+        graph = raw_case.get("document")
+        if not isinstance(graph, dict):
+            raise ValueError(f"compiler TCK case {case_id} requires document")
+        expected = raw_case.get("expected")
+        if not isinstance(expected, Mapping):
+            raise ValueError(f"compiler TCK case {case_id} requires expected result")
+        expected_hash = expected.get("graph_hash")
+        if not isinstance(expected_hash, str) or not expected_hash.strip():
+            raise ValueError(f"compiler TCK case {case_id} requires expected graph_hash")
+        raw_error_codes = expected.get("error_codes")
+        if not isinstance(raw_error_codes, list) or not all(isinstance(code, str) for code in raw_error_codes):
+            raise ValueError(f"compiler TCK case {case_id} requires string error_codes")
+        raw_warning_codes = expected.get("warning_codes", [])
+        if not isinstance(raw_warning_codes, list) or not all(isinstance(code, str) for code in raw_warning_codes):
+            raise ValueError(f"compiler TCK case {case_id} requires string warning_codes")
+        raw_block_catalog = raw_case.get("block_catalog", [])
+        if not isinstance(raw_block_catalog, list) or not all(isinstance(block, dict) for block in raw_block_catalog):
+            raise ValueError(f"compiler TCK case {case_id} block_catalog must be a list of mappings")
+        cases.append(
+            TckCase.compiler(
+                case_id=case_id,
+                graph=graph,
+                expected_hash=expected_hash,
+                expected_error_codes=tuple(raw_error_codes),
+                expected_warning_codes=tuple(raw_warning_codes),
+                expected_ok=not raw_error_codes,
+                block_catalog=tuple(raw_block_catalog),
+            )
+        )
+    return tuple(cases)
 
 
 @dataclass(frozen=True, slots=True)
@@ -346,8 +403,22 @@ class TckRunner:
         return TckReport(profile=self.profile, results=tuple(results))
 
     def _run_compiler_case(self, case: TckCase) -> TckResult:
-        plan = compile_graph(case.graph)
-        observed = {"hash": plan.graph_hash, "ok": plan.ok}
+        if case.block_catalog:
+            plan = compile_graph(case.graph, block_catalog=BlockCatalog.from_blocks(case.block_catalog))
+        else:
+            plan = compile_graph(case.graph)
+        error_codes = tuple(
+            diagnostic.code for diagnostic in plan.diagnostics.diagnostics if diagnostic.severity == "error"
+        )
+        warning_codes = tuple(
+            diagnostic.code for diagnostic in plan.diagnostics.diagnostics if diagnostic.severity == "warning"
+        )
+        observed = {
+            "hash": plan.graph_hash,
+            "ok": plan.ok,
+            "error_codes": list(error_codes),
+            "warning_codes": list(warning_codes),
+        }
         diagnostics: list[dict[str, str]] = []
         if plan.ok != case.expected_ok:
             diagnostics.append(
@@ -363,6 +434,22 @@ class TckRunner:
                     "code": "HashMismatch",
                     "message": "compiler graph hash did not match expected hash",
                     "path": "$.expected_hash",
+                }
+            )
+        if error_codes != case.expected_error_codes:
+            diagnostics.append(
+                {
+                    "code": "ErrorCodesMismatch",
+                    "message": "compiler error codes did not match expected diagnostics",
+                    "path": "$.expected_error_codes",
+                }
+            )
+        if warning_codes != case.expected_warning_codes:
+            diagnostics.append(
+                {
+                    "code": "WarningCodesMismatch",
+                    "message": "compiler warning codes did not match expected diagnostics",
+                    "path": "$.expected_warning_codes",
                 }
             )
         return TckResult(
@@ -433,5 +520,6 @@ __all__ = [
     "TckResult",
     "TckRunner",
     "compile_graph",
+    "load_compiler_tck_cases",
     "stdlib_registry",
 ]

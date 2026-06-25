@@ -65,11 +65,25 @@ def test_testing_package_runs_compiler_tck_case_and_reports_hash(monkeypatch) ->
                 "kind": "compiler",
                 "status": "passed",
                 "diagnostics": [],
-                "observed": {"hash": expected_hash, "ok": True},
+                "observed": {"hash": expected_hash, "ok": True, "error_codes": [], "warning_codes": []},
             }
         ],
     }
     assert report.content_digest().startswith("sha256:")
+
+
+def test_testing_package_loads_shared_compiler_tck_cases_with_diagnostic_expectations(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    cases = graphblocks_testing.load_compiler_tck_cases(ROOT / "tck" / "compiler" / "cases.json")
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
+
+    assert len(cases) >= 20
+    assert report.ok
+    assert all("error_codes" in result.observed for result in report.results)
+    assert any(result.observed["error_codes"] for result in report.results)
+    assert "load_compiler_tck_cases" in graphblocks_testing.__all__
 
 
 def test_testing_package_runs_runtime_tck_case_and_reports_output_mismatch(monkeypatch) -> None:
