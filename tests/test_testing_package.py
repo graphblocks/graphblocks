@@ -218,3 +218,71 @@ def test_testing_package_builds_performance_benchmark_report(monkeypatch) -> Non
     assert report.content_digest().startswith("sha256:")
     assert "PerformanceBenchmarkReport" in graphblocks_testing.__all__
     assert "PerformanceThreshold" in graphblocks_testing.__all__
+
+
+def test_testing_package_runs_migration_compatibility_cases(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+    legacy = {
+        "apiVersion": "graphblocks.ai/v1alpha2",
+        "kind": "Graph",
+        "metadata": {"name": "legacy"},
+        "spec": {"nodes": {}},
+    }
+    migrated = graphblocks_testing.migrate_document(legacy)
+    expected_hash = graphblocks_testing.canonical_hash(migrated)
+
+    report = graphblocks_testing.MigrationCompatibilityRunner().run_cases(
+        (
+            graphblocks_testing.MigrationCompatibilityCase.upgrade(
+                case_id="legacy-alpha2",
+                document=legacy,
+                expected_hash=expected_hash,
+            ),
+            graphblocks_testing.MigrationCompatibilityCase.upgrade(
+                case_id="hash-mismatch",
+                document=legacy,
+                expected_hash="sha256:wrong",
+            ),
+        )
+    )
+
+    assert not report.ok
+    assert report.report_contract() == {
+        "profile": "migration",
+        "ok": False,
+        "results": [
+            {
+                "case_id": "hash-mismatch",
+                "direction": "upgrade",
+                "status": "failed",
+                "diagnostics": [
+                    {
+                        "code": "MigrationHashMismatch",
+                        "message": "migrated document hash did not match expected hash",
+                        "path": "$.expected_hash",
+                    }
+                ],
+                "observed": {
+                    "api_version": "graphblocks.ai/v1alpha3",
+                    "graph_hash": expected_hash,
+                    "migrated_from": "graphblocks.ai/v1alpha2",
+                    "source_mutated": False,
+                },
+            },
+            {
+                "case_id": "legacy-alpha2",
+                "direction": "upgrade",
+                "status": "passed",
+                "diagnostics": [],
+                "observed": {
+                    "api_version": "graphblocks.ai/v1alpha3",
+                    "graph_hash": expected_hash,
+                    "migrated_from": "graphblocks.ai/v1alpha2",
+                    "source_mutated": False,
+                },
+            },
+        ],
+    }
+    assert report.content_digest().startswith("sha256:")
+    assert "MigrationCompatibilityRunner" in graphblocks_testing.__all__

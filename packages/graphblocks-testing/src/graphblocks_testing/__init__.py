@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field
 import json
 import math
@@ -9,6 +10,7 @@ from typing import Literal
 
 from graphblocks.canonical import canonical_hash
 from graphblocks.compiler import compile_graph
+from graphblocks.migration import GRAPH_API_VERSION, migrate_document
 from graphblocks.plugins import BlockCatalog
 from graphblocks.run_store import (
     InMemoryRunStore,
@@ -34,6 +36,7 @@ from graphblocks.runtime import (
 TckCaseKind = Literal["compiler", "runtime"]
 TckResultStatus = Literal["passed", "failed"]
 PerformanceThresholdOperator = Literal["at_most", "at_least"]
+MigrationDirection = Literal["upgrade", "downgrade"]
 
 
 def _string_tuple(value: object) -> tuple[str, ...]:
@@ -293,6 +296,167 @@ class PerformanceBenchmarkReport:
 
     def content_digest(self) -> str:
         return canonical_hash(self.report_contract())
+
+
+@dataclass(frozen=True, slots=True)
+class MigrationCompatibilityCase:
+    case_id: str
+    direction: MigrationDirection
+    document: dict[str, object]
+    expected_api_version: str = GRAPH_API_VERSION
+    expected_hash: str | None = None
+    expected_migrated_from: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.case_id.strip():
+            raise ValueError("migration compatibility case_id must not be empty")
+        if self.direction not in {"upgrade", "downgrade"}:
+            raise ValueError(f"invalid migration compatibility direction {self.direction!r}")
+        object.__setattr__(self, "document", deepcopy(self.document))
+
+    @classmethod
+    def upgrade(
+        cls,
+        *,
+        case_id: str,
+        document: dict[str, object],
+        expected_hash: str | None = None,
+        expected_api_version: str = GRAPH_API_VERSION,
+        expected_migrated_from: str | None = None,
+    ) -> MigrationCompatibilityCase:
+        if expected_migrated_from is None:
+            raw_version = document.get("apiVersion")
+            expected_migrated_from = raw_version if isinstance(raw_version, str) else None
+        return cls(
+            case_id=case_id,
+            direction="upgrade",
+            document=document,
+            expected_api_version=expected_api_version,
+            expected_hash=expected_hash,
+            expected_migrated_from=expected_migrated_from,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class MigrationCompatibilityResult:
+    case_id: str
+    direction: MigrationDirection
+    status: TckResultStatus
+    diagnostics: tuple[dict[str, str], ...] = field(default_factory=tuple)
+    observed: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "diagnostics", tuple(dict(diagnostic) for diagnostic in self.diagnostics))
+        object.__setattr__(self, "observed", dict(self.observed))
+
+    def result_contract(self) -> dict[str, object]:
+        return {
+            "case_id": self.case_id,
+            "direction": self.direction,
+            "status": self.status,
+            "diagnostics": [dict(diagnostic) for diagnostic in self.diagnostics],
+            "observed": dict(self.observed),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class MigrationCompatibilityReport:
+    profile: str
+    results: tuple[MigrationCompatibilityResult, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "results", tuple(sorted(self.results, key=lambda item: item.case_id)))
+
+    @property
+    def ok(self) -> bool:
+        return all(result.status == "passed" for result in self.results)
+
+    def report_contract(self) -> dict[str, object]:
+        return {
+            "profile": self.profile,
+            "ok": self.ok,
+            "results": [result.result_contract() for result in self.results],
+        }
+
+    def content_digest(self) -> str:
+        return canonical_hash(self.report_contract())
+
+
+@dataclass(frozen=True, slots=True)
+class MigrationCompatibilityRunner:
+    profile: str = "migration"
+
+    def run_cases(self, cases: tuple[MigrationCompatibilityCase, ...]) -> MigrationCompatibilityReport:
+        return MigrationCompatibilityReport(
+            profile=self.profile,
+            results=tuple(self._run_case(case) for case in cases),
+        )
+
+    def _run_case(self, case: MigrationCompatibilityCase) -> MigrationCompatibilityResult:
+        before = deepcopy(case.document)
+        if case.direction != "upgrade":
+            return MigrationCompatibilityResult(
+                case_id=case.case_id,
+                direction=case.direction,
+                status="failed",
+                diagnostics=(
+                    {
+                        "code": "MigrationDirectionUnsupported",
+                        "message": "only upgrade migration compatibility cases are currently supported",
+                        "path": "$.direction",
+                    },
+                ),
+                observed={"source_mutated": False},
+            )
+        migrated = migrate_document(case.document)
+        annotations = migrated.get("metadata", {}).get("annotations", {}) if isinstance(migrated.get("metadata"), dict) else {}
+        migrated_from = annotations.get("graphblocks.ai/migratedFrom") if isinstance(annotations, dict) else None
+        observed = {
+            "api_version": migrated.get("apiVersion"),
+            "graph_hash": canonical_hash(migrated),
+            "migrated_from": migrated_from,
+            "source_mutated": case.document != before,
+        }
+        diagnostics: list[dict[str, str]] = []
+        if observed["api_version"] != case.expected_api_version:
+            diagnostics.append(
+                {
+                    "code": "MigrationApiVersionMismatch",
+                    "message": "migrated document apiVersion did not match expected version",
+                    "path": "$.expected_api_version",
+                }
+            )
+        if case.expected_migrated_from is not None and observed["migrated_from"] != case.expected_migrated_from:
+            diagnostics.append(
+                {
+                    "code": "MigrationSourceVersionMismatch",
+                    "message": "migrated document source version annotation did not match expected version",
+                    "path": "$.expected_migrated_from",
+                }
+            )
+        if case.expected_hash is not None and observed["graph_hash"] != case.expected_hash:
+            diagnostics.append(
+                {
+                    "code": "MigrationHashMismatch",
+                    "message": "migrated document hash did not match expected hash",
+                    "path": "$.expected_hash",
+                }
+            )
+        if observed["source_mutated"]:
+            diagnostics.append(
+                {
+                    "code": "MigrationMutatedSource",
+                    "message": "migration mutated the source document",
+                    "path": "$.document",
+                }
+            )
+        return MigrationCompatibilityResult(
+            case_id=case.case_id,
+            direction=case.direction,
+            status="passed" if not diagnostics else "failed",
+            diagnostics=tuple(diagnostics),
+            observed=observed,
+        )
 
 
 def load_compiler_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
@@ -866,6 +1030,10 @@ __all__ = [
     "InProcessRuntime",
     "JournalRecord",
     "JournalStateError",
+    "MigrationCompatibilityCase",
+    "MigrationCompatibilityReport",
+    "MigrationCompatibilityResult",
+    "MigrationCompatibilityRunner",
     "PerformanceBenchmarkIssue",
     "PerformanceBenchmarkReport",
     "PerformanceThreshold",
@@ -881,7 +1049,9 @@ __all__ = [
     "TckReport",
     "TckResult",
     "TckRunner",
+    "canonical_hash",
     "compile_graph",
     "load_compiler_tck_cases",
+    "migrate_document",
     "stdlib_registry",
 ]
