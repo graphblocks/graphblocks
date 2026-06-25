@@ -248,6 +248,9 @@ pub enum ToolResultError {
     EmptyArtifactField {
         field: &'static str,
     },
+    EmptyDiagnosticField {
+        field: &'static str,
+    },
     CompletedBeforeStarted {
         started_at_unix_ms: u64,
         completed_at_unix_ms: u64,
@@ -416,6 +419,23 @@ impl ToolResult {
         }
         for artifact in &self.artifacts {
             artifact.validate()?;
+        }
+        for diagnostic in &self.diagnostics {
+            for (field, value) in [
+                ("code", diagnostic.code.as_str()),
+                ("message", diagnostic.message.as_str()),
+            ] {
+                if value.trim().is_empty() {
+                    return Err(ToolResultError::EmptyDiagnosticField { field });
+                }
+            }
+            if diagnostic
+                .path
+                .as_ref()
+                .is_some_and(|path| path.trim().is_empty())
+            {
+                return Err(ToolResultError::EmptyDiagnosticField { field: "path" });
+            }
         }
         for part in &self.output {
             part.validate()

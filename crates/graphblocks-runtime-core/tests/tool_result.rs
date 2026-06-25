@@ -749,6 +749,36 @@ fn artifact_refs_validate_identity_fields() {
 }
 
 #[test]
+fn diagnostic_records_validate_identity_fields() {
+    let blank_code = ToolResult::completed("call-1", [ContentPart::text("done")], 1_000, 1_050)
+        .with_diagnostics([Diagnostic::warning(" ", "redacted")]);
+    assert_eq!(
+        blank_code.validate(),
+        Err(ToolResultError::EmptyDiagnosticField { field: "code" })
+    );
+
+    let mut blank_message = Diagnostic::warning("tool.redacted", " ");
+    blank_message.path = Some("/output/0".to_owned());
+    let result = ToolResult::completed("call-1", [ContentPart::text("done")], 1_000, 1_050)
+        .with_diagnostics([blank_message]);
+    assert_eq!(
+        ToolResultEvent::completed("call-1", 7, result).validate(),
+        Err(ToolResultEventError::InvalidResult {
+            source: ToolResultError::EmptyDiagnosticField { field: "message" },
+        })
+    );
+
+    let mut blank_path = Diagnostic::warning("tool.redacted", "redacted");
+    blank_path.path = Some(" ".to_owned());
+    assert_eq!(
+        ToolResult::completed("call-1", [ContentPart::text("done")], 1_000, 1_050)
+            .with_diagnostics([blank_path])
+            .validate(),
+        Err(ToolResultError::EmptyDiagnosticField { field: "path" })
+    );
+}
+
+#[test]
 fn artifact_ready_event_validates_artifact_ref() {
     assert_eq!(
         ToolResultEvent::artifact_ready("call-1", 6, ArtifactRef::new("artifact-1", " "))
