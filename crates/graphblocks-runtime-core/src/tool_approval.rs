@@ -1,5 +1,5 @@
 use crate::tool::ResolvedTool;
-use crate::tool_call::ToolCall;
+use crate::tool_call::{ToolCall, ToolCallError};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ToolApprovalError {
@@ -24,6 +24,9 @@ pub enum ToolApprovalError {
     InvalidExpiration {
         requested_at_unix_ms: u64,
         expires_at_unix_ms: u64,
+    },
+    InvalidToolCall {
+        source: ToolCallError,
     },
 }
 
@@ -69,6 +72,8 @@ impl ToolApprovalRequest {
                 expires_at_unix_ms,
             });
         }
+        call.validate()
+            .map_err(|source| ToolApprovalError::InvalidToolCall { source })?;
         if call.resolved_tool_id != resolved_tool.resolved_tool_id {
             return Err(ToolApprovalError::ResolvedToolMismatch {
                 expected: resolved_tool.resolved_tool_id.clone(),

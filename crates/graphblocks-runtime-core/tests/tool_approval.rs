@@ -144,3 +144,18 @@ fn approval_request_rejects_empty_identity_fields() {
         }),
     );
 }
+
+#[test]
+fn approval_request_rejects_invalid_tool_call_model() {
+    let resolved = resolved_search_tool().expect("resolved tool is valid");
+    let mut call = search_call("call-1", "runtime").expect("tool call is valid");
+    call.resolved_tool_id = resolved.resolved_tool_id.clone();
+    call.revision = 0;
+
+    assert_eq!(
+        ToolApprovalRequest::for_call("approval-1", &resolved, &call, "user-1", 1_000, 2_000),
+        Err(ToolApprovalError::InvalidToolCall {
+            source: ToolCallError::InvalidRevision { revision: 0 },
+        }),
+    );
+}
