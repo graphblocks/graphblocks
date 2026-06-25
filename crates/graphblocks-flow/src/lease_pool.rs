@@ -9,6 +9,7 @@ use serde_json::Value;
 pub enum LeaseError {
     InvalidCapacity,
     InvalidUnits,
+    InvalidExpiration,
     CapacityExhausted {
         pool_id: String,
         requested_units: u64,
@@ -29,6 +30,7 @@ pub struct LeaseRequest {
     owner: String,
     units: u64,
     attribute_selector: BTreeMap<String, Value>,
+    expires_at: Option<SystemTime>,
 }
 
 impl LeaseRequest {
@@ -37,11 +39,17 @@ impl LeaseRequest {
             owner: owner.into(),
             units,
             attribute_selector: BTreeMap::new(),
+            expires_at: None,
         }
     }
 
     pub fn with_attribute_selector(mut self, attributes: BTreeMap<String, Value>) -> Self {
         self.attribute_selector = attributes;
+        self
+    }
+
+    pub fn with_expires_at(mut self, expires_at: SystemTime) -> Self {
+        self.expires_at = Some(expires_at);
         self
     }
 }
@@ -68,6 +76,7 @@ struct ActiveLease {
     attributes: BTreeMap<String, Value>,
     fencing_token: u64,
     acquired_at: SystemTime,
+    expires_at: Option<SystemTime>,
 }
 
 #[derive(Debug)]
@@ -108,11 +117,26 @@ impl LeasePool {
     }
 
     pub fn try_acquire(&self, request: LeaseRequest) -> Result<ResourceLease, LeaseError> {
+        self.try_acquire_at(request, SystemTime::now())
+    }
+
+    pub fn try_acquire_at(
+        &self,
+        request: LeaseRequest,
+        acquired_at: SystemTime,
+    ) -> Result<ResourceLease, LeaseError> {
         if request.units == 0 {
             return Err(LeaseError::InvalidUnits);
         }
+        if request
+            .expires_at
+            .is_some_and(|expires_at| expires_at <= acquired_at)
+        {
+            return Err(LeaseError::InvalidExpiration);
+        }
 
         let mut inner = self.lock();
+        Self::reap_expired_locked(&mut inner, acquired_at);
         let available_units = inner.capacity_units - inner.used_units;
         if request.units > available_units {
             return Err(LeaseError::CapacityExhausted {
@@ -134,7 +158,8 @@ impl LeasePool {
                 units: request.units,
                 attributes: request.attribute_selector,
                 fencing_token,
-                acquired_at: SystemTime::now(),
+                acquired_at,
+                expires_at: request.expires_at,
             },
         );
 
@@ -143,6 +168,11 @@ impl LeasePool {
             lease_id,
             released: AtomicBool::new(false),
         })
+    }
+
+    pub fn reap_expired(&self, now: SystemTime) -> usize {
+        let mut inner = self.lock();
+        Self::reap_expired_locked(&mut inner, now)
     }
 
     pub fn validate_fencing_token(
@@ -168,6 +198,27 @@ impl LeasePool {
 
     fn lock(&self) -> MutexGuard<'_, Inner> {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn reap_expired_locked(inner: &mut Inner, now: SystemTime) -> usize {
+        let expired_ids = inner
+            .active
+            .iter()
+            .filter_map(|(lease_id, active)| {
+                active
+                    .expires_at
+                    .filter(|expires_at| *expires_at <= now)
+                    .map(|_| lease_id.clone())
+            })
+            .collect::<Vec<_>>();
+        let mut reaped = 0;
+        for lease_id in expired_ids {
+            if let Some(active) = inner.active.remove(&lease_id) {
+                inner.used_units = inner.used_units.saturating_sub(active.units);
+                reaped += 1;
+            }
+        }
+        reaped
     }
 }
 
@@ -196,6 +247,10 @@ impl ResourceLease {
 
     pub fn acquired_at(&self) -> Option<SystemTime> {
         self.active().map(|active| active.acquired_at)
+    }
+
+    pub fn expires_at(&self) -> Option<SystemTime> {
+        self.active().and_then(|active| active.expires_at)
     }
 
     pub fn release(&self) -> bool {

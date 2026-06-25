@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::time::{Duration, SystemTime};
 
 use graphblocks_flow::lease_pool::{LeaseError, LeasePool, LeaseRequest};
 use serde_json::json;
@@ -81,4 +82,47 @@ fn lease_pool_rejects_invalid_capacity_and_units() {
             .try_acquire(LeaseRequest::new("run", 0)),
         Err(LeaseError::InvalidUnits),
     ));
+}
+
+#[test]
+fn expired_leases_are_reaped_without_reusing_fencing_tokens() -> Result<(), LeaseError> {
+    let pool = LeasePool::new("licensed-tool", 1)?;
+    let acquired_at = SystemTime::UNIX_EPOCH + Duration::from_secs(10);
+    let expires_at = acquired_at + Duration::from_secs(5);
+    let first = pool.try_acquire_at(
+        LeaseRequest::new("run-1", 1).with_expires_at(expires_at),
+        acquired_at,
+    )?;
+    let first_token = first.fencing_token();
+
+    assert_eq!(first.expires_at(), Some(expires_at));
+    assert_eq!(pool.available_units(), 0);
+    assert_eq!(pool.reap_expired(acquired_at + Duration::from_secs(4)), 0);
+    assert_eq!(pool.available_units(), 0);
+    assert_eq!(pool.reap_expired(expires_at), 1);
+    assert_eq!(pool.available_units(), 1);
+
+    let second = pool.try_acquire_at(
+        LeaseRequest::new("run-2", 1),
+        expires_at + Duration::from_secs(1),
+    )?;
+
+    assert!(second.fencing_token() > first_token);
+    assert!(!first.release());
+    Ok(())
+}
+
+#[test]
+fn lease_pool_rejects_expiration_not_after_acquisition() -> Result<(), LeaseError> {
+    let pool = LeasePool::new("licensed-tool", 1)?;
+    let acquired_at = SystemTime::UNIX_EPOCH + Duration::from_secs(10);
+
+    assert!(matches!(
+        pool.try_acquire_at(
+            LeaseRequest::new("run-1", 1).with_expires_at(acquired_at),
+            acquired_at,
+        ),
+        Err(LeaseError::InvalidExpiration),
+    ));
+    Ok(())
 }
