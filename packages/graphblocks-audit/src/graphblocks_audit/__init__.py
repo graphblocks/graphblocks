@@ -172,6 +172,9 @@ class SQLiteAuditOutbox:
         return self.get(record_id)
 
     def mark_failed(self, record_id: str, *, error: str) -> AuditOutboxRecord:
+        current = self.get(record_id)
+        if current.status == "published":
+            raise AuditOutboxError(f"audit outbox record {record_id!r} is already published")
         if self._connection.execute(
             """
             UPDATE audit_outbox_records
