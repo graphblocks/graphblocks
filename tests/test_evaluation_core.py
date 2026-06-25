@@ -129,6 +129,55 @@ def test_result_bundle_digest_is_stable_without_record_identity() -> None:
     assert bundle.content_digest() == same_payload.content_digest()
 
 
+def test_result_bundle_digest_includes_release_plan_and_signature_provenance() -> None:
+    base = (
+        RunProvenance(graph_hash="sha256:graph", started_at="2026-06-22T00:00:00Z")
+        .with_release("release-1", "rev-1")
+        .with_physical_plan_hash("sha256:plan-1")
+        .with_release_signature_digest("sha256:signature-1")
+    )
+    changed_signature = (
+        RunProvenance(graph_hash="sha256:graph", started_at="2026-06-22T00:00:00Z")
+        .with_release("release-1", "rev-1")
+        .with_physical_plan_hash("sha256:plan-1")
+        .with_release_signature_digest("sha256:signature-2")
+    )
+    changed_plan = (
+        RunProvenance(graph_hash="sha256:graph", started_at="2026-06-22T00:00:00Z")
+        .with_release("release-1", "rev-1")
+        .with_physical_plan_hash("sha256:plan-2")
+        .with_release_signature_digest("sha256:signature-1")
+    )
+
+    base_digest = ResultBundle(
+        bundle_id="bundle-1",
+        run_id="run-1",
+        release_id="release-1",
+        inputs=[],
+        outputs=[],
+        provenance=base,
+    ).content_digest()
+    changed_signature_digest = ResultBundle(
+        bundle_id="bundle-2",
+        run_id="run-1",
+        release_id="release-1",
+        inputs=[],
+        outputs=[],
+        provenance=changed_signature,
+    ).content_digest()
+    changed_plan_digest = ResultBundle(
+        bundle_id="bundle-3",
+        run_id="run-1",
+        release_id="release-1",
+        inputs=[],
+        outputs=[],
+        provenance=changed_plan,
+    ).content_digest()
+
+    assert base_digest != changed_signature_digest
+    assert base_digest != changed_plan_digest
+
+
 def test_result_bundle_digest_records_model_visible_tool_set_deterministically() -> None:
     catalog = ToolCatalog(
         definitions=(

@@ -62,6 +62,10 @@ class RunProvenance:
     graph_hash: str
     started_at: str
     completed_at: str | None = None
+    release_id: str | None = None
+    deployment_revision_id: str | None = None
+    physical_plan_hash: str | None = None
+    release_signature_digest: str | None = None
     model_visible_tools: tuple[ModelVisibleToolRef, ...] = field(default_factory=tuple)
     runner: dict[str, object] = field(default_factory=dict)
     metadata: dict[str, object] = field(default_factory=dict)
@@ -85,6 +89,15 @@ class RunProvenance:
                 for tool in tools
             ),
         )
+
+    def with_release(self, release_id: str, deployment_revision_id: str) -> RunProvenance:
+        return replace(self, release_id=release_id, deployment_revision_id=deployment_revision_id)
+
+    def with_physical_plan_hash(self, physical_plan_hash: str) -> RunProvenance:
+        return replace(self, physical_plan_hash=physical_plan_hash)
+
+    def with_release_signature_digest(self, release_signature_digest: str) -> RunProvenance:
+        return replace(self, release_signature_digest=release_signature_digest)
 
 
 @dataclass(frozen=True, slots=True)
