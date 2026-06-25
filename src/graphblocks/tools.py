@@ -1163,14 +1163,20 @@ class ToolPlanCall:
     cancellation: ToolCancellation = "cooperative"
 
     def __post_init__(self) -> None:
-        effects = frozenset(self.effects)
+        try:
+            effects = _validate_string_collection("tool plan", "effects", self.effects)
+        except ValueError as error:
+            raise ToolExecutionPlanError(str(error)) from error
         invalid_effects = sorted(effect for effect in effects if effect not in VALID_TOOL_EFFECTS)
         if invalid_effects:
             raise ToolExecutionPlanError(f"invalid tool effect {invalid_effects[0]}")
         if "none" in effects and len(effects) > 1:
             raise ToolExecutionPlanError("tool effect none cannot be combined with other effects")
-        if self.effect_key is not None and not self.effect_key.strip():
-            raise ToolExecutionPlanError(f"tool call {self.call.tool_call_id} effect_key must not be empty")
+        if self.effect_key is not None:
+            if not isinstance(self.effect_key, str):
+                raise ToolExecutionPlanError(f"tool call {self.call.tool_call_id} effect_key must be a string")
+            if not self.effect_key.strip():
+                raise ToolExecutionPlanError(f"tool call {self.call.tool_call_id} effect_key must not be empty")
         if self.cancellation not in VALID_TOOL_CANCELLATIONS:
             raise ToolExecutionPlanError(f"invalid tool cancellation {self.cancellation}")
         object.__setattr__(self, "effects", effects)
@@ -1238,17 +1244,30 @@ class ToolExecutionPlan:
     _calls_by_id: dict[str, ToolPlanCall] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.plan_id, str):
+            raise ToolExecutionPlanError("plan_id must be a string")
         if not self.plan_id.strip():
             raise ToolExecutionPlanError("plan_id must not be empty")
+        if not isinstance(self.response_id, str):
+            raise ToolExecutionPlanError("response_id must be a string")
         if not self.response_id.strip():
             raise ToolExecutionPlanError("response_id must not be empty")
         if self.failure_policy not in VALID_TOOL_EXECUTION_FAILURE_POLICIES:
             raise ToolExecutionPlanError(f"invalid failure policy {self.failure_policy}")
         if self.cancellation_policy not in VALID_TOOL_EXECUTION_CANCELLATION_POLICIES:
             raise ToolExecutionPlanError(f"invalid cancellation policy {self.cancellation_policy}")
+        if not isinstance(self.maximum_parallelism, int) or isinstance(self.maximum_parallelism, bool):
+            raise ToolExecutionPlanError("maximum_parallelism must be a positive integer")
         if self.maximum_parallelism <= 0:
             raise ToolExecutionPlanError("maximum_parallelism must be positive")
-        self.calls = tuple(self.calls)
+        if isinstance(self.calls, str):
+            raise ToolExecutionPlanError("calls must be a collection of ToolPlanCall")
+        try:
+            self.calls = tuple(self.calls)
+        except TypeError as error:
+            raise ToolExecutionPlanError("calls must be a collection of ToolPlanCall") from error
+        if any(not isinstance(planned_call, ToolPlanCall) for planned_call in self.calls):
+            raise ToolExecutionPlanError("calls must be a collection of ToolPlanCall")
         self._states = {}
         self._calls_by_id = {}
         for planned_call in self.calls:

@@ -2507,6 +2507,37 @@ def test_tool_execution_plan_rejects_empty_identity_fields() -> None:
         )
 
 
+def test_tool_execution_plan_rejects_invalid_metadata_types() -> None:
+    call = _tool_call("call-a")
+    calls = (ToolPlanCall(call),)
+
+    with pytest.raises(ToolExecutionPlanError, match="tool plan effects must be a collection of strings"):
+        ToolPlanCall(call, effects="network")  # type: ignore[arg-type]
+    with pytest.raises(ToolExecutionPlanError, match="tool plan effects must be a collection of strings"):
+        ToolPlanCall(call, effects=frozenset({"network", object()}))  # type: ignore[arg-type]
+    with pytest.raises(ToolExecutionPlanError, match="tool call call-a effect_key must be a string"):
+        ToolPlanCall(call, effect_key=object())  # type: ignore[arg-type]
+
+    plan_cases = (
+        ({"plan_id": object()}, "plan_id must be a string"),
+        ({"response_id": 1}, "response_id must be a string"),
+        ({"calls": "call-a"}, "calls must be a collection of ToolPlanCall"),
+        ({"calls": (object(),)}, "calls must be a collection of ToolPlanCall"),
+        ({"maximum_parallelism": "1"}, "maximum_parallelism must be a positive integer"),
+        ({"maximum_parallelism": True}, "maximum_parallelism must be a positive integer"),
+    )
+
+    for overrides, message in plan_cases:
+        base = {
+            "plan_id": "plan-1",
+            "response_id": "response-1",
+            "calls": calls,
+            "maximum_parallelism": 1,
+        }
+        with pytest.raises(ToolExecutionPlanError, match=message):
+            ToolExecutionPlan(**{**base, **overrides})  # type: ignore[arg-type]
+
+
 def test_tool_execution_plan_rejects_none_effect_combined_with_side_effects() -> None:
     with pytest.raises(ToolExecutionPlanError, match="tool effect none cannot be combined with other effects"):
         ToolPlanCall(_tool_call("call-a"), effects=frozenset({"none", "external_write"}))
