@@ -990,6 +990,7 @@ def admit_tool_call(
     schema_registry: ToolSchemaRegistry,
     *,
     policy_decision: PolicyDecision,
+    expected_policy_input_digest: str,
     approval: ToolApprovalRecord | None = None,
     principal_id: str,
     idempotency_key: str | None = None,
@@ -1026,6 +1027,10 @@ def admit_tool_call(
 
     if not policy_decision.input_digest.strip():
         raise ToolAdmissionError(f"policy decision {policy_decision.decision_id} has no input digest")
+    if policy_decision.input_digest != expected_policy_input_digest:
+        raise ToolAdmissionError(
+            f"policy decision {policy_decision.decision_id} input digest does not match the before-tool policy request"
+        )
     if policy_decision.effect == "deny":
         reason = ", ".join(policy_decision.reason_codes) or "deny"
         raise ToolAdmissionError(

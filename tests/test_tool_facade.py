@@ -821,6 +821,7 @@ def test_tool_admission_validates_arguments_before_approval() -> None:
             resolved,
             _process_schema_registry(),
             policy_decision=_allow_tool_policy_decision(),
+            expected_policy_input_digest=_allow_tool_policy_decision().input_digest,
             principal_id="user-1",
             idempotency_key="idem-1",
             admitted_at="2026-06-23T00:00:01Z",
@@ -850,6 +851,7 @@ def test_tool_admission_rejects_stale_argument_digest() -> None:
             resolved,
             _process_schema_registry(),
             policy_decision=_allow_tool_policy_decision(),
+            expected_policy_input_digest=_allow_tool_policy_decision().input_digest,
             principal_id="user-1",
             idempotency_key="idem-1",
             admitted_at="2026-06-23T00:00:01Z",
@@ -869,6 +871,7 @@ def test_tool_admission_denies_before_approval_when_policy_denies_tool_effect() 
             resolved,
             _process_schema_registry(),
             policy_decision=_deny_tool_policy_decision(),
+            expected_policy_input_digest=_deny_tool_policy_decision().input_digest,
             principal_id="user-1",
             idempotency_key="idem-1",
             admitted_at="2026-06-23T00:00:01Z",
@@ -888,6 +891,7 @@ def test_tool_admission_rejects_policy_decision_without_input_digest() -> None:
             resolved,
             _process_schema_registry(),
             policy_decision=replace(_allow_tool_policy_decision(), input_digest=""),
+            expected_policy_input_digest=_allow_tool_policy_decision().input_digest,
             principal_id="user-1",
             idempotency_key="idem-1",
             admitted_at="2026-06-23T00:00:01Z",
@@ -902,6 +906,7 @@ def test_tool_admission_rejects_policy_decision_without_input_digest() -> None:
             resolved,
             _process_schema_registry(),
             policy_decision=replace(_allow_tool_policy_decision(), input_digest=" "),
+            expected_policy_input_digest=_allow_tool_policy_decision().input_digest,
             principal_id="user-1",
             idempotency_key="idem-1",
             admitted_at="2026-06-23T00:00:01Z",
@@ -909,6 +914,38 @@ def test_tool_admission_rejects_policy_decision_without_input_digest() -> None:
         )
 
     assert str(whitespace_error.value) == "policy decision decision-allow-tool has no input digest"
+
+
+def test_tool_admission_rejects_policy_decision_for_different_input_digest() -> None:
+    resolved = _resolved_process_tool()
+    call = _process_call(resolved)
+    policy_request = build_before_tool_or_effect_policy_request(
+        request_id="policy-req-1",
+        call=call,
+        resolved_tool=resolved,
+        principal=PrincipalRef("user-1"),
+        occurred_at="2026-06-23T00:00:00Z",
+    ).with_input_digest()
+
+    with pytest.raises(ToolAdmissionError) as error:
+        admit_tool_call(
+            call,
+            resolved,
+            _process_schema_registry(),
+            policy_decision=replace(
+                _allow_tool_policy_decision(), input_digest="sha256:stale-before-tool"
+            ),
+            expected_policy_input_digest=policy_request.input_digest,
+            principal_id="user-1",
+            idempotency_key="idem-1",
+            admitted_at="2026-06-23T00:00:01Z",
+            now=1_200,
+        )
+
+    assert (
+        str(error.value)
+        == "policy decision decision-allow-tool input digest does not match the before-tool policy request"
+    )
 
 
 def test_tool_admission_rejects_empty_principal_id() -> None:
@@ -925,6 +962,7 @@ def test_tool_admission_rejects_empty_principal_id() -> None:
             resolved,
             _process_schema_registry(),
             policy_decision=_allow_tool_policy_decision(),
+            expected_policy_input_digest=_allow_tool_policy_decision().input_digest,
             principal_id=" ",
             admitted_at="2026-06-23T00:00:01Z",
             now=1_200,
@@ -948,6 +986,7 @@ def test_tool_admission_defers_before_approval_when_policy_defers_tool_effect() 
                 effect="defer",
                 reason_codes=("needs_external_pdp",),
             ),
+            expected_policy_input_digest=_allow_tool_policy_decision().input_digest,
             principal_id="user-1",
             idempotency_key="idem-1",
             admitted_at="2026-06-23T00:00:01Z",
@@ -967,6 +1006,7 @@ def test_tool_admission_denies_tool_no_longer_allowed_for_principal() -> None:
             resolved,
             _process_schema_registry(),
             policy_decision=_allow_tool_policy_decision(),
+            expected_policy_input_digest=_allow_tool_policy_decision().input_digest,
             principal_id="user-1",
             idempotency_key="idem-1",
             admitted_at="2026-06-23T00:00:01Z",
@@ -986,6 +1026,7 @@ def test_tool_admission_denies_expired_resolved_tool() -> None:
             resolved,
             _process_schema_registry(),
             policy_decision=_allow_tool_policy_decision(),
+            expected_policy_input_digest=_allow_tool_policy_decision().input_digest,
             principal_id="user-1",
             idempotency_key="idem-1",
             admitted_at="2026-06-23T00:00:01Z",
@@ -1005,6 +1046,7 @@ def test_tool_admission_requires_approval_and_idempotency_key() -> None:
             resolved,
             _process_schema_registry(),
             policy_decision=_allow_tool_policy_decision(),
+            expected_policy_input_digest=_allow_tool_policy_decision().input_digest,
             principal_id="user-1",
             idempotency_key="idem-1",
             admitted_at="2026-06-23T00:00:01Z",
@@ -1029,6 +1071,7 @@ def test_tool_admission_requires_approval_and_idempotency_key() -> None:
             _process_schema_registry(),
             approval=approval,
             policy_decision=_allow_tool_policy_decision(),
+            expected_policy_input_digest=_allow_tool_policy_decision().input_digest,
             principal_id="user-1",
             admitted_at="2026-06-23T00:00:01Z",
             now=1_200,
@@ -1042,6 +1085,7 @@ def test_tool_admission_requires_approval_and_idempotency_key() -> None:
             _process_schema_registry(),
             approval=approval,
             policy_decision=_allow_tool_policy_decision(),
+            expected_policy_input_digest=_allow_tool_policy_decision().input_digest,
             principal_id="user-1",
             idempotency_key=" ",
             admitted_at="2026-06-23T00:00:01Z",
@@ -1073,6 +1117,7 @@ def test_tool_admission_requires_approval_when_policy_obligates_it() -> None:
             resolved,
             _process_schema_registry(),
             policy_decision=policy_decision,
+            expected_policy_input_digest=policy_decision.input_digest,
             principal_id="user-1",
             idempotency_key="idem-1",
             admitted_at="2026-06-23T00:00:01Z",
@@ -1096,6 +1141,7 @@ def test_tool_admission_requires_approval_when_policy_obligates_it() -> None:
         _process_schema_registry(),
         approval=approval,
         policy_decision=policy_decision,
+        expected_policy_input_digest=policy_decision.input_digest,
         principal_id="user-1",
         idempotency_key="idem-1",
         admitted_at="2026-06-23T00:00:01Z",
@@ -1124,6 +1170,7 @@ def test_tool_admission_returns_admitted_call_with_idempotency_key() -> None:
         _process_schema_registry(),
         approval=approval,
         policy_decision=_allow_tool_policy_decision(),
+        expected_policy_input_digest=_allow_tool_policy_decision().input_digest,
         principal_id="user-1",
         idempotency_key="idem-1",
         admitted_at="2026-06-23T00:00:01Z",
