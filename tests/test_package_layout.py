@@ -886,6 +886,26 @@ def test_postgres_adapter_packages_have_sql_contract_layouts_without_db_driver_d
         assert (package_root / "src" / import_name / "py.typed").exists()
 
 
+def test_durable_stream_adapter_packages_have_layouts_without_client_dependencies() -> None:
+    package_root = ROOT / "packages" / "graphblocks-kafka"
+    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
+    dependencies = pyproject["project"]["dependencies"]
+
+    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
+    assert pyproject["project"]["name"] == "graphblocks-kafka"
+    assert dependencies == ["graphblocks-durable~=1.0"]
+    assert not any(
+        client in dependency.lower()
+        for dependency in dependencies
+        for client in ("confluent-kafka", "kafka-python", "aiokafka", "requests", "httpx")
+    )
+    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
+        "src/graphblocks_kafka"
+    ]
+    assert (package_root / "src" / "graphblocks_kafka" / "__init__.py").exists()
+    assert (package_root / "src" / "graphblocks_kafka" / "py.typed").exists()
+
+
 def test_package_lock_resolves_default_metapackage_closure_without_optional_integrations() -> None:
     lock = build_package_lock(load_package_catalog(), requested=("graphblocks",))
 

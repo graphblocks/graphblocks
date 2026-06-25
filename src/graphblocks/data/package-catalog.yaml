@@ -739,6 +739,23 @@ packages:
   - cloud queue SDK
   implementationPhase: 7
   stability: experimental-extension
+- distribution: graphblocks-kafka
+  import: graphblocks_kafka
+  layer: durable_stream_adapter
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-durable
+  responsibility:
+  - Kafka record to durable SourceEvent projection
+  - consumer group offset cursor mapping
+  - idempotent sink commit record projection
+  forbiddenDependencies:
+  - confluent-kafka
+  - kafka-python
+  - aiokafka
+  implementationPhase: integration-defined
+  stability: integration
 integrationRules:
   distributionPattern: graphblocks-<technology>
   importPattern: graphblocks_<technology>
