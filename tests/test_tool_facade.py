@@ -1736,6 +1736,18 @@ def test_tool_result_events_carry_artifacts_and_final_result() -> None:
     assert completed.into_result() == result
 
 
+def test_tool_result_artifact_ready_event_requires_artifact() -> None:
+    with pytest.raises(ValueError, match="tool result event artifact_ready requires an artifact"):
+        ToolResultEvent(kind="artifact_ready", tool_call_id="call-1", sequence=4)
+    with pytest.raises(ValueError, match="tool result event delta must not carry an artifact"):
+        ToolResultEvent(
+            kind="delta",
+            tool_call_id="call-1",
+            sequence=5,
+            artifact=ArtifactRef("artifact-1", "file:///tmp/out.txt"),
+        )
+
+
 def test_terminal_tool_result_events_preserve_partial_terminal_kind() -> None:
     policy_stopped = ToolResult.policy_stopped(
         "call-1",

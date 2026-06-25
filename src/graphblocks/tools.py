@@ -1676,6 +1676,11 @@ class ToolResultEvent:
         if self.sequence < 0:
             raise ValueError("tool result event sequence must be non-negative")
         object.__setattr__(self, "output", tuple(self.output))
+        if self.kind == "artifact_ready":
+            if self.artifact is None:
+                raise ValueError("tool result event artifact_ready requires an artifact")
+        elif self.artifact is not None:
+            raise ValueError(f"tool result event {self.kind} must not carry an artifact")
         expected_status = FINAL_TOOL_RESULT_EVENT_STATUSES.get(self.kind)
         if expected_status is None:
             if self.result is not None:

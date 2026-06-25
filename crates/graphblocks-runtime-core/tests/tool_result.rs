@@ -652,6 +652,17 @@ fn artifact_refs_validate_identity_fields() {
 }
 
 #[test]
+fn artifact_ready_event_validates_artifact_ref() {
+    assert_eq!(
+        ToolResultEvent::artifact_ready("call-1", 6, ArtifactRef::new("artifact-1", " "))
+            .validate(),
+        Err(ToolResultEventError::InvalidArtifact {
+            source: ToolResultError::EmptyArtifactField { field: "uri" },
+        })
+    );
+}
+
+#[test]
 fn terminal_tool_result_events_preserve_partial_terminal_kind() {
     let policy_stopped = ToolResult::policy_stopped(
         "call-1",

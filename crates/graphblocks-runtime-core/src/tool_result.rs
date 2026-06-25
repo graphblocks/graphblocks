@@ -859,6 +859,9 @@ pub enum ToolResultEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ToolResultEventError {
     EmptyToolCallId,
+    InvalidArtifact {
+        source: ToolResultError,
+    },
     InvalidResult {
         source: ToolResultError,
     },
@@ -990,6 +993,11 @@ impl ToolResultEvent {
     pub fn validate(&self) -> Result<(), ToolResultEventError> {
         if self.tool_call_id().trim().is_empty() {
             return Err(ToolResultEventError::EmptyToolCallId);
+        }
+        if let Self::ArtifactReady { artifact, .. } = self {
+            artifact
+                .validate()
+                .map_err(|source| ToolResultEventError::InvalidArtifact { source })?;
         }
 
         let Some((kind, expected, event_tool_call_id, result)) = (match self {
