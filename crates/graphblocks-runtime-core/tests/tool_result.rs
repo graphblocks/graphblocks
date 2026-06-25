@@ -8,7 +8,7 @@ use graphblocks_runtime_core::tool::{
 use graphblocks_runtime_core::tool_call::ToolCallDraft;
 use graphblocks_runtime_core::tool_result::{
     ArtifactRef, ContentPart, Diagnostic, ToolEffectOutcome, ToolResult, ToolResultContentPolicy,
-    ToolResultEvent, ToolResultEventError, ToolResultStatus, ToolResultValidation,
+    ToolResultError, ToolResultEvent, ToolResultEventError, ToolResultStatus, ToolResultValidation,
     ToolResultValidationError, ToolResultValidationRequest,
 };
 use graphblocks_runtime_core::tool_schema::{JsonSchema, JsonSchemaNode, ToolSchemaRegistry};
@@ -44,6 +44,27 @@ fn completed_tool_result_computes_stable_output_digest() {
     );
     assert_eq!(left.started_at_unix_ms, Some(1_000));
     assert_eq!(left.completed_at_unix_ms, Some(1_050));
+}
+
+#[test]
+fn tool_result_validates_identity_and_timestamp_order() {
+    let empty_call_id = ToolResult::completed("", [ContentPart::text("ok")], 1_000, 1_050);
+
+    assert_eq!(
+        empty_call_id.validate(),
+        Err(ToolResultError::EmptyToolCallId)
+    );
+
+    let reversed_timestamps =
+        ToolResult::completed("call-1", [ContentPart::text("ok")], 1_050, 1_000);
+
+    assert_eq!(
+        reversed_timestamps.validate(),
+        Err(ToolResultError::CompletedBeforeStarted {
+            started_at_unix_ms: 1_050,
+            completed_at_unix_ms: 1_000,
+        })
+    );
 }
 
 #[test]

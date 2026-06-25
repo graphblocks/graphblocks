@@ -174,6 +174,15 @@ pub struct ToolResult {
     pub effect_outcome: ToolEffectOutcome,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ToolResultError {
+    EmptyToolCallId,
+    CompletedBeforeStarted {
+        started_at_unix_ms: u64,
+        completed_at_unix_ms: u64,
+    },
+}
+
 impl ToolResult {
     pub fn completed<I>(
         tool_call_id: impl Into<String>,
@@ -320,6 +329,22 @@ impl ToolResult {
         self.diagnostics = diagnostics.into_iter().collect();
         self
     }
+
+    pub fn validate(&self) -> Result<(), ToolResultError> {
+        if self.tool_call_id.trim().is_empty() {
+            return Err(ToolResultError::EmptyToolCallId);
+        }
+        if let (Some(started_at_unix_ms), Some(completed_at_unix_ms)) =
+            (self.started_at_unix_ms, self.completed_at_unix_ms)
+            && completed_at_unix_ms < started_at_unix_ms
+        {
+            return Err(ToolResultError::CompletedBeforeStarted {
+                started_at_unix_ms,
+                completed_at_unix_ms,
+            });
+        }
+        Ok(())
+    }
 }
 
 fn tool_result_output_digest(output: &[ContentPart]) -> String {
@@ -407,6 +432,9 @@ pub struct ToolResultValidationRequest<'a> {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ToolResultValidationError {
+    InvalidToolResult {
+        source: ToolResultError,
+    },
     ToolCallMismatch {
         expected: String,
         actual: String,
@@ -460,6 +488,10 @@ impl ToolResultValidation {
     pub fn validate_for_model(
         request: ToolResultValidationRequest<'_>,
     ) -> Result<(), ToolResultValidationError> {
+        request
+            .result
+            .validate()
+            .map_err(|source| ToolResultValidationError::InvalidToolResult { source })?;
         if request.result.tool_call_id != request.call.tool_call_id {
             return Err(ToolResultValidationError::ToolCallMismatch {
                 expected: request.call.tool_call_id.clone(),
@@ -808,6 +840,9 @@ pub enum ToolResultEvent {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ToolResultEventError {
+    InvalidResult {
+        source: ToolResultError,
+    },
     ResultToolCallMismatch {
         event_tool_call_id: String,
         result_tool_call_id: String,
@@ -989,6 +1024,9 @@ impl ToolResultEvent {
         }) else {
             return Ok(());
         };
+        result
+            .validate()
+            .map_err(|source| ToolResultEventError::InvalidResult { source })?;
         if result.tool_call_id != *event_tool_call_id {
             return Err(ToolResultEventError::ResultToolCallMismatch {
                 event_tool_call_id: event_tool_call_id.clone(),
