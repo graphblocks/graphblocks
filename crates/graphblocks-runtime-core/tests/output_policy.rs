@@ -1,6 +1,7 @@
 use graphblocks_runtime_core::output_policy::{
-    DeclarativeOutputPolicyEvaluator, DeclarativeOutputPolicyRule, DraftDisposition, DurableResult,
-    GenerationChunk, GenerationChunkError, OutputCutoff, OutputCutoffError, OutputDeliveryGate,
+    DeclarativeOutputPolicyEvaluator, DeclarativeOutputPolicyRule,
+    DeclarativeOutputPolicyRuleError, DraftDisposition, DurableResult, GenerationChunk,
+    GenerationChunkError, OutputCutoff, OutputCutoffError, OutputDeliveryGate,
     OutputDeliveryPolicy, OutputDeliveryPolicyError, OutputDisposition, OutputGateError,
     OutputPolicyDecision, OutputPolicyDecisionError, PendingToolCallsDisposition,
     ProviderCancellation, RedactionInstruction, TerminalReason, ViolationAction,
@@ -501,6 +502,47 @@ fn output_policy_decision_rejects_invalid_redaction_instructions() {
         reversed_range.validate(),
         Err(OutputPolicyDecisionError::InvalidRedactionInstruction {
             path: "/chunks/1/text".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn declarative_output_policy_rules_reject_invalid_contracts() {
+    let empty_rule_id =
+        DeclarativeOutputPolicyRule::new(" ", "secret", OutputDisposition::AbortResponse);
+    assert_eq!(
+        empty_rule_id.validate(),
+        Err(DeclarativeOutputPolicyRuleError::EmptyRuleId)
+    );
+
+    let empty_literal =
+        DeclarativeOutputPolicyRule::new("redact-empty-literal", "", OutputDisposition::Redact)
+            .with_replacement("[redacted]");
+    assert_eq!(
+        empty_literal.validate(),
+        Err(DeclarativeOutputPolicyRuleError::EmptyLiteral {
+            rule_id: "redact-empty-literal".to_owned(),
+        })
+    );
+
+    let missing_replacement =
+        DeclarativeOutputPolicyRule::new("redact-secret", "secret", OutputDisposition::Redact);
+    assert_eq!(
+        missing_replacement.validate(),
+        Err(DeclarativeOutputPolicyRuleError::ReplacementRequired {
+            rule_id: "redact-secret".to_owned(),
+            disposition: OutputDisposition::Redact,
+        })
+    );
+
+    let evaluator = DeclarativeOutputPolicyEvaluator::new([empty_literal]);
+    assert_eq!(
+        evaluator.evaluate_chunk_checked(
+            &GenerationChunk::text("stream-1", "response-1", 1, "secret"),
+            1_000,
+        ),
+        Err(DeclarativeOutputPolicyRuleError::EmptyLiteral {
+            rule_id: "redact-empty-literal".to_owned(),
         })
     );
 }

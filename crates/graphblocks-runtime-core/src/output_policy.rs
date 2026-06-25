@@ -474,6 +474,18 @@ pub struct DeclarativeOutputPolicyRule {
     pub priority: i64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DeclarativeOutputPolicyRuleError {
+    EmptyRuleId,
+    EmptyLiteral {
+        rule_id: String,
+    },
+    ReplacementRequired {
+        rule_id: String,
+        disposition: OutputDisposition,
+    },
+}
+
 impl DeclarativeOutputPolicyRule {
     pub fn new(
         rule_id: impl Into<String>,
@@ -489,6 +501,28 @@ impl DeclarativeOutputPolicyRule {
             policy_refs: Vec::new(),
             priority: 0,
         }
+    }
+
+    pub fn validate(&self) -> Result<(), DeclarativeOutputPolicyRuleError> {
+        if self.rule_id.trim().is_empty() {
+            return Err(DeclarativeOutputPolicyRuleError::EmptyRuleId);
+        }
+        if self.literal.is_empty() {
+            return Err(DeclarativeOutputPolicyRuleError::EmptyLiteral {
+                rule_id: self.rule_id.clone(),
+            });
+        }
+        if matches!(
+            self.disposition,
+            OutputDisposition::Redact | OutputDisposition::Replace
+        ) && self.replacement.is_none()
+        {
+            return Err(DeclarativeOutputPolicyRuleError::ReplacementRequired {
+                rule_id: self.rule_id.clone(),
+                disposition: self.disposition,
+            });
+        }
+        Ok(())
     }
 
     pub fn with_replacement(mut self, replacement: impl Into<String>) -> Self {
@@ -543,7 +577,32 @@ impl DeclarativeOutputPolicyEvaluator {
         }
     }
 
+    pub fn validate(&self) -> Result<(), DeclarativeOutputPolicyRuleError> {
+        for rule in &self.rules {
+            rule.validate()?;
+        }
+        Ok(())
+    }
+
     pub fn evaluate_chunk(
+        &self,
+        chunk: &GenerationChunk,
+        evaluated_at_unix_ms: u64,
+    ) -> OutputPolicyDecision {
+        self.evaluate_chunk_checked(chunk, evaluated_at_unix_ms)
+            .expect("declarative output policy rules must be valid")
+    }
+
+    pub fn evaluate_chunk_checked(
+        &self,
+        chunk: &GenerationChunk,
+        evaluated_at_unix_ms: u64,
+    ) -> Result<OutputPolicyDecision, DeclarativeOutputPolicyRuleError> {
+        self.validate()?;
+        Ok(self.evaluate_chunk_unchecked(chunk, evaluated_at_unix_ms))
+    }
+
+    fn evaluate_chunk_unchecked(
         &self,
         chunk: &GenerationChunk,
         evaluated_at_unix_ms: u64,
