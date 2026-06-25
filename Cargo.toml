@@ -2,6 +2,7 @@
 members = [
   "crates/graphblocks-flow",
   "crates/graphblocks-telemetry",
+  "crates/graphblocks-cli-native",
   "crates/graphblocks-schema",
   "crates/graphblocks-types",
   "crates/graphblocks-compiler",
