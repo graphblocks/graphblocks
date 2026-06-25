@@ -447,6 +447,185 @@ class WorkerPool:
         return select_worker_for_block(self.workers, block)
 
 
+class LeasePoolError(ValueError):
+    """Base error for scarce-resource lease pools."""
+
+
+class LeasePoolCapacityError(LeasePoolError):
+    def __init__(self, field_name: str, value: int) -> None:
+        self.field_name = field_name
+        self.value = value
+        super().__init__(f"{field_name} must be positive, got {value}")
+
+
+class LeasePoolExhaustedError(LeasePoolError):
+    def __init__(self, pool_id: str, requested_units: int, available_units: int) -> None:
+        self.pool_id = pool_id
+        self.requested_units = requested_units
+        self.available_units = available_units
+        super().__init__(
+            f"lease pool {pool_id!r} has {available_units} units available, requested {requested_units}"
+        )
+
+
+class LeaseResourceKindMismatchError(LeasePoolError):
+    def __init__(self, expected: str, actual: str) -> None:
+        self.expected = expected
+        self.actual = actual
+        super().__init__(f"lease resource kind mismatch: expected {expected!r}, got {actual!r}")
+
+
+class LeaseAlreadyExistsError(LeasePoolError):
+    def __init__(self, lease_id: str) -> None:
+        self.lease_id = lease_id
+        super().__init__(f"lease {lease_id!r} already exists")
+
+
+class LeaseNotFoundError(LeasePoolError):
+    def __init__(self, lease_id: str) -> None:
+        self.lease_id = lease_id
+        super().__init__(f"lease {lease_id!r} does not exist")
+
+
+class LeaseEpochMismatchError(LeasePoolError):
+    def __init__(self, lease_id: str, expected_epoch: int, actual_epoch: int) -> None:
+        self.lease_id = lease_id
+        self.expected_epoch = expected_epoch
+        self.actual_epoch = actual_epoch
+        super().__init__(
+            f"lease {lease_id!r} fencing epoch mismatch: expected {expected_epoch}, got {actual_epoch}"
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class LeaseRequest:
+    request_id: str
+    holder: ResourceRef
+    resource_kind: str
+    units: int = 1
+    metadata: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.units <= 0:
+            raise LeasePoolCapacityError("units", self.units)
+        object.__setattr__(self, "metadata", dict(self.metadata))
+
+
+@dataclass(frozen=True, slots=True)
+class LeaseGrant:
+    lease_id: str
+    request_id: str
+    pool_id: str
+    holder: ResourceRef
+    resource_kind: str
+    units: int
+    fencing_epoch: int
+    acquired_at: str
+    expires_at: str
+    metadata: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.units <= 0:
+            raise LeasePoolCapacityError("units", self.units)
+        object.__setattr__(self, "metadata", dict(self.metadata))
+
+
+@dataclass(frozen=True, slots=True)
+class LeasePool:
+    pool_id: str
+    resource_kind: str
+    capacity_units: int
+    active_leases: tuple[LeaseGrant, ...] = field(default_factory=tuple)
+    next_fencing_epoch: int = 1
+    policy_ref: str | None = None
+    metadata: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.capacity_units <= 0:
+            raise LeasePoolCapacityError("capacity_units", self.capacity_units)
+        active_leases = tuple(
+            sorted(
+                self.active_leases,
+                key=lambda lease: (lease.expires_at, lease.lease_id),
+            )
+        )
+        seen_lease_ids: set[str] = set()
+        used_units = 0
+        highest_epoch = 0
+        for lease in active_leases:
+            if lease.pool_id != self.pool_id:
+                raise LeaseResourceKindMismatchError(self.pool_id, lease.pool_id)
+            if lease.resource_kind != self.resource_kind:
+                raise LeaseResourceKindMismatchError(self.resource_kind, lease.resource_kind)
+            if lease.lease_id in seen_lease_ids:
+                raise LeaseAlreadyExistsError(lease.lease_id)
+            seen_lease_ids.add(lease.lease_id)
+            used_units += lease.units
+            highest_epoch = max(highest_epoch, lease.fencing_epoch)
+        if used_units > self.capacity_units:
+            raise LeasePoolExhaustedError(self.pool_id, used_units, self.capacity_units)
+        object.__setattr__(self, "active_leases", active_leases)
+        object.__setattr__(self, "next_fencing_epoch", max(self.next_fencing_epoch, highest_epoch + 1))
+        object.__setattr__(self, "metadata", dict(self.metadata))
+
+    @property
+    def used_units(self) -> int:
+        return sum(lease.units for lease in self.active_leases)
+
+    @property
+    def available_units(self) -> int:
+        return self.capacity_units - self.used_units
+
+    def reap_expired(self, now: str) -> LeasePool:
+        active_leases = tuple(lease for lease in self.active_leases if lease.expires_at > now)
+        if active_leases == self.active_leases:
+            return self
+        return replace(self, active_leases=active_leases)
+
+    def acquire(
+        self,
+        request: LeaseRequest,
+        *,
+        lease_id: str,
+        acquired_at: str,
+        expires_at: str,
+    ) -> tuple[LeasePool, LeaseGrant]:
+        if request.resource_kind != self.resource_kind:
+            raise LeaseResourceKindMismatchError(self.resource_kind, request.resource_kind)
+        current = self.reap_expired(acquired_at)
+        if any(lease.lease_id == lease_id for lease in current.active_leases):
+            raise LeaseAlreadyExistsError(lease_id)
+        if request.units > current.available_units:
+            raise LeasePoolExhaustedError(self.pool_id, request.units, current.available_units)
+        grant = LeaseGrant(
+            lease_id=lease_id,
+            request_id=request.request_id,
+            pool_id=self.pool_id,
+            holder=request.holder,
+            resource_kind=request.resource_kind,
+            units=request.units,
+            fencing_epoch=current.next_fencing_epoch,
+            acquired_at=acquired_at,
+            expires_at=expires_at,
+            metadata=request.metadata,
+        )
+        return replace(
+            current,
+            active_leases=current.active_leases + (grant,),
+            next_fencing_epoch=current.next_fencing_epoch + 1,
+        ), grant
+
+    def release(self, lease_id: str, *, fencing_epoch: int) -> LeasePool:
+        active_leases = list(self.active_leases)
+        for index, lease in enumerate(active_leases):
+            if lease.lease_id == lease_id:
+                if lease.fencing_epoch != fencing_epoch:
+                    raise LeaseEpochMismatchError(lease_id, lease.fencing_epoch, fencing_epoch)
+                del active_leases[index]
+                return replace(self, active_leases=tuple(active_leases))
+        raise LeaseNotFoundError(lease_id)
+
+
 class ChildBudgetDelegationError(ValueError):
     pass
 
@@ -481,6 +660,16 @@ class ChildBudgetDelegation:
 __all__ = [
     "ChildBudgetDelegation",
     "ChildBudgetDelegationError",
+    "LeaseAlreadyExistsError",
+    "LeaseEpochMismatchError",
+    "LeaseGrant",
+    "LeaseNotFoundError",
+    "LeasePool",
+    "LeasePoolCapacityError",
+    "LeasePoolError",
+    "LeasePoolExhaustedError",
+    "LeaseRequest",
+    "LeaseResourceKindMismatchError",
     "ModelPool",
     "ModelPoolMismatchError",
     "ModelProfile",

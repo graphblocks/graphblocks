@@ -7,6 +7,10 @@ import pytest
 from graphblocks.budget import BudgetPermit, UsageAmount
 from graphblocks.orchestration import (
     ChildBudgetDelegation,
+    LeaseEpochMismatchError,
+    LeasePool,
+    LeasePoolExhaustedError,
+    LeaseRequest,
     ModelPool,
     ModelPoolMismatchError,
     ModelProfile,
@@ -306,3 +310,64 @@ def test_child_budget_delegation_builds_scoped_permit_from_parent_permit() -> No
     assert permit.authorized_amounts == [UsageAmount("tokens", Decimal("40"), "tokens")]
     assert permit.fencing_tokens == {"reservation-parent": 11}
     assert parent.allows(permit.authorized_amounts)
+
+
+def test_lease_pool_acquires_capacity_with_fencing_and_expiration() -> None:
+    pool = LeasePool("formal-license", "eda.formal", capacity_units=2)
+    request = LeaseRequest(
+        request_id="formal-check",
+        holder=ResourceRef("trial:formal"),
+        resource_kind="eda.formal",
+        units=2,
+    )
+
+    leased, grant = pool.acquire(
+        request,
+        lease_id="lease-1",
+        acquired_at="2026-06-24T00:00:00Z",
+        expires_at="2026-06-24T00:05:00Z",
+    )
+
+    assert grant.pool_id == "formal-license"
+    assert grant.fencing_epoch == 1
+    assert grant.units == 2
+    assert leased.available_units == 0
+
+    with pytest.raises(LeasePoolExhaustedError) as exhausted:
+        leased.acquire(
+            LeaseRequest("smoke-check", ResourceRef("trial:smoke"), "eda.formal"),
+            lease_id="lease-2",
+            acquired_at="2026-06-24T00:01:00Z",
+            expires_at="2026-06-24T00:06:00Z",
+        )
+
+    assert exhausted.value.available_units == 0
+    assert exhausted.value.requested_units == 1
+
+    reaped = leased.reap_expired("2026-06-24T00:05:01Z")
+    renewed, renewed_grant = reaped.acquire(
+        LeaseRequest("smoke-check", ResourceRef("trial:smoke"), "eda.formal"),
+        lease_id="lease-2",
+        acquired_at="2026-06-24T00:05:02Z",
+        expires_at="2026-06-24T00:10:00Z",
+    )
+
+    assert reaped.available_units == 2
+    assert renewed.available_units == 1
+    assert renewed_grant.fencing_epoch == 2
+
+
+def test_lease_pool_release_requires_matching_fencing_epoch() -> None:
+    pool, grant = LeasePool("synthesis-license", "eda.synthesis", capacity_units=1).acquire(
+        LeaseRequest("synthesis-check", ResourceRef("trial:synthesis"), "eda.synthesis"),
+        lease_id="lease-1",
+        acquired_at="2026-06-24T00:00:00Z",
+        expires_at="2026-06-24T00:05:00Z",
+    )
+
+    with pytest.raises(LeaseEpochMismatchError) as mismatch:
+        pool.release("lease-1", fencing_epoch=grant.fencing_epoch + 1)
+
+    assert mismatch.value.expected_epoch == grant.fencing_epoch
+    assert mismatch.value.actual_epoch == grant.fencing_epoch + 1
+    assert pool.release("lease-1", fencing_epoch=grant.fencing_epoch).available_units == 1
