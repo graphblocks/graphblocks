@@ -986,6 +986,59 @@ def test_package_lock_includes_requested_extension_and_transitive_dependencies()
     assert lock.entry("graphblocks-conversation").dependencies == ("graphblocks-core",)
 
 
+def test_package_lock_payload_and_digest_are_canonical() -> None:
+    catalog = load_package_catalog()
+    left = build_package_lock(
+        catalog,
+        requested=("graphblocks-openapi", "graphblocks-mcp"),
+        include_default=False,
+    )
+    right = build_package_lock(
+        catalog,
+        requested=("graphblocks-mcp", "graphblocks-openapi"),
+        include_default=False,
+    )
+
+    assert left.lock_payload()["packages"] == [
+        {
+            "default": True,
+            "dependencies": [],
+            "distribution": "graphblocks-core",
+            "forbiddenDependencies": [],
+            "import": "graphblocks",
+            "kind": "pure_python",
+            "layer": "schema_authoring",
+            "stability": "foundation",
+            "versionConstraint": "~=1.0",
+        },
+        {
+            "default": False,
+            "dependencies": ["graphblocks-core"],
+            "distribution": "graphblocks-mcp",
+            "forbiddenDependencies": [],
+            "import": "graphblocks_mcp",
+            "kind": "pure_python",
+            "layer": "integration",
+            "stability": "integration",
+            "versionConstraint": None,
+        },
+        {
+            "default": False,
+            "dependencies": ["graphblocks-core"],
+            "distribution": "graphblocks-openapi",
+            "forbiddenDependencies": [],
+            "import": "graphblocks_openapi",
+            "kind": "pure_python",
+            "layer": "integration",
+            "stability": "integration",
+            "versionConstraint": None,
+        },
+    ]
+    assert left.lock_payload()["requested"] == ["graphblocks-mcp", "graphblocks-openapi"]
+    assert left.content_digest().startswith("sha256:")
+    assert left.content_digest() == right.content_digest()
+
+
 def test_package_catalog_doctor_accepts_builtin_catalog() -> None:
     diagnostics = doctor_package_catalog(load_package_catalog())
 

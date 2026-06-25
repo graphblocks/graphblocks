@@ -8,6 +8,7 @@ from typing import Any
 
 import yaml
 
+from .canonical import canonical_hash
 from .diagnostics import Diagnostic, DiagnosticSet
 
 
@@ -23,6 +24,19 @@ class PackageLockEntry:
     dependencies: tuple[str, ...] = field(default_factory=tuple)
     forbidden_dependencies: tuple[str, ...] = field(default_factory=tuple)
 
+    def lock_payload(self) -> dict[str, object]:
+        return {
+            "default": self.default,
+            "dependencies": list(self.dependencies),
+            "distribution": self.distribution,
+            "forbiddenDependencies": list(self.forbidden_dependencies),
+            "import": self.import_package,
+            "kind": self.kind,
+            "layer": self.layer,
+            "stability": self.stability,
+            "versionConstraint": self.version_constraint,
+        }
+
 
 @dataclass(frozen=True, slots=True)
 class PackageLock:
@@ -37,6 +51,18 @@ class PackageLock:
             if entry.distribution == distribution:
                 return entry
         return None
+
+    def lock_payload(self) -> dict[str, object]:
+        return {
+            "catalogVersion": self.catalog_version,
+            "excludedCategories": list(self.excluded_categories),
+            "packages": [entry.lock_payload() for entry in self.entries],
+            "requested": sorted(set(self.requested)),
+            "specVersion": self.spec_version,
+        }
+
+    def content_digest(self) -> str:
+        return canonical_hash(self.lock_payload())
 
 
 @dataclass(frozen=True, slots=True)

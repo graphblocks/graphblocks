@@ -377,6 +377,8 @@ def main(argv: list[str] | None = None) -> int:
                 "graphHash": plan.graph_hash,
                 "schemaVersion": graph.get("apiVersion"),
             },
+            "packageCatalogVersion": package_lock.catalog_version,
+            "packageLockHash": package_lock.content_digest(),
             "runtime": {
                 "protocol": 1,
                 "distribution": "graphblocks-runtime",

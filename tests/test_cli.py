@@ -114,6 +114,8 @@ def test_lock_cli_emits_graph_hash_and_default_package_closure(tmp_path, capsys)
     assert payload["graph"]["id"] == "cli-lock"
     assert payload["graph"]["graphHash"].startswith("sha256:")
     assert payload["graph"]["schemaVersion"] == "graphblocks.ai/v1alpha3"
+    assert payload["packageLockHash"].startswith("sha256:")
+    assert payload["packageCatalogVersion"] == 4
     assert "graphblocks-core" in {package["name"] for package in payload["packages"]}
 
 
