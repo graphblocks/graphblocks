@@ -147,3 +147,74 @@ def test_testing_package_exposes_terminal_run_store_error(monkeypatch) -> None:
         assert "RunDeploymentProvenance" in graphblocks_testing.__all__
     else:  # pragma: no cover - test should fail before this branch.
         raise AssertionError("terminal run state mutation was allowed")
+
+
+def test_testing_package_builds_performance_benchmark_report(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    report = graphblocks_testing.PerformanceBenchmarkReport(
+        benchmark_id="release-candidate",
+        measurements={
+            "throughput_rps": 55,
+            "p95_latency_ms": 820,
+        },
+        thresholds=(
+            graphblocks_testing.PerformanceThreshold.at_most("p95_latency_ms", 800, unit="ms"),
+            graphblocks_testing.PerformanceThreshold.at_least("throughput_rps", 50, unit="rps"),
+            graphblocks_testing.PerformanceThreshold.at_most("first_token_ms", 300, unit="ms"),
+        ),
+        metadata={"release": "2026.06.23.1"},
+    )
+
+    assert not report.ok
+    assert report.report_contract() == {
+        "benchmark_id": "release-candidate",
+        "ok": False,
+        "metadata": {"release": "2026.06.23.1"},
+        "measurements": {
+            "p95_latency_ms": 820.0,
+            "throughput_rps": 55.0,
+        },
+        "thresholds": [
+            {
+                "metric_name": "first_token_ms",
+                "operator": "at_most",
+                "threshold": 300.0,
+                "unit": "ms",
+            },
+            {
+                "metric_name": "p95_latency_ms",
+                "operator": "at_most",
+                "threshold": 800.0,
+                "unit": "ms",
+            },
+            {
+                "metric_name": "throughput_rps",
+                "operator": "at_least",
+                "threshold": 50.0,
+                "unit": "rps",
+            },
+        ],
+        "issues": [
+            {
+                "metric_name": "first_token_ms",
+                "observed": None,
+                "operator": "at_most",
+                "threshold": 300.0,
+                "unit": "ms",
+                "reason": "measurement_missing",
+            },
+            {
+                "metric_name": "p95_latency_ms",
+                "observed": 820.0,
+                "operator": "at_most",
+                "threshold": 800.0,
+                "unit": "ms",
+                "reason": "threshold_failed",
+            },
+        ],
+    }
+    assert report.content_digest().startswith("sha256:")
+    assert "PerformanceBenchmarkReport" in graphblocks_testing.__all__
+    assert "PerformanceThreshold" in graphblocks_testing.__all__

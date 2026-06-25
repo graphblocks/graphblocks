@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 import json
+import math
 from pathlib import Path
 from typing import Literal
 
@@ -32,6 +33,7 @@ from graphblocks.runtime import (
 
 TckCaseKind = Literal["compiler", "runtime"]
 TckResultStatus = Literal["passed", "failed"]
+PerformanceThresholdOperator = Literal["at_most", "at_least"]
 
 
 def _string_tuple(value: object) -> tuple[str, ...]:
@@ -148,6 +150,145 @@ class TckReport:
             "profile": self.profile,
             "ok": self.ok,
             "results": [result.result_contract() for result in self.results],
+        }
+
+    def content_digest(self) -> str:
+        return canonical_hash(self.report_contract())
+
+
+@dataclass(frozen=True, slots=True)
+class PerformanceThreshold:
+    metric_name: str
+    operator: PerformanceThresholdOperator
+    threshold: float
+    unit: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.metric_name.strip():
+            raise ValueError("performance threshold metric_name must not be empty")
+        if self.operator not in {"at_most", "at_least"}:
+            raise ValueError(f"invalid performance threshold operator {self.operator!r}")
+        threshold = float(self.threshold)
+        if not math.isfinite(threshold):
+            raise ValueError("performance threshold must be finite")
+        object.__setattr__(self, "threshold", threshold)
+        if self.unit is not None:
+            object.__setattr__(self, "unit", self.unit.strip() or None)
+
+    @classmethod
+    def at_most(cls, metric_name: str, threshold: float, *, unit: str | None = None) -> PerformanceThreshold:
+        return cls(metric_name=metric_name, operator="at_most", threshold=threshold, unit=unit)
+
+    @classmethod
+    def at_least(cls, metric_name: str, threshold: float, *, unit: str | None = None) -> PerformanceThreshold:
+        return cls(metric_name=metric_name, operator="at_least", threshold=threshold, unit=unit)
+
+    def threshold_contract(self) -> dict[str, object]:
+        return {
+            "metric_name": self.metric_name,
+            "operator": self.operator,
+            "threshold": self.threshold,
+            "unit": self.unit,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class PerformanceBenchmarkIssue:
+    metric_name: str
+    observed: float | None
+    operator: PerformanceThresholdOperator
+    threshold: float
+    unit: str | None
+    reason: str
+
+    def issue_contract(self) -> dict[str, object]:
+        return {
+            "metric_name": self.metric_name,
+            "observed": self.observed,
+            "operator": self.operator,
+            "threshold": self.threshold,
+            "unit": self.unit,
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class PerformanceBenchmarkReport:
+    benchmark_id: str
+    measurements: Mapping[str, float]
+    thresholds: tuple[PerformanceThreshold, ...] = field(default_factory=tuple)
+    metadata: Mapping[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.benchmark_id.strip():
+            raise ValueError("performance benchmark_id must not be empty")
+        measurements: dict[str, float] = {}
+        for metric_name, value in self.measurements.items():
+            if not str(metric_name).strip():
+                raise ValueError("performance benchmark measurement name must not be empty")
+            numeric_value = float(value)
+            if not math.isfinite(numeric_value):
+                raise ValueError("performance benchmark measurement values must be finite")
+            measurements[str(metric_name)] = numeric_value
+        object.__setattr__(self, "measurements", dict(sorted(measurements.items())))
+        object.__setattr__(
+            self,
+            "thresholds",
+            tuple(sorted(self.thresholds, key=lambda item: (item.metric_name, item.operator, item.threshold))),
+        )
+        object.__setattr__(
+            self,
+            "metadata",
+            {str(key): str(value) for key, value in sorted(dict(self.metadata).items())},
+        )
+
+    @property
+    def issues(self) -> tuple[PerformanceBenchmarkIssue, ...]:
+        issues: list[PerformanceBenchmarkIssue] = []
+        for threshold in self.thresholds:
+            observed = self.measurements.get(threshold.metric_name)
+            if observed is None:
+                issues.append(
+                    PerformanceBenchmarkIssue(
+                        metric_name=threshold.metric_name,
+                        observed=None,
+                        operator=threshold.operator,
+                        threshold=threshold.threshold,
+                        unit=threshold.unit,
+                        reason="measurement_missing",
+                    )
+                )
+                continue
+            failed = (
+                observed > threshold.threshold
+                if threshold.operator == "at_most"
+                else observed < threshold.threshold
+            )
+            if failed:
+                issues.append(
+                    PerformanceBenchmarkIssue(
+                        metric_name=threshold.metric_name,
+                        observed=observed,
+                        operator=threshold.operator,
+                        threshold=threshold.threshold,
+                        unit=threshold.unit,
+                        reason="threshold_failed",
+                    )
+                )
+        return tuple(issues)
+
+    @property
+    def ok(self) -> bool:
+        return not self.issues
+
+    def report_contract(self) -> dict[str, object]:
+        return {
+            "benchmark_id": self.benchmark_id,
+            "ok": self.ok,
+            "metadata": dict(self.metadata),
+            "measurements": dict(self.measurements),
+            "thresholds": [threshold.threshold_contract() for threshold in self.thresholds],
+            "issues": [issue.issue_contract() for issue in self.issues],
         }
 
     def content_digest(self) -> str:
@@ -725,6 +866,9 @@ __all__ = [
     "InProcessRuntime",
     "JournalRecord",
     "JournalStateError",
+    "PerformanceBenchmarkIssue",
+    "PerformanceBenchmarkReport",
+    "PerformanceThreshold",
     "RunRecord",
     "RunTerminalStateError",
     "RunResult",
