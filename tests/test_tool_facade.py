@@ -343,6 +343,29 @@ def test_resolved_tool_rejects_empty_identity_fields() -> None:
         with pytest.raises(ValueError, match=f"resolved tool {field_name} must not be empty"):
             replace(resolved, **{field_name: ""})
 
+    with pytest.raises(ValueError, match="resolved tool definition_digest does not match definition"):
+        replace(resolved, definition_digest="sha256:stale")
+    with pytest.raises(ValueError, match="resolved tool binding_digest does not match binding"):
+        replace(resolved, binding_digest="sha256:stale")
+
+    mismatched_binding = ToolBinding(
+        binding_id="binding-ticket",
+        tool_name="ticket.create",
+        implementation=OpenApiToolImplementation(
+            connection="ticket-system",
+            operation_id="createTicket",
+        ),
+    )
+    with pytest.raises(
+        ToolResolutionError,
+        match="tool binding binding-ticket references ticket.create, not knowledge.search",
+    ):
+        replace(
+            resolved,
+            binding=mismatched_binding,
+            binding_digest=mismatched_binding.digest(),
+        )
+
 
 def test_resolved_tool_rejects_definition_binding_name_mismatch() -> None:
     definition = ToolDefinition(
@@ -966,9 +989,11 @@ def test_tool_admission_rejects_policy_decision_for_different_input_digest() -> 
 
 def test_tool_admission_rejects_empty_principal_id() -> None:
     base_resolved = _resolved_process_tool()
+    binding = replace(base_resolved.binding, approval="never", idempotency="optional")
     resolved = replace(
         base_resolved,
-        binding=replace(base_resolved.binding, approval="never", idempotency="optional"),
+        binding=binding,
+        binding_digest=binding.digest(),
     )
     call = _process_call(resolved)
 
@@ -1112,9 +1137,11 @@ def test_tool_admission_requires_approval_and_idempotency_key() -> None:
 
 def test_tool_admission_rejects_blank_provided_optional_idempotency_key() -> None:
     base_resolved = _resolved_process_tool()
+    binding = replace(base_resolved.binding, approval="never", idempotency="optional")
     resolved = replace(
         base_resolved,
-        binding=replace(base_resolved.binding, approval="never", idempotency="optional"),
+        binding=binding,
+        binding_digest=binding.digest(),
     )
     call = _process_call(resolved)
 

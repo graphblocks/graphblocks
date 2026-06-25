@@ -489,6 +489,31 @@ impl ResolvedTool {
                 return Err(ToolResolutionError::EmptyResolvedToolField { field });
             }
         }
+        self.definition.validate()?;
+        self.binding.validate()?;
+        if self.definition.name != self.binding.tool_name {
+            return Err(ToolResolutionError::BindingToolNameMismatch {
+                binding_id: self.binding.binding_id.clone(),
+                definition_name: self.definition.name.clone(),
+                binding_tool_name: self.binding.tool_name.clone(),
+            });
+        }
+        let definition_digest = self.definition.digest();
+        if self.definition_digest != definition_digest {
+            return Err(ToolResolutionError::ResolvedToolDigestMismatch {
+                field: "definition_digest",
+                expected: definition_digest,
+                actual: self.definition_digest.clone(),
+            });
+        }
+        let binding_digest = self.binding.digest();
+        if self.binding_digest != binding_digest {
+            return Err(ToolResolutionError::ResolvedToolDigestMismatch {
+                field: "binding_digest",
+                expected: binding_digest,
+                actual: self.binding_digest.clone(),
+            });
+        }
         Ok(())
     }
 
@@ -541,6 +566,11 @@ pub enum ToolResolutionError {
     },
     EmptyResolvedToolField {
         field: &'static str,
+    },
+    ResolvedToolDigestMismatch {
+        field: &'static str,
+        expected: String,
+        actual: String,
     },
     DuplicateToolDefinition {
         tool_name: String,

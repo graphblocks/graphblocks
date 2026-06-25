@@ -375,6 +375,85 @@ fn resolved_tool_validates_identity_fields() {
         })
     );
 
+    let mut stale_definition_digest = ResolvedTool::from_definition_and_binding(
+        "resolved-1",
+        search_definition(),
+        ToolBinding::new(
+            "binding-search",
+            "knowledge.search",
+            ToolImplementation::Block(BlockToolImplementation::new("blocks.search")),
+        ),
+        "policy-snapshot-1",
+        true,
+        None,
+    )
+    .expect("resolved tool is valid");
+    let expected_definition_digest = stale_definition_digest.definition.digest();
+    stale_definition_digest.definition_digest = "sha256:stale".to_owned();
+    assert_eq!(
+        stale_definition_digest.validate(),
+        Err(ToolResolutionError::ResolvedToolDigestMismatch {
+            field: "definition_digest",
+            expected: expected_definition_digest,
+            actual: "sha256:stale".to_owned(),
+        })
+    );
+
+    let mut stale_binding_digest = ResolvedTool::from_definition_and_binding(
+        "resolved-1",
+        search_definition(),
+        ToolBinding::new(
+            "binding-search",
+            "knowledge.search",
+            ToolImplementation::Block(BlockToolImplementation::new("blocks.search")),
+        ),
+        "policy-snapshot-1",
+        true,
+        None,
+    )
+    .expect("resolved tool is valid");
+    let expected_binding_digest = stale_binding_digest.binding.digest();
+    stale_binding_digest.binding_digest = "sha256:stale".to_owned();
+    assert_eq!(
+        stale_binding_digest.validate(),
+        Err(ToolResolutionError::ResolvedToolDigestMismatch {
+            field: "binding_digest",
+            expected: expected_binding_digest,
+            actual: "sha256:stale".to_owned(),
+        })
+    );
+
+    let mut mismatched_binding = ResolvedTool::from_definition_and_binding(
+        "resolved-1",
+        search_definition(),
+        ToolBinding::new(
+            "binding-search",
+            "knowledge.search",
+            ToolImplementation::Block(BlockToolImplementation::new("blocks.search")),
+        ),
+        "policy-snapshot-1",
+        true,
+        None,
+    )
+    .expect("resolved tool is valid");
+    mismatched_binding.binding = ToolBinding::new(
+        "binding-ticket",
+        "ticket.create",
+        ToolImplementation::OpenApi(OpenApiToolImplementation::new(
+            "ticket-system",
+            "createTicket",
+        )),
+    );
+    mismatched_binding.binding_digest = mismatched_binding.binding.digest();
+    assert_eq!(
+        mismatched_binding.validate(),
+        Err(ToolResolutionError::BindingToolNameMismatch {
+            binding_id: "binding-ticket".to_owned(),
+            definition_name: "knowledge.search".to_owned(),
+            binding_tool_name: "ticket.create".to_owned(),
+        })
+    );
+
     let catalog = ToolCatalog::new(
         [search_definition()],
         [ToolBinding::new(

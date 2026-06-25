@@ -537,6 +537,17 @@ class ResolvedTool:
         ):
             if not getattr(self, field_name).strip():
                 raise ValueError(f"resolved tool {field_name} must not be empty")
+        if self.binding.tool_name != self.definition.name:
+            raise ToolResolutionError(
+                f"tool binding {self.binding.binding_id} references "
+                f"{self.binding.tool_name}, not {self.definition.name}"
+            )
+        definition_digest = self.definition.digest()
+        if self.definition_digest != definition_digest:
+            raise ValueError("resolved tool definition_digest does not match definition")
+        binding_digest = self.binding.digest()
+        if self.binding_digest != binding_digest:
+            raise ValueError("resolved tool binding_digest does not match binding")
 
     @classmethod
     def from_definition_and_binding(
