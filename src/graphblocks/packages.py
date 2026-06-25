@@ -4,12 +4,14 @@ from dataclasses import dataclass, field
 from importlib import resources
 from pathlib import Path
 import tomllib
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 
 from .canonical import canonical_hash
 from .diagnostics import Diagnostic, DiagnosticSet
+
+WheelBuildKind = Literal["pure_python", "native_extension"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +65,58 @@ class PackageLock:
 
     def content_digest(self) -> str:
         return canonical_hash(self.lock_payload())
+
+
+@dataclass(frozen=True, slots=True)
+class WheelBuildTarget:
+    distribution: str
+    manifest: str
+    backend: str
+    kind: WheelBuildKind
+    source_layout: str
+    python_versions: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "python_versions", tuple(str(version) for version in self.python_versions))
+
+    def target_contract(self) -> dict[str, object]:
+        return {
+            "distribution": self.distribution,
+            "manifest": self.manifest,
+            "backend": self.backend,
+            "kind": self.kind,
+            "source_layout": self.source_layout,
+            "python_versions": list(self.python_versions),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class WheelMatrix:
+    targets: tuple[WheelBuildTarget, ...]
+    diagnostics: tuple[Diagnostic, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "targets", tuple(sorted(self.targets, key=lambda item: item.distribution)))
+        object.__setattr__(
+            self,
+            "diagnostics",
+            tuple(sorted(self.diagnostics, key=lambda item: (item.path, item.code, item.message))),
+        )
+
+    @property
+    def ok(self) -> bool:
+        return not any(diagnostic.severity == "error" for diagnostic in self.diagnostics)
+
+    def matrix_contract(self) -> dict[str, object]:
+        return {
+            "ok": self.ok,
+            "target_count": len(self.targets),
+            "targets": [target.target_contract() for target in self.targets],
+            "diagnostics": [diagnostic.to_dict() for diagnostic in self.diagnostics],
+        }
+
+    def content_digest(self) -> str:
+        return canonical_hash(self.matrix_contract())
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,6 +273,220 @@ def build_package_lock(
         entries=tuple(entries),
         excluded_categories=excluded_categories,
     )
+
+
+def _pyproject_paths(root_path: Path) -> list[Path]:
+    return [root_path / "pyproject.toml", *sorted(root_path.glob("packages/*/pyproject.toml"))]
+
+
+def _supports_python_version(requires_python: str, version: str) -> bool:
+    text = requires_python.strip()
+    if not text:
+        return False
+    major_minor = tuple(int(part) for part in version.split(".")[:2])
+    for clause in (part.strip() for part in text.split(",")):
+        if not clause:
+            continue
+        for operator in (">=", "==", ">", "<=", "<"):
+            if clause.startswith(operator):
+                raw_bound = clause[len(operator) :].strip()
+                bound_parts = raw_bound.split(".")[:2]
+                if not all(part.isdigit() for part in bound_parts):
+                    continue
+                bound = tuple(int(part) for part in bound_parts)
+                if operator == ">=" and major_minor < bound:
+                    return False
+                if operator == ">" and major_minor <= bound:
+                    return False
+                if operator == "<=" and major_minor > bound:
+                    return False
+                if operator == "<" and major_minor >= bound:
+                    return False
+                if operator == "==" and major_minor != bound:
+                    return False
+                break
+    return True
+
+
+def build_wheel_matrix(
+    root: str | Path,
+    *,
+    python_versions: tuple[str, ...] = ("3.11", "3.12"),
+) -> WheelMatrix:
+    root_path = Path(root)
+    diagnostics: list[Diagnostic] = []
+    targets: list[WheelBuildTarget] = []
+    if not root_path.is_dir():
+        return WheelMatrix(
+            targets=(),
+            diagnostics=(
+                Diagnostic(
+                    "WheelMatrixRootMissing",
+                    f"wheel matrix root is not a directory: {root_path}",
+                    "$",
+                ),
+            ),
+        )
+
+    for manifest_path in _pyproject_paths(root_path):
+        if not manifest_path.exists():
+            continue
+        relative_path = manifest_path.relative_to(root_path).as_posix()
+        path_prefix = f"$.{relative_path}"
+        try:
+            manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
+        except tomllib.TOMLDecodeError as error:
+            diagnostics.append(
+                Diagnostic(
+                    "WheelManifestInvalid",
+                    f"invalid Python package manifest: {error}",
+                    path_prefix,
+                )
+            )
+            continue
+        project = manifest.get("project")
+        if not isinstance(project, dict):
+            diagnostics.append(
+                Diagnostic(
+                    "WheelProjectMissing",
+                    "wheel pyproject must declare a project table",
+                    f"{path_prefix}.project",
+                )
+            )
+            continue
+        distribution = project.get("name")
+        if not isinstance(distribution, str) or not distribution.strip():
+            diagnostics.append(
+                Diagnostic(
+                    "WheelDistributionMissing",
+                    "wheel pyproject must declare project.name",
+                    f"{path_prefix}.project.name",
+                )
+            )
+            continue
+        distribution = distribution.strip()
+        build_system = manifest.get("build-system")
+        if not isinstance(build_system, dict):
+            diagnostics.append(
+                Diagnostic(
+                    "WheelBuildSystemMissing",
+                    f"wheel target {distribution!r} must declare build-system",
+                    f"{path_prefix}.build-system",
+                )
+            )
+            continue
+        backend = build_system.get("build-backend")
+        if not isinstance(backend, str) or not backend.strip():
+            diagnostics.append(
+                Diagnostic(
+                    "WheelBuildBackendMissing",
+                    f"wheel target {distribution!r} must declare build-system.build-backend",
+                    f"{path_prefix}.build-system.build-backend",
+                )
+            )
+            continue
+        backend = backend.strip()
+        requires_python = project.get("requires-python")
+        if not isinstance(requires_python, str) or not requires_python.strip():
+            diagnostics.append(
+                Diagnostic(
+                    "WheelPythonRequiresMissing",
+                    f"wheel target {distribution!r} must declare project.requires-python",
+                    f"{path_prefix}.project.requires-python",
+                )
+            )
+            continue
+        supported_versions = tuple(
+            version for version in python_versions if _supports_python_version(requires_python, version)
+        )
+        if supported_versions != tuple(python_versions):
+            diagnostics.append(
+                Diagnostic(
+                    "WheelPythonVersionUnsupported",
+                    f"wheel target {distribution!r} does not support the required Python matrix",
+                    f"{path_prefix}.project.requires-python",
+                )
+            )
+
+        tool = manifest.get("tool")
+        tool = tool if isinstance(tool, dict) else {}
+        if backend == "hatchling.build":
+            hatch = tool.get("hatch")
+            hatch = hatch if isinstance(hatch, dict) else {}
+            build = hatch.get("build")
+            build = build if isinstance(build, dict) else {}
+            targets_config = build.get("targets")
+            targets_config = targets_config if isinstance(targets_config, dict) else {}
+            wheel = targets_config.get("wheel")
+            wheel = wheel if isinstance(wheel, dict) else {}
+            source_layout: str | None = None
+            packages = wheel.get("packages")
+            only_include = wheel.get("only-include")
+            if isinstance(packages, list) and packages and all(isinstance(item, str) and item.strip() for item in packages):
+                source_layout = ",".join(packages)
+            elif (
+                isinstance(only_include, list)
+                and only_include
+                and all(isinstance(item, str) and item.strip() for item in only_include)
+            ):
+                source_layout = ",".join(only_include)
+            if source_layout is None:
+                diagnostics.append(
+                    Diagnostic(
+                        "WheelBuildTargetMissing",
+                        f"hatchling wheel target {distribution!r} must declare packages or only-include",
+                        f"{path_prefix}.tool",
+                    )
+                )
+                continue
+            targets.append(
+                WheelBuildTarget(
+                    distribution=distribution,
+                    manifest=relative_path,
+                    backend=backend,
+                    kind="pure_python",
+                    source_layout=source_layout,
+                    python_versions=supported_versions,
+                )
+            )
+            continue
+
+        if backend == "maturin":
+            maturin = tool.get("maturin")
+            maturin = maturin if isinstance(maturin, dict) else {}
+            python_source = maturin.get("python-source")
+            manifest_ref = maturin.get("manifest-path")
+            module_name = maturin.get("module-name")
+            if not all(isinstance(value, str) and value.strip() for value in (python_source, manifest_ref, module_name)):
+                diagnostics.append(
+                    Diagnostic(
+                        "WheelBuildTargetMissing",
+                        f"maturin wheel target {distribution!r} must declare python-source, module-name, and manifest-path",
+                        f"{path_prefix}.tool.maturin",
+                    )
+                )
+                continue
+            targets.append(
+                WheelBuildTarget(
+                    distribution=distribution,
+                    manifest=relative_path,
+                    backend=backend,
+                    kind="native_extension",
+                    source_layout=str(python_source),
+                    python_versions=supported_versions,
+                )
+            )
+            continue
+
+        diagnostics.append(
+            Diagnostic(
+                "WheelBuildBackendUnsupported",
+                f"wheel target {distribution!r} uses unsupported build backend {backend!r}",
+                f"{path_prefix}.build-system.build-backend",
+            )
+        )
+
+    return WheelMatrix(targets=tuple(targets), diagnostics=tuple(diagnostics))
 
 
 def audit_package_manifests(

@@ -5,6 +5,7 @@ import tomllib
 
 from graphblocks.packages import (
     PackageManifestAuditPolicy,
+    build_wheel_matrix,
     audit_package_manifests,
     build_package_lock,
     doctor_package_catalog,
@@ -1051,6 +1052,53 @@ def test_package_catalog_doctor_cross_checks_local_pyproject_dependencies() -> N
 
     assert diagnostics.ok
     assert diagnostics.diagnostics == ()
+
+
+def test_package_wheel_matrix_covers_first_party_python_distributions() -> None:
+    matrix = build_wheel_matrix(ROOT, python_versions=("3.11", "3.12"))
+    targets = {target.distribution: target for target in matrix.targets}
+
+    assert matrix.ok
+    assert matrix.diagnostics == ()
+    assert targets["graphblocks-core"].target_contract() == {
+        "distribution": "graphblocks-core",
+        "manifest": "pyproject.toml",
+        "backend": "hatchling.build",
+        "kind": "pure_python",
+        "source_layout": "src/graphblocks",
+        "python_versions": ["3.11", "3.12"],
+    }
+    assert targets["graphblocks-runtime"].kind == "native_extension"
+    assert targets["graphblocks-runtime"].source_layout == "src"
+    assert matrix.matrix_contract()["target_count"] == len(matrix.targets)
+    assert matrix.content_digest().startswith("sha256:")
+    assert "WheelMatrix" in __import__("graphblocks").__all__
+
+
+def test_package_wheel_matrix_reports_missing_build_target(tmp_path) -> None:
+    pyproject = tmp_path / "packages" / "broken-wheel" / "pyproject.toml"
+    pyproject.parent.mkdir(parents=True)
+    pyproject.write_text(
+        """
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "broken-wheel"
+version = "0.1.0"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    matrix = build_wheel_matrix(tmp_path, python_versions=("3.11", "3.12"))
+
+    assert not matrix.ok
+    assert [(item.code, item.path) for item in matrix.diagnostics] == [
+        ("WheelBuildTargetMissing", "$.packages/broken-wheel/pyproject.toml.tool")
+    ]
 
 
 def test_package_catalog_doctor_reports_local_manifest_dependency_drift(tmp_path) -> None:
