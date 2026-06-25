@@ -198,6 +198,15 @@ def _freeze_json_value(value: object) -> object:
     return value
 
 
+def _validate_string_mapping(kind: str, field_name: str, value: object) -> MappingProxyType[str, str]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{kind} tool implementation {field_name} must be a mapping")
+    mapping = dict(value)
+    if any(not isinstance(key, str) or not isinstance(item, str) for key, item in mapping.items()):
+        raise ValueError(f"{kind} tool implementation {field_name} entries must be strings")
+    return MappingProxyType(mapping)
+
+
 @dataclass(frozen=True, slots=True)
 class JsonSchemaNode:
     expected_type: JsonSchemaType | None = None
@@ -355,8 +364,16 @@ class BlockToolImplementation:
     def __post_init__(self) -> None:
         if not self.block.strip():
             raise ValueError("block tool implementation block must not be empty")
-        object.__setattr__(self, "input_mapping", MappingProxyType(dict(self.input_mapping)))
-        object.__setattr__(self, "output_mapping", MappingProxyType(dict(self.output_mapping)))
+        object.__setattr__(
+            self,
+            "input_mapping",
+            _validate_string_mapping("block", "input_mapping", self.input_mapping),
+        )
+        object.__setattr__(
+            self,
+            "output_mapping",
+            _validate_string_mapping("block", "output_mapping", self.output_mapping),
+        )
 
     def canonical_value(self) -> dict[str, object]:
         return {
@@ -377,8 +394,16 @@ class GraphToolImplementation:
     def __post_init__(self) -> None:
         if not self.graph.strip():
             raise ValueError("graph tool implementation graph must not be empty")
-        object.__setattr__(self, "input_mapping", MappingProxyType(dict(self.input_mapping)))
-        object.__setattr__(self, "output_mapping", MappingProxyType(dict(self.output_mapping)))
+        object.__setattr__(
+            self,
+            "input_mapping",
+            _validate_string_mapping("graph", "input_mapping", self.input_mapping),
+        )
+        object.__setattr__(
+            self,
+            "output_mapping",
+            _validate_string_mapping("graph", "output_mapping", self.output_mapping),
+        )
 
     def canonical_value(self) -> dict[str, object]:
         return {

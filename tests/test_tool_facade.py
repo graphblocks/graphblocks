@@ -251,6 +251,19 @@ def test_tool_implementations_reject_empty_execution_targets() -> None:
         OpenApiToolImplementation(connection="ticket-system", operation_id="")
 
 
+def test_block_and_graph_tool_implementations_reject_invalid_mappings() -> None:
+    with pytest.raises(ValueError, match="block tool implementation input_mapping must be a mapping"):
+        BlockToolImplementation(block="knowledge.search@1", input_mapping="query")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="block tool implementation input_mapping entries must be strings"):
+        BlockToolImplementation(block="knowledge.search@1", input_mapping={1: "$args.query"})  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="block tool implementation output_mapping entries must be strings"):
+        BlockToolImplementation(block="knowledge.search@1", output_mapping={"items": 1})  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="graph tool implementation input_mapping entries must be strings"):
+        GraphToolImplementation(graph="graphs/knowledge-search", input_mapping={"query": 1})  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="graph tool implementation output_mapping entries must be strings"):
+        GraphToolImplementation(graph="graphs/knowledge-search", output_mapping={1: "$result.items"})  # type: ignore[arg-type]
+
+
 def test_tool_implementation_mapping_mutation_cannot_change_binding_digest() -> None:
     input_mapping = {"query": "$args.query"}
     output_mapping = {"items": "$result.items"}
