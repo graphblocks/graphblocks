@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 import hashlib
@@ -12,6 +12,7 @@ from graphblocks_deployment import GraphRelease
 GRAPHBLOCKS_RELEASE_ARTIFACT_TYPE = "application/vnd.graphblocks.release.v1"
 GRAPHBLOCKS_RELEASE_CONFIG_MEDIA_TYPE = "application/vnd.graphblocks.release.config.v1+json"
 OCI_IMAGE_MANIFEST_MEDIA_TYPE = "application/vnd.oci.image.manifest.v1+json"
+CYCLONEDX_JSON_MEDIA_TYPE = "application/vnd.cyclonedx+json"
 
 
 class OciContractError(ValueError):
@@ -229,6 +230,104 @@ def build_release_provenance_attestation(
 
 
 @dataclass(frozen=True, slots=True)
+class ReleaseSbom:
+    release: GraphRelease
+    components: tuple[Mapping[str, object], ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        normalized = []
+        for component in self.components:
+            if not isinstance(component, Mapping):
+                raise OciContractError("SBOM components must be mappings")
+            component_type = component.get("type")
+            name = component.get("name")
+            if not isinstance(component_type, str) or not component_type.strip():
+                raise OciContractError("SBOM component type must not be empty")
+            if not isinstance(name, str) or not name.strip():
+                raise OciContractError("SBOM component name must not be empty")
+            item = {
+                str(key): deepcopy(value)
+                for key, value in sorted(component.items())
+                if value is not None
+            }
+            normalized.append(item)
+        object.__setattr__(
+            self,
+            "components",
+            tuple(sorted(normalized, key=lambda item: (str(item.get("name")), str(item.get("type"))))),
+        )
+
+    def sbom_contract(self) -> dict[str, object]:
+        return {
+            "bomFormat": "CycloneDX",
+            "specVersion": "1.5",
+            "metadata": {
+                "component": {
+                    "type": "application",
+                    "name": self.release.name,
+                    "version": self.release.version,
+                    "bom-ref": self.release.content_digest(),
+                }
+            },
+            "components": [deepcopy(dict(component)) for component in self.components],
+        }
+
+    def sbom_json(self) -> str:
+        return _canonical_dumps(self.sbom_contract())
+
+    def sbom_digest(self) -> str:
+        return "sha256:" + hashlib.sha256(self.sbom_json().encode("utf-8")).hexdigest()
+
+    def to_descriptor(self) -> OciDescriptor:
+        return OciDescriptor.from_payload(
+            CYCLONEDX_JSON_MEDIA_TYPE,
+            self.sbom_json(),
+            annotations={
+                "graphblocks.ai/artifact-kind": "sbom",
+                "graphblocks.ai/release-digest": self.release.content_digest(),
+            },
+        )
+
+
+def build_release_sbom(
+    release: GraphRelease,
+    *,
+    package_lock: Mapping[str, object] | None = None,
+    external_components: Iterable[Mapping[str, object]] = (),
+) -> ReleaseSbom:
+    components: list[Mapping[str, object]] = [dict(component) for component in external_components]
+    if package_lock is not None:
+        raw_packages = package_lock.get("packages", ())
+        if not isinstance(raw_packages, list | tuple):
+            raise OciContractError("package lock packages must be a sequence")
+        for raw_package in raw_packages:
+            if not isinstance(raw_package, Mapping):
+                raise OciContractError("package lock package entries must be mappings")
+            distribution = raw_package.get("distribution", raw_package.get("name"))
+            if not isinstance(distribution, str) or not distribution.strip():
+                raise OciContractError("package lock package distribution must not be empty")
+            version = raw_package.get("versionConstraint", raw_package.get("version_constraint"))
+            component: dict[str, object] = {
+                "type": "library",
+                "name": distribution,
+                "version": version,
+            }
+            properties = []
+            for source_key, property_name in (
+                ("kind", "graphblocks:kind"),
+                ("layer", "graphblocks:layer"),
+                ("stability", "graphblocks:stability"),
+            ):
+                value = raw_package.get(source_key)
+                if isinstance(value, str) and value.strip():
+                    properties.append({"name": property_name, "value": value})
+            if properties:
+                component["properties"] = sorted(properties, key=lambda item: str(item["name"]))
+            components.append(component)
+    return ReleaseSbom(release=release, components=tuple(components))
+
+
+@dataclass(frozen=True, slots=True)
 class SignatureVerificationResult:
     policy_id: str
     signature_digest: str
@@ -340,6 +439,7 @@ def build_release_manifest(
 
 __all__ = [
     "BuildProvenanceAttestation",
+    "CYCLONEDX_JSON_MEDIA_TYPE",
     "GRAPHBLOCKS_RELEASE_ARTIFACT_TYPE",
     "GRAPHBLOCKS_RELEASE_CONFIG_MEDIA_TYPE",
     "OCI_IMAGE_MANIFEST_MEDIA_TYPE",
@@ -347,8 +447,10 @@ __all__ = [
     "OciContractError",
     "OciDescriptor",
     "OciManifest",
+    "ReleaseSbom",
     "SignatureVerificationPolicy",
     "SignatureVerificationResult",
     "build_release_provenance_attestation",
+    "build_release_sbom",
     "build_release_manifest",
 ]

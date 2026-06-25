@@ -132,6 +132,125 @@ def test_oci_release_manifest_includes_sbom_descriptor(monkeypatch) -> None:
     assert contract["annotations"]["graphblocks.ai/provenance-digest"] == "sha256:provenance"
 
 
+def test_oci_build_release_sbom_is_canonical_and_descriptor_ready(monkeypatch) -> None:
+    graphblocks_oci = _import_oci(monkeypatch)
+    graphblocks_deployment = importlib.import_module("graphblocks_deployment")
+    release = (
+        graphblocks_deployment.GraphRelease("support-agent", "2026.06.23.1")
+        .with_bundle("sha256:bundle", "application/vnd.graphblocks.release.bundle.v1+tar")
+        .with_graph("turn", graphblocks_deployment.GraphReleaseGraph("sha256:graph", "sha256:plan"))
+        .with_lock(
+            "python",
+            graphblocks_deployment.ReleaseLockRef(
+                "oci://registry.example.com/locks/python@sha256:pylock",
+                digest="sha256:pylock",
+                lock_type="package-lock",
+            ),
+        )
+    )
+    left = graphblocks_oci.build_release_sbom(
+        release,
+        package_lock={
+            "packages": [
+                {
+                    "distribution": "graphblocks-runtime",
+                    "versionConstraint": "~=1.0",
+                    "kind": "native_wheel",
+                    "layer": "native_runtime",
+                    "stability": "foundation",
+                },
+                {
+                    "distribution": "graphblocks-core",
+                    "versionConstraint": "~=1.0",
+                    "kind": "pure_python",
+                    "layer": "schema_authoring",
+                    "stability": "foundation",
+                },
+            ]
+        },
+        external_components=[
+            {
+                "type": "container",
+                "name": "control-plane",
+                "version": "sha256:image",
+            }
+        ],
+    )
+    right = graphblocks_oci.build_release_sbom(
+        release,
+        package_lock={
+            "packages": [
+                {
+                    "distribution": "graphblocks-core",
+                    "versionConstraint": "~=1.0",
+                    "kind": "pure_python",
+                    "layer": "schema_authoring",
+                    "stability": "foundation",
+                },
+                {
+                    "distribution": "graphblocks-runtime",
+                    "versionConstraint": "~=1.0",
+                    "kind": "native_wheel",
+                    "layer": "native_runtime",
+                    "stability": "foundation",
+                },
+            ]
+        },
+        external_components=[
+            {
+                "version": "sha256:image",
+                "name": "control-plane",
+                "type": "container",
+            }
+        ],
+    )
+    descriptor = left.to_descriptor()
+
+    assert left.sbom_json() == right.sbom_json()
+    assert left.sbom_digest() == right.sbom_digest()
+    assert left.sbom_contract()["metadata"]["component"] == {
+        "type": "application",
+        "name": "support-agent",
+        "version": "2026.06.23.1",
+        "bom-ref": release.content_digest(),
+    }
+    assert left.sbom_contract()["components"] == [
+        {
+            "type": "container",
+            "name": "control-plane",
+            "version": "sha256:image",
+        },
+        {
+            "type": "library",
+            "name": "graphblocks-core",
+            "version": "~=1.0",
+            "properties": [
+                {"name": "graphblocks:kind", "value": "pure_python"},
+                {"name": "graphblocks:layer", "value": "schema_authoring"},
+                {"name": "graphblocks:stability", "value": "foundation"},
+            ],
+        },
+        {
+            "type": "library",
+            "name": "graphblocks-runtime",
+            "version": "~=1.0",
+            "properties": [
+                {"name": "graphblocks:kind", "value": "native_wheel"},
+                {"name": "graphblocks:layer", "value": "native_runtime"},
+                {"name": "graphblocks:stability", "value": "foundation"},
+            ],
+        },
+    ]
+    assert descriptor.media_type == "application/vnd.cyclonedx+json"
+    assert descriptor.digest == left.sbom_digest()
+    assert descriptor.descriptor_contract()["annotations"] == {
+        "graphblocks.ai/artifact-kind": "sbom",
+        "graphblocks.ai/release-digest": release.content_digest(),
+    }
+    assert "ReleaseSbom" in graphblocks_oci.__all__
+    assert "build_release_sbom" in graphblocks_oci.__all__
+
+
 def test_oci_build_provenance_attestation_is_canonical_and_descriptor_ready(monkeypatch) -> None:
     graphblocks_oci = _import_oci(monkeypatch)
     graphblocks_deployment = importlib.import_module("graphblocks_deployment")
