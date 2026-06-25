@@ -251,6 +251,23 @@ def test_tool_binding_rejects_unknown_contract_values() -> None:
             ToolBinding(**base, **overrides)
 
 
+def test_tool_binding_rejects_invalid_effect_collections() -> None:
+    base = {
+        "binding_id": "binding-search",
+        "tool_name": "knowledge.search",
+        "implementation": BlockToolImplementation(block="knowledge.search@1"),
+    }
+    cases = (
+        ({"effects": "network"}, "tool binding effects must be a collection of strings"),
+        ({"effects": None}, "tool binding effects must be a collection of strings"),
+        ({"effects": frozenset({"network", 1})}, "tool binding effects must be a collection of strings"),
+    )
+
+    for overrides, message in cases:
+        with pytest.raises(ValueError, match=message):
+            ToolBinding(**{**base, **overrides})  # type: ignore[arg-type]
+
+
 def test_tool_binding_rejects_non_string_identity_fields() -> None:
     base = {
         "binding_id": "binding-search",

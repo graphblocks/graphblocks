@@ -212,6 +212,18 @@ def _validate_optional_non_empty_string(owner: str, field_name: str, value: obje
     return _validate_non_empty_string(owner, field_name, value)
 
 
+def _validate_string_collection(owner: str, field_name: str, value: object) -> frozenset[str]:
+    if isinstance(value, str):
+        raise ValueError(f"{owner} {field_name} must be a collection of strings")
+    try:
+        items = tuple(value)  # type: ignore[arg-type]
+    except TypeError as error:
+        raise ValueError(f"{owner} {field_name} must be a collection of strings") from error
+    if any(not isinstance(item, str) for item in items):
+        raise ValueError(f"{owner} {field_name} must be a collection of strings")
+    return frozenset(items)
+
+
 def _validate_string_mapping(kind: str, field_name: str, value: object) -> MappingProxyType[str, str]:
     if not isinstance(value, Mapping):
         raise ValueError(f"{kind} tool implementation {field_name} must be a mapping")
@@ -342,11 +354,7 @@ class ToolDefinition:
             _validate_non_empty_string("tool definition", field_name, getattr(self, field_name))
         _validate_optional_non_empty_string("tool definition", "output_schema", self.output_schema)
         _validate_optional_non_empty_string("tool definition", "version", self.version)
-        if isinstance(self.tags, str):
-            raise ValueError("tool definition tags must be a collection of strings")
-        tags = frozenset(self.tags)
-        if any(not isinstance(tag, str) for tag in tags):
-            raise ValueError("tool definition tags must be a collection of strings")
+        tags = _validate_string_collection("tool definition", "tags", self.tags)
         if any(not tag.strip() for tag in tags):
             raise ValueError("tool definition tag must not be empty")
         object.__setattr__(self, "tags", tags)
@@ -504,7 +512,7 @@ class ToolBinding:
     def __post_init__(self) -> None:
         for field_name in ("binding_id", "tool_name"):
             _validate_non_empty_string("tool binding", field_name, getattr(self, field_name))
-        effects = frozenset(self.effects)
+        effects = _validate_string_collection("tool binding", "effects", self.effects)
         invalid_effects = sorted(effect for effect in effects if effect not in VALID_TOOL_EFFECTS)
         if invalid_effects:
             raise ValueError(f"invalid tool effect {invalid_effects[0]}")
