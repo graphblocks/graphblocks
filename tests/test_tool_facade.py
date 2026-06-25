@@ -158,6 +158,20 @@ def test_tool_definition_rejects_empty_identity_fields() -> None:
             input_schema="schemas/SearchRequest@1",
             tags=frozenset({"support", " "}),
         )
+    with pytest.raises(ValueError, match="tool definition tags must be a collection of strings"):
+        ToolDefinition(
+            name="knowledge.search",
+            description="Search support documentation.",
+            input_schema="schemas/SearchRequest@1",
+            tags="support",  # type: ignore[arg-type]
+        )
+    with pytest.raises(ValueError, match="tool definition tags must be a collection of strings"):
+        ToolDefinition(
+            name="knowledge.search",
+            description="Search support documentation.",
+            input_schema="schemas/SearchRequest@1",
+            tags=frozenset({"support", 3}),  # type: ignore[arg-type]
+        )
 
 
 def test_tool_binding_digest_includes_execution_contract_not_definition_text() -> None:

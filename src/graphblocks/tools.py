@@ -322,7 +322,11 @@ class ToolDefinition:
             raise ValueError("tool definition output_schema must not be empty")
         if self.version is not None and not self.version.strip():
             raise ValueError("tool definition version must not be empty")
+        if isinstance(self.tags, str):
+            raise ValueError("tool definition tags must be a collection of strings")
         tags = frozenset(self.tags)
+        if any(not isinstance(tag, str) for tag in tags):
+            raise ValueError("tool definition tags must be a collection of strings")
         if any(not tag.strip() for tag in tags):
             raise ValueError("tool definition tag must not be empty")
         object.__setattr__(self, "tags", tags)
