@@ -766,6 +766,53 @@ def test_output_cutoff_events_include_cutoff_and_retraction_semantics() -> None:
     }
 
 
+def test_application_event_stream_state_rejects_invalid_output_cutoff_payload() -> None:
+    state = ApplicationEventStreamState()
+    invalid_cutoff = ApplicationEvent.new(
+        "OutputCutoff",
+        _metadata(),
+        payload={
+            "stream_id": "stream-1",
+            "response_id": "response-1",
+            "turn_id": "turn-1",
+            "last_generated_sequence": 1,
+            "last_policy_accepted_sequence": 1,
+            "last_client_delivered_sequence": 2,
+            "terminal_reason": "policy_denied",
+            "draft_disposition": "retract",
+            "durable_result": "none",
+            "policy_decision_id": "decision-abort",
+            "occurred_at": "2026-06-23T00:00:01Z",
+        },
+    )
+
+    assert state.accept(invalid_cutoff) is None
+    assert state.cutoffs == {}
+    assert state.accepted_events == []
+
+    non_string_identity = ApplicationEvent.new(
+        "OutputCutoff",
+        _metadata(),
+        payload={
+            "stream_id": 123,
+            "response_id": "response-1",
+            "turn_id": "turn-1",
+            "last_generated_sequence": 1,
+            "last_policy_accepted_sequence": 1,
+            "last_client_delivered_sequence": 1,
+            "terminal_reason": "policy_denied",
+            "draft_disposition": "retract",
+            "durable_result": "none",
+            "policy_decision_id": "decision-abort",
+            "occurred_at": "2026-06-23T00:00:01Z",
+        },
+    )
+
+    assert state.accept(non_string_identity) is None
+    assert state.cutoffs == {}
+    assert state.accepted_events == []
+
+
 def test_application_event_stream_state_discards_late_output_after_cutoff() -> None:
     state = ApplicationEventStreamState()
     cutoff = OutputCutoff(

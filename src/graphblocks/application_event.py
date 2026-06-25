@@ -715,26 +715,52 @@ class ApplicationEventStreamState:
     def accept(self, event: ApplicationEvent) -> ApplicationEvent | None:
         if event.kind == "OutputCutoff":
             payload = event.payload
-            response_id = str(payload.get("response_id", event.metadata.response_id))
+            payload_response_id = payload.get("response_id")
+            response_id = payload_response_id if isinstance(payload_response_id, str) else event.metadata.response_id
             if response_id in self.cutoffs:
                 return None
-            cutoff = OutputCutoff(
-                stream_id=str(payload["stream_id"]),
-                response_id=response_id,
-                turn_id=None if payload.get("turn_id") is None else str(payload.get("turn_id")),
-                last_generated_sequence=int(payload["last_generated_sequence"]),
-                last_policy_accepted_sequence=int(payload["last_policy_accepted_sequence"]),
-                last_client_delivered_sequence=int(payload["last_client_delivered_sequence"]),
-                terminal_reason=str(payload["terminal_reason"]),
-                draft_disposition=str(payload["draft_disposition"]),
-                durable_result=str(payload["durable_result"]),
-                policy_decision_id=(
-                    None
-                    if payload.get("policy_decision_id") is None
-                    else str(payload.get("policy_decision_id"))
-                ),
-                occurred_at=str(payload["occurred_at"]),
-            )
+            try:
+                stream_id = payload["stream_id"]
+                turn_id = payload.get("turn_id")
+                policy_decision_id = payload.get("policy_decision_id")
+                last_generated_sequence = payload["last_generated_sequence"]
+                last_policy_accepted_sequence = payload["last_policy_accepted_sequence"]
+                last_client_delivered_sequence = payload["last_client_delivered_sequence"]
+                terminal_reason = payload["terminal_reason"]
+                draft_disposition = payload["draft_disposition"]
+                durable_result = payload["durable_result"]
+                occurred_at = payload["occurred_at"]
+                if (
+                    not isinstance(stream_id, str)
+                    or (turn_id is not None and not isinstance(turn_id, str))
+                    or (policy_decision_id is not None and not isinstance(policy_decision_id, str))
+                    or not isinstance(last_generated_sequence, int)
+                    or isinstance(last_generated_sequence, bool)
+                    or not isinstance(last_policy_accepted_sequence, int)
+                    or isinstance(last_policy_accepted_sequence, bool)
+                    or not isinstance(last_client_delivered_sequence, int)
+                    or isinstance(last_client_delivered_sequence, bool)
+                    or not isinstance(terminal_reason, str)
+                    or not isinstance(draft_disposition, str)
+                    or not isinstance(durable_result, str)
+                    or not isinstance(occurred_at, str)
+                ):
+                    return None
+                cutoff = OutputCutoff(
+                    stream_id=stream_id,
+                    response_id=response_id,
+                    turn_id=turn_id,
+                    last_generated_sequence=last_generated_sequence,
+                    last_policy_accepted_sequence=last_policy_accepted_sequence,
+                    last_client_delivered_sequence=last_client_delivered_sequence,
+                    terminal_reason=terminal_reason,
+                    draft_disposition=draft_disposition,
+                    durable_result=durable_result,
+                    policy_decision_id=policy_decision_id,
+                    occurred_at=occurred_at,
+                )
+            except (KeyError, TypeError, ValueError):
+                return None
             self.cutoffs[response_id] = cutoff
             self.accepted_events.append(event)
             return event
