@@ -1770,6 +1770,30 @@ def test_tool_result_rejects_empty_call_id_and_reversed_timestamps() -> None:
         )
 
 
+def test_tool_result_rejects_non_string_and_invalid_collection_fields() -> None:
+    with pytest.raises(ValueError, match="tool result tool_call_id must be a string"):
+        ToolResult(tool_call_id=object(), status="completed")  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="tool result output entries must be ContentPart"):
+        ToolResult(tool_call_id="call-1", status="completed", output=object())  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="tool result output entries must be ContentPart"):
+        ToolResult(tool_call_id="call-1", status="completed", output="draft")  # type: ignore[arg-type]
+
+    result = ToolResult.completed(
+        "call-1",
+        (ContentPart(kind="text", text="done"),),
+        started_at="2026-06-23T00:00:00Z",
+        completed_at="2026-06-23T00:00:01Z",
+    )
+    with pytest.raises(ValueError, match="tool result diagnostic code must be a string"):
+        replace(result, diagnostics=({"code": object(), "message": "redacted"},))
+    with pytest.raises(ValueError, match="tool result diagnostic message must be a string"):
+        replace(result, diagnostics=({"code": "tool.redacted", "message": object()},))
+    with pytest.raises(ValueError, match="tool result diagnostic path must be a string"):
+        replace(result, diagnostics=({"code": "tool.redacted", "message": "redacted", "path": object()},))
+
+
 def test_tool_result_diagnostics_require_identity_fields() -> None:
     with pytest.raises(ValueError, match="tool result diagnostic code must not be empty"):
         replace(
@@ -2506,6 +2530,17 @@ def test_tool_result_event_rejects_mismatched_final_result() -> None:
             result="done",  # type: ignore[arg-type]
         )
     assert str(result_type_error.value) == "tool result event completed requires a ToolResult"
+
+
+def test_tool_result_event_rejects_non_string_and_invalid_collection_fields() -> None:
+    with pytest.raises(ValueError, match="tool result event tool_call_id must be a string"):
+        ToolResultEvent.delta(object(), 1, (ContentPart(kind="text", text="draft"),))  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="tool result event output entries must be ContentPart"):
+        ToolResultEvent.delta("call-1", 1, object())  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="tool result event output entries must be ContentPart"):
+        ToolResultEvent.delta("call-1", 1, "draft")  # type: ignore[arg-type]
 
 
 def _tool_call(tool_call_id: str, arguments: str = '{"resource_id":"a"}'):

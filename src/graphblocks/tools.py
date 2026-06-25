@@ -1486,8 +1486,7 @@ class ToolResult:
     effect_outcome: ToolEffectOutcome = "unknown"
 
     def __post_init__(self) -> None:
-        if not self.tool_call_id.strip():
-            raise ValueError("tool result tool_call_id must not be empty")
+        _validate_non_empty_string("tool result", "tool_call_id", self.tool_call_id)
         if self.status not in VALID_TOOL_RESULT_STATUSES:
             raise ValueError(f"invalid tool result status {self.status}")
         if self.effect_outcome not in VALID_TOOL_EFFECT_OUTCOMES:
@@ -1499,6 +1498,8 @@ class ToolResult:
         ):
             raise ValueError("tool result completed_at must not be before started_at")
         try:
+            if isinstance(self.output, str):
+                raise TypeError
             output = tuple(self.output)
         except TypeError as error:
             raise ValueError("tool result output entries must be ContentPart") from error
@@ -1521,14 +1522,21 @@ class ToolResult:
         for diagnostic in self.diagnostics:
             diagnostic_copy = dict(diagnostic)
             code = diagnostic_copy.get("code")
-            if not isinstance(code, str) or not code.strip():
+            if not isinstance(code, str):
+                raise ValueError("tool result diagnostic code must be a string")
+            if not code.strip():
                 raise ValueError("tool result diagnostic code must not be empty")
             message = diagnostic_copy.get("message")
-            if not isinstance(message, str) or not message.strip():
+            if not isinstance(message, str):
+                raise ValueError("tool result diagnostic message must be a string")
+            if not message.strip():
                 raise ValueError("tool result diagnostic message must not be empty")
             path = diagnostic_copy.get("path")
-            if path is not None and (not isinstance(path, str) or not path.strip()):
-                raise ValueError("tool result diagnostic path must not be empty")
+            if path is not None:
+                if not isinstance(path, str):
+                    raise ValueError("tool result diagnostic path must be a string")
+                if not path.strip():
+                    raise ValueError("tool result diagnostic path must not be empty")
             diagnostics.append(MappingProxyType(diagnostic_copy))
         object.__setattr__(
             self,
@@ -1859,13 +1867,14 @@ class ToolResultEvent:
     result: ToolResult | None = None
 
     def __post_init__(self) -> None:
-        if not self.tool_call_id.strip():
-            raise ValueError("tool result event tool_call_id must not be empty")
+        _validate_non_empty_string("tool result event", "tool_call_id", self.tool_call_id)
         if self.kind not in VALID_TOOL_RESULT_EVENT_KINDS:
             raise ValueError(f"invalid tool result event kind {self.kind}")
         if self.sequence < 0:
             raise ValueError("tool result event sequence must be non-negative")
         try:
+            if isinstance(self.output, str):
+                raise TypeError
             output = tuple(self.output)
         except TypeError as error:
             raise ValueError("tool result event output entries must be ContentPart") from error
@@ -1914,7 +1923,7 @@ class ToolResultEvent:
 
     @classmethod
     def delta(cls, tool_call_id: str, sequence: int, output: tuple[ContentPart, ...]) -> ToolResultEvent:
-        return cls(kind="delta", tool_call_id=tool_call_id, sequence=sequence, output=tuple(output))
+        return cls(kind="delta", tool_call_id=tool_call_id, sequence=sequence, output=output)
 
     @classmethod
     def artifact_ready(cls, tool_call_id: str, sequence: int, artifact: ArtifactRef) -> ToolResultEvent:
