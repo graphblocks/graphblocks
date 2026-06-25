@@ -278,6 +278,47 @@ class ApplicationProtocolEvent:
     ) -> ApplicationProtocolEvent:
         return cls(kind=kind, metadata=metadata, payload=dict(payload or {}))
 
+    @classmethod
+    def tool_result_stream(
+        cls,
+        metadata: ApplicationProtocolEventMetadata,
+        event: ToolResultEvent,
+    ) -> ApplicationProtocolEvent | None:
+        if event.kind == "delta":
+            return cls.new(
+                "JobProgress",
+                metadata,
+                payload={
+                    "tool_call_id": event.tool_call_id,
+                    "tool_result_sequence": event.sequence,
+                    "output": [
+                        {
+                            "kind": part.kind,
+                            "text": part.text,
+                            "data": part.data,
+                            "metadata": dict(part.metadata),
+                        }
+                        for part in event.output
+                    ],
+                },
+            )
+        if event.kind == "artifact_ready" and event.artifact is not None:
+            return cls.new(
+                "ArtifactReady",
+                metadata,
+                payload={
+                    "tool_call_id": event.tool_call_id,
+                    "tool_result_sequence": event.sequence,
+                    "artifact": {
+                        "artifact_id": event.artifact.artifact_id,
+                        "uri": event.artifact.uri,
+                        "checksum": event.artifact.checksum,
+                        "media_type": event.artifact.media_type,
+                    },
+                },
+            )
+        return None
+
 
 @dataclass(frozen=True, slots=True)
 class ApplicationEventMetadata:

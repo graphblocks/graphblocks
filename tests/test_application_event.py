@@ -16,6 +16,7 @@ from graphblocks import (
     ApplicationProtocolError,
     ApplicationProtocolEvent,
     ApplicationProtocolEventMetadata,
+    ArtifactRef,
     BlockToolImplementation,
     ContentPart,
     GenerationChunk,
@@ -205,6 +206,114 @@ def test_application_protocol_command_and_event_envelopes_match_client_contract(
             ),
             payload={},
         )
+
+
+def test_protocol_events_represent_streaming_tool_result_deltas_and_artifacts() -> None:
+    delta = ToolResultEvent.delta(
+        "call-1",
+        7,
+        (
+            ContentPart(
+                kind="text",
+                text="draft chunk",
+                metadata={"trust_designation": "untrusted_external"},
+            ),
+            ContentPart(kind="json", data={"items": 2}),
+        ),
+    )
+    artifact = ToolResultEvent.artifact_ready(
+        "call-1",
+        8,
+        ArtifactRef(
+            "artifact-1",
+            "file:///tmp/result.json",
+            checksum="sha256:artifact",
+            media_type="application/json",
+        ),
+    )
+
+    delta_event = ApplicationProtocolEvent.tool_result_stream(
+        ApplicationProtocolEventMetadata(
+            event_id="event-delta",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            turn_id="turn-1",
+            sequence=7,
+            cursor="cursor-7",
+            occurred_at_unix_ms=1_765_843_201_000,
+        ),
+        delta,
+    )
+    artifact_event = ApplicationProtocolEvent.tool_result_stream(
+        ApplicationProtocolEventMetadata(
+            event_id="event-artifact",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            turn_id="turn-1",
+            sequence=8,
+            cursor="cursor-8",
+            occurred_at_unix_ms=1_765_843_202_000,
+        ),
+        artifact,
+    )
+    completed = ToolResultEvent.completed(
+        "call-1",
+        9,
+        ToolResult.completed(
+            "call-1",
+            (ContentPart(kind="text", text="done"),),
+            started_at="2026-06-23T00:00:00Z",
+            completed_at="2026-06-23T00:00:01Z",
+        ),
+    )
+
+    assert delta_event is not None
+    assert delta_event.kind == "JobProgress"
+    assert delta_event.payload == {
+        "tool_call_id": "call-1",
+        "tool_result_sequence": 7,
+        "output": [
+            {
+                "kind": "text",
+                "text": "draft chunk",
+                "data": None,
+                "metadata": {"trust_designation": "untrusted_external"},
+            },
+            {
+                "kind": "json",
+                "text": None,
+                "data": {"items": 2},
+                "metadata": {},
+            },
+        ],
+    }
+    assert artifact_event is not None
+    assert artifact_event.kind == "ArtifactReady"
+    assert artifact_event.payload == {
+        "tool_call_id": "call-1",
+        "tool_result_sequence": 8,
+        "artifact": {
+            "artifact_id": "artifact-1",
+            "uri": "file:///tmp/result.json",
+            "checksum": "sha256:artifact",
+            "media_type": "application/json",
+        },
+    }
+    assert (
+        ApplicationProtocolEvent.tool_result_stream(
+            ApplicationProtocolEventMetadata(
+                event_id="event-complete",
+                protocol_version="graphblocks.app.v1",
+                run_id="run-1",
+                turn_id="turn-1",
+                sequence=9,
+                cursor="cursor-9",
+                occurred_at_unix_ms=1_765_843_203_000,
+            ),
+            completed,
+        )
+        is None
+    )
 
 
 def test_tool_events_carry_tool_call_id_and_required_envelope_fields() -> None:
