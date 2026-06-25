@@ -1084,8 +1084,10 @@ def admit_tool_call(
     admitted_at: str,
     now: int,
 ) -> AdmittedToolCall:
-    if not principal_id.strip():
-        raise ToolAdmissionError("tool admission principal_id must not be empty")
+    try:
+        _validate_non_empty_string("tool admission", "principal_id", principal_id)
+    except ValueError as error:
+        raise ToolAdmissionError(str(error)) from error
     if call.status != "validated":
         raise ToolAdmissionError(f"tool call {call.tool_call_id} is {call.status}, not validated")
     if call.resolved_tool_id != resolved_tool.resolved_tool_id:
@@ -1112,6 +1114,8 @@ def admit_tool_call(
     if resolved_tool.valid_until is not None and admitted_at > resolved_tool.valid_until:
         raise ToolAdmissionError(f"resolved tool {resolved_tool.definition.name} expired at {resolved_tool.valid_until}")
 
+    if not isinstance(policy_decision.input_digest, str):
+        raise ToolAdmissionError(f"policy decision {policy_decision.decision_id} input_digest must be a string")
     if not policy_decision.input_digest.strip():
         raise ToolAdmissionError(f"policy decision {policy_decision.decision_id} has no input digest")
     if policy_decision.input_digest != expected_policy_input_digest:
@@ -1144,8 +1148,11 @@ def admit_tool_call(
     elif approval is not None and not approval.is_valid_for(resolved_tool, call, principal_id=principal_id, now=now):
         raise ToolAdmissionError(f"approval {approval.approval_id} is not valid for tool call {call.tool_call_id}")
 
-    if idempotency_key is not None and not idempotency_key.strip():
-        raise ToolAdmissionError(f"tool call {call.tool_call_id} requires a non-empty idempotency key")
+    if idempotency_key is not None:
+        if not isinstance(idempotency_key, str):
+            raise ToolAdmissionError(f"tool call {call.tool_call_id} idempotency_key must be a string")
+        if not idempotency_key.strip():
+            raise ToolAdmissionError(f"tool call {call.tool_call_id} requires a non-empty idempotency key")
     if resolved_tool.binding.idempotency == "required" and idempotency_key is None:
         raise ToolAdmissionError(f"tool call {call.tool_call_id} requires an idempotency key")
 
