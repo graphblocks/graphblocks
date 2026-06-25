@@ -123,6 +123,12 @@ def test_output_policy_contract_rejects_unknown_literals() -> None:
     with pytest.raises(ValueError, match="invalid terminal reason throttled"):
         OutputCutoff(stream_id="stream-1", response_id="response-1", terminal_reason="throttled")
 
+    with pytest.raises(ValueError, match="output cutoff stream_id must not be empty"):
+        OutputCutoff(stream_id=" ", response_id="response-1")
+
+    with pytest.raises(ValueError, match="output cutoff response_id must not be empty"):
+        OutputCutoff(stream_id="stream-1", response_id="")
+
     with pytest.raises(ValueError, match="invalid output durable result committed"):
         OutputCutoff(stream_id="stream-1", response_id="response-1", durable_result="committed")
 

@@ -692,6 +692,9 @@ pub struct OutputCutoff {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OutputCutoffError {
+    EmptyIdentityField {
+        field: &'static str,
+    },
     PolicyAcceptedSequenceBeyondGenerated {
         last_generated_sequence: u64,
         last_policy_accepted_sequence: u64,
@@ -704,6 +707,14 @@ pub enum OutputCutoffError {
 
 impl OutputCutoff {
     pub fn validate(&self) -> Result<(), OutputCutoffError> {
+        for (field, value) in [
+            ("stream_id", self.stream_id.as_str()),
+            ("response_id", self.response_id.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(OutputCutoffError::EmptyIdentityField { field });
+            }
+        }
         if self.last_policy_accepted_sequence > self.last_generated_sequence {
             return Err(OutputCutoffError::PolicyAcceptedSequenceBeyondGenerated {
                 last_generated_sequence: self.last_generated_sequence,

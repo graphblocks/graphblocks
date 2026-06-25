@@ -151,6 +151,42 @@ fn output_cutoff_rejects_sequences_beyond_generated() {
 }
 
 #[test]
+fn output_cutoff_requires_stream_and_response_ids() {
+    let valid = OutputCutoff {
+        stream_id: "stream-1".to_owned(),
+        response_id: "response-1".to_owned(),
+        turn_id: None,
+        last_generated_sequence: 1,
+        last_policy_accepted_sequence: 1,
+        last_client_delivered_sequence: 1,
+        terminal_reason: TerminalReason::PolicyDenied,
+        draft_disposition: DraftDisposition::Retract,
+        durable_result: DurableResult::None,
+        policy_decision_id: Some("decision-1".to_owned()),
+        occurred_at_unix_ms: 1_000,
+    };
+
+    assert_eq!(
+        OutputCutoff {
+            stream_id: " ".to_owned(),
+            ..valid.clone()
+        }
+        .validate(),
+        Err(OutputCutoffError::EmptyIdentityField { field: "stream_id" })
+    );
+    assert_eq!(
+        OutputCutoff {
+            response_id: "".to_owned(),
+            ..valid
+        }
+        .validate(),
+        Err(OutputCutoffError::EmptyIdentityField {
+            field: "response_id",
+        })
+    );
+}
+
+#[test]
 fn output_gate_rejects_policy_decision_without_input_digest() -> Result<(), OutputGateError> {
     let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
 
