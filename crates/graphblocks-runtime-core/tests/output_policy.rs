@@ -305,6 +305,27 @@ fn output_gate_rejects_policy_decision_without_input_digest() -> Result<(), Outp
 }
 
 #[test]
+fn output_policy_decision_rejects_invalid_metadata_values() {
+    let blank_reason = OutputPolicyDecision::hold("decision-hold", "sha256:hold")
+        .with_reason_codes(["secret.detected", " "]);
+    assert_eq!(
+        blank_reason.validate(),
+        Err(OutputPolicyDecisionError::InvalidReasonCode {
+            reason_code: " ".to_owned(),
+        }),
+    );
+
+    let blank_policy_ref = OutputPolicyDecision::hold("decision-hold", "sha256:hold")
+        .with_policy_refs(["policy/output-standard", ""]);
+    assert_eq!(
+        blank_policy_ref.validate(),
+        Err(OutputPolicyDecisionError::InvalidPolicyRef {
+            policy_ref: "".to_owned(),
+        }),
+    );
+}
+
+#[test]
 fn replace_decision_requires_policy_approved_replacement_content() -> Result<(), OutputGateError> {
     let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
     let decision = OutputPolicyDecision::replace(

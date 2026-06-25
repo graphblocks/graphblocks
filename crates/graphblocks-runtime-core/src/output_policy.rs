@@ -263,6 +263,8 @@ pub enum OutputPolicyDecisionError {
     ReplacementContentMissing { decision_id: String },
     InvalidReplacementChunk { source: GenerationChunkError },
     InvalidRedactionInstruction { path: String },
+    InvalidReasonCode { reason_code: String },
+    InvalidPolicyRef { policy_ref: String },
 }
 
 impl OutputPolicyDecision {
@@ -289,6 +291,20 @@ impl OutputPolicyDecision {
             if redaction.path.trim().is_empty() || redaction.start > redaction.end {
                 return Err(OutputPolicyDecisionError::InvalidRedactionInstruction {
                     path: redaction.path.clone(),
+                });
+            }
+        }
+        for reason_code in &self.reason_codes {
+            if reason_code.trim().is_empty() {
+                return Err(OutputPolicyDecisionError::InvalidReasonCode {
+                    reason_code: reason_code.clone(),
+                });
+            }
+        }
+        for policy_ref in &self.policy_refs {
+            if policy_ref.trim().is_empty() {
+                return Err(OutputPolicyDecisionError::InvalidPolicyRef {
+                    policy_ref: policy_ref.clone(),
                 });
             }
         }
@@ -894,6 +910,12 @@ pub enum OutputGateError {
     ReplacementContentMissing {
         decision_id: String,
     },
+    InvalidReasonCode {
+        reason_code: String,
+    },
+    InvalidPolicyRef {
+        policy_ref: String,
+    },
     PolicyStopped,
 }
 
@@ -1071,6 +1093,12 @@ impl OutputDeliveryGate {
                 }
                 OutputPolicyDecisionError::InvalidRedactionInstruction { path } => {
                     Err(OutputGateError::InvalidRedactionInstruction { path })
+                }
+                OutputPolicyDecisionError::InvalidReasonCode { reason_code } => {
+                    Err(OutputGateError::InvalidReasonCode { reason_code })
+                }
+                OutputPolicyDecisionError::InvalidPolicyRef { policy_ref } => {
+                    Err(OutputGateError::InvalidPolicyRef { policy_ref })
                 }
             };
         }
