@@ -7,7 +7,7 @@ import hashlib
 import json
 from typing import Literal
 
-from graphblocks_deployment import ExecutionTarget
+from graphblocks_deployment import ExecutionTarget, RolloutPlan
 
 
 KubernetesProtocol = Literal["TCP", "UDP", "SCTP"]
@@ -77,6 +77,15 @@ def _object_metadata(
         "labels": {key: labels[key] for key in sorted(labels)},
         "annotations": {key: merged_annotations[key] for key in sorted(merged_annotations)},
     }
+
+
+def _env_contracts(env: Mapping[str, str] | Iterable[KubernetesEnv]) -> list[dict[str, str]]:
+    if isinstance(env, Mapping):
+        return [
+            KubernetesEnv(str(key), str(value)).env_contract()
+            for key, value in sorted(env.items())
+        ]
+    return [item.env_contract() for item in sorted(tuple(env), key=lambda env_item: env_item.name)]
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,16 +260,7 @@ def render_target_deployment(
         raise KubernetesAdapterError("target image must be provided")
 
     port_contracts = [port.container_contract() for port in ports]
-    if isinstance(env, Mapping):
-        env_contracts = [
-            KubernetesEnv(str(key), str(value)).env_contract()
-            for key, value in sorted(env.items())
-        ]
-    else:
-        env_contracts = [
-            item.env_contract()
-            for item in sorted(tuple(env), key=lambda env_item: env_item.name)
-        ]
+    env_contracts = _env_contracts(env)
 
     container: dict[str, object] = {
         "name": name,
@@ -342,6 +342,169 @@ def render_target_service(
     }
 
 
+def render_rollout_manifests(
+    name: str,
+    stable_target: ExecutionTarget,
+    candidate_target: ExecutionTarget,
+    rollout_plan: RolloutPlan,
+    *,
+    active_step_index: int,
+    options: KubernetesRenderOptions | None = None,
+    ports: Iterable[KubernetesPort] = (),
+    env: Mapping[str, str] | Iterable[KubernetesEnv] = (),
+    stable_replicas: int = 1,
+    candidate_replicas: int | None = None,
+) -> KubernetesManifestSet:
+    if not name.strip():
+        raise KubernetesAdapterError("rollout name must not be empty")
+    if stable_replicas < 0:
+        raise KubernetesAdapterError("stable_replicas must not be negative")
+    if candidate_replicas is not None and candidate_replicas < 0:
+        raise KubernetesAdapterError("candidate_replicas must not be negative")
+    options = options or KubernetesRenderOptions()
+    ports = tuple(ports)
+    env_contracts = _env_contracts(env)
+    active_step = rollout_plan.current_step(active_step_index)
+
+    stable_image = stable_target.image
+    candidate_image = candidate_target.image
+    if stable_image is None or not stable_image.strip():
+        raise KubernetesAdapterError("stable target image must be provided")
+    if candidate_image is None or not candidate_image.strip():
+        raise KubernetesAdapterError("candidate target image must be provided")
+
+    if active_step.kind == "promote":
+        effective_stable_replicas = 0
+        effective_candidate_replicas = stable_replicas if candidate_replicas is None else candidate_replicas
+        service_role = "candidate"
+    elif active_step.kind == "canary":
+        effective_stable_replicas = stable_replicas
+        if candidate_replicas is not None:
+            effective_candidate_replicas = candidate_replicas
+        elif active_step.traffic_percent <= 0:
+            effective_candidate_replicas = 0
+        else:
+            denominator = max(1, 100 - active_step.traffic_percent)
+            effective_candidate_replicas = max(
+                1,
+                (stable_replicas * active_step.traffic_percent + denominator - 1) // denominator,
+            )
+        service_role = None if active_step.traffic_percent > 0 else "stable"
+    elif active_step.kind == "shadow":
+        effective_stable_replicas = stable_replicas
+        effective_candidate_replicas = 1 if candidate_replicas is None else candidate_replicas
+        service_role = "stable"
+    else:
+        effective_stable_replicas = stable_replicas
+        effective_candidate_replicas = 0 if candidate_replicas is None else candidate_replicas
+        service_role = "stable"
+
+    documents: list[KubernetesManifest] = []
+    for role, target, revision_id, replicas, image in (
+        ("stable", stable_target, rollout_plan.stable_revision_id, effective_stable_replicas, stable_image),
+        (
+            "candidate",
+            candidate_target,
+            rollout_plan.candidate_revision_id,
+            effective_candidate_replicas,
+            candidate_image,
+        ),
+    ):
+        selector = {
+            "app.kubernetes.io/name": name,
+            "graphblocks.ai/rollout-id": rollout_plan.rollout_id,
+            "graphblocks.ai/rollout-role": role,
+        }
+        labels = {
+            **options.labels,
+            "app.kubernetes.io/component": target.kind.replace("_", "-"),
+            "app.kubernetes.io/managed-by": "graphblocks",
+            "app.kubernetes.io/name": name,
+            "graphblocks.ai/deployment-revision": revision_id,
+            "graphblocks.ai/rollout-id": rollout_plan.rollout_id,
+            "graphblocks.ai/rollout-role": role,
+            "graphblocks.ai/target-id": target.target_id,
+        }
+        annotations = {
+            **_target_annotations(target),
+            "graphblocks.ai/deployment-revision": revision_id,
+            "graphblocks.ai/rollout-id": rollout_plan.rollout_id,
+            "graphblocks.ai/rollout-role": role,
+            "graphblocks.ai/rollout-step": active_step.step_id,
+            "graphblocks.ai/rollout-step-kind": active_step.kind,
+            "graphblocks.ai/rollout-traffic-percent": str(active_step.traffic_percent),
+        }
+        container: dict[str, object] = {
+            "name": name,
+            "image": image,
+        }
+        port_contracts = [port.container_contract() for port in ports]
+        if port_contracts:
+            container["ports"] = port_contracts
+        if env_contracts:
+            container["env"] = env_contracts
+
+        documents.append(
+            {
+                "apiVersion": "apps/v1",
+                "kind": "Deployment",
+                "metadata": _object_metadata(
+                    f"{name}-{role}",
+                    options,
+                    labels,
+                    annotations,
+                ),
+                "spec": {
+                    "replicas": replicas,
+                    "selector": {"matchLabels": selector},
+                    "template": {
+                        "metadata": {
+                            "labels": {key: labels[key] for key in sorted(labels)},
+                            "annotations": {key: annotations[key] for key in sorted(annotations)},
+                        },
+                        "spec": {"containers": [container]},
+                    },
+                },
+            }
+        )
+
+    if ports:
+        service_selector = {
+            "app.kubernetes.io/name": name,
+            "graphblocks.ai/rollout-id": rollout_plan.rollout_id,
+        }
+        if service_role is not None:
+            service_selector["graphblocks.ai/rollout-role"] = service_role
+        service_annotations = {
+            "graphblocks.ai/candidate-revision": rollout_plan.candidate_revision_id,
+            "graphblocks.ai/rollout-id": rollout_plan.rollout_id,
+            "graphblocks.ai/rollout-step": active_step.step_id,
+            "graphblocks.ai/rollout-step-kind": active_step.kind,
+            "graphblocks.ai/rollout-traffic-percent": str(active_step.traffic_percent),
+            "graphblocks.ai/stable-revision": rollout_plan.stable_revision_id,
+        }
+        service_labels = {
+            **options.labels,
+            "app.kubernetes.io/managed-by": "graphblocks",
+            "app.kubernetes.io/name": name,
+            "graphblocks.ai/rollout-id": rollout_plan.rollout_id,
+        }
+        documents.append(
+            {
+                "apiVersion": "v1",
+                "kind": "Service",
+                "metadata": _object_metadata(name, options, service_labels, service_annotations),
+                "spec": {
+                    "type": "ClusterIP",
+                    "selector": {key: service_selector[key] for key in sorted(service_selector)},
+                    "ports": [port.service_contract() for port in ports],
+                },
+            }
+        )
+
+    return KubernetesManifestSet(tuple(documents))
+
+
 def render_target_manifests(
     name: str,
     target: ExecutionTarget,
@@ -380,6 +543,7 @@ __all__ = [
     "KubernetesPort",
     "KubernetesProtocol",
     "KubernetesRenderOptions",
+    "render_rollout_manifests",
     "render_target_deployment",
     "render_target_manifests",
     "render_target_service",

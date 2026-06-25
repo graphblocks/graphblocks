@@ -65,6 +65,108 @@ def test_kubernetes_adapter_renders_worker_deployment_and_service(monkeypatch) -
     assert service["spec"]["ports"] == [{"name": "http", "port": 80, "targetPort": "http", "protocol": "TCP"}]
 
 
+def test_kubernetes_adapter_renders_canary_rollout_manifests(monkeypatch) -> None:
+    graphblocks_kubernetes = _import_kubernetes(monkeypatch)
+    graphblocks_deployment = importlib.import_module("graphblocks_deployment")
+    stable = graphblocks_deployment.ExecutionTarget(
+        "agent-workers",
+        "worker_pool",
+        "rust",
+        image="ghcr.io/acme/support-agent@sha256:stable",
+    )
+    candidate = graphblocks_deployment.ExecutionTarget(
+        "agent-workers",
+        "worker_pool",
+        "rust",
+        image="ghcr.io/acme/support-agent@sha256:candidate",
+    )
+    plan = graphblocks_deployment.RolloutPlan.canary(
+        "rollout-1",
+        "rev-stable",
+        "rev-canary",
+        canary_steps=(graphblocks_deployment.RolloutStep.canary("canary-10", traffic_percent=10),),
+    )
+    ports = (graphblocks_kubernetes.KubernetesPort("http", 8080),)
+
+    manifest_set = graphblocks_kubernetes.render_rollout_manifests(
+        "support-agent",
+        stable,
+        candidate,
+        plan,
+        active_step_index=2,
+        options=graphblocks_kubernetes.KubernetesRenderOptions(namespace="support"),
+        ports=ports,
+        stable_replicas=9,
+        candidate_replicas=1,
+        env={"GRAPHBLOCKS_RELEASE": "release-1"},
+    )
+    stable_deployment, candidate_deployment = manifest_set.by_kind("Deployment")
+    service = manifest_set.by_kind("Service")[0]
+
+    assert stable_deployment["metadata"]["name"] == "support-agent-stable"
+    assert stable_deployment["spec"]["replicas"] == 9
+    assert stable_deployment["metadata"]["annotations"]["graphblocks.ai/rollout-role"] == "stable"
+    assert stable_deployment["metadata"]["annotations"]["graphblocks.ai/deployment-revision"] == "rev-stable"
+    assert stable_deployment["spec"]["template"]["spec"]["containers"][0]["image"] == (
+        "ghcr.io/acme/support-agent@sha256:stable"
+    )
+    assert candidate_deployment["metadata"]["name"] == "support-agent-candidate"
+    assert candidate_deployment["spec"]["replicas"] == 1
+    assert candidate_deployment["metadata"]["annotations"]["graphblocks.ai/rollout-step"] == "canary-10"
+    assert candidate_deployment["metadata"]["annotations"]["graphblocks.ai/rollout-traffic-percent"] == "10"
+    assert candidate_deployment["metadata"]["annotations"]["graphblocks.ai/deployment-revision"] == "rev-canary"
+    assert candidate_deployment["spec"]["template"]["metadata"]["labels"]["graphblocks.ai/rollout-role"] == "candidate"
+    assert service["metadata"]["name"] == "support-agent"
+    assert service["spec"]["selector"] == {
+        "app.kubernetes.io/name": "support-agent",
+        "graphblocks.ai/rollout-id": "rollout-1",
+    }
+    assert service["metadata"]["annotations"]["graphblocks.ai/rollout-step-kind"] == "canary"
+
+
+def test_kubernetes_rollout_service_routes_only_candidate_after_promote(monkeypatch) -> None:
+    graphblocks_kubernetes = _import_kubernetes(monkeypatch)
+    graphblocks_deployment = importlib.import_module("graphblocks_deployment")
+    stable = graphblocks_deployment.ExecutionTarget(
+        "agent-workers",
+        "worker_pool",
+        "rust",
+        image="ghcr.io/acme/support-agent@sha256:stable",
+    )
+    candidate = graphblocks_deployment.ExecutionTarget(
+        "agent-workers",
+        "worker_pool",
+        "rust",
+        image="ghcr.io/acme/support-agent@sha256:candidate",
+    )
+    plan = graphblocks_deployment.RolloutPlan.canary(
+        "rollout-1",
+        "rev-stable",
+        "rev-canary",
+        canary_steps=(graphblocks_deployment.RolloutStep.canary("canary-25", traffic_percent=25),),
+    )
+
+    manifest_set = graphblocks_kubernetes.render_rollout_manifests(
+        "support-agent",
+        stable,
+        candidate,
+        plan,
+        active_step_index=3,
+        options=graphblocks_kubernetes.KubernetesRenderOptions(namespace="support"),
+        ports=(graphblocks_kubernetes.KubernetesPort("http", 8080),),
+    )
+    stable_deployment, candidate_deployment = manifest_set.by_kind("Deployment")
+    service = manifest_set.by_kind("Service")[0]
+
+    assert stable_deployment["spec"]["replicas"] == 0
+    assert candidate_deployment["spec"]["replicas"] == 1
+    assert service["spec"]["selector"] == {
+        "app.kubernetes.io/name": "support-agent",
+        "graphblocks.ai/rollout-id": "rollout-1",
+        "graphblocks.ai/rollout-role": "candidate",
+    }
+
+
 def test_kubernetes_manifest_set_digest_is_independent_of_document_order(monkeypatch) -> None:
     graphblocks_kubernetes = _import_kubernetes(monkeypatch)
     graphblocks_deployment = importlib.import_module("graphblocks_deployment")
