@@ -1,0 +1,44 @@
+{{- if .Values.rbac.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: graphblocks-operator
+  labels:
+    app.kubernetes.io/name: graphblocks-operator
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/managed-by: Helm
+rules:
+  - apiGroups: ["graphblocks.ai"]
+    resources:
+      - graphreleases
+      - graphdeployments
+      - deploymentrevisions
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources:
+      - services
+      - configmaps
+      - events
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: graphblocks-operator
+  labels:
+    app.kubernetes.io/name: graphblocks-operator
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: graphblocks-operator
+subjects:
+  - kind: ServiceAccount
+    name: graphblocks-operator
+    namespace: {{ .Release.Namespace | quote }}
+{{- end }}

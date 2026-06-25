@@ -1,0 +1,24 @@
+image:
+  repository: ghcr.io/graphblocks/graphblocks-operator
+  tag: 0.1.0
+  digest: ""
+  pullPolicy: IfNotPresent
+
+controller:
+  releaseId: graphblocks-operator
+  watchNamespaces: []
+  replicas: 1
+
+serviceAccount:
+  create: true
+  name: graphblocks-operator
+
+rbac:
+  create: true
+
+podAnnotations: {}
+podLabels: {}
+resources: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
