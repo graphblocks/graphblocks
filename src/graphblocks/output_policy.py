@@ -468,6 +468,10 @@ class OutputCutoff:
             raise ValueError("last_policy_accepted_sequence must be non-negative")
         if self.last_client_delivered_sequence < 0:
             raise ValueError("last_client_delivered_sequence must be non-negative")
+        if self.last_policy_accepted_sequence > self.last_generated_sequence:
+            raise ValueError("last_policy_accepted_sequence cannot exceed last_generated_sequence")
+        if self.last_client_delivered_sequence > self.last_generated_sequence:
+            raise ValueError("last_client_delivered_sequence cannot exceed last_generated_sequence")
 
     def accepts(self, output: GenerationChunk) -> bool:
         if not isinstance(output, GenerationChunk):

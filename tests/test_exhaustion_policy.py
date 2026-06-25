@@ -78,6 +78,7 @@ def test_hard_stop_blocks_new_work_and_late_output_delivery() -> None:
     cutoff = OutputCutoff(
         stream_id="stream-1",
         response_id="response-1",
+        last_generated_sequence=5,
         last_client_delivered_sequence=5,
         terminal_reason="budget_exhausted",
         draft_disposition="mark_incomplete",

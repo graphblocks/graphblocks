@@ -132,6 +132,22 @@ def test_output_policy_contract_rejects_unknown_literals() -> None:
     with pytest.raises(ValueError, match="last_generated_sequence must be non-negative"):
         OutputCutoff(stream_id="stream-1", response_id="response-1", last_generated_sequence=-1)
 
+    with pytest.raises(ValueError, match="last_policy_accepted_sequence cannot exceed last_generated_sequence"):
+        OutputCutoff(
+            stream_id="stream-1",
+            response_id="response-1",
+            last_generated_sequence=1,
+            last_policy_accepted_sequence=2,
+        )
+
+    with pytest.raises(ValueError, match="last_client_delivered_sequence cannot exceed last_generated_sequence"):
+        OutputCutoff(
+            stream_id="stream-1",
+            response_id="response-1",
+            last_generated_sequence=1,
+            last_client_delivered_sequence=2,
+        )
+
 
 def test_bounded_holdback_requires_size_or_time_bound() -> None:
     policy = OutputDeliveryPolicy.bounded_holdback(on_violation="abort_response")
