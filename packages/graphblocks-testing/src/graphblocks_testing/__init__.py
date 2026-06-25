@@ -37,6 +37,14 @@ TckCaseKind = Literal["compiler", "runtime"]
 TckResultStatus = Literal["passed", "failed"]
 PerformanceThresholdOperator = Literal["at_most", "at_least"]
 MigrationDirection = Literal["upgrade", "downgrade"]
+FaultKind = Literal[
+    "telemetry_outage",
+    "provider_timeout",
+    "worker_crash",
+    "budget_race",
+    "storage_conflict",
+    "network_partition",
+]
 
 
 def _string_tuple(value: object) -> tuple[str, ...]:
@@ -457,6 +465,121 @@ class MigrationCompatibilityRunner:
             diagnostics=tuple(diagnostics),
             observed=observed,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class FaultChaosResult:
+    case_id: str
+    fault_kind: FaultKind
+    status: TckResultStatus
+    diagnostics: tuple[dict[str, str], ...] = field(default_factory=tuple)
+    observed: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.case_id.strip():
+            raise ValueError("fault chaos case_id must not be empty")
+        if not self.fault_kind.strip():
+            raise ValueError("fault chaos fault_kind must not be empty")
+        object.__setattr__(self, "diagnostics", tuple(dict(diagnostic) for diagnostic in self.diagnostics))
+        object.__setattr__(self, "observed", dict(sorted(dict(self.observed).items())))
+
+    @classmethod
+    def from_observation(
+        cls,
+        *,
+        case_id: str,
+        fault_kind: FaultKind,
+        expected_terminal_state: str,
+        observed_terminal_state: str,
+        recovery_expected: bool,
+        recovered: bool,
+        data_loss_events: int,
+        audit_preserved: bool,
+    ) -> FaultChaosResult:
+        if data_loss_events < 0:
+            raise ValueError("fault chaos data_loss_events must not be negative")
+        observed = {
+            "audit_preserved": audit_preserved,
+            "data_loss_events": data_loss_events,
+            "expected_terminal_state": expected_terminal_state,
+            "observed_terminal_state": observed_terminal_state,
+            "recovered": recovered,
+            "recovery_expected": recovery_expected,
+        }
+        diagnostics: list[dict[str, str]] = []
+        if observed_terminal_state != expected_terminal_state:
+            diagnostics.append(
+                {
+                    "code": "ChaosTerminalStateMismatch",
+                    "message": "fault scenario terminal state did not match expected state",
+                    "path": "$.observed_terminal_state",
+                }
+            )
+        if recovery_expected and not recovered:
+            diagnostics.append(
+                {
+                    "code": "ChaosRecoveryFailed",
+                    "message": "fault scenario did not recover as expected",
+                    "path": "$.recovered",
+                }
+            )
+        if data_loss_events:
+            diagnostics.append(
+                {
+                    "code": "ChaosDataLossObserved",
+                    "message": "fault scenario observed data loss events",
+                    "path": "$.data_loss_events",
+                }
+            )
+        if not audit_preserved:
+            diagnostics.append(
+                {
+                    "code": "ChaosAuditNotPreserved",
+                    "message": "fault scenario did not preserve audit evidence",
+                    "path": "$.audit_preserved",
+                }
+            )
+        return cls(
+            case_id=case_id,
+            fault_kind=fault_kind,
+            status="passed" if not diagnostics else "failed",
+            diagnostics=tuple(diagnostics),
+            observed=observed,
+        )
+
+    def result_contract(self) -> dict[str, object]:
+        return {
+            "case_id": self.case_id,
+            "fault_kind": self.fault_kind,
+            "status": self.status,
+            "diagnostics": [dict(diagnostic) for diagnostic in self.diagnostics],
+            "observed": dict(self.observed),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class FaultChaosReport:
+    profile: str
+    results: tuple[FaultChaosResult, ...]
+
+    def __post_init__(self) -> None:
+        if not self.profile.strip():
+            raise ValueError("fault chaos profile must not be empty")
+        object.__setattr__(self, "results", tuple(sorted(self.results, key=lambda item: item.case_id)))
+
+    @property
+    def ok(self) -> bool:
+        return all(result.status == "passed" for result in self.results)
+
+    def report_contract(self) -> dict[str, object]:
+        return {
+            "profile": self.profile,
+            "ok": self.ok,
+            "results": [result.result_contract() for result in self.results],
+        }
+
+    def content_digest(self) -> str:
+        return canonical_hash(self.report_contract())
 
 
 def load_compiler_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
@@ -1026,6 +1149,8 @@ __all__ = [
     "ConformanceProfile",
     "ConformanceProfileSet",
     "ExecutionJournal",
+    "FaultChaosReport",
+    "FaultChaosResult",
     "InMemoryRunStore",
     "InProcessRuntime",
     "JournalRecord",

@@ -286,3 +286,93 @@ def test_testing_package_runs_migration_compatibility_cases(monkeypatch) -> None
     }
     assert report.content_digest().startswith("sha256:")
     assert "MigrationCompatibilityRunner" in graphblocks_testing.__all__
+
+
+def test_testing_package_builds_fault_chaos_report(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    report = graphblocks_testing.FaultChaosReport(
+        profile="release-candidate",
+        results=(
+            graphblocks_testing.FaultChaosResult.from_observation(
+                case_id="telemetry-outage",
+                fault_kind="telemetry_outage",
+                expected_terminal_state="succeeded",
+                observed_terminal_state="succeeded",
+                recovery_expected=True,
+                recovered=True,
+                data_loss_events=0,
+                audit_preserved=True,
+            ),
+            graphblocks_testing.FaultChaosResult.from_observation(
+                case_id="worker-crash",
+                fault_kind="worker_crash",
+                expected_terminal_state="succeeded",
+                observed_terminal_state="failed",
+                recovery_expected=True,
+                recovered=False,
+                data_loss_events=1,
+                audit_preserved=False,
+            ),
+        ),
+    )
+
+    assert not report.ok
+    assert report.report_contract() == {
+        "profile": "release-candidate",
+        "ok": False,
+        "results": [
+            {
+                "case_id": "telemetry-outage",
+                "fault_kind": "telemetry_outage",
+                "status": "passed",
+                "diagnostics": [],
+                "observed": {
+                    "audit_preserved": True,
+                    "data_loss_events": 0,
+                    "expected_terminal_state": "succeeded",
+                    "observed_terminal_state": "succeeded",
+                    "recovered": True,
+                    "recovery_expected": True,
+                },
+            },
+            {
+                "case_id": "worker-crash",
+                "fault_kind": "worker_crash",
+                "status": "failed",
+                "diagnostics": [
+                    {
+                        "code": "ChaosTerminalStateMismatch",
+                        "message": "fault scenario terminal state did not match expected state",
+                        "path": "$.observed_terminal_state",
+                    },
+                    {
+                        "code": "ChaosRecoveryFailed",
+                        "message": "fault scenario did not recover as expected",
+                        "path": "$.recovered",
+                    },
+                    {
+                        "code": "ChaosDataLossObserved",
+                        "message": "fault scenario observed data loss events",
+                        "path": "$.data_loss_events",
+                    },
+                    {
+                        "code": "ChaosAuditNotPreserved",
+                        "message": "fault scenario did not preserve audit evidence",
+                        "path": "$.audit_preserved",
+                    },
+                ],
+                "observed": {
+                    "audit_preserved": False,
+                    "data_loss_events": 1,
+                    "expected_terminal_state": "succeeded",
+                    "observed_terminal_state": "failed",
+                    "recovered": False,
+                    "recovery_expected": True,
+                },
+            },
+        ],
+    }
+    assert report.content_digest().startswith("sha256:")
+    assert "FaultChaosReport" in graphblocks_testing.__all__
