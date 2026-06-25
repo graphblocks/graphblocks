@@ -2170,7 +2170,7 @@ impl PhysicalExecutionPlan {
             .iter()
             .map(PlacementRule::canonical_value)
             .collect::<Vec<_>>();
-        placements.sort_by(|left, right| left.to_string().cmp(&right.to_string()));
+        placements.sort_by_key(|left| left.to_string());
         canonical_hash(&json!({
             "release_digest": self.release_digest,
             "deployment_revision_id": self.deployment_revision_id,

@@ -408,7 +408,7 @@ fn resolve_policy_snapshot_pins_effective_policy_identity() {
     let snapshot = resolve_policy_snapshot(
         "policy-snapshot-1",
         &profile,
-        &[bundle.clone()],
+        std::slice::from_ref(&bundle),
         Some(&entitlement),
         "2026-06-22T00:01:00Z",
     );

@@ -60,6 +60,12 @@ impl WriteOptions {
     }
 }
 
+impl Default for WriteOptions {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DeleteOptions {
     pub expected_revision: Option<u64>,
@@ -82,6 +88,12 @@ impl DeleteOptions {
     pub fn with_allow_missing(mut self, allow_missing: bool) -> Self {
         self.allow_missing = allow_missing;
         self
+    }
+}
+
+impl Default for DeleteOptions {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

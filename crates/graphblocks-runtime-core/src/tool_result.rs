@@ -884,7 +884,7 @@ impl ToolResultValidation {
             let mut actual_bytes = 0usize;
             for part in &model_output {
                 if let Some(text) = part.text.as_ref() {
-                    actual_bytes = actual_bytes.saturating_add(text.as_bytes().len());
+                    actual_bytes = actual_bytes.saturating_add(text.len());
                 }
                 if let Some(data) = part.data.as_ref() {
                     actual_bytes = actual_bytes

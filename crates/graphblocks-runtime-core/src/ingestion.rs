@@ -276,15 +276,13 @@ impl InMemoryIngestionManifestStore {
 
         self.current_by_asset
             .insert(asset_id.clone(), manifest_id.to_owned());
-        if let Some(previous_manifest_id) = previous_current {
-            if previous_manifest_id != manifest_id {
-                if let Some(previous) = self.manifests.get_mut(&previous_manifest_id) {
-                    if previous.status == IngestionStatus::Ready {
-                        previous.status = IngestionStatus::Superseded;
-                        previous.updated_at = updated_at;
-                    }
-                }
-            }
+        if let Some(previous_manifest_id) = previous_current
+            && previous_manifest_id != manifest_id
+            && let Some(previous) = self.manifests.get_mut(&previous_manifest_id)
+            && previous.status == IngestionStatus::Ready
+        {
+            previous.status = IngestionStatus::Superseded;
+            previous.updated_at = updated_at;
         }
         Ok(self.manifests[manifest_id].clone())
     }

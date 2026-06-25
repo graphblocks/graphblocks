@@ -315,23 +315,21 @@ impl WorkspaceMutationPolicy {
             let operation_name = operation.get("op").and_then(Value::as_str);
             let resource_id = operation.get("resource_id").and_then(Value::as_str);
             let resource_kind = operation.get("resource_kind").and_then(Value::as_str);
-            if let Some(operation_name) = operation_name {
-                if self
+            if let Some(operation_name) = operation_name
+                && self
                     .denied_operations
                     .iter()
                     .any(|denied| denied == operation_name)
-                {
-                    reasons.push("workspace.operation_denied".to_string());
-                }
+            {
+                reasons.push("workspace.operation_denied".to_string());
             }
-            if let Some(resource_kind) = resource_kind {
-                if !self
+            if let Some(resource_kind) = resource_kind
+                && !self
                     .allowed_resource_kinds
                     .iter()
                     .any(|allowed| allowed == resource_kind)
-                {
-                    reasons.push("workspace.resource_kind_denied".to_string());
-                }
+            {
+                reasons.push("workspace.resource_kind_denied".to_string());
             }
 
             let operation_action = operation_name

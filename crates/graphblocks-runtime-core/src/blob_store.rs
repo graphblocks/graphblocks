@@ -58,6 +58,12 @@ impl PutOptions {
     }
 }
 
+impl Default for PutOptions {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BlobMetadata {
     pub key: BlobKey,

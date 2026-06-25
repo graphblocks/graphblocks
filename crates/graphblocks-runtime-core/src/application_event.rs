@@ -1067,13 +1067,13 @@ impl ApplicationProtocolLog {
         if self.event_ids.contains(&event.metadata.event_id) {
             return Ok(false);
         }
-        if let Some(previous) = self.last_sequence {
-            if event.metadata.sequence <= previous {
-                return Err(ApplicationProtocolError::NonMonotonicSequence {
-                    previous,
-                    next: event.metadata.sequence,
-                });
-            }
+        if let Some(previous) = self.last_sequence
+            && event.metadata.sequence <= previous
+        {
+            return Err(ApplicationProtocolError::NonMonotonicSequence {
+                previous,
+                next: event.metadata.sequence,
+            });
         }
         self.last_sequence = Some(event.metadata.sequence);
         self.event_ids.insert(event.metadata.event_id.clone());

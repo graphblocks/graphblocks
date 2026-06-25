@@ -95,10 +95,7 @@ impl WorkerRegistry {
         })
     }
 
-    pub fn admit_worker(
-        &mut self,
-        advertisement: WorkerAdvertisement,
-    ) -> WorkerAdmissionDecision {
+    pub fn admit_worker(&mut self, advertisement: WorkerAdvertisement) -> WorkerAdmissionDecision {
         let policy = WorkerAdmissionPolicy {
             protocol_version: self.config.protocol_version,
             package_lock_hash: self.config.package_lock_hash.clone(),

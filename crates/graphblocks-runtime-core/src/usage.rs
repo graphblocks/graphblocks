@@ -6,6 +6,8 @@ use std::{
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde_json::{Map, Number, Value};
 
+type UsageTotalsKey = (String, String, Vec<(String, String)>);
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UsageSource {
     ProviderReported,
@@ -201,26 +203,26 @@ impl InMemoryUsageLedger {
             });
         }
 
-        if record.reconciliation_of.is_none() {
-            if let Some(provider_response_id) = &record.provider_response_id {
-                let dedupe_key = (provider_response_id.clone(), record.attempt_id.clone());
-                if let Some(existing_id) = self.provider_dedupe.get(&dedupe_key) {
-                    return Ok(self
-                        .records
-                        .get(existing_id)
-                        .expect("provider dedupe index points to an existing usage record")
-                        .clone());
-                }
+        if record.reconciliation_of.is_none()
+            && let Some(provider_response_id) = &record.provider_response_id
+        {
+            let dedupe_key = (provider_response_id.clone(), record.attempt_id.clone());
+            if let Some(existing_id) = self.provider_dedupe.get(&dedupe_key) {
+                return Ok(self
+                    .records
+                    .get(existing_id)
+                    .expect("provider dedupe index points to an existing usage record")
+                    .clone());
             }
         }
 
-        if record.reconciliation_of.is_none() {
-            if let Some(provider_response_id) = &record.provider_response_id {
-                self.provider_dedupe.insert(
-                    (provider_response_id.clone(), record.attempt_id.clone()),
-                    record.record_id.clone(),
-                );
-            }
+        if record.reconciliation_of.is_none()
+            && let Some(provider_response_id) = &record.provider_response_id
+        {
+            self.provider_dedupe.insert(
+                (provider_response_id.clone(), record.attempt_id.clone()),
+                record.record_id.clone(),
+            );
         }
 
         self.order.push(record.record_id.clone());
@@ -379,14 +381,12 @@ impl SqliteUsageLedger {
             Err(error) => return Err(error),
         }
 
-        if record.reconciliation_of.is_none() {
-            if let Some(provider_response_id) = &record.provider_response_id {
-                if let Some(existing) =
-                    self.provider_duplicate(provider_response_id, record.attempt_id.as_deref())?
-                {
-                    return Ok(existing);
-                }
-            }
+        if record.reconciliation_of.is_none()
+            && let Some(provider_response_id) = &record.provider_response_id
+            && let Some(existing) =
+                self.provider_duplicate(provider_response_id, record.attempt_id.as_deref())?
+        {
+            return Ok(existing);
         }
 
         let transaction = self.connection.transaction().map_err(usage_storage_error)?;
@@ -614,7 +614,7 @@ fn usage_totals(records: &[UsageRecord]) -> Vec<UsageAmount> {
         .iter()
         .filter_map(|record| record.reconciliation_of.clone())
         .collect::<BTreeSet<_>>();
-    let mut totals: BTreeMap<(String, String, Vec<(String, String)>), i64> = BTreeMap::new();
+    let mut totals: BTreeMap<UsageTotalsKey, i64> = BTreeMap::new();
     for record in records {
         if superseded_record_ids.contains(&record.record_id) {
             continue;

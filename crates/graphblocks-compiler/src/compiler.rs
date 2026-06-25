@@ -1092,7 +1092,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     .get("inputSchema")
                     .or_else(|| definition.get("input_schema"))
                     .and_then(Value::as_str);
-                if !input_schema.is_some_and(|schema| !schema.trim().is_empty()) {
+                if input_schema.is_none_or(|schema| schema.trim().is_empty()) {
                     diagnostics.push(Diagnostic::error(
                         "ToolSchemaMissing",
                         "model-visible tool definitions require an input schema",

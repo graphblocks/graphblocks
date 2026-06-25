@@ -829,7 +829,7 @@ fn render_context_pack_labels_retrieved_content_as_untrusted_data() {
     let pack_metadata: Value = serde_json::from_str(
         lines[0]
             .strip_prefix("GRAPHBLOCKS_CONTEXT_PACK_BEGIN ")
-            .unwrap(),
+            .expect("context pack begin line has metadata payload"),
     )
     .expect("context metadata is json");
     assert_eq!(pack_metadata["context_id"], json!("ctx-1"));
@@ -845,7 +845,7 @@ fn render_context_pack_labels_retrieved_content_as_untrusted_data() {
     let item_metadata: Value = serde_json::from_str(
         lines[1]
             .strip_prefix("GRAPHBLOCKS_RETRIEVED_ITEM_BEGIN ")
-            .unwrap(),
+            .expect("retrieved item begin line has metadata payload"),
     )
     .expect("item metadata is json");
     assert_eq!(item_metadata["trust"], json!("retrieved_untrusted"));

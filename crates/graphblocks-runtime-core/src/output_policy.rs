@@ -1259,17 +1259,17 @@ impl OutputDeliveryGate {
                     }
                 }
 
-                if decision.disposition == OutputDisposition::Replace {
-                    if let Some(accepted_through_sequence) = decision.accepted_through_sequence {
-                        let delivered_after = self.last_client_delivered_sequence + 1;
-                        let replaced_sequences = self
-                            .pending
-                            .range(delivered_after..=accepted_through_sequence)
-                            .map(|(sequence, _)| *sequence)
-                            .collect::<Vec<_>>();
-                        for sequence in replaced_sequences {
-                            self.pending.remove(&sequence);
-                        }
+                if decision.disposition == OutputDisposition::Replace
+                    && let Some(accepted_through_sequence) = decision.accepted_through_sequence
+                {
+                    let delivered_after = self.last_client_delivered_sequence + 1;
+                    let replaced_sequences = self
+                        .pending
+                        .range(delivered_after..=accepted_through_sequence)
+                        .map(|(sequence, _)| *sequence)
+                        .collect::<Vec<_>>();
+                    for sequence in replaced_sequences {
+                        self.pending.remove(&sequence);
                     }
                 }
 
@@ -1302,10 +1302,10 @@ impl OutputDeliveryGate {
                     }
                 }
 
-                if let Some(accepted_through_sequence) = replacement_accepted_through {
-                    if accepted_through_sequence > self.last_policy_accepted_sequence {
-                        self.last_policy_accepted_sequence = accepted_through_sequence;
-                    }
+                if let Some(accepted_through_sequence) = replacement_accepted_through
+                    && accepted_through_sequence > self.last_policy_accepted_sequence
+                {
+                    self.last_policy_accepted_sequence = accepted_through_sequence;
                 }
 
                 let deliverable = match self.delivery_policy.mode {

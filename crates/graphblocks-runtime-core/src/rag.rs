@@ -192,6 +192,12 @@ impl FederatedRetrievalOptions {
     }
 }
 
+impl Default for FederatedRetrievalOptions {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct FederatedRetrievalSource {
     pub source_id: String,
@@ -457,6 +463,12 @@ impl FusionOptions {
     pub fn with_retriever_id(mut self, retriever_id: impl Into<String>) -> Self {
         self.retriever_id = retriever_id.into();
         self
+    }
+}
+
+impl Default for FusionOptions {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

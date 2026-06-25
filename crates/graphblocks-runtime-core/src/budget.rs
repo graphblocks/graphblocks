@@ -352,12 +352,12 @@ impl InMemoryBudgetLedger {
         if self.accounts.contains_key(&budget_id) {
             return Err(BudgetError::BudgetConflict { budget_id });
         }
-        if let Some(parent_budget_id) = &parent_budget_id {
-            if !self.accounts.contains_key(parent_budget_id) {
-                return Err(BudgetError::BudgetNotFound {
-                    budget_id: parent_budget_id.clone(),
-                });
-            }
+        if let Some(parent_budget_id) = &parent_budget_id
+            && !self.accounts.contains_key(parent_budget_id)
+        {
+            return Err(BudgetError::BudgetNotFound {
+                budget_id: parent_budget_id.clone(),
+            });
         }
 
         let allocated = amounts_to_map(amounts);
@@ -787,6 +787,7 @@ impl InMemoryBudgetLedger {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn issue_permit(
         &mut self,
         permit_id: impl Into<String>,
@@ -1363,12 +1364,12 @@ impl SqliteBudgetLedger {
         if sqlite_account_exists(&transaction, &budget_id)? {
             return Err(BudgetError::BudgetConflict { budget_id });
         }
-        if let Some(parent_budget_id) = &parent_budget_id {
-            if !sqlite_account_exists(&transaction, parent_budget_id)? {
-                return Err(BudgetError::BudgetNotFound {
-                    budget_id: parent_budget_id.clone(),
-                });
-            }
+        if let Some(parent_budget_id) = &parent_budget_id
+            && !sqlite_account_exists(&transaction, parent_budget_id)?
+        {
+            return Err(BudgetError::BudgetNotFound {
+                budget_id: parent_budget_id.clone(),
+            });
         }
 
         let account = BudgetAccount {
@@ -1580,6 +1581,7 @@ impl SqliteBudgetLedger {
         Ok(settlement)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn issue_permit(
         &mut self,
         permit_id: impl Into<String>,

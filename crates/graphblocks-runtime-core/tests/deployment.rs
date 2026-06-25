@@ -140,7 +140,7 @@ fn deployment_target_profiles_cover_phase_five_image_roles() {
             ]
         }
     }))
-    .unwrap();
+    .expect("phase five deployment target profiles parse");
 
     let coverage = target_set.coverage_for_required_image_roles([
         "control-plane",
@@ -189,12 +189,14 @@ fn deployment_target_profiles_project_to_execution_targets() {
             }]
         }
     }))
-    .unwrap();
-    let control = target_set.by_id("control").unwrap();
+    .expect("deployment target profiles parse");
+    let control = target_set
+        .by_id("control")
+        .expect("control target profile exists");
 
     let target = control
         .to_execution_target("registry.example.com/gb/control@sha256:control")
-        .unwrap();
+        .expect("control target profile projects to an execution target");
 
     assert_eq!(
         control.profile_contract(),
@@ -668,7 +670,12 @@ fn rollout_plan_builds_validate_shadow_canary_and_promote_sequence() {
     );
     assert_eq!(plan.steps[1].effects, "suppress");
     assert_eq!(plan.steps[2].traffic_percent, 1);
-    assert_eq!(plan.current_step(2).unwrap().step_id, "canary-1");
+    assert_eq!(
+        plan.current_step(2)
+            .expect("canary rollout step exists")
+            .step_id,
+        "canary-1"
+    );
     assert_eq!(
         plan.analysis_profile_ref.as_deref(),
         Some("rag-production-rollout")
@@ -686,7 +693,10 @@ fn rollout_gate_holds_until_minimum_samples_and_duration_are_met() {
             .with_minimum_samples(20)
             .with_minimum_duration_seconds(60)],
     );
-    let state = plan.initial_state().advance_for_test(2).unwrap();
+    let state = plan
+        .initial_state()
+        .advance_for_test(2)
+        .expect("rollout advances to the canary gate");
 
     let held = state
         .evaluate_gate(
@@ -694,14 +704,14 @@ fn rollout_gate_holds_until_minimum_samples_and_duration_are_met() {
                 .with_sample_count(19)
                 .with_duration_seconds(120),
         )
-        .unwrap();
+        .expect("rollout gate evaluates held result");
     let advanced = state
         .evaluate_gate(
             RolloutAnalysisResult::passed("canary-10")
                 .with_sample_count(20)
                 .with_duration_seconds(60),
         )
-        .unwrap();
+        .expect("rollout gate evaluates advanced result");
 
     assert_eq!(held.decision, "hold");
     assert_eq!(held.reason, "minimum_samples_not_met");
@@ -718,11 +728,14 @@ fn rollout_gate_promotes_after_final_promote_step_passes() {
         "rev-canary",
         [RolloutStep::canary("canary-50", 50)],
     );
-    let state = plan.initial_state().advance_for_test(3).unwrap();
+    let state = plan
+        .initial_state()
+        .advance_for_test(3)
+        .expect("rollout advances to final promote step");
 
     let decision = state
         .evaluate_gate(RolloutAnalysisResult::passed("promote"))
-        .unwrap();
+        .expect("rollout gate promotes after final step passes");
 
     assert_eq!(decision.decision, "promote");
     assert_eq!(decision.next_state.status, "promoted");
@@ -737,14 +750,17 @@ fn rollout_gate_aborts_without_automatic_rollback_for_non_reversible_effects() {
         "rev-canary",
         [RolloutStep::canary("canary-10", 10)],
     );
-    let state = plan.initial_state().advance_for_test(2).unwrap();
+    let state = plan
+        .initial_state()
+        .advance_for_test(2)
+        .expect("rollout advances to canary gate");
 
     let decision = state
         .evaluate_gate(
             RolloutAnalysisResult::failed("canary-10", "quality_gate_failed")
                 .with_non_reversible_effect_observed(true),
         )
-        .unwrap();
+        .expect("rollout gate evaluates non-reversible failure");
 
     assert_eq!(decision.decision, "abort");
     assert_eq!(decision.reason, "quality_gate_failed");
@@ -769,7 +785,7 @@ fn deployment_slo_profile_evaluates_slo_within_budget_condition() {
             "slo_failed",
             "failed SLO objectives: p95-latency",
         )
-        .unwrap()
+        .expect("failed SLO deployment condition is valid")
     );
     assert!(profile.content_digest().starts_with("sha256:"));
 }
@@ -804,7 +820,7 @@ fn deployment_recovery_profile_evaluates_restore_test_freshness() {
     assert_eq!(
         current,
         DeploymentCondition::new("RecoveryTestCurrent", "true", "restore_test_current", "")
-            .unwrap()
+            .expect("current recovery deployment condition is valid")
     );
     assert_eq!(
         stale,
@@ -814,7 +830,7 @@ fn deployment_recovery_profile_evaluates_restore_test_freshness() {
             "restore_test_stale",
             "last restore test age 89000s exceeds 86400s",
         )
-        .unwrap()
+        .expect("stale recovery deployment condition is valid")
     );
     assert_eq!(
         profile.recovery_contract(),
@@ -845,7 +861,9 @@ fn rollout_traffic_assignment_is_deterministic_and_sticky_by_affinity() {
         [RolloutStep::canary("canary-10", 10)],
     )
     .with_affinity("conversation_id");
-    let step = plan.current_step(2).unwrap();
+    let step = plan
+        .current_step(2)
+        .expect("canary rollout step exists for assignment");
 
     let first = plan.assign_revision("conversation-1", step);
     let second = plan.assign_revision("conversation-1", step);

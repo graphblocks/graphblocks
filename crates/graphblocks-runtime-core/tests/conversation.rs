@@ -321,11 +321,10 @@ fn scoped_attachments_resolve_for_context_without_promoting_to_knowledge()
         vec!["att-message", "att-conversation"]
     );
     assert!(
-        snapshot
+        !snapshot
             .conversation
             .metadata
-            .get("knowledge_index_id")
-            .is_none()
+            .contains_key("knowledge_index_id")
     );
     Ok(())
 }

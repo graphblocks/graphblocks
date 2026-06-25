@@ -195,27 +195,22 @@ impl ToolSchemaRegistry {
             });
         }
 
-        if schema.expected_type == Some(JsonSchemaType::Object) {
-            if let Some(object) = value.as_object() {
-                for required in &schema.required {
-                    if !object.contains_key(required) {
-                        return Err(ToolSchemaValidationError::RequiredPropertyMissing {
-                            schema_id: schema_id.to_owned(),
-                            path: path.to_owned(),
-                            property: required.clone(),
-                        });
-                    }
+        if schema.expected_type == Some(JsonSchemaType::Object)
+            && let Some(object) = value.as_object()
+        {
+            for required in &schema.required {
+                if !object.contains_key(required) {
+                    return Err(ToolSchemaValidationError::RequiredPropertyMissing {
+                        schema_id: schema_id.to_owned(),
+                        path: path.to_owned(),
+                        property: required.clone(),
+                    });
                 }
-                for (property, property_schema) in &schema.properties {
-                    if let Some(property_value) = object.get(property) {
-                        let property_path = format!("{path}.{property}");
-                        self.validate_node(
-                            schema_id,
-                            property_schema,
-                            property_value,
-                            &property_path,
-                        )?;
-                    }
+            }
+            for (property, property_schema) in &schema.properties {
+                if let Some(property_value) = object.get(property) {
+                    let property_path = format!("{path}.{property}");
+                    self.validate_node(schema_id, property_schema, property_value, &property_path)?;
                 }
             }
         }

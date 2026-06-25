@@ -151,13 +151,13 @@ impl SequentialToolQueue {
     }
 
     fn ensure_running_call(&self, tool_call_id: &str) -> Result<(), SequentialToolQueueError> {
-        if let Some(running_call_id) = &self.running_call_id {
-            if running_call_id != tool_call_id {
-                return Err(SequentialToolQueueError::RunningCallMismatch {
-                    expected: running_call_id.clone(),
-                    actual: tool_call_id.to_owned(),
-                });
-            }
+        if let Some(running_call_id) = &self.running_call_id
+            && running_call_id != tool_call_id
+        {
+            return Err(SequentialToolQueueError::RunningCallMismatch {
+                expected: running_call_id.clone(),
+                actual: tool_call_id.to_owned(),
+            });
         }
         Ok(())
     }

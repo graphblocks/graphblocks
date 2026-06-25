@@ -770,6 +770,7 @@ impl SqliteRunStore {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn record_from_storage(
     sequence: i64,
     run_id: String,

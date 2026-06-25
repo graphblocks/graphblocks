@@ -27,7 +27,8 @@ fn typed_value_preserves_schema_id_and_round_trips_json() -> Result<(), Box<dyn 
 #[test]
 fn typed_value_rejects_invalid_schema_id() {
     assert_eq!(
-        TypedValue::new("schemas/Message", json!({})).unwrap_err(),
+        TypedValue::new("schemas/Message", json!({}))
+            .expect_err("schema id without a version must be rejected"),
         SchemaIdError::MissingVersion,
     );
 }

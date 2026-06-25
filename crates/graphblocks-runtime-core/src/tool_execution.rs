@@ -306,9 +306,8 @@ impl ToolExecutionPlan {
             .collect::<BTreeMap<_, _>>();
         let mut ready = remaining_dependencies
             .iter()
-            .filter_map(|(tool_call_id, dependencies)| {
-                dependencies.is_empty().then(|| tool_call_id.clone())
-            })
+            .filter(|(_, dependencies)| dependencies.is_empty())
+            .map(|(tool_call_id, _)| tool_call_id.clone())
             .collect::<VecDeque<_>>();
         while let Some(completed_id) = ready.pop_front() {
             if remaining_dependencies.remove(&completed_id).is_none() {
@@ -413,12 +412,12 @@ impl ToolExecutionPlan {
         if self.running_count() >= self.maximum_parallelism {
             return Err(ToolExecutionPlanError::ParallelismExhausted);
         }
-        if let Some(effect_key) = &planned_call.effect_key {
-            if self.running_effect_keys().contains(effect_key) {
-                return Err(ToolExecutionPlanError::EffectConflict {
-                    effect_key: effect_key.clone(),
-                });
-            }
+        if let Some(effect_key) = &planned_call.effect_key
+            && self.running_effect_keys().contains(effect_key)
+        {
+            return Err(ToolExecutionPlanError::EffectConflict {
+                effect_key: effect_key.clone(),
+            });
         }
 
         self.states

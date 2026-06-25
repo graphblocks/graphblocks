@@ -1,4 +1,6 @@
-use graphblocks_protocol::{BlockCapability, WORKER_PROTOCOL_VERSION, WorkerAdvertisement, WorkerState};
+use graphblocks_protocol::{
+    BlockCapability, WORKER_PROTOCOL_VERSION, WorkerAdvertisement, WorkerState,
+};
 use graphblocksd::{DaemonConfig, DaemonConfigError, WorkerRegistry};
 
 #[test]
