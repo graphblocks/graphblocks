@@ -716,6 +716,13 @@ impl OutputCutoff {
             }
         }
         if self
+            .turn_id
+            .as_ref()
+            .is_some_and(|turn_id| turn_id.trim().is_empty())
+        {
+            return Err(OutputCutoffError::EmptyIdentityField { field: "turn_id" });
+        }
+        if self
             .policy_decision_id
             .as_ref()
             .is_some_and(|decision_id| decision_id.trim().is_empty())

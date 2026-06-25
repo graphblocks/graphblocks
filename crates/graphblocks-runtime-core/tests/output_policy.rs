@@ -210,6 +210,27 @@ fn output_cutoff_rejects_empty_policy_decision_id() {
 }
 
 #[test]
+fn output_cutoff_rejects_empty_turn_id_when_present() {
+    assert_eq!(
+        OutputCutoff {
+            stream_id: "stream-1".to_owned(),
+            response_id: "response-1".to_owned(),
+            turn_id: Some(" ".to_owned()),
+            last_generated_sequence: 1,
+            last_policy_accepted_sequence: 1,
+            last_client_delivered_sequence: 1,
+            terminal_reason: TerminalReason::PolicyDenied,
+            draft_disposition: DraftDisposition::Retract,
+            durable_result: DurableResult::None,
+            policy_decision_id: Some("decision-1".to_owned()),
+            occurred_at_unix_ms: 1_000,
+        }
+        .validate(),
+        Err(OutputCutoffError::EmptyIdentityField { field: "turn_id" })
+    );
+}
+
+#[test]
 fn output_gate_rejects_policy_decision_without_input_digest() -> Result<(), OutputGateError> {
     let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
 

@@ -462,6 +462,8 @@ class OutputCutoff:
             raise ValueError("output cutoff stream_id must not be empty")
         if not self.response_id.strip():
             raise ValueError("output cutoff response_id must not be empty")
+        if self.turn_id is not None and not self.turn_id.strip():
+            raise ValueError("output cutoff turn_id must not be empty")
         if self.policy_decision_id is not None and not self.policy_decision_id.strip():
             raise ValueError("output cutoff policy_decision_id must not be empty")
         if self.terminal_reason not in VALID_TERMINAL_REASONS:
