@@ -90,6 +90,72 @@ def test_workspace_mutation_policy_requires_allowed_kind_and_reviewer() -> None:
     assert allowed.allowed
 
 
+def test_workspace_mutation_policy_protects_declared_read_only_inputs() -> None:
+    policy = WorkspaceMutationPolicy(
+        policy_id="policy-1",
+        allowed_resource_kinds=("file", "source", "test_oracle"),
+        read_only_resource_ids=("rtl/top.sv",),
+        read_only_resource_kinds=("test_oracle",),
+    )
+    principal = PrincipalRef("optimizer-1")
+    change_set = ChangeSet(
+        change_set_id="change-1",
+        base=ResourceSnapshotRef("workspace", "sha256:base", resource_kind="workspace"),
+        candidate=ResourceSnapshotRef("workspace", "sha256:candidate", resource_kind="workspace"),
+        operations=[
+            {"op": "file.read", "resource_id": "rtl/top.sv", "resource_kind": "source"},
+            {"op": "file.write", "resource_id": "rtl/top.sv", "resource_kind": "source"},
+            {"op": "file.write", "resource_id": "golden.json", "resource_kind": "test_oracle"},
+        ],
+    )
+
+    decision = policy.evaluate(change_set, principal)
+
+    assert not decision.allowed
+    assert decision.reason_codes == (
+        "workspace.read_only_resource_changed",
+        "workspace.read_only_resource_kind_changed",
+    )
+
+
+def test_workspace_store_rejects_protected_snapshot_digest_change_without_operation_log() -> None:
+    base = WorkspaceSnapshot(
+        workspace_id="workspace-1",
+        snapshot_id="snapshot-1",
+        revision=1,
+        resources=(
+            ResourceSnapshotRef("rtl/top.sv", "sha256:source-v1", resource_kind="source"),
+            ResourceSnapshotRef("candidate/out.sv", "sha256:candidate-v1", resource_kind="file"),
+        ),
+        created_at="2026-06-24T00:00:00Z",
+    )
+    store = InMemoryWorkspaceStore().put_snapshot(base)
+    policy = WorkspaceMutationPolicy(
+        policy_id="policy-1",
+        allowed_resource_kinds=("file", "source"),
+        read_only_resource_kinds=("source",),
+    )
+
+    with pytest.raises(WorkspaceMutationDeniedError) as error:
+        store.compare_and_swap_commit(
+            workspace_id="workspace-1",
+            expected_snapshot_id="snapshot-1",
+            new_snapshot_id="snapshot-2",
+            resources=(
+                ResourceSnapshotRef("rtl/top.sv", "sha256:source-v2", resource_kind="source"),
+                ResourceSnapshotRef("candidate/out.sv", "sha256:candidate-v2", resource_kind="file"),
+            ),
+            committed_by=PrincipalRef("optimizer-1"),
+            committed_at="2026-06-24T00:05:00Z",
+            change_set_id="change-1",
+            policy=policy,
+            operations=[],
+        )
+
+    assert error.value.reason_codes == ("workspace.read_only_resource_changed",)
+    assert store.current("workspace-1").snapshot_id == "snapshot-1"
+
+
 def test_workspace_store_compare_and_swap_commit_updates_revision() -> None:
     base = WorkspaceSnapshot(
         workspace_id="workspace-1",

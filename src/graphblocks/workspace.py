@@ -102,11 +102,15 @@ class WorkspaceMutationPolicy:
     allowed_resource_kinds: tuple[str, ...]
     denied_operations: tuple[str, ...] = field(default_factory=tuple)
     required_review_scopes: tuple[str, ...] = field(default_factory=tuple)
+    read_only_resource_ids: tuple[str, ...] = field(default_factory=tuple)
+    read_only_resource_kinds: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "allowed_resource_kinds", tuple(sorted(set(self.allowed_resource_kinds))))
         object.__setattr__(self, "denied_operations", tuple(sorted(set(self.denied_operations))))
         object.__setattr__(self, "required_review_scopes", tuple(sorted(set(self.required_review_scopes))))
+        object.__setattr__(self, "read_only_resource_ids", tuple(sorted(set(self.read_only_resource_ids))))
+        object.__setattr__(self, "read_only_resource_kinds", tuple(sorted(set(self.read_only_resource_kinds))))
 
     def evaluate(
         self,
@@ -114,19 +118,48 @@ class WorkspaceMutationPolicy:
         principal: PrincipalRef,
         *,
         review_scopes: tuple[str, ...] = (),
+        base_resources: tuple[ResourceSnapshotRef, ...] = (),
+        candidate_resources: tuple[ResourceSnapshotRef, ...] = (),
     ) -> WorkspaceMutationDecision:
         del principal
         reasons: list[str] = []
         review_scope_set = set(review_scopes)
+        read_only_resource_ids = set(self.read_only_resource_ids)
+        read_only_resource_kinds = set(self.read_only_resource_kinds)
+        read_only_operations = {"check", "diff", "inspect", "list", "read", "stat", "validate"}
         if not set(self.required_review_scopes).issubset(review_scope_set):
             reasons.append("workspace.review_required")
         for operation in change_set.operations:
             operation_name = operation.get("op")
             resource_kind = operation.get("resource_kind")
+            resource_id = operation.get("resource_id")
             if isinstance(operation_name, str) and operation_name in self.denied_operations:
                 reasons.append("workspace.operation_denied")
             if isinstance(resource_kind, str) and resource_kind not in self.allowed_resource_kinds:
                 reasons.append("workspace.resource_kind_denied")
+            operation_action = operation_name.rsplit(".", 1)[-1].lower() if isinstance(operation_name, str) else ""
+            if operation_action not in read_only_operations:
+                if isinstance(resource_id, str) and resource_id in read_only_resource_ids:
+                    reasons.append("workspace.read_only_resource_changed")
+                if isinstance(resource_kind, str) and resource_kind in read_only_resource_kinds:
+                    reasons.append("workspace.read_only_resource_kind_changed")
+        if base_resources or candidate_resources:
+            candidate_by_resource_id = {resource.resource_id: resource for resource in candidate_resources}
+            for resource in base_resources:
+                is_read_only_resource = resource.resource_id in read_only_resource_ids or (
+                    resource.resource_kind is not None and resource.resource_kind in read_only_resource_kinds
+                )
+                if not is_read_only_resource:
+                    continue
+                candidate = candidate_by_resource_id.get(resource.resource_id)
+                if (
+                    candidate is None
+                    or candidate.digest != resource.digest
+                    or candidate.resource_kind != resource.resource_kind
+                    or candidate.uri != resource.uri
+                    or dict(candidate.metadata) != dict(resource.metadata)
+                ):
+                    reasons.append("workspace.read_only_resource_changed")
         return WorkspaceMutationDecision(allowed=not reasons, reason_codes=tuple(reasons))
 
 
@@ -231,6 +264,8 @@ class InMemoryWorkspaceStore:
                 ),
                 committed_by,
                 review_scopes=review_scopes,
+                base_resources=current.resources,
+                candidate_resources=candidate.resources,
             )
             if not decision.allowed:
                 raise WorkspaceMutationDeniedError(decision.reason_codes)
