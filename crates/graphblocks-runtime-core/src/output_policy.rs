@@ -715,6 +715,15 @@ impl OutputCutoff {
                 return Err(OutputCutoffError::EmptyIdentityField { field });
             }
         }
+        if self
+            .policy_decision_id
+            .as_ref()
+            .is_some_and(|decision_id| decision_id.trim().is_empty())
+        {
+            return Err(OutputCutoffError::EmptyIdentityField {
+                field: "policy_decision_id",
+            });
+        }
         if self.last_policy_accepted_sequence > self.last_generated_sequence {
             return Err(OutputCutoffError::PolicyAcceptedSequenceBeyondGenerated {
                 last_generated_sequence: self.last_generated_sequence,
