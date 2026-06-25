@@ -39,6 +39,16 @@ def test_parser_registry_selects_by_media_type_and_records_lock_inputs() -> None
         "config_digest": "sha256:parser-config",
         "profile": "plain-text-default",
     }
+    with pytest.raises(TypeError):
+        lock.metadata["profile"] = "changed"
+
+    resolved = registry.resolve_locked(lock)
+    assert resolved.metadata == {
+        "config_digest": "sha256:parser-config",
+        "profile": "plain-text-default",
+    }
+    with pytest.raises(TypeError):
+        resolved.metadata["profile"] = "changed"
 
 
 def test_parser_registry_uses_extension_when_media_type_is_missing() -> None:

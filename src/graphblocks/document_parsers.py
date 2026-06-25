@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
+from types import MappingProxyType
 
 from .documents import AssetRevision, ParsedDocument, SourceAsset, parse_plain_text_document
 from .documents import ArtifactRef
@@ -41,6 +42,9 @@ class ParserSelectionLock:
     artifact_checksum: str | None = None
     metadata: dict[str, object] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
+
 
 @dataclass(slots=True)
 class DocumentParserRegistry:
@@ -61,7 +65,7 @@ class DocumentParserRegistry:
             priority=descriptor.priority,
             supports_ocr=descriptor.supports_ocr,
             parse=descriptor.parse,
-            metadata=dict(descriptor.metadata),
+            metadata=MappingProxyType(dict(descriptor.metadata)),
         )
 
     def select(self, artifact: ArtifactRef, *, allow_ocr_fallback: bool = False) -> ParserSelectionLock:
