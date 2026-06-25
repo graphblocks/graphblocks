@@ -1279,10 +1279,18 @@ class ToolResult:
     effect_outcome: ToolEffectOutcome = "unknown"
 
     def __post_init__(self) -> None:
+        if not self.tool_call_id.strip():
+            raise ValueError("tool result tool_call_id must not be empty")
         if self.status not in VALID_TOOL_RESULT_STATUSES:
             raise ValueError(f"invalid tool result status {self.status}")
         if self.effect_outcome not in VALID_TOOL_EFFECT_OUTCOMES:
             raise ValueError(f"invalid tool effect outcome {self.effect_outcome}")
+        if (
+            self.started_at is not None
+            and self.completed_at is not None
+            and self.completed_at < self.started_at
+        ):
+            raise ValueError("tool result completed_at must not be before started_at")
         object.__setattr__(self, "output", tuple(self.output))
         object.__setattr__(
             self,

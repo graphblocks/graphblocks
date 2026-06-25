@@ -1077,6 +1077,19 @@ def test_completed_tool_result_computes_stable_output_digest() -> None:
     assert left.completed_at == "2026-06-23T00:00:01Z"
 
 
+def test_tool_result_rejects_empty_call_id_and_reversed_timestamps() -> None:
+    with pytest.raises(ValueError, match="tool result tool_call_id must not be empty"):
+        ToolResult(tool_call_id=" ", status="completed")
+
+    with pytest.raises(ValueError, match="tool result completed_at must not be before started_at"):
+        ToolResult.completed(
+            "call-1",
+            (ContentPart(kind="text", text="ok"),),
+            started_at="2026-06-23T00:00:02Z",
+            completed_at="2026-06-23T00:00:01Z",
+        )
+
+
 def test_completed_tool_result_rejects_non_canonical_json_values() -> None:
     with pytest.raises(ToolResultValidationError) as error:
         ToolResult.completed(
