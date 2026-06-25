@@ -756,6 +756,24 @@ packages:
   - wsproto
   implementationPhase: integration-defined
   stability: integration
+- distribution: graphblocks-silero-vad
+  import: graphblocks_silero_vad
+  layer: voice_vad_adapter
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-voice
+  responsibility:
+  - Silero VAD probability frame contract
+  - runtime-free VAD authority configuration
+  - core AudioFrame and VadDecision projection
+  forbiddenDependencies:
+  - torch
+  - onnxruntime
+  - torchaudio
+  - silero
+  implementationPhase: integration-defined
+  stability: integration
 - distribution: graphblocks-durable
   import: graphblocks_durable
   layer: durable_stream
