@@ -59,6 +59,19 @@ impl ToolCallDraft {
         }
     }
 
+    pub fn validate(&self) -> Result<(), ToolCallError> {
+        for (field, value) in [
+            ("response_id", self.response_id.as_str()),
+            ("tool_call_id", self.tool_call_id.as_str()),
+            ("tool_name", self.tool_name.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(ToolCallError::EmptyField { field });
+            }
+        }
+        Ok(())
+    }
+
     pub fn append_argument_fragment(
         &mut self,
         fragment: impl Into<String>,
@@ -66,6 +79,7 @@ impl ToolCallDraft {
         if self.status == ToolCallDraftStatus::ArgumentsComplete {
             return Err(ToolCallError::DraftAlreadyComplete);
         }
+        self.validate()?;
         self.argument_fragments.push(fragment.into());
         self.sequence += 1;
         self.status = ToolCallDraftStatus::ArgumentsStreaming;
@@ -76,6 +90,7 @@ impl ToolCallDraft {
         if self.status == ToolCallDraftStatus::ArgumentsComplete {
             return Err(ToolCallError::DraftAlreadyComplete);
         }
+        self.validate()?;
         self.status = ToolCallDraftStatus::ArgumentsComplete;
         Ok(())
     }
@@ -99,6 +114,7 @@ impl ToolCallDraft {
                 status: self.status,
             });
         }
+        self.validate()?;
 
         let mut assembled = String::new();
         for fragment in self.argument_fragments {

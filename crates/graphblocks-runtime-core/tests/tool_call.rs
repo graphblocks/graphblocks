@@ -109,6 +109,37 @@ fn admitted_tool_call_arguments_cannot_be_revised() -> Result<(), ToolCallError>
 }
 
 #[test]
+fn tool_call_draft_validates_required_identity_fields() {
+    assert_eq!(
+        ToolCallDraft::proposed(" ", "call-1", "knowledge.search").validate(),
+        Err(ToolCallError::EmptyField {
+            field: "response_id"
+        })
+    );
+    assert_eq!(
+        ToolCallDraft::proposed("response-1", "", "knowledge.search").validate(),
+        Err(ToolCallError::EmptyField {
+            field: "tool_call_id"
+        })
+    );
+    assert_eq!(
+        ToolCallDraft::proposed("response-1", "call-1", " ").validate(),
+        Err(ToolCallError::EmptyField { field: "tool_name" })
+    );
+
+    let mut draft = ToolCallDraft::proposed("response-1", "", "knowledge.search");
+    assert_eq!(
+        draft.append_argument_fragment("{}"),
+        Err(ToolCallError::EmptyField {
+            field: "tool_call_id"
+        })
+    );
+    assert_eq!(draft.sequence, 0);
+    assert_eq!(draft.status, ToolCallDraftStatus::Proposed);
+    assert!(draft.argument_fragments.is_empty());
+}
+
+#[test]
 fn tool_call_validates_revision_and_required_identity_fields() {
     let invalid_revision = ToolCall {
         tool_call_id: "call-1".to_owned(),

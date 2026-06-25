@@ -442,6 +442,12 @@ def test_tool_approval_request_validates_revision_and_expiration() -> None:
 
 
 def test_tool_lifecycle_counters_are_non_negative_and_positive() -> None:
+    with pytest.raises(ValueError, match="tool call draft response_id must not be empty"):
+        ToolCallDraft(" ", "call-1", "knowledge.search")
+    with pytest.raises(ValueError, match="tool call draft tool_call_id must not be empty"):
+        ToolCallDraft("response-1", "", "knowledge.search")
+    with pytest.raises(ValueError, match="tool call draft tool_name must not be empty"):
+        ToolCallDraft("response-1", "call-1", " ")
     with pytest.raises(ValueError, match="tool call draft sequence must be non-negative"):
         ToolCallDraft("response-1", "call-1", "knowledge.search", sequence=-1)
 

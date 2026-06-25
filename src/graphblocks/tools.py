@@ -786,6 +786,9 @@ class ToolCallDraft:
     status: ToolCallDraftStatus = "proposed"
 
     def __post_init__(self) -> None:
+        for field_name in ("response_id", "tool_call_id", "tool_name"):
+            if not getattr(self, field_name).strip():
+                raise ValueError(f"tool call draft {field_name} must not be empty")
         if self.status not in VALID_TOOL_CALL_DRAFT_STATUSES:
             raise ValueError(f"invalid tool call draft status {self.status}")
         if self.sequence < 0:
