@@ -217,6 +217,37 @@ def test_documents_package_has_pure_python_layout_without_parser_dependencies() 
     assert (package_root / "src" / "graphblocks_documents" / "py.typed").exists()
 
 
+def test_document_parser_packages_are_cataloged_as_optional_integrations() -> None:
+    rows = {row["distribution"]: row for row in package_rows(load_package_catalog())}
+
+    assert rows["graphblocks-pdf"] == {
+        "distribution": "graphblocks-pdf",
+        "import": "graphblocks_pdf",
+        "default": False,
+        "layer": "document_parser_adapter",
+        "kind": "pure_python",
+        "implementationPhase": "integration-defined",
+        "stability": "integration",
+    }
+
+
+def test_pdf_parser_package_has_lazy_optional_parser_dependency() -> None:
+    package_root = ROOT / "packages" / "graphblocks-pdf"
+    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
+    dependencies = pyproject["project"]["dependencies"]
+
+    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
+    assert pyproject["project"]["name"] == "graphblocks-pdf"
+    assert dependencies == ["graphblocks-core~=1.0"]
+    assert not any("pypdf" in dependency.lower() or "pdfminer" in dependency.lower() for dependency in dependencies)
+    assert pyproject["project"]["optional-dependencies"]["pypdf"] == ["pypdf>=4.0"]
+    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
+        "src/graphblocks_pdf"
+    ]
+    assert (package_root / "src" / "graphblocks_pdf" / "__init__.py").exists()
+    assert (package_root / "src" / "graphblocks_pdf" / "py.typed").exists()
+
+
 def test_rag_package_has_pure_python_layout_without_vector_db_dependencies() -> None:
     package_root = ROOT / "packages" / "graphblocks-rag"
     pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))

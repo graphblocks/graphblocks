@@ -169,6 +169,21 @@ packages:
   - OCR engines
   implementationPhase: 1
   stability: foundation
+- distribution: graphblocks-pdf
+  import: graphblocks_pdf
+  layer: document_parser_adapter
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-core
+  responsibility:
+  - PDF parser descriptor
+  - lazy pypdf text extraction adapter
+  - page-level ParsedDocument conversion
+  forbiddenDependencies:
+  - default parser SDK import
+  implementationPhase: integration-defined
+  stability: integration
 - distribution: graphblocks-rag
   import: graphblocks_rag
   layer: domain
