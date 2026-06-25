@@ -9,7 +9,7 @@ use graphblocks_runtime_core::tool_admission::{
     ToolAdmission, ToolAdmissionError, ToolAdmissionRequest, ToolPolicyRequestContext,
 };
 use graphblocks_runtime_core::tool_approval::{ToolApprovalRecord, ToolApprovalRequest};
-use graphblocks_runtime_core::tool_call::{ToolCall, ToolCallDraft, ToolCallStatus};
+use graphblocks_runtime_core::tool_call::{ToolCall, ToolCallDraft, ToolCallError, ToolCallStatus};
 use graphblocks_runtime_core::tool_schema::{
     JsonSchema, JsonSchemaNode, ToolSchemaRegistry, ToolSchemaRegistryError,
 };
@@ -183,6 +183,31 @@ fn admission_requires_valid_approval_when_binding_requires_it() {
     assert_eq!(admitted.call.status, ToolCallStatus::Admitted);
     assert_eq!(admitted.call.admitted_at_unix_ms, Some(1_200));
     assert_eq!(admitted.idempotency_key.as_deref(), Some("idem-1"));
+}
+
+#[test]
+fn admission_rejects_invalid_tool_call_model() {
+    let resolved_tool = resolved_process_tool();
+    let mut call = process_call(&resolved_tool);
+    let schemas = process_schema_registry();
+    let policy_decision = allow_tool_policy_decision();
+    call.revision = 0;
+
+    assert_eq!(
+        ToolAdmission::admit(ToolAdmissionRequest {
+            call,
+            resolved_tool: &resolved_tool,
+            schema_registry: &schemas,
+            policy_decision: &policy_decision,
+            approval: None,
+            principal_id: "user-1",
+            idempotency_key: Some("idem-1".to_owned()),
+            admitted_at_unix_ms: 1_200,
+        }),
+        Err(ToolAdmissionError::InvalidToolCall {
+            source: ToolCallError::InvalidRevision { revision: 0 }
+        }),
+    );
 }
 
 #[test]

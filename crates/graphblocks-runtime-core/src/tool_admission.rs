@@ -6,7 +6,7 @@ use crate::policy::{
 };
 use crate::tool::{ResolvedTool, ToolApproval, ToolIdempotency, canonical_effect_names};
 use crate::tool_approval::ToolApprovalRecord;
-use crate::tool_call::{ToolCall, ToolCallStatus};
+use crate::tool_call::{ToolCall, ToolCallError, ToolCallStatus};
 use crate::tool_schema::{ToolSchemaRegistry, ToolSchemaValidationError};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -40,6 +40,9 @@ pub struct ToolPolicyRequestContext<'a> {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ToolAdmissionError {
+    InvalidToolCall {
+        source: ToolCallError,
+    },
     ToolCallNotValidated {
         tool_call_id: String,
         status: ToolCallStatus,
@@ -154,6 +157,10 @@ impl ToolAdmission {
     pub fn admit(
         request: ToolAdmissionRequest<'_>,
     ) -> Result<AdmittedToolCall, ToolAdmissionError> {
+        request
+            .call
+            .validate()
+            .map_err(|source| ToolAdmissionError::InvalidToolCall { source })?;
         if request.call.status != ToolCallStatus::Validated {
             return Err(ToolAdmissionError::ToolCallNotValidated {
                 tool_call_id: request.call.tool_call_id,
