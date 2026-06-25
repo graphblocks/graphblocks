@@ -49,6 +49,47 @@ def test_oci_package_builds_release_manifest_with_graphblocks_annotations(monkey
     assert manifest.manifest_digest().startswith("sha256:")
 
 
+def test_oci_release_manifest_includes_provenance_and_signature_descriptors(monkeypatch) -> None:
+    graphblocks_oci = _import_oci(monkeypatch)
+    graphblocks_deployment = importlib.import_module("graphblocks_deployment")
+    release = (
+        graphblocks_deployment.GraphRelease("support-agent", "2026.06.23.1")
+        .with_bundle("sha256:bundle", "application/vnd.graphblocks.release.bundle.v1+tar")
+        .with_graph("turn", graphblocks_deployment.GraphReleaseGraph("sha256:graph", "sha256:plan"))
+    )
+    bundle = graphblocks_oci.OciDescriptor(
+        media_type="application/vnd.graphblocks.release.bundle.v1+tar",
+        digest="sha256:bundle",
+        size=4096,
+    )
+    provenance = graphblocks_oci.OciDescriptor(
+        media_type="application/vnd.in-toto+json",
+        digest="sha256:provenance",
+        size=512,
+    )
+    signature = graphblocks_oci.OciDescriptor(
+        media_type="application/vnd.dev.cosign.simplesigning.v1+json",
+        digest="sha256:signature",
+        size=256,
+    )
+
+    manifest = graphblocks_oci.build_release_manifest(
+        release,
+        bundle_descriptor=bundle,
+        provenance_descriptor=provenance,
+        signature_descriptor=signature,
+    )
+    contract = manifest.manifest_contract()
+
+    assert contract["layers"] == [
+        bundle.descriptor_contract(),
+        provenance.descriptor_contract(),
+        signature.descriptor_contract(),
+    ]
+    assert contract["annotations"]["graphblocks.ai/provenance-digest"] == "sha256:provenance"
+    assert contract["annotations"]["graphblocks.ai/signature-digest"] == "sha256:signature"
+
+
 def test_oci_manifest_digest_uses_canonical_serialization(monkeypatch) -> None:
     graphblocks_oci = _import_oci(monkeypatch)
     config = graphblocks_oci.OciDescriptor("application/vnd.graphblocks.config.v1+json", "sha256:config", 64)

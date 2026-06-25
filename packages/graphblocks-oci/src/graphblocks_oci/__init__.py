@@ -122,6 +122,8 @@ def build_release_manifest(
     release: GraphRelease,
     *,
     bundle_descriptor: OciDescriptor,
+    provenance_descriptor: OciDescriptor | None = None,
+    signature_descriptor: OciDescriptor | None = None,
     config_descriptor: OciDescriptor | None = None,
     annotations: Mapping[str, str] | None = None,
 ) -> OciManifest:
@@ -135,6 +137,13 @@ def build_release_manifest(
         release_annotations["graphblocks.ai/bundle-digest"] = release.bundle_digest
     if release.bundle_media_type is not None:
         release_annotations["graphblocks.ai/bundle-media-type"] = release.bundle_media_type
+    layers = [bundle_descriptor]
+    if provenance_descriptor is not None:
+        layers.append(provenance_descriptor)
+        release_annotations["graphblocks.ai/provenance-digest"] = provenance_descriptor.digest
+    if signature_descriptor is not None:
+        layers.append(signature_descriptor)
+        release_annotations["graphblocks.ai/signature-digest"] = signature_descriptor.digest
 
     return OciManifest(
         config=config_descriptor
@@ -143,7 +152,7 @@ def build_release_manifest(
             digest=release.content_digest(),
             size=0,
         ),
-        layers=(bundle_descriptor,),
+        layers=tuple(layers),
         annotations=release_annotations,
     )
 
