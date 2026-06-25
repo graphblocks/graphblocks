@@ -39,6 +39,20 @@ class OutputGateError(RuntimeError):
     pass
 
 
+def _validate_non_empty_string(
+    owner: str,
+    field_name: str,
+    value: object,
+    *,
+    empty_message: str | None = None,
+) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{owner} {field_name} must be a string")
+    if not value.strip():
+        raise ValueError(empty_message or f"{owner} {field_name} must not be empty")
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class DeclarativeOutputPolicyRule:
     rule_id: str
@@ -210,10 +224,8 @@ class GenerationChunk:
     def __init__(self, stream_id: str, response_id: str, sequence: int, text: str) -> None:
         if sequence < 0:
             raise ValueError("generation chunk sequence must be non-negative")
-        if not stream_id.strip():
-            raise ValueError("generation chunk stream_id must not be empty")
-        if not response_id.strip():
-            raise ValueError("generation chunk response_id must not be empty")
+        _validate_non_empty_string("generation chunk", "stream_id", stream_id)
+        _validate_non_empty_string("generation chunk", "response_id", response_id)
         if not isinstance(text, str):
             raise ValueError("generation chunk text must be a string")
         self.stream_id = stream_id
@@ -261,8 +273,12 @@ class OutputPolicyDecision:
     input_digest: str = ""
 
     def __post_init__(self) -> None:
-        if not self.decision_id.strip():
-            raise ValueError("output policy decisions require a decision id")
+        _validate_non_empty_string(
+            "output policy",
+            "decision_id",
+            self.decision_id,
+            empty_message="output policy decisions require a decision id",
+        )
         if self.disposition not in VALID_OUTPUT_DISPOSITIONS:
             raise ValueError(f"invalid output disposition {self.disposition}")
         if self.provider_cancellation not in VALID_PROVIDER_CANCELLATIONS:
@@ -271,11 +287,17 @@ class OutputPolicyDecision:
             raise ValueError(f"invalid draft disposition {self.draft_disposition}")
         if self.pending_tool_calls not in VALID_PENDING_TOOL_CALLS_DISPOSITIONS:
             raise ValueError(f"invalid pending tool calls disposition {self.pending_tool_calls}")
-        if not self.input_digest.strip():
-            raise ValueError("output policy decisions require an input digest")
+        _validate_non_empty_string(
+            "output policy",
+            "input_digest",
+            self.input_digest,
+            empty_message="output policy decisions require an input digest",
+        )
         if self.accepted_through_sequence is not None and self.accepted_through_sequence < 0:
             raise ValueError("accepted_through_sequence must be non-negative")
         try:
+            if isinstance(self.replacement_parts, str):
+                raise TypeError
             replacement_parts = tuple(self.replacement_parts)
         except TypeError as error:
             raise ValueError("output policy replacement parts must be ContentPart") from error
@@ -287,7 +309,9 @@ class OutputPolicyDecision:
         for redaction in self.redactions:
             redaction_copy = dict(redaction)
             path = redaction_copy.get("path")
-            if not isinstance(path, str) or not path.strip():
+            if not isinstance(path, str):
+                raise ValueError("redaction path must be a string")
+            if not path.strip():
                 raise ValueError("redaction path must not be empty")
             start = redaction_copy.get("start")
             end = redaction_copy.get("end")

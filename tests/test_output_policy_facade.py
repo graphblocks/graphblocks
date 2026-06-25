@@ -278,6 +278,44 @@ def test_output_policy_contract_rejects_unknown_literals() -> None:
         )
 
 
+def test_output_policy_contract_rejects_non_string_identifiers() -> None:
+    with pytest.raises(ValueError, match="generation chunk stream_id must be a string"):
+        GenerationChunk.text(object(), "response-1", 1, "late")  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="generation chunk response_id must be a string"):
+        GenerationChunk.text("stream-1", object(), 1, "late")  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="output policy decision_id must be a string"):
+        OutputPolicyDecision.allow(
+            object(),  # type: ignore[arg-type]
+            accepted_through_sequence=1,
+            input_digest="sha256:input",
+        )
+
+    with pytest.raises(ValueError, match="output policy input_digest must be a string"):
+        OutputPolicyDecision.allow(
+            "decision-1",
+            accepted_through_sequence=1,
+            input_digest=object(),  # type: ignore[arg-type]
+        )
+
+    with pytest.raises(ValueError, match="output policy replacement parts must be ContentPart"):
+        OutputPolicyDecision.replace(
+            "decision-replace",
+            accepted_through_sequence=1,
+            replacement_parts="approved",  # type: ignore[arg-type]
+            input_digest="sha256:replace",
+        )
+
+    with pytest.raises(ValueError, match="redaction path must be a string"):
+        OutputPolicyDecision.redact(
+            "decision-redact",
+            accepted_through_sequence=1,
+            redactions=({"path": object(), "start": 0, "end": 6, "replacement": "[redacted]"},),
+            input_digest="sha256:redact",
+        )
+
+
 def test_bounded_holdback_requires_size_or_time_bound() -> None:
     policy = OutputDeliveryPolicy.bounded_holdback(on_violation="abort_response")
 
