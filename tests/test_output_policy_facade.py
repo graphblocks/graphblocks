@@ -511,6 +511,27 @@ def test_output_delivery_gate_rejects_future_accepted_sequence() -> None:
     assert gate.last_client_delivered_sequence == 0
 
 
+def test_output_delivery_gate_enforces_bounded_holdback_byte_limit() -> None:
+    gate = OutputDeliveryGate(
+        "stream-1",
+        "response-1",
+        delivery_policy=OutputDeliveryPolicy.bounded_holdback(
+            on_violation="abort_response",
+            holdback_max_bytes=8,
+        ),
+    )
+
+    gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "safe"))
+    gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 2, "text"))
+
+    with pytest.raises(OutputGateError) as error:
+        gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 3, "!"))
+
+    assert str(error.value) == "bounded_holdback pending output exceeds 8 bytes"
+    assert gate.last_generated_sequence == 2
+    assert sorted(gate.pending) == [1, 2]
+
+
 def test_output_delivery_gate_applies_typed_redaction_instruction_before_delivery() -> None:
     gate = OutputDeliveryGate("stream-1", "response-1")
     gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "hello secret world"))

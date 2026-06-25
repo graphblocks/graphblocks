@@ -634,6 +634,14 @@ class OutputDeliveryGate:
             raise OutputGateError(
                 f"chunk sequence {chunk.sequence} must be next after {self.last_generated_sequence}"
             )
+        if (
+            self.delivery_policy.mode == "bounded_holdback"
+            and self.delivery_policy.holdback_max_bytes is not None
+            and self._pending_output_bytes(extra_chunk=chunk) > self.delivery_policy.holdback_max_bytes
+        ):
+            raise OutputGateError(
+                f"bounded_holdback pending output exceeds {self.delivery_policy.holdback_max_bytes} bytes"
+            )
         self.last_generated_sequence = chunk.sequence
         self.pending[chunk.sequence] = chunk
         if self.delivery_policy.mode != "immediate_draft":
@@ -791,3 +799,9 @@ class OutputDeliveryGate:
             )
 
         raise OutputGateError(f"unknown output policy disposition {decision.disposition}")
+
+    def _pending_output_bytes(self, *, extra_chunk: GenerationChunk | None = None) -> int:
+        total = sum(len(chunk.text.encode("utf-8")) for chunk in self.pending.values())
+        if extra_chunk is not None:
+            total += len(extra_chunk.text.encode("utf-8"))
+        return total
