@@ -59,6 +59,81 @@ fn stale_fencing_token_cannot_commit() -> Result<(), LeaseError> {
 }
 
 #[test]
+fn lease_renewal_extends_expiration_and_rotates_fencing_token() -> Result<(), LeaseError> {
+    let pool = LeasePool::new("licensed-tool", 1)?;
+    let acquired_at = SystemTime::UNIX_EPOCH + Duration::from_secs(10);
+    let expires_at = acquired_at + Duration::from_secs(5);
+    let lease = pool.try_acquire_at(
+        LeaseRequest::new("run-1", 1).with_expires_at(expires_at),
+        acquired_at,
+    )?;
+    let stale_token = lease.fencing_token();
+    let renewed_expires_at = expires_at + Duration::from_secs(10);
+
+    let renewed_token = pool.renew_at(
+        lease.lease_id(),
+        stale_token,
+        renewed_expires_at,
+        acquired_at + Duration::from_secs(3),
+    )?;
+
+    assert!(renewed_token > stale_token);
+    assert_eq!(lease.fencing_token(), renewed_token);
+    assert_eq!(lease.expires_at(), Some(renewed_expires_at));
+    assert_eq!(
+        pool.validate_fencing_token(lease.lease_id(), stale_token),
+        Err(LeaseError::StaleFencingToken {
+            pool_id: "licensed-tool".to_owned(),
+            lease_id: lease.lease_id().to_owned(),
+        }),
+    );
+    assert_eq!(
+        pool.renew_at(
+            lease.lease_id(),
+            stale_token,
+            renewed_expires_at + Duration::from_secs(5),
+            acquired_at + Duration::from_secs(4),
+        ),
+        Err(LeaseError::StaleFencingToken {
+            pool_id: "licensed-tool".to_owned(),
+            lease_id: lease.lease_id().to_owned(),
+        }),
+    );
+    assert!(
+        pool.validate_fencing_token(lease.lease_id(), renewed_token)
+            .is_ok()
+    );
+    Ok(())
+}
+
+#[test]
+fn expired_lease_cannot_be_renewed() -> Result<(), LeaseError> {
+    let pool = LeasePool::new("licensed-tool", 1)?;
+    let acquired_at = SystemTime::UNIX_EPOCH + Duration::from_secs(10);
+    let expires_at = acquired_at + Duration::from_secs(5);
+    let lease = pool.try_acquire_at(
+        LeaseRequest::new("run-1", 1).with_expires_at(expires_at),
+        acquired_at,
+    )?;
+
+    assert_eq!(
+        pool.renew_at(
+            lease.lease_id(),
+            lease.fencing_token(),
+            expires_at + Duration::from_secs(10),
+            expires_at,
+        ),
+        Err(LeaseError::UnknownLease {
+            pool_id: "licensed-tool".to_owned(),
+            lease_id: lease.lease_id().to_owned(),
+        }),
+    );
+    assert_eq!(pool.available_units(), 1);
+    assert!(!lease.release());
+    Ok(())
+}
+
+#[test]
 fn lease_request_preserves_owner_and_attribute_selector() -> Result<(), LeaseError> {
     let pool = LeasePool::new("licensed-tool", 2)?;
     let request = LeaseRequest::new("run-1", 1)

@@ -175,6 +175,55 @@ impl LeasePool {
         Self::reap_expired_locked(&mut inner, now)
     }
 
+    pub fn renew(
+        &self,
+        lease_id: &str,
+        fencing_token: u64,
+        expires_at: SystemTime,
+    ) -> Result<u64, LeaseError> {
+        self.renew_at(lease_id, fencing_token, expires_at, SystemTime::now())
+    }
+
+    pub fn renew_at(
+        &self,
+        lease_id: &str,
+        fencing_token: u64,
+        expires_at: SystemTime,
+        renewed_at: SystemTime,
+    ) -> Result<u64, LeaseError> {
+        if expires_at <= renewed_at {
+            return Err(LeaseError::InvalidExpiration);
+        }
+
+        let mut inner = self.lock();
+        Self::reap_expired_locked(&mut inner, renewed_at);
+        let pool_id = inner.id.clone();
+        let Some(current_token) = inner
+            .active
+            .get(lease_id)
+            .map(|active| active.fencing_token)
+        else {
+            return Err(LeaseError::UnknownLease {
+                pool_id,
+                lease_id: lease_id.to_owned(),
+            });
+        };
+        if current_token != fencing_token {
+            return Err(LeaseError::StaleFencingToken {
+                pool_id,
+                lease_id: lease_id.to_owned(),
+            });
+        }
+
+        let renewed_token = inner.next_fencing_token;
+        inner.next_fencing_token += 1;
+        if let Some(active) = inner.active.get_mut(lease_id) {
+            active.fencing_token = renewed_token;
+            active.expires_at = Some(expires_at);
+        }
+        Ok(renewed_token)
+    }
+
     pub fn validate_fencing_token(
         &self,
         lease_id: &str,
