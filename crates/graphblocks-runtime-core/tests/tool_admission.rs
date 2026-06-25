@@ -8,7 +8,9 @@ use graphblocks_runtime_core::tool::{
 use graphblocks_runtime_core::tool_admission::{
     ToolAdmission, ToolAdmissionError, ToolAdmissionRequest, ToolPolicyRequestContext,
 };
-use graphblocks_runtime_core::tool_approval::{ToolApprovalRecord, ToolApprovalRequest};
+use graphblocks_runtime_core::tool_approval::{
+    ToolApprovalError, ToolApprovalRecord, ToolApprovalRequest,
+};
 use graphblocks_runtime_core::tool_call::{ToolCall, ToolCallDraft, ToolCallError, ToolCallStatus};
 use graphblocks_runtime_core::tool_schema::{
     JsonSchema, JsonSchemaNode, ToolSchemaRegistry, ToolSchemaRegistryError,
@@ -183,6 +185,42 @@ fn admission_requires_valid_approval_when_binding_requires_it() {
     assert_eq!(admitted.call.status, ToolCallStatus::Admitted);
     assert_eq!(admitted.call.admitted_at_unix_ms, Some(1_200));
     assert_eq!(admitted.idempotency_key.as_deref(), Some("idem-1"));
+}
+
+#[test]
+fn approval_records_validate_decision_metadata() {
+    let resolved_tool = resolved_process_tool();
+    let call = process_call(&resolved_tool);
+    let request =
+        ToolApprovalRequest::for_call("approval-1", &resolved_tool, &call, "user-1", 1_100, 2_000)
+            .expect("approval request is valid");
+
+    assert_eq!(
+        ToolApprovalRecord::approve(request.clone(), " ", 1_150).validate(),
+        Err(ToolApprovalError::EmptyField {
+            field: "approver_id",
+        })
+    );
+
+    let mut missing_decision_time = ToolApprovalRecord::approve(request.clone(), "admin-1", 1_150);
+    missing_decision_time.decided_at_unix_ms = None;
+    assert_eq!(
+        missing_decision_time.validate(),
+        Err(ToolApprovalError::MissingField {
+            field: "decided_at_unix_ms",
+        })
+    );
+
+    let mut mismatched_record = ToolApprovalRecord::approve(request.clone(), "admin-1", 1_150);
+    mismatched_record.approval_id = "approval-other".to_owned();
+    assert_eq!(
+        mismatched_record.validate(),
+        Err(ToolApprovalError::ApprovalIdMismatch {
+            expected: "approval-1".to_owned(),
+            actual: "approval-other".to_owned(),
+        })
+    );
+    assert!(!mismatched_record.is_valid_for(&resolved_tool, &call, "user-1", 1_200));
 }
 
 #[test]

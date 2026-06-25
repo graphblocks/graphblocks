@@ -6,6 +6,13 @@ pub enum ToolApprovalError {
     EmptyField {
         field: &'static str,
     },
+    MissingField {
+        field: &'static str,
+    },
+    ApprovalIdMismatch {
+        expected: String,
+        actual: String,
+    },
     ResolvedToolMismatch {
         expected: String,
         actual: String,
@@ -162,6 +169,35 @@ impl ToolApprovalRecord {
         self
     }
 
+    pub fn validate(&self) -> Result<(), ToolApprovalError> {
+        if self.approval_id != self.request.approval_id {
+            return Err(ToolApprovalError::ApprovalIdMismatch {
+                expected: self.request.approval_id.clone(),
+                actual: self.approval_id.clone(),
+            });
+        }
+        if matches!(
+            self.status,
+            ToolApprovalStatus::Approved | ToolApprovalStatus::Denied
+        ) {
+            if self
+                .approver_id
+                .as_deref()
+                .is_none_or(|approver_id| approver_id.trim().is_empty())
+            {
+                return Err(ToolApprovalError::EmptyField {
+                    field: "approver_id",
+                });
+            }
+            if self.decided_at_unix_ms.is_none() {
+                return Err(ToolApprovalError::MissingField {
+                    field: "decided_at_unix_ms",
+                });
+            }
+        }
+        Ok(())
+    }
+
     pub fn is_valid_for(
         &self,
         resolved_tool: &ResolvedTool,
@@ -170,6 +206,7 @@ impl ToolApprovalRecord {
         now_unix_ms: u64,
     ) -> bool {
         self.status == ToolApprovalStatus::Approved
+            && self.validate().is_ok()
             && self.approval_id == self.request.approval_id
             && now_unix_ms <= self.request.expires_at_unix_ms
             && self.request.tool_call_id == call.tool_call_id

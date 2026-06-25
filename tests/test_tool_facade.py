@@ -503,6 +503,17 @@ def test_tool_lifecycle_records_reject_unknown_literals() -> None:
         ToolApprovalRecord(approval_id=request.approval_id, request=request, status="escalated")
     with pytest.raises(ValueError, match="approval record id must match request approval_id"):
         ToolApprovalRecord(approval_id="approval-other", request=request, status="approved")
+    with pytest.raises(ValueError, match="approval approver_id must not be empty"):
+        ToolApprovalRecord.approve(request, approver_id=" ", decided_at=1_100)
+    with pytest.raises(ValueError, match="approval decided_at must be non-negative"):
+        ToolApprovalRecord.approve(request, approver_id="admin-1", decided_at=-1)
+    with pytest.raises(ValueError, match="approved approval record requires decided_at"):
+        ToolApprovalRecord(
+            approval_id=request.approval_id,
+            request=request,
+            status="approved",
+            approver_id="admin-1",
+        )
 
 
 def test_tool_approval_request_validates_revision_and_expiration() -> None:

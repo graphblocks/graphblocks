@@ -633,6 +633,15 @@ class ToolApprovalRecord:
             raise ValueError(f"invalid tool approval status {self.status}")
         if self.approval_id != self.request.approval_id:
             raise ValueError("approval record id must match request approval_id")
+        if self.status in {"approved", "denied"}:
+            if self.approver_id is None or not self.approver_id.strip():
+                raise ValueError("approval approver_id must not be empty")
+            if self.decided_at is None:
+                raise ValueError(f"{self.status} approval record requires decided_at")
+        if self.decided_at is not None and self.decided_at < 0:
+            raise ValueError("approval decided_at must be non-negative")
+        if self.invalidated_at is not None and self.invalidated_at < 0:
+            raise ValueError("approval invalidated_at must be non-negative")
 
     @classmethod
     def requested(cls, request: ToolApprovalRequest) -> ToolApprovalRecord:
