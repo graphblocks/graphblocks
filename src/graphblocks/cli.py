@@ -248,7 +248,7 @@ def main(argv: list[str] | None = None) -> int:
         help="render manifests from a deploy plan JSON payload",
     )
     deploy_render_parser.add_argument("path", type=Path)
-    deploy_render_parser.add_argument("--target", default="kubernetes", choices=["kubernetes"])
+    deploy_render_parser.add_argument("--target", default="kubernetes", choices=["kubernetes", "helm"])
     deploy_render_parser.add_argument("--namespace", default="default")
     deploy_render_parser.add_argument("--name", help="manifest name prefix; defaults to deployment id")
     deploy_render_parser.add_argument("--replicas", type=int, default=1)
@@ -988,6 +988,7 @@ def main(argv: list[str] | None = None) -> int:
                 from graphblocks_kubernetes import (
                     KubernetesManifestSet,
                     KubernetesRenderOptions,
+                    render_helm_chart,
                     render_target_manifests,
                 )
 
@@ -1035,13 +1036,55 @@ def main(argv: list[str] | None = None) -> int:
                     manifest_documents.extend(manifest_set.documents)
 
                 manifest_set = KubernetesManifestSet(tuple(manifest_documents))
+                manifest_digest = manifest_set.content_digest()
+                if args.target == "helm":
+                    chart_values = {
+                        key: value
+                        for key, value in {
+                            "deploymentId": payload.get("deploymentId"),
+                            "deploymentRevisionId": payload.get("deploymentRevisionId"),
+                            "releaseDigest": payload.get("releaseDigest"),
+                            "planHash": payload.get("planHash"),
+                            "manifestDigest": manifest_digest,
+                        }.items()
+                        if value is not None
+                    }
+                    chart = render_helm_chart(
+                        name_prefix,
+                        manifest_set,
+                        app_version=(
+                            str(payload.get("deploymentRevisionId"))
+                            if payload.get("deploymentRevisionId") is not None
+                            else None
+                        ),
+                        values=chart_values,
+                    )
+                    output = {
+                        "ok": True,
+                        "target": args.target,
+                        "deploymentId": payload.get("deploymentId"),
+                        "deploymentRevisionId": payload.get("deploymentRevisionId"),
+                        "planHash": payload.get("planHash"),
+                        "manifestDigest": manifest_digest,
+                        "chartName": chart.chart_name,
+                        "chartDigest": chart.content_digest(),
+                        "files": chart.file_map(),
+                    }
+                    if args.json:
+                        print(json.dumps(output, indent=2, sort_keys=True))
+                    else:
+                        for file in chart.files:
+                            print(f"# Source: {file.path}")
+                            print(file.content, end="" if file.content.endswith("\n") else "\n")
+                    return 0
+
                 output = {
                     "ok": True,
                     "target": args.target,
                     "deploymentId": payload.get("deploymentId"),
                     "deploymentRevisionId": payload.get("deploymentRevisionId"),
                     "planHash": payload.get("planHash"),
-                    "manifestDigest": manifest_set.content_digest(),
+                    "manifestDigest": manifest_digest,
                     "manifests": manifest_set.documents,
                 }
                 if args.json:

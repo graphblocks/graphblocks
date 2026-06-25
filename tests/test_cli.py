@@ -609,6 +609,58 @@ def test_deploy_render_cli_renders_kubernetes_manifest_set(tmp_path, capsys, mon
     )
 
 
+def test_deploy_render_cli_renders_helm_chart_package(tmp_path, capsys, monkeypatch) -> None:
+    root = Path(__file__).parents[1]
+    monkeypatch.syspath_prepend(str(root / "packages" / "graphblocks-deployment" / "src"))
+    monkeypatch.syspath_prepend(str(root / "packages" / "graphblocks-kubernetes" / "src"))
+    plan = {
+        "ok": True,
+        "deploymentId": "support-production",
+        "deploymentRevisionId": "rev-1",
+        "releaseDigest": "sha256:release",
+        "planHash": "sha256:plan",
+        "plan": {
+            "targets": {
+                "control": {
+                    "kind": "service",
+                    "executionHost": "rust",
+                    "capabilities": ["graph.coordinator"],
+                    "effects": [],
+                    "packageLock": None,
+                    "image": "registry.example.com/graphblocks/control@sha256:control",
+                }
+            }
+        },
+    }
+    path = tmp_path / "plan.json"
+    path.write_text(json.dumps(plan), encoding="utf-8")
+
+    assert main(["deploy", "render", str(path), "--target", "helm", "--namespace", "support", "--json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["target"] == "helm"
+    assert payload["chartName"] == "support-production"
+    assert payload["chartDigest"].startswith("sha256:")
+    assert payload["manifestDigest"].startswith("sha256:")
+    assert sorted(payload["files"]) == [
+        "Chart.yaml",
+        "templates/support-production-control-deployment.yaml",
+        "values.yaml",
+    ]
+    assert yaml.safe_load(payload["files"]["Chart.yaml"])["appVersion"] == "rev-1"
+    assert yaml.safe_load(payload["files"]["values.yaml"]) == {
+        "deploymentId": "support-production",
+        "deploymentRevisionId": "rev-1",
+        "manifestDigest": payload["manifestDigest"],
+        "planHash": "sha256:plan",
+        "releaseDigest": "sha256:release",
+    }
+    deployment = yaml.safe_load(payload["files"]["templates/support-production-control-deployment.yaml"])
+    assert deployment["metadata"]["namespace"] == "support"
+    assert deployment["metadata"]["annotations"]["graphblocks.ai/target-id"] == "control"
+
+
 def test_deploy_targets_verify_cli_accepts_production_target_manifest(capsys) -> None:
     root = Path(__file__).parents[1]
 
