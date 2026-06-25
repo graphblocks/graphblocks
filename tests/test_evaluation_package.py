@@ -36,3 +36,28 @@ def test_evaluation_package_exposes_gate_result_contract(monkeypatch) -> None:
     assert gate.decision == "pass"
     assert trial.gate == gate
     assert trial.outcome == "accepted"
+
+
+def test_evaluation_package_exposes_slo_contract(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-evaluation" / "src"))
+    graphblocks_evaluation = importlib.import_module("graphblocks_evaluation")
+
+    objective = graphblocks_evaluation.SloObjective.at_most(
+        "first-draft",
+        "p95(turn_first_draft_ms)",
+        1500.0,
+        "30d",
+    ).with_unit("ms")
+    measurement = graphblocks_evaluation.SloMeasurement(
+        "p95(turn_first_draft_ms)",
+        1700.0,
+        "30d",
+    ).with_unit("ms")
+
+    report = objective.evaluate(measurement)
+
+    assert report.status == "fail"
+    assert report.violated_by == 200.0
+    assert "SloObjective" in graphblocks_evaluation.__all__
+    assert "SloMeasurement" in graphblocks_evaluation.__all__
+    assert "SloReport" in graphblocks_evaluation.__all__

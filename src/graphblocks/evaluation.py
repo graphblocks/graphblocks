@@ -17,6 +17,8 @@ MetricDirection = Literal["minimize", "maximize", "target", "informational"]
 GateDecision = Literal["pass", "fail", "inconclusive"]
 ReviewDecision = Literal["accept", "accept_with_conditions", "revise", "reject"]
 ConstraintOperator = Literal["at_least", "at_most", "equals"]
+SloComparison = Literal["at_least", "at_most"]
+SloReportStatus = Literal["pass", "fail", "no_data"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +160,104 @@ class GateResult:
     violated_constraints: list[str] = field(default_factory=list)
     metrics: list[MetricObservation] = field(default_factory=list)
     policy_ref: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SloObjective:
+    slo_id: str
+    indicator: str
+    comparison: SloComparison
+    objective: float
+    window: str
+    unit: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.comparison not in {"at_least", "at_most"}:
+            raise ValueError(f"unsupported SLO comparison {self.comparison!r}")
+        object.__setattr__(self, "objective", float(self.objective))
+
+    @classmethod
+    def at_least(cls, slo_id: str, indicator: str, objective: float, window: str) -> SloObjective:
+        return cls(slo_id=slo_id, indicator=indicator, comparison="at_least", objective=objective, window=window)
+
+    @classmethod
+    def at_most(cls, slo_id: str, indicator: str, objective: float, window: str) -> SloObjective:
+        return cls(slo_id=slo_id, indicator=indicator, comparison="at_most", objective=objective, window=window)
+
+    def with_unit(self, unit: str) -> SloObjective:
+        return replace(self, unit=unit)
+
+    def evaluate(self, measurement: SloMeasurement) -> SloReport:
+        for reason, mismatched in (
+            ("indicator_mismatch", self.indicator != measurement.indicator),
+            ("window_mismatch", self.window != measurement.window),
+            ("unit_mismatch", self.unit != measurement.unit),
+        ):
+            if mismatched:
+                return SloReport(
+                    slo_id=self.slo_id,
+                    indicator=self.indicator,
+                    window=self.window,
+                    status="no_data",
+                    objective=self.objective,
+                    reason=reason,
+                )
+
+        passes = (
+            measurement.value >= self.objective
+            if self.comparison == "at_least"
+            else measurement.value <= self.objective
+        )
+        violated_by = None
+        if not passes:
+            violated_by = (
+                self.objective - measurement.value
+                if self.comparison == "at_least"
+                else measurement.value - self.objective
+            )
+        return SloReport(
+            slo_id=self.slo_id,
+            indicator=self.indicator,
+            window=self.window,
+            status="pass" if passes else "fail",
+            objective=self.objective,
+            observed_value=measurement.value,
+            sample_count=measurement.sample_count,
+            violated_by=violated_by,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SloMeasurement:
+    indicator: str
+    value: float
+    window: str
+    unit: str | None = None
+    sample_count: int | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "value", float(self.value))
+        if self.sample_count is not None and self.sample_count < 0:
+            raise ValueError("SLO sample_count must be non-negative")
+
+    def with_unit(self, unit: str) -> SloMeasurement:
+        return replace(self, unit=unit)
+
+    def with_sample_count(self, sample_count: int) -> SloMeasurement:
+        return replace(self, sample_count=sample_count)
+
+
+@dataclass(frozen=True, slots=True)
+class SloReport:
+    slo_id: str
+    indicator: str
+    window: str
+    status: SloReportStatus
+    objective: float
+    observed_value: float | None = None
+    sample_count: int | None = None
+    violated_by: float | None = None
+    reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

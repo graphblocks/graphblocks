@@ -12,6 +12,8 @@ from graphblocks.evaluation import (
     ResultBundle,
     ReviewRecord,
     RunProvenance,
+    SloMeasurement,
+    SloObjective,
     TrialResult,
     evaluate_gate,
 )
@@ -71,6 +73,49 @@ def test_evaluate_gate_uses_metric_thresholds() -> None:
     assert passing.decision == "pass"
     assert failing.decision == "fail"
     assert failing.violated_constraints == ["metric:latency_ms"]
+
+
+def test_slo_objective_passes_when_ratio_meets_objective() -> None:
+    objective = SloObjective.at_least(
+        "chat-availability",
+        "successful_committed_turns / admitted_turns",
+        0.995,
+        "30d",
+    )
+    measurement = SloMeasurement(
+        "successful_committed_turns / admitted_turns",
+        0.996,
+        "30d",
+    ).with_sample_count(10_000)
+
+    report = objective.evaluate(measurement)
+
+    assert report.status == "pass"
+    assert report.slo_id == "chat-availability"
+    assert report.observed_value == 0.996
+    assert report.violated_by is None
+
+
+def test_slo_objective_fails_when_latency_exceeds_maximum() -> None:
+    objective = SloObjective.at_most("first-draft", "p95(turn_first_draft_ms)", 1500.0, "30d").with_unit("ms")
+    measurement = SloMeasurement("p95(turn_first_draft_ms)", 1700.0, "30d").with_unit("ms").with_sample_count(500)
+
+    report = objective.evaluate(measurement)
+
+    assert report.status == "fail"
+    assert report.observed_value == 1700.0
+    assert report.violated_by == 200.0
+
+
+def test_slo_objective_is_no_data_for_mismatched_indicator_or_window() -> None:
+    objective = SloObjective.at_least("citation-validity", "validated / returned", 0.99, "30d")
+    measurement = SloMeasurement("validated / returned", 0.995, "7d")
+
+    report = objective.evaluate(measurement)
+
+    assert report.status == "no_data"
+    assert report.observed_value is None
+    assert report.reason == "window_mismatch"
 
 
 def test_review_record_is_invalid_for_changed_subject_digest() -> None:
