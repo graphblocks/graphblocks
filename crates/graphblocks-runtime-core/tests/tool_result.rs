@@ -7,9 +7,9 @@ use graphblocks_runtime_core::tool::{
 };
 use graphblocks_runtime_core::tool_call::ToolCallDraft;
 use graphblocks_runtime_core::tool_result::{
-    ArtifactRef, ContentPart, Diagnostic, ToolEffectOutcome, ToolResult, ToolResultContentPolicy,
-    ToolResultError, ToolResultEvent, ToolResultEventError, ToolResultStatus, ToolResultValidation,
-    ToolResultValidationError, ToolResultValidationRequest,
+    ArtifactRef, ContentPart, ContentPartError, ContentPartKind, Diagnostic, ToolEffectOutcome,
+    ToolResult, ToolResultContentPolicy, ToolResultError, ToolResultEvent, ToolResultEventError,
+    ToolResultStatus, ToolResultValidation, ToolResultValidationError, ToolResultValidationRequest,
 };
 use graphblocks_runtime_core::tool_schema::{JsonSchema, JsonSchemaNode, ToolSchemaRegistry};
 use serde_json::{Value, json};
@@ -63,6 +63,45 @@ fn tool_result_validates_identity_and_timestamp_order() {
         Err(ToolResultError::CompletedBeforeStarted {
             started_at_unix_ms: 1_050,
             completed_at_unix_ms: 1_000,
+        })
+    );
+}
+
+#[test]
+fn tool_result_rejects_content_parts_without_required_payload() {
+    let missing_text = ContentPart {
+        kind: ContentPartKind::Text,
+        text: None,
+        data: None,
+        metadata: Default::default(),
+    };
+    let missing_json = ContentPart {
+        kind: ContentPartKind::Json,
+        text: None,
+        data: None,
+        metadata: Default::default(),
+    };
+    let missing_artifact = ContentPart {
+        kind: ContentPartKind::ArtifactRef,
+        text: None,
+        data: None,
+        metadata: Default::default(),
+    };
+
+    assert_eq!(
+        missing_text.validate(),
+        Err(ContentPartError::MissingTextPayload)
+    );
+    assert_eq!(
+        ToolResult::completed("call-1", [missing_json], 1_000, 1_050).validate(),
+        Err(ToolResultError::InvalidContentPart {
+            source: ContentPartError::MissingJsonPayload,
+        })
+    );
+    assert_eq!(
+        ToolResultEvent::delta("call-1", 2, [missing_artifact]).validate(),
+        Err(ToolResultEventError::InvalidOutput {
+            source: ContentPartError::MissingArtifactRefPayload,
         })
     );
 }

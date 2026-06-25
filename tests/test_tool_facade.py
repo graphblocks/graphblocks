@@ -1208,6 +1208,23 @@ def test_completed_tool_result_computes_stable_output_digest() -> None:
     assert left.completed_at == "2026-06-23T00:00:01Z"
 
 
+def test_content_part_requires_payload_for_its_kind() -> None:
+    with pytest.raises(ValueError, match="text content part requires text"):
+        ContentPart(kind="text")
+
+    with pytest.raises(ValueError, match="json content part requires data"):
+        ContentPart(kind="json")
+
+    with pytest.raises(ValueError, match="artifact_ref content part requires data"):
+        ContentPart(kind="artifact_ref")
+
+    with pytest.raises(ValueError, match="text content part must not carry data"):
+        ContentPart(kind="text", text="ok", data={"unexpected": True})
+
+    with pytest.raises(ValueError, match="json content part must not carry text"):
+        ContentPart(kind="json", text="unexpected", data={})
+
+
 def test_tool_result_rejects_empty_call_id_and_reversed_timestamps() -> None:
     with pytest.raises(ValueError, match="tool result tool_call_id must not be empty"):
         ToolResult(tool_call_id=" ", status="completed")

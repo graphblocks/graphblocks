@@ -60,6 +60,25 @@ class ContentPart:
     data: dict[str, object] | None = None
     metadata: dict[str, object] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        if self.kind not in {"text", "json", "artifact_ref"}:
+            raise ValueError(f"invalid content part kind {self.kind}")
+        if self.kind == "text":
+            if self.text is None:
+                raise ValueError("text content part requires text")
+            if self.data is not None:
+                raise ValueError("text content part must not carry data")
+        elif self.kind == "json":
+            if self.data is None:
+                raise ValueError("json content part requires data")
+            if self.text is not None:
+                raise ValueError("json content part must not carry text")
+        elif self.kind == "artifact_ref":
+            if self.data is None:
+                raise ValueError("artifact_ref content part requires data")
+            if self.text is not None:
+                raise ValueError("artifact_ref content part must not carry text")
+
 
 @dataclass(frozen=True, slots=True)
 class Message:

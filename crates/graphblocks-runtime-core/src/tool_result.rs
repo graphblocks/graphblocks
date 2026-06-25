@@ -67,6 +67,51 @@ impl ContentPart {
         self.metadata.insert(key.into(), value);
         self
     }
+
+    pub fn validate(&self) -> Result<(), ContentPartError> {
+        match self.kind {
+            ContentPartKind::Text => {
+                if self.text.is_none() {
+                    return Err(ContentPartError::MissingTextPayload);
+                }
+                if self.data.is_some() {
+                    return Err(ContentPartError::UnexpectedDataPayload {
+                        kind: ContentPartKind::Text,
+                    });
+                }
+            }
+            ContentPartKind::Json => {
+                if self.data.is_none() {
+                    return Err(ContentPartError::MissingJsonPayload);
+                }
+                if self.text.is_some() {
+                    return Err(ContentPartError::UnexpectedTextPayload {
+                        kind: ContentPartKind::Json,
+                    });
+                }
+            }
+            ContentPartKind::ArtifactRef => {
+                if self.data.is_none() {
+                    return Err(ContentPartError::MissingArtifactRefPayload);
+                }
+                if self.text.is_some() {
+                    return Err(ContentPartError::UnexpectedTextPayload {
+                        kind: ContentPartKind::ArtifactRef,
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ContentPartError {
+    MissingTextPayload,
+    MissingJsonPayload,
+    MissingArtifactRefPayload,
+    UnexpectedTextPayload { kind: ContentPartKind },
+    UnexpectedDataPayload { kind: ContentPartKind },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -197,6 +242,9 @@ pub struct ToolResult {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ToolResultError {
     EmptyToolCallId,
+    InvalidContentPart {
+        source: ContentPartError,
+    },
     EmptyArtifactField {
         field: &'static str,
     },
@@ -368,6 +416,10 @@ impl ToolResult {
         }
         for artifact in &self.artifacts {
             artifact.validate()?;
+        }
+        for part in &self.output {
+            part.validate()
+                .map_err(|source| ToolResultError::InvalidContentPart { source })?;
         }
         Ok(())
     }
@@ -870,6 +922,9 @@ pub enum ToolResultEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ToolResultEventError {
     EmptyToolCallId,
+    InvalidOutput {
+        source: ContentPartError,
+    },
     InvalidArtifact {
         source: ToolResultError,
     },
@@ -1004,6 +1059,12 @@ impl ToolResultEvent {
     pub fn validate(&self) -> Result<(), ToolResultEventError> {
         if self.tool_call_id().trim().is_empty() {
             return Err(ToolResultEventError::EmptyToolCallId);
+        }
+        if let Self::Delta { output, .. } = self {
+            for part in output {
+                part.validate()
+                    .map_err(|source| ToolResultEventError::InvalidOutput { source })?;
+            }
         }
         if let Self::ArtifactReady { artifact, .. } = self {
             artifact
