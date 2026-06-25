@@ -724,6 +724,9 @@ def test_tool_approval_record_is_valid_only_for_same_call_arguments_and_principa
     changed = _search_call(resolved, query="changed")
     assert record.is_valid_for(resolved, changed, principal_id="user-1", now=1_500) is False
 
+    object.__setattr__(record, "decided_at", None)
+    assert record.is_valid_for(resolved, call, principal_id="user-1", now=1_500) is False
+
 
 def test_tool_approval_record_is_invalid_after_argument_revision() -> None:
     resolved = _resolved_search_tool()

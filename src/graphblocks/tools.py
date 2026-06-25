@@ -710,6 +710,10 @@ class ToolApprovalRecord:
         return replace(self, status="invalidated", invalidated_at=invalidated_at)
 
     def is_valid_for(self, resolved_tool: ResolvedTool, call: ToolCall, *, principal_id: str, now: int) -> bool:
+        try:
+            self.__post_init__()
+        except ValueError:
+            return False
         return (
             self.status == "approved"
             and self.approval_id == self.request.approval_id
