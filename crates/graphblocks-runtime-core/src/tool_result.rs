@@ -840,6 +840,7 @@ pub enum ToolResultEvent {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ToolResultEventError {
+    EmptyToolCallId,
     InvalidResult {
         source: ToolResultError,
     },
@@ -969,6 +970,10 @@ impl ToolResultEvent {
     }
 
     pub fn validate(&self) -> Result<(), ToolResultEventError> {
+        if self.tool_call_id().trim().is_empty() {
+            return Err(ToolResultEventError::EmptyToolCallId);
+        }
+
         let Some((kind, expected, event_tool_call_id, result)) = (match self {
             Self::Completed {
                 tool_call_id,

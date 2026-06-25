@@ -868,6 +868,7 @@ pub struct ApplicationProtocolEvent {
 pub enum ApplicationProtocolError {
     EmptyCommandId,
     EmptyEventId,
+    InvalidToolResultEvent { source: ToolResultEventError },
     NonMonotonicSequence { previous: u64, next: u64 },
     ProtocolVersionMismatch { left: String, right: String },
 }
@@ -877,6 +878,9 @@ impl fmt::Display for ApplicationProtocolError {
         match self {
             Self::EmptyCommandId => write!(formatter, "application command id must not be empty"),
             Self::EmptyEventId => write!(formatter, "application event id must not be empty"),
+            Self::InvalidToolResultEvent { source } => {
+                write!(formatter, "tool result event is invalid: {source:?}")
+            }
             Self::NonMonotonicSequence { previous, next } => write!(
                 formatter,
                 "application event sequence {next} must be greater than previous sequence {previous}"
@@ -927,6 +931,10 @@ impl ApplicationProtocolEvent {
         metadata: ApplicationProtocolEventMetadata,
         event: &ToolResultEvent,
     ) -> Result<Option<Self>, ApplicationProtocolError> {
+        event
+            .validate()
+            .map_err(|source| ApplicationProtocolError::InvalidToolResultEvent { source })?;
+
         match event {
             ToolResultEvent::Delta {
                 tool_call_id,

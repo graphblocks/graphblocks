@@ -1,8 +1,9 @@
 use graphblocks_runtime_core::application_event::{
     ApplicationCommand, ApplicationCommandKind, ApplicationCommandMetadata, ApplicationEvent,
     ApplicationEventError, ApplicationEventKind, ApplicationEventMetadata,
-    ApplicationEventStreamState, ApplicationProtocolCapabilities, ApplicationProtocolEvent,
-    ApplicationProtocolEventKind, ApplicationProtocolEventMetadata, ApplicationProtocolLog,
+    ApplicationEventStreamState, ApplicationProtocolCapabilities, ApplicationProtocolError,
+    ApplicationProtocolEvent, ApplicationProtocolEventKind, ApplicationProtocolEventMetadata,
+    ApplicationProtocolLog,
 };
 use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory};
 use graphblocks_runtime_core::output_policy::{
@@ -1176,6 +1177,21 @@ fn protocol_events_represent_streaming_tool_result_deltas_and_artifacts() {
         )
         .expect("completed conversion should be valid"),
         None
+    );
+}
+
+#[test]
+fn protocol_tool_result_stream_rejects_invalid_tool_result_event() {
+    let delta = ToolResultEvent::delta("", 7, [ContentPart::text("draft chunk")]);
+
+    assert_eq!(
+        ApplicationProtocolEvent::tool_result_stream(
+            protocol_event_metadata("event-delta", 7, "cursor-7"),
+            &delta,
+        ),
+        Err(ApplicationProtocolError::InvalidToolResultEvent {
+            source: ToolResultEventError::EmptyToolCallId,
+        })
     );
 }
 

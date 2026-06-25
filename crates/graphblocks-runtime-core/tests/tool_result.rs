@@ -727,6 +727,27 @@ fn final_tool_result_events_validate_result_status_and_call_identity() {
 }
 
 #[test]
+fn tool_result_events_require_tool_call_id_for_draft_and_final_events() {
+    assert_eq!(
+        ToolResultEvent::started(" ", 1, 1_000).validate(),
+        Err(ToolResultEventError::EmptyToolCallId),
+    );
+    assert_eq!(
+        ToolResultEvent::delta("", 2, [ContentPart::text("draft")]).validate(),
+        Err(ToolResultEventError::EmptyToolCallId),
+    );
+    assert_eq!(
+        ToolResultEvent::completed(
+            "",
+            3,
+            ToolResult::completed("", [ContentPart::text("done")], 1_000, 1_010)
+        )
+        .validate(),
+        Err(ToolResultEventError::EmptyToolCallId),
+    );
+}
+
+#[test]
 fn policy_stopped_result_is_final_but_incomplete() {
     let result = ToolResult::policy_stopped(
         "call-1",
