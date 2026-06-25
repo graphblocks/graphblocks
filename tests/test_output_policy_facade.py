@@ -190,6 +190,9 @@ def test_output_policy_contract_rejects_unknown_literals() -> None:
     with pytest.raises(ValueError, match="generation chunk response_id must not be empty"):
         GenerationChunk.text("stream-1", "", 1, "late")
 
+    with pytest.raises(ValueError, match="generation chunk text must be a string"):
+        GenerationChunk.text("stream-1", "response-1", 1, {"kind": "text"})  # type: ignore[arg-type]
+
     with pytest.raises(ValueError, match="output gate stream_id must not be empty"):
         OutputDeliveryGate(" ", "response-1")
 

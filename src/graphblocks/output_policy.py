@@ -192,6 +192,8 @@ class GenerationChunk:
             raise ValueError("generation chunk stream_id must not be empty")
         if not response_id.strip():
             raise ValueError("generation chunk response_id must not be empty")
+        if not isinstance(text, str):
+            raise ValueError("generation chunk text must be a string")
         self.stream_id = stream_id
         self.response_id = response_id
         self.sequence = sequence
