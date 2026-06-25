@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, path::Path};
 
 use rusqlite::{Connection, OptionalExtension, params};
-use serde_json::{Map, Number, Value};
+use serde_json::{Map, Number, Value, json};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RunStatus {
@@ -61,11 +61,72 @@ impl RunStatus {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct RunDeploymentProvenance {
+    pub release_digest: Option<String>,
+    pub deployment_revision_id: Option<String>,
+    pub physical_plan_hash: Option<String>,
+    pub release_signature_digest: Option<String>,
+}
+
+impl RunDeploymentProvenance {
+    pub fn new() -> Self {
+        Self {
+            release_digest: None,
+            deployment_revision_id: None,
+            physical_plan_hash: None,
+            release_signature_digest: None,
+        }
+    }
+
+    pub fn with_release_digest(mut self, release_digest: impl Into<String>) -> Self {
+        self.release_digest = Some(release_digest.into());
+        self
+    }
+
+    pub fn with_deployment_revision_id(
+        mut self,
+        deployment_revision_id: impl Into<String>,
+    ) -> Self {
+        self.deployment_revision_id = Some(deployment_revision_id.into());
+        self
+    }
+
+    pub fn with_physical_plan_hash(mut self, physical_plan_hash: impl Into<String>) -> Self {
+        self.physical_plan_hash = Some(physical_plan_hash.into());
+        self
+    }
+
+    pub fn with_release_signature_digest(
+        mut self,
+        release_signature_digest: impl Into<String>,
+    ) -> Self {
+        self.release_signature_digest = Some(release_signature_digest.into());
+        self
+    }
+
+    pub fn canonical_value(&self) -> Value {
+        json!({
+            "release_digest": self.release_digest,
+            "deployment_revision_id": self.deployment_revision_id,
+            "physical_plan_hash": self.physical_plan_hash,
+            "release_signature_digest": self.release_signature_digest,
+        })
+    }
+}
+
+impl Default for RunDeploymentProvenance {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct RunRecord {
     pub run_id: String,
     pub sequence: u64,
     pub graph_hash: String,
     pub inputs: Value,
+    pub deployment_provenance: RunDeploymentProvenance,
     pub status: RunStatus,
     pub state: Value,
     pub state_revision: u64,
@@ -408,6 +469,15 @@ impl InMemoryRunStore {
     }
 
     pub fn create_run(&mut self, graph_hash: impl Into<String>, inputs: Value) -> RunRecord {
+        self.create_run_with_provenance(graph_hash, inputs, RunDeploymentProvenance::new())
+    }
+
+    pub fn create_run_with_provenance(
+        &mut self,
+        graph_hash: impl Into<String>,
+        inputs: Value,
+        deployment_provenance: RunDeploymentProvenance,
+    ) -> RunRecord {
         let sequence = self.next_sequence;
         self.next_sequence += 1;
         let run_id = format!("run-{sequence:06}");
@@ -416,6 +486,7 @@ impl InMemoryRunStore {
             sequence,
             graph_hash: graph_hash.into(),
             inputs,
+            deployment_provenance,
             status: RunStatus::Created,
             state: Value::Object(Map::new()),
             state_revision: 0,
@@ -497,6 +568,7 @@ impl SqliteRunStore {
                     run_id TEXT NOT NULL UNIQUE,
                     graph_hash TEXT NOT NULL,
                     inputs_json TEXT NOT NULL,
+                    deployment_provenance_json TEXT NOT NULL,
                     status TEXT NOT NULL,
                     state_json TEXT NOT NULL,
                     state_revision INTEGER NOT NULL
@@ -504,6 +576,30 @@ impl SqliteRunStore {
                 ",
             )
             .map_err(storage_error)?;
+        let has_deployment_provenance = self
+            .connection
+            .prepare("PRAGMA table_info(runs)")
+            .map_err(storage_error)?
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(storage_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(storage_error)?
+            .into_iter()
+            .any(|name| name == "deployment_provenance_json");
+        if !has_deployment_provenance {
+            self.connection
+                .execute(
+                    "ALTER TABLE runs ADD COLUMN deployment_provenance_json TEXT",
+                    [],
+                )
+                .map_err(storage_error)?;
+            self.connection
+                .execute(
+                    "UPDATE runs SET deployment_provenance_json = ? WHERE deployment_provenance_json IS NULL",
+                    params![storage_json(&RunDeploymentProvenance::new().canonical_value())?],
+                )
+                .map_err(storage_error)?;
+        }
         Ok(())
     }
 
@@ -511,6 +607,15 @@ impl SqliteRunStore {
         &mut self,
         graph_hash: impl Into<String>,
         inputs: Value,
+    ) -> Result<RunRecord, RunStoreError> {
+        self.create_run_with_provenance(graph_hash, inputs, RunDeploymentProvenance::new())
+    }
+
+    pub fn create_run_with_provenance(
+        &mut self,
+        graph_hash: impl Into<String>,
+        inputs: Value,
+        deployment_provenance: RunDeploymentProvenance,
     ) -> Result<RunRecord, RunStoreError> {
         let transaction = self.connection.transaction().map_err(storage_error)?;
         let next_sequence = transaction
@@ -527,6 +632,7 @@ impl SqliteRunStore {
             sequence,
             graph_hash: graph_hash.into(),
             inputs,
+            deployment_provenance,
             status: RunStatus::Created,
             state: Value::Object(Map::new()),
             state_revision: 0,
@@ -539,17 +645,19 @@ impl SqliteRunStore {
                     run_id,
                     graph_hash,
                     inputs_json,
+                    deployment_provenance_json,
                     status,
                     state_json,
                     state_revision
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ",
                 params![
                     sqlite_u64_to_i64(record.sequence, "run sequence")?,
                     &record.run_id,
                     &record.graph_hash,
                     storage_json(&record.inputs)?,
+                    storage_json(&record.deployment_provenance.canonical_value())?,
                     record.status.as_str(),
                     storage_json(&record.state)?,
                     sqlite_u64_to_i64(record.state_revision, "state revision")?,
@@ -566,7 +674,15 @@ impl SqliteRunStore {
             .connection
             .query_row(
                 "
-                SELECT sequence, run_id, graph_hash, inputs_json, status, state_json, state_revision
+                SELECT
+                    sequence,
+                    run_id,
+                    graph_hash,
+                    inputs_json,
+                    deployment_provenance_json,
+                    status,
+                    state_json,
+                    state_revision
                 FROM runs
                 WHERE run_id = ?
                 ",
@@ -579,13 +695,23 @@ impl SqliteRunStore {
                         row.get::<_, String>(3)?,
                         row.get::<_, String>(4)?,
                         row.get::<_, String>(5)?,
-                        row.get::<_, i64>(6)?,
+                        row.get::<_, String>(6)?,
+                        row.get::<_, i64>(7)?,
                     ))
                 },
             )
             .optional()
             .map_err(storage_error)?;
-        let Some((sequence, run_id, graph_hash, inputs, status, state, state_revision)) = row
+        let Some((
+            sequence,
+            run_id,
+            graph_hash,
+            inputs,
+            deployment_provenance,
+            status,
+            state,
+            state_revision,
+        )) = row
         else {
             return Err(RunStoreError::NotFound {
                 run_id: run_id.to_owned(),
@@ -596,6 +722,7 @@ impl SqliteRunStore {
             run_id,
             graph_hash,
             inputs,
+            deployment_provenance,
             status,
             state,
             state_revision,
@@ -648,6 +775,7 @@ fn record_from_storage(
     run_id: String,
     graph_hash: String,
     inputs: String,
+    deployment_provenance: String,
     status: String,
     state: String,
     state_revision: i64,
@@ -660,6 +788,7 @@ fn record_from_storage(
         sequence: sqlite_i64_to_u64(sequence, "run sequence")?,
         graph_hash,
         inputs: parse_storage_json(&inputs)?,
+        deployment_provenance: deployment_provenance_from_storage(&deployment_provenance)?,
         status,
         state: parse_storage_json(&state)?,
         state_revision: sqlite_i64_to_u64(state_revision, "state revision")?,
@@ -672,6 +801,28 @@ fn storage_json(value: &Value) -> Result<String, RunStoreError> {
 
 fn parse_storage_json(text: &str) -> Result<Value, RunStoreError> {
     serde_json::from_str(text).map_err(storage_error)
+}
+
+fn deployment_provenance_from_storage(
+    text: &str,
+) -> Result<RunDeploymentProvenance, RunStoreError> {
+    let value = parse_storage_json(text)?;
+    let Some(object) = value.as_object() else {
+        return Ok(RunDeploymentProvenance::new());
+    };
+    Ok(RunDeploymentProvenance {
+        release_digest: optional_string(object, "release_digest"),
+        deployment_revision_id: optional_string(object, "deployment_revision_id"),
+        physical_plan_hash: optional_string(object, "physical_plan_hash"),
+        release_signature_digest: optional_string(object, "release_signature_digest"),
+    })
+}
+
+fn optional_string(object: &Map<String, Value>, key: &str) -> Option<String> {
+    object
+        .get(key)
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
 }
 
 fn sqlite_u64_to_i64(value: u64, label: &'static str) -> Result<i64, RunStoreError> {

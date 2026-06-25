@@ -1,5 +1,6 @@
 use graphblocks_runtime_core::run_store::{
-    InMemoryRunStore, PatchOperation, RunStatus, RunStoreError, SqliteRunStore, StatePatch,
+    InMemoryRunStore, PatchOperation, RunDeploymentProvenance, RunStatus, RunStoreError,
+    SqliteRunStore, StatePatch,
 };
 use serde_json::json;
 
@@ -20,6 +21,37 @@ fn run_store_allocates_monotonic_run_snapshots() -> Result<(), RunStoreError> {
     assert_eq!(second.run_id, "run-000002");
     assert_eq!(second.sequence, 2);
     assert_eq!(store.get_run("run-000001")?, first);
+    Ok(())
+}
+
+#[test]
+fn run_store_records_deployment_provenance_and_preserves_it_across_mutations()
+-> Result<(), RunStoreError> {
+    let mut store = InMemoryRunStore::new();
+    let provenance = RunDeploymentProvenance::new()
+        .with_release_digest("sha256:release")
+        .with_deployment_revision_id("rev-1")
+        .with_physical_plan_hash("sha256:physical")
+        .with_release_signature_digest("sha256:signature");
+
+    let record = store.create_run_with_provenance("sha256:test", json!({}), provenance.clone());
+    let patched = store.patch_state(
+        &record.run_id,
+        StatePatch::new(Some(0)).with(PatchOperation::set(["step"], json!(1))),
+    )?;
+    let running = store.set_status(&record.run_id, RunStatus::Running)?;
+
+    assert_eq!(
+        record.deployment_provenance.canonical_value(),
+        json!({
+            "release_digest": "sha256:release",
+            "deployment_revision_id": "rev-1",
+            "physical_plan_hash": "sha256:physical",
+            "release_signature_digest": "sha256:signature",
+        })
+    );
+    assert_eq!(patched.deployment_provenance, provenance);
+    assert_eq!(running.deployment_provenance, provenance);
     Ok(())
 }
 
@@ -118,8 +150,13 @@ fn sqlite_run_store_persists_runs_across_reopen() -> Result<(), String> {
 
     {
         let mut store = SqliteRunStore::open(&path).map_err(|error| format!("{error:?}"))?;
+        let provenance = RunDeploymentProvenance::new()
+            .with_release_digest("sha256:release")
+            .with_deployment_revision_id("rev-1")
+            .with_physical_plan_hash("sha256:physical")
+            .with_release_signature_digest("sha256:signature");
         let first = store
-            .create_run("sha256:one", json!({"message": "hello"}))
+            .create_run_with_provenance("sha256:one", json!({"message": "hello"}), provenance)
             .map_err(|error| format!("{error:?}"))?;
         let second = store
             .create_run("sha256:two", json!({}))
@@ -142,6 +179,15 @@ fn sqlite_run_store_persists_runs_across_reopen() -> Result<(), String> {
     assert_eq!(first.status, RunStatus::Running);
     assert_eq!(first.state, json!({}));
     assert_eq!(first.state_revision, 0);
+    assert_eq!(
+        first.deployment_provenance.canonical_value(),
+        json!({
+            "release_digest": "sha256:release",
+            "deployment_revision_id": "rev-1",
+            "physical_plan_hash": "sha256:physical",
+            "release_signature_digest": "sha256:signature",
+        })
+    );
 
     let _ = std::fs::remove_file(&path);
     Ok(())
