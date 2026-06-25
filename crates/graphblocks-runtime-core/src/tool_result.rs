@@ -97,6 +97,18 @@ impl ArtifactRef {
         self
     }
 
+    pub fn validate(&self) -> Result<(), ToolResultError> {
+        for (field, value) in [
+            ("artifact_id", self.artifact_id.as_str()),
+            ("uri", self.uri.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(ToolResultError::EmptyArtifactField { field });
+            }
+        }
+        Ok(())
+    }
+
     fn canonical_value(&self) -> Value {
         json!({
             "artifact_id": self.artifact_id,
@@ -177,6 +189,9 @@ pub struct ToolResult {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ToolResultError {
     EmptyToolCallId,
+    EmptyArtifactField {
+        field: &'static str,
+    },
     CompletedBeforeStarted {
         started_at_unix_ms: u64,
         completed_at_unix_ms: u64,
@@ -342,6 +357,9 @@ impl ToolResult {
                 started_at_unix_ms,
                 completed_at_unix_ms,
             });
+        }
+        for artifact in &self.artifacts {
+            artifact.validate()?;
         }
         Ok(())
     }

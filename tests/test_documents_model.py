@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from graphblocks.documents import (
     ArtifactRef,
     AssetRevision,
@@ -12,6 +14,13 @@ from graphblocks.documents import (
     SourceRef,
     create_local_text_revision,
 )
+
+
+def test_artifact_ref_rejects_empty_identity_fields() -> None:
+    with pytest.raises(ValueError, match="artifact artifact_id must not be empty"):
+        ArtifactRef(" ", "file:///tmp/example.txt")
+    with pytest.raises(ValueError, match="artifact uri must not be empty"):
+        ArtifactRef("artifact-1", "")
 
 
 def test_create_local_text_revision_preserves_content_hash_and_artifact_metadata() -> None:

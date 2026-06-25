@@ -20,6 +20,12 @@ class ArtifactRef:
     filename: str | None = None
     metadata: dict[str, str] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        if not self.artifact_id.strip():
+            raise ValueError("artifact artifact_id must not be empty")
+        if not self.uri.strip():
+            raise ValueError("artifact uri must not be empty")
+
 
 @dataclass(frozen=True, slots=True)
 class SourceAsset:

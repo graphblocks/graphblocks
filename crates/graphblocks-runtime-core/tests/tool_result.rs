@@ -630,6 +630,28 @@ fn completed_event_carries_the_final_durable_result() {
 }
 
 #[test]
+fn artifact_refs_validate_identity_fields() {
+    assert_eq!(
+        ArtifactRef::new(" ", "file:///tmp/out.txt").validate(),
+        Err(ToolResultError::EmptyArtifactField {
+            field: "artifact_id",
+        })
+    );
+    assert_eq!(
+        ArtifactRef::new("artifact-1", "").validate(),
+        Err(ToolResultError::EmptyArtifactField { field: "uri" })
+    );
+
+    let result = ToolResult::completed("call-1", [ContentPart::text("done")], 1_000, 1_050)
+        .with_artifacts([ArtifactRef::new("artifact-1", " ")]);
+
+    assert_eq!(
+        result.validate(),
+        Err(ToolResultError::EmptyArtifactField { field: "uri" })
+    );
+}
+
+#[test]
 fn terminal_tool_result_events_preserve_partial_terminal_kind() {
     let policy_stopped = ToolResult::policy_stopped(
         "call-1",
