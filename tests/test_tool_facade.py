@@ -490,6 +490,47 @@ def test_resolved_tool_rejects_empty_identity_fields() -> None:
         )
 
 
+def test_resolved_tool_rejects_non_string_identity_fields() -> None:
+    definition = ToolDefinition(
+        name="knowledge.search",
+        description="Search support documentation.",
+        input_schema="schemas/SearchRequest@1",
+    )
+    binding = ToolBinding(
+        binding_id="binding-knowledge-search",
+        tool_name="knowledge.search",
+        implementation=BlockToolImplementation(block="knowledge.search@1"),
+    )
+
+    with pytest.raises(ValueError, match="resolved tool resolved_tool_id must be a string"):
+        ResolvedTool.from_definition_and_binding(
+            resolved_tool_id=1,  # type: ignore[arg-type]
+            definition=definition,
+            binding=binding,
+            effective_policy_snapshot_id="policy-snapshot-1",
+            allowed_for_principal=True,
+        )
+    with pytest.raises(ValueError, match="resolved tool effective_policy_snapshot_id must be a string"):
+        ResolvedTool.from_definition_and_binding(
+            resolved_tool_id="resolved-1",
+            definition=definition,
+            binding=binding,
+            effective_policy_snapshot_id=object(),  # type: ignore[arg-type]
+            allowed_for_principal=True,
+        )
+
+    resolved = ResolvedTool.from_definition_and_binding(
+        resolved_tool_id="resolved-1",
+        definition=definition,
+        binding=binding,
+        effective_policy_snapshot_id="policy-snapshot-1",
+        allowed_for_principal=True,
+    )
+    for field_name in ("definition_digest", "binding_digest"):
+        with pytest.raises(ValueError, match=f"resolved tool {field_name} must be a string"):
+            replace(resolved, **{field_name: object()})
+
+
 def test_resolved_tool_rejects_definition_binding_name_mismatch() -> None:
     definition = ToolDefinition(
         name="knowledge.search",

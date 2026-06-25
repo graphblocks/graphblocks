@@ -572,8 +572,7 @@ class ResolvedTool:
             "binding_digest",
             "effective_policy_snapshot_id",
         ):
-            if not getattr(self, field_name).strip():
-                raise ValueError(f"resolved tool {field_name} must not be empty")
+            _validate_non_empty_string("resolved tool", field_name, getattr(self, field_name))
         if self.binding.tool_name != self.definition.name:
             raise ToolResolutionError(
                 f"tool binding {self.binding.binding_id} references "
