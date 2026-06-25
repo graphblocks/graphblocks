@@ -1,7 +1,8 @@
 use graphblocks_runtime_core::evaluation::{
-    CheckResult, CheckStatus, ConstraintOperator, GateConstraint, GateDecision, MetricDirection,
-    MetricObservation, ResourceSnapshotRef, ResultBundle, ReviewDecision, ReviewRecord,
-    RunProvenance, SloMeasurement, SloObjective, SloReportStatus, TrialResult, evaluate_gate,
+    ChangeSet, CheckResult, CheckStatus, ConstraintOperator, GateConstraint, GateDecision,
+    MetricDirection, MetricObservation, ResourceSnapshotRef, ResultBundle, ReviewDecision,
+    ReviewRecord, RunProvenance, SloMeasurement, SloObjective, SloReportStatus, TrialResult,
+    WorkspaceMutationPolicy, evaluate_gate,
 };
 use graphblocks_runtime_core::policy::PrincipalRef;
 use graphblocks_runtime_core::tool::{
@@ -78,6 +79,76 @@ fn evaluate_gate_uses_metric_thresholds() {
     assert_eq!(passing.decision, GateDecision::Pass);
     assert_eq!(failing.decision, GateDecision::Fail);
     assert_eq!(failing.violated_constraints, vec!["metric:latency_ms"]);
+}
+
+#[test]
+fn workspace_mutation_policy_protects_declared_read_only_inputs() {
+    let policy = WorkspaceMutationPolicy::new("policy-1", ["file", "source", "test_oracle"])
+        .with_read_only_resource_id("rtl/top.sv")
+        .with_read_only_resource_kind("test_oracle");
+    let principal = PrincipalRef::new("optimizer-1");
+    let change_set = ChangeSet {
+        change_set_id: "change-1".to_string(),
+        base: ResourceSnapshotRef::new("workspace", "sha256:base").with_resource_kind("workspace"),
+        candidate: ResourceSnapshotRef::new("workspace", "sha256:candidate")
+            .with_resource_kind("workspace"),
+        operations: vec![
+            json!({"op": "file.read", "resource_id": "rtl/top.sv", "resource_kind": "source"}),
+            json!({"op": "file.write", "resource_id": "rtl/top.sv", "resource_kind": "source"}),
+            json!({"op": "file.write", "resource_id": "golden.json", "resource_kind": "test_oracle"}),
+        ],
+        summary: None,
+    };
+
+    let decision = policy.evaluate(&change_set, &principal, &[], &[], &[]);
+
+    assert!(!decision.allowed);
+    assert_eq!(
+        decision.reason_codes,
+        vec![
+            "workspace.read_only_resource_changed",
+            "workspace.read_only_resource_kind_changed",
+        ]
+    );
+}
+
+#[test]
+fn workspace_mutation_policy_rejects_protected_snapshot_digest_change_without_operation_log() {
+    let policy = WorkspaceMutationPolicy::new("policy-1", ["file", "source"])
+        .with_read_only_resource_kind("source");
+    let principal = PrincipalRef::new("optimizer-1");
+    let change_set = ChangeSet {
+        change_set_id: "change-1".to_string(),
+        base: ResourceSnapshotRef::new("workspace", "sha256:base").with_resource_kind("workspace"),
+        candidate: ResourceSnapshotRef::new("workspace", "sha256:candidate")
+            .with_resource_kind("workspace"),
+        operations: Vec::new(),
+        summary: None,
+    };
+    let base_resources = vec![
+        ResourceSnapshotRef::new("rtl/top.sv", "sha256:source-v1").with_resource_kind("source"),
+        ResourceSnapshotRef::new("candidate/out.sv", "sha256:candidate-v1")
+            .with_resource_kind("file"),
+    ];
+    let candidate_resources = vec![
+        ResourceSnapshotRef::new("rtl/top.sv", "sha256:source-v2").with_resource_kind("source"),
+        ResourceSnapshotRef::new("candidate/out.sv", "sha256:candidate-v2")
+            .with_resource_kind("file"),
+    ];
+
+    let decision = policy.evaluate(
+        &change_set,
+        &principal,
+        &[],
+        &base_resources,
+        &candidate_resources,
+    );
+
+    assert!(!decision.allowed);
+    assert_eq!(
+        decision.reason_codes,
+        vec!["workspace.read_only_resource_changed"]
+    );
 }
 
 #[test]

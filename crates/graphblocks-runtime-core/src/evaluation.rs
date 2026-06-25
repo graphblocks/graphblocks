@@ -218,6 +218,190 @@ pub struct ChangeSet {
     pub summary: Option<String>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkspaceMutationDecision {
+    pub allowed: bool,
+    pub reason_codes: Vec<String>,
+}
+
+impl WorkspaceMutationDecision {
+    fn from_reasons(mut reason_codes: Vec<String>) -> Self {
+        reason_codes.sort();
+        reason_codes.dedup();
+        Self {
+            allowed: reason_codes.is_empty(),
+            reason_codes,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkspaceMutationPolicy {
+    pub policy_id: String,
+    pub allowed_resource_kinds: Vec<String>,
+    pub denied_operations: Vec<String>,
+    pub required_review_scopes: Vec<String>,
+    pub read_only_resource_ids: Vec<String>,
+    pub read_only_resource_kinds: Vec<String>,
+}
+
+impl WorkspaceMutationPolicy {
+    pub fn new<I, S>(policy_id: impl Into<String>, allowed_resource_kinds: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let mut allowed_resource_kinds = allowed_resource_kinds
+            .into_iter()
+            .map(Into::into)
+            .collect::<Vec<_>>();
+        allowed_resource_kinds.sort();
+        allowed_resource_kinds.dedup();
+        Self {
+            policy_id: policy_id.into(),
+            allowed_resource_kinds,
+            denied_operations: Vec::new(),
+            required_review_scopes: Vec::new(),
+            read_only_resource_ids: Vec::new(),
+            read_only_resource_kinds: Vec::new(),
+        }
+    }
+
+    pub fn with_denied_operation(mut self, operation: impl Into<String>) -> Self {
+        self.denied_operations.push(operation.into());
+        self.denied_operations.sort();
+        self.denied_operations.dedup();
+        self
+    }
+
+    pub fn with_required_review_scope(mut self, scope: impl Into<String>) -> Self {
+        self.required_review_scopes.push(scope.into());
+        self.required_review_scopes.sort();
+        self.required_review_scopes.dedup();
+        self
+    }
+
+    pub fn with_read_only_resource_id(mut self, resource_id: impl Into<String>) -> Self {
+        self.read_only_resource_ids.push(resource_id.into());
+        self.read_only_resource_ids.sort();
+        self.read_only_resource_ids.dedup();
+        self
+    }
+
+    pub fn with_read_only_resource_kind(mut self, resource_kind: impl Into<String>) -> Self {
+        self.read_only_resource_kinds.push(resource_kind.into());
+        self.read_only_resource_kinds.sort();
+        self.read_only_resource_kinds.dedup();
+        self
+    }
+
+    pub fn evaluate(
+        &self,
+        change_set: &ChangeSet,
+        _principal: &PrincipalRef,
+        review_scopes: &[&str],
+        base_resources: &[ResourceSnapshotRef],
+        candidate_resources: &[ResourceSnapshotRef],
+    ) -> WorkspaceMutationDecision {
+        let mut reasons = Vec::new();
+        if !self
+            .required_review_scopes
+            .iter()
+            .all(|required| review_scopes.contains(&required.as_str()))
+        {
+            reasons.push("workspace.review_required".to_string());
+        }
+        for operation in &change_set.operations {
+            let operation_name = operation.get("op").and_then(Value::as_str);
+            let resource_id = operation.get("resource_id").and_then(Value::as_str);
+            let resource_kind = operation.get("resource_kind").and_then(Value::as_str);
+            if let Some(operation_name) = operation_name {
+                if self
+                    .denied_operations
+                    .iter()
+                    .any(|denied| denied == operation_name)
+                {
+                    reasons.push("workspace.operation_denied".to_string());
+                }
+            }
+            if let Some(resource_kind) = resource_kind {
+                if !self
+                    .allowed_resource_kinds
+                    .iter()
+                    .any(|allowed| allowed == resource_kind)
+                {
+                    reasons.push("workspace.resource_kind_denied".to_string());
+                }
+            }
+
+            let operation_action = operation_name
+                .and_then(|name| name.rsplit('.').next())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            let is_read_only_operation = matches!(
+                operation_action.as_str(),
+                "check" | "diff" | "inspect" | "list" | "read" | "stat" | "validate"
+            );
+            if !is_read_only_operation {
+                if resource_id
+                    .map(|id| {
+                        self.read_only_resource_ids
+                            .iter()
+                            .any(|read_only| read_only == id)
+                    })
+                    .unwrap_or(false)
+                {
+                    reasons.push("workspace.read_only_resource_changed".to_string());
+                }
+                if resource_kind
+                    .map(|kind| {
+                        self.read_only_resource_kinds
+                            .iter()
+                            .any(|read_only| read_only == kind)
+                    })
+                    .unwrap_or(false)
+                {
+                    reasons.push("workspace.read_only_resource_kind_changed".to_string());
+                }
+            }
+        }
+
+        if !base_resources.is_empty() || !candidate_resources.is_empty() {
+            let candidate_by_resource_id = candidate_resources
+                .iter()
+                .map(|resource| (resource.resource_id.as_str(), resource))
+                .collect::<BTreeMap<_, _>>();
+            for resource in base_resources {
+                let is_read_only_resource = self
+                    .read_only_resource_ids
+                    .iter()
+                    .any(|resource_id| resource_id == &resource.resource_id)
+                    || resource
+                        .resource_kind
+                        .as_ref()
+                        .map(|resource_kind| {
+                            self.read_only_resource_kinds
+                                .iter()
+                                .any(|read_only| read_only == resource_kind)
+                        })
+                        .unwrap_or(false);
+                if !is_read_only_resource {
+                    continue;
+                }
+                if candidate_by_resource_id
+                    .get(resource.resource_id.as_str())
+                    .map(|candidate| *candidate != resource)
+                    .unwrap_or(true)
+                {
+                    reasons.push("workspace.read_only_resource_changed".to_string());
+                }
+            }
+        }
+
+        WorkspaceMutationDecision::from_reasons(reasons)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CheckStatus {
     Passed,
