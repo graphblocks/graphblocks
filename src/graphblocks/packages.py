@@ -273,6 +273,39 @@ def doctor_package_catalog(catalog: dict[str, Any]) -> DiagnosticSet:
                     )
                 )
 
+        raw_forbidden_dependencies = package.get("forbiddenDependencies", [])
+        forbidden_dependencies = raw_forbidden_dependencies if isinstance(raw_forbidden_dependencies, list) else []
+        if not isinstance(raw_forbidden_dependencies, list):
+            diagnostics.append(
+                Diagnostic(
+                    "PackageForbiddenDependenciesInvalid",
+                    "package forbiddenDependencies must be a list",
+                    f"$.packages.{distribution}.forbiddenDependencies",
+                )
+            )
+            continue
+        valid_forbidden_dependencies: set[str] = set()
+        for index, dependency in enumerate(forbidden_dependencies):
+            if not isinstance(dependency, str) or not dependency.strip():
+                diagnostics.append(
+                    Diagnostic(
+                        "PackageForbiddenDependencyInvalid",
+                        "package forbidden dependencies must be non-empty strings",
+                        f"$.packages.{distribution}.forbiddenDependencies[{index}]",
+                    )
+                )
+            else:
+                valid_forbidden_dependencies.add(dependency)
+        for index, dependency in enumerate(dependencies):
+            if isinstance(dependency, str) and dependency in valid_forbidden_dependencies:
+                diagnostics.append(
+                    Diagnostic(
+                        "PackageForbiddenDependencySelected",
+                        f"package {distribution!r} depends on forbidden dependency {dependency!r}",
+                        f"$.packages.{distribution}.dependsOn[{index}]",
+                    )
+                )
+
     states: dict[str, str] = {}
     reported_cycles: set[frozenset[str]] = set()
     for root in sorted(packages_by_distribution):

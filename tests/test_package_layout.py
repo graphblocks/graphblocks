@@ -1012,6 +1012,30 @@ def test_package_catalog_doctor_reports_unknown_dependency_and_default_constrain
     ]
 
 
+def test_package_catalog_doctor_reports_forbidden_dependency_conflicts() -> None:
+    diagnostics = doctor_package_catalog(
+        {
+            "catalogVersion": 1,
+            "specVersion": "1.0",
+            "defaultMetaPackage": {"distribution": "graphblocks", "dependencies": [], "excludedCategories": []},
+            "packages": [
+                {"distribution": "graphblocks", "default": True, "dependsOn": []},
+                {
+                    "distribution": "graphblocks-openai-realtime",
+                    "default": False,
+                    "dependsOn": ["graphblocks-voice", "openai"],
+                    "forbiddenDependencies": ["openai"],
+                },
+                {"distribution": "graphblocks-voice", "default": False, "dependsOn": []},
+                {"distribution": "openai", "default": False, "dependsOn": []},
+            ],
+        }
+    )
+
+    assert [item.code for item in diagnostics.diagnostics] == ["PackageForbiddenDependencySelected"]
+    assert "openai" in diagnostics.diagnostics[0].message
+
+
 def test_package_catalog_doctor_reports_dependency_cycles() -> None:
     diagnostics = doctor_package_catalog(
         {
