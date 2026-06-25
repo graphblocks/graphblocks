@@ -429,6 +429,11 @@ def test_testing_package_builds_release_candidate_gate_report(monkeypatch) -> No
             ),
         )
     )
+    oci_image_build = graphblocks_testing.ReleaseCandidateEvidence(
+        evidence_id="oci-image-build",
+        ok=True,
+        digest="sha256:oci-image-build",
+    )
 
     report = graphblocks_testing.ReleaseCandidateGateReport.from_evidence(
         release_id="2026.06.23.1",
@@ -439,6 +444,12 @@ def test_testing_package_builds_release_candidate_gate_report(monkeypatch) -> No
         performance=failing_performance,
         wheel_matrix=wheel_matrix,
         migration=migration,
+        oci_image_build=oci_image_build,
+        supply_chain={
+            "sbom": "sha256:sbom",
+            "provenance": "sha256:provenance",
+            "signature": "sha256:signature",
+        },
     )
 
     assert not report.ok
@@ -448,7 +459,9 @@ def test_testing_package_builds_release_candidate_gate_report(monkeypatch) -> No
         "fault_chaos_tests",
         "full_tck",
         "migration_tests",
+        "oci_image_build",
         "performance_benchmark",
+        "supply_chain",
         "wheel_matrix",
     ]
     failing = {gate["gate"]: gate for gate in report.report_contract()["gates"] if gate["status"] == "failed"}

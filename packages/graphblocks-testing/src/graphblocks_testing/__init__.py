@@ -611,6 +611,32 @@ class ReleaseCandidateGateResult:
 
 
 @dataclass(frozen=True, slots=True)
+class ReleaseCandidateEvidence:
+    evidence_id: str
+    ok: bool
+    digest: str
+    diagnostics: tuple[dict[str, str], ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        if not self.evidence_id.strip():
+            raise ValueError("release candidate evidence_id must not be empty")
+        if not self.digest.startswith("sha256:"):
+            raise ValueError("release candidate evidence digest must use sha256:<digest>")
+        object.__setattr__(self, "diagnostics", tuple(dict(diagnostic) for diagnostic in self.diagnostics))
+
+    def evidence_contract(self) -> dict[str, object]:
+        return {
+            "evidence_id": self.evidence_id,
+            "ok": self.ok,
+            "digest": self.digest,
+            "diagnostics": [dict(diagnostic) for diagnostic in self.diagnostics],
+        }
+
+    def content_digest(self) -> str:
+        return canonical_hash(self.evidence_contract())
+
+
+@dataclass(frozen=True, slots=True)
 class ReleaseCandidateGateReport:
     release_id: str
     gates: tuple[ReleaseCandidateGateResult, ...]
@@ -636,6 +662,8 @@ class ReleaseCandidateGateReport:
         performance: PerformanceBenchmarkReport,
         wheel_matrix: object,
         migration: MigrationCompatibilityReport,
+        oci_image_build: object | None = None,
+        supply_chain: Mapping[str, str] | None = None,
     ) -> ReleaseCandidateGateReport:
         gates: list[ReleaseCandidateGateResult] = []
 
@@ -722,6 +750,56 @@ class ReleaseCandidateGateReport:
                 status="passed" if not performance_diagnostics else "failed",
                 evidence_digest=performance.content_digest(),
                 diagnostics=performance_diagnostics,
+            )
+        )
+
+        oci_image_diagnostics = ()
+        if oci_image_build is None:
+            oci_image_digest = canonical_hash(None)
+            oci_image_diagnostics = (
+                {
+                    "code": "ReleaseCandidateOciImageBuildMissing",
+                    "message": "OCI image build evidence is required",
+                    "path": "$.oci_image_build",
+                },
+            )
+        else:
+            oci_image_digest = str(oci_image_build.content_digest())
+            if not bool(getattr(oci_image_build, "ok", True)):
+                oci_image_diagnostics = (
+                    {
+                        "code": "ReleaseCandidateOciImageBuildFailed",
+                        "message": "OCI image build evidence did not pass",
+                        "path": "$.oci_image_build",
+                    },
+                )
+        gates.append(
+            ReleaseCandidateGateResult(
+                gate="oci_image_build",
+                status="passed" if not oci_image_diagnostics else "failed",
+                evidence_digest=oci_image_digest,
+                diagnostics=oci_image_diagnostics,
+            )
+        )
+
+        supply_chain = dict(supply_chain or {})
+        supply_chain_diagnostics: list[dict[str, str]] = []
+        for artifact_name in ("sbom", "provenance", "signature"):
+            digest = supply_chain.get(artifact_name)
+            if not isinstance(digest, str) or not digest.startswith("sha256:"):
+                supply_chain_diagnostics.append(
+                    {
+                        "code": "ReleaseCandidateSupplyChainEvidenceMissing",
+                        "message": f"release candidate requires {artifact_name} digest evidence",
+                        "path": f"$.supply_chain.{artifact_name}",
+                    }
+                )
+        gates.append(
+            ReleaseCandidateGateResult(
+                gate="supply_chain",
+                status="passed" if not supply_chain_diagnostics else "failed",
+                evidence_digest=canonical_hash(supply_chain),
+                diagnostics=tuple(supply_chain_diagnostics),
             )
         )
 
@@ -1356,6 +1434,7 @@ __all__ = [
     "PerformanceBenchmarkIssue",
     "PerformanceBenchmarkReport",
     "PerformanceThreshold",
+    "ReleaseCandidateEvidence",
     "ReleaseCandidateGateReport",
     "ReleaseCandidateGateResult",
     "RunRecord",
