@@ -557,6 +557,24 @@ def test_compile_reports_invalid_tool_effect_literals() -> None:
 
     assert _error_codes(graph) == ["InvalidToolEffect"]
 
+    conflicting_none = {
+        **graph,
+        "metadata": {"name": "conflicting-none-effect"},
+        "spec": {
+            **graph["spec"],
+            "bindings": {
+                "tools": {
+                    "createTicket": {
+                        **graph["spec"]["bindings"]["tools"]["createTicket"],
+                        "effects": ["none", "network"],
+                    }
+                }
+            },
+        },
+    }
+
+    assert _error_codes(conflicting_none) == ["InvalidToolEffect"]
+
 
 def test_compile_reports_invalid_tool_binding_literals() -> None:
     graph = {

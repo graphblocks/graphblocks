@@ -519,6 +519,14 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                     )
                     continue
                 valid_effects.add(effect)
+            if "none" in valid_effects and len(valid_effects) > 1:
+                diagnostics.append(
+                    Diagnostic(
+                        "InvalidToolEffect",
+                        "tool effect none cannot be combined with other effects",
+                        f"$.spec.bindings.tools.{tool_key}.effects",
+                    )
+                )
             state_changing_tool = bool(STATE_CHANGING_TOOL_EFFECTS & valid_effects)
             has_state_changing_tool = has_state_changing_tool or state_changing_tool
 

@@ -951,6 +951,13 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 }
                 None => {}
             };
+            if valid_effects.contains("none") && valid_effects.len() > 1 {
+                diagnostics.push(Diagnostic::error(
+                    "InvalidToolEffect",
+                    "tool effect none cannot be combined with other effects",
+                    format!("$.spec.bindings.tools.{tool_key}.effects"),
+                ));
+            }
             let state_changing_tool = valid_effects.iter().any(|effect| {
                 matches!(
                     *effect,

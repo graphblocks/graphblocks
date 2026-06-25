@@ -1301,6 +1301,46 @@ fn compile_graph_reports_invalid_tool_effect_literals() {
             .collect::<Vec<_>>(),
         vec!["InvalidToolEffect"]
     );
+
+    let conflicting_none = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "conflicting-none-effect"},
+        "spec": {
+            "bindings": {
+                "tools": {
+                    "createTicket": {
+                        "definition": {
+                            "name": "ticket.create",
+                            "description": "Create a support ticket.",
+                            "inputSchema": "schemas/TicketCreateRequest@1"
+                        },
+                        "implementation": {
+                            "kind": "openapi",
+                            "connection": "ticket-system",
+                            "operationId": "createTicket"
+                        },
+                        "effects": ["none", "network"]
+                    }
+                }
+            },
+            "nodes": {
+                "agent": {"block": "agent.run@1"}
+            }
+        }
+    });
+
+    let conflicting_plan = compile_graph(&conflicting_none);
+
+    assert_eq!(
+        conflicting_plan
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["InvalidToolEffect"]
+    );
 }
 
 #[test]
