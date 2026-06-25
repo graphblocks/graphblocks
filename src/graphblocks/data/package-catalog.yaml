@@ -721,6 +721,24 @@ packages:
   - VAD model runtime
   implementationPhase: 7
   stability: experimental-extension
+- distribution: graphblocks-webrtc
+  import: graphblocks_webrtc
+  layer: voice_transport_adapter
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-voice
+  responsibility:
+  - WebRTC session description and ICE candidate contracts
+  - WebRTC signaling contract projection
+  - core VoiceTransport projection
+  forbiddenDependencies:
+  - aiortc
+  - webrtcvad
+  - av
+  - pylibsrtp
+  implementationPhase: integration-defined
+  stability: integration
 - distribution: graphblocks-durable
   import: graphblocks_durable
   layer: durable_stream

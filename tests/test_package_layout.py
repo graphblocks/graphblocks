@@ -913,6 +913,30 @@ def test_durable_stream_adapter_packages_have_layouts_without_client_dependencie
         assert (package_root / "src" / import_name / "py.typed").exists()
 
 
+def test_voice_adapter_packages_have_layouts_without_media_sdk_dependencies() -> None:
+    cases = (
+        ("graphblocks-webrtc", "graphblocks_webrtc", ("aiortc", "webrtcvad", "av", "pylibsrtp")),
+    )
+    for distribution, import_name, forbidden_clients in cases:
+        package_root = ROOT / "packages" / distribution
+        pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
+        dependencies = pyproject["project"]["dependencies"]
+
+        assert pyproject["build-system"]["build-backend"] == "hatchling.build"
+        assert pyproject["project"]["name"] == distribution
+        assert dependencies == ["graphblocks-voice~=1.0"]
+        assert not any(
+            client in dependency.lower()
+            for dependency in dependencies
+            for client in (*forbidden_clients, "requests", "httpx", "websockets")
+        )
+        assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
+            f"src/{import_name}"
+        ]
+        assert (package_root / "src" / import_name / "__init__.py").exists()
+        assert (package_root / "src" / import_name / "py.typed").exists()
+
+
 def test_package_lock_resolves_default_metapackage_closure_without_optional_integrations() -> None:
     lock = build_package_lock(load_package_catalog(), requested=("graphblocks",))
 
