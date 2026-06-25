@@ -555,6 +555,13 @@ def test_tool_lifecycle_counters_are_non_negative_and_positive() -> None:
         ToolCallDraft("response-1", "call-1", " ")
     with pytest.raises(ValueError, match="tool call draft sequence must be non-negative"):
         ToolCallDraft("response-1", "call-1", "knowledge.search", sequence=-1)
+    with pytest.raises(ValueError, match="tool call draft argument fragments must be strings"):
+        ToolCallDraft(
+            "response-1",
+            "call-1",
+            "knowledge.search",
+            argument_fragments=(1,),  # type: ignore[arg-type]
+        )
 
     resolved = _resolved_search_tool()
     call = _search_call(resolved)
@@ -587,6 +594,18 @@ def test_tool_lifecycle_counters_are_non_negative_and_positive() -> None:
 
     with pytest.raises(ValueError, match="tool result event sequence must be non-negative"):
         ToolResultEvent.started("call-1", -1, started_at="2026-06-23T00:00:00Z")
+
+
+def test_tool_call_draft_append_rejects_non_string_argument_fragment() -> None:
+    draft = ToolCallDraft.proposed("response-1", "call-1", "knowledge.search")
+
+    with pytest.raises(ToolCallError) as error:
+        draft.append_argument_fragment({"query": "runtime"})  # type: ignore[arg-type]
+
+    assert str(error.value) == "tool argument fragment must be a string"
+    assert draft.argument_fragments == ()
+    assert draft.sequence == 0
+    assert draft.status == "proposed"
 
 
 def _resolved_search_tool() -> ResolvedTool:

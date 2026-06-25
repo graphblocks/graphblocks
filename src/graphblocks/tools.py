@@ -844,7 +844,10 @@ class ToolCallDraft:
             raise ValueError(f"invalid tool call draft status {self.status}")
         if self.sequence < 0:
             raise ValueError("tool call draft sequence must be non-negative")
-        object.__setattr__(self, "argument_fragments", tuple(self.argument_fragments))
+        argument_fragments = tuple(self.argument_fragments)
+        if any(not isinstance(fragment, str) for fragment in argument_fragments):
+            raise ValueError("tool call draft argument fragments must be strings")
+        object.__setattr__(self, "argument_fragments", argument_fragments)
 
     @classmethod
     def proposed(cls, response_id: str, tool_call_id: str, tool_name: str) -> ToolCallDraft:
@@ -853,6 +856,8 @@ class ToolCallDraft:
     def append_argument_fragment(self, fragment: str) -> ToolCallDraft:
         if self.status == "arguments_complete":
             raise ToolCallError("tool arguments are already complete")
+        if not isinstance(fragment, str):
+            raise ToolCallError("tool argument fragment must be a string")
         return replace(
             self,
             argument_fragments=(*self.argument_fragments, fragment),
