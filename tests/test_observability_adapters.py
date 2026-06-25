@@ -254,6 +254,36 @@ def test_otel_projection_uses_versioned_schema_without_importing_sdk(monkeypatch
     }
 
 
+def test_otel_projection_applies_capture_policy_before_export(monkeypatch) -> None:
+    _add_observability_package_paths(monkeypatch)
+    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
+    graphblocks_otel = importlib.import_module("graphblocks_otel")
+    observation = graphblocks_telemetry.GenerationTelemetryRecord(
+        record_id="gen-1",
+        run_id="run-1",
+        span_id="span-1",
+        node_id="agent",
+        provider="openai-compatible",
+        model="gpt-test",
+        attributes={
+            "tenant": "tenant-1",
+            "api_key": "sk-test",
+            "prompt": "secret prompt",
+        },
+    )
+
+    span = graphblocks_otel.otlp_span_from_generation(
+        observation,
+        schema_url="https://opentelemetry.io/schemas/1.27.0",
+    )
+
+    attributes = span.span_contract()["attributes"]
+    assert attributes["graphblocks.attribute.api_key"] == "[redacted]"
+    assert attributes["graphblocks.attribute.tenant"] == "tenant-1"
+    assert "graphblocks.attribute.prompt" not in attributes
+    assert "secret prompt" not in repr(span.span_contract())
+
+
 def test_langfuse_projection_uses_trace_generation_contract(monkeypatch) -> None:
     _add_observability_package_paths(monkeypatch)
     graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
@@ -292,3 +322,34 @@ def test_langfuse_projection_uses_trace_generation_contract(monkeypatch) -> None
         },
         "usage": {"input_tokens": 20, "output_tokens": 8},
     }
+
+
+def test_langfuse_projection_applies_capture_policy_before_export(monkeypatch) -> None:
+    _add_observability_package_paths(monkeypatch)
+    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
+    graphblocks_langfuse = importlib.import_module("graphblocks_langfuse")
+    observation = graphblocks_telemetry.GenerationTelemetryRecord(
+        record_id="gen-1",
+        run_id="run-1",
+        span_id="span-1",
+        node_id="agent",
+        provider="openai-compatible",
+        model="gpt-test",
+        input_digest="sha256:input",
+        output_digest="sha256:output",
+        attributes={
+            "tenant": "tenant-1",
+            "token": "secret-token",
+            "messages": [{"role": "user", "content": "private"}],
+        },
+    )
+
+    generation = graphblocks_langfuse.langfuse_generation_from_observation(observation)
+
+    metadata = generation.generation_contract()["metadata"]
+    assert metadata["attributes"] == {
+        "tenant": "tenant-1",
+        "token": "[redacted]",
+    }
+    assert "messages" not in metadata["attributes"]
+    assert "private" not in repr(generation.generation_contract())

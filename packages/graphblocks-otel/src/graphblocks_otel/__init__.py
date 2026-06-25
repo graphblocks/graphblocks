@@ -4,7 +4,18 @@ from dataclasses import dataclass
 import json
 
 from graphblocks import canonical_dumps
-from graphblocks_telemetry import GenerationTelemetryRecord
+from graphblocks_telemetry import (
+    DEFAULT_CONTENT_TELEMETRY_ATTRIBUTE_KEYS,
+    DEFAULT_SENSITIVE_TELEMETRY_ATTRIBUTE_KEYS,
+    GenerationTelemetryRecord,
+    TelemetryCapturePolicy,
+)
+
+
+DEFAULT_OTLP_CAPTURE_POLICY = TelemetryCapturePolicy(
+    redacted_attribute_keys=DEFAULT_SENSITIVE_TELEMETRY_ATTRIBUTE_KEYS,
+    dropped_attribute_keys=DEFAULT_CONTENT_TELEMETRY_ATTRIBUTE_KEYS,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,7 +30,9 @@ def otlp_span_from_generation(
     observation: GenerationTelemetryRecord,
     *,
     schema_url: str,
+    capture_policy: TelemetryCapturePolicy | None = None,
 ) -> OtlpSpanProjection:
+    observation = (capture_policy or DEFAULT_OTLP_CAPTURE_POLICY).apply_generation(observation)
     attributes = {
         "gen_ai.request.model": observation.model,
         "gen_ai.system": observation.provider,
@@ -29,6 +42,8 @@ def otlp_span_from_generation(
     }
     if observation.release_id is not None:
         attributes["graphblocks.release_id"] = observation.release_id
+    for key, value in observation.attributes.items():
+        attributes[f"graphblocks.attribute.{key}"] = value
     span = {
         "schema_url": schema_url,
         "name": "graphblocks.generation",
@@ -40,6 +55,7 @@ def otlp_span_from_generation(
 
 
 __all__ = [
+    "DEFAULT_OTLP_CAPTURE_POLICY",
     "OtlpSpanProjection",
     "otlp_span_from_generation",
 ]
