@@ -1,0 +1,67 @@
+apiVersion: graphblocks.ai/deployment/v1alpha1
+kind: DeploymentTargetProfileSet
+metadata:
+  name: graphblocks-production-targets
+  version: 1.0.0
+spec:
+  targets:
+  - id: control
+    imageRole: control-plane
+    kind: service
+    executionHost: rust
+    capabilities:
+    - graph.coordinator
+    - model.remote_call
+    - retrieval.remote_call
+    effects:
+    - network
+    packageLock: locks/control.lock
+    defaultReplicas: 2
+  - id: rag-cpu
+    imageRole: rag-cpu
+    kind: worker_pool
+    executionHost: python_worker
+    capabilities:
+    - rag.context
+    - retrieval.local
+    - rerank.local
+    effects:
+    - network
+    packageLock: locks/rag-cpu.lock
+    defaultReplicas: 2
+  - id: document-cpu
+    imageRole: document-cpu
+    kind: worker_pool
+    executionHost: python_worker
+    capabilities:
+    - document.normalize
+    - document.parse.office
+    - document.parse.pdf
+    - document.split
+    effects:
+    - filesystem_read
+    packageLock: locks/document-cpu.lock
+    defaultReplicas: 2
+  - id: ocr-gpu
+    imageRole: ocr-gpu
+    kind: worker_pool
+    executionHost: python_worker
+    capabilities:
+    - document.ocr
+    - document.parse.image
+    effects:
+    - filesystem_read
+    packageLock: locks/ocr-gpu.lock
+    defaultReplicas: 1
+  - id: sandbox
+    imageRole: sandbox
+    kind: sandbox_pool
+    executionHost: python_worker
+    capabilities:
+    - code.exec
+    - tool.sandbox
+    effects:
+    - filesystem_write
+    - process_execution
+    packageLock: locks/sandbox.lock
+    defaultReplicas: 1

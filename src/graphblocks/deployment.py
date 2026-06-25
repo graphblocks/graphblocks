@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Literal
@@ -657,6 +658,200 @@ class ExecutionTarget:
 
 
 @dataclass(frozen=True, slots=True)
+class DeploymentTargetProfile:
+    target_id: str
+    image_role: str
+    kind: ExecutionTargetKind
+    execution_host: str
+    capabilities: tuple[str, ...] = field(default_factory=tuple)
+    effects: tuple[str, ...] = field(default_factory=tuple)
+    package_lock: str | None = None
+    default_replicas: int = 1
+
+    def __post_init__(self) -> None:
+        if not self.target_id.strip():
+            raise GraphDeploymentError("deployment target profile id must not be empty")
+        if not self.image_role.strip():
+            raise GraphDeploymentError("deployment target image_role must not be empty")
+        if not self.execution_host.strip():
+            raise GraphDeploymentError("deployment target execution_host must not be empty")
+        if self.default_replicas <= 0:
+            raise GraphDeploymentError("deployment target default_replicas must be positive")
+        object.__setattr__(self, "capabilities", tuple(sorted({str(item) for item in self.capabilities})))
+        object.__setattr__(self, "effects", tuple(sorted({str(item) for item in self.effects})))
+
+    @classmethod
+    def from_mapping(cls, mapping: Mapping[str, object]) -> DeploymentTargetProfile:
+        target_id = mapping.get("id", mapping.get("targetId", mapping.get("target_id")))
+        image_role = mapping.get("imageRole", mapping.get("image_role"))
+        kind = mapping.get("kind")
+        execution_host = mapping.get("executionHost", mapping.get("execution_host"))
+        for field_name, value in (
+            ("id", target_id),
+            ("imageRole", image_role),
+            ("kind", kind),
+            ("executionHost", execution_host),
+        ):
+            if not isinstance(value, str):
+                raise GraphDeploymentError(f"deployment target profile {field_name} must be a string")
+        raw_capabilities = mapping.get("capabilities", ())
+        if isinstance(raw_capabilities, str):
+            capabilities = (raw_capabilities,)
+        else:
+            capabilities = tuple(str(item) for item in raw_capabilities or ())
+        raw_effects = mapping.get("effects", ())
+        if isinstance(raw_effects, str):
+            effects = (raw_effects,)
+        else:
+            effects = tuple(str(item) for item in raw_effects or ())
+        package_lock = mapping.get("packageLock", mapping.get("package_lock"))
+        default_replicas = mapping.get("defaultReplicas", mapping.get("default_replicas", 1))
+        if package_lock is not None and not isinstance(package_lock, str):
+            raise GraphDeploymentError("deployment target profile packageLock must be a string")
+        if not isinstance(default_replicas, int):
+            raise GraphDeploymentError("deployment target profile defaultReplicas must be an integer")
+        return cls(
+            target_id=target_id,
+            image_role=image_role,
+            kind=kind,
+            execution_host=execution_host,
+            capabilities=capabilities,
+            effects=effects,
+            package_lock=package_lock,
+            default_replicas=default_replicas,
+        )
+
+    def to_execution_target(self, image: str) -> ExecutionTarget:
+        if "@sha256:" not in image:
+            raise GraphDeploymentError("deployment target image must be digest-pinned")
+        target = (
+            ExecutionTarget(self.target_id, self.kind, self.execution_host)
+            .with_capabilities(self.capabilities)
+            .with_effects(self.effects)
+            .with_image(image)
+        )
+        if self.package_lock is not None:
+            target = target.with_package_lock(self.package_lock)
+        return target
+
+    def profile_contract(self) -> dict[str, object]:
+        return {
+            "target_id": self.target_id,
+            "image_role": self.image_role,
+            "kind": self.kind,
+            "execution_host": self.execution_host,
+            "capabilities": list(self.capabilities),
+            "effects": list(self.effects),
+            "package_lock": self.package_lock,
+            "default_replicas": self.default_replicas,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class DeploymentTargetCoverageIssue:
+    code: str
+    image_role: str
+    target_id: str
+    path: str
+    message: str
+
+    def issue_contract(self) -> dict[str, str]:
+        return {
+            "code": self.code,
+            "image_role": self.image_role,
+            "target_id": self.target_id,
+            "path": self.path,
+            "message": self.message,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class DeploymentTargetCoverageResult:
+    issues: tuple[DeploymentTargetCoverageIssue, ...] = field(default_factory=tuple)
+
+    @property
+    def ok(self) -> bool:
+        return not self.issues
+
+    def issue_contracts(self) -> list[dict[str, str]]:
+        return [issue.issue_contract() for issue in self.issues]
+
+
+@dataclass(frozen=True, slots=True)
+class DeploymentTargetProfileSet:
+    targets: tuple[DeploymentTargetProfile, ...]
+
+    def __post_init__(self) -> None:
+        seen_ids: set[str] = set()
+        seen_roles: set[str] = set()
+        for target in self.targets:
+            if target.target_id in seen_ids:
+                raise GraphDeploymentError(f"duplicate deployment target id {target.target_id!r}")
+            if target.image_role in seen_roles:
+                raise GraphDeploymentError(f"duplicate deployment target image role {target.image_role!r}")
+            seen_ids.add(target.target_id)
+            seen_roles.add(target.image_role)
+
+    @classmethod
+    def from_document(cls, document: Mapping[str, object]) -> DeploymentTargetProfileSet:
+        if document.get("kind") != "DeploymentTargetProfileSet":
+            raise GraphDeploymentError("deployment target manifest kind must be DeploymentTargetProfileSet")
+        spec = document.get("spec")
+        if not isinstance(spec, Mapping):
+            raise GraphDeploymentError("deployment target manifest spec must be a mapping")
+        raw_targets = spec.get("targets", ())
+        if not isinstance(raw_targets, list):
+            raise GraphDeploymentError("deployment target manifest spec.targets must be a list")
+        targets = []
+        for index, raw_target in enumerate(raw_targets):
+            if not isinstance(raw_target, Mapping):
+                raise GraphDeploymentError(f"deployment target manifest target {index} must be a mapping")
+            targets.append(DeploymentTargetProfile.from_mapping(raw_target))
+        return cls(tuple(targets))
+
+    def by_id(self, target_id: str) -> DeploymentTargetProfile:
+        for target in self.targets:
+            if target.target_id == target_id:
+                return target
+        raise KeyError(target_id)
+
+    def target_ids(self) -> tuple[str, ...]:
+        return tuple(sorted(target.target_id for target in self.targets))
+
+    def image_roles(self) -> tuple[str, ...]:
+        return tuple(target.image_role for target in self.targets)
+
+    def coverage_for_required_image_roles(
+        self,
+        required_image_roles: tuple[str, ...] | list[str],
+    ) -> DeploymentTargetCoverageResult:
+        known_roles = {target.image_role for target in self.targets}
+        issues = [
+            DeploymentTargetCoverageIssue(
+                code="DeploymentTargetRoleMissing",
+                image_role=image_role,
+                target_id="",
+                path="$.spec.targets",
+                message="required production image role has no deployment target profile",
+            )
+            for image_role in required_image_roles
+            if image_role not in known_roles
+        ]
+        return DeploymentTargetCoverageResult(tuple(issues))
+
+    def manifest_contract(self) -> dict[str, object]:
+        return {
+            "targets": [
+                target.profile_contract()
+                for target in sorted(self.targets, key=lambda target: target.target_id)
+            ],
+        }
+
+    def content_digest(self) -> str:
+        return canonical_hash(self.manifest_contract())
+
+
+@dataclass(frozen=True, slots=True)
 class PlacementSelector:
     kind: Literal["nodes", "execution_groups", "blocks", "capabilities", "effects", "execution_classes"]
     values: tuple[str, ...]
@@ -921,6 +1116,10 @@ __all__ = [
     "DeploymentEventKind",
     "DeploymentObservabilityContext",
     "DeploymentRevision",
+    "DeploymentTargetCoverageIssue",
+    "DeploymentTargetCoverageResult",
+    "DeploymentTargetProfile",
+    "DeploymentTargetProfileSet",
     "ExecutionTarget",
     "ExecutionTargetKind",
     "GraphDeployment",
