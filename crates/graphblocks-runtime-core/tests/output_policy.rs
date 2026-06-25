@@ -470,6 +470,42 @@ fn output_policy_decision_requires_input_digest() {
 }
 
 #[test]
+fn output_policy_decision_rejects_invalid_redaction_instructions() {
+    let blank_path = OutputPolicyDecision::redact(
+        "decision-redact",
+        Some(1),
+        Vec::<GenerationChunk>::new(),
+        "sha256:redact",
+    )
+    .with_redactions([RedactionInstruction::text_range(" ", 0, 6, "[redacted]")]);
+    assert_eq!(
+        blank_path.validate(),
+        Err(OutputPolicyDecisionError::InvalidRedactionInstruction {
+            path: " ".to_owned(),
+        })
+    );
+
+    let reversed_range = OutputPolicyDecision::redact(
+        "decision-redact",
+        Some(1),
+        Vec::<GenerationChunk>::new(),
+        "sha256:redact",
+    )
+    .with_redactions([RedactionInstruction::text_range(
+        "/chunks/1/text",
+        6,
+        5,
+        "[redacted]",
+    )]);
+    assert_eq!(
+        reversed_range.validate(),
+        Err(OutputPolicyDecisionError::InvalidRedactionInstruction {
+            path: "/chunks/1/text".to_owned(),
+        })
+    );
+}
+
+#[test]
 fn declarative_output_policy_evaluator_allows_unmatched_chunk() {
     let evaluator = DeclarativeOutputPolicyEvaluator::new([DeclarativeOutputPolicyRule::new(
         "blocked-secret",

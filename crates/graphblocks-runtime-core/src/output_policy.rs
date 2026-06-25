@@ -260,6 +260,7 @@ pub struct OutputPolicyDecision {
 pub enum OutputPolicyDecisionError {
     MissingDecisionId,
     MissingInputDigest { decision_id: String },
+    InvalidRedactionInstruction { path: String },
 }
 
 impl OutputPolicyDecision {
@@ -271,6 +272,13 @@ impl OutputPolicyDecision {
             return Err(OutputPolicyDecisionError::MissingInputDigest {
                 decision_id: self.decision_id.clone(),
             });
+        }
+        for redaction in &self.redactions {
+            if redaction.path.trim().is_empty() || redaction.start > redaction.end {
+                return Err(OutputPolicyDecisionError::InvalidRedactionInstruction {
+                    path: redaction.path.clone(),
+                });
+            }
         }
         Ok(())
     }
@@ -980,6 +988,9 @@ impl OutputDeliveryGate {
                 }
                 OutputPolicyDecisionError::MissingInputDigest { decision_id } => {
                     Err(OutputGateError::MissingInputDigest { decision_id })
+                }
+                OutputPolicyDecisionError::InvalidRedactionInstruction { path } => {
+                    Err(OutputGateError::InvalidRedactionInstruction { path })
                 }
             };
         }
