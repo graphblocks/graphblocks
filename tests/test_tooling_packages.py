@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).parents[1]
 
@@ -33,6 +35,86 @@ def test_tui_package_builds_run_status_screen_contract(monkeypatch) -> None:
         ],
     }
     assert snapshot.content_digest().startswith("sha256:")
+
+
+def test_tui_package_projects_application_protocol_events_to_workspace_screen(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-tui" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_tui = importlib.import_module("graphblocks_tui")
+
+    def event(kind: str, sequence: int, payload: dict[str, object] | None = None):
+        return graphblocks_client.ApplicationProtocolEvent.new(
+            kind,
+            graphblocks_client.ApplicationProtocolEventMetadata(
+                event_id=f"event-{sequence}",
+                protocol_version="graphblocks.app.v1",
+                run_id="run-1",
+                sequence=sequence,
+                occurred_at_unix_ms=sequence * 1000,
+            ),
+            payload=payload or {},
+        )
+
+    state = graphblocks_tui.TuiProtocolSession("run-1").apply_all(
+        (
+            event("RunStarted", 1, {"status": "running"}),
+            event("AssistantDraftStarted", 2),
+            event("AssistantDraftDelta", 3, {"delta": "Hello"}),
+            event("AssistantDraftDelta", 4, {"text": " world"}),
+            event("AssistantDraftDelta", 4, {"delta": " ignored"}),
+            event("ApprovalRequested", 5, {"approval_id": "approval-1"}),
+            event("ArtifactReady", 6, {"artifact": {"artifact_id": "artifact-1", "uri": "file:///tmp/out.txt"}}),
+            event("AssistantRetracted", 7, {"reason": "policy_denied"}),
+        )
+    )
+    screen = graphblocks_tui.workspace_assistant_screen(state)
+
+    assert state.last_sequence == 7
+    assert state.assistant_text == "Hello world"
+    assert state.assistant_state == "retracted"
+    assert state.pending_actions == ("approval-1",)
+    assert state.artifacts == ("artifact-1",)
+    assert state.counters["AssistantDraftDelta"] == 2
+    assert screen.screen_contract() == {
+        "name": "workspace-assistant",
+        "title": "Workspace run-1",
+        "sections": [
+            {"title": "Run", "rows": {"last_event": "AssistantRetracted", "sequence": "7", "status": "running"}},
+            {"title": "Assistant", "rows": {"state": "retracted", "text": "Hello world"}},
+            {"title": "Pending", "rows": {"actions": "approval-1", "artifacts": "artifact-1"}},
+            {
+                "title": "Counters",
+                "rows": {
+                    "ApprovalRequested": "1",
+                    "ArtifactReady": "1",
+                    "AssistantDraftDelta": "2",
+                    "AssistantDraftStarted": "1",
+                    "AssistantRetracted": "1",
+                    "RunStarted": "1",
+                },
+            },
+        ],
+        "commands": [
+            {"label": "Refresh", "action": "refresh", "key": "r"},
+            {"label": "Cancel", "action": "cancel", "key": "c"},
+            {"label": "Approve", "action": "approve", "key": "a"},
+            {"label": "Deny", "action": "deny", "key": "d"},
+        ],
+    }
+
+    mismatched = graphblocks_client.ApplicationProtocolEvent.new(
+        "RunStarted",
+        graphblocks_client.ApplicationProtocolEventMetadata(
+            event_id="event-other",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-other",
+            sequence=8,
+            occurred_at_unix_ms=8000,
+        ),
+    )
+    with pytest.raises(graphblocks_tui.TuiContractError, match="event run_id mismatch"):
+        state.apply(mismatched)
 
 
 def test_devtools_package_renders_dot_and_migration_plan(monkeypatch) -> None:
