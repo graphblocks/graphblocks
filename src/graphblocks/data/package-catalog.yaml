@@ -791,6 +791,23 @@ packages:
   - aioboto3
   implementationPhase: integration-defined
   stability: integration
+- distribution: graphblocks-pubsub
+  import: graphblocks_pubsub
+  layer: durable_stream_adapter
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-durable
+  responsibility:
+  - Pub/Sub message to durable SourceEvent projection
+  - subscription receive sequence cursor mapping
+  - publish message projection with ordering key support
+  forbiddenDependencies:
+  - google-cloud-pubsub
+  - google-api-core
+  - grpcio
+  implementationPhase: integration-defined
+  stability: integration
 integrationRules:
   distributionPattern: graphblocks-<technology>
   importPattern: graphblocks_<technology>

@@ -891,6 +891,7 @@ def test_durable_stream_adapter_packages_have_layouts_without_client_dependencie
         ("graphblocks-kafka", "graphblocks_kafka", ("confluent-kafka", "kafka-python", "aiokafka")),
         ("graphblocks-nats", "graphblocks_nats", ("nats-py", "pynats", "asyncio-nats")),
         ("graphblocks-sqs", "graphblocks_sqs", ("boto3", "botocore", "aiobotocore", "aioboto3")),
+        ("graphblocks-pubsub", "graphblocks_pubsub", ("google-cloud-pubsub", "google-api-core", "grpcio")),
     )
     for distribution, import_name, forbidden_clients in cases:
         package_root = ROOT / "packages" / distribution
