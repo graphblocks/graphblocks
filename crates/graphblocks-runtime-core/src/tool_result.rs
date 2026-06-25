@@ -483,6 +483,9 @@ pub enum ToolResultValidationError {
         path: String,
         property: String,
     },
+    OutputDigestMissing {
+        tool_call_id: String,
+    },
     OutputDigestMismatch {
         tool_call_id: String,
     },
@@ -525,12 +528,12 @@ impl ToolResultValidation {
         if request.result.status != ToolResultStatus::Completed {
             return Ok(());
         }
-        if request
-            .result
-            .output_digest
-            .as_ref()
-            .is_some_and(|digest| digest != &tool_result_output_digest(&request.result.output))
-        {
+        let Some(output_digest) = request.result.output_digest.as_ref() else {
+            return Err(ToolResultValidationError::OutputDigestMissing {
+                tool_call_id: request.result.tool_call_id.clone(),
+            });
+        };
+        if output_digest != &tool_result_output_digest(&request.result.output) {
             return Err(ToolResultValidationError::OutputDigestMismatch {
                 tool_call_id: request.result.tool_call_id.clone(),
             });

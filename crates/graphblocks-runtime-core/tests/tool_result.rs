@@ -191,6 +191,50 @@ fn completed_tool_result_rejects_stale_output_digest_before_model_return() {
 }
 
 #[test]
+fn completed_tool_result_rejects_missing_output_digest_before_model_return() {
+    let catalog = ToolCatalog::new(
+        [ToolDefinition::new(
+            "knowledge.search",
+            "Search documentation.",
+            "schemas/SearchRequest@1",
+        )],
+        [ToolBinding::new(
+            "binding-search",
+            "knowledge.search",
+            ToolImplementation::Block(BlockToolImplementation::new("blocks.search")),
+        )],
+    )
+    .expect("catalog should be valid");
+    let resolved = catalog
+        .resolve(ToolResolutionScope::new(), "policy-snapshot-1")
+        .expect("tool should resolve")
+        .remove(0);
+    let mut draft = ToolCallDraft::proposed("response-1", "call-1", "knowledge.search");
+    draft
+        .append_argument_fragment("{}")
+        .expect("argument fragment should append");
+    let call = draft
+        .into_completed_tool_call(resolved.resolved_tool_id.clone(), 1_000)
+        .expect("arguments should parse");
+    let registry =
+        ToolSchemaRegistry::new(Vec::<JsonSchema>::new()).expect("schema registry should be valid");
+    let mut result = ToolResult::completed("call-1", [ContentPart::text("done")], 1_100, 1_200);
+    result.output_digest = None;
+
+    assert_eq!(
+        ToolResultValidation::validate_for_model(ToolResultValidationRequest {
+            call: &call,
+            result: &result,
+            resolved_tool: &resolved,
+            schema_registry: &registry,
+        }),
+        Err(ToolResultValidationError::OutputDigestMissing {
+            tool_call_id: "call-1".to_string(),
+        })
+    );
+}
+
+#[test]
 fn completed_tool_result_model_output_overrides_raw_trust_metadata_by_default() {
     let catalog = ToolCatalog::new(
         [ToolDefinition::new(
