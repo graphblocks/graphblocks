@@ -208,8 +208,12 @@ class ApplicationCommandMetadata:
     idempotency_key: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.command_id.strip():
-            raise ApplicationProtocolError("application command id must not be empty")
+        for field_name in ("command_id", "protocol_version", "run_id"):
+            if not getattr(self, field_name).strip():
+                label = "id" if field_name == "command_id" else field_name
+                raise ApplicationProtocolError(
+                    f"application command {label} must not be empty"
+                )
         if self.sequence < 0:
             raise ApplicationProtocolError("application command sequence must be non-negative")
         if self.issued_at_unix_ms < 0:
@@ -249,8 +253,12 @@ class ApplicationProtocolEventMetadata:
     cursor: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.event_id.strip():
-            raise ApplicationProtocolError("application event id must not be empty")
+        for field_name in ("event_id", "protocol_version", "run_id"):
+            if not getattr(self, field_name).strip():
+                label = "id" if field_name == "event_id" else field_name
+                raise ApplicationProtocolError(
+                    f"application event {label} must not be empty"
+                )
         if self.sequence < 0:
             raise ApplicationProtocolError("application event sequence must be non-negative")
         if self.occurred_at_unix_ms < 0:

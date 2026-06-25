@@ -868,6 +868,7 @@ pub struct ApplicationProtocolEvent {
 pub enum ApplicationProtocolError {
     EmptyCommandId,
     EmptyEventId,
+    EmptyMetadataField { field: &'static str },
     InvalidToolResultEvent { source: ToolResultEventError },
     NonMonotonicSequence { previous: u64, next: u64 },
     ProtocolVersionMismatch { left: String, right: String },
@@ -878,6 +879,12 @@ impl fmt::Display for ApplicationProtocolError {
         match self {
             Self::EmptyCommandId => write!(formatter, "application command id must not be empty"),
             Self::EmptyEventId => write!(formatter, "application event id must not be empty"),
+            Self::EmptyMetadataField { field } => {
+                write!(
+                    formatter,
+                    "application protocol metadata field {field} must not be empty"
+                )
+            }
             Self::InvalidToolResultEvent { source } => {
                 write!(formatter, "tool result event is invalid: {source:?}")
             }
@@ -903,6 +910,14 @@ impl ApplicationCommand {
         if metadata.command_id.trim().is_empty() {
             return Err(ApplicationProtocolError::EmptyCommandId);
         }
+        for (field, value) in [
+            ("protocol_version", metadata.protocol_version.as_str()),
+            ("run_id", metadata.run_id.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(ApplicationProtocolError::EmptyMetadataField { field });
+            }
+        }
         Ok(Self {
             kind,
             metadata,
@@ -919,6 +934,14 @@ impl ApplicationProtocolEvent {
     ) -> Result<Self, ApplicationProtocolError> {
         if metadata.event_id.trim().is_empty() {
             return Err(ApplicationProtocolError::EmptyEventId);
+        }
+        for (field, value) in [
+            ("protocol_version", metadata.protocol_version.as_str()),
+            ("run_id", metadata.run_id.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(ApplicationProtocolError::EmptyMetadataField { field });
+            }
         }
         Ok(Self {
             kind,

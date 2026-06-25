@@ -208,6 +208,53 @@ def test_application_protocol_command_and_event_envelopes_match_client_contract(
         )
 
 
+def test_application_protocol_metadata_rejects_empty_required_fields() -> None:
+    with pytest.raises(
+        ApplicationProtocolError,
+        match="application command protocol_version must not be empty",
+    ):
+        ApplicationCommandMetadata(
+            command_id="command-1",
+            protocol_version=" ",
+            run_id="run-1",
+            sequence=1,
+            issued_at_unix_ms=1_765_843_200_000,
+        )
+    with pytest.raises(
+        ApplicationProtocolError,
+        match="application command run_id must not be empty",
+    ):
+        ApplicationCommandMetadata(
+            command_id="command-1",
+            protocol_version="graphblocks.app.v1",
+            run_id="",
+            sequence=1,
+            issued_at_unix_ms=1_765_843_200_000,
+        )
+    with pytest.raises(
+        ApplicationProtocolError,
+        match="application event protocol_version must not be empty",
+    ):
+        ApplicationProtocolEventMetadata(
+            event_id="event-1",
+            protocol_version="",
+            run_id="run-1",
+            sequence=1,
+            occurred_at_unix_ms=1_765_843_201_000,
+        )
+    with pytest.raises(
+        ApplicationProtocolError,
+        match="application event run_id must not be empty",
+    ):
+        ApplicationProtocolEventMetadata(
+            event_id="event-1",
+            protocol_version="graphblocks.app.v1",
+            run_id=" ",
+            sequence=1,
+            occurred_at_unix_ms=1_765_843_201_000,
+        )
+
+
 def test_protocol_events_represent_streaming_tool_result_deltas_and_artifacts() -> None:
     delta = ToolResultEvent.delta(
         "call-1",

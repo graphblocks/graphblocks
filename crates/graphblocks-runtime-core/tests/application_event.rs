@@ -1050,6 +1050,45 @@ fn application_command_preserves_common_envelope_and_payload() {
 }
 
 #[test]
+fn application_commands_reject_empty_required_protocol_metadata() {
+    assert_eq!(
+        ApplicationCommand::new(
+            ApplicationCommandKind::CancelRun,
+            ApplicationCommandMetadata {
+                command_id: " ".to_owned(),
+                ..command_metadata()
+            },
+            json!({}),
+        ),
+        Err(ApplicationProtocolError::EmptyCommandId)
+    );
+    assert_eq!(
+        ApplicationCommand::new(
+            ApplicationCommandKind::CancelRun,
+            ApplicationCommandMetadata {
+                protocol_version: "".to_owned(),
+                ..command_metadata()
+            },
+            json!({}),
+        ),
+        Err(ApplicationProtocolError::EmptyMetadataField {
+            field: "protocol_version",
+        })
+    );
+    assert_eq!(
+        ApplicationCommand::new(
+            ApplicationCommandKind::CancelRun,
+            ApplicationCommandMetadata {
+                run_id: " ".to_owned(),
+                ..command_metadata()
+            },
+            json!({}),
+        ),
+        Err(ApplicationProtocolError::EmptyMetadataField { field: "run_id" })
+    );
+}
+
+#[test]
 fn application_protocol_event_names_and_envelope_match_client_protocol() {
     let names = [
         ApplicationProtocolEventKind::RunStarted.as_str(),
@@ -1091,6 +1130,45 @@ fn application_protocol_event_names_and_envelope_match_client_protocol() {
     assert_eq!(event.metadata.protocol_version, "graphblocks.app.v1");
     assert_eq!(event.metadata.cursor.as_deref(), Some("cursor-5"));
     assert_eq!(event.payload, json!({"revision": 2}));
+}
+
+#[test]
+fn application_protocol_events_reject_empty_required_metadata() {
+    assert_eq!(
+        ApplicationProtocolEvent::new(
+            ApplicationProtocolEventKind::RunStarted,
+            ApplicationProtocolEventMetadata {
+                event_id: " ".to_owned(),
+                ..protocol_event_metadata("event-1", 5, "cursor-5")
+            },
+            json!({}),
+        ),
+        Err(ApplicationProtocolError::EmptyEventId)
+    );
+    assert_eq!(
+        ApplicationProtocolEvent::new(
+            ApplicationProtocolEventKind::RunStarted,
+            ApplicationProtocolEventMetadata {
+                protocol_version: " ".to_owned(),
+                ..protocol_event_metadata("event-1", 5, "cursor-5")
+            },
+            json!({}),
+        ),
+        Err(ApplicationProtocolError::EmptyMetadataField {
+            field: "protocol_version",
+        })
+    );
+    assert_eq!(
+        ApplicationProtocolEvent::new(
+            ApplicationProtocolEventKind::RunStarted,
+            ApplicationProtocolEventMetadata {
+                run_id: "".to_owned(),
+                ..protocol_event_metadata("event-1", 5, "cursor-5")
+            },
+            json!({}),
+        ),
+        Err(ApplicationProtocolError::EmptyMetadataField { field: "run_id" })
+    );
 }
 
 #[test]
