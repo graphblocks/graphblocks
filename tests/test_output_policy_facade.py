@@ -141,6 +141,21 @@ def test_output_policy_contract_rejects_unknown_literals() -> None:
     with pytest.raises(ValueError, match="generation chunk sequence must be non-negative"):
         GenerationChunk.text("stream-1", "response-1", -1, "late")
 
+    with pytest.raises(ValueError, match="generation chunk stream_id must not be empty"):
+        GenerationChunk.text(" ", "response-1", 1, "late")
+
+    with pytest.raises(ValueError, match="generation chunk response_id must not be empty"):
+        GenerationChunk.text("stream-1", "", 1, "late")
+
+    with pytest.raises(ValueError, match="output gate stream_id must not be empty"):
+        OutputDeliveryGate(" ", "response-1")
+
+    with pytest.raises(ValueError, match="output gate response_id must not be empty"):
+        OutputDeliveryGate("stream-1", "")
+
+    with pytest.raises(ValueError, match="output gate turn_id must not be empty"):
+        OutputDeliveryGate("stream-1", "response-1", turn_id=" ")
+
     with pytest.raises(ValueError, match="accepted_through_sequence must be non-negative"):
         OutputPolicyDecision.allow(
             "decision-1",

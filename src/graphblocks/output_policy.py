@@ -188,6 +188,10 @@ class GenerationChunk:
     def __init__(self, stream_id: str, response_id: str, sequence: int, text: str) -> None:
         if sequence < 0:
             raise ValueError("generation chunk sequence must be non-negative")
+        if not stream_id.strip():
+            raise ValueError("generation chunk stream_id must not be empty")
+        if not response_id.strip():
+            raise ValueError("generation chunk response_id must not be empty")
         self.stream_id = stream_id
         self.response_id = response_id
         self.sequence = sequence
@@ -522,6 +526,12 @@ class OutputDeliveryGate:
     cutoff: OutputCutoff | None = None
 
     def __post_init__(self) -> None:
+        if not self.stream_id.strip():
+            raise ValueError("output gate stream_id must not be empty")
+        if not self.response_id.strip():
+            raise ValueError("output gate response_id must not be empty")
+        if self.turn_id is not None and not self.turn_id.strip():
+            raise ValueError("output gate turn_id must not be empty")
         self.delivery_policy.validate()
 
     def record_chunk(self, chunk: GenerationChunk) -> list[GenerationChunk]:

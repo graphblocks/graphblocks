@@ -25,6 +25,23 @@ impl GenerationChunk {
             text: text.into(),
         }
     }
+
+    pub fn validate(&self) -> Result<(), GenerationChunkError> {
+        for (field, value) in [
+            ("stream_id", self.stream_id.as_str()),
+            ("response_id", self.response_id.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(GenerationChunkError::EmptyIdentityField { field });
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GenerationChunkError {
+    EmptyIdentityField { field: &'static str },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -759,6 +776,12 @@ impl OutputCutoff {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OutputGateError {
+    EmptyIdentityField {
+        field: &'static str,
+    },
+    InvalidGenerationChunk {
+        source: GenerationChunkError,
+    },
     InvalidDeliveryPolicy {
         source: OutputDeliveryPolicyError,
     },
@@ -841,6 +864,7 @@ impl OutputDeliveryGate {
         mut self,
         delivery_policy: OutputDeliveryPolicy,
     ) -> Result<Self, OutputGateError> {
+        self.validate_identity()?;
         delivery_policy
             .validate()
             .map_err(|source| OutputGateError::InvalidDeliveryPolicy { source })?;
@@ -895,6 +919,10 @@ impl OutputDeliveryGate {
         &mut self,
         chunk: GenerationChunk,
     ) -> Result<Vec<GenerationChunk>, OutputGateError> {
+        self.validate_identity()?;
+        chunk
+            .validate()
+            .map_err(|source| OutputGateError::InvalidGenerationChunk { source })?;
         if self.stopped.is_some() {
             return Err(OutputGateError::PolicyStopped);
         }
@@ -941,6 +969,7 @@ impl OutputDeliveryGate {
         decision: OutputPolicyDecision,
         occurred_at_unix_ms: u64,
     ) -> Result<OutputGateUpdate, OutputGateError> {
+        self.validate_identity()?;
         if self.stopped.is_some() {
             return Err(OutputGateError::PolicyStopped);
         }
@@ -1086,6 +1115,9 @@ impl OutputDeliveryGate {
 
                 let mut replacement_accepted_through = decision.accepted_through_sequence;
                 for chunk in decision.replacement_chunks {
+                    chunk
+                        .validate()
+                        .map_err(|source| OutputGateError::InvalidGenerationChunk { source })?;
                     let chunk_sequence = chunk.sequence;
                     if chunk.stream_id != self.stream_id {
                         return Err(OutputGateError::StreamMismatch {
@@ -1160,5 +1192,24 @@ impl OutputDeliveryGate {
                 })
             }
         }
+    }
+
+    fn validate_identity(&self) -> Result<(), OutputGateError> {
+        for (field, value) in [
+            ("stream_id", self.stream_id.as_str()),
+            ("response_id", self.response_id.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(OutputGateError::EmptyIdentityField { field });
+            }
+        }
+        if self
+            .turn_id
+            .as_ref()
+            .is_some_and(|turn_id| turn_id.trim().is_empty())
+        {
+            return Err(OutputGateError::EmptyIdentityField { field: "turn_id" });
+        }
+        Ok(())
     }
 }

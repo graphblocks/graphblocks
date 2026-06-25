@@ -1,9 +1,9 @@
 use graphblocks_runtime_core::output_policy::{
     DeclarativeOutputPolicyEvaluator, DeclarativeOutputPolicyRule, DraftDisposition, DurableResult,
-    GenerationChunk, OutputCutoff, OutputCutoffError, OutputDeliveryGate, OutputDeliveryPolicy,
-    OutputDeliveryPolicyError, OutputDisposition, OutputGateError, OutputPolicyDecision,
-    OutputPolicyDecisionError, PendingToolCallsDisposition, ProviderCancellation,
-    RedactionInstruction, TerminalReason, ViolationAction,
+    GenerationChunk, GenerationChunkError, OutputCutoff, OutputCutoffError, OutputDeliveryGate,
+    OutputDeliveryPolicy, OutputDeliveryPolicyError, OutputDisposition, OutputGateError,
+    OutputPolicyDecision, OutputPolicyDecisionError, PendingToolCallsDisposition,
+    ProviderCancellation, RedactionInstruction, TerminalReason, ViolationAction,
 };
 
 #[test]
@@ -60,6 +60,59 @@ fn output_gate_rejects_non_contiguous_generation_sequence() {
     );
     assert_eq!(gate.last_generated_sequence(), 0);
     assert_eq!(gate.last_client_delivered_sequence(), 0);
+}
+
+#[test]
+fn generation_chunk_requires_stream_and_response_ids() {
+    let empty_stream = GenerationChunk::text(" ", "response-1", 1, "late");
+    assert_eq!(
+        empty_stream.validate(),
+        Err(GenerationChunkError::EmptyIdentityField { field: "stream_id" })
+    );
+
+    let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
+    assert_eq!(
+        gate.record_chunk(empty_stream),
+        Err(OutputGateError::InvalidGenerationChunk {
+            source: GenerationChunkError::EmptyIdentityField { field: "stream_id" },
+        })
+    );
+
+    assert_eq!(
+        GenerationChunk::text("stream-1", "", 1, "late").validate(),
+        Err(GenerationChunkError::EmptyIdentityField {
+            field: "response_id",
+        })
+    );
+}
+
+#[test]
+fn output_gate_rejects_empty_identity_fields() {
+    let mut empty_stream_gate = OutputDeliveryGate::new(" ", "response-1");
+    assert_eq!(
+        empty_stream_gate.record_chunk(GenerationChunk::text(" ", "response-1", 1, "late")),
+        Err(OutputGateError::EmptyIdentityField { field: "stream_id" })
+    );
+
+    let mut empty_response_gate = OutputDeliveryGate::new("stream-1", "");
+    assert_eq!(
+        empty_response_gate.apply_decision(
+            OutputPolicyDecision::hold("decision-1", "sha256:input"),
+            1_000,
+        ),
+        Err(OutputGateError::EmptyIdentityField {
+            field: "response_id",
+        })
+    );
+
+    let mut empty_turn_gate = OutputDeliveryGate::new("stream-1", "response-1").with_turn_id(" ");
+    assert_eq!(
+        empty_turn_gate.apply_decision(
+            OutputPolicyDecision::abort_response("decision-1", "sha256:input"),
+            1_000,
+        ),
+        Err(OutputGateError::EmptyIdentityField { field: "turn_id" })
+    );
 }
 
 #[test]
