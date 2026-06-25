@@ -170,6 +170,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "graphblocks-telemetry"
+version = "0.1.0"
+dependencies = [
+ "graphblocks-runtime-core",
+]
+
+[[package]]
 name = "graphblocks-types"
 version = "0.1.0"
 dependencies = [

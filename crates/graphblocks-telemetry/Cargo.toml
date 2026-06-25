@@ -1,0 +1,13 @@
+[package]
+name = "graphblocks-telemetry"
+version = "0.1.0"
+description = "Telemetry and observability contracts for GraphBlocks"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+graphblocks-runtime-core = { path = "../graphblocks-runtime-core" }
+
+[lints]
+workspace = true
