@@ -1348,6 +1348,41 @@ def test_tool_result_rejects_empty_call_id_and_reversed_timestamps() -> None:
         )
 
 
+def test_tool_result_diagnostics_require_identity_fields() -> None:
+    with pytest.raises(ValueError, match="tool result diagnostic code must not be empty"):
+        replace(
+            ToolResult.completed(
+                "call-1",
+                (ContentPart(kind="text", text="done"),),
+                started_at="2026-06-23T00:00:00Z",
+                completed_at="2026-06-23T00:00:01Z",
+            ),
+            diagnostics=({"code": " ", "message": "redacted"},),
+        )
+
+    with pytest.raises(ValueError, match="tool result diagnostic message must not be empty"):
+        replace(
+            ToolResult.completed(
+                "call-1",
+                (ContentPart(kind="text", text="done"),),
+                started_at="2026-06-23T00:00:00Z",
+                completed_at="2026-06-23T00:00:01Z",
+            ),
+            diagnostics=({"code": "tool.redacted", "message": " "},),
+        )
+
+    with pytest.raises(ValueError, match="tool result diagnostic path must not be empty"):
+        replace(
+            ToolResult.completed(
+                "call-1",
+                (ContentPart(kind="text", text="done"),),
+                started_at="2026-06-23T00:00:00Z",
+                completed_at="2026-06-23T00:00:01Z",
+            ),
+            diagnostics=({"code": "tool.redacted", "message": "redacted", "path": " "},),
+        )
+
+
 def test_artifact_ref_rejects_empty_optional_fields_when_present() -> None:
     optional_fields = (
         ("media_type", "artifact media_type must not be empty"),

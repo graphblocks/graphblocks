@@ -1395,10 +1395,23 @@ class ToolResult:
             "artifacts",
             tuple(MappingProxyType(dict(artifact)) for artifact in self.artifacts),
         )
+        diagnostics: list[MappingProxyType[str, object]] = []
+        for diagnostic in self.diagnostics:
+            diagnostic_copy = dict(diagnostic)
+            code = diagnostic_copy.get("code")
+            if not isinstance(code, str) or not code.strip():
+                raise ValueError("tool result diagnostic code must not be empty")
+            message = diagnostic_copy.get("message")
+            if not isinstance(message, str) or not message.strip():
+                raise ValueError("tool result diagnostic message must not be empty")
+            path = diagnostic_copy.get("path")
+            if path is not None and (not isinstance(path, str) or not path.strip()):
+                raise ValueError("tool result diagnostic path must not be empty")
+            diagnostics.append(MappingProxyType(diagnostic_copy))
         object.__setattr__(
             self,
             "diagnostics",
-            tuple(MappingProxyType(dict(diagnostic)) for diagnostic in self.diagnostics),
+            tuple(diagnostics),
         )
         if self.error is not None:
             object.__setattr__(self, "error", MappingProxyType(dict(self.error)))
