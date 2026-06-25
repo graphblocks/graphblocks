@@ -188,6 +188,18 @@ fn tool_binding_validates_identity_fields() {
         ToolBinding::new("binding-search", "", valid_implementation.clone()).validate(),
         Err(ToolResolutionError::EmptyToolBindingField { field: "tool_name" })
     );
+    assert_eq!(
+        ToolBinding::new(
+            "binding-search",
+            "knowledge.search",
+            valid_implementation.clone()
+        )
+        .with_effects([ToolEffect::None, ToolEffect::Network])
+        .validate(),
+        Err(ToolResolutionError::ConflictingToolEffects {
+            binding_id: "binding-search".to_owned(),
+        })
+    );
     let mut empty_retry_policy_ref = ToolBinding::new(
         "binding-search",
         "knowledge.search",

@@ -477,6 +477,8 @@ class ToolBinding:
         invalid_effects = sorted(effect for effect in effects if effect not in VALID_TOOL_EFFECTS)
         if invalid_effects:
             raise ValueError(f"invalid tool effect {invalid_effects[0]}")
+        if "none" in effects and len(effects) > 1:
+            raise ValueError("tool effect none cannot be combined with other effects")
         if self.approval not in VALID_TOOL_APPROVALS:
             raise ValueError(f"invalid tool approval {self.approval}")
         if self.idempotency not in VALID_TOOL_IDEMPOTENCIES:
@@ -1087,6 +1089,8 @@ class ToolPlanCall:
         invalid_effects = sorted(effect for effect in effects if effect not in VALID_TOOL_EFFECTS)
         if invalid_effects:
             raise ToolExecutionPlanError(f"invalid tool effect {invalid_effects[0]}")
+        if "none" in effects and len(effects) > 1:
+            raise ToolExecutionPlanError("tool effect none cannot be combined with other effects")
         if self.effect_key is not None and not self.effect_key.strip():
             raise ToolExecutionPlanError(f"tool call {self.call.tool_call_id} effect_key must not be empty")
         if self.cancellation not in VALID_TOOL_CANCELLATIONS:

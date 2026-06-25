@@ -200,6 +200,10 @@ def test_tool_binding_rejects_unknown_contract_values() -> None:
 
     cases = (
         ({"effects": frozenset({"external_read", "telepathy"})}, "invalid tool effect telepathy"),
+        (
+            {"effects": frozenset({"none", "network"})},
+            "tool effect none cannot be combined with other effects",
+        ),
         ({"approval": "sometimes"}, "invalid tool approval sometimes"),
         ({"idempotency": "maybe"}, "invalid tool idempotency maybe"),
         ({"cancellation": "eventually"}, "invalid tool cancellation eventually"),
@@ -2123,6 +2127,11 @@ def test_tool_execution_plan_rejects_empty_identity_fields() -> None:
             calls=calls,
             maximum_parallelism=1,
         )
+
+
+def test_tool_execution_plan_rejects_none_effect_combined_with_side_effects() -> None:
+    with pytest.raises(ToolExecutionPlanError, match="tool effect none cannot be combined with other effects"):
+        ToolPlanCall(_tool_call("call-a"), effects=frozenset({"none", "external_write"}))
 
 
 def test_tool_execution_plan_readies_independent_calls_up_to_parallelism() -> None:

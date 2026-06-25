@@ -306,6 +306,24 @@ fn plan_rejects_empty_effect_key() {
 }
 
 #[test]
+fn plan_rejects_none_effect_combined_with_side_effects() {
+    assert_eq!(
+        ToolExecutionPlan::new(
+            "plan-1",
+            "response-1",
+            [
+                ToolPlanCall::new(tool_call("call-a", "{\"resource_id\":\"ticket-1\"}"))
+                    .with_effects([ToolEffect::None, ToolEffect::ExternalWrite])
+            ],
+            1,
+        ),
+        Err(ToolExecutionPlanError::ConflictingToolEffects {
+            tool_call_id: "call-a".to_owned(),
+        }),
+    );
+}
+
+#[test]
 fn effect_key_template_derives_keys_from_tool_name_and_arguments()
 -> Result<(), ToolExecutionPlanError> {
     let mut plan = ToolExecutionPlan::new(

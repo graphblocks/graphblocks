@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::output_policy::PendingToolCallsDisposition;
-use crate::tool::{ToolCancellation, ToolEffect};
+use crate::tool::{ToolCancellation, ToolEffect, has_conflicting_tool_effects};
 use crate::tool_call::{ToolCall, ToolCallError};
 use serde_json::Value;
 
@@ -75,6 +75,9 @@ pub enum ToolExecutionPlanError {
         effect_key: String,
     },
     EmptyEffectKey {
+        tool_call_id: String,
+    },
+    ConflictingToolEffects {
         tool_call_id: String,
     },
     InvalidEffectKeyTemplate {
@@ -264,6 +267,9 @@ impl ToolExecutionPlan {
                 .is_some_and(|effect_key| effect_key.trim().is_empty())
             {
                 return Err(ToolExecutionPlanError::EmptyEffectKey { tool_call_id });
+            }
+            if has_conflicting_tool_effects(&planned_call.effects) {
+                return Err(ToolExecutionPlanError::ConflictingToolEffects { tool_call_id });
             }
             if indexed_calls
                 .insert(tool_call_id.clone(), planned_call)

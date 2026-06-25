@@ -121,6 +121,10 @@ pub(crate) fn canonical_effect_names(effects: &BTreeSet<ToolEffect>) -> Vec<&'st
     names
 }
 
+pub(crate) fn has_conflicting_tool_effects(effects: &BTreeSet<ToolEffect>) -> bool {
+    effects.contains(&ToolEffect::None) && effects.len() > 1
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ToolApproval {
     Never,
@@ -431,6 +435,11 @@ impl ToolBinding {
                 return Err(ToolResolutionError::EmptyToolBindingField { field });
             }
         }
+        if has_conflicting_tool_effects(&self.effects) {
+            return Err(ToolResolutionError::ConflictingToolEffects {
+                binding_id: self.binding_id.clone(),
+            });
+        }
         self.implementation.validate()?;
         Ok(())
     }
@@ -526,6 +535,9 @@ pub enum ToolResolutionError {
     EmptyToolImplementationField {
         kind: &'static str,
         field: &'static str,
+    },
+    ConflictingToolEffects {
+        binding_id: String,
     },
     EmptyResolvedToolField {
         field: &'static str,
