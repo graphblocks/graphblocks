@@ -17,7 +17,7 @@ use graphblocks_runtime_core::tool::{
 use graphblocks_runtime_core::tool_approval::ToolApprovalRequest;
 use graphblocks_runtime_core::tool_call::{ToolCallDraft, ToolCallError, ToolCallStatus};
 use graphblocks_runtime_core::tool_result::{
-    ArtifactRef, ContentPart, ToolResult, ToolResultEvent,
+    ArtifactRef, ContentPart, ToolResult, ToolResultEvent, ToolResultEventError, ToolResultStatus,
 };
 use serde_json::json;
 
@@ -924,6 +924,33 @@ fn tool_result_events_map_to_standard_tool_application_events() {
     assert_eq!(
         events[5].payload.get("status"),
         Some(&json!("policy_stopped"))
+    );
+}
+
+#[test]
+fn tool_result_application_event_rejects_invalid_final_result_event() {
+    let failed = ToolResult::failed(
+        "call-1",
+        BlockError::new(
+            "tool.failed",
+            ErrorCategory::Permanent,
+            "tool execution failed",
+            true,
+        ),
+        1_000,
+        1_020,
+    );
+    let event = ToolResultEvent::completed("call-1", 13, failed);
+
+    assert_eq!(
+        ApplicationEvent::tool_result_event(metadata(), &event),
+        Err(ApplicationEventError::InvalidToolResultEvent {
+            source: ToolResultEventError::ResultStatusMismatch {
+                kind: "completed".to_owned(),
+                expected: ToolResultStatus::Completed,
+                actual: ToolResultStatus::Failed,
+            }
+        })
     );
 }
 

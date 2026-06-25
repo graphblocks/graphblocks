@@ -13,7 +13,8 @@ use crate::tool_call::{
     ToolCall, ToolCallDraft, ToolCallDraftStatus, ToolCallError, ToolCallStatus,
 };
 use crate::tool_result::{
-    ContentPartKind, ToolEffectOutcome, ToolResult, ToolResultEvent, ToolResultStatus,
+    ContentPartKind, ToolEffectOutcome, ToolResult, ToolResultEvent, ToolResultEventError,
+    ToolResultStatus,
 };
 use serde_json::{Value, json};
 
@@ -133,6 +134,7 @@ pub enum ApplicationEventError {
     EmptyMetadataField { field: &'static str },
     EmptyToolCallId,
     InvalidToolCall { source: ToolCallError },
+    InvalidToolResultEvent { source: ToolResultEventError },
     InvalidOutputCutoff { source: OutputCutoffError },
     InvalidOutputPolicyDecision { source: OutputPolicyDecisionError },
 }
@@ -290,6 +292,9 @@ impl ApplicationEvent {
         metadata: ApplicationEventMetadata,
         event: &ToolResultEvent,
     ) -> Result<Option<Self>, ApplicationEventError> {
+        event
+            .validate()
+            .map_err(|source| ApplicationEventError::InvalidToolResultEvent { source })?;
         match event {
             ToolResultEvent::Started {
                 tool_call_id,
