@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import dataclass, field
 import json
 from urllib.request import Request, urlopen
@@ -38,8 +39,8 @@ class RunGraphCommand:
     occurred_at: str = ""
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "graph", dict(self.graph))
-        object.__setattr__(self, "inputs", dict(self.inputs))
+        object.__setattr__(self, "graph", deepcopy(self.graph))
+        object.__setattr__(self, "inputs", deepcopy(self.inputs))
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,7 +52,7 @@ class RunGraphResponse:
     event_stream: ApplicationEventStreamState
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "outputs", dict(self.outputs))
+        object.__setattr__(self, "outputs", deepcopy(self.outputs))
         object.__setattr__(self, "events", tuple(self.events))
 
 

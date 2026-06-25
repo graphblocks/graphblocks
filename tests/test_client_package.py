@@ -121,16 +121,18 @@ def test_client_package_runs_local_graph_command_and_emits_events(monkeypatch) -
         },
     }
     client = graphblocks_client.LocalGraphBlocksClient()
-
-    response = client.run_graph(
-        graphblocks_client.RunGraphCommand(
-            graph=graph,
-            inputs={"message": {"text": "ok"}},
-            run_id="run-client-1",
-            release_id="release-1",
-            policy_snapshot_id="policy-1",
-        )
+    inputs = {"message": {"text": "ok"}}
+    command = graphblocks_client.RunGraphCommand(
+        graph=graph,
+        inputs=inputs,
+        run_id="run-client-1",
+        release_id="release-1",
+        policy_snapshot_id="policy-1",
     )
+    graph["spec"]["nodes"]["render"]["config"]["template"] = "Mutated {message.text}"
+    inputs["message"]["text"] = "mutated"
+
+    response = client.run_graph(command)
 
     assert response.status == "succeeded"
     assert response.outputs == {"prompt": "Client ok"}
@@ -141,6 +143,23 @@ def test_client_package_runs_local_graph_command_and_emits_events(monkeypatch) -
     assert response.event_stream.accept(response.events[0]) == response.events[0]
     assert "RunStarted" in graphblocks_client.STANDARD_APPLICATION_EVENT_KINDS
     assert "LocalGraphBlocksClient" in graphblocks_client.__all__
+
+
+def test_client_package_response_outputs_are_nested_snapshots(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+    outputs = {"answer": {"text": "ok"}}
+
+    response = graphblocks_client.RunGraphResponse(
+        run_id="run-1",
+        status="succeeded",
+        outputs=outputs,
+        events=(),
+        event_stream=graphblocks_client.ApplicationEventStreamState(),
+    )
+    outputs["answer"]["text"] = "mutated"
+
+    assert response.outputs == {"answer": {"text": "ok"}}
 
 
 def test_client_package_posts_run_graph_command_over_http(monkeypatch) -> None:
