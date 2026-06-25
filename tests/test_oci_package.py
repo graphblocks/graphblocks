@@ -142,6 +142,51 @@ def test_oci_build_provenance_attestation_is_canonical_and_descriptor_ready(monk
     }
 
 
+def test_oci_signature_policy_evaluates_descriptor_metadata(monkeypatch) -> None:
+    graphblocks_oci = _import_oci(monkeypatch)
+    signature = graphblocks_oci.OciDescriptor(
+        media_type="application/vnd.dev.cosign.simplesigning.v1+json",
+        digest="sha256:signature",
+        size=256,
+        annotations={
+            "graphblocks.ai/release-digest": "sha256:release",
+            "graphblocks.ai/signature-kind": "cosign",
+        },
+    )
+    policy = graphblocks_oci.SignatureVerificationPolicy(
+        policy_id="production-publishers",
+        trusted_signers=("cosign://ci.example.com/release",),
+        required_annotations={"graphblocks.ai/signature-kind": "cosign"},
+    )
+
+    accepted = policy.evaluate(
+        signature,
+        signer="cosign://ci.example.com/release",
+        subject_digest="sha256:release",
+    )
+    denied = policy.evaluate(
+        signature,
+        signer="cosign://unknown",
+        subject_digest="sha256:other-release",
+    )
+
+    assert accepted.verified is True
+    assert accepted.reason_codes == ()
+    assert accepted.verification_contract() == {
+        "policy_id": "production-publishers",
+        "signature_digest": "sha256:signature",
+        "signer": "cosign://ci.example.com/release",
+        "subject_digest": "sha256:release",
+        "verified": True,
+        "reason_codes": [],
+    }
+    assert denied.verified is False
+    assert denied.reason_codes == (
+        "signature.subject_digest_mismatch",
+        "signature.untrusted_signer",
+    )
+
+
 def test_oci_manifest_digest_uses_canonical_serialization(monkeypatch) -> None:
     graphblocks_oci = _import_oci(monkeypatch)
     config = graphblocks_oci.OciDescriptor("application/vnd.graphblocks.config.v1+json", "sha256:config", 64)

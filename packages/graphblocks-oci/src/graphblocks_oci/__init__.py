@@ -228,6 +228,73 @@ def build_release_provenance_attestation(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class SignatureVerificationResult:
+    policy_id: str
+    signature_digest: str
+    signer: str
+    subject_digest: str
+    verified: bool
+    reason_codes: tuple[str, ...] = field(default_factory=tuple)
+
+    def verification_contract(self) -> dict[str, object]:
+        return {
+            "policy_id": self.policy_id,
+            "signature_digest": self.signature_digest,
+            "signer": self.signer,
+            "subject_digest": self.subject_digest,
+            "verified": self.verified,
+            "reason_codes": list(self.reason_codes),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class SignatureVerificationPolicy:
+    policy_id: str
+    trusted_signers: tuple[str, ...] = field(default_factory=tuple)
+    required_annotations: Mapping[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.policy_id.strip():
+            raise OciContractError("signature policy_id must not be empty")
+        object.__setattr__(
+            self,
+            "trusted_signers",
+            tuple(sorted(str(signer) for signer in self.trusted_signers)),
+        )
+        object.__setattr__(
+            self,
+            "required_annotations",
+            {str(key): str(value) for key, value in sorted(dict(self.required_annotations).items())},
+        )
+
+    def evaluate(
+        self,
+        signature_descriptor: OciDescriptor,
+        *,
+        signer: str,
+        subject_digest: str,
+    ) -> SignatureVerificationResult:
+        _validate_digest(subject_digest)
+        reason_codes: list[str] = []
+        signed_subject = signature_descriptor.annotations.get("graphblocks.ai/release-digest")
+        if signed_subject != subject_digest:
+            reason_codes.append("signature.subject_digest_mismatch")
+        for key, expected in self.required_annotations.items():
+            if signature_descriptor.annotations.get(key) != expected:
+                reason_codes.append(f"signature.annotation_mismatch:{key}")
+        if self.trusted_signers and signer not in self.trusted_signers:
+            reason_codes.append("signature.untrusted_signer")
+        return SignatureVerificationResult(
+            policy_id=self.policy_id,
+            signature_digest=signature_descriptor.digest,
+            signer=signer,
+            subject_digest=subject_digest,
+            verified=not reason_codes,
+            reason_codes=tuple(reason_codes),
+        )
+
+
 def build_release_manifest(
     release: GraphRelease,
     *,
@@ -276,6 +343,8 @@ __all__ = [
     "OciContractError",
     "OciDescriptor",
     "OciManifest",
+    "SignatureVerificationPolicy",
+    "SignatureVerificationResult",
     "build_release_provenance_attestation",
     "build_release_manifest",
 ]
