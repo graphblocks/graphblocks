@@ -192,6 +192,7 @@ def test_physical_plan_hash_and_resolution_are_stable() -> None:
     )
 
     assert left.plan_hash() == right.plan_hash()
+    assert left.target_capability_hash() == right.target_capability_hash()
     assert left.resolve_target("generate", None, "model.generate", [], [], None).target_id == "control"
     assert (
         left.resolve_target("parse-one", None, "document.parse", ["document.parse.pdf"], [], None).target_id

@@ -1002,6 +1002,16 @@ class PhysicalExecutionPlan:
             }
         )
 
+    def target_capability_hash(self) -> str:
+        return canonical_hash(
+            {
+                "targets": {
+                    target_id: target.canonical_value()
+                    for target_id, target in sorted(self.targets.items())
+                },
+            }
+        )
+
     def resolve_target(
         self,
         node_id: str,

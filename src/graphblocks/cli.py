@@ -11,8 +11,10 @@ import tarfile
 import yaml
 
 from . import __version__
+from .canonical import canonical_hash
 from .compiler import compile_graph
 from .deployment import (
+    DeploymentRevision,
     DeploymentTargetProfileSet,
     ExecutionTarget,
     GraphDeployment,
@@ -197,6 +199,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     deploy_plan_parser.add_argument("path", type=Path)
     deploy_plan_parser.add_argument("--revision", required=True, help="immutable deployment revision id")
+    deploy_plan_parser.add_argument("--created-at", default="", help="deployment revision creation timestamp")
     deploy_plan_parser.add_argument("--graph", help="release graph name; inferred when the release has one graph")
     deploy_plan_parser.add_argument("--json", action="store_true", help="emit JSON")
     deploy_render_parser = deploy_subparsers.add_parser(
@@ -1168,14 +1171,45 @@ def main(argv: list[str] | None = None) -> int:
                         else None
                     )
                 )
+                deployment_spec_hash = deployment.deployment_spec_hash()
+                plan_hash = plan.plan_hash()
+                resolved_binding_hash_value = _field(
+                    spec,
+                    "resolvedBindingHash",
+                    "resolved_binding_hash",
+                )
+                if resolved_binding_hash_value is None:
+                    binding_ref = _field(spec, "bindingRef", "binding_ref", default={})
+                    resolved_binding_hash = canonical_hash(binding_ref)
+                else:
+                    resolved_binding_hash = str(resolved_binding_hash_value)
+                revision = DeploymentRevision(
+                    revision_id=deployment.deployment_revision_id,
+                    release_digest=plan.release_digest,
+                    deployment_spec_hash=deployment_spec_hash,
+                    physical_plan_hash=plan_hash,
+                    resolved_binding_hash=resolved_binding_hash,
+                    target_capability_hash=plan.target_capability_hash(),
+                    created_at=args.created_at,
+                )
                 payload = {
                     "ok": True,
                     "deploymentId": deployment.deployment_id,
                     "deploymentRevisionId": deployment.deployment_revision_id,
                     "graphName": deployment.graph_name,
                     "releaseDigest": plan.release_digest,
-                    "deploymentSpecHash": deployment.deployment_spec_hash(),
-                    "planHash": plan.plan_hash(),
+                    "deploymentSpecHash": deployment_spec_hash,
+                    "planHash": plan_hash,
+                    "deploymentRevision": {
+                        "revisionId": revision.revision_id,
+                        "releaseDigest": revision.release_digest,
+                        "deploymentSpecHash": revision.deployment_spec_hash,
+                        "physicalPlanHash": revision.physical_plan_hash,
+                        "resolvedBindingHash": revision.resolved_binding_hash,
+                        "targetCapabilityHash": revision.target_capability_hash,
+                        "createdAt": revision.created_at,
+                        "contentDigest": revision.content_digest(),
+                    },
                     "plan": {
                         "graphHash": plan.graph_hash,
                         "packageLockHash": plan.package_lock_hash,

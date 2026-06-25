@@ -400,6 +400,7 @@ def test_deploy_plan_cli_builds_physical_execution_plan(tmp_path, capsys) -> Non
         "spec": {
             "releaseRef": {"name": "support-agent"},
             "profile": "production",
+            "bindingRef": "bindings/support-production.yaml",
             "coordinator": {"target": "control"},
             "targets": {
                 "control": {
@@ -432,7 +433,18 @@ def test_deploy_plan_cli_builds_physical_execution_plan(tmp_path, capsys) -> Non
     path = tmp_path / "deployment.yaml"
     path.write_text(yaml.safe_dump_all([release, deployment]), encoding="utf-8")
 
-    assert main(["deploy", "plan", str(path), "--revision", "rev-1", "--json"]) == 0
+    assert main(
+        [
+            "deploy",
+            "plan",
+            str(path),
+            "--revision",
+            "rev-1",
+            "--created-at",
+            "2026-06-24T00:00:00Z",
+            "--json",
+        ]
+    ) == 0
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["deploymentId"] == "support-production"
@@ -441,6 +453,14 @@ def test_deploy_plan_cli_builds_physical_execution_plan(tmp_path, capsys) -> Non
     assert payload["releaseDigest"].startswith("sha256:")
     assert payload["planHash"].startswith("sha256:")
     assert payload["deploymentSpecHash"].startswith("sha256:")
+    assert payload["deploymentRevision"]["revisionId"] == "rev-1"
+    assert payload["deploymentRevision"]["releaseDigest"] == payload["releaseDigest"]
+    assert payload["deploymentRevision"]["deploymentSpecHash"] == payload["deploymentSpecHash"]
+    assert payload["deploymentRevision"]["physicalPlanHash"] == payload["planHash"]
+    assert payload["deploymentRevision"]["resolvedBindingHash"].startswith("sha256:")
+    assert payload["deploymentRevision"]["targetCapabilityHash"].startswith("sha256:")
+    assert payload["deploymentRevision"]["createdAt"] == "2026-06-24T00:00:00Z"
+    assert payload["deploymentRevision"]["contentDigest"].startswith("sha256:")
     assert payload["plan"]["graphHash"] == "sha256:graph-turn"
     assert payload["plan"]["defaultTarget"] == "control"
     assert payload["plan"]["targets"]["docs"]["kind"] == "worker_pool"
