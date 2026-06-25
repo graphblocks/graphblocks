@@ -51,6 +51,11 @@ def test_packages_cli_doctor_accepts_catalog(capsys) -> None:
     assert capsys.readouterr().out.strip() == "OK"
 
 
+def test_packages_cli_doctor_cross_checks_repo_manifests(capsys) -> None:
+    assert main(["packages", "doctor", "--root", "."]) == 0
+    assert capsys.readouterr().out.strip() == "OK"
+
+
 def test_packages_audit_cli_accepts_repo_manifests(capsys) -> None:
     assert main(["packages", "audit", "--root", "."]) == 0
 

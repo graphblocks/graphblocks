@@ -157,6 +157,7 @@ def main(argv: list[str] | None = None) -> int:
     packages_list_parser.add_argument("--json", action="store_true", help="emit JSON")
     packages_doctor_parser = packages_subparsers.add_parser("doctor", help="validate package catalog closure")
     packages_doctor_parser.add_argument("--catalog", type=Path, help="override package-catalog.yaml")
+    packages_doctor_parser.add_argument("--root", type=Path, help="cross-check local pyproject dependency closure")
     packages_doctor_parser.add_argument("--json", action="store_true", help="emit JSON")
     packages_audit_parser = packages_subparsers.add_parser(
         "audit",
@@ -456,7 +457,7 @@ def main(argv: list[str] | None = None) -> int:
                     )
             return 0
         if args.packages_command == "doctor":
-            diagnostics = doctor_package_catalog(load_package_catalog(args.catalog))
+            diagnostics = doctor_package_catalog(load_package_catalog(args.catalog), root=args.root)
             if args.json:
                 print(json.dumps({"ok": diagnostics.ok, "diagnostics": diagnostics.to_list()}, indent=2, sort_keys=True))
             elif diagnostics.diagnostics:

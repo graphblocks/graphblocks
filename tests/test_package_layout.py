@@ -794,7 +794,7 @@ def test_policy_adapter_packages_have_pure_python_layouts_without_sdk_dependenci
 
         assert pyproject["build-system"]["build-backend"] == "hatchling.build"
         assert pyproject["project"]["name"] == distribution
-        assert dependencies == ["graphblocks-core~=1.0"]
+        assert dependencies == ["graphblocks-policy~=1.0"]
         assert not any("opa" in dependency.lower() or "cedar" in dependency.lower() for dependency in dependencies)
         assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
             f"src/{import_name}"
@@ -991,6 +991,57 @@ def test_package_catalog_doctor_accepts_builtin_catalog() -> None:
 
     assert diagnostics.ok
     assert diagnostics.diagnostics == ()
+
+
+def test_package_catalog_doctor_cross_checks_local_pyproject_dependencies() -> None:
+    diagnostics = doctor_package_catalog(load_package_catalog(), root=ROOT)
+
+    assert diagnostics.ok
+    assert diagnostics.diagnostics == ()
+
+
+def test_package_catalog_doctor_reports_local_manifest_dependency_drift(tmp_path) -> None:
+    package_root = tmp_path / "packages" / "graphblocks-agents"
+    package_root.mkdir(parents=True)
+    (package_root / "pyproject.toml").write_text(
+        """
+[project]
+name = "graphblocks-agents"
+version = "0.1.0"
+dependencies = ["graphblocks-core~=1.0"]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    diagnostics = doctor_package_catalog(
+        {
+            "catalogVersion": 1,
+            "specVersion": "1.0",
+            "defaultMetaPackage": {"distribution": "graphblocks", "dependencies": [], "excludedCategories": []},
+            "packages": [
+                {"distribution": "graphblocks", "default": True, "dependsOn": []},
+                {"distribution": "graphblocks-core", "default": True, "dependsOn": []},
+                {"distribution": "graphblocks-policy", "default": True, "dependsOn": ["graphblocks-core"]},
+                {
+                    "distribution": "graphblocks-agents",
+                    "default": False,
+                    "dependsOn": ["graphblocks-policy"],
+                },
+            ],
+        },
+        root=tmp_path,
+    )
+
+    assert [(item.code, item.message) for item in diagnostics.diagnostics] == [
+        (
+            "PackageManifestDependencyMissing",
+            "package manifest for 'graphblocks-agents' is missing catalog dependency 'graphblocks-policy'",
+        ),
+        (
+            "PackageManifestDependencyUnexpected",
+            "package manifest for 'graphblocks-agents' declares uncataloged first-party dependency 'graphblocks-core'",
+        ),
+    ]
 
 
 def test_package_catalog_doctor_reports_unknown_dependency_and_default_constraint() -> None:

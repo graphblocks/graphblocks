@@ -395,7 +395,7 @@ def audit_package_manifests(
     return DiagnosticSet(tuple(diagnostics))
 
 
-def doctor_package_catalog(catalog: dict[str, Any]) -> DiagnosticSet:
+def doctor_package_catalog(catalog: dict[str, Any], *, root: str | Path | None = None) -> DiagnosticSet:
     diagnostics: list[Diagnostic] = []
     raw_packages = catalog.get("packages", [])
     packages = raw_packages if isinstance(raw_packages, list) else []
@@ -535,10 +535,10 @@ def doctor_package_catalog(catalog: dict[str, Any]) -> DiagnosticSet:
 
     states: dict[str, str] = {}
     reported_cycles: set[frozenset[str]] = set()
-    for root in sorted(packages_by_distribution):
-        if states.get(root) == "done":
+    for root_distribution in sorted(packages_by_distribution):
+        if states.get(root_distribution) == "done":
             continue
-        stack: list[tuple[str, int]] = [(root, 0)]
+        stack: list[tuple[str, int]] = [(root_distribution, 0)]
         path: list[str] = []
         while stack:
             current, next_index = stack[-1]
@@ -579,6 +579,106 @@ def doctor_package_catalog(catalog: dict[str, Any]) -> DiagnosticSet:
                     )
             elif dependency_state != "done":
                 stack.append((dependency, 0))
+
+    if root is not None:
+        root_path = Path(root)
+        if not root_path.is_dir():
+            diagnostics.append(
+                Diagnostic(
+                    "PackageDoctorRootMissing",
+                    f"package doctor root is not a directory: {root_path}",
+                    "$",
+                )
+            )
+        else:
+            manifest_paths = [
+                root_path / "pyproject.toml",
+                *sorted(root_path.glob("packages/*/pyproject.toml")),
+            ]
+            known_distributions = set(packages_by_distribution)
+            for manifest_path in manifest_paths:
+                if not manifest_path.exists():
+                    continue
+                relative_path = manifest_path.relative_to(root_path).as_posix()
+                try:
+                    manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
+                except tomllib.TOMLDecodeError as error:
+                    diagnostics.append(
+                        Diagnostic(
+                            "PackageManifestInvalid",
+                            f"invalid Python package manifest: {error}",
+                            f"$.{relative_path}",
+                        )
+                    )
+                    continue
+                project = manifest.get("project")
+                if not isinstance(project, dict):
+                    diagnostics.append(
+                        Diagnostic(
+                            "PackageManifestInvalid",
+                            "Python package manifests require a project table",
+                            f"$.{relative_path}.project",
+                        )
+                    )
+                    continue
+                distribution = project.get("name")
+                if not isinstance(distribution, str) or not distribution.strip():
+                    diagnostics.append(
+                        Diagnostic(
+                            "PackageManifestDistributionMissing",
+                            "Python package manifest must declare project.name",
+                            f"$.{relative_path}.project.name",
+                        )
+                    )
+                    continue
+                distribution = distribution.strip()
+                package = packages_by_distribution.get(distribution)
+                if package is None:
+                    diagnostics.append(
+                        Diagnostic(
+                            "PackageManifestDistributionUnknown",
+                            f"package manifest distribution {distribution!r} is not listed in catalog",
+                            f"$.{relative_path}.project.name",
+                        )
+                    )
+                    continue
+                expected_dependencies = tuple(
+                    dependency for dependency in package.get("dependsOn", []) if isinstance(dependency, str) and dependency
+                )
+                dependencies = project.get("dependencies", [])
+                actual_dependencies: list[str] = []
+                if isinstance(dependencies, list):
+                    for dependency in dependencies:
+                        if not isinstance(dependency, str):
+                            continue
+                        dependency_name = dependency.strip().split(";", 1)[0].strip()
+                        for marker in ("[", "~=", "==", ">=", "<=", "!=", ">", "<"):
+                            marker_index = dependency_name.find(marker)
+                            if marker_index > 0:
+                                dependency_name = dependency_name[:marker_index]
+                                break
+                        dependency_name = dependency_name.strip().lower().replace("_", "-")
+                        if dependency_name in known_distributions and dependency_name not in actual_dependencies:
+                            actual_dependencies.append(dependency_name)
+                dependency_path = f"$.{relative_path}.project.dependencies"
+                for dependency in expected_dependencies:
+                    if dependency not in actual_dependencies:
+                        diagnostics.append(
+                            Diagnostic(
+                                "PackageManifestDependencyMissing",
+                                f"package manifest for {distribution!r} is missing catalog dependency {dependency!r}",
+                                dependency_path,
+                            )
+                        )
+                for dependency in actual_dependencies:
+                    if dependency not in expected_dependencies:
+                        diagnostics.append(
+                            Diagnostic(
+                                "PackageManifestDependencyUnexpected",
+                                f"package manifest for {distribution!r} declares uncataloged first-party dependency {dependency!r}",
+                                dependency_path,
+                            )
+                        )
 
     excluded_categories = {
         category
