@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import hashlib
+import json
+from typing import Iterable
+
+from graphblocks.diagnostics import Diagnostic, DiagnosticSet, Severity
 
 
 class DevtoolsContractError(ValueError):
@@ -12,8 +16,19 @@ def _content_digest(content: str) -> str:
     return "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
+def _canonical_content_digest(content: object) -> str:
+    return _content_digest(json.dumps(content, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
+
+
 def _dot_quote(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _diagnostic_summary(diagnostics: Iterable[Diagnostic]) -> dict[Severity, int]:
+    summary: dict[Severity, int] = {"error": 0, "warning": 0, "info": 0}
+    for diagnostic in diagnostics:
+        summary[diagnostic.severity] += 1
+    return summary
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,12 +176,83 @@ class CodegenArtifact:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class DiagnosticBundleSection:
+    name: str
+    diagnostics: DiagnosticSet | tuple[Diagnostic, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        if not self.name.strip():
+            raise DevtoolsContractError("diagnostic bundle section name must not be empty")
+        diagnostics = self.diagnostics.diagnostics if isinstance(self.diagnostics, DiagnosticSet) else self.diagnostics
+        object.__setattr__(
+            self,
+            "diagnostics",
+            tuple(
+                sorted(
+                    diagnostics,
+                    key=lambda item: (item.severity, item.code, item.path, item.message),
+                )
+            ),
+        )
+
+    @property
+    def ok(self) -> bool:
+        return not any(item.severity == "error" for item in self.diagnostics)
+
+    def summary(self) -> dict[Severity, int]:
+        return _diagnostic_summary(self.diagnostics)
+
+    def section_contract(self) -> dict[str, object]:
+        return {
+            "name": self.name,
+            "ok": self.ok,
+            "summary": self.summary(),
+            "diagnostics": [diagnostic.to_dict() for diagnostic in self.diagnostics],
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class DiagnosticBundle:
+    bundle_id: str
+    sections: tuple[DiagnosticBundleSection, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        if not self.bundle_id.strip():
+            raise DevtoolsContractError("diagnostic bundle_id must not be empty")
+        object.__setattr__(self, "sections", tuple(sorted(self.sections, key=lambda item: item.name)))
+
+    @property
+    def ok(self) -> bool:
+        return all(section.ok for section in self.sections)
+
+    def summary(self) -> dict[Severity, int]:
+        summary: dict[Severity, int] = {"error": 0, "warning": 0, "info": 0}
+        for section in self.sections:
+            for severity, count in section.summary().items():
+                summary[severity] += count
+        return summary
+
+    def bundle_contract(self) -> dict[str, object]:
+        return {
+            "bundle_id": self.bundle_id,
+            "ok": self.ok,
+            "summary": self.summary(),
+            "sections": [section.section_contract() for section in self.sections],
+        }
+
+    def content_digest(self) -> str:
+        return _canonical_content_digest(self.bundle_contract())
+
+
 __all__ = [
     "CodegenArtifact",
     "DevGraph",
     "DevGraphEdge",
     "DevGraphNode",
     "DevtoolsContractError",
+    "DiagnosticBundle",
+    "DiagnosticBundleSection",
     "MigrationPlan",
     "MigrationStep",
     "ProfileSample",

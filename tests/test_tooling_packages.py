@@ -183,3 +183,75 @@ def test_devtools_package_builds_profile_summary_and_codegen_artifact(monkeypatc
         "path": "support_agent.py",
         "content_digest": artifact.content_digest(),
     }
+
+
+def test_devtools_package_builds_deterministic_diagnostic_bundle(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-cli" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-devtools" / "src"))
+    graphblocks = importlib.import_module("graphblocks")
+    graphblocks_devtools = importlib.import_module("graphblocks_devtools")
+
+    bundle = graphblocks_devtools.DiagnosticBundle(
+        bundle_id="release-checks",
+        sections=(
+            graphblocks_devtools.DiagnosticBundleSection(
+                name="compiler",
+                diagnostics=graphblocks.DiagnosticSet(
+                    (
+                        graphblocks.Diagnostic("GB1001", "node is not connected", "$.spec.nodes.agent", "warning"),
+                        graphblocks.Diagnostic("GB0003", "metadata.name is required", "$.metadata.name"),
+                    )
+                ),
+            ),
+            graphblocks_devtools.DiagnosticBundleSection(
+                name="package-doctor",
+                diagnostics=(graphblocks.Diagnostic("GBPKG001", "missing package dependency", "$.packages[0]"),),
+            ),
+        ),
+    )
+
+    assert not bundle.ok
+    assert bundle.bundle_contract() == {
+        "bundle_id": "release-checks",
+        "ok": False,
+        "summary": {"error": 2, "warning": 1, "info": 0},
+        "sections": [
+            {
+                "name": "compiler",
+                "ok": False,
+                "summary": {"error": 1, "warning": 1, "info": 0},
+                "diagnostics": [
+                    {
+                        "code": "GB0003",
+                        "severity": "error",
+                        "path": "$.metadata.name",
+                        "message": "metadata.name is required",
+                    },
+                    {
+                        "code": "GB1001",
+                        "severity": "warning",
+                        "path": "$.spec.nodes.agent",
+                        "message": "node is not connected",
+                    },
+                ],
+            },
+            {
+                "name": "package-doctor",
+                "ok": False,
+                "summary": {"error": 1, "warning": 0, "info": 0},
+                "diagnostics": [
+                    {
+                        "code": "GBPKG001",
+                        "severity": "error",
+                        "path": "$.packages[0]",
+                        "message": "missing package dependency",
+                    }
+                ],
+            },
+        ],
+    }
+    assert bundle.content_digest().startswith("sha256:")
+    assert bundle.content_digest() == graphblocks_devtools.DiagnosticBundle(
+        bundle_id="release-checks",
+        sections=tuple(reversed(bundle.sections)),
+    ).content_digest()
