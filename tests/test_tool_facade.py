@@ -795,6 +795,46 @@ def test_tool_approval_request_validates_revision_and_expiration() -> None:
         ToolApprovalRequest(**{**base, "expires_at": 100})
 
 
+def test_tool_approval_records_reject_non_string_identity_fields() -> None:
+    base = {
+        "approval_id": "approval-1",
+        "tool_call_id": "call-1",
+        "tool_name": "knowledge.search",
+        "revision": 1,
+        "definition_digest": "sha256:def",
+        "binding_digest": "sha256:binding",
+        "arguments_digest": "sha256:args",
+        "policy_snapshot_id": "policy-1",
+        "principal_id": "user-1",
+        "requested_at": 100,
+        "expires_at": 200,
+    }
+
+    for field_name in (
+        "approval_id",
+        "tool_call_id",
+        "tool_name",
+        "definition_digest",
+        "binding_digest",
+        "arguments_digest",
+        "policy_snapshot_id",
+        "principal_id",
+    ):
+        with pytest.raises(ValueError, match=f"approval {field_name} must be a string"):
+            ToolApprovalRequest(**{**base, field_name: object()})  # type: ignore[arg-type]
+
+    request = ToolApprovalRequest(**base)
+    with pytest.raises(ValueError, match="approval approver_id must be a string"):
+        ToolApprovalRecord.approve(request, approver_id=object(), decided_at=110)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="approval reason must be a string"):
+        ToolApprovalRecord.deny(
+            request,
+            approver_id="admin-1",
+            decided_at=110,
+            reason=object(),  # type: ignore[arg-type]
+        )
+
+
 def test_tool_lifecycle_counters_are_non_negative_and_positive() -> None:
     with pytest.raises(ValueError, match="tool call draft response_id must not be empty"):
         ToolCallDraft(" ", "call-1", "knowledge.search")

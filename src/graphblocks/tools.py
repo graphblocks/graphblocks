@@ -637,8 +637,7 @@ class ToolApprovalRequest:
             "policy_snapshot_id",
             "principal_id",
         ):
-            if not getattr(self, field_name).strip():
-                raise ValueError(f"approval {field_name} must not be empty")
+            _validate_non_empty_string("approval", field_name, getattr(self, field_name))
         if self.revision < 1:
             raise ValueError("approval revision must be positive")
         if self.requested_at < 0:
@@ -694,15 +693,15 @@ class ToolApprovalRecord:
         if self.approval_id != self.request.approval_id:
             raise ValueError("approval record id must match request approval_id")
         if self.status in {"approved", "denied"}:
-            if self.approver_id is None or not self.approver_id.strip():
+            if self.approver_id is None:
                 raise ValueError("approval approver_id must not be empty")
+            _validate_non_empty_string("approval", "approver_id", self.approver_id)
             if self.decided_at is None:
                 raise ValueError(f"{self.status} approval record requires decided_at")
         if self.status == "denied":
             if self.reason is None:
                 raise ValueError("denied approval record requires reason")
-            if not self.reason.strip():
-                raise ValueError("approval reason must not be empty")
+            _validate_non_empty_string("approval", "reason", self.reason)
         if self.status == "invalidated" and self.invalidated_at is None:
             raise ValueError("invalidated approval record requires invalidated_at")
         if self.decided_at is not None and self.decided_at < 0:
