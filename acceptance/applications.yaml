@@ -1,0 +1,67 @@
+apiVersion: graphblocks.ai/acceptance/v1alpha1
+kind: AcceptanceApplicationSet
+metadata:
+  name: graphblocks-core-acceptance
+  version: 1.0.0
+spec:
+  applications:
+  - id: direct-file-analysis
+    profiles:
+    - GB-C2-AI-APPLICATION
+    scenarioPath: docs/upstream/GraphBlocks_v1.0_Final/examples/05-authority-backed-advisory.yaml
+    gates:
+    - graphblocks validate
+    - graphblocks plan --expand
+    - source reference check
+    - generated artifact check
+    description: Direct multi-format file analysis with source references and a generated artifact.
+  - id: document-ingestion
+    profiles:
+    - GB-C2-AI-APPLICATION
+    scenarioPath: docs/upstream/GraphBlocks_v1.0_Final/examples/02-document-ingestion.yaml
+    gates:
+    - graphblocks validate
+    - graphblocks plan --expand
+    - parser fallback check
+    - ACL propagation check
+    description: Incremental document ingestion with parser fallback, per-item budget, checkpoint, staging index, publish, delete, and ACL propagation.
+  - id: enterprise-rag
+    profiles:
+    - GB-C2-AI-APPLICATION
+    scenarioPath: docs/upstream/GraphBlocks_v1.0_Final/examples/01-enterprise-federated-rag.yaml
+    gates:
+    - graphblocks validate
+    - graphblocks plan --expand
+    - rag citation validation
+    - abstention check
+    description: Federated enterprise RAG with dense and keyword retrieval, fusion, rerank, budgeted context, abstention, and citation checks.
+  - id: kubernetes-canary
+    profiles:
+    - GB-C4-PRODUCTION
+    scenarioPath: docs/upstream/GraphBlocks_v1.0_Final/examples/08-kubernetes-production-deployment.yaml
+    gates:
+    - graphblocks validate
+    - release bundle verification
+    - canary quality gate
+    - rollback and drain gate
+    description: GraphRelease build, Kubernetes execution groups, canary quality and policy gate, rollback, and drain.
+  - id: multi-turn-chat
+    profiles:
+    - GB-C2-AI-APPLICATION
+    scenarioPath: docs/upstream/GraphBlocks_v1.0_Final/examples/03-policy-governed-chat.yaml
+    gates:
+    - graphblocks validate
+    - graphblocks plan --expand
+    - conversation CAS check
+    - draft retract commit check
+    description: Multi-turn chatbot with attachment handling, regenerate and branch, CAS, draft/retract/commit, and quota profiles.
+  - id: telemetry-outage-correctness
+    profiles:
+    - GB-C4-PRODUCTION
+    scenarioPath: docs/upstream/GraphBlocks_v1.0_Final/examples/09-observability-profile.yaml
+    gates:
+    - graphblocks validate
+    - OTel projection check
+    - Langfuse projection check
+    - telemetry outage correctness check
+    description: OTel and Langfuse projection while audit, usage, budget, and recovery remain correct when telemetry is unavailable.
