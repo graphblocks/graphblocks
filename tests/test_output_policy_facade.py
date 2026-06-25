@@ -129,6 +129,31 @@ def test_declarative_output_policy_rule_rejects_invalid_metadata_values() -> Non
         )
 
 
+def test_declarative_output_policy_rule_rejects_invalid_field_types() -> None:
+    with pytest.raises(ValueError, match="output policy rule literal must be a string"):
+        DeclarativeOutputPolicyRule(
+            rule_id="blocked-secret",
+            literal=["secret"],  # type: ignore[arg-type]
+            disposition="abort_response",
+        )
+
+    with pytest.raises(ValueError, match="output policy rule replacement must be a string"):
+        DeclarativeOutputPolicyRule(
+            rule_id="redact-secret",
+            literal="secret",
+            disposition="redact",
+            replacement={"text": "[redacted]"},  # type: ignore[arg-type]
+        )
+
+    with pytest.raises(ValueError, match="output policy rule priority must be an integer"):
+        DeclarativeOutputPolicyRule(
+            rule_id="blocked-secret",
+            literal="secret",
+            disposition="abort_response",
+            priority="high",  # type: ignore[arg-type]
+        )
+
+
 def test_output_policy_contract_rejects_unknown_literals() -> None:
     with pytest.raises(ValueError, match="invalid output disposition stream"):
         OutputPolicyDecision("decision-1", disposition="stream")

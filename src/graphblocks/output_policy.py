@@ -52,10 +52,16 @@ class DeclarativeOutputPolicyRule:
     def __post_init__(self) -> None:
         if not self.rule_id.strip():
             raise ValueError("output policy rule_id must not be empty")
+        if not isinstance(self.literal, str):
+            raise ValueError("output policy rule literal must be a string")
         if not self.literal:
             raise ValueError("output policy rule literal must not be empty")
         if self.disposition not in VALID_OUTPUT_DISPOSITIONS:
             raise ValueError(f"invalid output disposition {self.disposition}")
+        if self.replacement is not None and not isinstance(self.replacement, str):
+            raise ValueError("output policy rule replacement must be a string")
+        if not isinstance(self.priority, int) or isinstance(self.priority, bool):
+            raise ValueError("output policy rule priority must be an integer")
         if self.disposition in {"redact", "replace"} and self.replacement is None:
             raise ValueError(f"{self.disposition} output policy rules require a replacement")
         try:
