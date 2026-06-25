@@ -190,6 +190,40 @@ def test_rag_package_has_pure_python_layout_without_vector_db_dependencies() -> 
     assert (package_root / "src" / "graphblocks_rag" / "py.typed").exists()
 
 
+def test_vector_store_adapter_packages_are_cataloged_as_optional_integrations() -> None:
+    rows = {row["distribution"]: row for row in package_rows(load_package_catalog())}
+
+    assert rows["graphblocks-qdrant"] == {
+        "distribution": "graphblocks-qdrant",
+        "import": "graphblocks_qdrant",
+        "default": False,
+        "layer": "retrieval_adapter",
+        "kind": "pure_python",
+        "implementationPhase": "integration-defined",
+        "stability": "integration",
+    }
+
+
+def test_vector_store_adapter_packages_have_pure_python_layouts_without_sdk_dependencies() -> None:
+    package_root = ROOT / "packages" / "graphblocks-qdrant"
+    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
+    dependencies = pyproject["project"]["dependencies"]
+
+    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
+    assert pyproject["project"]["name"] == "graphblocks-qdrant"
+    assert dependencies == ["graphblocks-rag~=1.0"]
+    assert not any(
+        vector_client in dependency.lower()
+        for dependency in dependencies
+        for vector_client in ("qdrant", "requests", "httpx", "grpc")
+    )
+    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
+        "src/graphblocks_qdrant"
+    ]
+    assert (package_root / "src" / "graphblocks_qdrant" / "__init__.py").exists()
+    assert (package_root / "src" / "graphblocks_qdrant" / "py.typed").exists()
+
+
 def test_conversation_package_has_pure_python_layout_without_server_or_db_dependencies() -> None:
     package_root = ROOT / "packages" / "graphblocks-conversation"
     pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))

@@ -185,6 +185,23 @@ packages:
   - vector DB clients
   implementationPhase: 1
   stability: foundation
+- distribution: graphblocks-qdrant
+  import: graphblocks_qdrant
+  layer: retrieval_adapter
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-rag
+  responsibility:
+  - Qdrant search request contract
+  - Qdrant scored point to SearchHit mapping
+  - vector store payload interoperability
+  forbiddenDependencies:
+  - qdrant-client
+  - HTTP clients
+  - gRPC clients
+  implementationPhase: integration-defined
+  stability: integration
 - distribution: graphblocks-conversation
   import: graphblocks_conversation
   layer: domain
