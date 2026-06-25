@@ -59,6 +59,17 @@ impl ToolDefinition {
                 return Err(ToolResolutionError::EmptyToolDefinitionField { field });
             }
         }
+        for (field, value) in [
+            ("output_schema", self.output_schema.as_deref()),
+            ("version", self.version.as_deref()),
+        ] {
+            if value.is_some_and(|value| value.trim().is_empty()) {
+                return Err(ToolResolutionError::EmptyToolDefinitionField { field });
+            }
+        }
+        if self.tags.iter().any(|tag| tag.trim().is_empty()) {
+            return Err(ToolResolutionError::EmptyToolDefinitionField { field: "tag" });
+        }
         Ok(())
     }
 

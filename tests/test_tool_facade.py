@@ -137,6 +137,27 @@ def test_tool_definition_rejects_empty_identity_fields() -> None:
             description="Search support documentation.",
             input_schema=" ",
         )
+    with pytest.raises(ValueError, match="tool definition output_schema must not be empty"):
+        ToolDefinition(
+            name="knowledge.search",
+            description="Search support documentation.",
+            input_schema="schemas/SearchRequest@1",
+            output_schema=" ",
+        )
+    with pytest.raises(ValueError, match="tool definition version must not be empty"):
+        ToolDefinition(
+            name="knowledge.search",
+            description="Search support documentation.",
+            input_schema="schemas/SearchRequest@1",
+            version=" ",
+        )
+    with pytest.raises(ValueError, match="tool definition tag must not be empty"):
+        ToolDefinition(
+            name="knowledge.search",
+            description="Search support documentation.",
+            input_schema="schemas/SearchRequest@1",
+            tags=frozenset({"support", " "}),
+        )
 
 
 def test_tool_binding_digest_includes_execution_contract_not_definition_text() -> None:

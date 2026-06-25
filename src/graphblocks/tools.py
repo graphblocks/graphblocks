@@ -318,7 +318,14 @@ class ToolDefinition:
         for field_name in ("name", "description", "input_schema"):
             if not getattr(self, field_name).strip():
                 raise ValueError(f"tool definition {field_name} must not be empty")
-        object.__setattr__(self, "tags", frozenset(self.tags))
+        if self.output_schema is not None and not self.output_schema.strip():
+            raise ValueError("tool definition output_schema must not be empty")
+        if self.version is not None and not self.version.strip():
+            raise ValueError("tool definition version must not be empty")
+        tags = frozenset(self.tags)
+        if any(not tag.strip() for tag in tags):
+            raise ValueError("tool definition tag must not be empty")
+        object.__setattr__(self, "tags", tags)
 
     def model_contract(self) -> dict[str, object]:
         return {

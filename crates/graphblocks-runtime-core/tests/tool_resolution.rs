@@ -129,6 +129,38 @@ fn tool_definition_validates_identity_fields() {
         })
     );
     assert_eq!(
+        ToolDefinition::new(
+            "knowledge.search",
+            "Search internal documentation.",
+            "schemas/KnowledgeSearchRequest@1",
+        )
+        .with_output_schema(" ")
+        .validate(),
+        Err(ToolResolutionError::EmptyToolDefinitionField {
+            field: "output_schema",
+        })
+    );
+    assert_eq!(
+        ToolDefinition::new(
+            "knowledge.search",
+            "Search internal documentation.",
+            "schemas/KnowledgeSearchRequest@1",
+        )
+        .with_version("")
+        .validate(),
+        Err(ToolResolutionError::EmptyToolDefinitionField { field: "version" })
+    );
+    assert_eq!(
+        ToolDefinition::new(
+            "knowledge.search",
+            "Search internal documentation.",
+            "schemas/KnowledgeSearchRequest@1",
+        )
+        .with_tags(["read", " "])
+        .validate(),
+        Err(ToolResolutionError::EmptyToolDefinitionField { field: "tag" })
+    );
+    assert_eq!(
         ToolCatalog::new(
             [ToolDefinition::new(
                 " ",
