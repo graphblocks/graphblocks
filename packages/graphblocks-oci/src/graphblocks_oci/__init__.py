@@ -142,6 +142,45 @@ class OciArtifactReference:
 
 
 @dataclass(frozen=True, slots=True)
+class ReleaseImageBuild:
+    release: GraphRelease
+    tag_reference: OciArtifactReference
+    manifest: OciManifest
+
+    @property
+    def manifest_digest(self) -> str:
+        return self.manifest.manifest_digest()
+
+    @property
+    def tag_ref(self) -> str:
+        return self.tag_reference.ref()
+
+    @property
+    def digest_ref(self) -> str:
+        return OciArtifactReference(
+            registry=self.tag_reference.registry,
+            repository=self.tag_reference.repository,
+            digest=self.manifest_digest,
+        ).ref()
+
+    def image_build_contract(self) -> dict[str, object]:
+        return {
+            "release_name": self.release.name,
+            "release_version": self.release.version,
+            "release_digest": self.release.content_digest(),
+            "tag_ref": self.tag_ref,
+            "digest_ref": self.digest_ref,
+            "manifest_digest": self.manifest_digest,
+            "manifest_media_type": self.manifest.media_type,
+            "artifact_type": self.manifest.artifact_type,
+            "layers": [layer.descriptor_contract() for layer in self.manifest.layers],
+        }
+
+    def content_digest(self) -> str:
+        return "sha256:" + hashlib.sha256(_canonical_dumps(self.image_build_contract()).encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
 class BuildProvenanceAttestation:
     subject_name: str
     subject_digest: str
@@ -437,6 +476,39 @@ def build_release_manifest(
     )
 
 
+def build_release_image(
+    release: GraphRelease,
+    *,
+    registry: str,
+    repository: str,
+    tag: str | None = None,
+    bundle_descriptor: OciDescriptor,
+    sbom_descriptor: OciDescriptor | None = None,
+    provenance_descriptor: OciDescriptor | None = None,
+    signature_descriptor: OciDescriptor | None = None,
+    config_descriptor: OciDescriptor | None = None,
+    annotations: Mapping[str, str] | None = None,
+) -> ReleaseImageBuild:
+    manifest = build_release_manifest(
+        release,
+        bundle_descriptor=bundle_descriptor,
+        sbom_descriptor=sbom_descriptor,
+        provenance_descriptor=provenance_descriptor,
+        signature_descriptor=signature_descriptor,
+        config_descriptor=config_descriptor,
+        annotations=annotations,
+    )
+    return ReleaseImageBuild(
+        release=release,
+        tag_reference=OciArtifactReference(
+            registry=registry,
+            repository=repository,
+            tag=tag or release.version,
+        ),
+        manifest=manifest,
+    )
+
+
 __all__ = [
     "BuildProvenanceAttestation",
     "CYCLONEDX_JSON_MEDIA_TYPE",
@@ -447,10 +519,12 @@ __all__ = [
     "OciContractError",
     "OciDescriptor",
     "OciManifest",
+    "ReleaseImageBuild",
     "ReleaseSbom",
     "SignatureVerificationPolicy",
     "SignatureVerificationResult",
     "build_release_provenance_attestation",
+    "build_release_image",
     "build_release_sbom",
     "build_release_manifest",
 ]

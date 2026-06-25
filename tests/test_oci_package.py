@@ -132,6 +132,69 @@ def test_oci_release_manifest_includes_sbom_descriptor(monkeypatch) -> None:
     assert contract["annotations"]["graphblocks.ai/provenance-digest"] == "sha256:provenance"
 
 
+def test_oci_build_release_image_returns_tag_and_digest_references(monkeypatch) -> None:
+    graphblocks_oci = _import_oci(monkeypatch)
+    graphblocks_deployment = importlib.import_module("graphblocks_deployment")
+    release = (
+        graphblocks_deployment.GraphRelease("support-agent", "2026.06.23.1")
+        .with_bundle("sha256:bundle", "application/vnd.graphblocks.release.bundle.v1+tar")
+        .with_graph("turn", graphblocks_deployment.GraphReleaseGraph("sha256:graph", "sha256:plan"))
+    )
+    bundle = graphblocks_oci.OciDescriptor(
+        media_type="application/vnd.graphblocks.release.bundle.v1+tar",
+        digest="sha256:bundle",
+        size=4096,
+    )
+    sbom = graphblocks_oci.OciDescriptor(
+        media_type="application/vnd.cyclonedx+json",
+        digest="sha256:sbom",
+        size=1024,
+    )
+    provenance = graphblocks_oci.OciDescriptor(
+        media_type="application/vnd.in-toto+json",
+        digest="sha256:provenance",
+        size=512,
+    )
+    signature = graphblocks_oci.OciDescriptor(
+        media_type="application/vnd.dev.cosign.simplesigning.v1+json",
+        digest="sha256:signature",
+        size=256,
+    )
+
+    image = graphblocks_oci.build_release_image(
+        release,
+        registry="registry.example.com",
+        repository="graphblocks/support-agent",
+        tag="2026.06.23.1",
+        bundle_descriptor=bundle,
+        sbom_descriptor=sbom,
+        provenance_descriptor=provenance,
+        signature_descriptor=signature,
+    )
+
+    assert image.tag_ref == "registry.example.com/graphblocks/support-agent:2026.06.23.1"
+    assert image.digest_ref == f"registry.example.com/graphblocks/support-agent@{image.manifest_digest}"
+    assert image.image_build_contract() == {
+        "release_name": "support-agent",
+        "release_version": "2026.06.23.1",
+        "release_digest": release.content_digest(),
+        "tag_ref": "registry.example.com/graphblocks/support-agent:2026.06.23.1",
+        "digest_ref": f"registry.example.com/graphblocks/support-agent@{image.manifest_digest}",
+        "manifest_digest": image.manifest_digest,
+        "manifest_media_type": "application/vnd.oci.image.manifest.v1+json",
+        "artifact_type": "application/vnd.graphblocks.release.v1",
+        "layers": [
+            bundle.descriptor_contract(),
+            sbom.descriptor_contract(),
+            provenance.descriptor_contract(),
+            signature.descriptor_contract(),
+        ],
+    }
+    assert image.content_digest().startswith("sha256:")
+    assert "ReleaseImageBuild" in graphblocks_oci.__all__
+    assert "build_release_image" in graphblocks_oci.__all__
+
+
 def test_oci_build_release_sbom_is_canonical_and_descriptor_ready(monkeypatch) -> None:
     graphblocks_oci = _import_oci(monkeypatch)
     graphblocks_deployment = importlib.import_module("graphblocks_deployment")
