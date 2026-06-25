@@ -20,6 +20,19 @@ def _tokens(value: str) -> UsageAmount:
     return UsageAmount(kind="model_total_tokens", amount=Decimal(value), unit="tokens")
 
 
+def test_usage_amount_rejects_negative_amounts_and_freezes_dimensions() -> None:
+    dimensions = {"model": "support"}
+
+    amount = UsageAmount("model_total_tokens", Decimal("5"), "tokens", dimensions)
+    dimensions["model"] = "mutated"
+
+    assert amount.dimensions == {"model": "support"}
+    with pytest.raises(TypeError):
+        amount.dimensions["model"] = "direct"
+    with pytest.raises(ValueError, match="usage amount must be non-negative"):
+        UsageAmount("model_total_tokens", Decimal("-1"), "tokens")
+
+
 def test_budget_ledger_reserve_reduces_available_balance() -> None:
     ledger = InMemoryBudgetLedger()
     ledger.allocate("budget-1", ResourceRef("tenant:acme"), [_tokens("100")], policy_ref="policy-1")

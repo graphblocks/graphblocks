@@ -6,6 +6,7 @@ from decimal import Decimal
 import json
 from pathlib import Path
 import sqlite3
+from types import MappingProxyType
 from typing import Literal, TypeVar, cast
 
 from .policy import ResourceRef
@@ -102,8 +103,13 @@ class UsageAmount:
     dimensions: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        amount = self.amount
         if not isinstance(self.amount, Decimal):
-            object.__setattr__(self, "amount", Decimal(str(self.amount)))
+            amount = Decimal(str(self.amount))
+            object.__setattr__(self, "amount", amount)
+        if amount < 0:
+            raise ValueError("usage amount must be non-negative")
+        object.__setattr__(self, "dimensions", MappingProxyType(dict(self.dimensions)))
 
 
 @dataclass(frozen=True, slots=True)
