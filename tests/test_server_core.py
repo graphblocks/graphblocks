@@ -12,6 +12,7 @@ from graphblocks.server import (
     ServerAuthRequest,
     ServerHealth,
     ServerRequest,
+    ServerResponse,
     ServerProtocolVersionMismatchError,
     ServerRouteManifest,
     StaticBearerAuthHook,
@@ -40,12 +41,19 @@ def test_server_route_manifest_matches_templated_run_paths() -> None:
 
     assert match.endpoint.operation == "cancel_run"
     assert match.path_params == {"run_id": "run-123"}
+    with pytest.raises(TypeError):
+        match.path_params["run_id"] = "mutated"
     assert default_server_route_manifest().lookup("POST", "/runs/run-123/cancel").operation == "cancel_run"
 
 
 def test_static_bearer_auth_hook_authorizes_configured_principal() -> None:
-    hook = StaticBearerAuthHook({"token-1": PrincipalRef("user-1", roles=("operator",))})
+    principals_by_token = {"token-1": PrincipalRef("user-1", roles=("operator",))}
+    hook = StaticBearerAuthHook(principals_by_token)
+    principals_by_token["token-1"] = PrincipalRef("mutated")
     route = default_server_route_manifest().lookup("POST", "/runs")
+
+    with pytest.raises(TypeError):
+        hook.principals_by_token["token-2"] = PrincipalRef("user-2")
 
     allowed = hook.authorize(
         ServerAuthRequest(
@@ -84,21 +92,59 @@ def test_static_bearer_auth_hook_authorizes_configured_principal() -> None:
 
 
 def test_server_health_aggregates_component_status() -> None:
+    runtime_details = {"workers": 2}
     health = ServerHealth(
         service="graphblocks-api",
         checks=(
-            ("runtime", "healthy", {"workers": 2}),
+            ("runtime", "healthy", runtime_details),
             ("event_stream", "degraded", {"lag_ms": 250}),
         ),
         observed_at="2026-06-24T00:00:00Z",
     )
+    runtime_details["workers"] = 99
 
     payload = health.to_payload()
+    payload["checks"]["runtime"]["details"]["workers"] = 42
 
     assert health.overall_status() == "degraded"
-    assert payload["status"] == "degraded"
-    assert payload["checks"]["runtime"]["status"] == "healthy"
-    assert payload["checks"]["event_stream"]["details"] == {"lag_ms": 250}
+    assert health.to_payload()["status"] == "degraded"
+    assert health.to_payload()["checks"]["runtime"]["status"] == "healthy"
+    assert health.to_payload()["checks"]["runtime"]["details"] == {"workers": 2}
+    assert health.to_payload()["checks"]["event_stream"]["details"] == {"lag_ms": 250}
+
+
+def test_server_request_and_response_maps_are_read_only_snapshots() -> None:
+    headers = {"Authorization": "Bearer token-1"}
+    query = {"cursor": "1"}
+    cookies = {"session": "s1"}
+    request = ServerRequest(
+        method="GET",
+        path="/health",
+        headers=headers,
+        query=query,
+        cookies=cookies,
+        body=b"",
+        requested_at="2026-06-24T00:00:00Z",
+    )
+    headers["Authorization"] = "Bearer mutated"
+    query["cursor"] = "2"
+    cookies["session"] = "s2"
+
+    assert request.headers == {"authorization": "Bearer token-1"}
+    assert request.query == {"cursor": "1"}
+    assert request.cookies == {"session": "s1"}
+    with pytest.raises(TypeError):
+        request.headers["authorization"] = "Bearer changed"
+    with pytest.raises(TypeError):
+        request.query["cursor"] = "changed"
+    with pytest.raises(TypeError):
+        request.cookies["session"] = "changed"
+
+    response = ServerResponse.json(200, {"ok": True})
+
+    assert response.headers == {"content-type": "application/json"}
+    with pytest.raises(TypeError):
+        response.headers["content-type"] = "text/plain"
 
 
 def test_application_protocol_capabilities_negotiate_intersection() -> None:

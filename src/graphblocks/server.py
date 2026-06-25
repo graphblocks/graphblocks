@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 import json
+from types import MappingProxyType
 from typing import Literal, Protocol
 
 from .application_event import ApplicationEvent, ApplicationEventMetadata
@@ -48,7 +49,7 @@ class ServerRouteMatch:
     path_params: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "path_params", dict(self.path_params))
+        object.__setattr__(self, "path_params", MappingProxyType(dict(self.path_params)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,9 +133,13 @@ class ServerAuthRequest:
     requested_at: str
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "headers", {key.lower(): value for key, value in self.headers.items()})
-        object.__setattr__(self, "query", dict(self.query))
-        object.__setattr__(self, "cookies", dict(self.cookies))
+        object.__setattr__(
+            self,
+            "headers",
+            MappingProxyType({key.lower(): value for key, value in self.headers.items()}),
+        )
+        object.__setattr__(self, "query", MappingProxyType(dict(self.query)))
+        object.__setattr__(self, "cookies", MappingProxyType(dict(self.cookies)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,9 +154,13 @@ class ServerRequest:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "method", self.method.upper())
-        object.__setattr__(self, "headers", {key.lower(): value for key, value in self.headers.items()})
-        object.__setattr__(self, "query", dict(self.query))
-        object.__setattr__(self, "cookies", dict(self.cookies))
+        object.__setattr__(
+            self,
+            "headers",
+            MappingProxyType({key.lower(): value for key, value in self.headers.items()}),
+        )
+        object.__setattr__(self, "query", MappingProxyType(dict(self.query)))
+        object.__setattr__(self, "cookies", MappingProxyType(dict(self.cookies)))
         object.__setattr__(self, "body", bytes(self.body))
 
 
@@ -160,6 +169,10 @@ class ServerResponse:
     status_code: int
     headers: dict[str, str]
     body: bytes
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "headers", MappingProxyType(dict(self.headers)))
+        object.__setattr__(self, "body", bytes(self.body))
 
     def read(self) -> bytes:
         return self.body
@@ -193,7 +206,7 @@ class StaticBearerAuthHook:
     principals_by_token: dict[str, PrincipalRef] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "principals_by_token", dict(self.principals_by_token))
+        object.__setattr__(self, "principals_by_token", MappingProxyType(dict(self.principals_by_token)))
 
     def authorize(self, request: ServerAuthRequest) -> ServerAuthDecision:
         if not request.route.auth_required:
@@ -218,7 +231,7 @@ class ServerHealth:
         object.__setattr__(
             self,
             "checks",
-            tuple((name, status, dict(details)) for name, status, details in self.checks),
+            tuple((name, status, MappingProxyType(dict(details))) for name, status, details in self.checks),
         )
 
     def overall_status(self) -> ServerHealthStatus:
@@ -237,7 +250,7 @@ class ServerHealth:
             "checks": {
                 name: {
                     "status": status,
-                    "details": details,
+                    "details": dict(details),
                 }
                 for name, status, details in self.checks
             },
