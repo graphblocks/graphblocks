@@ -1606,6 +1606,8 @@ def test_streaming_tool_result_delta_is_not_a_durable_result() -> None:
 def test_tool_result_event_and_effect_outcome_reject_unknown_literals() -> None:
     with pytest.raises(ValueError, match="invalid tool result event kind progress"):
         ToolResultEvent(kind="progress", tool_call_id="call-1", sequence=1)
+    with pytest.raises(ValueError, match="tool result event tool_call_id must not be empty"):
+        ToolResultEvent.delta("", 1, (ContentPart(kind="text", text="draft"),))
 
     with pytest.raises(ValueError, match="invalid tool effect outcome partially_committed"):
         ToolResult.policy_stopped(

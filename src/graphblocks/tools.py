@@ -1626,6 +1626,8 @@ class ToolResultEvent:
     result: ToolResult | None = None
 
     def __post_init__(self) -> None:
+        if not self.tool_call_id.strip():
+            raise ValueError("tool result event tool_call_id must not be empty")
         if self.kind not in VALID_TOOL_RESULT_EVENT_KINDS:
             raise ValueError(f"invalid tool result event kind {self.kind}")
         if self.sequence < 0:
