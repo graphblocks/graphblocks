@@ -412,6 +412,19 @@ def test_tool_lifecycle_records_reject_unknown_literals() -> None:
         ToolApprovalRecord(approval_id=request.approval_id, request=request, status="escalated")
 
 
+def test_tool_lifecycle_counters_are_non_negative_and_positive() -> None:
+    with pytest.raises(ValueError, match="tool call draft sequence must be non-negative"):
+        ToolCallDraft("response-1", "call-1", "knowledge.search", sequence=-1)
+
+    resolved = _resolved_search_tool()
+    call = _search_call(resolved)
+    with pytest.raises(ValueError, match="tool call revision must be positive"):
+        replace(call, revision=0)
+
+    with pytest.raises(ValueError, match="tool result event sequence must be non-negative"):
+        ToolResultEvent.started("call-1", -1, started_at="2026-06-23T00:00:00Z")
+
+
 def _resolved_search_tool() -> ResolvedTool:
     catalog = ToolCatalog(
         definitions=(

@@ -765,6 +765,8 @@ class ToolCallDraft:
     def __post_init__(self) -> None:
         if self.status not in VALID_TOOL_CALL_DRAFT_STATUSES:
             raise ValueError(f"invalid tool call draft status {self.status}")
+        if self.sequence < 0:
+            raise ValueError("tool call draft sequence must be non-negative")
         object.__setattr__(self, "argument_fragments", tuple(self.argument_fragments))
 
     @classmethod
@@ -833,6 +835,8 @@ class ToolCall:
     def __post_init__(self) -> None:
         if self.status not in VALID_TOOL_CALL_STATUSES:
             raise ValueError(f"invalid tool call status {self.status}")
+        if self.revision < 1:
+            raise ValueError("tool call revision must be positive")
         object.__setattr__(self, "arguments", _freeze_json_value(self.arguments))
         object.__setattr__(self, "depends_on", tuple(self.depends_on))
 
@@ -1582,6 +1586,8 @@ class ToolResultEvent:
     def __post_init__(self) -> None:
         if self.kind not in VALID_TOOL_RESULT_EVENT_KINDS:
             raise ValueError(f"invalid tool result event kind {self.kind}")
+        if self.sequence < 0:
+            raise ValueError("tool result event sequence must be non-negative")
         object.__setattr__(self, "output", tuple(self.output))
         expected_status = FINAL_TOOL_RESULT_EVENT_STATUSES.get(self.kind)
         if expected_status is None:
