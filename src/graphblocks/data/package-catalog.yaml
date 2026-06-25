@@ -721,6 +721,24 @@ packages:
   - VAD model runtime
   implementationPhase: 7
   stability: experimental-extension
+- distribution: graphblocks-durable
+  import: graphblocks_durable
+  layer: durable_stream
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-core
+  responsibility:
+  - source cursors and watermarks
+  - replayable durable source batches
+  - event-time window panes and late data rejection
+  - idempotent sink commit contracts
+  forbiddenDependencies:
+  - Kafka SDK
+  - NATS SDK
+  - cloud queue SDK
+  implementationPhase: 7
+  stability: experimental-extension
 integrationRules:
   distributionPattern: graphblocks-<technology>
   importPattern: graphblocks_<technology>
