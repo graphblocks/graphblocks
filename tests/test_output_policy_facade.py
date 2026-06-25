@@ -111,6 +111,24 @@ def test_output_policy_decision_metadata_builders_are_chainable() -> None:
         decision.redactions[0]["replacement"] = "[mutated]"
 
 
+def test_declarative_output_policy_rule_rejects_invalid_metadata_values() -> None:
+    with pytest.raises(ValueError, match="output policy rule reason codes must be non-empty strings"):
+        DeclarativeOutputPolicyRule(
+            rule_id="blocked-secret",
+            literal="secret",
+            disposition="abort_response",
+            reason_codes=("secret.detected", " "),
+        )
+
+    with pytest.raises(ValueError, match="output policy rule policy refs must be non-empty strings"):
+        DeclarativeOutputPolicyRule(
+            rule_id="blocked-secret",
+            literal="secret",
+            disposition="abort_response",
+            policy_refs=(1,),  # type: ignore[arg-type]
+        )
+
+
 def test_output_policy_contract_rejects_unknown_literals() -> None:
     with pytest.raises(ValueError, match="invalid output disposition stream"):
         OutputPolicyDecision("decision-1", disposition="stream")
