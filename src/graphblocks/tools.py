@@ -662,6 +662,13 @@ class ToolApprovalRecord:
                 raise ValueError("approval approver_id must not be empty")
             if self.decided_at is None:
                 raise ValueError(f"{self.status} approval record requires decided_at")
+        if self.status == "denied":
+            if self.reason is None:
+                raise ValueError("denied approval record requires reason")
+            if not self.reason.strip():
+                raise ValueError("approval reason must not be empty")
+        if self.status == "invalidated" and self.invalidated_at is None:
+            raise ValueError("invalidated approval record requires invalidated_at")
         if self.decided_at is not None and self.decided_at < 0:
             raise ValueError("approval decided_at must be non-negative")
         if self.invalidated_at is not None and self.invalidated_at < 0:

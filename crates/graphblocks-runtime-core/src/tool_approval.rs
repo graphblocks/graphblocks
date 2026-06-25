@@ -235,6 +235,20 @@ impl ToolApprovalRecord {
                 });
             }
         }
+        if self.status == ToolApprovalStatus::Denied {
+            match self.reason.as_deref() {
+                None => return Err(ToolApprovalError::MissingField { field: "reason" }),
+                Some(reason) if reason.trim().is_empty() => {
+                    return Err(ToolApprovalError::EmptyField { field: "reason" });
+                }
+                Some(_) => {}
+            }
+        }
+        if self.status == ToolApprovalStatus::Invalidated && self.invalidated_at_unix_ms.is_none() {
+            return Err(ToolApprovalError::MissingField {
+                field: "invalidated_at_unix_ms",
+            });
+        }
         Ok(())
     }
 

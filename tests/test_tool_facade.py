@@ -565,6 +565,22 @@ def test_tool_lifecycle_records_reject_unknown_literals() -> None:
             status="approved",
             approver_id="admin-1",
         )
+    with pytest.raises(ValueError, match="denied approval record requires reason"):
+        ToolApprovalRecord(
+            approval_id=request.approval_id,
+            request=request,
+            status="denied",
+            approver_id="admin-1",
+            decided_at=1_100,
+        )
+    with pytest.raises(ValueError, match="approval reason must not be empty"):
+        ToolApprovalRecord.deny(request, approver_id="admin-1", decided_at=1_100, reason=" ")
+    with pytest.raises(ValueError, match="invalidated approval record requires invalidated_at"):
+        ToolApprovalRecord(
+            approval_id=request.approval_id,
+            request=request,
+            status="invalidated",
+        )
 
 
 def test_tool_approval_request_validates_revision_and_expiration() -> None:

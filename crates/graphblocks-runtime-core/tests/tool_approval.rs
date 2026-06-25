@@ -110,6 +110,52 @@ fn denied_record_never_authorizes_tool_execution() {
 }
 
 #[test]
+fn terminal_approval_records_require_audit_metadata() {
+    let resolved = resolved_search_tool().expect("resolved tool is valid");
+    let mut call = search_call("call-1", "runtime").expect("tool call is valid");
+    call.resolved_tool_id = resolved.resolved_tool_id.clone();
+    let request =
+        ToolApprovalRequest::for_call("approval-1", &resolved, &call, "user-1", 1_000, 2_000)
+            .expect("approval request is valid");
+
+    let denied_missing_reason = ToolApprovalRecord {
+        approval_id: request.approval_id.clone(),
+        request: request.clone(),
+        status: ToolApprovalStatus::Denied,
+        approver_id: Some("admin-1".to_owned()),
+        decided_at_unix_ms: Some(1_100),
+        invalidated_at_unix_ms: None,
+        reason: None,
+    };
+    assert_eq!(
+        denied_missing_reason.validate(),
+        Err(ToolApprovalError::MissingField { field: "reason" }),
+    );
+
+    let denied_blank_reason = ToolApprovalRecord::deny(request.clone(), "admin-1", 1_100, " ");
+    assert_eq!(
+        denied_blank_reason.validate(),
+        Err(ToolApprovalError::EmptyField { field: "reason" }),
+    );
+
+    let invalidated_missing_timestamp = ToolApprovalRecord {
+        approval_id: request.approval_id.clone(),
+        request,
+        status: ToolApprovalStatus::Invalidated,
+        approver_id: Some("admin-1".to_owned()),
+        decided_at_unix_ms: Some(1_100),
+        invalidated_at_unix_ms: None,
+        reason: Some("arguments changed".to_owned()),
+    };
+    assert_eq!(
+        invalidated_missing_timestamp.validate(),
+        Err(ToolApprovalError::MissingField {
+            field: "invalidated_at_unix_ms",
+        }),
+    );
+}
+
+#[test]
 fn approval_request_rejects_mismatched_resolved_tool() {
     let resolved = resolved_search_tool().expect("resolved tool is valid");
     let call = search_call("call-1", "runtime").expect("tool call is valid");
