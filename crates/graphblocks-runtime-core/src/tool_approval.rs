@@ -170,6 +170,7 @@ impl ToolApprovalRecord {
         now_unix_ms: u64,
     ) -> bool {
         self.status == ToolApprovalStatus::Approved
+            && self.approval_id == self.request.approval_id
             && now_unix_ms <= self.request.expires_at_unix_ms
             && self.request.tool_call_id == call.tool_call_id
             && self.request.tool_name == call.name

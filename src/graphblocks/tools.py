@@ -593,6 +593,8 @@ class ToolApprovalRecord:
     def __post_init__(self) -> None:
         if self.status not in VALID_TOOL_APPROVAL_STATUSES:
             raise ValueError(f"invalid tool approval status {self.status}")
+        if self.approval_id != self.request.approval_id:
+            raise ValueError("approval record id must match request approval_id")
 
     @classmethod
     def requested(cls, request: ToolApprovalRequest) -> ToolApprovalRecord:
@@ -632,6 +634,7 @@ class ToolApprovalRecord:
     def is_valid_for(self, resolved_tool: ResolvedTool, call: ToolCall, *, principal_id: str, now: int) -> bool:
         return (
             self.status == "approved"
+            and self.approval_id == self.request.approval_id
             and self.invalidated_at is None
             and now <= self.request.expires_at
             and self.request.tool_call_id == call.tool_call_id

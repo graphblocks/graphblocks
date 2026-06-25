@@ -410,6 +410,8 @@ def test_tool_lifecycle_records_reject_unknown_literals() -> None:
     )
     with pytest.raises(ValueError, match="invalid tool approval status escalated"):
         ToolApprovalRecord(approval_id=request.approval_id, request=request, status="escalated")
+    with pytest.raises(ValueError, match="approval record id must match request approval_id"):
+        ToolApprovalRecord(approval_id="approval-other", request=request, status="approved")
 
 
 def test_tool_approval_request_validates_revision_and_expiration() -> None:
