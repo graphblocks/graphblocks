@@ -47,6 +47,19 @@ fn completed_tool_result_computes_stable_output_digest() {
 }
 
 #[test]
+fn tool_result_rejects_output_digest_mismatch() {
+    let mut result = ToolResult::completed("call-1", [ContentPart::text("ok")], 1_000, 1_050);
+    result.output_digest = Some("sha256:stale".to_owned());
+
+    assert_eq!(
+        result.validate(),
+        Err(ToolResultError::OutputDigestMismatch {
+            tool_call_id: "call-1".to_owned(),
+        })
+    );
+}
+
+#[test]
 fn tool_result_validates_identity_and_timestamp_order() {
     let empty_call_id = ToolResult::completed("", [ContentPart::text("ok")], 1_000, 1_050);
 

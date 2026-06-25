@@ -239,7 +239,7 @@ pub struct ToolResult {
     pub effect_outcome: ToolEffectOutcome,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ToolResultError {
     EmptyToolCallId,
     InvalidContentPart {
@@ -254,6 +254,9 @@ pub enum ToolResultError {
     CompletedBeforeStarted {
         started_at_unix_ms: u64,
         completed_at_unix_ms: u64,
+    },
+    OutputDigestMismatch {
+        tool_call_id: String,
     },
 }
 
@@ -441,6 +444,13 @@ impl ToolResult {
             part.validate()
                 .map_err(|source| ToolResultError::InvalidContentPart { source })?;
         }
+        if let Some(output_digest) = self.output_digest.as_ref()
+            && output_digest != &tool_result_output_digest(&self.output)
+        {
+            return Err(ToolResultError::OutputDigestMismatch {
+                tool_call_id: self.tool_call_id.clone(),
+            });
+        }
         Ok(())
     }
 }
@@ -589,10 +599,14 @@ impl ToolResultValidation {
     pub fn validate_for_model(
         request: ToolResultValidationRequest<'_>,
     ) -> Result<(), ToolResultValidationError> {
-        request
-            .result
-            .validate()
-            .map_err(|source| ToolResultValidationError::InvalidToolResult { source })?;
+        if let Err(source) = request.result.validate() {
+            return match source {
+                ToolResultError::OutputDigestMismatch { tool_call_id } => {
+                    Err(ToolResultValidationError::OutputDigestMismatch { tool_call_id })
+                }
+                source => Err(ToolResultValidationError::InvalidToolResult { source }),
+            };
+        }
         if request.result.tool_call_id != request.call.tool_call_id {
             return Err(ToolResultValidationError::ToolCallMismatch {
                 expected: request.call.tool_call_id.clone(),

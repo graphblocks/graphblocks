@@ -1362,6 +1362,18 @@ def test_completed_tool_result_computes_stable_output_digest() -> None:
     assert left.completed_at == "2026-06-23T00:00:01Z"
 
 
+def test_tool_result_rejects_output_digest_mismatch() -> None:
+    result = ToolResult.completed(
+        "call-1",
+        (ContentPart(kind="text", text="ok"),),
+        started_at="2026-06-23T00:00:00Z",
+        completed_at="2026-06-23T00:00:01Z",
+    )
+
+    with pytest.raises(ValueError, match="tool result output_digest does not match output"):
+        replace(result, output_digest="sha256:stale")
+
+
 def test_content_part_requires_payload_for_its_kind() -> None:
     with pytest.raises(ValueError, match="text content part requires text"):
         ContentPart(kind="text")

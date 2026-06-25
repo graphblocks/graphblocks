@@ -1407,6 +1407,13 @@ class ToolResult:
         if any(not isinstance(part, ContentPart) for part in output):
             raise ValueError("tool result output entries must be ContentPart")
         object.__setattr__(self, "output", output)
+        if self.output_digest is not None:
+            try:
+                actual_output_digest = _tool_result_output_digest(output)
+            except (TypeError, ValueError) as error:
+                raise ValueError("tool result output is not canonical JSON") from error
+            if actual_output_digest != self.output_digest:
+                raise ValueError("tool result output_digest does not match output")
         object.__setattr__(
             self,
             "artifacts",
