@@ -25,6 +25,10 @@ class ArtifactRef:
             raise ValueError("artifact artifact_id must not be empty")
         if not self.uri.strip():
             raise ValueError("artifact uri must not be empty")
+        for field_name in ("media_type", "checksum", "etag", "version", "filename"):
+            value = getattr(self, field_name)
+            if value is not None and not value.strip():
+                raise ValueError(f"artifact {field_name} must not be empty")
 
 
 @dataclass(frozen=True, slots=True)

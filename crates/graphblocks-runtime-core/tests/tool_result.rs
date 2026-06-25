@@ -685,6 +685,20 @@ fn artifact_refs_validate_identity_fields() {
         ArtifactRef::new("artifact-1", "").validate(),
         Err(ToolResultError::EmptyArtifactField { field: "uri" })
     );
+    assert_eq!(
+        ArtifactRef::new("artifact-1", "file:///tmp/out.txt")
+            .with_checksum(" ")
+            .validate(),
+        Err(ToolResultError::EmptyArtifactField { field: "checksum" })
+    );
+    assert_eq!(
+        ArtifactRef::new("artifact-1", "file:///tmp/out.txt")
+            .with_media_type("")
+            .validate(),
+        Err(ToolResultError::EmptyArtifactField {
+            field: "media_type"
+        })
+    );
 
     let result = ToolResult::completed("call-1", [ContentPart::text("done")], 1_000, 1_050)
         .with_artifacts([ArtifactRef::new("artifact-1", " ")]);

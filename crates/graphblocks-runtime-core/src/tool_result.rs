@@ -106,6 +106,14 @@ impl ArtifactRef {
                 return Err(ToolResultError::EmptyArtifactField { field });
             }
         }
+        for (field, value) in [
+            ("checksum", self.checksum.as_deref()),
+            ("media_type", self.media_type.as_deref()),
+        ] {
+            if value.is_some_and(|value| value.trim().is_empty()) {
+                return Err(ToolResultError::EmptyArtifactField { field });
+            }
+        }
         Ok(())
     }
 

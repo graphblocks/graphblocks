@@ -1218,6 +1218,20 @@ def test_tool_result_rejects_empty_call_id_and_reversed_timestamps() -> None:
         )
 
 
+def test_artifact_ref_rejects_empty_optional_fields_when_present() -> None:
+    optional_fields = (
+        ("media_type", "artifact media_type must not be empty"),
+        ("checksum", "artifact checksum must not be empty"),
+        ("etag", "artifact etag must not be empty"),
+        ("version", "artifact version must not be empty"),
+        ("filename", "artifact filename must not be empty"),
+    )
+
+    for field_name, message in optional_fields:
+        with pytest.raises(ValueError, match=message):
+            ArtifactRef("artifact-1", "file:///tmp/out.txt", **{field_name: " "})
+
+
 def test_completed_tool_result_rejects_non_canonical_json_values() -> None:
     with pytest.raises(ToolResultValidationError) as error:
         ToolResult.completed(
