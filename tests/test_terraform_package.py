@@ -105,3 +105,28 @@ def test_terraform_bridge_rejects_missing_required_output(monkeypatch) -> None:
 
     with pytest.raises(graphblocks_terraform.TerraformOutputMissingError, match="worker_url"):
         bridge.materialize_outputs({})
+
+
+def test_terraform_bridge_materializes_sensitive_outputs_as_secret_refs(monkeypatch) -> None:
+    graphblocks_terraform = _import_terraform(monkeypatch)
+    bridge = graphblocks_terraform.TerraformBridgeSpec(
+        workspace="support-prod",
+        output_bindings=(
+            graphblocks_terraform.TerraformOutputBinding(
+                "openai_api_key",
+                "bindings.model.api_key",
+                secret_ref="secret://support-prod/openai-api-key",
+            ),
+        ),
+    )
+
+    materialized = bridge.materialize_outputs(
+        {"openai_api_key": {"value": "sk-should-not-leak", "sensitive": True}}
+    )
+
+    assert materialized == {
+        "bindings.model.api_key": {
+            "secretRef": "secret://support-prod/openai-api-key",
+        }
+    }
+    assert "sk-should-not-leak" not in repr(materialized)

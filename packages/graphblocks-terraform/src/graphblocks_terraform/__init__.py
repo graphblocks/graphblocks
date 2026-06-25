@@ -50,18 +50,22 @@ class TerraformOutputBinding:
     output_name: str
     graphblocks_key: str
     required: bool = True
+    secret_ref: str | None = None
 
     def __post_init__(self) -> None:
         if not self.output_name.strip():
             raise TerraformBridgeError("output_name must not be empty")
         if not self.graphblocks_key.strip():
             raise TerraformBridgeError("graphblocks_key must not be empty")
+        if self.secret_ref is not None and not self.secret_ref.strip():
+            raise TerraformBridgeError("secret_ref must not be empty")
 
     def canonical_value(self) -> dict[str, object]:
         return {
             "output_name": self.output_name,
             "graphblocks_key": self.graphblocks_key,
             "required": self.required,
+            "secret_ref": self.secret_ref,
         }
 
 
@@ -174,6 +178,9 @@ class TerraformBridgeSpec:
                     raise TerraformOutputMissingError(binding.output_name)
                 continue
             raw_value = terraform_outputs[binding.output_name]
+            if binding.secret_ref is not None:
+                materialized[binding.graphblocks_key] = {"secretRef": binding.secret_ref}
+                continue
             if isinstance(raw_value, Mapping) and "value" in raw_value:
                 value = raw_value["value"]
             else:
