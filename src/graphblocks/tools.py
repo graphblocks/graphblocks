@@ -853,6 +853,15 @@ class ToolCall:
     completed_at: str | None = None
 
     def __post_init__(self) -> None:
+        for field_name in (
+            "tool_call_id",
+            "response_id",
+            "resolved_tool_id",
+            "name",
+            "arguments_digest",
+        ):
+            if not getattr(self, field_name).strip():
+                raise ValueError(f"tool call {field_name} must not be empty")
         if self.status not in VALID_TOOL_CALL_STATUSES:
             raise ValueError(f"invalid tool call status {self.status}")
         if self.revision < 1:

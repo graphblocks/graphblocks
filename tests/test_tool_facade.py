@@ -447,6 +447,10 @@ def test_tool_lifecycle_counters_are_non_negative_and_positive() -> None:
     call = _search_call(resolved)
     with pytest.raises(ValueError, match="tool call revision must be positive"):
         replace(call, revision=0)
+    with pytest.raises(ValueError, match="tool call tool_call_id must not be empty"):
+        replace(call, tool_call_id=" ")
+    with pytest.raises(ValueError, match="tool call arguments_digest must not be empty"):
+        replace(call, arguments_digest="")
 
     with pytest.raises(ValueError, match="tool result event sequence must be non-negative"):
         ToolResultEvent.started("call-1", -1, started_at="2026-06-23T00:00:00Z")
