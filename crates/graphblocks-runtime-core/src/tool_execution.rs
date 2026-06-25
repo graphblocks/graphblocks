@@ -34,6 +34,9 @@ pub enum ToolExecutionState {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ToolExecutionPlanError {
+    EmptyField {
+        field: &'static str,
+    },
     InvalidMaximumParallelism,
     InvalidToolCall {
         source: ToolCallError,
@@ -226,11 +229,20 @@ impl ToolExecutionPlan {
     where
         I: IntoIterator<Item = ToolPlanCall>,
     {
+        let plan_id = plan_id.into();
+        let response_id = response_id.into();
+        for (field, value) in [
+            ("plan_id", plan_id.as_str()),
+            ("response_id", response_id.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(ToolExecutionPlanError::EmptyField { field });
+            }
+        }
         if maximum_parallelism == 0 {
             return Err(ToolExecutionPlanError::InvalidMaximumParallelism);
         }
 
-        let response_id = response_id.into();
         let mut indexed_calls = BTreeMap::new();
         let mut states = BTreeMap::new();
         for planned_call in calls {
@@ -309,7 +321,7 @@ impl ToolExecutionPlan {
         }
 
         Ok(Self {
-            plan_id: plan_id.into(),
+            plan_id,
             response_id,
             maximum_parallelism,
             failure_policy: ToolExecutionFailurePolicy::ReturnFailuresToModel,

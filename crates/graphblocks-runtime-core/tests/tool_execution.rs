@@ -36,6 +36,36 @@ fn independent_calls_are_ready_up_to_maximum_parallelism() -> Result<(), ToolExe
 }
 
 #[test]
+fn plan_rejects_empty_identity_fields() {
+    assert_eq!(
+        ToolExecutionPlan::new(
+            " ",
+            "response-1",
+            [ToolPlanCall::new(tool_call(
+                "call-a",
+                "{\"resource_id\":\"a\"}"
+            ))],
+            1,
+        ),
+        Err(ToolExecutionPlanError::EmptyField { field: "plan_id" }),
+    );
+    assert_eq!(
+        ToolExecutionPlan::new(
+            "plan-1",
+            "",
+            [ToolPlanCall::new(tool_call(
+                "call-a",
+                "{\"resource_id\":\"a\"}"
+            ))],
+            1,
+        ),
+        Err(ToolExecutionPlanError::EmptyField {
+            field: "response_id",
+        }),
+    );
+}
+
+#[test]
 fn plan_rejects_tool_calls_from_different_response() {
     let mut mismatched = tool_call("call-b", "{\"resource_id\":\"b\"}");
     mismatched.response_id = "response-2".to_owned();

@@ -1906,6 +1906,26 @@ def test_tool_execution_plan_rejects_unknown_policies() -> None:
         )
 
 
+def test_tool_execution_plan_rejects_empty_identity_fields() -> None:
+    calls = (ToolPlanCall(_tool_call("call-a")),)
+
+    with pytest.raises(ToolExecutionPlanError, match="plan_id must not be empty"):
+        ToolExecutionPlan(
+            plan_id=" ",
+            response_id="response-1",
+            calls=calls,
+            maximum_parallelism=1,
+        )
+
+    with pytest.raises(ToolExecutionPlanError, match="response_id must not be empty"):
+        ToolExecutionPlan(
+            plan_id="plan-1",
+            response_id="",
+            calls=calls,
+            maximum_parallelism=1,
+        )
+
+
 def test_tool_execution_plan_readies_independent_calls_up_to_parallelism() -> None:
     plan = ToolExecutionPlan(
         plan_id="plan-1",

@@ -1137,6 +1137,10 @@ class ToolExecutionPlan:
     _calls_by_id: dict[str, ToolPlanCall] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        if not self.plan_id.strip():
+            raise ToolExecutionPlanError("plan_id must not be empty")
+        if not self.response_id.strip():
+            raise ToolExecutionPlanError("response_id must not be empty")
         if self.failure_policy not in VALID_TOOL_EXECUTION_FAILURE_POLICIES:
             raise ToolExecutionPlanError(f"invalid failure policy {self.failure_policy}")
         if self.cancellation_policy not in VALID_TOOL_EXECUTION_CANCELLATION_POLICIES:
