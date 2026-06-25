@@ -52,11 +52,21 @@ fn approved_record_is_valid_only_for_same_tool_call_and_arguments() {
         invalidated_at_unix_ms: None,
         reason: None,
     };
+    let invalidated_approved_record = ToolApprovalRecord {
+        approval_id: request.approval_id.clone(),
+        request: request.clone(),
+        status: ToolApprovalStatus::Approved,
+        approver_id: Some("admin-1".to_owned()),
+        decided_at_unix_ms: Some(1_100),
+        invalidated_at_unix_ms: Some(1_200),
+        reason: None,
+    };
 
     assert_eq!(record.status, ToolApprovalStatus::Approved);
     assert_eq!(record.request.revision, 1);
     assert!(record.is_valid_for(&resolved, &call, "user-1", 1_500));
     assert!(!mismatched_record.is_valid_for(&resolved, &call, "user-1", 1_500));
+    assert!(!invalidated_approved_record.is_valid_for(&resolved, &call, "user-1", 1_500));
 
     let mut changed_args = search_call("call-1", "changed").expect("changed tool call is valid");
     changed_args.resolved_tool_id = resolved.resolved_tool_id.clone();

@@ -208,6 +208,7 @@ impl ToolApprovalRecord {
         self.status == ToolApprovalStatus::Approved
             && self.validate().is_ok()
             && self.approval_id == self.request.approval_id
+            && self.invalidated_at_unix_ms.is_none()
             && now_unix_ms <= self.request.expires_at_unix_ms
             && self.request.tool_call_id == call.tool_call_id
             && self.request.tool_name == call.name
