@@ -74,6 +74,26 @@ def test_output_policy_decision_redact_carries_redaction_instructions() -> None:
         decision.redactions[0]["replacement"] = "[direct-mutation]"
 
 
+def test_output_policy_decision_rejects_invalid_redaction_instructions() -> None:
+    with pytest.raises(ValueError, match="redaction path must not be empty"):
+        OutputPolicyDecision.redact(
+            "decision-redact",
+            accepted_through_sequence=1,
+            redactions=({"path": " ", "start": 0, "end": 6, "replacement": "[redacted]"},),
+            input_digest="sha256:redact",
+        )
+
+    with pytest.raises(ValueError, match="redaction range must not be reversed"):
+        OutputPolicyDecision.redact(
+            "decision-redact",
+            accepted_through_sequence=1,
+            redactions=(
+                {"path": "/chunks/1/text", "start": 6, "end": 5, "replacement": "[redacted]"},
+            ),
+            input_digest="sha256:redact",
+        )
+
+
 def test_output_policy_decision_metadata_builders_are_chainable() -> None:
     decision = (
         OutputPolicyDecision.hold("decision-hold", input_digest="sha256:hold")

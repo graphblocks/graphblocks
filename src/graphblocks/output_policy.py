@@ -251,12 +251,24 @@ class OutputPolicyDecision:
             raise ValueError("output policy decisions require an input digest")
         if self.accepted_through_sequence is not None and self.accepted_through_sequence < 0:
             raise ValueError("accepted_through_sequence must be non-negative")
+        redactions: list[MappingProxyType[str, object]] = []
+        for redaction in self.redactions:
+            redaction_copy = dict(redaction)
+            path = redaction_copy.get("path")
+            if not isinstance(path, str) or not path.strip():
+                raise ValueError("redaction path must not be empty")
+            start = redaction_copy.get("start")
+            end = redaction_copy.get("end")
+            if start is not None or end is not None:
+                if not isinstance(start, int) or not isinstance(end, int):
+                    raise ValueError("redaction range must use integer start and end")
+                if start < 0 or end < 0:
+                    raise ValueError("redaction range must be non-negative")
+                if start > end:
+                    raise ValueError("redaction range must not be reversed")
+            redactions.append(MappingProxyType(redaction_copy))
         object.__setattr__(self, "replacement_parts", tuple(self.replacement_parts))
-        object.__setattr__(
-            self,
-            "redactions",
-            tuple(MappingProxyType(dict(redaction)) for redaction in self.redactions),
-        )
+        object.__setattr__(self, "redactions", tuple(redactions))
         object.__setattr__(self, "reason_codes", tuple(self.reason_codes))
         object.__setattr__(self, "policy_refs", tuple(self.policy_refs))
 
