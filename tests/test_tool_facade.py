@@ -558,6 +558,27 @@ def test_tool_catalog_resolution_intersects_scoped_capabilities() -> None:
     assert resolved[0].resolved_tool_id.startswith("sha256:")
 
 
+def test_tool_resolution_scope_rejects_invalid_tool_collections() -> None:
+    cases = (
+        (
+            {"application_tools": "knowledge.search"},
+            "tool resolution scope application_tools must be a collection of strings",
+        ),
+        (
+            {"principal_tools": object()},
+            "tool resolution scope principal_tools must be a collection of strings",
+        ),
+        (
+            {"budget_tools": frozenset({"knowledge.search", 1})},
+            "tool resolution scope budget_tools must be a collection of strings",
+        ),
+    )
+
+    for overrides, message in cases:
+        with pytest.raises(ValueError, match=message):
+            ToolResolutionScope(**overrides)  # type: ignore[arg-type]
+
+
 def test_tool_catalog_reports_visible_tool_without_binding() -> None:
     catalog = ToolCatalog(
         definitions=(

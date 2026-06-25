@@ -791,7 +791,11 @@ class ToolResolutionScope:
         ):
             value = getattr(self, field_name)
             if value is not None:
-                object.__setattr__(self, field_name, frozenset(value))
+                object.__setattr__(
+                    self,
+                    field_name,
+                    _validate_string_collection("tool resolution scope", field_name, value),
+                )
 
     def allows(self, tool_name: str) -> bool:
         return all(
