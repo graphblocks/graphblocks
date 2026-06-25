@@ -251,7 +251,12 @@ class OutputPolicyDecision:
             raise ValueError("output policy decisions require an input digest")
         if self.accepted_through_sequence is not None and self.accepted_through_sequence < 0:
             raise ValueError("accepted_through_sequence must be non-negative")
-        replacement_parts = tuple(self.replacement_parts)
+        try:
+            replacement_parts = tuple(self.replacement_parts)
+        except TypeError as error:
+            raise ValueError("output policy replacement parts must be ContentPart") from error
+        if any(not isinstance(part, ContentPart) for part in replacement_parts):
+            raise ValueError("output policy replacement parts must be ContentPart")
         if self.disposition == "replace" and not replacement_parts:
             raise ValueError("replace output policy decisions require replacement content")
         redactions: list[MappingProxyType[str, object]] = []

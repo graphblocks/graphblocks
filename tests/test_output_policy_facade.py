@@ -132,6 +132,22 @@ def test_output_policy_contract_rejects_unknown_literals() -> None:
             input_digest="sha256:replace",
         )
 
+    with pytest.raises(ValueError, match="output policy replacement parts must be ContentPart"):
+        OutputPolicyDecision.replace(
+            "decision-replace",
+            accepted_through_sequence=1,
+            replacement_parts=("approved",),  # type: ignore[arg-type]
+            input_digest="sha256:replace",
+        )
+
+    with pytest.raises(ValueError, match="output policy replacement parts must be ContentPart"):
+        OutputPolicyDecision.redact(
+            "decision-redact",
+            accepted_through_sequence=1,
+            replacement_parts=("approved",),  # type: ignore[arg-type]
+            input_digest="sha256:redact",
+        )
+
     with pytest.raises(ValueError, match="invalid provider cancellation force"):
         OutputPolicyDecision.abort_response("decision-1", input_digest="sha256:input").with_provider_cancellation(
             "force"
