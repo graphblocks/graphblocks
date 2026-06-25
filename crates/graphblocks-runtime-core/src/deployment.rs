@@ -431,6 +431,363 @@ impl DeploymentEvent {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeploymentConditionError {
+    pub message: String,
+}
+
+impl DeploymentConditionError {
+    fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for DeploymentConditionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl Error for DeploymentConditionError {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeploymentCondition {
+    pub condition_type: String,
+    pub status: String,
+    pub reason: String,
+    pub message: String,
+}
+
+impl DeploymentCondition {
+    pub fn new(
+        condition_type: impl Into<String>,
+        status: impl Into<String>,
+        reason: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Result<Self, DeploymentConditionError> {
+        let condition = Self {
+            condition_type: condition_type.into(),
+            status: status.into(),
+            reason: reason.into(),
+            message: message.into(),
+        };
+        if condition.condition_type.trim().is_empty() {
+            return Err(DeploymentConditionError::new(
+                "deployment condition type must not be empty",
+            ));
+        }
+        if !matches!(condition.status.as_str(), "true" | "false" | "unknown") {
+            return Err(DeploymentConditionError::new(format!(
+                "invalid deployment condition status {:?}",
+                condition.status
+            )));
+        }
+        if condition.reason.trim().is_empty() {
+            return Err(DeploymentConditionError::new(
+                "deployment condition reason must not be empty",
+            ));
+        }
+        Ok(condition)
+    }
+
+    pub fn condition_contract(&self) -> Value {
+        json!({
+            "type": self.condition_type,
+            "status": self.status,
+            "reason": self.reason,
+            "message": self.message,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeploymentSloReport {
+    pub slo_id: String,
+    pub status: String,
+}
+
+impl DeploymentSloReport {
+    pub fn passed(slo_id: impl Into<String>) -> Self {
+        Self {
+            slo_id: slo_id.into(),
+            status: "pass".to_owned(),
+        }
+    }
+
+    pub fn failed(slo_id: impl Into<String>) -> Self {
+        Self {
+            slo_id: slo_id.into(),
+            status: "fail".to_owned(),
+        }
+    }
+
+    pub fn no_data(slo_id: impl Into<String>) -> Self {
+        Self {
+            slo_id: slo_id.into(),
+            status: "no_data".to_owned(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeploymentSloProfile {
+    pub profile_id: String,
+    pub slo_objective_ids: BTreeSet<String>,
+}
+
+impl DeploymentSloProfile {
+    pub fn new<I, S>(profile_id: impl Into<String>, slo_objective_ids: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let profile_id = profile_id.into();
+        let slo_objective_ids = slo_objective_ids
+            .into_iter()
+            .map(Into::into)
+            .filter(|item: &String| !item.trim().is_empty())
+            .collect::<BTreeSet<_>>();
+        assert!(
+            !profile_id.trim().is_empty(),
+            "deployment SLO profile id must not be empty"
+        );
+        assert!(
+            !slo_objective_ids.is_empty(),
+            "deployment SLO profile requires at least one SLO objective"
+        );
+        Self {
+            profile_id,
+            slo_objective_ids,
+        }
+    }
+
+    pub fn evaluate_slo_reports<I>(&self, reports: I) -> DeploymentCondition
+    where
+        I: IntoIterator<Item = DeploymentSloReport>,
+    {
+        let reports_by_id = reports
+            .into_iter()
+            .map(|report| (report.slo_id.clone(), report))
+            .collect::<BTreeMap<_, _>>();
+        let mut failed = Vec::new();
+        let mut missing_or_no_data = Vec::new();
+        for objective_id in &self.slo_objective_ids {
+            match reports_by_id
+                .get(objective_id)
+                .map(|report| report.status.as_str())
+            {
+                Some("pass") => {}
+                Some("no_data") | None => missing_or_no_data.push(objective_id.clone()),
+                Some(_) => failed.push(objective_id.clone()),
+            }
+        }
+        if !failed.is_empty() {
+            return DeploymentCondition::new(
+                "SLOWithinBudget",
+                "false",
+                "slo_failed",
+                format!("failed SLO objectives: {}", failed.join(", ")),
+            )
+            .expect("static SLO condition must be valid");
+        }
+        if !missing_or_no_data.is_empty() {
+            return DeploymentCondition::new(
+                "SLOWithinBudget",
+                "unknown",
+                "slo_no_data",
+                format!(
+                    "missing or no-data SLO objectives: {}",
+                    missing_or_no_data.join(", ")
+                ),
+            )
+            .expect("static SLO condition must be valid");
+        }
+        DeploymentCondition::new("SLOWithinBudget", "true", "slo_within_budget", "")
+            .expect("static SLO condition must be valid")
+    }
+
+    pub fn profile_contract(&self) -> Value {
+        json!({
+            "profile_id": self.profile_id,
+            "slo_objective_ids": self.slo_objective_ids,
+        })
+    }
+
+    pub fn content_digest(&self) -> String {
+        canonical_hash(&self.profile_contract())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RecoveryObjective {
+    pub target: String,
+    pub rto: String,
+    pub rpo: String,
+}
+
+impl RecoveryObjective {
+    pub fn new(target: impl Into<String>, rto: impl Into<String>, rpo: impl Into<String>) -> Self {
+        let objective = Self {
+            target: target.into(),
+            rto: rto.into(),
+            rpo: rpo.into(),
+        };
+        assert!(
+            !objective.target.trim().is_empty(),
+            "recovery objective target must not be empty"
+        );
+        assert!(
+            !objective.rto.trim().is_empty(),
+            "recovery objective rto must not be empty"
+        );
+        assert!(
+            !objective.rpo.trim().is_empty(),
+            "recovery objective rpo must not be empty"
+        );
+        objective
+    }
+
+    pub fn objective_contract(&self) -> Value {
+        json!({
+            "target": self.target,
+            "rto": self.rto,
+            "rpo": self.rpo,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeploymentRecoveryProfile {
+    pub profile_id: String,
+    pub objectives: BTreeMap<String, RecoveryObjective>,
+    pub knowledge_index_rebuildable_from: BTreeSet<String>,
+    pub regional_failover_mode: Option<String>,
+    pub max_restore_test_age_seconds: Option<u64>,
+}
+
+impl DeploymentRecoveryProfile {
+    pub fn new(profile_id: impl Into<String>) -> Self {
+        let profile_id = profile_id.into();
+        assert!(
+            !profile_id.trim().is_empty(),
+            "deployment recovery profile id must not be empty"
+        );
+        Self {
+            profile_id,
+            objectives: BTreeMap::new(),
+            knowledge_index_rebuildable_from: BTreeSet::new(),
+            regional_failover_mode: None,
+            max_restore_test_age_seconds: None,
+        }
+    }
+
+    pub fn with_objective(
+        mut self,
+        target: impl Into<String>,
+        rto: impl Into<String>,
+        rpo: impl Into<String>,
+    ) -> Self {
+        let objective = RecoveryObjective::new(target, rto, rpo);
+        self.objectives.insert(objective.target.clone(), objective);
+        self
+    }
+
+    pub fn with_knowledge_index_sources<I, S>(mut self, sources: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.knowledge_index_rebuildable_from = sources
+            .into_iter()
+            .map(Into::into)
+            .filter(|item: &String| !item.trim().is_empty())
+            .collect();
+        self
+    }
+
+    pub fn with_regional_failover(mut self, mode: impl Into<String>) -> Self {
+        let mode = mode.into();
+        assert!(
+            !mode.trim().is_empty(),
+            "regional failover mode must not be empty"
+        );
+        self.regional_failover_mode = Some(mode);
+        self
+    }
+
+    pub fn with_max_restore_test_age_seconds(mut self, max_age_seconds: u64) -> Self {
+        assert!(max_age_seconds > 0, "restore test max age must be positive");
+        self.max_restore_test_age_seconds = Some(max_age_seconds);
+        self
+    }
+
+    pub fn evaluate_restore_test(
+        &self,
+        tested_at_unix_seconds: Option<u64>,
+        now_unix_seconds: u64,
+        passed: bool,
+    ) -> DeploymentCondition {
+        if !passed {
+            return DeploymentCondition::new(
+                "RecoveryTestCurrent",
+                "false",
+                "restore_test_failed",
+                "",
+            )
+            .expect("static recovery condition must be valid");
+        }
+        let Some(tested_at_unix_seconds) = tested_at_unix_seconds else {
+            return DeploymentCondition::new(
+                "RecoveryTestCurrent",
+                "unknown",
+                "restore_test_missing",
+                "",
+            )
+            .expect("static recovery condition must be valid");
+        };
+        let Some(age_seconds) = now_unix_seconds.checked_sub(tested_at_unix_seconds) else {
+            return DeploymentCondition::new(
+                "RecoveryTestCurrent",
+                "unknown",
+                "restore_test_in_future",
+                "",
+            )
+            .expect("static recovery condition must be valid");
+        };
+        if self
+            .max_restore_test_age_seconds
+            .is_some_and(|max_age| age_seconds > max_age)
+        {
+            let max_age = self.max_restore_test_age_seconds.unwrap_or_default();
+            return DeploymentCondition::new(
+                "RecoveryTestCurrent",
+                "false",
+                "restore_test_stale",
+                format!("last restore test age {age_seconds}s exceeds {max_age}s"),
+            )
+            .expect("static recovery condition must be valid");
+        }
+        DeploymentCondition::new("RecoveryTestCurrent", "true", "restore_test_current", "")
+            .expect("static recovery condition must be valid")
+    }
+
+    pub fn recovery_contract(&self) -> Value {
+        json!({
+            "profile_id": self.profile_id,
+            "objectives": self.objectives.values().map(RecoveryObjective::objective_contract).collect::<Vec<_>>(),
+            "knowledge_index_rebuildable_from": self.knowledge_index_rebuildable_from,
+            "regional_failover_mode": self.regional_failover_mode,
+            "max_restore_test_age_seconds": self.max_restore_test_age_seconds,
+        })
+    }
+
+    pub fn content_digest(&self) -> String {
+        canonical_hash(&self.recovery_contract())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RolloutError {
     pub message: String,
 }

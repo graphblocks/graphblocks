@@ -1,5 +1,6 @@
 use graphblocks_runtime_core::deployment::{
-    DeploymentEvent, DeploymentEventKind, DeploymentObservabilityContext, DeploymentRevision,
+    DeploymentCondition, DeploymentEvent, DeploymentEventKind, DeploymentObservabilityContext,
+    DeploymentRecoveryProfile, DeploymentRevision, DeploymentSloProfile, DeploymentSloReport,
     DeploymentTargetProfileSet, ExecutionTarget, ExecutionTargetKind, GraphRelease,
     GraphReleaseError, GraphReleaseGraph, ImageRef, KnowledgeBinding, PhysicalExecutionPlan,
     PlacementError, PlacementRule, PlacementSelector, PromptLock, RevisionDecision,
@@ -667,6 +668,90 @@ fn rollout_gate_aborts_without_automatic_rollback_for_non_reversible_effects() {
     assert_eq!(decision.reason, "quality_gate_failed");
     assert!(!decision.automatic_rollback_allowed);
     assert_eq!(decision.next_state.status, "aborted");
+}
+
+#[test]
+fn deployment_slo_profile_evaluates_slo_within_budget_condition() {
+    let profile = DeploymentSloProfile::new("rag-production", ["availability", "p95-latency"]);
+
+    let condition = profile.evaluate_slo_reports([
+        DeploymentSloReport::passed("availability"),
+        DeploymentSloReport::failed("p95-latency"),
+    ]);
+
+    assert_eq!(
+        condition,
+        DeploymentCondition::new(
+            "SLOWithinBudget",
+            "false",
+            "slo_failed",
+            "failed SLO objectives: p95-latency",
+        )
+        .unwrap()
+    );
+    assert!(profile.content_digest().starts_with("sha256:"));
+}
+
+#[test]
+fn deployment_slo_profile_reports_missing_or_no_data_as_unknown() {
+    let profile = DeploymentSloProfile::new("rag-production", ["availability", "p95-latency"]);
+
+    let condition = profile.evaluate_slo_reports([DeploymentSloReport::no_data("availability")]);
+
+    assert_eq!(condition.condition_type, "SLOWithinBudget");
+    assert_eq!(condition.status, "unknown");
+    assert_eq!(condition.reason, "slo_no_data");
+    assert_eq!(
+        condition.message,
+        "missing or no-data SLO objectives: availability, p95-latency"
+    );
+}
+
+#[test]
+fn deployment_recovery_profile_evaluates_restore_test_freshness() {
+    let profile = DeploymentRecoveryProfile::new("production-recovery")
+        .with_objective("service", "15m", "5m")
+        .with_objective("durable_jobs", "1h", "checkpoint")
+        .with_knowledge_index_sources(["source_assets", "manifests", "release_bundle"])
+        .with_regional_failover("active_passive")
+        .with_max_restore_test_age_seconds(86_400);
+
+    let current = profile.evaluate_restore_test(Some(1_000), 80_000, true);
+    let stale = profile.evaluate_restore_test(Some(1_000), 90_000, true);
+
+    assert_eq!(
+        current,
+        DeploymentCondition::new("RecoveryTestCurrent", "true", "restore_test_current", "")
+            .unwrap()
+    );
+    assert_eq!(
+        stale,
+        DeploymentCondition::new(
+            "RecoveryTestCurrent",
+            "false",
+            "restore_test_stale",
+            "last restore test age 89000s exceeds 86400s",
+        )
+        .unwrap()
+    );
+    assert_eq!(
+        profile.recovery_contract(),
+        json!({
+            "profile_id": "production-recovery",
+            "objectives": [
+                {"target": "durable_jobs", "rto": "1h", "rpo": "checkpoint"},
+                {"target": "service", "rto": "15m", "rpo": "5m"},
+            ],
+            "knowledge_index_rebuildable_from": [
+                "manifests",
+                "release_bundle",
+                "source_assets",
+            ],
+            "regional_failover_mode": "active_passive",
+            "max_restore_test_age_seconds": 86400,
+        })
+    );
+    assert!(profile.content_digest().starts_with("sha256:"));
 }
 
 #[test]
