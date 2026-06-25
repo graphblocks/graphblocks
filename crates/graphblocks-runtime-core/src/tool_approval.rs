@@ -25,6 +25,9 @@ pub enum ToolApprovalError {
         requested_at_unix_ms: u64,
         expires_at_unix_ms: u64,
     },
+    InvalidRevision {
+        revision: u32,
+    },
     InvalidToolCall {
         source: ToolCallError,
     },
@@ -87,7 +90,7 @@ impl ToolApprovalRequest {
             });
         }
 
-        Ok(Self {
+        let request = Self {
             approval_id,
             tool_call_id: call.tool_call_id.clone(),
             tool_name: call.name.clone(),
@@ -99,7 +102,38 @@ impl ToolApprovalRequest {
             principal_id,
             requested_at_unix_ms,
             expires_at_unix_ms,
-        })
+        };
+        request.validate()?;
+        Ok(request)
+    }
+
+    pub fn validate(&self) -> Result<(), ToolApprovalError> {
+        for (field, value) in [
+            ("approval_id", self.approval_id.as_str()),
+            ("tool_call_id", self.tool_call_id.as_str()),
+            ("tool_name", self.tool_name.as_str()),
+            ("definition_digest", self.definition_digest.as_str()),
+            ("binding_digest", self.binding_digest.as_str()),
+            ("arguments_digest", self.arguments_digest.as_str()),
+            ("policy_snapshot_id", self.policy_snapshot_id.as_str()),
+            ("principal_id", self.principal_id.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(ToolApprovalError::EmptyField { field });
+            }
+        }
+        if self.revision == 0 {
+            return Err(ToolApprovalError::InvalidRevision {
+                revision: self.revision,
+            });
+        }
+        if self.expires_at_unix_ms <= self.requested_at_unix_ms {
+            return Err(ToolApprovalError::InvalidExpiration {
+                requested_at_unix_ms: self.requested_at_unix_ms,
+                expires_at_unix_ms: self.expires_at_unix_ms,
+            });
+        }
+        Ok(())
     }
 }
 
@@ -175,6 +209,7 @@ impl ToolApprovalRecord {
     }
 
     pub fn validate(&self) -> Result<(), ToolApprovalError> {
+        self.request.validate()?;
         if self.approval_id != self.request.approval_id {
             return Err(ToolApprovalError::ApprovalIdMismatch {
                 expected: self.request.approval_id.clone(),

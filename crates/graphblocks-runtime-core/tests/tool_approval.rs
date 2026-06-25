@@ -159,3 +159,50 @@ fn approval_request_rejects_invalid_tool_call_model() {
         }),
     );
 }
+
+#[test]
+fn approval_record_rejects_malformed_embedded_request_digest() {
+    let resolved = resolved_search_tool().expect("resolved tool is valid");
+    let mut call = search_call("call-1", "runtime").expect("tool call is valid");
+    call.resolved_tool_id = resolved.resolved_tool_id.clone();
+    let mut request =
+        ToolApprovalRequest::for_call("approval-1", &resolved, &call, "user-1", 1_000, 2_000)
+            .expect("approval request is valid");
+    request.arguments_digest = " ".to_owned();
+
+    let record = ToolApprovalRecord::approve(request, "admin-1", 1_100);
+
+    assert_eq!(
+        record.validate(),
+        Err(ToolApprovalError::EmptyField {
+            field: "arguments_digest",
+        }),
+    );
+}
+
+#[test]
+fn approval_record_rejects_malformed_embedded_request_revision_and_expiration() {
+    let resolved = resolved_search_tool().expect("resolved tool is valid");
+    let mut call = search_call("call-1", "runtime").expect("tool call is valid");
+    call.resolved_tool_id = resolved.resolved_tool_id.clone();
+    let request =
+        ToolApprovalRequest::for_call("approval-1", &resolved, &call, "user-1", 1_000, 2_000)
+            .expect("approval request is valid");
+
+    let mut invalid_revision = request.clone();
+    invalid_revision.revision = 0;
+    assert_eq!(
+        ToolApprovalRecord::requested(invalid_revision).validate(),
+        Err(ToolApprovalError::InvalidRevision { revision: 0 }),
+    );
+
+    let mut invalid_expiration = request;
+    invalid_expiration.expires_at_unix_ms = invalid_expiration.requested_at_unix_ms;
+    assert_eq!(
+        ToolApprovalRecord::requested(invalid_expiration).validate(),
+        Err(ToolApprovalError::InvalidExpiration {
+            requested_at_unix_ms: 1_000,
+            expires_at_unix_ms: 1_000,
+        }),
+    );
+}
