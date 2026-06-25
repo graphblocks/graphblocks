@@ -272,6 +272,50 @@ def test_resolved_tool_records_definition_binding_and_policy_identity() -> None:
     assert resolved.allowed_for_principal is True
 
 
+def test_resolved_tool_rejects_empty_identity_fields() -> None:
+    definition = ToolDefinition(
+        name="knowledge.search",
+        description="Search support documentation.",
+        input_schema="schemas/SearchRequest@1",
+    )
+    binding = ToolBinding(
+        binding_id="binding-knowledge-search",
+        tool_name="knowledge.search",
+        implementation=BlockToolImplementation(block="knowledge.search@1"),
+    )
+
+    with pytest.raises(ValueError, match="resolved tool resolved_tool_id must not be empty"):
+        ResolvedTool.from_definition_and_binding(
+            resolved_tool_id=" ",
+            definition=definition,
+            binding=binding,
+            effective_policy_snapshot_id="policy-snapshot-1",
+            allowed_for_principal=True,
+        )
+    with pytest.raises(
+        ValueError,
+        match="resolved tool effective_policy_snapshot_id must not be empty",
+    ):
+        ResolvedTool.from_definition_and_binding(
+            resolved_tool_id="resolved-1",
+            definition=definition,
+            binding=binding,
+            effective_policy_snapshot_id="",
+            allowed_for_principal=True,
+        )
+
+    resolved = ResolvedTool.from_definition_and_binding(
+        resolved_tool_id="resolved-1",
+        definition=definition,
+        binding=binding,
+        effective_policy_snapshot_id="policy-snapshot-1",
+        allowed_for_principal=True,
+    )
+    for field_name in ("definition_digest", "binding_digest"):
+        with pytest.raises(ValueError, match=f"resolved tool {field_name} must not be empty"):
+            replace(resolved, **{field_name: ""})
+
+
 def test_resolved_tool_rejects_definition_binding_name_mismatch() -> None:
     definition = ToolDefinition(
         name="knowledge.search",

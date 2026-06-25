@@ -515,6 +515,16 @@ class ResolvedTool:
     allowed_for_principal: bool
     valid_until: str | None = None
 
+    def __post_init__(self) -> None:
+        for field_name in (
+            "resolved_tool_id",
+            "definition_digest",
+            "binding_digest",
+            "effective_policy_snapshot_id",
+        ):
+            if not getattr(self, field_name).strip():
+                raise ValueError(f"resolved tool {field_name} must not be empty")
+
     @classmethod
     def from_definition_and_binding(
         cls,

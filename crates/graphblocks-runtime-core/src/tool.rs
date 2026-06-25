@@ -446,6 +446,23 @@ pub struct ResolvedTool {
 }
 
 impl ResolvedTool {
+    pub fn validate(&self) -> Result<(), ToolResolutionError> {
+        for (field, value) in [
+            ("resolved_tool_id", self.resolved_tool_id.as_str()),
+            ("definition_digest", self.definition_digest.as_str()),
+            ("binding_digest", self.binding_digest.as_str()),
+            (
+                "effective_policy_snapshot_id",
+                self.effective_policy_snapshot_id.as_str(),
+            ),
+        ] {
+            if value.trim().is_empty() {
+                return Err(ToolResolutionError::EmptyResolvedToolField { field });
+            }
+        }
+        Ok(())
+    }
+
     pub fn from_definition_and_binding(
         resolved_tool_id: impl Into<String>,
         definition: ToolDefinition,
@@ -463,7 +480,7 @@ impl ResolvedTool {
         }
         let definition_digest = definition.digest();
         let binding_digest = binding.digest();
-        Ok(Self {
+        let resolved_tool = Self {
             resolved_tool_id: resolved_tool_id.into(),
             definition,
             binding,
@@ -472,7 +489,9 @@ impl ResolvedTool {
             effective_policy_snapshot_id: effective_policy_snapshot_id.into(),
             allowed_for_principal,
             valid_until_unix_ms,
-        })
+        };
+        resolved_tool.validate()?;
+        Ok(resolved_tool)
     }
 }
 
@@ -486,6 +505,9 @@ pub enum ToolResolutionError {
     },
     EmptyToolImplementationField {
         kind: &'static str,
+        field: &'static str,
+    },
+    EmptyResolvedToolField {
         field: &'static str,
     },
     DuplicateToolDefinition {
@@ -717,7 +739,7 @@ impl ToolCatalog {
                 "binding_digest": binding_digest,
                 "policy_snapshot": policy_snapshot,
             }));
-            resolved.push(ResolvedTool {
+            let resolved_tool = ResolvedTool {
                 resolved_tool_id,
                 definition: definition.clone(),
                 binding: binding.clone(),
@@ -726,7 +748,9 @@ impl ToolCatalog {
                 effective_policy_snapshot_id: policy_snapshot.clone(),
                 allowed_for_principal: scope.contains_in_principal_scope(tool_name),
                 valid_until_unix_ms: None,
-            });
+            };
+            resolved_tool.validate()?;
+            resolved.push(resolved_tool);
         }
         Ok(resolved)
     }

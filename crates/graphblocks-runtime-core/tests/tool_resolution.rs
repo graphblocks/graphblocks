@@ -1,8 +1,8 @@
 use graphblocks_compiler::canonical::canonical_hash;
 use graphblocks_runtime_core::tool::{
     BlockToolImplementation, GraphToolImplementation, McpToolImplementation,
-    OpenApiToolImplementation, RemoteToolImplementation, ToolBinding, ToolCatalog, ToolDefinition,
-    ToolEffect, ToolImplementation, ToolResolutionError, ToolResolutionScope,
+    OpenApiToolImplementation, RemoteToolImplementation, ResolvedTool, ToolBinding, ToolCatalog,
+    ToolDefinition, ToolEffect, ToolImplementation, ToolResolutionError, ToolResolutionScope,
 };
 use graphblocks_schema::SchemaIdError;
 use serde_json::json;
@@ -239,6 +239,75 @@ fn tool_implementations_validate_execution_targets() {
         Err(ToolResolutionError::EmptyToolImplementationField {
             kind: "block",
             field: "block",
+        })
+    );
+}
+
+#[test]
+fn resolved_tool_validates_identity_fields() {
+    let binding = ToolBinding::new(
+        "binding-search",
+        "knowledge.search",
+        ToolImplementation::Block(BlockToolImplementation::new("blocks.search")),
+    );
+
+    assert_eq!(
+        ResolvedTool::from_definition_and_binding(
+            " ",
+            search_definition(),
+            binding.clone(),
+            "policy-snapshot-1",
+            true,
+            None,
+        ),
+        Err(ToolResolutionError::EmptyResolvedToolField {
+            field: "resolved_tool_id",
+        })
+    );
+    assert_eq!(
+        ResolvedTool::from_definition_and_binding(
+            "resolved-1",
+            search_definition(),
+            binding.clone(),
+            " ",
+            true,
+            None,
+        ),
+        Err(ToolResolutionError::EmptyResolvedToolField {
+            field: "effective_policy_snapshot_id",
+        })
+    );
+
+    let mut resolved = ResolvedTool::from_definition_and_binding(
+        "resolved-1",
+        search_definition(),
+        binding,
+        "policy-snapshot-1",
+        true,
+        None,
+    )
+    .expect("resolved tool is valid");
+    resolved.definition_digest.clear();
+    assert_eq!(
+        resolved.validate(),
+        Err(ToolResolutionError::EmptyResolvedToolField {
+            field: "definition_digest",
+        })
+    );
+
+    let catalog = ToolCatalog::new(
+        [search_definition()],
+        [ToolBinding::new(
+            "binding-search",
+            "knowledge.search",
+            ToolImplementation::Block(BlockToolImplementation::new("blocks.search")),
+        )],
+    )
+    .expect("catalog is valid");
+    assert_eq!(
+        catalog.resolve(ToolResolutionScope::new(), " "),
+        Err(ToolResolutionError::EmptyResolvedToolField {
+            field: "effective_policy_snapshot_id",
         })
     );
 }
