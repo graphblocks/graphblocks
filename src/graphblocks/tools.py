@@ -937,7 +937,6 @@ class ToolCall:
             raise ValueError(f"invalid tool call status {self.status}")
         if self.revision < 1:
             raise ValueError("tool call revision must be positive")
-        object.__setattr__(self, "arguments", _freeze_json_value(self.arguments))
         object.__setattr__(self, "depends_on", tuple(self.depends_on))
         if any(not dependency.strip() for dependency in self.depends_on):
             raise ValueError("tool call dependency ids must not be empty")
@@ -959,6 +958,13 @@ class ToolCall:
             and self.completed_at < self.admitted_at
         ):
             raise ValueError("tool call completed_at must not be before admitted_at")
+        try:
+            actual_arguments_digest = canonical_hash(self.arguments)
+        except (TypeError, ValueError) as error:
+            raise ValueError("tool call arguments are invalid JSON") from error
+        if actual_arguments_digest != self.arguments_digest:
+            raise ValueError("tool call arguments_digest does not match arguments")
+        object.__setattr__(self, "arguments", _freeze_json_value(self.arguments))
 
     def revise_arguments(self, arguments: object) -> ToolCall:
         if self.status != "validated":

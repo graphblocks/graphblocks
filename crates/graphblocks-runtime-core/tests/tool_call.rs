@@ -75,6 +75,23 @@ fn canonical_arguments_digest_is_stable_for_object_key_order() -> Result<(), Too
 }
 
 #[test]
+fn tool_call_rejects_argument_digest_mismatch() -> Result<(), ToolCallError> {
+    let mut draft = ToolCallDraft::proposed("response-1", "call-1", "ticket.create");
+    draft.append_argument_fragment("{\"title\":\"original\"}")?;
+    let mut call = draft.into_completed_tool_call("resolved-tool-1", 1_000)?;
+
+    call.arguments = json!({"title": "tampered"});
+
+    assert_eq!(
+        call.validate(),
+        Err(ToolCallError::ArgumentsDigestMismatch {
+            tool_call_id: "call-1".to_owned(),
+        })
+    );
+    Ok(())
+}
+
+#[test]
 fn argument_revision_recomputes_digest_and_invalidates_admission_state() -> Result<(), ToolCallError>
 {
     let mut draft = ToolCallDraft::proposed("response-1", "call-1", "ticket.create");

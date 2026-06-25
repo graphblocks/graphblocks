@@ -149,17 +149,9 @@ def test_mcp_adapter_rejects_stale_argument_digest(monkeypatch) -> None:
         binding_id="binding-mcp-search",
         arguments={"query": "billing"},
     )
+    object.__setattr__(admitted.call, "arguments", {"query": "mutated"})
     stale = AdmittedToolCall(
-        call=ToolCall(
-            tool_call_id=admitted.call.tool_call_id,
-            response_id=admitted.call.response_id,
-            resolved_tool_id=admitted.call.resolved_tool_id,
-            name=admitted.call.name,
-            arguments={"query": "mutated"},
-            arguments_digest=admitted.call.arguments_digest,
-            status="admitted",
-            admitted_at=admitted.call.admitted_at,
-        ),
+        call=admitted.call,
         idempotency_key=admitted.idempotency_key,
     )
 
@@ -339,17 +331,9 @@ def test_openapi_adapter_rejects_stale_argument_digest(monkeypatch) -> None:
         binding_id="binding-ticket-create",
         arguments={"title": "Need help"},
     )
+    object.__setattr__(admitted.call, "arguments", {"title": "mutated"})
     stale = AdmittedToolCall(
-        call=ToolCall(
-            tool_call_id=admitted.call.tool_call_id,
-            response_id=admitted.call.response_id,
-            resolved_tool_id=admitted.call.resolved_tool_id,
-            name=admitted.call.name,
-            arguments={"title": "mutated"},
-            arguments_digest=admitted.call.arguments_digest,
-            status="admitted",
-            admitted_at=admitted.call.admitted_at,
-        ),
+        call=admitted.call,
         idempotency_key=admitted.idempotency_key,
     )
 

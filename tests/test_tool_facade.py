@@ -858,17 +858,8 @@ def test_tool_admission_validates_arguments_before_approval() -> None:
 
 def test_tool_admission_rejects_stale_argument_digest() -> None:
     resolved = _resolved_process_tool()
-    call = ToolCall(
-        tool_call_id="call-1",
-        response_id="response-1",
-        resolved_tool_id=resolved.resolved_tool_id,
-        name="process.run",
-        arguments={"cmd": ["echo", "hello"]},
-        arguments_digest=canonical_hash({"cmd": ["echo"]}),
-        revision=1,
-        status="validated",
-        created_at="2026-06-23T00:00:00Z",
-    )
+    call = _process_call(resolved, arguments='{"cmd":["echo"]}')
+    object.__setattr__(call, "arguments", {"cmd": ["echo", "hello"]})
 
     with pytest.raises(ToolAdmissionError) as error:
         admit_tool_call(
@@ -1316,6 +1307,18 @@ def test_tool_call_arguments_are_immutable_after_digesting() -> None:
         call.arguments["cmd"].append("world")  # type: ignore[index,union-attr]
 
     assert call.arguments_digest == canonical_hash({"cmd": ["echo", "hello"], "env": {"SAFE": "1"}})
+
+
+def test_tool_call_rejects_argument_digest_mismatch() -> None:
+    call = (
+        ToolCallDraft.proposed("response-1", "call-1", "ticket.create")
+        .append_argument_fragment('{"title":"original"}')
+        .complete_arguments()
+        .into_tool_call("resolved-tool-1", created_at="2026-06-23T00:00:00Z")
+    )
+
+    with pytest.raises(ValueError, match="tool call arguments_digest does not match arguments"):
+        replace(call, arguments={"title": "tampered"})
 
 
 def test_tool_call_revise_arguments_rejects_non_canonical_json_values() -> None:

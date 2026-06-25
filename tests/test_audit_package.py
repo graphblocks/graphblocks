@@ -154,7 +154,7 @@ def test_audit_package_rejects_mismatched_tool_effect_record_inputs(monkeypatch)
         resolved_tool_id="resolved-search",
         name="knowledge.search",
         arguments={},
-        arguments_digest="sha256:arguments",
+        arguments_digest=graphblocks.canonical_hash({}),
     )
 
     try:

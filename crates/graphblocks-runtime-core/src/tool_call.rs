@@ -51,6 +51,9 @@ pub enum ToolCallError {
         admitted_at_unix_ms: u64,
         completed_at_unix_ms: u64,
     },
+    ArgumentsDigestMismatch {
+        tool_call_id: String,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -229,6 +232,11 @@ impl ToolCall {
         {
             return Err(ToolCallError::EmptyField {
                 field: "depends_on",
+            });
+        }
+        if canonical_hash(&self.arguments) != self.arguments_digest {
+            return Err(ToolCallError::ArgumentsDigestMismatch {
+                tool_call_id: self.tool_call_id.clone(),
             });
         }
         Ok(())

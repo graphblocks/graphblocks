@@ -167,10 +167,14 @@ impl ToolAdmission {
     pub fn admit(
         request: ToolAdmissionRequest<'_>,
     ) -> Result<AdmittedToolCall, ToolAdmissionError> {
-        request
-            .call
-            .validate()
-            .map_err(|source| ToolAdmissionError::InvalidToolCall { source })?;
+        if let Err(source) = request.call.validate() {
+            return match source {
+                ToolCallError::ArgumentsDigestMismatch { tool_call_id } => {
+                    Err(ToolAdmissionError::ArgumentsDigestMismatch { tool_call_id })
+                }
+                source => Err(ToolAdmissionError::InvalidToolCall { source }),
+            };
+        }
         if request.principal_id.trim().is_empty() {
             return Err(ToolAdmissionError::EmptyPrincipalId);
         }
