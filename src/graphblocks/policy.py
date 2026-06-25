@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from types import MappingProxyType
-from typing import Literal
+from typing import Literal, get_args
 
 from .canonical import canonical_hash
 
@@ -26,6 +26,11 @@ EnforcementPoint = Literal[
     "before_publish",
     "on_resume",
 ]
+
+VALID_POLICY_EFFECTS = frozenset(get_args(PolicyEffect))
+VALID_RULE_EFFECTS = frozenset(get_args(RuleEffect))
+VALID_ENFORCEMENT_STATUSES = frozenset(get_args(PolicyEnforcementStatus))
+VALID_ENFORCEMENT_POINTS = frozenset(get_args(EnforcementPoint))
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +77,14 @@ class PolicyRule:
     principal_selectors: tuple[str, ...] = field(default_factory=tuple)
     obligations: tuple[PolicyObligation, ...] = field(default_factory=tuple)
     priority: int = 0
+
+    def __post_init__(self) -> None:
+        if self.effect not in VALID_RULE_EFFECTS:
+            raise ValueError(f"unknown policy rule effect {self.effect!r}")
+        object.__setattr__(self, "actions", tuple(self.actions))
+        object.__setattr__(self, "resource_selectors", tuple(self.resource_selectors))
+        object.__setattr__(self, "principal_selectors", tuple(self.principal_selectors))
+        object.__setattr__(self, "obligations", tuple(self.obligations))
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,6 +198,8 @@ class PolicyRequest:
     input_digest: str = ""
 
     def __post_init__(self) -> None:
+        if self.enforcement_point not in VALID_ENFORCEMENT_POINTS:
+            raise ValueError(f"unknown enforcement point {self.enforcement_point!r}")
         object.__setattr__(self, "data_labels", tuple(self.data_labels))
         object.__setattr__(
             self,
@@ -255,6 +270,8 @@ class PolicyDecision:
     input_digest: str = ""
 
     def __post_init__(self) -> None:
+        if self.effect not in VALID_POLICY_EFFECTS:
+            raise ValueError(f"unknown policy effect {self.effect!r}")
         object.__setattr__(self, "reason_codes", tuple(self.reason_codes))
         object.__setattr__(self, "policy_refs", tuple(self.policy_refs))
         object.__setattr__(self, "obligations", tuple(self.obligations))
@@ -270,6 +287,14 @@ class PolicyEnforcementRecord:
     enforced_obligation_ids: tuple[str, ...] = field(default_factory=tuple)
     occurred_at: str = ""
     metadata: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.enforcement_point not in VALID_ENFORCEMENT_POINTS:
+            raise ValueError(f"unknown enforcement point {self.enforcement_point!r}")
+        if self.status not in VALID_ENFORCEMENT_STATUSES:
+            raise ValueError(f"unknown policy enforcement status {self.status!r}")
+        object.__setattr__(self, "enforced_obligation_ids", tuple(self.enforced_obligation_ids))
+        object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
 
     @classmethod
     def from_decision(

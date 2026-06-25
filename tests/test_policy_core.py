@@ -87,6 +87,44 @@ def test_policy_request_mappings_are_copied_and_read_only() -> None:
     assert request.with_input_digest().input_digest.startswith("sha256:")
 
 
+def test_policy_models_reject_unknown_typed_values() -> None:
+    with pytest.raises(ValueError, match="unknown enforcement point"):
+        PolicyRequest(
+            request_id="req-invalid",
+            enforcement_point="after_delivery",
+            action="model.generate",
+            resource=ResourceRef("model:support", resource_kind="model"),
+            occurred_at="2026-06-23T00:00:00Z",
+        )
+    with pytest.raises(ValueError, match="unknown policy rule effect"):
+        PolicyRule("rule-invalid", "maybe", actions=("*",), resource_selectors=("*",))
+    with pytest.raises(ValueError, match="unknown policy effect"):
+        PolicyDecision(
+            decision_id="decision-invalid",
+            effect="maybe",
+            reason_codes=(),
+            policy_refs=(),
+            evaluated_at="2026-06-23T00:00:01Z",
+            input_digest="sha256:input",
+        )
+    with pytest.raises(ValueError, match="unknown policy enforcement status"):
+        PolicyEnforcementRecord(
+            record_id="enforce-invalid",
+            decision_id="decision-1",
+            enforcement_point="before_provider_call",
+            status="maybe",
+            occurred_at="2026-06-23T00:00:02Z",
+        )
+    with pytest.raises(ValueError, match="unknown enforcement point"):
+        PolicyEnforcementRecord(
+            record_id="enforce-invalid",
+            decision_id="decision-1",
+            enforcement_point="after_delivery",
+            status="enforced",
+            occurred_at="2026-06-23T00:00:02Z",
+        )
+
+
 def test_policy_obligation_parameters_are_copied_and_read_only() -> None:
     parameters = {"max_tokens": 4000}
 
