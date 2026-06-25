@@ -83,6 +83,19 @@ dependencies = ["vulnerable-sdk>=0"]
     assert payload["diagnostics"][0]["path"] == "$.pyproject.toml.project.dependencies[0]"
 
 
+def test_packages_wheel_matrix_cli_emits_release_gate_payload(capsys) -> None:
+    assert main(["packages", "wheel-matrix", "--root", ".", "--json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    runtime = next(target for target in payload["targets"] if target["distribution"] == "graphblocks-runtime")
+
+    assert payload["ok"] is True
+    assert payload["contentDigest"].startswith("sha256:")
+    assert payload["targetCount"] == len(payload["targets"])
+    assert runtime["kind"] == "native_extension"
+    assert runtime["python_versions"] == ["3.11", "3.12"]
+
+
 def test_schemas_manifest_cli_emits_deterministic_manifest(capsys) -> None:
     assert main(["schemas", "manifest", "schemas"]) == 0
 

@@ -36,6 +36,7 @@ from .packages import (
     PackageManifestAuditPolicy,
     audit_package_manifests,
     build_package_lock,
+    build_wheel_matrix,
     doctor_package_catalog,
     load_package_catalog,
     package_rows,
@@ -167,6 +168,19 @@ def main(argv: list[str] | None = None) -> int:
     packages_audit_parser.add_argument("--allowed-license", action="append", default=["Apache-2.0"])
     packages_audit_parser.add_argument("--blocked-dependency", action="append", default=[])
     packages_audit_parser.add_argument("--json", action="store_true", help="emit JSON")
+    packages_wheel_matrix_parser = packages_subparsers.add_parser(
+        "wheel-matrix",
+        help="validate first-party Python wheel build matrix",
+    )
+    packages_wheel_matrix_parser.add_argument("--root", type=Path, default=Path("."))
+    packages_wheel_matrix_parser.add_argument(
+        "--python",
+        action="append",
+        dest="python_versions",
+        default=[],
+        help="required Python version, repeatable; defaults to 3.11 and 3.12",
+    )
+    packages_wheel_matrix_parser.add_argument("--json", action="store_true", help="emit JSON")
 
     schemas_parser = subparsers.add_parser("schemas", help="inspect checked-in JSON Schema documents")
     schemas_subparsers = schemas_parser.add_subparsers(dest="schemas_command")
@@ -484,6 +498,22 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print("OK")
             return 0 if diagnostics.ok else 1
+        if args.packages_command == "wheel-matrix":
+            matrix = build_wheel_matrix(
+                args.root,
+                python_versions=tuple(args.python_versions) or ("3.11", "3.12"),
+            )
+            payload = matrix.matrix_contract()
+            payload["contentDigest"] = matrix.content_digest()
+            payload["targetCount"] = payload.pop("target_count")
+            if args.json:
+                print(json.dumps(payload, indent=2, sort_keys=True))
+            elif matrix.diagnostics:
+                for item in matrix.diagnostics:
+                    print(f"{item.severity} {item.code} {item.path}: {item.message}")
+            else:
+                print(f"OK {len(matrix.targets)} wheel targets")
+            return 0 if matrix.ok else 1
         packages_parser.print_help()
         return 0
     if args.command == "schemas":
