@@ -29,6 +29,8 @@ pub enum ToolCallError {
     ArgumentsNotComplete { status: ToolCallDraftStatus },
     InvalidArgumentsJson,
     CannotReviseArguments { status: ToolCallStatus },
+    EmptyField { field: &'static str },
+    InvalidRevision { revision: u32 },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -106,7 +108,7 @@ impl ToolCallDraft {
             .map_err(|_| ToolCallError::InvalidArgumentsJson)?;
         let arguments_digest = canonical_hash(&arguments);
 
-        Ok(ToolCall {
+        let call = ToolCall {
             tool_call_id: self.tool_call_id,
             response_id: self.response_id,
             resolved_tool_id: resolved_tool_id.into(),
@@ -119,7 +121,9 @@ impl ToolCallDraft {
             created_at_unix_ms,
             admitted_at_unix_ms: None,
             completed_at_unix_ms: None,
-        })
+        };
+        call.validate()?;
+        Ok(call)
     }
 }
 
@@ -140,7 +144,28 @@ pub struct ToolCall {
 }
 
 impl ToolCall {
+    pub fn validate(&self) -> Result<(), ToolCallError> {
+        for (field, value) in [
+            ("tool_call_id", self.tool_call_id.as_str()),
+            ("response_id", self.response_id.as_str()),
+            ("resolved_tool_id", self.resolved_tool_id.as_str()),
+            ("name", self.name.as_str()),
+            ("arguments_digest", self.arguments_digest.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(ToolCallError::EmptyField { field });
+            }
+        }
+        if self.revision == 0 {
+            return Err(ToolCallError::InvalidRevision {
+                revision: self.revision,
+            });
+        }
+        Ok(())
+    }
+
     pub fn revise_arguments(&self, arguments: Value) -> Result<Self, ToolCallError> {
+        self.validate()?;
         if self.status != ToolCallStatus::Validated {
             return Err(ToolCallError::CannotReviseArguments {
                 status: self.status,
@@ -154,6 +179,7 @@ impl ToolCall {
         revised.status = ToolCallStatus::Validated;
         revised.admitted_at_unix_ms = None;
         revised.completed_at_unix_ms = None;
+        revised.validate()?;
         Ok(revised)
     }
 }

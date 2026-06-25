@@ -15,7 +15,7 @@ use graphblocks_runtime_core::tool::{
     ToolResolutionScope,
 };
 use graphblocks_runtime_core::tool_approval::ToolApprovalRequest;
-use graphblocks_runtime_core::tool_call::{ToolCallDraft, ToolCallStatus};
+use graphblocks_runtime_core::tool_call::{ToolCallDraft, ToolCallError, ToolCallStatus};
 use graphblocks_runtime_core::tool_result::{
     ArtifactRef, ContentPart, ToolResult, ToolResultEvent,
 };
@@ -332,6 +332,25 @@ fn final_tool_calls_map_to_validated_and_admitted_application_events() {
             "created_at_unix_ms": 1_000,
             "admitted_at_unix_ms": 1_100,
             "completed_at_unix_ms": null,
+        })
+    );
+}
+
+#[test]
+fn tool_call_state_rejects_invalid_final_tool_call() {
+    let mut draft = ToolCallDraft::proposed("response-1", "call-1", "knowledge.search");
+    draft
+        .append_argument_fragment("{\"query\":\"runtime\"}")
+        .expect("argument fragment should append");
+    let mut call = draft
+        .into_completed_tool_call("resolved-tool-1", 1_000)
+        .expect("arguments should parse");
+    call.revision = 0;
+
+    assert_eq!(
+        ApplicationEvent::tool_call_state(metadata(), &call),
+        Err(ApplicationEventError::InvalidToolCall {
+            source: ToolCallError::InvalidRevision { revision: 0 }
         })
     );
 }

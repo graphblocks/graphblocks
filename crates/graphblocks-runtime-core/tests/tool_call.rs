@@ -1,5 +1,5 @@
 use graphblocks_runtime_core::tool_call::{
-    ToolCallDraft, ToolCallDraftStatus, ToolCallError, ToolCallStatus,
+    ToolCall, ToolCallDraft, ToolCallDraftStatus, ToolCallError, ToolCallStatus,
 };
 use serde_json::json;
 
@@ -106,4 +106,40 @@ fn admitted_tool_call_arguments_cannot_be_revised() -> Result<(), ToolCallError>
         }),
     );
     Ok(())
+}
+
+#[test]
+fn tool_call_validates_revision_and_required_identity_fields() {
+    let invalid_revision = ToolCall {
+        tool_call_id: "call-1".to_owned(),
+        response_id: "response-1".to_owned(),
+        resolved_tool_id: "resolved-tool-1".to_owned(),
+        name: "knowledge.search".to_owned(),
+        arguments: json!({"query": "runtime"}),
+        arguments_digest: "sha256:args".to_owned(),
+        revision: 0,
+        status: ToolCallStatus::Validated,
+        depends_on: Vec::new(),
+        created_at_unix_ms: 1_000,
+        admitted_at_unix_ms: None,
+        completed_at_unix_ms: None,
+    };
+
+    assert_eq!(
+        invalid_revision.validate(),
+        Err(ToolCallError::InvalidRevision { revision: 0 })
+    );
+
+    let empty_arguments_digest = ToolCall {
+        revision: 1,
+        arguments_digest: " ".to_owned(),
+        ..invalid_revision
+    };
+
+    assert_eq!(
+        empty_arguments_digest.validate(),
+        Err(ToolCallError::EmptyField {
+            field: "arguments_digest"
+        })
+    );
 }

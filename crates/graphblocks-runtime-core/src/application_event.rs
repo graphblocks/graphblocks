@@ -9,7 +9,9 @@ use crate::output_policy::{
 };
 use crate::policy::PolicyDecision;
 use crate::tool_approval::ToolApprovalRequest;
-use crate::tool_call::{ToolCall, ToolCallDraft, ToolCallDraftStatus, ToolCallStatus};
+use crate::tool_call::{
+    ToolCall, ToolCallDraft, ToolCallDraftStatus, ToolCallError, ToolCallStatus,
+};
 use crate::tool_result::{
     ContentPartKind, ToolEffectOutcome, ToolResult, ToolResultEvent, ToolResultStatus,
 };
@@ -130,6 +132,7 @@ pub enum ApplicationEventError {
     NotToolEvent { kind: ApplicationEventKind },
     EmptyMetadataField { field: &'static str },
     EmptyToolCallId,
+    InvalidToolCall { source: ToolCallError },
     InvalidOutputCutoff { source: OutputCutoffError },
     InvalidOutputPolicyDecision { source: OutputPolicyDecisionError },
 }
@@ -181,6 +184,8 @@ impl ApplicationEvent {
         metadata: ApplicationEventMetadata,
         call: &ToolCall,
     ) -> Result<Option<Self>, ApplicationEventError> {
+        call.validate()
+            .map_err(|source| ApplicationEventError::InvalidToolCall { source })?;
         let kind = match call.status {
             ToolCallStatus::Validated => ApplicationEventKind::ToolCallValidated,
             ToolCallStatus::Admitted => ApplicationEventKind::ToolCallAdmitted,
