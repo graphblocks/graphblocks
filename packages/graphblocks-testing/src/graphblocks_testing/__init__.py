@@ -45,6 +45,7 @@ FaultKind = Literal[
     "storage_conflict",
     "network_partition",
 ]
+ReleaseCandidateGateStatus = Literal["passed", "failed"]
 
 
 def _string_tuple(value: object) -> tuple[str, ...]:
@@ -576,6 +577,199 @@ class FaultChaosReport:
             "profile": self.profile,
             "ok": self.ok,
             "results": [result.result_contract() for result in self.results],
+        }
+
+    def content_digest(self) -> str:
+        return canonical_hash(self.report_contract())
+
+
+@dataclass(frozen=True, slots=True)
+class ReleaseCandidateGateResult:
+    gate: str
+    status: ReleaseCandidateGateStatus
+    evidence_digest: str
+    diagnostics: tuple[dict[str, str], ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        if not self.gate.strip():
+            raise ValueError("release candidate gate must not be empty")
+        if self.status not in {"passed", "failed"}:
+            raise ValueError(f"invalid release candidate gate status {self.status!r}")
+        object.__setattr__(self, "diagnostics", tuple(dict(diagnostic) for diagnostic in self.diagnostics))
+
+    @property
+    def ok(self) -> bool:
+        return self.status == "passed"
+
+    def gate_contract(self) -> dict[str, object]:
+        return {
+            "gate": self.gate,
+            "status": self.status,
+            "evidence_digest": self.evidence_digest,
+            "diagnostics": [dict(diagnostic) for diagnostic in self.diagnostics],
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ReleaseCandidateGateReport:
+    release_id: str
+    gates: tuple[ReleaseCandidateGateResult, ...]
+
+    def __post_init__(self) -> None:
+        if not self.release_id.strip():
+            raise ValueError("release candidate release_id must not be empty")
+        object.__setattr__(self, "gates", tuple(sorted(self.gates, key=lambda gate: gate.gate)))
+
+    @property
+    def ok(self) -> bool:
+        return all(gate.ok for gate in self.gates)
+
+    @classmethod
+    def from_evidence(
+        cls,
+        *,
+        release_id: str,
+        tck_reports: Mapping[str, TckReport],
+        required_tck_suites: tuple[str, ...],
+        acceptance_coverage: AcceptanceCoverageResult,
+        fault_chaos: FaultChaosReport,
+        performance: PerformanceBenchmarkReport,
+        wheel_matrix: object,
+        migration: MigrationCompatibilityReport,
+    ) -> ReleaseCandidateGateReport:
+        gates: list[ReleaseCandidateGateResult] = []
+
+        tck_diagnostics: list[dict[str, str]] = []
+        tck_digests: dict[str, str | None] = {}
+        for suite in required_tck_suites:
+            report = tck_reports.get(suite)
+            if report is None:
+                tck_digests[suite] = None
+                tck_diagnostics.append(
+                    {
+                        "code": "ReleaseCandidateTckMissing",
+                        "message": "required TCK suite has no report",
+                        "path": f"$.tck_reports.{suite}",
+                    }
+                )
+                continue
+            tck_digests[suite] = report.content_digest()
+            if not report.ok:
+                tck_diagnostics.append(
+                    {
+                        "code": "ReleaseCandidateTckFailed",
+                        "message": "required TCK suite did not pass",
+                        "path": f"$.tck_reports.{suite}",
+                    }
+                )
+        gates.append(
+            ReleaseCandidateGateResult(
+                gate="full_tck",
+                status="passed" if not tck_diagnostics else "failed",
+                evidence_digest=canonical_hash({"required": list(required_tck_suites), "reports": tck_digests}),
+                diagnostics=tuple(tck_diagnostics),
+            )
+        )
+
+        acceptance_diagnostics = ()
+        if not acceptance_coverage.ok:
+            acceptance_diagnostics = (
+                {
+                    "code": "ReleaseCandidateAcceptanceFailed",
+                    "message": "acceptance application coverage did not pass",
+                    "path": "$.acceptance_coverage",
+                },
+            )
+        gates.append(
+            ReleaseCandidateGateResult(
+                gate="acceptance_applications",
+                status="passed" if not acceptance_diagnostics else "failed",
+                evidence_digest=canonical_hash(acceptance_coverage.issue_contracts()),
+                diagnostics=acceptance_diagnostics,
+            )
+        )
+
+        fault_diagnostics = ()
+        if not fault_chaos.ok:
+            fault_diagnostics = (
+                {
+                    "code": "ReleaseCandidateChaosFailed",
+                    "message": "fault/chaos report did not pass",
+                    "path": "$.fault_chaos",
+                },
+            )
+        gates.append(
+            ReleaseCandidateGateResult(
+                gate="fault_chaos_tests",
+                status="passed" if not fault_diagnostics else "failed",
+                evidence_digest=fault_chaos.content_digest(),
+                diagnostics=fault_diagnostics,
+            )
+        )
+
+        performance_diagnostics = ()
+        if not performance.ok:
+            performance_diagnostics = (
+                {
+                    "code": "ReleaseCandidatePerformanceFailed",
+                    "message": "performance benchmark did not pass",
+                    "path": "$.performance",
+                },
+            )
+        gates.append(
+            ReleaseCandidateGateResult(
+                gate="performance_benchmark",
+                status="passed" if not performance_diagnostics else "failed",
+                evidence_digest=performance.content_digest(),
+                diagnostics=performance_diagnostics,
+            )
+        )
+
+        wheel_ok = bool(getattr(wheel_matrix, "ok"))
+        wheel_digest = str(wheel_matrix.content_digest())
+        wheel_diagnostics = ()
+        if not wheel_ok:
+            wheel_diagnostics = (
+                {
+                    "code": "ReleaseCandidateWheelMatrixFailed",
+                    "message": "wheel matrix did not pass",
+                    "path": "$.wheel_matrix",
+                },
+            )
+        gates.append(
+            ReleaseCandidateGateResult(
+                gate="wheel_matrix",
+                status="passed" if not wheel_diagnostics else "failed",
+                evidence_digest=wheel_digest,
+                diagnostics=wheel_diagnostics,
+            )
+        )
+
+        migration_diagnostics = ()
+        if not migration.ok:
+            migration_diagnostics = (
+                {
+                    "code": "ReleaseCandidateMigrationFailed",
+                    "message": "migration compatibility report did not pass",
+                    "path": "$.migration",
+                },
+            )
+        gates.append(
+            ReleaseCandidateGateResult(
+                gate="migration_tests",
+                status="passed" if not migration_diagnostics else "failed",
+                evidence_digest=migration.content_digest(),
+                diagnostics=migration_diagnostics,
+            )
+        )
+
+        return cls(release_id=release_id, gates=tuple(gates))
+
+    def report_contract(self) -> dict[str, object]:
+        return {
+            "release_id": self.release_id,
+            "ok": self.ok,
+            "gates": [gate.gate_contract() for gate in self.gates],
         }
 
     def content_digest(self) -> str:
@@ -1162,6 +1356,8 @@ __all__ = [
     "PerformanceBenchmarkIssue",
     "PerformanceBenchmarkReport",
     "PerformanceThreshold",
+    "ReleaseCandidateGateReport",
+    "ReleaseCandidateGateResult",
     "RunRecord",
     "RunTerminalStateError",
     "RunResult",

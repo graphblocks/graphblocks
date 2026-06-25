@@ -376,3 +376,95 @@ def test_testing_package_builds_fault_chaos_report(monkeypatch) -> None:
     }
     assert report.content_digest().startswith("sha256:")
     assert "FaultChaosReport" in graphblocks_testing.__all__
+
+
+def test_testing_package_builds_release_candidate_gate_report(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks = importlib.import_module("graphblocks")
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    passing_tck = graphblocks_testing.TckReport(
+        profile="compiler",
+        results=(graphblocks_testing.TckResult("compiler/hash", "compiler", "passed"),),
+    )
+    failing_performance = graphblocks_testing.PerformanceBenchmarkReport(
+        benchmark_id="release-candidate",
+        measurements={"p95_latency_ms": 900},
+        thresholds=(graphblocks_testing.PerformanceThreshold.at_most("p95_latency_ms", 800, unit="ms"),),
+    )
+    fault_chaos = graphblocks_testing.FaultChaosReport(
+        profile="release-candidate",
+        results=(
+            graphblocks_testing.FaultChaosResult.from_observation(
+                case_id="telemetry-outage",
+                fault_kind="telemetry_outage",
+                expected_terminal_state="succeeded",
+                observed_terminal_state="succeeded",
+                recovery_expected=True,
+                recovered=True,
+                data_loss_events=0,
+                audit_preserved=True,
+            ),
+        ),
+    )
+    migration = graphblocks_testing.MigrationCompatibilityReport(
+        profile="migration",
+        results=(
+            graphblocks_testing.MigrationCompatibilityResult(
+                case_id="legacy-alpha2",
+                direction="upgrade",
+                status="passed",
+            ),
+        ),
+    )
+    wheel_matrix = graphblocks.WheelMatrix(
+        targets=(
+            graphblocks.WheelBuildTarget(
+                distribution="graphblocks-core",
+                manifest="pyproject.toml",
+                backend="hatchling.build",
+                kind="pure_python",
+                source_layout="src/graphblocks",
+                python_versions=("3.11", "3.12"),
+            ),
+        )
+    )
+
+    report = graphblocks_testing.ReleaseCandidateGateReport.from_evidence(
+        release_id="2026.06.23.1",
+        tck_reports={"compiler": passing_tck},
+        required_tck_suites=("compiler", "runtime"),
+        acceptance_coverage=graphblocks_testing.AcceptanceCoverageResult(),
+        fault_chaos=fault_chaos,
+        performance=failing_performance,
+        wheel_matrix=wheel_matrix,
+        migration=migration,
+    )
+
+    assert not report.ok
+    assert report.report_contract()["release_id"] == "2026.06.23.1"
+    assert [gate["gate"] for gate in report.report_contract()["gates"]] == [
+        "acceptance_applications",
+        "fault_chaos_tests",
+        "full_tck",
+        "migration_tests",
+        "performance_benchmark",
+        "wheel_matrix",
+    ]
+    failing = {gate["gate"]: gate for gate in report.report_contract()["gates"] if gate["status"] == "failed"}
+    assert failing["full_tck"]["diagnostics"] == [
+        {
+            "code": "ReleaseCandidateTckMissing",
+            "message": "required TCK suite has no report",
+            "path": "$.tck_reports.runtime",
+        }
+    ]
+    assert failing["performance_benchmark"]["diagnostics"] == [
+        {
+            "code": "ReleaseCandidatePerformanceFailed",
+            "message": "performance benchmark did not pass",
+            "path": "$.performance",
+        }
+    ]
+    assert report.content_digest().startswith("sha256:")
+    assert "ReleaseCandidateGateReport" in graphblocks_testing.__all__
