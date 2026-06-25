@@ -214,6 +214,10 @@ class ApplicationCommandMetadata:
                 raise ApplicationProtocolError(
                     f"application command {label} must not be empty"
                 )
+        for field_name in ("turn_id", "idempotency_key"):
+            value = getattr(self, field_name)
+            if value is not None and not value.strip():
+                raise ApplicationProtocolError(f"application command {field_name} must not be empty")
         if self.sequence < 0:
             raise ApplicationProtocolError("application command sequence must be non-negative")
         if self.issued_at_unix_ms < 0:
@@ -259,6 +263,10 @@ class ApplicationProtocolEventMetadata:
                 raise ApplicationProtocolError(
                     f"application event {label} must not be empty"
                 )
+        for field_name in ("turn_id", "cursor"):
+            value = getattr(self, field_name)
+            if value is not None and not value.strip():
+                raise ApplicationProtocolError(f"application event {field_name} must not be empty")
         if self.sequence < 0:
             raise ApplicationProtocolError("application event sequence must be non-negative")
         if self.occurred_at_unix_ms < 0:

@@ -925,6 +925,14 @@ impl ApplicationCommand {
                 return Err(ApplicationProtocolError::EmptyMetadataField { field });
             }
         }
+        for (field, value) in [
+            ("turn_id", metadata.turn_id.as_deref()),
+            ("idempotency_key", metadata.idempotency_key.as_deref()),
+        ] {
+            if value.is_some_and(|value| value.trim().is_empty()) {
+                return Err(ApplicationProtocolError::EmptyMetadataField { field });
+            }
+        }
         Ok(Self {
             kind,
             metadata,
@@ -947,6 +955,14 @@ impl ApplicationProtocolEvent {
             ("run_id", metadata.run_id.as_str()),
         ] {
             if value.trim().is_empty() {
+                return Err(ApplicationProtocolError::EmptyMetadataField { field });
+            }
+        }
+        for (field, value) in [
+            ("turn_id", metadata.turn_id.as_deref()),
+            ("cursor", metadata.cursor.as_deref()),
+        ] {
+            if value.is_some_and(|value| value.trim().is_empty()) {
                 return Err(ApplicationProtocolError::EmptyMetadataField { field });
             }
         }

@@ -244,6 +244,30 @@ def test_application_protocol_metadata_rejects_empty_required_fields() -> None:
         )
     with pytest.raises(
         ApplicationProtocolError,
+        match="application command turn_id must not be empty",
+    ):
+        ApplicationCommandMetadata(
+            command_id="command-1",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            turn_id=" ",
+            sequence=1,
+            issued_at_unix_ms=1_765_843_200_000,
+        )
+    with pytest.raises(
+        ApplicationProtocolError,
+        match="application command idempotency_key must not be empty",
+    ):
+        ApplicationCommandMetadata(
+            command_id="command-1",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            idempotency_key="",
+            sequence=1,
+            issued_at_unix_ms=1_765_843_200_000,
+        )
+    with pytest.raises(
+        ApplicationProtocolError,
         match="application event protocol_version must not be empty",
     ):
         ApplicationProtocolEventMetadata(
@@ -261,6 +285,30 @@ def test_application_protocol_metadata_rejects_empty_required_fields() -> None:
             event_id="event-1",
             protocol_version="graphblocks.app.v1",
             run_id=" ",
+            sequence=1,
+            occurred_at_unix_ms=1_765_843_201_000,
+        )
+    with pytest.raises(
+        ApplicationProtocolError,
+        match="application event turn_id must not be empty",
+    ):
+        ApplicationProtocolEventMetadata(
+            event_id="event-1",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            turn_id=" ",
+            sequence=1,
+            occurred_at_unix_ms=1_765_843_201_000,
+        )
+    with pytest.raises(
+        ApplicationProtocolError,
+        match="application event cursor must not be empty",
+    ):
+        ApplicationProtocolEventMetadata(
+            event_id="event-1",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            cursor="",
             sequence=1,
             occurred_at_unix_ms=1_765_843_201_000,
         )

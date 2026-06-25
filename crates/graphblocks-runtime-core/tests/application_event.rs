@@ -1098,6 +1098,30 @@ fn application_commands_reject_empty_required_protocol_metadata() {
         ),
         Err(ApplicationProtocolError::EmptyMetadataField { field: "run_id" })
     );
+    assert_eq!(
+        ApplicationCommand::new(
+            ApplicationCommandKind::CancelRun,
+            ApplicationCommandMetadata {
+                turn_id: Some(" ".to_owned()),
+                ..command_metadata()
+            },
+            json!({}),
+        ),
+        Err(ApplicationProtocolError::EmptyMetadataField { field: "turn_id" })
+    );
+    assert_eq!(
+        ApplicationCommand::new(
+            ApplicationCommandKind::CancelRun,
+            ApplicationCommandMetadata {
+                idempotency_key: Some("".to_owned()),
+                ..command_metadata()
+            },
+            json!({}),
+        ),
+        Err(ApplicationProtocolError::EmptyMetadataField {
+            field: "idempotency_key",
+        })
+    );
 }
 
 #[test]
@@ -1180,6 +1204,28 @@ fn application_protocol_events_reject_empty_required_metadata() {
             json!({}),
         ),
         Err(ApplicationProtocolError::EmptyMetadataField { field: "run_id" })
+    );
+    assert_eq!(
+        ApplicationProtocolEvent::new(
+            ApplicationProtocolEventKind::RunStarted,
+            ApplicationProtocolEventMetadata {
+                turn_id: Some(" ".to_owned()),
+                ..protocol_event_metadata("event-1", 5, "cursor-5")
+            },
+            json!({}),
+        ),
+        Err(ApplicationProtocolError::EmptyMetadataField { field: "turn_id" })
+    );
+    assert_eq!(
+        ApplicationProtocolEvent::new(
+            ApplicationProtocolEventKind::RunStarted,
+            ApplicationProtocolEventMetadata {
+                cursor: Some("".to_owned()),
+                ..protocol_event_metadata("event-1", 5, "cursor-5")
+            },
+            json!({}),
+        ),
+        Err(ApplicationProtocolError::EmptyMetadataField { field: "cursor" })
     );
 }
 
