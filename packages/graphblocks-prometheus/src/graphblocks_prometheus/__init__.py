@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 import hashlib
 import json
 
-from graphblocks_telemetry import GenerationTelemetryRecord
+from graphblocks_telemetry import GenerationTelemetryRecord, MetricCardinalityLinter, MetricCardinalityLintResult
 
 
 class PrometheusProjectionError(ValueError):
@@ -158,10 +158,20 @@ def prometheus_samples_from_generation(record: GenerationTelemetryRecord) -> tup
     return tuple(samples)
 
 
+def lint_prometheus_samples(
+    samples: Iterable[PrometheusSample],
+    *,
+    linter: MetricCardinalityLinter | None = None,
+) -> MetricCardinalityLintResult:
+    cardinality_linter = linter or MetricCardinalityLinter()
+    return cardinality_linter.lint_samples(sample.sample_contract() for sample in samples)
+
+
 __all__ = [
     "PrometheusProjectionError",
     "PrometheusRule",
     "PrometheusRuleGroup",
     "PrometheusSample",
+    "lint_prometheus_samples",
     "prometheus_samples_from_generation",
 ]

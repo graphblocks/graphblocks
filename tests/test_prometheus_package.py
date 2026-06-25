@@ -78,6 +78,53 @@ def test_prometheus_projection_builds_generation_samples(monkeypatch) -> None:
     ]
 
 
+def test_prometheus_package_lints_sample_cardinality(monkeypatch) -> None:
+    graphblocks_prometheus = _import_prometheus(monkeypatch)
+    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
+
+    samples = (
+        graphblocks_prometheus.PrometheusSample(
+            "graphblocks_generation_usage_tokens_total",
+            {"provider": "openai-compatible", "model": "small", "run_id": "run-1"},
+            1,
+        ),
+        graphblocks_prometheus.PrometheusSample(
+            "graphblocks_generation_usage_tokens_total",
+            {"provider": "openai-compatible", "model": "medium"},
+            1,
+        ),
+        graphblocks_prometheus.PrometheusSample(
+            "graphblocks_generation_usage_tokens_total",
+            {"provider": "openai-compatible", "model": "large"},
+            1,
+        ),
+    )
+
+    result = graphblocks_prometheus.lint_prometheus_samples(
+        samples,
+        linter=graphblocks_telemetry.MetricCardinalityLinter(max_distinct_values_per_label=2),
+    )
+
+    assert not result.passed
+    assert result.issue_contracts() == [
+        {
+            "metric_name": "graphblocks_generation_usage_tokens_total",
+            "label": "model",
+            "distinct_values": 3,
+            "limit": 2,
+            "reason": "too_many_values",
+        },
+        {
+            "metric_name": "graphblocks_generation_usage_tokens_total",
+            "label": "run_id",
+            "distinct_values": 1,
+            "limit": 0,
+            "reason": "blocked_label",
+        },
+    ]
+    assert "lint_prometheus_samples" in graphblocks_prometheus.__all__
+
+
 def test_prometheus_rule_group_builds_rule_file_contract(monkeypatch) -> None:
     graphblocks_prometheus = _import_prometheus(monkeypatch)
     group = graphblocks_prometheus.PrometheusRuleGroup(
