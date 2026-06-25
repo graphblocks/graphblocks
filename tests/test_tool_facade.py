@@ -184,6 +184,9 @@ def test_tool_binding_rejects_unknown_contract_values() -> None:
         ({"cancellation": "eventually"}, "invalid tool cancellation eventually"),
         ({"result_mode": "firehose"}, "invalid tool result mode firehose"),
         ({"timeout_ms": -1}, "tool timeout_ms must be non-negative"),
+        ({"retry_policy_ref": " "}, "tool binding retry_policy_ref must not be empty"),
+        ({"policy_profile_ref": ""}, "tool binding policy_profile_ref must not be empty"),
+        ({"execution_class": " "}, "tool binding execution_class must not be empty"),
     )
     for overrides, message in cases:
         with pytest.raises(ValueError, match=message):

@@ -411,6 +411,15 @@ impl ToolBinding {
                 return Err(ToolResolutionError::EmptyToolBindingField { field });
             }
         }
+        for (field, value) in [
+            ("retry_policy_ref", self.retry_policy_ref.as_deref()),
+            ("policy_profile_ref", self.policy_profile_ref.as_deref()),
+            ("execution_class", self.execution_class.as_deref()),
+        ] {
+            if value.is_some_and(|value| value.trim().is_empty()) {
+                return Err(ToolResolutionError::EmptyToolBindingField { field });
+            }
+        }
         self.implementation.validate()?;
         Ok(())
     }

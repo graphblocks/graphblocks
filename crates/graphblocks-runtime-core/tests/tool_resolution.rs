@@ -156,6 +156,42 @@ fn tool_binding_validates_identity_fields() {
         ToolBinding::new("binding-search", "", valid_implementation.clone()).validate(),
         Err(ToolResolutionError::EmptyToolBindingField { field: "tool_name" })
     );
+    let mut empty_retry_policy_ref = ToolBinding::new(
+        "binding-search",
+        "knowledge.search",
+        valid_implementation.clone(),
+    );
+    empty_retry_policy_ref.retry_policy_ref = Some(" ".to_owned());
+    assert_eq!(
+        empty_retry_policy_ref.validate(),
+        Err(ToolResolutionError::EmptyToolBindingField {
+            field: "retry_policy_ref",
+        })
+    );
+    let mut empty_policy_profile_ref = ToolBinding::new(
+        "binding-search",
+        "knowledge.search",
+        valid_implementation.clone(),
+    );
+    empty_policy_profile_ref.policy_profile_ref = Some("".to_owned());
+    assert_eq!(
+        empty_policy_profile_ref.validate(),
+        Err(ToolResolutionError::EmptyToolBindingField {
+            field: "policy_profile_ref",
+        })
+    );
+    let mut empty_execution_class = ToolBinding::new(
+        "binding-search",
+        "knowledge.search",
+        valid_implementation.clone(),
+    );
+    empty_execution_class.execution_class = Some(" ".to_owned());
+    assert_eq!(
+        empty_execution_class.validate(),
+        Err(ToolResolutionError::EmptyToolBindingField {
+            field: "execution_class",
+        })
+    );
     assert_eq!(
         ToolCatalog::new(
             [search_definition()],

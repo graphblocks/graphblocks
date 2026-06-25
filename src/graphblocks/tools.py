@@ -482,6 +482,10 @@ class ToolBinding:
             not isinstance(self.timeout_ms, int) or isinstance(self.timeout_ms, bool) or self.timeout_ms < 0
         ):
             raise ValueError("tool timeout_ms must be non-negative")
+        for field_name in ("retry_policy_ref", "policy_profile_ref", "execution_class"):
+            value = getattr(self, field_name)
+            if value is not None and not value.strip():
+                raise ValueError(f"tool binding {field_name} must not be empty")
         object.__setattr__(self, "effects", effects)
 
     def binding_contract(self) -> dict[str, object]:
