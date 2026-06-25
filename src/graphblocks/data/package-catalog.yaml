@@ -739,6 +739,23 @@ packages:
   - pylibsrtp
   implementationPhase: integration-defined
   stability: integration
+- distribution: graphblocks-websocket-media
+  import: graphblocks_websocket_media
+  layer: voice_transport_adapter
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-voice
+  responsibility:
+  - WebSocket media endpoint contract
+  - sequenced audio and transcript message contracts
+  - core VoiceTransport projection
+  forbiddenDependencies:
+  - websockets
+  - aiohttp
+  - wsproto
+  implementationPhase: integration-defined
+  stability: integration
 - distribution: graphblocks-durable
   import: graphblocks_durable
   layer: durable_stream

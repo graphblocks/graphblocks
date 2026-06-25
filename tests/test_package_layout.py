@@ -916,6 +916,7 @@ def test_durable_stream_adapter_packages_have_layouts_without_client_dependencie
 def test_voice_adapter_packages_have_layouts_without_media_sdk_dependencies() -> None:
     cases = (
         ("graphblocks-webrtc", "graphblocks_webrtc", ("aiortc", "webrtcvad", "av", "pylibsrtp")),
+        ("graphblocks-websocket-media", "graphblocks_websocket_media", ("websockets", "aiohttp", "wsproto")),
     )
     for distribution, import_name, forbidden_clients in cases:
         package_root = ROOT / "packages" / distribution
