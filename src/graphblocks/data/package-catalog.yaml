@@ -597,6 +597,22 @@ packages:
   - ToolBinding execution bridge for OpenAPI calls
   implementationPhase: 2
   stability: integration
+- distribution: graphblocks-openai
+  import: graphblocks_openai
+  layer: model_provider_adapter
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-core
+  responsibility:
+  - OpenAI-compatible chat completion request contract
+  - OpenAI-compatible response and stream delta normalization
+  - tool definition projection for model-visible function tools
+  forbiddenDependencies:
+  - openai SDK
+  - HTTP clients
+  implementationPhase: integration-defined
+  stability: integration
 - distribution: graphblocks-policy-opa
   import: graphblocks_policy_opa
   layer: governance_adapter
