@@ -877,6 +877,42 @@ def test_tool_admission_rejects_policy_decision_without_input_digest() -> None:
 
     assert str(error.value) == "policy decision decision-allow-tool has no input digest"
 
+    with pytest.raises(ToolAdmissionError) as whitespace_error:
+        admit_tool_call(
+            call,
+            resolved,
+            _process_schema_registry(),
+            policy_decision=replace(_allow_tool_policy_decision(), input_digest=" "),
+            principal_id="user-1",
+            idempotency_key="idem-1",
+            admitted_at="2026-06-23T00:00:01Z",
+            now=1_200,
+        )
+
+    assert str(whitespace_error.value) == "policy decision decision-allow-tool has no input digest"
+
+
+def test_tool_admission_rejects_empty_principal_id() -> None:
+    base_resolved = _resolved_process_tool()
+    resolved = replace(
+        base_resolved,
+        binding=replace(base_resolved.binding, approval="never", idempotency="optional"),
+    )
+    call = _process_call(resolved)
+
+    with pytest.raises(ToolAdmissionError) as error:
+        admit_tool_call(
+            call,
+            resolved,
+            _process_schema_registry(),
+            policy_decision=_allow_tool_policy_decision(),
+            principal_id=" ",
+            admitted_at="2026-06-23T00:00:01Z",
+            now=1_200,
+        )
+
+    assert str(error.value) == "tool admission principal_id must not be empty"
+
 
 def test_tool_admission_defers_before_approval_when_policy_defers_tool_effect() -> None:
     resolved = _resolved_process_tool()

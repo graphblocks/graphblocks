@@ -378,6 +378,48 @@ fn admission_rejects_policy_decision_without_input_digest() {
 }
 
 #[test]
+fn admission_rejects_empty_principal_and_blank_policy_digest() {
+    let mut resolved_tool = resolved_process_tool();
+    resolved_tool.binding.approval = ToolApproval::Never;
+    resolved_tool.binding.idempotency = ToolIdempotency::Optional;
+    let call = process_call(&resolved_tool);
+    let schemas = process_schema_registry();
+    let policy_decision = allow_tool_policy_decision();
+
+    assert_eq!(
+        ToolAdmission::admit(ToolAdmissionRequest {
+            call: call.clone(),
+            resolved_tool: &resolved_tool,
+            schema_registry: &schemas,
+            policy_decision: &policy_decision,
+            approval: None,
+            principal_id: " ",
+            idempotency_key: None,
+            admitted_at_unix_ms: 1_200,
+        }),
+        Err(ToolAdmissionError::EmptyPrincipalId),
+    );
+
+    let mut blank_digest = policy_decision;
+    blank_digest.input_digest = " ".to_owned();
+    assert_eq!(
+        ToolAdmission::admit(ToolAdmissionRequest {
+            call,
+            resolved_tool: &resolved_tool,
+            schema_registry: &schemas,
+            policy_decision: &blank_digest,
+            approval: None,
+            principal_id: "user-1",
+            idempotency_key: None,
+            admitted_at_unix_ms: 1_200,
+        }),
+        Err(ToolAdmissionError::PolicyDecisionMissingInputDigest {
+            decision_id: "decision-allow-tool".to_owned(),
+        }),
+    );
+}
+
+#[test]
 fn admission_defers_before_approval_when_policy_defers_tool_effect() {
     let resolved_tool = resolved_process_tool();
     let call = process_call(&resolved_tool);

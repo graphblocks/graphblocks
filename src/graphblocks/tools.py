@@ -991,6 +991,8 @@ def admit_tool_call(
     admitted_at: str,
     now: int,
 ) -> AdmittedToolCall:
+    if not principal_id.strip():
+        raise ToolAdmissionError("tool admission principal_id must not be empty")
     if call.status != "validated":
         raise ToolAdmissionError(f"tool call {call.tool_call_id} is {call.status}, not validated")
     if call.resolved_tool_id != resolved_tool.resolved_tool_id:
@@ -1017,7 +1019,7 @@ def admit_tool_call(
     if resolved_tool.valid_until is not None and admitted_at > resolved_tool.valid_until:
         raise ToolAdmissionError(f"resolved tool {resolved_tool.definition.name} expired at {resolved_tool.valid_until}")
 
-    if not policy_decision.input_digest:
+    if not policy_decision.input_digest.strip():
         raise ToolAdmissionError(f"policy decision {policy_decision.decision_id} has no input digest")
     if policy_decision.effect == "deny":
         reason = ", ".join(policy_decision.reason_codes) or "deny"

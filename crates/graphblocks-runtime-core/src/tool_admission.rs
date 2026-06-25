@@ -43,6 +43,7 @@ pub enum ToolAdmissionError {
     InvalidToolCall {
         source: ToolCallError,
     },
+    EmptyPrincipalId,
     ToolCallNotValidated {
         tool_call_id: String,
         status: ToolCallStatus,
@@ -161,6 +162,9 @@ impl ToolAdmission {
             .call
             .validate()
             .map_err(|source| ToolAdmissionError::InvalidToolCall { source })?;
+        if request.principal_id.trim().is_empty() {
+            return Err(ToolAdmissionError::EmptyPrincipalId);
+        }
         if request.call.status != ToolCallStatus::Validated {
             return Err(ToolAdmissionError::ToolCallNotValidated {
                 tool_call_id: request.call.tool_call_id,
@@ -233,7 +237,7 @@ impl ToolAdmission {
             });
         }
 
-        if request.policy_decision.input_digest.is_empty() {
+        if request.policy_decision.input_digest.trim().is_empty() {
             return Err(ToolAdmissionError::PolicyDecisionMissingInputDigest {
                 decision_id: request.policy_decision.decision_id.clone(),
             });
