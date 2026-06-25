@@ -21,6 +21,7 @@ from graphblocks.orchestration import (
     TaskPlanCycleError,
     TaskPlanContextAccessError,
     TaskPlanDependencyError,
+    TaskPlanIdentityError,
     TaskPlanLimitError,
     TaskPlanLimits,
     TaskPlan,
@@ -185,6 +186,65 @@ def test_task_plan_context_access_graph_is_validated_and_digest_stable() -> None
 
     assert mode_error.value.reason == "invalid_mode"
     assert mode_error.value.mode == "execute"
+
+
+def test_task_plan_rejects_empty_identity_fields() -> None:
+    invalid_cases = [
+        (
+            lambda: TaskPlan("", "answer support request"),
+            ("plan", "plan_id"),
+        ),
+        (
+            lambda: TaskPlan("plan-1", " "),
+            ("plan", "objective"),
+        ),
+        (
+            lambda: TaskStep("", "Draft response"),
+            ("step", "step_id"),
+        ),
+        (
+            lambda: TaskStep("draft", " "),
+            ("step", "description"),
+        ),
+        (
+            lambda: TaskStep("draft", "Draft response", depends_on=(" ",)),
+            ("step", "depends_on"),
+        ),
+        (
+            lambda: TaskContextAccess("", "policy-doc", "read"),
+            ("context_access", "step_id"),
+        ),
+        (
+            lambda: TaskContextAccess("draft", "", "read"),
+            ("context_access", "resource_id"),
+        ),
+        (
+            lambda: TaskPlan(
+                "plan-1",
+                "answer support request",
+                steps=(TaskStep("draft", "Draft response"),),
+                context_resources=(" ",),
+            ),
+            ("plan", "context_resources"),
+        ),
+        (
+            lambda: TaskPlanPatch("", "plan-1", 1),
+            ("patch", "patch_id"),
+        ),
+        (
+            lambda: TaskPlanPatch("patch-1", "", 1),
+            ("patch", "base_plan_id"),
+        ),
+        (
+            lambda: TaskPlanPatch("patch-1", "plan-1", 1, remove_step_ids=(" ",)),
+            ("patch", "remove_step_ids"),
+        ),
+    ]
+
+    for factory, expected in invalid_cases:
+        with pytest.raises(TaskPlanIdentityError) as error:
+            factory()
+        assert (error.value.entity, error.value.field_name) == expected
 
 
 def test_model_pool_selects_first_profile_matching_worker_policy_and_request() -> None:

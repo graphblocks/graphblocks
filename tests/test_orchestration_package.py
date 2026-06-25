@@ -40,3 +40,4 @@ def test_orchestration_package_reexports_task_and_pool_contracts(monkeypatch) ->
     assert pool.select_model(request).connection == "models.support"
     assert grant.fencing_epoch == 1
     assert leased.available_units == 0
+    assert "TaskPlanIdentityError" in graphblocks_orchestration.__all__

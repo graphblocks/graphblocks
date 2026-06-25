@@ -13,6 +13,22 @@ ContextAccessMode = Literal["read", "write", "read_write"]
 VALID_CONTEXT_ACCESS_MODES = {"read", "write", "read_write"}
 
 
+class TaskPlanError(ValueError):
+    """Base error for task-plan operations."""
+
+
+class TaskPlanIdentityError(TaskPlanError):
+    def __init__(self, entity: str, field_name: str) -> None:
+        self.entity = entity
+        self.field_name = field_name
+        super().__init__(f"task {entity} {field_name} must not be empty")
+
+
+def _validate_task_identity(entity: str, field_name: str, value: str) -> None:
+    if not isinstance(value, str) or not value.strip():
+        raise TaskPlanIdentityError(entity, field_name)
+
+
 @dataclass(frozen=True, slots=True)
 class TaskStep:
     step_id: str
@@ -21,6 +37,10 @@ class TaskStep:
     metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        _validate_task_identity("step", "step_id", self.step_id)
+        _validate_task_identity("step", "description", self.description)
+        for dependency_id in self.depends_on:
+            _validate_task_identity("step", "depends_on", dependency_id)
         object.__setattr__(self, "depends_on", tuple(self.depends_on))
         object.__setattr__(self, "metadata", dict(self.metadata))
 
@@ -44,7 +64,11 @@ class TaskPlanPatch:
     metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        _validate_task_identity("patch", "patch_id", self.patch_id)
+        _validate_task_identity("patch", "base_plan_id", self.base_plan_id)
         object.__setattr__(self, "upsert_steps", tuple(self.upsert_steps))
+        for step_id in self.remove_step_ids:
+            _validate_task_identity("patch", "remove_step_ids", step_id)
         object.__setattr__(self, "remove_step_ids", tuple(sorted(set(self.remove_step_ids))))
         object.__setattr__(self, "metadata", dict(self.metadata))
 
@@ -63,6 +87,10 @@ class TaskContextAccess:
     mode: ContextAccessMode
     reason: str | None = None
 
+    def __post_init__(self) -> None:
+        _validate_task_identity("context_access", "step_id", self.step_id)
+        _validate_task_identity("context_access", "resource_id", self.resource_id)
+
     def canonical_value(self) -> dict[str, object]:
         return {
             "step_id": self.step_id,
@@ -70,10 +98,6 @@ class TaskContextAccess:
             "mode": self.mode,
             "reason": self.reason,
         }
-
-
-class TaskPlanError(ValueError):
-    """Base error for task-plan operations."""
 
 
 class TaskPlanLimitError(TaskPlanError):
@@ -144,8 +168,12 @@ class TaskPlan:
     context_access: tuple[TaskContextAccess, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
+        _validate_task_identity("plan", "plan_id", self.plan_id)
+        _validate_task_identity("plan", "objective", self.objective)
         object.__setattr__(self, "steps", tuple(sorted(self.steps, key=lambda step: step.step_id)))
         object.__setattr__(self, "metadata", dict(self.metadata))
+        for resource_id in self.context_resources:
+            _validate_task_identity("plan", "context_resources", resource_id)
         object.__setattr__(self, "context_resources", tuple(sorted(set(self.context_resources))))
         object.__setattr__(
             self,
@@ -685,6 +713,7 @@ __all__ = [
     "TaskPlanDependencyError",
     "TaskPlanDuplicateStepError",
     "TaskPlanError",
+    "TaskPlanIdentityError",
     "TaskPlanLimitError",
     "TaskPlanLimits",
     "TaskPlanPatch",
