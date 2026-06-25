@@ -885,6 +885,42 @@ def test_tool_lifecycle_counters_are_non_negative_and_positive() -> None:
         ToolResultEvent.started("call-1", -1, started_at="2026-06-23T00:00:00Z")
 
 
+def test_tool_call_lifecycle_rejects_non_string_fields() -> None:
+    draft_cases = (
+        ({"response_id": object()}, "tool call draft response_id must be a string"),
+        ({"tool_call_id": 1}, "tool call draft tool_call_id must be a string"),
+        ({"tool_name": object()}, "tool call draft tool_name must be a string"),
+        ({"argument_fragments": "{}"}, "tool call draft argument fragments must be strings"),
+        ({"argument_fragments": object()}, "tool call draft argument fragments must be strings"),
+    )
+
+    for overrides, message in draft_cases:
+        base = {
+            "response_id": "response-1",
+            "tool_call_id": "call-1",
+            "tool_name": "knowledge.search",
+        }
+        with pytest.raises(ValueError, match=message):
+            ToolCallDraft(**{**base, **overrides})  # type: ignore[arg-type]
+
+    resolved = _resolved_search_tool()
+    call = _search_call(resolved)
+    call_cases = (
+        ({"tool_call_id": object()}, "tool call tool_call_id must be a string"),
+        ({"response_id": 1}, "tool call response_id must be a string"),
+        ({"resolved_tool_id": object()}, "tool call resolved_tool_id must be a string"),
+        ({"name": 1}, "tool call name must be a string"),
+        ({"arguments_digest": object()}, "tool call arguments_digest must be a string"),
+        ({"depends_on": "call-a"}, "tool call depends_on must be a collection of strings"),
+        ({"depends_on": object()}, "tool call depends_on must be a collection of strings"),
+        ({"depends_on": ("call-a", object())}, "tool call depends_on must be a collection of strings"),
+    )
+
+    for overrides, message in call_cases:
+        with pytest.raises(ValueError, match=message):
+            replace(call, **overrides)
+
+
 def test_tool_call_draft_append_rejects_non_string_argument_fragment() -> None:
     draft = ToolCallDraft.proposed("response-1", "call-1", "knowledge.search")
 

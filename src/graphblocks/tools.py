@@ -908,13 +908,17 @@ class ToolCallDraft:
 
     def __post_init__(self) -> None:
         for field_name in ("response_id", "tool_call_id", "tool_name"):
-            if not getattr(self, field_name).strip():
-                raise ValueError(f"tool call draft {field_name} must not be empty")
+            _validate_non_empty_string("tool call draft", field_name, getattr(self, field_name))
         if self.status not in VALID_TOOL_CALL_DRAFT_STATUSES:
             raise ValueError(f"invalid tool call draft status {self.status}")
         if self.sequence < 0:
             raise ValueError("tool call draft sequence must be non-negative")
-        argument_fragments = tuple(self.argument_fragments)
+        if isinstance(self.argument_fragments, str):
+            raise ValueError("tool call draft argument fragments must be strings")
+        try:
+            argument_fragments = tuple(self.argument_fragments)
+        except TypeError as error:
+            raise ValueError("tool call draft argument fragments must be strings") from error
         if any(not isinstance(fragment, str) for fragment in argument_fragments):
             raise ValueError("tool call draft argument fragments must be strings")
         object.__setattr__(self, "argument_fragments", argument_fragments)
@@ -992,14 +996,21 @@ class ToolCall:
             "name",
             "arguments_digest",
         ):
-            if not getattr(self, field_name).strip():
-                raise ValueError(f"tool call {field_name} must not be empty")
+            _validate_non_empty_string("tool call", field_name, getattr(self, field_name))
         if self.status not in VALID_TOOL_CALL_STATUSES:
             raise ValueError(f"invalid tool call status {self.status}")
         if self.revision < 1:
             raise ValueError("tool call revision must be positive")
-        object.__setattr__(self, "depends_on", tuple(self.depends_on))
-        if any(not dependency.strip() for dependency in self.depends_on):
+        if isinstance(self.depends_on, str):
+            raise ValueError("tool call depends_on must be a collection of strings")
+        try:
+            depends_on = tuple(self.depends_on)
+        except TypeError as error:
+            raise ValueError("tool call depends_on must be a collection of strings") from error
+        if any(not isinstance(dependency, str) for dependency in depends_on):
+            raise ValueError("tool call depends_on must be a collection of strings")
+        object.__setattr__(self, "depends_on", depends_on)
+        if any(not dependency.strip() for dependency in depends_on):
             raise ValueError("tool call dependency ids must not be empty")
         if (
             self.created_at is not None
