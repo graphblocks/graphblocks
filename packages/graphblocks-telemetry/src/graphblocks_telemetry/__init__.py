@@ -15,6 +15,23 @@ DEFAULT_BLOCKED_METRIC_LABELS = (
     "turn_id",
     "user_id",
 )
+DEFAULT_SENSITIVE_TELEMETRY_ATTRIBUTE_KEYS = (
+    "api_key",
+    "authorization",
+    "credential",
+    "credentials",
+    "password",
+    "secret",
+    "token",
+)
+DEFAULT_CONTENT_TELEMETRY_ATTRIBUTE_KEYS = (
+    "completion",
+    "input",
+    "messages",
+    "output",
+    "prompt",
+    "tool_result",
+)
 
 
 class TelemetryProjectionError(RuntimeError):
@@ -84,6 +101,83 @@ class TelemetryCapturePolicy:
             output_digest=record.output_digest if self.capture_output_digest else None,
             attributes=attributes,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class TelemetryCapturePolicyIssue:
+    attribute_key: str
+    reason: str
+    required_action: str
+
+    def issue_contract(self) -> dict[str, object]:
+        return {
+            "attribute_key": self.attribute_key,
+            "reason": self.reason,
+            "required_action": self.required_action,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class TelemetryCapturePolicyLintResult:
+    issues: tuple[TelemetryCapturePolicyIssue, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "issues",
+            tuple(sorted(self.issues, key=lambda issue: (issue.attribute_key, issue.reason))),
+        )
+
+    @property
+    def passed(self) -> bool:
+        return not self.issues
+
+    def issue_contracts(self) -> list[dict[str, object]]:
+        return [issue.issue_contract() for issue in self.issues]
+
+
+@dataclass(frozen=True, slots=True)
+class TelemetryCapturePolicyLinter:
+    sensitive_attribute_keys: tuple[str, ...] = DEFAULT_SENSITIVE_TELEMETRY_ATTRIBUTE_KEYS
+    content_attribute_keys: tuple[str, ...] = DEFAULT_CONTENT_TELEMETRY_ATTRIBUTE_KEYS
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "sensitive_attribute_keys", tuple(sorted(set(self.sensitive_attribute_keys))))
+        object.__setattr__(self, "content_attribute_keys", tuple(sorted(set(self.content_attribute_keys))))
+
+    def lint_policy(self, policy: TelemetryCapturePolicy) -> TelemetryCapturePolicyLintResult:
+        redacted = set(policy.redacted_attribute_keys)
+        dropped = set(policy.dropped_attribute_keys)
+        protected = redacted | dropped
+        issues: list[TelemetryCapturePolicyIssue] = []
+        for attribute_key in self.sensitive_attribute_keys:
+            if attribute_key not in protected:
+                issues.append(
+                    TelemetryCapturePolicyIssue(
+                        attribute_key=attribute_key,
+                        reason="sensitive_attribute_not_protected",
+                        required_action="redact_or_drop",
+                    )
+                )
+        for attribute_key in self.content_attribute_keys:
+            if attribute_key not in protected:
+                issues.append(
+                    TelemetryCapturePolicyIssue(
+                        attribute_key=attribute_key,
+                        reason="content_attribute_not_protected",
+                        required_action="redact_or_drop",
+                    )
+                )
+        if redacted and not policy.replacement.strip():
+            for attribute_key in redacted:
+                issues.append(
+                    TelemetryCapturePolicyIssue(
+                        attribute_key=attribute_key,
+                        reason="redaction_replacement_empty",
+                        required_action="set_non_empty_replacement",
+                    )
+                )
+        return TelemetryCapturePolicyLintResult(tuple(issues))
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,11 +315,16 @@ class MetricCardinalityLinter:
 
 __all__ = [
     "DEFAULT_BLOCKED_METRIC_LABELS",
+    "DEFAULT_CONTENT_TELEMETRY_ATTRIBUTE_KEYS",
+    "DEFAULT_SENSITIVE_TELEMETRY_ATTRIBUTE_KEYS",
     "GenerationTelemetryRecord",
     "MetricCardinalityIssue",
     "MetricCardinalityLintResult",
     "MetricCardinalityLinter",
     "TelemetryCapturePolicy",
+    "TelemetryCapturePolicyIssue",
+    "TelemetryCapturePolicyLintResult",
+    "TelemetryCapturePolicyLinter",
     "TelemetryExportResult",
     "TelemetryProjectionError",
 ]

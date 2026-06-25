@@ -91,6 +91,65 @@ def test_telemetry_capture_policy_redacts_sensitive_observation_fields(monkeypat
     assert "TelemetryCapturePolicy" in graphblocks_telemetry.__all__
 
 
+def test_telemetry_capture_policy_linter_flags_unprotected_secret_and_content_keys(monkeypatch) -> None:
+    _add_observability_package_paths(monkeypatch)
+    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
+    linter = graphblocks_telemetry.TelemetryCapturePolicyLinter(
+        sensitive_attribute_keys=("api_key", "authorization"),
+        content_attribute_keys=("messages", "prompt"),
+    )
+    policy = graphblocks_telemetry.TelemetryCapturePolicy(
+        redacted_attribute_keys=("api_key",),
+        replacement=" ",
+    )
+
+    result = linter.lint_policy(policy)
+
+    assert not result.passed
+    assert result.issue_contracts() == [
+        {
+            "attribute_key": "api_key",
+            "reason": "redaction_replacement_empty",
+            "required_action": "set_non_empty_replacement",
+        },
+        {
+            "attribute_key": "authorization",
+            "reason": "sensitive_attribute_not_protected",
+            "required_action": "redact_or_drop",
+        },
+        {
+            "attribute_key": "messages",
+            "reason": "content_attribute_not_protected",
+            "required_action": "redact_or_drop",
+        },
+        {
+            "attribute_key": "prompt",
+            "reason": "content_attribute_not_protected",
+            "required_action": "redact_or_drop",
+        },
+    ]
+
+
+def test_telemetry_capture_policy_linter_accepts_protected_capture_policy(monkeypatch) -> None:
+    _add_observability_package_paths(monkeypatch)
+    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
+    linter = graphblocks_telemetry.TelemetryCapturePolicyLinter(
+        sensitive_attribute_keys=("api_key", "authorization"),
+        content_attribute_keys=("messages", "prompt"),
+    )
+    policy = graphblocks_telemetry.TelemetryCapturePolicy(
+        redacted_attribute_keys=("api_key", "authorization", "prompt"),
+        dropped_attribute_keys=("messages",),
+        replacement="[redacted]",
+    )
+
+    result = linter.lint_policy(policy)
+
+    assert result.passed
+    assert result.issue_contracts() == []
+    assert "TelemetryCapturePolicyLinter" in graphblocks_telemetry.__all__
+
+
 def test_telemetry_export_failure_is_non_fatal_to_run(monkeypatch) -> None:
     _add_observability_package_paths(monkeypatch)
     graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
