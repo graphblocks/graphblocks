@@ -1,0 +1,113 @@
+from __future__ import annotations
+
+import importlib
+from pathlib import Path
+
+import pytest
+
+
+ROOT = Path(__file__).parents[1]
+
+
+def _add_scripted_package_paths(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-scripted" / "src"))
+
+
+def test_scripted_provider_generates_deterministic_response_for_exact_prompt(monkeypatch) -> None:
+    _add_scripted_package_paths(monkeypatch)
+    graphblocks_scripted = importlib.import_module("graphblocks_scripted")
+    provider = graphblocks_scripted.ScriptedModelProvider(
+        scripts={"Answer: Hello": "Hello from the scripted provider."},
+        model="scripted-test",
+        provider_id="scripted-local",
+    )
+
+    response = provider.generate("Answer: Hello", response_id="response-1", metadata={"run_id": "run-1"})
+
+    assert response.response_contract() == {
+        "response_id": "response-1",
+        "provider": "scripted-local",
+        "model": "scripted-test",
+        "text": "Hello from the scripted provider.",
+        "finish_reason": "scripted",
+        "usage": {
+            "input_characters": 13,
+            "output_characters": 33,
+        },
+        "metadata": {"run_id": "run-1", "script_key": "Answer: Hello"},
+    }
+    assert provider.capabilities() == {
+        "chat": True,
+        "streaming": True,
+        "tool_calling": False,
+        "usage": True,
+    }
+
+
+def test_scripted_provider_streams_chunked_deltas_and_completion(monkeypatch) -> None:
+    _add_scripted_package_paths(monkeypatch)
+    graphblocks_scripted = importlib.import_module("graphblocks_scripted")
+    provider = graphblocks_scripted.ScriptedModelProvider(
+        scripts={"prompt": "abcdef"},
+        model="scripted-test",
+    )
+
+    chunks = tuple(provider.stream("prompt", response_id="response-1", chunk_size=2))
+
+    assert [chunk.delta_contract() for chunk in chunks] == [
+        {
+            "response_id": "response-1",
+            "sequence": 1,
+            "text_delta": "ab",
+            "finished": False,
+            "finish_reason": None,
+        },
+        {
+            "response_id": "response-1",
+            "sequence": 2,
+            "text_delta": "cd",
+            "finished": False,
+            "finish_reason": None,
+        },
+        {
+            "response_id": "response-1",
+            "sequence": 3,
+            "text_delta": "ef",
+            "finished": False,
+            "finish_reason": None,
+        },
+        {
+            "response_id": "response-1",
+            "sequence": 4,
+            "text_delta": "",
+            "finished": True,
+            "finish_reason": "scripted",
+        },
+    ]
+
+
+def test_scripted_provider_rejects_missing_prompt_and_invalid_chunk_size(monkeypatch) -> None:
+    _add_scripted_package_paths(monkeypatch)
+    graphblocks_scripted = importlib.import_module("graphblocks_scripted")
+    provider = graphblocks_scripted.ScriptedModelProvider(scripts={"known": "response"})
+
+    with pytest.raises(graphblocks_scripted.ScriptedModelProviderError, match="no scripted response"):
+        provider.generate("unknown")
+
+    with pytest.raises(graphblocks_scripted.ScriptedModelProviderError, match="chunk_size"):
+        tuple(provider.stream("known", chunk_size=0))
+
+
+def test_scripted_provider_detaches_mutable_script_and_metadata_inputs(monkeypatch) -> None:
+    _add_scripted_package_paths(monkeypatch)
+    graphblocks_scripted = importlib.import_module("graphblocks_scripted")
+    scripts = {"prompt": "response"}
+    metadata = {"run_id": "run-1"}
+    provider = graphblocks_scripted.ScriptedModelProvider(scripts=scripts)
+
+    response = provider.generate("prompt", metadata=metadata)
+    scripts["prompt"] = "mutated"
+    metadata["run_id"] = "mutated"
+
+    assert response.text == "response"
+    assert response.metadata["run_id"] == "run-1"

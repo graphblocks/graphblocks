@@ -613,6 +613,19 @@ packages:
   - HTTP clients
   implementationPhase: integration-defined
   stability: integration
+- distribution: graphblocks-scripted
+  import: graphblocks_scripted
+  layer: model_provider_adapter
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-core
+  responsibility:
+  - deterministic scripted model provider
+  - exact prompt response contracts for tests and examples
+  - chunked scripted streaming deltas
+  implementationPhase: integration-defined
+  stability: integration
 - distribution: graphblocks-haystack
   import: graphblocks_haystack
   layer: framework_bridge

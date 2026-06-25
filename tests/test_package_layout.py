@@ -152,26 +152,39 @@ def test_model_provider_adapter_packages_are_cataloged_as_optional_integrations(
         "implementationPhase": "integration-defined",
         "stability": "integration",
     }
+    assert rows["graphblocks-scripted"] == {
+        "distribution": "graphblocks-scripted",
+        "import": "graphblocks_scripted",
+        "default": False,
+        "layer": "model_provider_adapter",
+        "kind": "pure_python",
+        "implementationPhase": "integration-defined",
+        "stability": "integration",
+    }
 
 
 def test_model_provider_adapter_packages_have_pure_python_layouts_without_sdk_dependencies() -> None:
-    package_root = ROOT / "packages" / "graphblocks-openai"
-    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
-    dependencies = pyproject["project"]["dependencies"]
+    for distribution, import_name in (
+        ("graphblocks-openai", "graphblocks_openai"),
+        ("graphblocks-scripted", "graphblocks_scripted"),
+    ):
+        package_root = ROOT / "packages" / distribution
+        pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
+        dependencies = pyproject["project"]["dependencies"]
 
-    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
-    assert pyproject["project"]["name"] == "graphblocks-openai"
-    assert dependencies == ["graphblocks-core~=1.0"]
-    assert not any(
-        provider in dependency.lower()
-        for dependency in dependencies
-        for provider in ("openai", "httpx", "requests", "aiohttp")
-    )
-    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-        "src/graphblocks_openai"
-    ]
-    assert (package_root / "src" / "graphblocks_openai" / "__init__.py").exists()
-    assert (package_root / "src" / "graphblocks_openai" / "py.typed").exists()
+        assert pyproject["build-system"]["build-backend"] == "hatchling.build"
+        assert pyproject["project"]["name"] == distribution
+        assert dependencies == ["graphblocks-core~=1.0"]
+        assert not any(
+            provider in dependency.lower()
+            for dependency in dependencies
+            for provider in ("openai", "httpx", "requests", "aiohttp", "anthropic", "google")
+        )
+        assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
+            f"src/{import_name}"
+        ]
+        assert (package_root / "src" / import_name / "__init__.py").exists()
+        assert (package_root / "src" / import_name / "py.typed").exists()
 
 
 def test_stdlib_package_has_pure_python_layout() -> None:
