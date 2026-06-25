@@ -90,6 +90,58 @@ def test_oci_release_manifest_includes_provenance_and_signature_descriptors(monk
     assert contract["annotations"]["graphblocks.ai/signature-digest"] == "sha256:signature"
 
 
+def test_oci_build_provenance_attestation_is_canonical_and_descriptor_ready(monkeypatch) -> None:
+    graphblocks_oci = _import_oci(monkeypatch)
+    graphblocks_deployment = importlib.import_module("graphblocks_deployment")
+    release = (
+        graphblocks_deployment.GraphRelease("support-agent", "2026.06.23.1")
+        .with_bundle("sha256:bundle", "application/vnd.graphblocks.release.bundle.v1+tar")
+        .with_graph("turn", graphblocks_deployment.GraphReleaseGraph("sha256:graph", "sha256:plan"))
+    )
+
+    left = graphblocks_oci.build_release_provenance_attestation(
+        release,
+        builder_id="https://ci.example.com/builders/release",
+        build_type="https://graphblocks.ai/build/release-bundle/v1",
+        invocation_id="build-123",
+        materials={
+            "Cargo.lock": "sha256:cargo-lock",
+            "pylock.toml": "sha256:pylock",
+        },
+        metadata={"source": "git+https://example.com/support-agent@abc123"},
+    )
+    right = graphblocks_oci.build_release_provenance_attestation(
+        release,
+        builder_id="https://ci.example.com/builders/release",
+        build_type="https://graphblocks.ai/build/release-bundle/v1",
+        invocation_id="build-123",
+        materials={
+            "pylock.toml": "sha256:pylock",
+            "Cargo.lock": "sha256:cargo-lock",
+        },
+        metadata={"source": "git+https://example.com/support-agent@abc123"},
+    )
+    descriptor = graphblocks_oci.OciDescriptor.from_payload(
+        "application/vnd.in-toto+json",
+        left.attestation_json(),
+        annotations={"graphblocks.ai/attestation-kind": "build-provenance"},
+    )
+
+    assert left.attestation_json() == right.attestation_json()
+    assert left.attestation_digest() == right.attestation_digest()
+    assert left.attestation_contract()["subject"] == [
+        {
+            "name": "support-agent:2026.06.23.1",
+            "digest": {"sha256": release.content_digest().removeprefix("sha256:")},
+        }
+    ]
+    assert descriptor.digest == left.attestation_digest()
+    assert descriptor.size == len(left.attestation_json().encode("utf-8"))
+    assert descriptor.descriptor_contract()["annotations"] == {
+        "graphblocks.ai/attestation-kind": "build-provenance"
+    }
+
+
 def test_oci_manifest_digest_uses_canonical_serialization(monkeypatch) -> None:
     graphblocks_oci = _import_oci(monkeypatch)
     config = graphblocks_oci.OciDescriptor("application/vnd.graphblocks.config.v1+json", "sha256:config", 64)

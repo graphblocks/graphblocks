@@ -27,6 +27,12 @@ def _validate_digest(digest: str) -> None:
         raise OciContractError("OCI digests must use sha256:<digest>")
 
 
+def _payload_bytes(payload: str | bytes) -> bytes:
+    if isinstance(payload, bytes):
+        return payload
+    return payload.encode("utf-8")
+
+
 def _sorted_annotations(annotations: Mapping[str, str]) -> dict[str, str]:
     return {str(key): str(value) for key, value in sorted(dict(annotations).items())}
 
@@ -55,6 +61,22 @@ class OciDescriptor:
         if self.annotations:
             contract["annotations"] = deepcopy(dict(self.annotations))
         return contract
+
+    @classmethod
+    def from_payload(
+        cls,
+        media_type: str,
+        payload: str | bytes,
+        *,
+        annotations: Mapping[str, str] | None = None,
+    ) -> OciDescriptor:
+        payload_bytes = _payload_bytes(payload)
+        return cls(
+            media_type=media_type,
+            digest="sha256:" + hashlib.sha256(payload_bytes).hexdigest(),
+            size=len(payload_bytes),
+            annotations=annotations or {},
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +140,94 @@ class OciArtifactReference:
         return f"{base}:{self.tag}"
 
 
+@dataclass(frozen=True, slots=True)
+class BuildProvenanceAttestation:
+    subject_name: str
+    subject_digest: str
+    builder_id: str
+    build_type: str
+    invocation_id: str | None = None
+    materials: Mapping[str, str] = field(default_factory=dict)
+    metadata: Mapping[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.subject_name.strip():
+            raise OciContractError("provenance subject_name must not be empty")
+        _validate_digest(self.subject_digest)
+        if not self.builder_id.strip():
+            raise OciContractError("provenance builder_id must not be empty")
+        if not self.build_type.strip():
+            raise OciContractError("provenance build_type must not be empty")
+        materials = {str(key): str(value) for key, value in sorted(dict(self.materials).items())}
+        for digest in materials.values():
+            _validate_digest(digest)
+        object.__setattr__(self, "materials", materials)
+        object.__setattr__(
+            self,
+            "metadata",
+            {str(key): str(value) for key, value in sorted(dict(self.metadata).items())},
+        )
+
+    def attestation_contract(self) -> dict[str, object]:
+        metadata = deepcopy(dict(self.metadata))
+        if self.invocation_id is not None:
+            metadata["invocationId"] = self.invocation_id
+        return {
+            "_type": "https://in-toto.io/Statement/v1",
+            "subject": [
+                {
+                    "name": self.subject_name,
+                    "digest": {"sha256": self.subject_digest.removeprefix("sha256:")},
+                }
+            ],
+            "predicateType": "https://slsa.dev/provenance/v1",
+            "predicate": {
+                "buildDefinition": {
+                    "buildType": self.build_type,
+                    "externalParameters": {"release": self.subject_name},
+                    "internalParameters": {},
+                    "resolvedDependencies": [
+                        {
+                            "uri": uri,
+                            "digest": {"sha256": digest.removeprefix("sha256:")},
+                        }
+                        for uri, digest in self.materials.items()
+                    ],
+                },
+                "runDetails": {
+                    "builder": {"id": self.builder_id},
+                    "metadata": metadata,
+                },
+            },
+        }
+
+    def attestation_json(self) -> str:
+        return _canonical_dumps(self.attestation_contract())
+
+    def attestation_digest(self) -> str:
+        return "sha256:" + hashlib.sha256(self.attestation_json().encode("utf-8")).hexdigest()
+
+
+def build_release_provenance_attestation(
+    release: GraphRelease,
+    *,
+    builder_id: str,
+    build_type: str,
+    invocation_id: str | None = None,
+    materials: Mapping[str, str] | None = None,
+    metadata: Mapping[str, str] | None = None,
+) -> BuildProvenanceAttestation:
+    return BuildProvenanceAttestation(
+        subject_name=f"{release.name}:{release.version}",
+        subject_digest=release.content_digest(),
+        builder_id=builder_id,
+        build_type=build_type,
+        invocation_id=invocation_id,
+        materials=materials or {},
+        metadata=metadata or {},
+    )
+
+
 def build_release_manifest(
     release: GraphRelease,
     *,
@@ -158,6 +268,7 @@ def build_release_manifest(
 
 
 __all__ = [
+    "BuildProvenanceAttestation",
     "GRAPHBLOCKS_RELEASE_ARTIFACT_TYPE",
     "GRAPHBLOCKS_RELEASE_CONFIG_MEDIA_TYPE",
     "OCI_IMAGE_MANIFEST_MEDIA_TYPE",
@@ -165,5 +276,6 @@ __all__ = [
     "OciContractError",
     "OciDescriptor",
     "OciManifest",
+    "build_release_provenance_attestation",
     "build_release_manifest",
 ]
