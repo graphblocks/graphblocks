@@ -412,6 +412,29 @@ def test_tool_lifecycle_records_reject_unknown_literals() -> None:
         ToolApprovalRecord(approval_id=request.approval_id, request=request, status="escalated")
 
 
+def test_tool_approval_request_validates_revision_and_expiration() -> None:
+    base = {
+        "approval_id": "approval-1",
+        "tool_call_id": "call-1",
+        "tool_name": "knowledge.search",
+        "revision": 1,
+        "definition_digest": "sha256:def",
+        "binding_digest": "sha256:binding",
+        "arguments_digest": "sha256:args",
+        "policy_snapshot_id": "policy-1",
+        "principal_id": "user-1",
+        "requested_at": 100,
+        "expires_at": 200,
+    }
+
+    with pytest.raises(ValueError, match="approval revision must be positive"):
+        ToolApprovalRequest(**{**base, "revision": 0})
+    with pytest.raises(ValueError, match="approval requested_at must be non-negative"):
+        ToolApprovalRequest(**{**base, "requested_at": -1})
+    with pytest.raises(ValueError, match="approval expiration must be after request time"):
+        ToolApprovalRequest(**{**base, "expires_at": 100})
+
+
 def test_tool_lifecycle_counters_are_non_negative_and_positive() -> None:
     with pytest.raises(ValueError, match="tool call draft sequence must be non-negative"):
         ToolCallDraft("response-1", "call-1", "knowledge.search", sequence=-1)

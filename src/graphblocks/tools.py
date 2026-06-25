@@ -528,6 +528,14 @@ class ToolApprovalRequest:
     requested_at: int
     expires_at: int
 
+    def __post_init__(self) -> None:
+        if self.revision < 1:
+            raise ValueError("approval revision must be positive")
+        if self.requested_at < 0:
+            raise ValueError("approval requested_at must be non-negative")
+        if self.expires_at <= self.requested_at:
+            raise ValueError("approval expiration must be after request time")
+
     @classmethod
     def for_call(
         cls,
