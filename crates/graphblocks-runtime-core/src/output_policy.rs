@@ -512,6 +512,14 @@ pub enum DeclarativeOutputPolicyRuleError {
         rule_id: String,
         disposition: OutputDisposition,
     },
+    InvalidReasonCode {
+        rule_id: String,
+        reason_code: String,
+    },
+    InvalidPolicyRef {
+        rule_id: String,
+        policy_ref: String,
+    },
 }
 
 impl DeclarativeOutputPolicyRule {
@@ -549,6 +557,22 @@ impl DeclarativeOutputPolicyRule {
                 rule_id: self.rule_id.clone(),
                 disposition: self.disposition,
             });
+        }
+        for reason_code in &self.reason_codes {
+            if reason_code.trim().is_empty() {
+                return Err(DeclarativeOutputPolicyRuleError::InvalidReasonCode {
+                    rule_id: self.rule_id.clone(),
+                    reason_code: reason_code.clone(),
+                });
+            }
+        }
+        for policy_ref in &self.policy_refs {
+            if policy_ref.trim().is_empty() {
+                return Err(DeclarativeOutputPolicyRuleError::InvalidPolicyRef {
+                    rule_id: self.rule_id.clone(),
+                    policy_ref: policy_ref.clone(),
+                });
+            }
         }
         Ok(())
     }

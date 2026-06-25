@@ -609,6 +609,34 @@ fn declarative_output_policy_rules_reject_invalid_contracts() {
         })
     );
 
+    let blank_reason = DeclarativeOutputPolicyRule::new(
+        "blocked-secret",
+        "secret",
+        OutputDisposition::AbortResponse,
+    )
+    .with_reason_codes(["secret.detected", " "]);
+    assert_eq!(
+        blank_reason.validate(),
+        Err(DeclarativeOutputPolicyRuleError::InvalidReasonCode {
+            rule_id: "blocked-secret".to_owned(),
+            reason_code: " ".to_owned(),
+        })
+    );
+
+    let blank_policy_ref = DeclarativeOutputPolicyRule::new(
+        "blocked-secret",
+        "secret",
+        OutputDisposition::AbortResponse,
+    )
+    .with_policy_refs(["policy/output-standard", ""]);
+    assert_eq!(
+        blank_policy_ref.validate(),
+        Err(DeclarativeOutputPolicyRuleError::InvalidPolicyRef {
+            rule_id: "blocked-secret".to_owned(),
+            policy_ref: "".to_owned(),
+        })
+    );
+
     let evaluator = DeclarativeOutputPolicyEvaluator::new([empty_literal]);
     assert_eq!(
         evaluator.evaluate_chunk_checked(
