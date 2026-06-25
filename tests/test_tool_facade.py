@@ -1261,6 +1261,14 @@ def test_content_part_requires_payload_for_its_kind() -> None:
         ContentPart(kind="json", text="unexpected", data={})
 
 
+def test_tool_result_rejects_non_content_part_output_entries() -> None:
+    with pytest.raises(ValueError, match="tool result output entries must be ContentPart"):
+        ToolResult(tool_call_id="call-1", status="completed", output=("draft",))  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="tool result event output entries must be ContentPart"):
+        ToolResultEvent.delta("call-1", 1, ("draft",))  # type: ignore[arg-type]
+
+
 def test_tool_result_rejects_empty_call_id_and_reversed_timestamps() -> None:
     with pytest.raises(ValueError, match="tool result tool_call_id must not be empty"):
         ToolResult(tool_call_id=" ", status="completed")
@@ -1838,6 +1846,13 @@ def test_tool_result_events_carry_artifacts_and_final_result() -> None:
 def test_tool_result_artifact_ready_event_requires_artifact() -> None:
     with pytest.raises(ValueError, match="tool result event artifact_ready requires an artifact"):
         ToolResultEvent(kind="artifact_ready", tool_call_id="call-1", sequence=4)
+    with pytest.raises(ValueError, match="tool result event artifact_ready requires an ArtifactRef"):
+        ToolResultEvent(
+            kind="artifact_ready",
+            tool_call_id="call-1",
+            sequence=4,
+            artifact="artifact-1",  # type: ignore[arg-type]
+        )
     with pytest.raises(ValueError, match="tool result event delta must not carry an artifact"):
         ToolResultEvent(
             kind="delta",
@@ -1927,6 +1942,15 @@ def test_tool_result_event_rejects_mismatched_final_result() -> None:
     with pytest.raises(ValueError) as draft_error:
         ToolResultEvent(kind="delta", tool_call_id="call-1", sequence=15, result=other_call)
     assert str(draft_error.value) == "tool result event delta must not carry a final result"
+
+    with pytest.raises(ValueError) as result_type_error:
+        ToolResultEvent(
+            kind="completed",
+            tool_call_id="call-1",
+            sequence=16,
+            result="done",  # type: ignore[arg-type]
+        )
+    assert str(result_type_error.value) == "tool result event completed requires a ToolResult"
 
 
 def _tool_call(tool_call_id: str, arguments: str = '{"resource_id":"a"}'):

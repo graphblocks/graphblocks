@@ -1373,7 +1373,13 @@ class ToolResult:
             and self.completed_at < self.started_at
         ):
             raise ValueError("tool result completed_at must not be before started_at")
-        object.__setattr__(self, "output", tuple(self.output))
+        try:
+            output = tuple(self.output)
+        except TypeError as error:
+            raise ValueError("tool result output entries must be ContentPart") from error
+        if any(not isinstance(part, ContentPart) for part in output):
+            raise ValueError("tool result output entries must be ContentPart")
+        object.__setattr__(self, "output", output)
         object.__setattr__(
             self,
             "artifacts",
@@ -1714,10 +1720,18 @@ class ToolResultEvent:
             raise ValueError(f"invalid tool result event kind {self.kind}")
         if self.sequence < 0:
             raise ValueError("tool result event sequence must be non-negative")
-        object.__setattr__(self, "output", tuple(self.output))
+        try:
+            output = tuple(self.output)
+        except TypeError as error:
+            raise ValueError("tool result event output entries must be ContentPart") from error
+        if any(not isinstance(part, ContentPart) for part in output):
+            raise ValueError("tool result event output entries must be ContentPart")
+        object.__setattr__(self, "output", output)
         if self.kind == "artifact_ready":
             if self.artifact is None:
                 raise ValueError("tool result event artifact_ready requires an artifact")
+            if not isinstance(self.artifact, ArtifactRef):
+                raise ValueError("tool result event artifact_ready requires an ArtifactRef")
         elif self.artifact is not None:
             raise ValueError(f"tool result event {self.kind} must not carry an artifact")
         expected_status = FINAL_TOOL_RESULT_EVENT_STATUSES.get(self.kind)
@@ -1727,6 +1741,8 @@ class ToolResultEvent:
             return
         if self.result is None:
             raise ValueError(f"tool result event {self.kind} requires a final result")
+        if not isinstance(self.result, ToolResult):
+            raise ValueError(f"tool result event {self.kind} requires a ToolResult")
         if self.result.tool_call_id != self.tool_call_id:
             raise ValueError(
                 f"tool result event {self.kind} for {self.tool_call_id} "
