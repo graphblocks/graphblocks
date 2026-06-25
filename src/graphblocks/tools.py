@@ -529,6 +529,18 @@ class ToolApprovalRequest:
     expires_at: int
 
     def __post_init__(self) -> None:
+        for field_name in (
+            "approval_id",
+            "tool_call_id",
+            "tool_name",
+            "definition_digest",
+            "binding_digest",
+            "arguments_digest",
+            "policy_snapshot_id",
+            "principal_id",
+        ):
+            if not getattr(self, field_name).strip():
+                raise ValueError(f"approval {field_name} must not be empty")
         if self.revision < 1:
             raise ValueError("approval revision must be positive")
         if self.requested_at < 0:

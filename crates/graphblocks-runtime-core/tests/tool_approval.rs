@@ -3,7 +3,7 @@ use graphblocks_runtime_core::tool::{
     ToolImplementation, ToolResolutionError, ToolResolutionScope,
 };
 use graphblocks_runtime_core::tool_approval::{
-    ToolApprovalRecord, ToolApprovalRequest, ToolApprovalStatus,
+    ToolApprovalError, ToolApprovalRecord, ToolApprovalRequest, ToolApprovalStatus,
 };
 use graphblocks_runtime_core::tool_call::{ToolCall, ToolCallDraft, ToolCallError};
 use serde_json::json;
@@ -102,5 +102,25 @@ fn approval_request_rejects_mismatched_resolved_tool() {
                 actual: "resolved-tool-1".to_owned()
             }
         ),
+    );
+}
+
+#[test]
+fn approval_request_rejects_empty_identity_fields() {
+    let resolved = resolved_search_tool().expect("resolved tool is valid");
+    let mut call = search_call("call-1", "runtime").expect("tool call is valid");
+    call.resolved_tool_id = resolved.resolved_tool_id.clone();
+
+    assert_eq!(
+        ToolApprovalRequest::for_call(" ", &resolved, &call, "user-1", 1_000, 2_000),
+        Err(ToolApprovalError::EmptyField {
+            field: "approval_id",
+        }),
+    );
+    assert_eq!(
+        ToolApprovalRequest::for_call("approval-1", &resolved, &call, "", 1_000, 2_000),
+        Err(ToolApprovalError::EmptyField {
+            field: "principal_id",
+        }),
     );
 }

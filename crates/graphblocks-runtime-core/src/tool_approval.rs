@@ -3,6 +3,9 @@ use crate::tool_call::ToolCall;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ToolApprovalError {
+    EmptyField {
+        field: &'static str,
+    },
     ResolvedToolMismatch {
         expected: String,
         actual: String,
@@ -41,6 +44,18 @@ impl ToolApprovalRequest {
         requested_at_unix_ms: u64,
         expires_at_unix_ms: u64,
     ) -> Result<Self, ToolApprovalError> {
+        let approval_id = approval_id.into();
+        if approval_id.trim().is_empty() {
+            return Err(ToolApprovalError::EmptyField {
+                field: "approval_id",
+            });
+        }
+        let principal_id = principal_id.into();
+        if principal_id.trim().is_empty() {
+            return Err(ToolApprovalError::EmptyField {
+                field: "principal_id",
+            });
+        }
         if expires_at_unix_ms <= requested_at_unix_ms {
             return Err(ToolApprovalError::InvalidExpiration {
                 requested_at_unix_ms,
@@ -61,7 +76,7 @@ impl ToolApprovalRequest {
         }
 
         Ok(Self {
-            approval_id: approval_id.into(),
+            approval_id,
             tool_call_id: call.tool_call_id.clone(),
             tool_name: call.name.clone(),
             revision: call.revision,
@@ -69,7 +84,7 @@ impl ToolApprovalRequest {
             binding_digest: resolved_tool.binding_digest.clone(),
             arguments_digest: call.arguments_digest.clone(),
             policy_snapshot_id: resolved_tool.effective_policy_snapshot_id.clone(),
-            principal_id: principal_id.into(),
+            principal_id,
             requested_at_unix_ms,
             expires_at_unix_ms,
         })

@@ -429,6 +429,10 @@ def test_tool_approval_request_validates_revision_and_expiration() -> None:
 
     with pytest.raises(ValueError, match="approval revision must be positive"):
         ToolApprovalRequest(**{**base, "revision": 0})
+    with pytest.raises(ValueError, match="approval approval_id must not be empty"):
+        ToolApprovalRequest(**{**base, "approval_id": " "})
+    with pytest.raises(ValueError, match="approval principal_id must not be empty"):
+        ToolApprovalRequest(**{**base, "principal_id": ""})
     with pytest.raises(ValueError, match="approval requested_at must be non-negative"):
         ToolApprovalRequest(**{**base, "requested_at": -1})
     with pytest.raises(ValueError, match="approval expiration must be after request time"):
