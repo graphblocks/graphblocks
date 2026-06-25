@@ -1,0 +1,13 @@
+[package]
+name = "graphblocksd"
+version = "0.1.0"
+description = "GraphBlocks daemon control-plane contracts"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+graphblocks-protocol = { path = "../graphblocks-protocol" }
+
+[lints]
+workspace = true
