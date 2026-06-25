@@ -204,6 +204,60 @@ class KubernetesManifestSet:
 
 
 @dataclass(frozen=True, slots=True)
+class HelmChartFile:
+    path: str
+    content: str
+
+    def __post_init__(self) -> None:
+        if not self.path.strip():
+            raise KubernetesAdapterError("Helm chart file path must not be empty")
+        path_parts = self.path.split("/")
+        if self.path.startswith("/") or any(part in {"", ".", ".."} for part in path_parts):
+            raise KubernetesAdapterError(f"invalid Helm chart file path: {self.path!r}")
+        object.__setattr__(self, "content", str(self.content))
+
+
+@dataclass(frozen=True, slots=True)
+class HelmChartPackage:
+    chart_name: str
+    files: tuple[HelmChartFile, ...]
+
+    def __post_init__(self) -> None:
+        if not self.chart_name.strip():
+            raise KubernetesAdapterError("Helm chart name must not be empty")
+        files = tuple(sorted(self.files, key=lambda file: file.path))
+        paths = [file.path for file in files]
+        if len(paths) != len(set(paths)):
+            raise KubernetesAdapterError("Helm chart file paths must be unique")
+        required_files = {"Chart.yaml", "values.yaml"}
+        missing_files = required_files.difference(paths)
+        if missing_files:
+            missing = ", ".join(sorted(missing_files))
+            raise KubernetesAdapterError(f"Helm chart package is missing required file(s): {missing}")
+        object.__setattr__(self, "files", files)
+
+    def file_names(self) -> tuple[str, ...]:
+        return tuple(file.path for file in self.files)
+
+    def file(self, path: str) -> str:
+        for file in self.files:
+            if file.path == path:
+                return file.content
+        raise KubernetesAdapterError(f"Helm chart file {path!r} not found")
+
+    def file_map(self) -> dict[str, str]:
+        return {file.path: file.content for file in self.files}
+
+    def content_digest(self) -> str:
+        return _content_digest(
+            {
+                "chart_name": self.chart_name,
+                "files": [{"path": file.path, "content": file.content} for file in self.files],
+            }
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class KubernetesClusterCapability:
     api_version: str
     kind: str
@@ -562,7 +616,76 @@ def render_target_manifests(
     return KubernetesManifestSet(tuple(documents))
 
 
+def render_helm_chart(
+    chart_name: str,
+    manifest_set: KubernetesManifestSet,
+    *,
+    chart_version: str = "0.1.0",
+    app_version: str | None = None,
+    description: str | None = None,
+    values: Mapping[str, object] | None = None,
+) -> HelmChartPackage:
+    if not chart_name.strip():
+        raise KubernetesAdapterError("Helm chart name must not be empty")
+    if not chart_version.strip():
+        raise KubernetesAdapterError("Helm chart version must not be empty")
+    chart_document: dict[str, object] = {
+        "apiVersion": "v2",
+        "name": chart_name,
+        "description": description or f"GraphBlocks deployment chart for {chart_name}",
+        "type": "application",
+        "version": chart_version,
+    }
+    if app_version is not None:
+        chart_document["appVersion"] = str(app_version)
+
+    chart_values = {str(key): deepcopy(value) for key, value in sorted(dict(values or {}).items())}
+    try:
+        _canonical_dumps(chart_values)
+    except (TypeError, ValueError) as error:
+        raise KubernetesAdapterError("Helm chart values must be JSON-serializable") from error
+
+    used_paths = {"Chart.yaml", "values.yaml"}
+    files = [
+        HelmChartFile("Chart.yaml", _canonical_dumps(chart_document) + "\n"),
+        HelmChartFile("values.yaml", _canonical_dumps(chart_values) + "\n"),
+    ]
+    for index, document in enumerate(manifest_set.documents, start=1):
+        metadata = document.get("metadata")
+        raw_name = metadata.get("name", f"document-{index:02d}") if isinstance(metadata, Mapping) else f"document-{index:02d}"
+        path_segments: list[str] = []
+        for raw_segment in (raw_name, document.get("kind", "manifest")):
+            text = str(raw_segment).strip().lower()
+            characters: list[str] = []
+            previous_dash = False
+            for character in text:
+                if character.isalnum() or character in ".-":
+                    characters.append(character)
+                    previous_dash = False
+                    continue
+                if not previous_dash:
+                    characters.append("-")
+                    previous_dash = True
+            segment = "".join(characters).strip(".-")
+            while "--" in segment:
+                segment = segment.replace("--", "-")
+            if not segment:
+                raise KubernetesAdapterError("Helm template name segment must not be empty")
+            path_segments.append(segment)
+        base_path = f"templates/{path_segments[0]}-{path_segments[1]}.yaml"
+        path = base_path
+        suffix = 2
+        while path in used_paths:
+            path = base_path.removesuffix(".yaml") + f"-{suffix}.yaml"
+            suffix += 1
+        used_paths.add(path)
+        files.append(HelmChartFile(path, _canonical_dumps(document) + "\n"))
+    return HelmChartPackage(chart_name, tuple(files))
+
+
 __all__ = [
+    "HelmChartFile",
+    "HelmChartPackage",
     "KubernetesAdapterError",
     "KubernetesClusterCapability",
     "KubernetesClusterSnapshot",
@@ -574,6 +697,7 @@ __all__ = [
     "KubernetesRenderOptions",
     "KubernetesSecretEnv",
     "render_rollout_manifests",
+    "render_helm_chart",
     "render_target_deployment",
     "render_target_manifests",
     "render_target_service",

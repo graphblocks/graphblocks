@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib
 from pathlib import Path
 
+import yaml
+
 
 ROOT = Path(__file__).parents[1]
 
@@ -254,3 +256,59 @@ def test_kubernetes_cluster_snapshot_tracks_capabilities_deterministically(monke
     assert left.supports("apps/v1", "Deployment")
     assert not left.supports("batch/v1", "CronJob")
     assert left.content_digest() == right.content_digest()
+
+
+def test_kubernetes_adapter_renders_helm_chart_package(monkeypatch) -> None:
+    graphblocks_kubernetes = _import_kubernetes(monkeypatch)
+    graphblocks_deployment = importlib.import_module("graphblocks_deployment")
+    target = graphblocks_deployment.ExecutionTarget(
+        "agent-workers",
+        "worker_pool",
+        "rust",
+        image="ghcr.io/acme/support-agent@sha256:runtime",
+    )
+    manifest_set = graphblocks_kubernetes.render_target_manifests(
+        "support-agent",
+        target,
+        options=graphblocks_kubernetes.KubernetesRenderOptions(namespace="support"),
+        ports=(graphblocks_kubernetes.KubernetesPort("http", 8080, service_port=80),),
+        env={"GRAPHBLOCKS_RELEASE": "release-2026-06-24"},
+    )
+
+    chart = graphblocks_kubernetes.render_helm_chart(
+        "support-agent",
+        manifest_set,
+        chart_version="1.2.3",
+        app_version="2026.06.24.1",
+        values={
+            "deploymentRevisionId": "rev-1",
+            "releaseDigest": "sha256:release",
+        },
+    )
+
+    assert chart.file_names() == (
+        "Chart.yaml",
+        "templates/support-agent-deployment.yaml",
+        "templates/support-agent-service.yaml",
+        "values.yaml",
+    )
+    assert yaml.safe_load(chart.file("Chart.yaml")) == {
+        "apiVersion": "v2",
+        "name": "support-agent",
+        "description": "GraphBlocks deployment chart for support-agent",
+        "type": "application",
+        "version": "1.2.3",
+        "appVersion": "2026.06.24.1",
+    }
+    assert yaml.safe_load(chart.file("values.yaml")) == {
+        "deploymentRevisionId": "rev-1",
+        "releaseDigest": "sha256:release",
+    }
+    deployment = yaml.safe_load(chart.file("templates/support-agent-deployment.yaml"))
+    assert deployment["kind"] == "Deployment"
+    assert deployment["metadata"]["namespace"] == "support"
+    assert deployment["metadata"]["annotations"]["graphblocks.ai/target-id"] == "agent-workers"
+    assert deployment["spec"]["template"]["spec"]["containers"][0]["image"] == (
+        "ghcr.io/acme/support-agent@sha256:runtime"
+    )
+    assert chart.content_digest().startswith("sha256:")
