@@ -773,6 +773,24 @@ packages:
   - asyncio-nats
   implementationPhase: integration-defined
   stability: integration
+- distribution: graphblocks-sqs
+  import: graphblocks_sqs
+  layer: durable_stream_adapter
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-durable
+  responsibility:
+  - SQS message to durable SourceEvent projection
+  - adapter receive sequence cursor mapping
+  - FIFO idempotent send message projection
+  forbiddenDependencies:
+  - boto3
+  - botocore
+  - aiobotocore
+  - aioboto3
+  implementationPhase: integration-defined
+  stability: integration
 integrationRules:
   distributionPattern: graphblocks-<technology>
   importPattern: graphblocks_<technology>

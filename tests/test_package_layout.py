@@ -890,6 +890,7 @@ def test_durable_stream_adapter_packages_have_layouts_without_client_dependencie
     cases = (
         ("graphblocks-kafka", "graphblocks_kafka", ("confluent-kafka", "kafka-python", "aiokafka")),
         ("graphblocks-nats", "graphblocks_nats", ("nats-py", "pynats", "asyncio-nats")),
+        ("graphblocks-sqs", "graphblocks_sqs", ("boto3", "botocore", "aiobotocore", "aioboto3")),
     )
     for distribution, import_name, forbidden_clients in cases:
         package_root = ROOT / "packages" / distribution
