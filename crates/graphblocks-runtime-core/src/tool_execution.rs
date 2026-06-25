@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::output_policy::PendingToolCallsDisposition;
 use crate::tool::{ToolCancellation, ToolEffect};
-use crate::tool_call::ToolCall;
+use crate::tool_call::{ToolCall, ToolCallError};
 use serde_json::Value;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -35,6 +35,9 @@ pub enum ToolExecutionState {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ToolExecutionPlanError {
     InvalidMaximumParallelism,
+    InvalidToolCall {
+        source: ToolCallError,
+    },
     DuplicateToolCall {
         tool_call_id: String,
     },
@@ -228,6 +231,10 @@ impl ToolExecutionPlan {
         let mut indexed_calls = BTreeMap::new();
         let mut states = BTreeMap::new();
         for planned_call in calls {
+            planned_call
+                .call
+                .validate()
+                .map_err(|source| ToolExecutionPlanError::InvalidToolCall { source })?;
             let tool_call_id = planned_call.call.tool_call_id.clone();
             if planned_call.call.response_id != response_id {
                 return Err(ToolExecutionPlanError::ResponseMismatch {

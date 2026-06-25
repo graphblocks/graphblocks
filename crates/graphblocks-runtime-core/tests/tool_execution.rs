@@ -1,6 +1,6 @@
 use graphblocks_runtime_core::output_policy::PendingToolCallsDisposition;
 use graphblocks_runtime_core::tool::{ToolCancellation, ToolEffect};
-use graphblocks_runtime_core::tool_call::{ToolCall, ToolCallDraft};
+use graphblocks_runtime_core::tool_call::{ToolCall, ToolCallDraft, ToolCallError};
 use graphblocks_runtime_core::tool_execution::{
     ToolExecutionCancellationPolicy, ToolExecutionFailurePolicy, ToolExecutionPlan,
     ToolExecutionPlanError, ToolExecutionState, ToolPlanCall,
@@ -54,6 +54,19 @@ fn plan_rejects_tool_calls_from_different_response() {
             tool_call_id: "call-b".to_owned(),
             expected_response_id: "response-1".to_owned(),
             actual_response_id: "response-2".to_owned(),
+        }),
+    );
+}
+
+#[test]
+fn plan_rejects_invalid_tool_call_model() {
+    let mut invalid = tool_call("call-a", "{\"resource_id\":\"a\"}");
+    invalid.revision = 0;
+
+    assert_eq!(
+        ToolExecutionPlan::new("plan-1", "response-1", [ToolPlanCall::new(invalid)], 1,),
+        Err(ToolExecutionPlanError::InvalidToolCall {
+            source: ToolCallError::InvalidRevision { revision: 0 },
         }),
     );
 }
