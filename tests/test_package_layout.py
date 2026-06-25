@@ -258,6 +258,40 @@ def test_vector_store_adapter_packages_have_pure_python_layouts_without_sdk_depe
     assert (package_root / "src" / "graphblocks_qdrant" / "py.typed").exists()
 
 
+def test_framework_bridge_packages_are_cataloged_as_optional_integrations() -> None:
+    rows = {row["distribution"]: row for row in package_rows(load_package_catalog())}
+
+    assert rows["graphblocks-haystack"] == {
+        "distribution": "graphblocks-haystack",
+        "import": "graphblocks_haystack",
+        "default": False,
+        "layer": "framework_bridge",
+        "kind": "pure_python",
+        "implementationPhase": "integration-defined",
+        "stability": "integration",
+    }
+
+
+def test_framework_bridge_packages_have_pure_python_layouts_without_framework_dependencies() -> None:
+    package_root = ROOT / "packages" / "graphblocks-haystack"
+    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
+    dependencies = pyproject["project"]["dependencies"]
+
+    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
+    assert pyproject["project"]["name"] == "graphblocks-haystack"
+    assert dependencies == ["graphblocks-core~=1.0"]
+    assert not any(
+        framework in dependency.lower()
+        for dependency in dependencies
+        for framework in ("haystack", "farm-haystack", "deepset")
+    )
+    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
+        "src/graphblocks_haystack"
+    ]
+    assert (package_root / "src" / "graphblocks_haystack" / "__init__.py").exists()
+    assert (package_root / "src" / "graphblocks_haystack" / "py.typed").exists()
+
+
 def test_conversation_package_has_pure_python_layout_without_server_or_db_dependencies() -> None:
     package_root = ROOT / "packages" / "graphblocks-conversation"
     pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))

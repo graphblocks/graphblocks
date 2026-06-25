@@ -613,6 +613,21 @@ packages:
   - HTTP clients
   implementationPhase: integration-defined
   stability: integration
+- distribution: graphblocks-haystack
+  import: graphblocks_haystack
+  layer: framework_bridge
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-core
+  responsibility:
+  - Haystack component and pipeline block descriptors
+  - Haystack ChatMessage adapters
+  - explicit descriptor diagnostics for dynamic sockets
+  forbiddenDependencies:
+  - haystack framework
+  implementationPhase: integration-defined
+  stability: integration
 - distribution: graphblocks-policy-opa
   import: graphblocks_policy_opa
   layer: governance_adapter
