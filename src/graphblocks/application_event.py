@@ -349,6 +349,8 @@ class ApplicationEventMetadata:
         ):
             if not value.strip():
                 raise ApplicationEventError(f"application event {field_name} must not be empty")
+        if self.turn_id is not None and not self.turn_id.strip():
+            raise ApplicationEventError("application event turn_id must not be empty")
         if self.sequence < 0:
             raise ApplicationEventError("application event sequence must be non-negative")
 

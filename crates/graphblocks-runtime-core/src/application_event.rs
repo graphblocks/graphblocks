@@ -558,6 +558,13 @@ impl ApplicationEvent {
                 return Err(ApplicationEventError::EmptyMetadataField { field });
             }
         }
+        if metadata
+            .turn_id
+            .as_ref()
+            .is_some_and(|turn_id| turn_id.trim().is_empty())
+        {
+            return Err(ApplicationEventError::EmptyMetadataField { field: "turn_id" });
+        }
         Ok(())
     }
 

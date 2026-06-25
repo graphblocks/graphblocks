@@ -126,6 +126,10 @@ fn application_events_reject_empty_required_metadata_fields() {
         policy_snapshot_id: "".to_owned(),
         ..metadata()
     };
+    let empty_turn_id = ApplicationEventMetadata {
+        turn_id: Some(" ".to_owned()),
+        ..metadata()
+    };
 
     assert_eq!(
         ApplicationEvent::new(
@@ -144,6 +148,14 @@ fn application_events_reject_empty_required_metadata_fields() {
         Err(ApplicationEventError::EmptyMetadataField {
             field: "policy_snapshot_id",
         })
+    );
+    assert_eq!(
+        ApplicationEvent::new(
+            ApplicationEventKind::RunStarted,
+            empty_turn_id,
+            json!({"status": "running"}),
+        ),
+        Err(ApplicationEventError::EmptyMetadataField { field: "turn_id" })
     );
 }
 
