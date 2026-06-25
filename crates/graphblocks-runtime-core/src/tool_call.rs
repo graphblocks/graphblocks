@@ -43,6 +43,10 @@ pub enum ToolCallError {
         created_at_unix_ms: u64,
         admitted_at_unix_ms: u64,
     },
+    CompletedBeforeCreated {
+        created_at_unix_ms: u64,
+        completed_at_unix_ms: u64,
+    },
     CompletedBeforeAdmitted {
         admitted_at_unix_ms: u64,
         completed_at_unix_ms: u64,
@@ -199,6 +203,14 @@ impl ToolCall {
             return Err(ToolCallError::AdmittedBeforeCreated {
                 created_at_unix_ms: self.created_at_unix_ms,
                 admitted_at_unix_ms,
+            });
+        }
+        if let Some(completed_at_unix_ms) = self.completed_at_unix_ms
+            && completed_at_unix_ms < self.created_at_unix_ms
+        {
+            return Err(ToolCallError::CompletedBeforeCreated {
+                created_at_unix_ms: self.created_at_unix_ms,
+                completed_at_unix_ms,
             });
         }
         if let (Some(admitted_at_unix_ms), Some(completed_at_unix_ms)) =

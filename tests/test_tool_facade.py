@@ -569,6 +569,12 @@ def test_tool_lifecycle_counters_are_non_negative_and_positive() -> None:
             created_at="2026-06-23T00:00:02Z",
             admitted_at="2026-06-23T00:00:01Z",
         )
+    with pytest.raises(ValueError, match="tool call completed_at must not be before created_at"):
+        replace(
+            call,
+            created_at="2026-06-23T00:00:02Z",
+            completed_at="2026-06-23T00:00:01Z",
+        )
     with pytest.raises(ValueError, match="tool call completed_at must not be before admitted_at"):
         replace(
             call,

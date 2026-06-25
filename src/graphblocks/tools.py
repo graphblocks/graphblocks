@@ -930,6 +930,12 @@ class ToolCall:
         ):
             raise ValueError("tool call admitted_at must not be before created_at")
         if (
+            self.created_at is not None
+            and self.completed_at is not None
+            and self.completed_at < self.created_at
+        ):
+            raise ValueError("tool call completed_at must not be before created_at")
+        if (
             self.admitted_at is not None
             and self.completed_at is not None
             and self.completed_at < self.admitted_at

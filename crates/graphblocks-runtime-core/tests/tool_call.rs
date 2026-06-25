@@ -202,10 +202,24 @@ fn tool_call_validates_revision_and_required_identity_fields() {
         })
     );
 
+    let completed_before_created = ToolCall {
+        admitted_at_unix_ms: None,
+        completed_at_unix_ms: Some(999),
+        ..admitted_before_created
+    };
+
+    assert_eq!(
+        completed_before_created.validate(),
+        Err(ToolCallError::CompletedBeforeCreated {
+            created_at_unix_ms: 1_000,
+            completed_at_unix_ms: 999,
+        })
+    );
+
     let completed_before_admitted = ToolCall {
         admitted_at_unix_ms: Some(1_100),
         completed_at_unix_ms: Some(1_050),
-        ..admitted_before_created
+        ..completed_before_created
     };
 
     assert_eq!(
