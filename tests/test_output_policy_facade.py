@@ -148,6 +148,12 @@ def test_output_policy_contract_rejects_unknown_literals() -> None:
             input_digest="sha256:redact",
         )
 
+    with pytest.raises(ValueError, match="output policy reason codes must be non-empty strings"):
+        OutputPolicyDecision.hold("decision-hold", input_digest="sha256:hold").with_reason_codes((" ",))
+
+    with pytest.raises(ValueError, match="output policy policy refs must be non-empty strings"):
+        OutputPolicyDecision.hold("decision-hold", input_digest="sha256:hold").with_policy_refs((1,))  # type: ignore[arg-type]
+
     with pytest.raises(ValueError, match="invalid provider cancellation force"):
         OutputPolicyDecision.abort_response("decision-1", input_digest="sha256:input").with_provider_cancellation(
             "force"

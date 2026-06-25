@@ -277,10 +277,26 @@ class OutputPolicyDecision:
                 if start > end:
                     raise ValueError("redaction range must not be reversed")
             redactions.append(MappingProxyType(redaction_copy))
+        try:
+            reason_codes = tuple(self.reason_codes)
+        except TypeError as error:
+            raise ValueError("output policy reason codes must be non-empty strings") from error
+        if isinstance(self.reason_codes, str) or any(
+            not isinstance(code, str) or not code.strip() for code in reason_codes
+        ):
+            raise ValueError("output policy reason codes must be non-empty strings")
+        try:
+            policy_refs = tuple(self.policy_refs)
+        except TypeError as error:
+            raise ValueError("output policy policy refs must be non-empty strings") from error
+        if isinstance(self.policy_refs, str) or any(
+            not isinstance(policy_ref, str) or not policy_ref.strip() for policy_ref in policy_refs
+        ):
+            raise ValueError("output policy policy refs must be non-empty strings")
         object.__setattr__(self, "replacement_parts", replacement_parts)
         object.__setattr__(self, "redactions", tuple(redactions))
-        object.__setattr__(self, "reason_codes", tuple(self.reason_codes))
-        object.__setattr__(self, "policy_refs", tuple(self.policy_refs))
+        object.__setattr__(self, "reason_codes", reason_codes)
+        object.__setattr__(self, "policy_refs", policy_refs)
 
     @classmethod
     def allow(
