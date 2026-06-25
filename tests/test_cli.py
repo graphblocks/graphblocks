@@ -498,6 +498,53 @@ def test_deploy_render_cli_renders_kubernetes_manifest_set(tmp_path, capsys, mon
     )
 
 
+def test_deploy_targets_verify_cli_accepts_production_target_manifest(capsys) -> None:
+    root = Path(__file__).parents[1]
+
+    assert main(["deploy", "targets-verify", str(root / "deployment" / "production-targets.yaml"), "--json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["targetCount"] == 5
+    assert payload["targetIds"] == ["control", "document-cpu", "ocr-gpu", "rag-cpu", "sandbox"]
+    assert payload["imageRoles"] == ["control-plane", "rag-cpu", "document-cpu", "ocr-gpu", "sandbox"]
+    assert payload["contentDigest"].startswith("sha256:")
+    assert payload["issues"] == []
+
+
+def test_deploy_targets_verify_cli_reports_missing_required_role(tmp_path, capsys) -> None:
+    manifest = {
+        "apiVersion": "graphblocks.ai/deployment/v1alpha1",
+        "kind": "DeploymentTargetProfileSet",
+        "spec": {
+            "targets": [
+                {
+                    "id": "control",
+                    "imageRole": "control-plane",
+                    "kind": "service",
+                    "executionHost": "rust",
+                }
+            ]
+        },
+    }
+    path = tmp_path / "targets.yaml"
+    path.write_text(yaml.safe_dump(manifest), encoding="utf-8")
+
+    assert main(["deploy", "targets-verify", str(path), "--required-role", "rag-cpu", "--json"]) == 1
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["issues"] == [
+        {
+            "code": "DeploymentTargetRoleMissing",
+            "image_role": "rag-cpu",
+            "target_id": "",
+            "path": "$.spec.targets",
+            "message": "required production image role has no deployment target profile",
+        }
+    ]
+
+
 def test_deploy_plan_cli_rejects_mismatched_release_reference(tmp_path, capsys) -> None:
     release = {
         "apiVersion": "graphblocks.ai/v1alpha3",

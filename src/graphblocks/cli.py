@@ -13,6 +13,7 @@ import yaml
 from . import __version__
 from .compiler import compile_graph
 from .deployment import (
+    DeploymentTargetProfileSet,
     ExecutionTarget,
     GraphDeployment,
     GraphRelease,
@@ -48,12 +49,20 @@ STRUCTURAL_KINDS = {
     "Application",
     "Binding",
     "ConformanceProfileSet",
+    "DeploymentTargetProfileSet",
     "GraphDeployment",
     "GraphRelease",
     "ObservabilityProfile",
     "PluginManifest",
     "PolicyProfile",
 }
+PHASE_FIVE_IMAGE_ROLES = (
+    "control-plane",
+    "rag-cpu",
+    "document-cpu",
+    "ocr-gpu",
+    "sandbox",
+)
 
 
 def _field(mapping: Mapping[str, object], *names: str, default: object = None) -> object:
@@ -170,6 +179,18 @@ def main(argv: list[str] | None = None) -> int:
 
     deploy_parser = subparsers.add_parser("deploy", help="compile graph deployment plans")
     deploy_subparsers = deploy_parser.add_subparsers(dest="deploy_command")
+    deploy_targets_parser = deploy_subparsers.add_parser(
+        "targets-verify",
+        help="verify a DeploymentTargetProfileSet manifest",
+    )
+    deploy_targets_parser.add_argument("path", type=Path)
+    deploy_targets_parser.add_argument(
+        "--required-role",
+        action="append",
+        default=[],
+        help="required production image role; defaults to the Phase 5 image roles",
+    )
+    deploy_targets_parser.add_argument("--json", action="store_true", help="emit JSON")
     deploy_plan_parser = deploy_subparsers.add_parser(
         "plan",
         help="resolve GraphRelease and GraphDeployment documents into a physical plan",
@@ -792,6 +813,43 @@ def main(argv: list[str] | None = None) -> int:
         release_parser.print_help()
         return 0
     if args.command == "deploy":
+        if args.deploy_command == "targets-verify":
+            try:
+                documents = load_documents(args.path)
+                target_documents = [
+                    document
+                    for document in documents
+                    if document.get("kind") == "DeploymentTargetProfileSet"
+                ]
+                if len(target_documents) != 1:
+                    raise ValueError(
+                        f"expected one DeploymentTargetProfileSet document, found {len(target_documents)}"
+                    )
+                target_set = DeploymentTargetProfileSet.from_document(target_documents[0])
+                required_roles = tuple(args.required_role or PHASE_FIVE_IMAGE_ROLES)
+                coverage = target_set.coverage_for_required_image_roles(required_roles)
+                payload = {
+                    "ok": coverage.ok,
+                    "targetCount": len(target_set.targets),
+                    "targetIds": list(target_set.target_ids()),
+                    "imageRoles": list(target_set.image_roles()),
+                    "requiredImageRoles": list(required_roles),
+                    "contentDigest": target_set.content_digest(),
+                    "issues": coverage.issue_contracts(),
+                }
+                if args.json:
+                    print(json.dumps(payload, indent=2, sort_keys=True))
+                elif coverage.ok:
+                    print(f"OK {payload['targetCount']} targets {payload['contentDigest']}")
+                else:
+                    print(f"FAIL deployment target coverage: {len(coverage.issues)} issue(s)")
+                return 0 if coverage.ok else 1
+            except (OSError, TypeError, ValueError, yaml.YAMLError) as error:
+                if args.json:
+                    print(json.dumps({"ok": False, "error": str(error)}, indent=2, sort_keys=True))
+                else:
+                    print(f"FAIL {error}")
+                return 1
         if args.deploy_command == "render":
             try:
                 from graphblocks_kubernetes import (
