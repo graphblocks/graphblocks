@@ -5,9 +5,13 @@ from decimal import Decimal
 import pytest
 
 from graphblocks.budget import (
+    BudgetAccount,
     BudgetCompletionReserveStateError,
     BudgetCompletionReserveUnauthorizedError,
     BudgetExceededError,
+    BudgetReservation,
+    BudgetSettlement,
+    CompletionReserve,
     InMemoryBudgetLedger,
     BudgetReservationStateError,
     SQLiteBudgetLedger,
@@ -31,6 +35,45 @@ def test_usage_amount_rejects_negative_amounts_and_freezes_dimensions() -> None:
         amount.dimensions["model"] = "direct"
     with pytest.raises(ValueError, match="usage amount must be non-negative"):
         UsageAmount("model_total_tokens", Decimal("-1"), "tokens")
+
+
+def test_budget_models_reject_unknown_typed_values() -> None:
+    with pytest.raises(ValueError, match="unknown budget status"):
+        BudgetAccount("budget-1", ResourceRef("tenant:acme"), [_tokens("1")], status="maybe")
+    with pytest.raises(ValueError, match="unknown reservation purpose"):
+        BudgetReservation(
+            "reservation-1",
+            "budget-1",
+            ResourceRef("run:1"),
+            [_tokens("1")],
+            purpose="maybe",
+            expires_at="later",
+            fencing_token=1,
+        )
+    with pytest.raises(ValueError, match="unknown reservation status"):
+        BudgetReservation(
+            "reservation-1",
+            "budget-1",
+            ResourceRef("run:1"),
+            [_tokens("1")],
+            purpose="provider_call",
+            expires_at="later",
+            fencing_token=1,
+            status="maybe",
+        )
+    with pytest.raises(ValueError, match="unknown reservation status"):
+        BudgetSettlement("reservation-1", "budget-1", status="maybe")
+    with pytest.raises(ValueError, match="unknown completion reserve purpose"):
+        CompletionReserve("reserve-1", "budget-1", purpose="maybe", amounts=[_tokens("1")], spendable_by=frozenset())
+    with pytest.raises(ValueError, match="unknown completion reserve status"):
+        CompletionReserve(
+            "reserve-1",
+            "budget-1",
+            purpose="finalization",
+            amounts=[_tokens("1")],
+            spendable_by=frozenset(),
+            status="maybe",
+        )
 
 
 def test_budget_ledger_reserve_reduces_available_balance() -> None:

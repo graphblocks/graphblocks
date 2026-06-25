@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 import sqlite3
 from types import MappingProxyType
-from typing import Literal, TypeVar, cast
+from typing import Literal, TypeVar, cast, get_args
 
 from .policy import ResourceRef
 
@@ -19,6 +19,12 @@ ReservationPurpose = Literal["provider_call", "task", "trial", "tool", "finaliza
 ReservationStatus = Literal["reserved", "committed", "released", "expired"]
 CompletionReservePurpose = Literal["finalization", "checkpoint", "cleanup", "compensation"]
 CompletionReserveStatus = Literal["available", "spent", "released", "expired"]
+
+VALID_BUDGET_STATUSES = frozenset(get_args(BudgetStatus))
+VALID_RESERVATION_PURPOSES = frozenset(get_args(ReservationPurpose))
+VALID_RESERVATION_STATUSES = frozenset(get_args(ReservationStatus))
+VALID_COMPLETION_RESERVE_PURPOSES = frozenset(get_args(CompletionReservePurpose))
+VALID_COMPLETION_RESERVE_STATUSES = frozenset(get_args(CompletionReserveStatus))
 
 
 class BudgetError(RuntimeError):
@@ -122,6 +128,10 @@ class BudgetAccount:
     policy_ref: str = ""
     revision: int = 0
 
+    def __post_init__(self) -> None:
+        if self.status not in VALID_BUDGET_STATUSES:
+            raise ValueError(f"unknown budget status {self.status!r}")
+
 
 @dataclass(frozen=True, slots=True)
 class BudgetReservation:
@@ -133,6 +143,12 @@ class BudgetReservation:
     expires_at: str
     fencing_token: int
     status: ReservationStatus = "reserved"
+
+    def __post_init__(self) -> None:
+        if self.purpose not in VALID_RESERVATION_PURPOSES:
+            raise ValueError(f"unknown reservation purpose {self.purpose!r}")
+        if self.status not in VALID_RESERVATION_STATUSES:
+            raise ValueError(f"unknown reservation status {self.status!r}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,6 +172,10 @@ class BudgetSettlement:
     overdraft: list[UsageAmount] = field(default_factory=list)
     status: ReservationStatus = "committed"
     revision: int = 0
+
+    def __post_init__(self) -> None:
+        if self.status not in VALID_RESERVATION_STATUSES:
+            raise ValueError(f"unknown reservation status {self.status!r}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,6 +211,10 @@ class CompletionReserve:
     fencing_token: int = 0
 
     def __post_init__(self) -> None:
+        if self.purpose not in VALID_COMPLETION_RESERVE_PURPOSES:
+            raise ValueError(f"unknown completion reserve purpose {self.purpose!r}")
+        if self.status not in VALID_COMPLETION_RESERVE_STATUSES:
+            raise ValueError(f"unknown completion reserve status {self.status!r}")
         object.__setattr__(self, "spendable_by", frozenset(self.spendable_by))
 
 
