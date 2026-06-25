@@ -923,6 +923,18 @@ class ToolCall:
         object.__setattr__(self, "depends_on", tuple(self.depends_on))
         if any(not dependency.strip() for dependency in self.depends_on):
             raise ValueError("tool call dependency ids must not be empty")
+        if (
+            self.created_at is not None
+            and self.admitted_at is not None
+            and self.admitted_at < self.created_at
+        ):
+            raise ValueError("tool call admitted_at must not be before created_at")
+        if (
+            self.admitted_at is not None
+            and self.completed_at is not None
+            and self.completed_at < self.admitted_at
+        ):
+            raise ValueError("tool call completed_at must not be before admitted_at")
 
     def revise_arguments(self, arguments: object) -> ToolCall:
         if self.status != "validated":

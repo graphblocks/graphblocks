@@ -26,11 +26,27 @@ pub enum ToolCallStatus {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ToolCallError {
     DraftAlreadyComplete,
-    ArgumentsNotComplete { status: ToolCallDraftStatus },
+    ArgumentsNotComplete {
+        status: ToolCallDraftStatus,
+    },
     InvalidArgumentsJson,
-    CannotReviseArguments { status: ToolCallStatus },
-    EmptyField { field: &'static str },
-    InvalidRevision { revision: u32 },
+    CannotReviseArguments {
+        status: ToolCallStatus,
+    },
+    EmptyField {
+        field: &'static str,
+    },
+    InvalidRevision {
+        revision: u32,
+    },
+    AdmittedBeforeCreated {
+        created_at_unix_ms: u64,
+        admitted_at_unix_ms: u64,
+    },
+    CompletedBeforeAdmitted {
+        admitted_at_unix_ms: u64,
+        completed_at_unix_ms: u64,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -175,6 +191,23 @@ impl ToolCall {
         if self.revision == 0 {
             return Err(ToolCallError::InvalidRevision {
                 revision: self.revision,
+            });
+        }
+        if let Some(admitted_at_unix_ms) = self.admitted_at_unix_ms
+            && admitted_at_unix_ms < self.created_at_unix_ms
+        {
+            return Err(ToolCallError::AdmittedBeforeCreated {
+                created_at_unix_ms: self.created_at_unix_ms,
+                admitted_at_unix_ms,
+            });
+        }
+        if let (Some(admitted_at_unix_ms), Some(completed_at_unix_ms)) =
+            (self.admitted_at_unix_ms, self.completed_at_unix_ms)
+            && completed_at_unix_ms < admitted_at_unix_ms
+        {
+            return Err(ToolCallError::CompletedBeforeAdmitted {
+                admitted_at_unix_ms,
+                completed_at_unix_ms,
             });
         }
         if self

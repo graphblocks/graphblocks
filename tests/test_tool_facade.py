@@ -563,6 +563,18 @@ def test_tool_lifecycle_counters_are_non_negative_and_positive() -> None:
         replace(call, arguments_digest="")
     with pytest.raises(ValueError, match="tool call dependency ids must not be empty"):
         replace(call, depends_on=("call-a", " "))
+    with pytest.raises(ValueError, match="tool call admitted_at must not be before created_at"):
+        replace(
+            call,
+            created_at="2026-06-23T00:00:02Z",
+            admitted_at="2026-06-23T00:00:01Z",
+        )
+    with pytest.raises(ValueError, match="tool call completed_at must not be before admitted_at"):
+        replace(
+            call,
+            admitted_at="2026-06-23T00:00:03Z",
+            completed_at="2026-06-23T00:00:02Z",
+        )
 
     with pytest.raises(ValueError, match="tool result event sequence must be non-negative"):
         ToolResultEvent.started("call-1", -1, started_at="2026-06-23T00:00:00Z")
