@@ -327,6 +327,25 @@ fn replace_decision_requires_policy_approved_replacement_content() -> Result<(),
             decision_id: "decision-replace".to_owned(),
         }),
     );
+
+    let invalid_replacement = OutputPolicyDecision::replace(
+        "decision-replace",
+        Some(1),
+        [GenerationChunk::text(
+            " ",
+            "response-1",
+            1,
+            "policy-approved replacement",
+        )],
+        "sha256:replace",
+    );
+    assert_eq!(
+        invalid_replacement.validate(),
+        Err(OutputPolicyDecisionError::InvalidReplacementChunk {
+            source: GenerationChunkError::EmptyIdentityField { field: "stream_id" },
+        }),
+    );
+
     assert_eq!(
         gate.apply_decision(decision, 1_000),
         Err(OutputGateError::ReplacementContentMissing {

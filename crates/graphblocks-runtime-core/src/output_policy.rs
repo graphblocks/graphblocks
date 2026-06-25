@@ -261,6 +261,7 @@ pub enum OutputPolicyDecisionError {
     MissingDecisionId,
     MissingInputDigest { decision_id: String },
     ReplacementContentMissing { decision_id: String },
+    InvalidReplacementChunk { source: GenerationChunkError },
     InvalidRedactionInstruction { path: String },
 }
 
@@ -278,6 +279,11 @@ impl OutputPolicyDecision {
             return Err(OutputPolicyDecisionError::ReplacementContentMissing {
                 decision_id: self.decision_id.clone(),
             });
+        }
+        for chunk in &self.replacement_chunks {
+            chunk
+                .validate()
+                .map_err(|source| OutputPolicyDecisionError::InvalidReplacementChunk { source })?;
         }
         for redaction in &self.redactions {
             if redaction.path.trim().is_empty() || redaction.start > redaction.end {
@@ -1059,6 +1065,9 @@ impl OutputDeliveryGate {
                 }
                 OutputPolicyDecisionError::ReplacementContentMissing { decision_id } => {
                     Err(OutputGateError::ReplacementContentMissing { decision_id })
+                }
+                OutputPolicyDecisionError::InvalidReplacementChunk { source } => {
+                    Err(OutputGateError::InvalidGenerationChunk { source })
                 }
                 OutputPolicyDecisionError::InvalidRedactionInstruction { path } => {
                     Err(OutputGateError::InvalidRedactionInstruction { path })
