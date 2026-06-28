@@ -130,3 +130,53 @@ def test_terraform_bridge_materializes_sensitive_outputs_as_secret_refs(monkeypa
         }
     }
     assert "sk-should-not-leak" not in repr(materialized)
+
+
+def test_terraform_bridge_imports_outputs_as_nested_binding_document(monkeypatch) -> None:
+    graphblocks_terraform = _import_terraform(monkeypatch)
+    bridge = graphblocks_terraform.TerraformBridgeSpec(
+        workspace="support-prod",
+        output_bindings=(
+            graphblocks_terraform.TerraformOutputBinding("worker_url", "services.worker.url"),
+            graphblocks_terraform.TerraformOutputBinding(
+                "openai_api_key",
+                "models.support.apiKey",
+                secret_ref="secret://support-prod/openai-api-key",
+            ),
+        ),
+    )
+
+    document = bridge.materialize_binding_document(
+        "support-production",
+        {
+            "worker_url": {"value": "https://workers.internal", "sensitive": False},
+            "openai_api_key": {"value": "sk-should-not-leak", "sensitive": True},
+        },
+    )
+
+    assert document == {
+        "apiVersion": "graphblocks.ai/v1alpha1",
+        "kind": "Binding",
+        "metadata": {
+            "name": "support-production",
+            "annotations": {
+                "graphblocks.ai/terraform-bridge-digest": bridge.content_digest(),
+                "graphblocks.ai/terraform-workspace": "support-prod",
+            },
+        },
+        "spec": {
+            "models": {
+                "support": {
+                    "apiKey": {
+                        "secretRef": "secret://support-prod/openai-api-key",
+                    }
+                }
+            },
+            "services": {
+                "worker": {
+                    "url": "https://workers.internal",
+                }
+            },
+        },
+    }
+    assert "sk-should-not-leak" not in repr(document)

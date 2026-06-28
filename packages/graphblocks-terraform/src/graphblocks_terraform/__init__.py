@@ -188,6 +188,50 @@ class TerraformBridgeSpec:
             materialized[binding.graphblocks_key] = deepcopy(value)
         return {key: materialized[key] for key in sorted(materialized)}
 
+    def materialize_binding_document(
+        self,
+        name: str,
+        terraform_outputs: Mapping[str, object],
+        *,
+        api_version: str = "graphblocks.ai/v1alpha1",
+        kind: str = "Binding",
+    ) -> dict[str, object]:
+        if not name.strip():
+            raise TerraformBridgeError("binding document name must not be empty")
+        if not api_version.strip():
+            raise TerraformBridgeError("binding document api_version must not be empty")
+        if not kind.strip():
+            raise TerraformBridgeError("binding document kind must not be empty")
+
+        spec: dict[str, object] = {}
+        for graphblocks_key, value in self.materialize_outputs(terraform_outputs).items():
+            path = graphblocks_key.split(".")
+            if not path or any(not part for part in path):
+                raise TerraformBridgeError(f"invalid graphblocks binding path {graphblocks_key!r}")
+            current = spec
+            for part in path[:-1]:
+                existing = current.setdefault(part, {})
+                if not isinstance(existing, dict):
+                    raise TerraformBridgeError(f"conflicting graphblocks binding path {graphblocks_key!r}")
+                current = existing
+            leaf = path[-1]
+            if leaf in current:
+                raise TerraformBridgeError(f"duplicate graphblocks binding path {graphblocks_key!r}")
+            current[leaf] = deepcopy(value)
+
+        return {
+            "apiVersion": api_version,
+            "kind": kind,
+            "metadata": {
+                "name": name,
+                "annotations": {
+                    "graphblocks.ai/terraform-bridge-digest": self.content_digest(),
+                    "graphblocks.ai/terraform-workspace": self.workspace,
+                },
+            },
+            "spec": spec,
+        }
+
     def content_digest(self) -> str:
         value = {
             "workspace": self.workspace,
