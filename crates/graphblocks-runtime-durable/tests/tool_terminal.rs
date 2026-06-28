@@ -19,6 +19,18 @@ fn completed_tool_record() -> DurableToolTerminalRecord {
     .with_durable_result_committed()
 }
 
+fn incomplete_tool_record() -> DurableToolTerminalRecord {
+    DurableToolTerminalRecord::new(
+        "run-000001",
+        "response-1",
+        "call-2",
+        1,
+        DurableToolTerminalState::Incomplete,
+        "sha256:arguments-incomplete",
+        1_820_000_000_200,
+    )
+}
+
 #[test]
 fn tool_terminal_store_replays_matching_terminal_record() {
     let mut store = InMemoryDurableToolTerminalStore::new();
@@ -35,6 +47,29 @@ fn tool_terminal_store_replays_matching_terminal_record() {
     assert!(!committed.replayed);
     assert_eq!(duplicate.sequence, committed.sequence);
     assert_eq!(duplicate.record, committed.record);
+    assert!(duplicate.replayed);
+    assert_eq!(store.tool_terminal_count(), 1);
+}
+
+#[test]
+fn tool_terminal_store_records_incomplete_terminal_result() {
+    let mut store = InMemoryDurableToolTerminalStore::new();
+    let record = incomplete_tool_record();
+
+    let committed = store
+        .record_tool_terminal(record.clone())
+        .expect("incomplete terminal record should commit");
+    let duplicate = store
+        .record_tool_terminal(record)
+        .expect("matching incomplete terminal record should replay");
+
+    assert_eq!(
+        committed.record.terminal_state,
+        DurableToolTerminalState::Incomplete
+    );
+    assert_eq!(committed.record.output_digest, None);
+    assert!(!committed.record.effect_committed);
+    assert!(!committed.record.durable_result_committed);
     assert!(duplicate.replayed);
     assert_eq!(store.tool_terminal_count(), 1);
 }

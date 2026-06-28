@@ -455,6 +455,7 @@ pub enum DurableToolTerminalState {
     Denied,
     Cancelled,
     PolicyStopped,
+    Incomplete,
     Expired,
 }
 
