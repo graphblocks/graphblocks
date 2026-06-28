@@ -167,8 +167,12 @@ class SourceCursor:
     def __post_init__(self) -> None:
         if not self.stream.strip():
             raise DurableError("stream must not be empty")
+        if not isinstance(self.partition, int) or isinstance(self.partition, bool):
+            raise DurableError("partition must be an integer")
         if self.partition < 0:
             raise DurableError("partition must be non-negative")
+        if not isinstance(self.offset, int) or isinstance(self.offset, bool):
+            raise DurableError("offset must be an integer")
         if self.offset < 0:
             raise DurableError("offset must be non-negative")
 

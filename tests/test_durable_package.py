@@ -108,6 +108,27 @@ def test_durable_source_rejects_unknown_cursor_partition(monkeypatch) -> None:
     assert poll_error.value.cursor == unknown_cursor
 
 
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (("", 0, 10), "stream must not be empty"),
+        (("orders", True, 10), "partition must be an integer"),
+        (("orders", 0, False), "offset must be an integer"),
+        (("orders", -1, 10), "partition must be non-negative"),
+        (("orders", 0, -1), "offset must be non-negative"),
+    ],
+)
+def test_durable_source_cursor_validates_identity_fields(
+    monkeypatch,
+    args: tuple[object, object, object],
+    message: str,
+) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+
+    with pytest.raises(graphblocks_durable.DurableError, match=message):
+        graphblocks_durable.SourceCursor(*args)
+
+
 def test_durable_event_time_window_closes_after_watermark_and_rejects_late_events(monkeypatch) -> None:
     graphblocks_durable = _import_durable(monkeypatch)
     policy = graphblocks_durable.WindowPolicy.tumbling_event_time(
