@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
+import hashlib
 import json
 from typing import Literal
 
@@ -403,6 +404,118 @@ def validate_remote_payload(payload: Mapping[str, object], limits: RemotePayload
             raise RemotePayloadInvalidArtifactRefError("uri")
         return
     raise RemotePayloadInvalidModeError(mode)
+
+
+@dataclass(frozen=True, slots=True)
+class RemoteEdgePayload:
+    mode: Literal["inline", "artifact_ref"]
+    schema: str
+    value: object | None = None
+    artifact: Mapping[str, object] | None = None
+    value_digest: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.schema.strip():
+            raise RemotePayloadInvalidModeError("empty_schema")
+        if self.mode == "inline":
+            try:
+                encoded = json.dumps(
+                    self.value,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                )
+            except (TypeError, ValueError) as error:
+                raise RemotePayloadInlineJsonEncodingError("remote inline payload is not JSON serializable") from error
+            computed_digest = "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+            if self.value_digest is not None and self.value_digest != computed_digest:
+                raise RemotePayloadInvalidModeError("value_digest_mismatch")
+            object.__setattr__(self, "value", json.loads(encoded))
+            object.__setattr__(
+                self,
+                "value_digest",
+                computed_digest,
+            )
+            object.__setattr__(self, "artifact", None)
+            return
+        if self.mode == "artifact_ref":
+            artifact = dict(self.artifact or {})
+            if self.value is not None:
+                raise RemotePayloadInvalidModeError("artifact_ref_with_inline_value")
+            object.__setattr__(self, "artifact", {str(key): artifact[key] for key in sorted(artifact)})
+            object.__setattr__(self, "value_digest", None)
+            return
+        raise RemotePayloadInvalidModeError(self.mode)
+
+    @classmethod
+    def inline(
+        cls,
+        schema: str,
+        value: object,
+        limits: RemotePayloadLimits,
+    ) -> RemoteEdgePayload:
+        payload = cls(mode="inline", schema=schema, value=value)
+        validate_remote_payload(payload.to_wire(), limits)
+        return payload
+
+    @classmethod
+    def artifact_ref(
+        cls,
+        schema: str,
+        *,
+        artifact_id: str,
+        uri: str,
+        size_bytes: int | None = None,
+        digest: str | None = None,
+    ) -> RemoteEdgePayload:
+        artifact: dict[str, object] = {
+            "artifact_id": artifact_id,
+            "uri": uri,
+        }
+        if size_bytes is not None:
+            artifact["size_bytes"] = size_bytes
+        if digest is not None:
+            artifact["digest"] = digest
+        payload = cls(mode="artifact_ref", schema=schema, artifact=artifact)
+        validate_remote_payload(payload.to_wire(), RemotePayloadLimits(max_inline_bytes=0))
+        return payload
+
+    def to_wire(self) -> dict[str, object]:
+        if self.mode == "inline":
+            return {
+                "mode": self.mode,
+                "schema": self.schema,
+                "value": self.value,
+                "valueDigest": self.value_digest,
+            }
+        return {
+            "mode": self.mode,
+            "schema": self.schema,
+            "artifact": dict(self.artifact or {}),
+        }
+
+    @classmethod
+    def from_wire(cls, payload: dict[str, object]) -> RemoteEdgePayload:
+        mode = payload.get("mode")
+        if mode == "inline":
+            return cls(
+                mode="inline",
+                schema=str(payload["schema"]),
+                value=payload.get("value"),
+                value_digest=(
+                    None if payload.get("valueDigest") is None else str(payload.get("valueDigest"))
+                ),
+            )
+        if mode == "artifact_ref":
+            artifact = payload.get("artifact")
+            if not isinstance(artifact, Mapping):
+                raise RemotePayloadInvalidArtifactRefError("artifact")
+            return cls(mode="artifact_ref", schema=str(payload["schema"]), artifact=artifact)
+        raise RemotePayloadInvalidModeError(mode)
+
+    def content_digest(self) -> str:
+        encoded = json.dumps(self.to_wire(), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        return "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -816,6 +929,7 @@ def validate_worker_result(request: WorkerInvokeRequest, result: WorkerInvokeRes
 __all__ = [
     "WORKER_PROTOCOL_VERSION",
     "BlockCapability",
+    "RemoteEdgePayload",
     "RemotePayloadError",
     "RemotePayloadInlineJsonEncodingError",
     "RemotePayloadInvalidArtifactRefError",

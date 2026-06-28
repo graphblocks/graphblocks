@@ -49,4 +49,18 @@ def test_worker_package_reexports_worker_protocol_contracts(monkeypatch) -> None
 
     assert drain_plan.worker_state == "draining"
     assert drain_plan.decisions[0].disposition == "finish_in_place"
+    edge_payload = graphblocks_worker.RemoteEdgePayload.artifact_ref(
+        "graphblocks.ai/PdfDocument@1",
+        artifact_id="artifact-1",
+        uri="s3://graphblocks/documents/source.pdf",
+    )
+
+    assert (
+        graphblocks_worker.validate_remote_payload(
+            edge_payload.to_wire(),
+            graphblocks_worker.RemotePayloadLimits(max_inline_bytes=8),
+        )
+        is None
+    )
+    assert "RemoteEdgePayload" in graphblocks_worker.__all__
     assert "WorkerDrainPlan" in graphblocks_worker.__all__

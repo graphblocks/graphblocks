@@ -454,6 +454,7 @@ from .usage import (
 from .worker import (
     WORKER_PROTOCOL_VERSION,
     BlockCapability,
+    RemoteEdgePayload,
     RemotePayloadError,
     RemotePayloadInlineJsonEncodingError,
     RemotePayloadInvalidArtifactRefError,
@@ -898,6 +899,7 @@ __all__ = [
     "WorkerAdmissionDecision",
     "WorkerAdmissionPolicy",
     "WorkerAdvertisement",
+    "RemoteEdgePayload",
     "RemotePayloadError",
     "RemotePayloadInlineJsonEncodingError",
     "RemotePayloadInvalidArtifactRefError",

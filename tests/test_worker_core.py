@@ -6,7 +6,9 @@ import graphblocks
 from graphblocks.worker import (
     WORKER_PROTOCOL_VERSION,
     BlockCapability,
+    RemoteEdgePayload,
     RemotePayloadInvalidArtifactRefError,
+    RemotePayloadInvalidModeError,
     RemotePayloadLimits,
     RemotePayloadOversizedInlineError,
     RunOwnershipLease,
@@ -159,6 +161,12 @@ def test_top_level_package_exports_worker_admission_decision_api() -> None:
     )
     assert isinstance(drain_plan, graphblocks.WorkerDrainPlan)
     assert drain_plan.decisions[0].deployment_revision_id == "rev-old"
+    edge_payload = graphblocks.RemoteEdgePayload.inline(
+        "graphblocks.ai/Message@1",
+        {"text": "hello"},
+        graphblocks.RemotePayloadLimits(max_inline_bytes=64),
+    )
+    assert edge_payload.to_wire()["valueDigest"].startswith("sha256:")
 
 
 def test_worker_selection_skips_draining_and_saturated_workers() -> None:
@@ -338,6 +346,46 @@ def test_remote_payload_validator_allows_artifact_reference_payload() -> None:
     }
 
     assert validate_remote_payload(payload, RemotePayloadLimits(max_inline_bytes=8)) is None
+
+
+def test_remote_edge_payload_envelope_records_inline_digest_and_artifact_refs() -> None:
+    limits = RemotePayloadLimits(max_inline_bytes=128)
+    value = {"message": {"text": "hello"}}
+
+    inline_payload = RemoteEdgePayload.inline("graphblocks.ai/Message@1", value, limits)
+    value["message"]["text"] = "mutated"
+    inline_wire = inline_payload.to_wire()
+
+    assert inline_wire["mode"] == "inline"
+    assert inline_wire["schema"] == "graphblocks.ai/Message@1"
+    assert inline_wire["value"] == {"message": {"text": "hello"}}
+    assert inline_wire["valueDigest"].startswith("sha256:")
+    assert validate_remote_payload(inline_wire, limits) is None
+    assert RemoteEdgePayload.from_wire(inline_wire) == inline_payload
+    with pytest.raises(RemotePayloadInvalidModeError):
+        RemoteEdgePayload.from_wire(inline_wire | {"valueDigest": "sha256:mismatch"})
+
+    artifact_payload = RemoteEdgePayload.artifact_ref(
+        "graphblocks.ai/PdfDocument@1",
+        artifact_id="artifact-1",
+        uri="s3://graphblocks/documents/source.pdf",
+        size_bytes=10_000_000,
+        digest="sha256:artifact",
+    )
+    artifact_wire = artifact_payload.to_wire()
+
+    assert artifact_wire == {
+        "mode": "artifact_ref",
+        "schema": "graphblocks.ai/PdfDocument@1",
+        "artifact": {
+            "artifact_id": "artifact-1",
+            "uri": "s3://graphblocks/documents/source.pdf",
+            "size_bytes": 10_000_000,
+            "digest": "sha256:artifact",
+        },
+    }
+    assert validate_remote_payload(artifact_wire, RemotePayloadLimits(max_inline_bytes=8)) is None
+    assert RemoteEdgePayload.from_wire(artifact_wire) == artifact_payload
 
 
 def test_remote_payload_validator_rejects_invalid_artifact_reference() -> None:

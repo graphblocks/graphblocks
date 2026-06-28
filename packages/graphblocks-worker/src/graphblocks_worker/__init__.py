@@ -3,6 +3,7 @@ from __future__ import annotations
 from graphblocks.worker import (
     WORKER_PROTOCOL_VERSION,
     BlockCapability,
+    RemoteEdgePayload,
     RemotePayloadError,
     RemotePayloadInlineJsonEncodingError,
     RemotePayloadInvalidArtifactRefError,
@@ -50,6 +51,7 @@ from graphblocks.worker import (
 __all__ = [
     "WORKER_PROTOCOL_VERSION",
     "BlockCapability",
+    "RemoteEdgePayload",
     "RemotePayloadError",
     "RemotePayloadInlineJsonEncodingError",
     "RemotePayloadInvalidArtifactRefError",
