@@ -149,6 +149,71 @@ def test_durable_sink_commit_replays_same_idempotency_key_and_rejects_conflict(m
         )
 
 
+def test_durable_tool_terminal_store_replays_incomplete_terminal_record(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    store = graphblocks_durable.InMemoryDurableToolTerminalStore()
+    record = graphblocks_durable.DurableToolTerminalRecord(
+        run_id="run-000001",
+        response_id="response-1",
+        tool_call_id="call-1",
+        revision=1,
+        terminal_state="incomplete",
+        arguments_digest="sha256:arguments",
+        completed_at_unix_ms=1_820_000_000_000,
+    )
+
+    committed = store.record_tool_terminal(record)
+    replayed = store.record_tool_terminal(record)
+
+    assert committed.sequence == 1
+    assert committed.record.terminal_state == "incomplete"
+    assert committed.record.output_digest is None
+    assert committed.record.effect_committed is False
+    assert committed.record.durable_result_committed is False
+    assert replayed.sequence == committed.sequence
+    assert replayed.record == committed.record
+    assert replayed.replayed is True
+    assert store.tool_terminal_count() == 1
+
+
+def test_durable_tool_terminal_store_rejects_terminal_replay_mutation(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    store = graphblocks_durable.InMemoryDurableToolTerminalStore()
+    record = graphblocks_durable.DurableToolTerminalRecord(
+        run_id="run-000001",
+        response_id="response-1",
+        tool_call_id="call-1",
+        revision=1,
+        terminal_state="completed",
+        arguments_digest="sha256:arguments",
+        completed_at_unix_ms=1_820_000_000_000,
+        output_digest="sha256:output",
+        idempotency_key="ticket-create:call-1",
+        effect_committed=True,
+        durable_result_committed=True,
+    )
+    conflicting = graphblocks_durable.DurableToolTerminalRecord(
+        run_id=record.run_id,
+        response_id=record.response_id,
+        tool_call_id=record.tool_call_id,
+        revision=record.revision,
+        terminal_state="failed",
+        arguments_digest=record.arguments_digest,
+        completed_at_unix_ms=record.completed_at_unix_ms,
+        output_digest="sha256:error",
+    )
+
+    store.record_tool_terminal(record)
+
+    with pytest.raises(graphblocks_durable.ToolTerminalStateConflictError) as error:
+        store.record_tool_terminal(conflicting)
+
+    assert error.value.response_id == "response-1"
+    assert error.value.tool_call_id == "call-1"
+    assert error.value.revision == 1
+    assert store.tool_terminal_count() == 1
+
+
 def test_durable_checkpoint_barrier_validates_and_builds_source_commit_plan(monkeypatch) -> None:
     graphblocks_durable = _import_durable(monkeypatch)
     missing_plan = _checkpoint(graphblocks_durable, "checkpoint-000001", 1, "")

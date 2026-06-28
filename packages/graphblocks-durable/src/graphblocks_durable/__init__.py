@@ -9,6 +9,27 @@ from typing import Literal
 DeliveryGuarantee = Literal["best_effort", "at_most_once", "at_least_once"]
 WatermarkKind = Literal["event_time", "processing_time"]
 AccumulationMode = Literal["discarding", "accumulating"]
+DurableToolTerminalState = Literal[
+    "completed",
+    "failed",
+    "denied",
+    "cancelled",
+    "policy_stopped",
+    "incomplete",
+    "expired",
+]
+
+VALID_DURABLE_TOOL_TERMINAL_STATES = frozenset(
+    {
+        "completed",
+        "failed",
+        "denied",
+        "cancelled",
+        "policy_stopped",
+        "incomplete",
+        "expired",
+    }
+)
 
 
 class DurableError(ValueError):
@@ -82,6 +103,21 @@ class IdempotencyConflictError(SinkCommitError):
     def __init__(self, idempotency_key: str) -> None:
         self.idempotency_key = idempotency_key
         super().__init__(f"idempotency conflict for key {idempotency_key!r}")
+
+
+class ToolTerminalStoreError(DurableError):
+    pass
+
+
+class ToolTerminalStateConflictError(ToolTerminalStoreError):
+    def __init__(self, response_id: str, tool_call_id: str, revision: int) -> None:
+        self.response_id = response_id
+        self.tool_call_id = tool_call_id
+        self.revision = revision
+        super().__init__(
+            f"tool terminal state conflict for response {response_id!r}, "
+            f"tool call {tool_call_id!r}, revision {revision}"
+        )
 
 
 class CheckpointBarrierError(DurableError):
@@ -368,6 +404,78 @@ class InMemoryDurableSink:
 
 
 @dataclass(frozen=True, slots=True)
+class DurableToolTerminalRecord:
+    run_id: str
+    response_id: str
+    tool_call_id: str
+    revision: int
+    terminal_state: DurableToolTerminalState
+    arguments_digest: str
+    completed_at_unix_ms: int
+    output_digest: str | None = None
+    idempotency_key: str | None = None
+    effect_committed: bool = False
+    durable_result_committed: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.run_id.strip():
+            raise ToolTerminalStoreError("run_id must not be empty")
+        if not self.response_id.strip():
+            raise ToolTerminalStoreError("response_id must not be empty")
+        if not self.tool_call_id.strip():
+            raise ToolTerminalStoreError("tool_call_id must not be empty")
+        if self.revision <= 0:
+            raise ToolTerminalStoreError("revision must be positive")
+        if self.terminal_state not in VALID_DURABLE_TOOL_TERMINAL_STATES:
+            raise ToolTerminalStoreError(f"invalid terminal_state {self.terminal_state}")
+        if not self.arguments_digest.strip():
+            raise ToolTerminalStoreError("arguments_digest must not be empty")
+        if self.completed_at_unix_ms <= 0:
+            raise ToolTerminalStoreError("completed_at_unix_ms must be positive")
+        if self.output_digest is not None and not self.output_digest.strip():
+            raise ToolTerminalStoreError("output_digest must not be empty")
+        if self.idempotency_key is not None and not self.idempotency_key.strip():
+            raise ToolTerminalStoreError("idempotency_key must not be empty")
+
+
+@dataclass(frozen=True, slots=True)
+class DurableToolTerminalCommit:
+    sequence: int
+    record: DurableToolTerminalRecord
+    replayed: bool
+
+
+@dataclass(slots=True)
+class InMemoryDurableToolTerminalStore:
+    next_sequence: int = 1
+    terminal_records: dict[tuple[str, str, int], DurableToolTerminalCommit] = field(default_factory=dict)
+
+    def record_tool_terminal(self, record: DurableToolTerminalRecord) -> DurableToolTerminalCommit:
+        key = (record.response_id, record.tool_call_id, record.revision)
+        existing = self.terminal_records.get(key)
+        if existing is not None:
+            if existing.record != record:
+                raise ToolTerminalStateConflictError(record.response_id, record.tool_call_id, record.revision)
+            return DurableToolTerminalCommit(
+                sequence=existing.sequence,
+                record=existing.record,
+                replayed=True,
+            )
+
+        committed = DurableToolTerminalCommit(
+            sequence=self.next_sequence,
+            record=record,
+            replayed=False,
+        )
+        self.next_sequence += 1
+        self.terminal_records[key] = committed
+        return committed
+
+    def tool_terminal_count(self) -> int:
+        return len(self.terminal_records)
+
+
+@dataclass(frozen=True, slots=True)
 class SchemaRef:
     schema_id: str
     schema_version: int
@@ -513,11 +621,15 @@ __all__ = [
     "CheckpointStoreError",
     "DeliveryGuarantee",
     "DemandExceededError",
+    "DurableToolTerminalCommit",
+    "DurableToolTerminalRecord",
+    "DurableToolTerminalState",
     "DurableError",
     "IdempotencyConflictError",
     "InMemoryCheckpointStore",
     "InMemoryDurableSink",
     "InMemoryDurableSource",
+    "InMemoryDurableToolTerminalStore",
     "InvalidDemandError",
     "InvalidWindowSizeError",
     "LateEventError",
@@ -536,6 +648,8 @@ __all__ = [
     "SourcePausedError",
     "StaleCommitError",
     "StaleCheckpointError",
+    "ToolTerminalStateConflictError",
+    "ToolTerminalStoreError",
     "UnknownSourceCursorError",
     "Watermark",
     "WatermarkKind",
