@@ -205,3 +205,79 @@ fn tool_terminal_record_requires_stable_identity_fields() {
         Err(ToolTerminalStoreError::InvalidRevision),
     );
 }
+
+#[test]
+fn tool_terminal_record_rejects_whitespace_identity_and_digest_fields() {
+    let mut store = InMemoryDurableToolTerminalStore::new();
+
+    assert_eq!(
+        store.record_tool_terminal(DurableToolTerminalRecord::new(
+            " ",
+            "response-1",
+            "call-1",
+            1,
+            DurableToolTerminalState::Completed,
+            "sha256:arguments",
+            1_820_000_000_000,
+        )),
+        Err(ToolTerminalStoreError::MissingRunId),
+    );
+    assert_eq!(
+        store.record_tool_terminal(DurableToolTerminalRecord::new(
+            "run-000001",
+            "\t",
+            "call-1",
+            1,
+            DurableToolTerminalState::Completed,
+            "sha256:arguments",
+            1_820_000_000_000,
+        )),
+        Err(ToolTerminalStoreError::MissingResponseId),
+    );
+    assert_eq!(
+        store.record_tool_terminal(DurableToolTerminalRecord::new(
+            "run-000001",
+            "response-1",
+            "\n",
+            1,
+            DurableToolTerminalState::Completed,
+            "sha256:arguments",
+            1_820_000_000_000,
+        )),
+        Err(ToolTerminalStoreError::MissingToolCallId),
+    );
+    assert_eq!(
+        store.record_tool_terminal(DurableToolTerminalRecord::new(
+            "run-000001",
+            "response-1",
+            "call-1",
+            1,
+            DurableToolTerminalState::Completed,
+            " ",
+            1_820_000_000_000,
+        )),
+        Err(ToolTerminalStoreError::MissingArgumentsDigest),
+    );
+    assert_eq!(
+        store.record_tool_terminal(completed_tool_record().with_output_digest(" ")),
+        Err(ToolTerminalStoreError::MissingOutputDigest),
+    );
+    assert_eq!(
+        store.record_tool_terminal(incomplete_tool_record().with_idempotency_key(" ")),
+        Err(ToolTerminalStoreError::MissingIdempotencyKey),
+    );
+}
+
+#[test]
+fn policy_stop_barrier_rejects_whitespace_identity_fields() {
+    let mut store = InMemoryDurableToolTerminalStore::new();
+
+    assert_eq!(
+        store.record_response_policy_stopped(" ", "decision-1", 7, 1_820_000_000_000),
+        Err(ToolTerminalStoreError::MissingResponseId),
+    );
+    assert_eq!(
+        store.record_response_policy_stopped("response-1", "\t", 7, 1_820_000_000_000),
+        Err(ToolTerminalStoreError::MissingPolicyDecisionId),
+    );
+}

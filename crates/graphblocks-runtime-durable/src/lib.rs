@@ -577,6 +577,8 @@ pub enum ToolTerminalStoreError {
     MissingResponseId,
     MissingToolCallId,
     MissingArgumentsDigest,
+    MissingOutputDigest,
+    MissingIdempotencyKey,
     MissingPolicyDecisionId,
     InvalidRevision,
     InvalidCompletedAt,
@@ -616,20 +618,34 @@ impl InMemoryDurableToolTerminalStore {
         &mut self,
         record: DurableToolTerminalRecord,
     ) -> Result<DurableToolTerminalCommit, ToolTerminalStoreError> {
-        if record.run_id.is_empty() {
+        if record.run_id.trim().is_empty() {
             return Err(ToolTerminalStoreError::MissingRunId);
         }
-        if record.response_id.is_empty() {
+        if record.response_id.trim().is_empty() {
             return Err(ToolTerminalStoreError::MissingResponseId);
         }
-        if record.tool_call_id.is_empty() {
+        if record.tool_call_id.trim().is_empty() {
             return Err(ToolTerminalStoreError::MissingToolCallId);
         }
         if record.revision == 0 {
             return Err(ToolTerminalStoreError::InvalidRevision);
         }
-        if record.arguments_digest.is_empty() {
+        if record.arguments_digest.trim().is_empty() {
             return Err(ToolTerminalStoreError::MissingArgumentsDigest);
+        }
+        if record
+            .output_digest
+            .as_deref()
+            .is_some_and(|output_digest| output_digest.trim().is_empty())
+        {
+            return Err(ToolTerminalStoreError::MissingOutputDigest);
+        }
+        if record
+            .idempotency_key
+            .as_deref()
+            .is_some_and(|idempotency_key| idempotency_key.trim().is_empty())
+        {
+            return Err(ToolTerminalStoreError::MissingIdempotencyKey);
         }
         if record.completed_at_unix_ms == 0 {
             return Err(ToolTerminalStoreError::InvalidCompletedAt);
@@ -686,10 +702,10 @@ impl InMemoryDurableToolTerminalStore {
             last_policy_accepted_sequence,
             occurred_at_unix_ms,
         };
-        if record.response_id.is_empty() {
+        if record.response_id.trim().is_empty() {
             return Err(ToolTerminalStoreError::MissingResponseId);
         }
-        if record.policy_decision_id.is_empty() {
+        if record.policy_decision_id.trim().is_empty() {
             return Err(ToolTerminalStoreError::MissingPolicyDecisionId);
         }
         if record.occurred_at_unix_ms == 0 {
