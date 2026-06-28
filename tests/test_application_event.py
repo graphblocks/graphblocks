@@ -902,6 +902,12 @@ def test_application_event_stream_state_discards_late_output_after_cutoff() -> N
         tool_call_id="call-3",
         payload={"status": "policy_stopped"},
     )
+    incomplete_tool = ApplicationEvent.tool(
+        "ToolCallIncomplete",
+        _metadata(),
+        tool_call_id="call-4",
+        payload={"status": "incomplete"},
+    )
 
     assert state.accept(cutoff_event) == cutoff_event
     assert state.accept(retraction_event) == retraction_event
@@ -916,6 +922,7 @@ def test_application_event_stream_state_discards_late_output_after_cutoff() -> N
     assert state.accept(denied_tool) == denied_tool
     assert state.accept(cancelled_tool) == cancelled_tool
     assert state.accept(policy_stopped_tool) == policy_stopped_tool
+    assert state.accept(incomplete_tool) == incomplete_tool
     assert [event.kind for event in state.accepted_events] == [
         "OutputCutoff",
         "AssistantRetracted",
@@ -924,6 +931,7 @@ def test_application_event_stream_state_discards_late_output_after_cutoff() -> N
         "ToolCallDenied",
         "ToolCallCancelled",
         "ToolCallPolicyStopped",
+        "ToolCallIncomplete",
     ]
 
 

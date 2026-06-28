@@ -831,6 +831,13 @@ fn application_event_stream_state_discards_late_output_after_cutoff() {
         json!({"status": "policy_stopped"}),
     )
     .expect("tool event is valid");
+    let incomplete_tool = ApplicationEvent::tool(
+        ApplicationEventKind::ToolCallIncomplete,
+        metadata(),
+        "call-4",
+        json!({"status": "incomplete"}),
+    )
+    .expect("tool event is valid");
 
     assert_eq!(
         state.accept(cutoff_events[0].clone()),
@@ -862,6 +869,10 @@ fn application_event_stream_state_discards_late_output_after_cutoff() {
         Some(policy_stopped_tool)
     );
     assert_eq!(
+        state.accept(incomplete_tool.clone()),
+        Some(incomplete_tool)
+    );
+    assert_eq!(
         state
             .accepted_events()
             .iter()
@@ -875,6 +886,7 @@ fn application_event_stream_state_discards_late_output_after_cutoff() {
             ApplicationEventKind::ToolCallDenied,
             ApplicationEventKind::ToolCallCancelled,
             ApplicationEventKind::ToolCallPolicyStopped,
+            ApplicationEventKind::ToolCallIncomplete,
         ]
     );
 }
