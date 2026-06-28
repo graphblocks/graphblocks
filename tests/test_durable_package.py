@@ -129,6 +129,68 @@ def test_durable_source_cursor_validates_identity_fields(
         graphblocks_durable.SourceCursor(*args)
 
 
+@pytest.mark.parametrize(
+    ("event_time_unix_ms", "message"),
+    [
+        (False, "event_time_unix_ms must be an integer"),
+        (-1, "event_time_unix_ms must be non-negative"),
+    ],
+)
+def test_durable_source_event_validates_event_time(
+    monkeypatch,
+    event_time_unix_ms: object,
+    message: str,
+) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+
+    with pytest.raises(graphblocks_durable.DurableError, match=message):
+        graphblocks_durable.SourceEvent(
+            graphblocks_durable.SourceCursor("orders", 0, 10),
+            {"orderId": "ord-10"},
+            event_time_unix_ms=event_time_unix_ms,
+        )
+
+
+@pytest.mark.parametrize(
+    ("unix_ms", "message"),
+    [
+        (True, "watermark unix_ms must be an integer"),
+        (-1, "watermark unix_ms must be non-negative"),
+    ],
+)
+def test_durable_watermark_validates_unix_ms(monkeypatch, unix_ms: object, message: str) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+
+    with pytest.raises(graphblocks_durable.DurableError, match=message):
+        graphblocks_durable.Watermark.event_time(unix_ms)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"size_ms": True}, "window size_ms must be an integer"),
+        ({"allowed_lateness_ms": False}, "allowed_lateness_ms must be an integer"),
+        ({"size_ms": 0}, "window size_ms must be positive"),
+        ({"allowed_lateness_ms": -1}, "allowed_lateness_ms must be non-negative"),
+    ],
+)
+def test_durable_window_policy_validates_integer_bounds(
+    monkeypatch,
+    kwargs: dict[str, object],
+    message: str,
+) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    config = {
+        "size_ms": 1_000,
+        "allowed_lateness_ms": 250,
+        "accumulation_mode": "discarding",
+        **kwargs,
+    }
+
+    with pytest.raises(graphblocks_durable.DurableError, match=message):
+        graphblocks_durable.WindowPolicy.tumbling_event_time(**config)
+
+
 def test_durable_event_time_window_closes_after_watermark_and_rejects_late_events(monkeypatch) -> None:
     graphblocks_durable = _import_durable(monkeypatch)
     policy = graphblocks_durable.WindowPolicy.tumbling_event_time(

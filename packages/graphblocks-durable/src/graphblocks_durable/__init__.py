@@ -158,6 +158,12 @@ class StaleCheckpointError(CheckpointStoreError):
         )
 
 
+def _require_integer(field_name: str, value: object) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise DurableError(f"{field_name} must be an integer")
+    return value
+
+
 @dataclass(frozen=True, slots=True, order=True)
 class SourceCursor:
     stream: str
@@ -167,12 +173,10 @@ class SourceCursor:
     def __post_init__(self) -> None:
         if not self.stream.strip():
             raise DurableError("stream must not be empty")
-        if not isinstance(self.partition, int) or isinstance(self.partition, bool):
-            raise DurableError("partition must be an integer")
+        _require_integer("partition", self.partition)
         if self.partition < 0:
             raise DurableError("partition must be non-negative")
-        if not isinstance(self.offset, int) or isinstance(self.offset, bool):
-            raise DurableError("offset must be an integer")
+        _require_integer("offset", self.offset)
         if self.offset < 0:
             raise DurableError("offset must be non-negative")
 
@@ -188,6 +192,7 @@ class Watermark:
     def __post_init__(self) -> None:
         if self.kind not in {"event_time", "processing_time"}:
             raise DurableError(f"unsupported watermark kind {self.kind!r}")
+        _require_integer("watermark unix_ms", self.unix_ms)
         if self.unix_ms < 0:
             raise DurableError("watermark unix_ms must be non-negative")
 
@@ -205,6 +210,13 @@ class SourceEvent:
     cursor: SourceCursor
     payload: object
     event_time_unix_ms: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.event_time_unix_ms is None:
+            return
+        _require_integer("event_time_unix_ms", self.event_time_unix_ms)
+        if self.event_time_unix_ms < 0:
+            raise DurableError("event_time_unix_ms must be non-negative")
 
 
 @dataclass(frozen=True, slots=True)
@@ -293,8 +305,10 @@ class WindowPolicy:
     accumulation_mode: AccumulationMode
 
     def __post_init__(self) -> None:
+        _require_integer("window size_ms", self.size_ms)
         if self.size_ms <= 0:
             raise InvalidWindowSizeError("window size_ms must be positive")
+        _require_integer("allowed_lateness_ms", self.allowed_lateness_ms)
         if self.allowed_lateness_ms < 0:
             raise DurableError("allowed_lateness_ms must be non-negative")
         if self.accumulation_mode not in {"discarding", "accumulating"}:
