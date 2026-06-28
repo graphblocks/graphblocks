@@ -266,6 +266,70 @@ def test_mcp_adapter_converts_error_to_failed_tool_result(monkeypatch) -> None:
     assert result.effect_outcome == "not_committed"
 
 
+def test_mcp_adapter_converts_policy_stopped_terminal_result(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
+    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    admitted, resolved = _admitted_call_for(
+        McpToolImplementation(server="support-mcp", remote_name="search"),
+        tool_name="knowledge.search",
+        binding_id="binding-mcp-search",
+        arguments={"query": "billing"},
+    )
+    error = {"code": "policy.denied", "message": "tool output violated policy"}
+
+    result = graphblocks_mcp.mcp_tool_result_policy_stopped(
+        admitted,
+        resolved,
+        error=error,
+        started_at="2026-06-23T00:00:01Z",
+        completed_at="2026-06-23T00:00:02Z",
+        effect_outcome="committed",
+    )
+    error["message"] = "mutated"
+    prepared = graphblocks_mcp.prepare_mcp_tool_result_for_model(
+        admitted,
+        resolved,
+        _tool_output_registry(),
+        result,
+    )
+
+    assert result.status == "policy_stopped"
+    assert result.error == {"code": "policy.denied", "message": "tool output violated policy"}
+    assert result.effect_outcome == "committed"
+    assert prepared == ()
+
+
+def test_mcp_adapter_converts_cancelled_and_incomplete_terminal_results(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
+    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    admitted, resolved = _admitted_call_for(
+        McpToolImplementation(server="support-mcp", remote_name="search"),
+        tool_name="knowledge.search",
+        binding_id="binding-mcp-search",
+        arguments={"query": "billing"},
+    )
+
+    cancelled = graphblocks_mcp.mcp_tool_result_cancelled(
+        admitted,
+        resolved,
+        started_at="2026-06-23T00:00:01Z",
+        completed_at="2026-06-23T00:00:02Z",
+        effect_outcome="not_committed",
+    )
+    incomplete = graphblocks_mcp.mcp_tool_result_incomplete(
+        admitted,
+        resolved,
+        started_at="2026-06-23T00:00:03Z",
+        completed_at="2026-06-23T00:00:04Z",
+        effect_outcome="unknown",
+    )
+
+    assert cancelled.status == "cancelled"
+    assert cancelled.effect_outcome == "not_committed"
+    assert incomplete.status == "incomplete"
+    assert incomplete.effect_outcome == "unknown"
+
+
 def test_openapi_adapter_builds_tool_definition_and_binding(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
     graphblocks_openapi = importlib.import_module("graphblocks_openapi")
@@ -451,3 +515,64 @@ def test_openapi_adapter_converts_error_to_failed_tool_result(monkeypatch) -> No
     assert result.status == "failed"
     assert result.error == {"code": "openapi.conflict", "message": "duplicate ticket"}
     assert result.effect_outcome == "unknown"
+
+
+def test_openapi_adapter_converts_policy_stopped_terminal_result(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
+    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    admitted, resolved = _admitted_call_for(
+        OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
+        tool_name="ticket.create",
+        binding_id="binding-ticket-create",
+        arguments={"title": "Need help"},
+    )
+
+    result = graphblocks_openapi.openapi_tool_result_policy_stopped(
+        admitted,
+        resolved,
+        error={"code": "policy.denied", "message": "ticket output violated policy"},
+        started_at="2026-06-23T00:00:01Z",
+        completed_at="2026-06-23T00:00:02Z",
+        effect_outcome="committed",
+    )
+    prepared = graphblocks_openapi.prepare_openapi_tool_result_for_model(
+        admitted,
+        resolved,
+        _tool_output_registry(),
+        result,
+    )
+
+    assert result.status == "policy_stopped"
+    assert result.effect_was_committed()
+    assert prepared == ()
+
+
+def test_openapi_adapter_converts_cancelled_and_incomplete_terminal_results(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
+    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    admitted, resolved = _admitted_call_for(
+        OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
+        tool_name="ticket.create",
+        binding_id="binding-ticket-create",
+        arguments={"title": "Need help"},
+    )
+
+    cancelled = graphblocks_openapi.openapi_tool_result_cancelled(
+        admitted,
+        resolved,
+        started_at="2026-06-23T00:00:01Z",
+        completed_at="2026-06-23T00:00:02Z",
+        effect_outcome="not_committed",
+    )
+    incomplete = graphblocks_openapi.openapi_tool_result_incomplete(
+        admitted,
+        resolved,
+        started_at="2026-06-23T00:00:03Z",
+        completed_at="2026-06-23T00:00:04Z",
+        effect_outcome="unknown",
+    )
+
+    assert cancelled.status == "cancelled"
+    assert cancelled.effect_outcome == "not_committed"
+    assert incomplete.status == "incomplete"
+    assert incomplete.effect_outcome == "unknown"

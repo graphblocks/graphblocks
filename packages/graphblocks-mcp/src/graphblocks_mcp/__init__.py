@@ -229,13 +229,78 @@ def mcp_tool_result_from_error(
         raise McpToolAdapterError("MCP tool result has an invalid effect outcome") from error
 
 
+def mcp_tool_result_policy_stopped(
+    admitted: AdmittedToolCall,
+    resolved_tool: ResolvedTool,
+    *,
+    error: Mapping[str, object],
+    started_at: str,
+    completed_at: str,
+    effect_outcome: str = "unknown",
+) -> ToolResult:
+    prepare_mcp_tool_invocation(admitted, resolved_tool)
+    if not isinstance(error, Mapping):
+        raise McpToolAdapterError("MCP tool policy stop error must be an object")
+
+    try:
+        return ToolResult.policy_stopped(
+            admitted.call.tool_call_id,
+            error=dict(error),
+            started_at=started_at,
+            completed_at=completed_at,
+        ).with_effect_outcome(effect_outcome)
+    except ValueError as error:
+        raise McpToolAdapterError("MCP tool result has an invalid effect outcome") from error
+
+
+def mcp_tool_result_cancelled(
+    admitted: AdmittedToolCall,
+    resolved_tool: ResolvedTool,
+    *,
+    started_at: str,
+    completed_at: str,
+    effect_outcome: str = "unknown",
+) -> ToolResult:
+    prepare_mcp_tool_invocation(admitted, resolved_tool)
+    try:
+        return ToolResult.cancelled(
+            admitted.call.tool_call_id,
+            started_at=started_at,
+            completed_at=completed_at,
+        ).with_effect_outcome(effect_outcome)
+    except ValueError as error:
+        raise McpToolAdapterError("MCP tool result has an invalid effect outcome") from error
+
+
+def mcp_tool_result_incomplete(
+    admitted: AdmittedToolCall,
+    resolved_tool: ResolvedTool,
+    *,
+    started_at: str,
+    completed_at: str,
+    effect_outcome: str = "unknown",
+) -> ToolResult:
+    prepare_mcp_tool_invocation(admitted, resolved_tool)
+    try:
+        return ToolResult.incomplete(
+            admitted.call.tool_call_id,
+            started_at=started_at,
+            completed_at=completed_at,
+        ).with_effect_outcome(effect_outcome)
+    except ValueError as error:
+        raise McpToolAdapterError("MCP tool result has an invalid effect outcome") from error
+
+
 __all__ = [
     "McpToolAdapterError",
     "McpToolInvocation",
     "bind_mcp_tool",
     "define_mcp_tool",
+    "mcp_tool_result_cancelled",
     "mcp_tool_result_from_error",
     "mcp_tool_result_from_response",
+    "mcp_tool_result_incomplete",
+    "mcp_tool_result_policy_stopped",
     "prepare_mcp_tool_invocation",
     "prepare_mcp_tool_result_for_model",
 ]

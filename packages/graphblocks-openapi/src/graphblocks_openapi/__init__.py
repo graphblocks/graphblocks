@@ -229,13 +229,78 @@ def openapi_tool_result_from_error(
         raise OpenApiToolAdapterError("OpenAPI tool result has an invalid effect outcome") from error
 
 
+def openapi_tool_result_policy_stopped(
+    admitted: AdmittedToolCall,
+    resolved_tool: ResolvedTool,
+    *,
+    error: Mapping[str, object],
+    started_at: str,
+    completed_at: str,
+    effect_outcome: str = "unknown",
+) -> ToolResult:
+    prepare_openapi_operation_invocation(admitted, resolved_tool)
+    if not isinstance(error, Mapping):
+        raise OpenApiToolAdapterError("OpenAPI operation policy stop error must be an object")
+
+    try:
+        return ToolResult.policy_stopped(
+            admitted.call.tool_call_id,
+            error=dict(error),
+            started_at=started_at,
+            completed_at=completed_at,
+        ).with_effect_outcome(effect_outcome)
+    except ValueError as error:
+        raise OpenApiToolAdapterError("OpenAPI tool result has an invalid effect outcome") from error
+
+
+def openapi_tool_result_cancelled(
+    admitted: AdmittedToolCall,
+    resolved_tool: ResolvedTool,
+    *,
+    started_at: str,
+    completed_at: str,
+    effect_outcome: str = "unknown",
+) -> ToolResult:
+    prepare_openapi_operation_invocation(admitted, resolved_tool)
+    try:
+        return ToolResult.cancelled(
+            admitted.call.tool_call_id,
+            started_at=started_at,
+            completed_at=completed_at,
+        ).with_effect_outcome(effect_outcome)
+    except ValueError as error:
+        raise OpenApiToolAdapterError("OpenAPI tool result has an invalid effect outcome") from error
+
+
+def openapi_tool_result_incomplete(
+    admitted: AdmittedToolCall,
+    resolved_tool: ResolvedTool,
+    *,
+    started_at: str,
+    completed_at: str,
+    effect_outcome: str = "unknown",
+) -> ToolResult:
+    prepare_openapi_operation_invocation(admitted, resolved_tool)
+    try:
+        return ToolResult.incomplete(
+            admitted.call.tool_call_id,
+            started_at=started_at,
+            completed_at=completed_at,
+        ).with_effect_outcome(effect_outcome)
+    except ValueError as error:
+        raise OpenApiToolAdapterError("OpenAPI tool result has an invalid effect outcome") from error
+
+
 __all__ = [
     "OpenApiOperationInvocation",
     "OpenApiToolAdapterError",
     "bind_openapi_operation",
     "define_openapi_tool",
+    "openapi_tool_result_cancelled",
     "openapi_tool_result_from_error",
     "openapi_tool_result_from_response",
+    "openapi_tool_result_incomplete",
+    "openapi_tool_result_policy_stopped",
     "prepare_openapi_operation_invocation",
     "prepare_openapi_tool_result_for_model",
 ]
