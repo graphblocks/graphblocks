@@ -141,6 +141,7 @@ pub struct InMemoryDurableSource {
     guarantee: DeliveryGuarantee,
     events: Vec<SourceEvent>,
     known_streams: BTreeSet<String>,
+    known_partitions: BTreeSet<(String, u32)>,
     committed_cursor: Option<SourceCursor>,
     paused: bool,
 }
@@ -156,10 +157,15 @@ impl InMemoryDurableSource {
             .iter()
             .map(|event| event.cursor.stream.clone())
             .collect::<BTreeSet<_>>();
+        let known_partitions = events
+            .iter()
+            .map(|event| (event.cursor.stream.clone(), event.cursor.partition))
+            .collect::<BTreeSet<_>>();
         Self {
             guarantee,
             events,
             known_streams,
+            known_partitions,
             committed_cursor: None,
             paused: false,
         }
@@ -216,6 +222,15 @@ impl InMemoryDurableSource {
 
     fn validate_cursor(&self, cursor: &SourceCursor) -> Result<(), DurableError> {
         if !self.known_streams.is_empty() && !self.known_streams.contains(&cursor.stream) {
+            return Err(DurableError::UnknownSourceCursor {
+                cursor: cursor.clone(),
+            });
+        }
+        if !self.known_partitions.is_empty()
+            && !self
+                .known_partitions
+                .contains(&(cursor.stream.clone(), cursor.partition))
+        {
             return Err(DurableError::UnknownSourceCursor {
                 cursor: cursor.clone(),
             });
