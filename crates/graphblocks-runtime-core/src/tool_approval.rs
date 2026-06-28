@@ -25,6 +25,11 @@ pub enum ToolApprovalError {
         requested_at_unix_ms: u64,
         expires_at_unix_ms: u64,
     },
+    InvalidDecisionTime {
+        requested_at_unix_ms: u64,
+        decided_at_unix_ms: u64,
+        expires_at_unix_ms: u64,
+    },
     InvalidRevision {
         revision: u32,
     },
@@ -234,6 +239,16 @@ impl ToolApprovalRecord {
                     field: "decided_at_unix_ms",
                 });
             }
+            if let Some(decided_at_unix_ms) = self.decided_at_unix_ms
+                && (decided_at_unix_ms < self.request.requested_at_unix_ms
+                    || decided_at_unix_ms > self.request.expires_at_unix_ms)
+            {
+                return Err(ToolApprovalError::InvalidDecisionTime {
+                    requested_at_unix_ms: self.request.requested_at_unix_ms,
+                    decided_at_unix_ms,
+                    expires_at_unix_ms: self.request.expires_at_unix_ms,
+                });
+            }
         }
         if self.status == ToolApprovalStatus::Denied {
             match self.reason.as_deref() {
@@ -263,6 +278,9 @@ impl ToolApprovalRecord {
             && self.validate().is_ok()
             && self.approval_id == self.request.approval_id
             && self.invalidated_at_unix_ms.is_none()
+            && self
+                .decided_at_unix_ms
+                .is_some_and(|decided_at_unix_ms| now_unix_ms >= decided_at_unix_ms)
             && now_unix_ms <= self.request.expires_at_unix_ms
             && self.request.tool_call_id == call.tool_call_id
             && self.request.tool_name == call.name

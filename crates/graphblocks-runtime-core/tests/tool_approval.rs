@@ -43,6 +43,7 @@ fn approved_record_is_valid_only_for_same_tool_call_and_arguments() {
             .expect("approval request is valid");
 
     let record = ToolApprovalRecord::approve(request.clone(), "admin-1", 1_100);
+    let future_record = ToolApprovalRecord::approve(request.clone(), "admin-1", 1_600);
     let mismatched_record = ToolApprovalRecord {
         approval_id: "approval-other".to_owned(),
         request: request.clone(),
@@ -65,6 +66,8 @@ fn approved_record_is_valid_only_for_same_tool_call_and_arguments() {
     assert_eq!(record.status, ToolApprovalStatus::Approved);
     assert_eq!(record.request.revision, 1);
     assert!(record.is_valid_for(&resolved, &call, "user-1", 1_500));
+    assert!(!future_record.is_valid_for(&resolved, &call, "user-1", 1_500));
+    assert!(future_record.is_valid_for(&resolved, &call, "user-1", 1_600));
     assert!(!mismatched_record.is_valid_for(&resolved, &call, "user-1", 1_500));
     assert!(!invalidated_approved_record.is_valid_for(&resolved, &call, "user-1", 1_500));
 
@@ -151,6 +154,33 @@ fn terminal_approval_records_require_audit_metadata() {
         invalidated_missing_timestamp.validate(),
         Err(ToolApprovalError::MissingField {
             field: "invalidated_at_unix_ms",
+        }),
+    );
+}
+
+#[test]
+fn terminal_approval_records_reject_decisions_outside_request_window() {
+    let resolved = resolved_search_tool().expect("resolved tool is valid");
+    let mut call = search_call("call-1", "runtime").expect("tool call is valid");
+    call.resolved_tool_id = resolved.resolved_tool_id.clone();
+    let request =
+        ToolApprovalRequest::for_call("approval-1", &resolved, &call, "user-1", 1_000, 2_000)
+            .expect("approval request is valid");
+
+    assert_eq!(
+        ToolApprovalRecord::approve(request.clone(), "admin-1", 999).validate(),
+        Err(ToolApprovalError::InvalidDecisionTime {
+            requested_at_unix_ms: 1_000,
+            decided_at_unix_ms: 999,
+            expires_at_unix_ms: 2_000,
+        }),
+    );
+    assert_eq!(
+        ToolApprovalRecord::approve(request, "admin-1", 2_001).validate(),
+        Err(ToolApprovalError::InvalidDecisionTime {
+            requested_at_unix_ms: 1_000,
+            decided_at_unix_ms: 2_001,
+            expires_at_unix_ms: 2_000,
         }),
     );
 }

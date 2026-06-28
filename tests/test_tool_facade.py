@@ -743,6 +743,10 @@ def test_tool_lifecycle_records_reject_unknown_literals() -> None:
         ToolApprovalRecord.approve(request, approver_id=" ", decided_at=1_100)
     with pytest.raises(ValueError, match="approval decided_at must be non-negative"):
         ToolApprovalRecord.approve(request, approver_id="admin-1", decided_at=-1)
+    with pytest.raises(ValueError, match="approval decided_at must not be before requested_at"):
+        ToolApprovalRecord.approve(request, approver_id="admin-1", decided_at=999)
+    with pytest.raises(ValueError, match="approval decided_at must not be after expires_at"):
+        ToolApprovalRecord.approve(request, approver_id="admin-1", decided_at=2_001)
     with pytest.raises(ValueError, match="approved approval record requires decided_at"):
         ToolApprovalRecord(
             approval_id=request.approval_id,
@@ -1025,6 +1029,9 @@ def test_tool_approval_record_is_valid_only_for_same_call_arguments_and_principa
     assert record.status == "approved"
     assert record.request.revision == 1
     assert record.is_valid_for(resolved, call, principal_id="user-1", now=1_500) is True
+    future_record = ToolApprovalRecord.approve(request, approver_id="admin-1", decided_at=1_600)
+    assert future_record.is_valid_for(resolved, call, principal_id="user-1", now=1_500) is False
+    assert future_record.is_valid_for(resolved, call, principal_id="user-1", now=1_600) is True
     assert record.is_valid_for(resolved, call, principal_id="user-2", now=1_500) is False
     assert record.is_valid_for(resolved, call, principal_id="user-1", now=2_001) is False
 

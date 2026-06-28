@@ -730,6 +730,11 @@ class ToolApprovalRecord:
             raise ValueError("invalidated approval record requires invalidated_at")
         if self.decided_at is not None:
             _validate_non_negative_integer("approval", "decided_at", self.decided_at)
+            if self.status in {"approved", "denied"}:
+                if self.decided_at < self.request.requested_at:
+                    raise ValueError("approval decided_at must not be before requested_at")
+                if self.decided_at > self.request.expires_at:
+                    raise ValueError("approval decided_at must not be after expires_at")
         if self.invalidated_at is not None:
             _validate_non_negative_integer("approval", "invalidated_at", self.invalidated_at)
 
@@ -777,6 +782,8 @@ class ToolApprovalRecord:
             self.status == "approved"
             and self.approval_id == self.request.approval_id
             and self.invalidated_at is None
+            and self.decided_at is not None
+            and now >= self.decided_at
             and now <= self.request.expires_at
             and self.request.tool_call_id == call.tool_call_id
             and self.request.tool_name == call.name
