@@ -53,6 +53,15 @@ def _validate_non_empty_string(
     return value
 
 
+def _validate_non_negative_integer(field_name: str, value: object, *, owner: str | None = None) -> int:
+    prefix = f"{owner} {field_name}" if owner is not None else field_name
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ValueError(f"{prefix} must be an integer")
+    if value < 0:
+        raise ValueError(f"{prefix} must be non-negative")
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class DeclarativeOutputPolicyRule:
     rule_id: str
@@ -222,10 +231,9 @@ class DeclarativeOutputPolicyEvaluator:
 
 class GenerationChunk:
     def __init__(self, stream_id: str, response_id: str, sequence: int, text: str) -> None:
-        if sequence < 0:
-            raise ValueError("generation chunk sequence must be non-negative")
         _validate_non_empty_string("generation chunk", "stream_id", stream_id)
         _validate_non_empty_string("generation chunk", "response_id", response_id)
+        sequence = _validate_non_negative_integer("sequence", sequence, owner="generation chunk")
         if not isinstance(text, str):
             raise ValueError("generation chunk text must be a string")
         self.stream_id = stream_id
@@ -293,8 +301,8 @@ class OutputPolicyDecision:
             self.input_digest,
             empty_message="output policy decisions require an input digest",
         )
-        if self.accepted_through_sequence is not None and self.accepted_through_sequence < 0:
-            raise ValueError("accepted_through_sequence must be non-negative")
+        if self.accepted_through_sequence is not None:
+            _validate_non_negative_integer("accepted_through_sequence", self.accepted_through_sequence)
         try:
             if isinstance(self.replacement_parts, str):
                 raise TypeError
@@ -316,7 +324,12 @@ class OutputPolicyDecision:
             start = redaction_copy.get("start")
             end = redaction_copy.get("end")
             if start is not None or end is not None:
-                if not isinstance(start, int) or not isinstance(end, int):
+                if (
+                    not isinstance(start, int)
+                    or isinstance(start, bool)
+                    or not isinstance(end, int)
+                    or isinstance(end, bool)
+                ):
                     raise ValueError("redaction range must use integer start and end")
                 if start < 0 or end < 0:
                     raise ValueError("redaction range must be non-negative")
@@ -515,7 +528,11 @@ class OutputDeliveryPolicy:
             ("holdback_max_bytes", self.holdback_max_bytes),
             ("holdback_max_duration_ms", self.holdback_max_duration_ms),
         ):
-            if value is not None and value <= 0:
+            if value is None:
+                continue
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise OutputDeliveryPolicyError(f"{name} must be an integer")
+            if value <= 0:
                 raise OutputDeliveryPolicyError(f"{name} must be positive")
 
         if self.mode == "bounded_holdback" and (
@@ -546,26 +563,21 @@ class OutputCutoff:
     occurred_at: str = ""
 
     def __post_init__(self) -> None:
-        if not self.stream_id.strip():
-            raise ValueError("output cutoff stream_id must not be empty")
-        if not self.response_id.strip():
-            raise ValueError("output cutoff response_id must not be empty")
-        if self.turn_id is not None and not self.turn_id.strip():
-            raise ValueError("output cutoff turn_id must not be empty")
-        if self.policy_decision_id is not None and not self.policy_decision_id.strip():
-            raise ValueError("output cutoff policy_decision_id must not be empty")
+        _validate_non_empty_string("output cutoff", "stream_id", self.stream_id)
+        _validate_non_empty_string("output cutoff", "response_id", self.response_id)
+        if self.turn_id is not None:
+            _validate_non_empty_string("output cutoff", "turn_id", self.turn_id)
+        if self.policy_decision_id is not None:
+            _validate_non_empty_string("output cutoff", "policy_decision_id", self.policy_decision_id)
         if self.terminal_reason not in VALID_TERMINAL_REASONS:
             raise ValueError(f"invalid terminal reason {self.terminal_reason}")
         if self.draft_disposition not in VALID_DRAFT_DISPOSITIONS:
             raise ValueError(f"invalid draft disposition {self.draft_disposition}")
         if self.durable_result not in VALID_OUTPUT_DURABLE_RESULTS:
             raise ValueError(f"invalid output durable result {self.durable_result}")
-        if self.last_generated_sequence < 0:
-            raise ValueError("last_generated_sequence must be non-negative")
-        if self.last_policy_accepted_sequence < 0:
-            raise ValueError("last_policy_accepted_sequence must be non-negative")
-        if self.last_client_delivered_sequence < 0:
-            raise ValueError("last_client_delivered_sequence must be non-negative")
+        _validate_non_negative_integer("last_generated_sequence", self.last_generated_sequence)
+        _validate_non_negative_integer("last_policy_accepted_sequence", self.last_policy_accepted_sequence)
+        _validate_non_negative_integer("last_client_delivered_sequence", self.last_client_delivered_sequence)
         if self.last_policy_accepted_sequence > self.last_generated_sequence:
             raise ValueError("last_policy_accepted_sequence cannot exceed last_generated_sequence")
         if self.last_client_delivered_sequence > self.last_generated_sequence:
@@ -610,15 +622,30 @@ class OutputDeliveryGate:
     cutoff: OutputCutoff | None = None
 
     def __post_init__(self) -> None:
-        if not self.stream_id.strip():
-            raise ValueError("output gate stream_id must not be empty")
-        if not self.response_id.strip():
-            raise ValueError("output gate response_id must not be empty")
-        if self.turn_id is not None and not self.turn_id.strip():
-            raise ValueError("output gate turn_id must not be empty")
+        _validate_non_empty_string("output gate", "stream_id", self.stream_id)
+        _validate_non_empty_string("output gate", "response_id", self.response_id)
+        if self.turn_id is not None:
+            _validate_non_empty_string("output gate", "turn_id", self.turn_id)
+        _validate_non_negative_integer("last_generated_sequence", self.last_generated_sequence, owner="output gate")
+        _validate_non_negative_integer(
+            "last_policy_accepted_sequence",
+            self.last_policy_accepted_sequence,
+            owner="output gate",
+        )
+        _validate_non_negative_integer(
+            "last_client_delivered_sequence",
+            self.last_client_delivered_sequence,
+            owner="output gate",
+        )
+        if self.last_policy_accepted_sequence > self.last_generated_sequence:
+            raise ValueError("last_policy_accepted_sequence cannot exceed last_generated_sequence")
+        if self.last_client_delivered_sequence > self.last_generated_sequence:
+            raise ValueError("last_client_delivered_sequence cannot exceed last_generated_sequence")
         self.delivery_policy.validate()
 
     def record_chunk(self, chunk: GenerationChunk) -> list[GenerationChunk]:
+        if not isinstance(chunk, GenerationChunk):
+            raise TypeError("OutputDeliveryGate.record_chunk requires a GenerationChunk")
         if self.cutoff is not None:
             raise OutputGateError("output gate is policy stopped")
         if chunk.stream_id != self.stream_id:

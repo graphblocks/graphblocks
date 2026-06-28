@@ -316,6 +316,65 @@ def test_output_policy_contract_rejects_non_string_identifiers() -> None:
         )
 
 
+def test_output_policy_contract_rejects_non_integer_sequences_and_bounds() -> None:
+    with pytest.raises(ValueError, match="generation chunk sequence must be an integer"):
+        GenerationChunk.text("stream-1", "response-1", True, "late")  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="generation chunk sequence must be an integer"):
+        GenerationChunk.text("stream-1", "response-1", "1", "late")  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="accepted_through_sequence must be an integer"):
+        OutputPolicyDecision.allow(
+            "decision-1",
+            accepted_through_sequence=True,  # type: ignore[arg-type]
+            input_digest="sha256:input",
+        )
+
+    with pytest.raises(ValueError, match="redaction range must use integer start and end"):
+        OutputPolicyDecision.redact(
+            "decision-redact",
+            accepted_through_sequence=1,
+            redactions=({"path": "/chunks/1/text", "start": False, "end": 6, "replacement": "[redacted]"},),
+            input_digest="sha256:redact",
+        )
+
+    with pytest.raises(ValueError, match="holdback_max_tokens must be an integer"):
+        OutputDeliveryPolicy.bounded_holdback(
+            on_violation="abort_response",
+            holdback_max_tokens=True,  # type: ignore[arg-type]
+        ).validate()
+
+    with pytest.raises(ValueError, match="last_generated_sequence must be an integer"):
+        OutputCutoff(
+            stream_id="stream-1",
+            response_id="response-1",
+            last_generated_sequence=True,  # type: ignore[arg-type]
+        )
+
+    with pytest.raises(ValueError, match="output gate last_generated_sequence must be an integer"):
+        OutputDeliveryGate(
+            "stream-1",
+            "response-1",
+            last_generated_sequence=True,  # type: ignore[arg-type]
+        )
+
+    with pytest.raises(ValueError, match="last_policy_accepted_sequence cannot exceed last_generated_sequence"):
+        OutputDeliveryGate(
+            "stream-1",
+            "response-1",
+            last_generated_sequence=1,
+            last_policy_accepted_sequence=2,
+        )
+
+    with pytest.raises(ValueError, match="last_client_delivered_sequence cannot exceed last_generated_sequence"):
+        OutputDeliveryGate(
+            "stream-1",
+            "response-1",
+            last_generated_sequence=1,
+            last_client_delivered_sequence=2,
+        )
+
+
 def test_bounded_holdback_requires_size_or_time_bound() -> None:
     policy = OutputDeliveryPolicy.bounded_holdback(on_violation="abort_response")
 
