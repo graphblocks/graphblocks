@@ -44,6 +44,9 @@ def test_tui_package_projects_application_protocol_events_to_workspace_screen(mo
     graphblocks_tui = importlib.import_module("graphblocks_tui")
 
     def event(kind: str, sequence: int, payload: dict[str, object] | None = None):
+        event_payload = dict(payload or {})
+        if kind == "ToolCallApprovalRequested":
+            event_payload["tool_call_id"] = "tool-call-1"
         return graphblocks_client.ApplicationProtocolEvent.new(
             kind,
             graphblocks_client.ApplicationProtocolEventMetadata(
@@ -115,6 +118,49 @@ def test_tui_package_projects_application_protocol_events_to_workspace_screen(mo
     )
     with pytest.raises(graphblocks_tui.TuiContractError, match="event run_id mismatch"):
         state.apply(mismatched)
+
+
+def test_tui_package_projects_standard_tool_approval_and_incomplete_events(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-tui" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_tui = importlib.import_module("graphblocks_tui")
+
+    def event(kind: str, sequence: int, payload: dict[str, object] | None = None):
+        event_payload = dict(payload or {})
+        if kind == "ToolCallApprovalRequested":
+            event_payload["tool_call_id"] = "tool-call-1"
+        return graphblocks_client.ApplicationProtocolEvent.new(
+            kind,
+            graphblocks_client.ApplicationProtocolEventMetadata(
+                event_id=f"event-{sequence}",
+                protocol_version="graphblocks.app.v1",
+                run_id="run-1",
+                sequence=sequence,
+                occurred_at_unix_ms=sequence * 1000,
+            ),
+            payload=event_payload,
+        )
+
+    state = graphblocks_tui.TuiProtocolSession("run-1").apply_all(
+        (
+            event("RunStarted", 1, {"status": "running"}),
+            event("AssistantDraftDelta", 2, {"delta": "Partial"}),
+            event("ToolCallApprovalRequested", 3, {"approval_id": "approval-1"}),
+            event("AssistantIncomplete", 4, {"reason": "policy_denied"}),
+        )
+    )
+    screen = graphblocks_tui.workspace_assistant_screen(state)
+
+    assert state.status == "running"
+    assert state.assistant_state == "incomplete"
+    assert state.assistant_text == "Partial"
+    assert state.pending_actions == ("approval-1",)
+    assert state.counters["ToolCallApprovalRequested"] == 1
+    assert screen.screen_contract()["sections"][1]["rows"] == {
+        "state": "incomplete",
+        "text": "Partial",
+    }
 
 
 def test_devtools_package_renders_dot_and_migration_plan(monkeypatch) -> None:

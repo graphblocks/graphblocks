@@ -176,13 +176,17 @@ class TuiProtocolSession:
             text = payload.get("text")
             if isinstance(text, str):
                 assistant_text = text
+        elif event.kind == "AssistantIncomplete":
+            assistant_state = "incomplete"
         elif event.kind == "AssistantRetracted":
             assistant_state = "retracted"
 
-        if event.kind in {"ApprovalRequested", "PolicyDecisionRequired"}:
+        if event.kind in {"ApprovalRequested", "ToolCallApprovalRequested", "PolicyDecisionRequired"}:
             action_id = (
                 payload.get("approval_id")
                 or payload.get("approvalId")
+                or payload.get("tool_call_id")
+                or payload.get("toolCallId")
                 or payload.get("decision_id")
                 or payload.get("decisionId")
                 or payload.get("request_id")
