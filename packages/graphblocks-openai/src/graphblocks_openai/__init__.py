@@ -79,19 +79,25 @@ class OpenAIChatResponse:
 class OpenAIChatDelta:
     response_id: str
     sequence: int
-    choice_index: int
+    choice_index: int | None
     content_delta: str | None = None
     tool_call_deltas: list[dict[str, object]] = field(default_factory=list)
     finish_reason: str | None = None
+    usage_delta: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.response_id.strip():
             raise OpenAICompatibleAdapterError("response_id must not be empty")
         if self.sequence < 0:
             raise OpenAICompatibleAdapterError("sequence must be non-negative")
-        if self.choice_index < 0:
+        if self.choice_index is not None and (
+            isinstance(self.choice_index, bool) or not isinstance(self.choice_index, int)
+        ):
+            raise OpenAICompatibleAdapterError("choice_index must be an integer")
+        if self.choice_index is not None and self.choice_index < 0:
             raise OpenAICompatibleAdapterError("choice_index must be non-negative")
         object.__setattr__(self, "tool_call_deltas", [deepcopy(delta) for delta in self.tool_call_deltas])
+        object.__setattr__(self, "usage_delta", deepcopy(dict(self.usage_delta)))
 
     def delta_contract(self) -> dict[str, object]:
         return {
@@ -101,6 +107,7 @@ class OpenAIChatDelta:
             "content_delta": self.content_delta,
             "tool_call_deltas": [deepcopy(delta) for delta in self.tool_call_deltas],
             "finish_reason": self.finish_reason,
+            "usage_delta": dict(sorted(deepcopy(dict(self.usage_delta)).items())),
         }
 
 
@@ -389,9 +396,23 @@ def openai_chat_delta_from_chunk(data: Mapping[str, object], *, sequence: int) -
         raise OpenAICompatibleAdapterError("provider chunk must be a mapping")
     response_id = data.get("id")
     choices = data.get("choices")
+    usage = data.get("usage", {})
+    if usage is None:
+        usage = {}
+    if not isinstance(usage, Mapping):
+        raise OpenAICompatibleAdapterError("provider chunk usage must be a mapping")
     if not isinstance(response_id, str) or not response_id.strip():
         raise OpenAICompatibleAdapterError("provider chunk id must not be empty")
-    if not isinstance(choices, Sequence) or isinstance(choices, (str, bytes)) or not choices:
+    if not isinstance(choices, Sequence) or isinstance(choices, (str, bytes)):
+        raise OpenAICompatibleAdapterError("provider chunk choices must be a sequence")
+    if not choices:
+        if usage:
+            return OpenAIChatDelta(
+                response_id=response_id,
+                sequence=sequence,
+                choice_index=None,
+                usage_delta=usage,
+            )
         raise OpenAICompatibleAdapterError("provider chunk choices must be a non-empty sequence")
     choice = choices[0]
     if not isinstance(choice, Mapping):
@@ -441,6 +462,7 @@ def openai_chat_delta_from_chunk(data: Mapping[str, object], *, sequence: int) -
         content_delta=content_delta,
         tool_call_deltas=tool_call_deltas,
         finish_reason=finish_reason,
+        usage_delta=usage,
     )
 
 

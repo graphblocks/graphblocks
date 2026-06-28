@@ -224,6 +224,31 @@ def test_openai_stream_chunk_normalizes_content_delta(monkeypatch) -> None:
         "content_delta": "Ref",
         "tool_call_deltas": [],
         "finish_reason": None,
+        "usage_delta": {},
+    }
+
+
+def test_openai_stream_chunk_normalizes_usage_only_final_chunk(monkeypatch) -> None:
+    _add_openai_package_paths(monkeypatch)
+    graphblocks_openai = importlib.import_module("graphblocks_openai")
+
+    delta = graphblocks_openai.openai_chat_delta_from_chunk(
+        {
+            "id": "chatcmpl-usage",
+            "choices": [],
+            "usage": {"prompt_tokens": 20, "completion_tokens": 5, "total_tokens": 25},
+        },
+        sequence=99,
+    )
+
+    assert delta.delta_contract() == {
+        "response_id": "chatcmpl-usage",
+        "sequence": 99,
+        "choice_index": None,
+        "content_delta": None,
+        "tool_call_deltas": [],
+        "finish_reason": None,
+        "usage_delta": {"completion_tokens": 5, "prompt_tokens": 20, "total_tokens": 25},
     }
 
 
