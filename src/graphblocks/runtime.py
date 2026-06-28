@@ -73,6 +73,12 @@ def parse_duration_seconds(value: Any) -> float | None:
     return float(text)
 
 
+def _configured_retry_attempts(value: Any) -> int:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return max(value, 1)
+    return 1
+
+
 def _freeze_json_like(value: Any) -> Any:
     if isinstance(value, dict):
         return MappingProxyType({key: _freeze_json_like(nested) for key, nested in value.items()})
@@ -367,12 +373,12 @@ class InProcessRuntime:
                 max_attempts = 1
                 idempotency_key = None
                 if isinstance(retry, dict):
-                    max_attempts = int(retry.get("maxAttempts", 1))
+                    max_attempts = _configured_retry_attempts(
+                        retry.get("maxAttempts", retry.get("max_attempts", 1))
+                    )
                     idempotency_key = retry.get("idempotencyKey") or retry.get("idempotency_key")
-                elif isinstance(retry, int):
-                    max_attempts = retry
-                if max_attempts < 1:
-                    max_attempts = 1
+                else:
+                    max_attempts = _configured_retry_attempts(retry)
                 result: dict[str, Any] | None = None
                 for attempt in range(1, max_attempts + 1):
                     journal.append("node_started", {"node": node_name, "block": block_id, "attempt": attempt})

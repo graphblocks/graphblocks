@@ -221,6 +221,74 @@ def test_runtime_fails_when_block_is_not_registered() -> None:
     assert result.journal.terminal_kind == "run_failed"
 
 
+def test_runtime_does_not_coerce_non_numeric_retry_attempts() -> None:
+    attempts = {"count": 0}
+    registry = RuntimeRegistry()
+
+    def flaky_block(inputs, config, context):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise RuntimeError("transient")
+        return {"value": "ok"}
+
+    registry.register("test.flaky@1", flaky_block)
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "non-numeric-retry-runtime"},
+        "spec": {
+            "nodes": {
+                "flaky": {
+                    "block": "test.flaky@1",
+                    "flow": {"retry": {"maxAttempts": "2"}},
+                    "outputs": {"value": "$output.value"},
+                }
+            }
+        },
+    }
+
+    result = InProcessRuntime(registry).run(graph, {})
+
+    assert attempts["count"] == 1
+    assert result.status == "failed"
+    assert result.outputs == {}
+    assert result.journal.terminal_kind == "run_failed"
+    assert "node_retry" not in [record.kind for record in result.journal.records]
+
+
+def test_runtime_ignores_malformed_retry_attempts_without_crashing() -> None:
+    registry = RuntimeRegistry()
+
+    def failing_block(inputs, config, context):
+        raise RuntimeError("failed once")
+
+    registry.register("test.fail@1", failing_block)
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "malformed-retry-runtime"},
+        "spec": {
+            "nodes": {
+                "fail": {
+                    "block": "test.fail@1",
+                    "flow": {"retry": {"maxAttempts": "two"}},
+                }
+            }
+        },
+    }
+
+    result = InProcessRuntime(registry).run(graph, {})
+
+    assert result.status == "failed"
+    assert result.journal.terminal_kind == "run_failed"
+    assert [record.kind for record in result.journal.records] == [
+        "run_started",
+        "node_started",
+        "node_failed",
+        "run_failed",
+    ]
+
+
 def test_runtime_updates_supplied_run_store_status() -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
