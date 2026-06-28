@@ -768,9 +768,8 @@ class OutputDeliveryGate:
                         text,
                     )
             if decision.disposition == "replace" and decision.accepted_through_sequence is not None:
-                for sequence in list(self.pending):
-                    if self.last_client_delivered_sequence < sequence <= decision.accepted_through_sequence:
-                        self.pending.pop(sequence, None)
+                if self.last_client_delivered_sequence < decision.accepted_through_sequence:
+                    self.pending.pop(decision.accepted_through_sequence, None)
             replacement_end_sequence = None
             replacement_base_sequence = (
                 decision.accepted_through_sequence
