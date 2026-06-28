@@ -129,6 +129,33 @@ def test_durable_source_cursor_validates_identity_fields(
         graphblocks_durable.SourceCursor(*args)
 
 
+def test_durable_source_rejects_invalid_delivery_guarantee(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+
+    with pytest.raises(graphblocks_durable.DurableError, match="unsupported delivery guarantee"):
+        graphblocks_durable.InMemoryDurableSource("exactly_once", [])
+
+
+@pytest.mark.parametrize(
+    ("demand", "message"),
+    [
+        (True, "demand must be an integer"),
+        (0, "demand must be positive"),
+    ],
+)
+def test_durable_source_batch_validates_guarantee_and_demand(
+    monkeypatch,
+    demand: object,
+    message: str,
+) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+
+    with pytest.raises(graphblocks_durable.DurableError, match="unsupported delivery guarantee"):
+        graphblocks_durable.SourceBatch.new("exactly_once", [], None, demand=1)
+    with pytest.raises(graphblocks_durable.DurableError, match=message):
+        graphblocks_durable.SourceBatch.new("at_least_once", [], None, demand=demand)
+
+
 @pytest.mark.parametrize(
     ("event_time_unix_ms", "message"),
     [

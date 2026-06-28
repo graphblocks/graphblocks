@@ -19,6 +19,7 @@ DurableToolTerminalState = Literal[
     "expired",
 ]
 
+VALID_DELIVERY_GUARANTEES = frozenset({"best_effort", "at_most_once", "at_least_once"})
 VALID_DURABLE_TOOL_TERMINAL_STATES = frozenset(
     {
         "completed",
@@ -164,6 +165,11 @@ def _require_integer(field_name: str, value: object) -> int:
     return value
 
 
+def _require_delivery_guarantee(value: object) -> None:
+    if value not in VALID_DELIVERY_GUARANTEES:
+        raise DurableError(f"unsupported delivery guarantee {value!r}")
+
+
 @dataclass(frozen=True, slots=True, order=True)
 class SourceCursor:
     stream: str
@@ -225,6 +231,9 @@ class SourceBatch:
     events: tuple[SourceEvent, ...]
     watermark: Watermark | None = None
 
+    def __post_init__(self) -> None:
+        _require_delivery_guarantee(self.guarantee)
+
     @classmethod
     def new(
         cls,
@@ -233,6 +242,7 @@ class SourceBatch:
         watermark: Watermark | None,
         demand: int,
     ) -> SourceBatch:
+        demand = _require_integer("demand", demand)
         if demand <= 0:
             raise InvalidDemandError("demand must be positive")
         events = tuple(events)
@@ -256,6 +266,7 @@ class InMemoryDurableSource:
     _known_partitions: frozenset[tuple[str, int]] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        _require_delivery_guarantee(self.guarantee)
         self.events = sorted(self.events, key=lambda event: event.cursor)
         self._known_streams = frozenset(event.cursor.stream for event in self.events)
         self._known_partitions = frozenset(
