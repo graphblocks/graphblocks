@@ -64,13 +64,23 @@ class JournalStateError(RuntimeError):
 def parse_duration_seconds(value: Any) -> float | None:
     if value is None:
         return None
+    if isinstance(value, bool):
+        return None
     if isinstance(value, (int, float)):
         return float(value)
-    text = str(value).strip()
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
     for suffix, multiplier in (("ms", 0.001), ("s", 1.0), ("m", 60.0), ("h", 3600.0)):
         if text.endswith(suffix):
-            return float(text[: -len(suffix)]) * multiplier
-    return float(text)
+            try:
+                return float(text[: -len(suffix)]) * multiplier
+            except ValueError:
+                return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
 
 
 def _configured_retry_attempts(value: Any) -> int:
