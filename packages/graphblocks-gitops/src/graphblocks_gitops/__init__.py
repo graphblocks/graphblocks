@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 import hashlib
 import json
 
-from graphblocks_deployment import GraphRelease
+from graphblocks_deployment import DeploymentRevision, GraphRelease
 
 
 GitOpsManifest = dict[str, object]
@@ -207,6 +207,46 @@ def render_flux_kustomization(
     }
 
 
+def render_graphblocks_desired_state(
+    name: str,
+    *,
+    release: GraphRelease,
+    deployment_revision: DeploymentRevision,
+    desired_state: Mapping[str, object],
+    namespace: str | None = None,
+    labels: Mapping[str, str] | None = None,
+    annotations: Mapping[str, str] | None = None,
+) -> GitOpsManifest:
+    if not name.strip():
+        raise GitOpsContractError("GraphBlocks desired state name must not be empty")
+    release_contract: dict[str, object] = {
+        "name": release.name,
+        "version": release.version,
+        "digest": release.content_digest(),
+    }
+    if release.bundle_digest is not None:
+        release_contract["bundleDigest"] = release.bundle_digest
+    return {
+        "apiVersion": "graphblocks.ai/gitops/v1alpha1",
+        "kind": "GraphBlocksDeploymentDesiredState",
+        "metadata": _metadata(name, release, labels, annotations, namespace),
+        "spec": {
+            "release": release_contract,
+            "deploymentRevision": {
+                "revisionId": deployment_revision.revision_id,
+                "releaseDigest": deployment_revision.release_digest,
+                "deploymentSpecHash": deployment_revision.deployment_spec_hash,
+                "physicalPlanHash": deployment_revision.physical_plan_hash,
+                "resolvedBindingHash": deployment_revision.resolved_binding_hash,
+                "targetCapabilityHash": deployment_revision.target_capability_hash,
+                "createdAt": deployment_revision.created_at,
+                "contentDigest": deployment_revision.content_digest(),
+            },
+            "desiredState": deepcopy(dict(desired_state)),
+        },
+    }
+
+
 __all__ = [
     "FluxSourceRef",
     "GitOpsContractError",
@@ -216,4 +256,5 @@ __all__ = [
     "GitOpsSource",
     "render_argocd_application",
     "render_flux_kustomization",
+    "render_graphblocks_desired_state",
 ]

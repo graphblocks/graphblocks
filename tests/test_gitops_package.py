@@ -83,6 +83,59 @@ def test_gitops_package_renders_flux_kustomization(monkeypatch) -> None:
     assert kustomization["spec"]["prune"] is True
 
 
+def test_gitops_package_renders_graphblocks_desired_state(monkeypatch) -> None:
+    graphblocks_gitops = _import_gitops(monkeypatch)
+    graphblocks_deployment = importlib.import_module("graphblocks_deployment")
+    release = _release(monkeypatch)
+    revision = graphblocks_deployment.DeploymentRevision(
+        revision_id="rev-1",
+        release_digest=release.content_digest(),
+        deployment_spec_hash="sha256:deployment",
+        physical_plan_hash="sha256:plan",
+        resolved_binding_hash="sha256:binding",
+        target_capability_hash="sha256:targets",
+        created_at="2026-06-29T00:00:00Z",
+    )
+    desired_state = {
+        "deploymentId": "support-production",
+        "profile": "production",
+        "targets": {"control": {"image": "registry.example.com/control@sha256:control"}},
+    }
+
+    document = graphblocks_gitops.render_graphblocks_desired_state(
+        "support-production",
+        release=release,
+        deployment_revision=revision,
+        desired_state=desired_state,
+        namespace="support",
+    )
+    desired_state["targets"]["control"]["image"] = "mutated"
+
+    assert document["apiVersion"] == "graphblocks.ai/gitops/v1alpha1"
+    assert document["kind"] == "GraphBlocksDeploymentDesiredState"
+    assert document["metadata"]["namespace"] == "support"
+    assert document["metadata"]["annotations"]["graphblocks.ai/release-digest"] == release.content_digest()
+    assert document["spec"]["release"] == {
+        "name": "support-agent",
+        "version": "2026.06.23.1",
+        "digest": release.content_digest(),
+        "bundleDigest": "sha256:bundle",
+    }
+    assert document["spec"]["deploymentRevision"] == {
+        "revisionId": "rev-1",
+        "releaseDigest": release.content_digest(),
+        "deploymentSpecHash": "sha256:deployment",
+        "physicalPlanHash": "sha256:plan",
+        "resolvedBindingHash": "sha256:binding",
+        "targetCapabilityHash": "sha256:targets",
+        "createdAt": "2026-06-29T00:00:00Z",
+        "contentDigest": revision.content_digest(),
+    }
+    assert document["spec"]["desiredState"]["targets"]["control"]["image"] == (
+        "registry.example.com/control@sha256:control"
+    )
+
+
 def test_gitops_manifest_set_digest_is_independent_of_document_order(monkeypatch) -> None:
     graphblocks_gitops = _import_gitops(monkeypatch)
     release = _release(monkeypatch)
