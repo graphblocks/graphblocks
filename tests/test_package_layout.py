@@ -149,7 +149,9 @@ def test_tool_adapter_packages_have_pure_python_layouts() -> None:
 
 
 def test_model_provider_adapter_packages_are_cataloged_as_optional_integrations() -> None:
-    rows = {row["distribution"]: row for row in package_rows(load_package_catalog())}
+    catalog = load_package_catalog()
+    rows = {row["distribution"]: row for row in package_rows(catalog)}
+    manifests = {manifest["distribution"]: manifest for manifest in catalog["packages"]}
 
     assert rows["graphblocks-openai"] == {
         "distribution": "graphblocks-openai",
@@ -160,6 +162,9 @@ def test_model_provider_adapter_packages_are_cataloged_as_optional_integrations(
         "implementationPhase": "integration-defined",
         "stability": "integration",
     }
+    assert "OpenAI usage ledger record conversion" in manifests["graphblocks-openai"][
+        "responsibility"
+    ]
     assert rows["graphblocks-scripted"] == {
         "distribution": "graphblocks-scripted",
         "import": "graphblocks_scripted",

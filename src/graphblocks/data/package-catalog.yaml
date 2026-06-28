@@ -622,6 +622,7 @@ packages:
   responsibility:
   - OpenAI-compatible chat completion request contract
   - OpenAI-compatible response and stream delta normalization
+  - OpenAI usage ledger record conversion
   - tool definition projection for model-visible function tools
   forbiddenDependencies:
   - openai SDK
