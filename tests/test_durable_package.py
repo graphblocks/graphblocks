@@ -214,6 +214,102 @@ def test_durable_tool_terminal_store_rejects_terminal_replay_mutation(monkeypatc
     assert store.tool_terminal_count() == 1
 
 
+def test_durable_tool_terminal_store_replays_response_policy_stop_barrier(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    store = graphblocks_durable.InMemoryDurableToolTerminalStore()
+
+    committed = store.record_response_policy_stopped(
+        "response-1",
+        "decision-abort",
+        last_policy_accepted_sequence=7,
+        occurred_at_unix_ms=1_820_000_000_000,
+    )
+    replayed = store.record_response_policy_stopped(
+        "response-1",
+        "decision-abort",
+        last_policy_accepted_sequence=7,
+        occurred_at_unix_ms=1_820_000_000_000,
+    )
+
+    assert committed.sequence == 1
+    assert committed.record.response_id == "response-1"
+    assert committed.record.policy_decision_id == "decision-abort"
+    assert replayed.sequence == committed.sequence
+    assert replayed.record == committed.record
+    assert replayed.replayed is True
+
+
+def test_durable_tool_terminal_store_rejects_late_result_commit_after_policy_stop(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    store = graphblocks_durable.InMemoryDurableToolTerminalStore()
+    store.record_response_policy_stopped(
+        "response-1",
+        "decision-abort",
+        last_policy_accepted_sequence=7,
+        occurred_at_unix_ms=1_820_000_000_000,
+    )
+    durable_result = graphblocks_durable.DurableToolTerminalRecord(
+        run_id="run-000001",
+        response_id="response-1",
+        tool_call_id="call-1",
+        revision=1,
+        terminal_state="completed",
+        arguments_digest="sha256:arguments",
+        completed_at_unix_ms=1_820_000_000_100,
+        output_digest="sha256:output",
+        durable_result_committed=True,
+    )
+    audited_late_effect = graphblocks_durable.DurableToolTerminalRecord(
+        run_id="run-000001",
+        response_id="response-1",
+        tool_call_id="call-2",
+        revision=1,
+        terminal_state="cancelled",
+        arguments_digest="sha256:arguments-late",
+        completed_at_unix_ms=1_820_000_000_200,
+        effect_committed=True,
+    )
+
+    with pytest.raises(graphblocks_durable.ResponsePolicyStoppedError) as error:
+        store.record_tool_terminal(durable_result)
+
+    committed = store.record_tool_terminal(audited_late_effect)
+
+    assert error.value.response_id == "response-1"
+    assert committed.record.terminal_state == "cancelled"
+    assert committed.record.effect_committed is True
+    assert committed.record.durable_result_committed is False
+    assert store.tool_terminal_count() == 1
+
+
+def test_durable_tool_terminal_store_rejects_policy_stop_after_committed_result(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    store = graphblocks_durable.InMemoryDurableToolTerminalStore()
+    store.record_tool_terminal(
+        graphblocks_durable.DurableToolTerminalRecord(
+            run_id="run-000001",
+            response_id="response-1",
+            tool_call_id="call-1",
+            revision=1,
+            terminal_state="completed",
+            arguments_digest="sha256:arguments",
+            completed_at_unix_ms=1_820_000_000_000,
+            output_digest="sha256:output",
+            durable_result_committed=True,
+        )
+    )
+
+    with pytest.raises(graphblocks_durable.DurableResultAlreadyCommittedError) as error:
+        store.record_response_policy_stopped(
+            "response-1",
+            "decision-abort",
+            last_policy_accepted_sequence=7,
+            occurred_at_unix_ms=1_820_000_000_100,
+        )
+
+    assert error.value.response_id == "response-1"
+
+
 def test_durable_checkpoint_barrier_validates_and_builds_source_commit_plan(monkeypatch) -> None:
     graphblocks_durable = _import_durable(monkeypatch)
     missing_plan = _checkpoint(graphblocks_durable, "checkpoint-000001", 1, "")

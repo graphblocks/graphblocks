@@ -120,6 +120,24 @@ class ToolTerminalStateConflictError(ToolTerminalStoreError):
         )
 
 
+class ResponsePolicyStopConflictError(ToolTerminalStoreError):
+    def __init__(self, response_id: str) -> None:
+        self.response_id = response_id
+        super().__init__(f"response policy stop conflict for response {response_id!r}")
+
+
+class DurableResultAlreadyCommittedError(ToolTerminalStoreError):
+    def __init__(self, response_id: str) -> None:
+        self.response_id = response_id
+        super().__init__(f"durable result already committed for response {response_id!r}")
+
+
+class ResponsePolicyStoppedError(ToolTerminalStoreError):
+    def __init__(self, response_id: str) -> None:
+        self.response_id = response_id
+        super().__init__(f"response {response_id!r} is policy stopped")
+
+
 class CheckpointBarrierError(DurableError):
     def __init__(self, reason: str) -> None:
         self.reason = reason
@@ -445,10 +463,36 @@ class DurableToolTerminalCommit:
     replayed: bool
 
 
+@dataclass(frozen=True, slots=True)
+class DurableResponsePolicyStopRecord:
+    response_id: str
+    policy_decision_id: str
+    last_policy_accepted_sequence: int
+    occurred_at_unix_ms: int
+
+    def __post_init__(self) -> None:
+        if not self.response_id.strip():
+            raise ToolTerminalStoreError("response_id must not be empty")
+        if not self.policy_decision_id.strip():
+            raise ToolTerminalStoreError("policy_decision_id must not be empty")
+        if self.last_policy_accepted_sequence < 0:
+            raise ToolTerminalStoreError("last_policy_accepted_sequence must be non-negative")
+        if self.occurred_at_unix_ms <= 0:
+            raise ToolTerminalStoreError("occurred_at_unix_ms must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class DurableResponsePolicyStopCommit:
+    sequence: int
+    record: DurableResponsePolicyStopRecord
+    replayed: bool
+
+
 @dataclass(slots=True)
 class InMemoryDurableToolTerminalStore:
     next_sequence: int = 1
     terminal_records: dict[tuple[str, str, int], DurableToolTerminalCommit] = field(default_factory=dict)
+    policy_stopped_responses: dict[str, DurableResponsePolicyStopCommit] = field(default_factory=dict)
 
     def record_tool_terminal(self, record: DurableToolTerminalRecord) -> DurableToolTerminalCommit:
         key = (record.response_id, record.tool_call_id, record.revision)
@@ -462,6 +506,9 @@ class InMemoryDurableToolTerminalStore:
                 replayed=True,
             )
 
+        if record.durable_result_committed and record.response_id in self.policy_stopped_responses:
+            raise ResponsePolicyStoppedError(record.response_id)
+
         committed = DurableToolTerminalCommit(
             sequence=self.next_sequence,
             record=record,
@@ -473,6 +520,44 @@ class InMemoryDurableToolTerminalStore:
 
     def tool_terminal_count(self) -> int:
         return len(self.terminal_records)
+
+    def record_response_policy_stopped(
+        self,
+        response_id: str,
+        policy_decision_id: str,
+        *,
+        last_policy_accepted_sequence: int,
+        occurred_at_unix_ms: int,
+    ) -> DurableResponsePolicyStopCommit:
+        record = DurableResponsePolicyStopRecord(
+            response_id=response_id,
+            policy_decision_id=policy_decision_id,
+            last_policy_accepted_sequence=last_policy_accepted_sequence,
+            occurred_at_unix_ms=occurred_at_unix_ms,
+        )
+        existing = self.policy_stopped_responses.get(record.response_id)
+        if existing is not None:
+            if existing.record != record:
+                raise ResponsePolicyStopConflictError(record.response_id)
+            return DurableResponsePolicyStopCommit(
+                sequence=existing.sequence,
+                record=existing.record,
+                replayed=True,
+            )
+        if any(
+            commit.record.response_id == record.response_id and commit.record.durable_result_committed
+            for commit in self.terminal_records.values()
+        ):
+            raise DurableResultAlreadyCommittedError(record.response_id)
+
+        committed = DurableResponsePolicyStopCommit(
+            sequence=self.next_sequence,
+            record=record,
+            replayed=False,
+        )
+        self.next_sequence += 1
+        self.policy_stopped_responses[record.response_id] = committed
+        return committed
 
 
 @dataclass(frozen=True, slots=True)
@@ -621,6 +706,9 @@ __all__ = [
     "CheckpointStoreError",
     "DeliveryGuarantee",
     "DemandExceededError",
+    "DurableResponsePolicyStopCommit",
+    "DurableResponsePolicyStopRecord",
+    "DurableResultAlreadyCommittedError",
     "DurableToolTerminalCommit",
     "DurableToolTerminalRecord",
     "DurableToolTerminalState",
@@ -648,6 +736,8 @@ __all__ = [
     "SourcePausedError",
     "StaleCommitError",
     "StaleCheckpointError",
+    "ResponsePolicyStopConflictError",
+    "ResponsePolicyStoppedError",
     "ToolTerminalStateConflictError",
     "ToolTerminalStoreError",
     "UnknownSourceCursorError",
