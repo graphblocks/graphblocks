@@ -163,6 +163,53 @@ def test_tui_package_projects_standard_tool_approval_and_incomplete_events(monke
     }
 
 
+def test_tui_package_projects_output_cutoff_events(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-tui" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_tui = importlib.import_module("graphblocks_tui")
+
+    def event(kind: str, sequence: int, payload: dict[str, object] | None = None):
+        return graphblocks_client.ApplicationProtocolEvent.new(
+            kind,
+            graphblocks_client.ApplicationProtocolEventMetadata(
+                event_id=f"event-{sequence}",
+                protocol_version="graphblocks.app.v1",
+                run_id="run-1",
+                sequence=sequence,
+                occurred_at_unix_ms=sequence * 1000,
+            ),
+            payload=payload or {},
+        )
+
+    state = graphblocks_tui.TuiProtocolSession("run-1").apply_all(
+        (
+            event("RunStarted", 1, {"status": "running"}),
+            event("AssistantDraftDelta", 2, {"delta": "Sensitive draft"}),
+            event(
+                "OutputCutoff",
+                3,
+                {
+                    "terminal_reason": "policy_denied",
+                    "draft_disposition": "retract",
+                    "last_client_delivered_sequence": 2,
+                },
+            ),
+        )
+    )
+    screen = graphblocks_tui.workspace_assistant_screen(state)
+
+    assert state.status == "policy_denied"
+    assert state.assistant_state == "retracted"
+    assert state.last_event == "OutputCutoff"
+    assert state.counters["OutputCutoff"] == 1
+    assert screen.screen_contract()["sections"][0]["rows"] == {
+        "last_event": "OutputCutoff",
+        "sequence": "3",
+        "status": "policy_denied",
+    }
+
+
 def test_devtools_package_renders_dot_and_migration_plan(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-cli" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-devtools" / "src"))

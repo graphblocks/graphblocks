@@ -156,6 +156,7 @@ def test_application_protocol_command_and_event_envelopes_match_client_contract(
         "BudgetExtensionGranted",
         "PolicyDecisionRequired",
         "ExecutionDegraded",
+        "OutputCutoff",
         "FilePatchPreview",
         "JobProgress",
         "ArtifactReady",

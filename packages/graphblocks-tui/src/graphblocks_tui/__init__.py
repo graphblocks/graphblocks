@@ -160,6 +160,14 @@ class TuiProtocolSession:
             status = "budget_exhausted"
         elif event.kind == "ExecutionDegraded":
             status = "degraded"
+        elif event.kind == "OutputCutoff":
+            terminal_reason = payload.get("terminal_reason", payload.get("terminalReason"))
+            status = str(terminal_reason or "cutoff")
+            draft_disposition = payload.get("draft_disposition", payload.get("draftDisposition"))
+            if draft_disposition == "retract":
+                assistant_state = "retracted"
+            elif draft_disposition == "mark_incomplete":
+                assistant_state = "incomplete"
 
         if event.kind == "AssistantDraftStarted":
             assistant_state = "drafting"
