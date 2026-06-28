@@ -583,7 +583,7 @@ def stdlib_registry() -> RuntimeRegistry:
                     idempotency=str(item.get("idempotency", "optional")),
                     cancellation=str(item.get("cancellation", "cooperative")),
                     result_mode=str(item.get("resultMode", item.get("result_mode", "value"))),
-                    timeout_ms=int(item["timeoutMs"]) if item.get("timeoutMs") is not None else None,
+                    timeout_ms=item.get("timeoutMs", item.get("timeout_ms")),
                     retry_policy_ref=(
                         str(item.get("retryPolicyRef", item.get("retry_policy_ref")))
                         if item.get("retryPolicyRef", item.get("retry_policy_ref")) is not None

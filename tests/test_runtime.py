@@ -152,6 +152,7 @@ def test_stdlib_runtime_executes_tool_resolution_and_agent_run() -> None:
                                 "implementation": {"kind": "block", "block": "knowledge.search@1"},
                                 "effects": ["external_read"],
                                 "approval": "never",
+                                "timeoutMs": 250,
                             }
                         ],
                         "scope": {"principalTools": ["knowledge.search"]},
@@ -184,6 +185,53 @@ def test_stdlib_runtime_executes_tool_resolution_and_agent_run() -> None:
     }
     assert result.outputs["tools"][0]["definition"]["name"] == "knowledge.search"
     assert result.outputs["tools"][0]["allowed_for_principal"] is True
+    assert result.outputs["tools"][0]["binding"]["timeout_ms"] == 250
+
+
+@pytest.mark.parametrize("timeout_ms", [True, "250"])
+def test_stdlib_tool_resolution_rejects_non_integer_timeout_ms(timeout_ms: object) -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "tool-timeout-ms-validation"},
+        "spec": {
+            "nodes": {
+                "resolve": {
+                    "block": "tools.resolve@1",
+                    "config": {
+                        "effectivePolicySnapshotId": "policy-snapshot-1",
+                        "definitions": [
+                            {
+                                "name": "knowledge.search",
+                                "description": "Search support documentation.",
+                                "inputSchema": "schemas/SearchRequest@1",
+                            }
+                        ],
+                        "bindings": [
+                            {
+                                "bindingId": "binding-search",
+                                "toolName": "knowledge.search",
+                                "implementation": {"kind": "block", "block": "knowledge.search@1"},
+                                "effects": ["external_read"],
+                                "approval": "never",
+                                "timeoutMs": timeout_ms,
+                            }
+                        ],
+                        "scope": {"principalTools": ["knowledge.search"]},
+                    },
+                    "outputs": {"tools": "$output.tools"},
+                }
+            }
+        },
+    }
+
+    result = InProcessRuntime(stdlib_registry()).run(graph, {})
+
+    assert result.status == "failed"
+    assert result.outputs == {}
+    failed = [record for record in result.journal.records if record.kind == "node_failed"]
+    assert failed[0].payload["node"] == "resolve"
+    assert "tool timeout_ms must be non-negative" in failed[0].payload["error"]
 
 
 def test_journal_rejects_second_terminal_record() -> None:
