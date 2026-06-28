@@ -113,6 +113,13 @@ class DocumentParserRegistry:
         body: bytes,
         lock: ParserSelectionLock,
     ) -> ParsedDocument:
+        if (
+            lock.artifact_checksum is not None
+            and revision.artifact.checksum != lock.artifact_checksum
+        ):
+            raise DocumentParserError(
+                "locked parser artifact checksum does not match revision artifact checksum"
+            )
         descriptor = self.resolve_locked(lock)
         if descriptor.parse is None:
             raise DocumentParserNotFoundError(

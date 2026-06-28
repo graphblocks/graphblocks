@@ -367,6 +367,10 @@ pub enum DocumentParserError {
     NotFound {
         message: String,
     },
+    LockMismatch {
+        expected_checksum: String,
+        actual_checksum: Option<String>,
+    },
     Utf8 {
         processor_id: String,
         message: String,
@@ -377,6 +381,13 @@ impl fmt::Display for DocumentParserError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NotFound { message } => write!(formatter, "{message}"),
+            Self::LockMismatch {
+                expected_checksum,
+                actual_checksum,
+            } => write!(
+                formatter,
+                "locked parser artifact checksum {expected_checksum:?} does not match revision artifact checksum {actual_checksum:?}"
+            ),
             Self::Utf8 {
                 processor_id,
                 message,
@@ -512,6 +523,14 @@ impl DocumentParserRegistry {
         body: &[u8],
         lock: &ParserSelectionLock,
     ) -> Result<ParsedDocument, DocumentParserError> {
+        if let Some(expected_checksum) = &lock.artifact_checksum
+            && revision.artifact.checksum.as_ref() != Some(expected_checksum)
+        {
+            return Err(DocumentParserError::LockMismatch {
+                expected_checksum: expected_checksum.clone(),
+                actual_checksum: revision.artifact.checksum.clone(),
+            });
+        }
         let descriptor = self.resolve_locked(lock)?;
         let Some(parser) = descriptor.parser else {
             return Err(DocumentParserError::NotFound {

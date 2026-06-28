@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from graphblocks.document_parsers import (
+    DocumentParserError,
     DocumentParserNotFoundError,
     DocumentParserRegistry,
     ParserDescriptor,
@@ -114,6 +115,36 @@ def test_parser_registry_parse_locked_uses_locked_parser_version() -> None:
 
     assert document.parser == {"processor_id": "plain-text", "version": "1"}
     assert [element.content for element in document.elements] == ["Alpha", "Beta"]
+
+
+def test_parser_registry_rejects_lock_for_different_artifact_checksum() -> None:
+    registry = DocumentParserRegistry()
+    registry.register(plain_text_parser_descriptor())
+    asset = SourceAsset("asset-1", "file:///tmp/policy.txt", "local", current_revision_id="rev-1")
+    selected_artifact = ArtifactRef(
+        "artifact-1",
+        "file:///tmp/policy.txt",
+        media_type="text/plain",
+        filename="policy.txt",
+        checksum="sha256:old",
+    )
+    lock = registry.select(selected_artifact)
+    revision = AssetRevision(
+        revision_id="rev-1",
+        asset_id="asset-1",
+        content_hash="sha256:new",
+        observed_at="2026-06-22T00:00:00Z",
+        artifact=ArtifactRef(
+            "artifact-1",
+            "file:///tmp/policy.txt",
+            media_type="text/plain",
+            filename="policy.txt",
+            checksum="sha256:new",
+        ),
+    )
+
+    with pytest.raises(DocumentParserError, match="artifact checksum"):
+        registry.parse_locked(asset, revision, b"Alpha\n", lock)
 
 
 def test_parser_registry_rejects_unknown_locked_parser() -> None:

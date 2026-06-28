@@ -120,6 +120,40 @@ fn parser_registry_parse_locked_uses_locked_parser_version()
 }
 
 #[test]
+fn parser_registry_rejects_lock_for_different_artifact_checksum()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut registry = DocumentParserRegistry::new();
+    registry.register(plain_text_parser_descriptor());
+    let asset = SourceAsset::new("asset-1", "file:///tmp/policy.txt", "local")
+        .with_current_revision_id("rev-1");
+    let mut selected_artifact = ArtifactRef::new("artifact-1", "file:///tmp/policy.txt");
+    selected_artifact.media_type = Some("text/plain".to_owned());
+    selected_artifact.filename = Some("policy.txt".to_owned());
+    selected_artifact.checksum = Some("sha256:old".to_owned());
+    let lock = registry.select(&selected_artifact)?;
+    let mut artifact = ArtifactRef::new("artifact-1", "file:///tmp/policy.txt");
+    artifact.media_type = Some("text/plain".to_owned());
+    artifact.filename = Some("policy.txt".to_owned());
+    artifact.checksum = Some("sha256:new".to_owned());
+    let revision = AssetRevision::new(
+        "rev-1",
+        "asset-1",
+        "sha256:new",
+        "2026-06-22T00:00:00Z",
+        artifact,
+    );
+
+    assert!(matches!(
+        registry.parse_locked(&asset, &revision, b"Alpha\n", &lock),
+        Err(DocumentParserError::LockMismatch {
+            expected_checksum,
+            actual_checksum
+        }) if expected_checksum == "sha256:old" && actual_checksum.as_deref() == Some("sha256:new")
+    ));
+    Ok(())
+}
+
+#[test]
 fn parser_registry_rejects_unknown_locked_parser() {
     let registry = DocumentParserRegistry::new();
     let lock = ParserSelectionLock::new("missing", "1", "media_type").with_media_type("text/plain");
