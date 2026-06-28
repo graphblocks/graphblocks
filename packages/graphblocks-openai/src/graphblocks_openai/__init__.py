@@ -5,7 +5,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 import math
 
-from graphblocks import ContentPart, Message, ToolCallDraft, ToolDefinition, canonical_dumps
+from graphblocks import ContentPart, Message, ToolCallDraft, ToolDefinition, UsageAmount, UsageRecord, canonical_dumps
 
 
 class OpenAICompatibleAdapterError(ValueError):
@@ -181,6 +181,26 @@ class OpenAIStreamingToolCallDraftAssembler:
         return tuple(completed)
 
 
+def _openai_usage_amounts(usage: Mapping[str, object], *, model: str) -> tuple[UsageAmount, ...]:
+    dimensions = {"model": model, "provider": "openai-compatible"}
+    usage_keys = (
+        ("prompt_tokens", "model_input_tokens"),
+        ("completion_tokens", "model_output_tokens"),
+        ("total_tokens", "model_total_tokens"),
+    )
+    amounts: list[UsageAmount] = []
+    for provider_key, amount_kind in usage_keys:
+        value = usage.get(provider_key)
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise OpenAICompatibleAdapterError(f"provider usage {provider_key} must be an integer")
+        amounts.append(UsageAmount(amount_kind, value, "tokens", dimensions=dimensions))
+    if not amounts:
+        raise OpenAICompatibleAdapterError("provider usage contains no recognized token counts")
+    return tuple(amounts)
+
+
 def openai_chat_completion_request(
     *,
     model: str,
@@ -297,6 +317,81 @@ def openai_tool_call_drafts_from_response(response: OpenAIChatResponse) -> tuple
             .complete_arguments()
         )
     return tuple(drafts)
+
+
+def openai_usage_record_from_response(
+    response: OpenAIChatResponse,
+    *,
+    record_id: str,
+    occurred_at: str,
+    run_id: str | None = None,
+    attempt_id: str | None = None,
+    pricing_ref: str | None = None,
+    quota_window_id: str | None = None,
+    execution_scope: str | None = None,
+) -> UsageRecord:
+    if not isinstance(response, OpenAIChatResponse):
+        raise OpenAICompatibleAdapterError("response must be an OpenAIChatResponse")
+
+    metadata: dict[str, object] = {
+        "model": response.model,
+        "provider": "openai-compatible",
+    }
+    if response.finish_reason is not None:
+        metadata["finish_reason"] = response.finish_reason
+    return UsageRecord(
+        record_id=record_id,
+        source="provider_reported",
+        confidence="provider_exact",
+        amounts=_openai_usage_amounts(response.usage, model=response.model),
+        occurred_at=occurred_at,
+        run_id=run_id,
+        attempt_id=attempt_id,
+        provider_response_id=response.response_id,
+        pricing_ref=pricing_ref,
+        quota_window_id=quota_window_id,
+        execution_scope=execution_scope,
+        metadata=metadata,
+    )
+
+
+def openai_usage_record_from_delta(
+    delta: OpenAIChatDelta,
+    *,
+    record_id: str,
+    model: str,
+    occurred_at: str,
+    run_id: str | None = None,
+    attempt_id: str | None = None,
+    pricing_ref: str | None = None,
+    quota_window_id: str | None = None,
+    execution_scope: str | None = None,
+    reconciliation_of: str | None = None,
+) -> UsageRecord:
+    if not isinstance(delta, OpenAIChatDelta):
+        raise OpenAICompatibleAdapterError("delta must be an OpenAIChatDelta")
+    if not isinstance(model, str) or not model.strip():
+        raise OpenAICompatibleAdapterError("model must not be empty")
+
+    return UsageRecord(
+        record_id=record_id,
+        source="reconciled" if reconciliation_of is not None else "provider_reported",
+        confidence="exact" if reconciliation_of is not None else "provider_exact",
+        amounts=_openai_usage_amounts(delta.usage_delta, model=model.strip()),
+        occurred_at=occurred_at,
+        run_id=run_id,
+        attempt_id=attempt_id,
+        provider_response_id=delta.response_id,
+        pricing_ref=pricing_ref,
+        quota_window_id=quota_window_id,
+        execution_scope=execution_scope,
+        reconciliation_of=reconciliation_of,
+        metadata={
+            "model": model.strip(),
+            "provider": "openai-compatible",
+            "stream_sequence": delta.sequence,
+        },
+    )
 
 
 def openai_chat_response_from_provider(data: Mapping[str, object]) -> OpenAIChatResponse:
@@ -476,4 +571,6 @@ __all__ = [
     "openai_chat_delta_from_chunk",
     "openai_chat_response_from_provider",
     "openai_tool_call_drafts_from_response",
+    "openai_usage_record_from_delta",
+    "openai_usage_record_from_response",
 ]

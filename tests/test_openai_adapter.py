@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from graphblocks import ContentPart, Message, ToolCallError, ToolDefinition
+from graphblocks import ContentPart, Message, ToolCallError, ToolDefinition, UsageAmount
 
 
 ROOT = Path(__file__).parents[1]
@@ -250,6 +250,120 @@ def test_openai_stream_chunk_normalizes_usage_only_final_chunk(monkeypatch) -> N
         "finish_reason": None,
         "usage_delta": {"completion_tokens": 5, "prompt_tokens": 20, "total_tokens": 25},
     }
+
+
+def test_openai_provider_usage_converts_to_usage_record(monkeypatch) -> None:
+    _add_openai_package_paths(monkeypatch)
+    graphblocks_openai = importlib.import_module("graphblocks_openai")
+    response = graphblocks_openai.openai_chat_response_from_provider(
+        {
+            "id": "chatcmpl-usage",
+            "model": "gpt-test",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "Done."},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 20, "completion_tokens": 5, "total_tokens": 25},
+        }
+    )
+
+    record = graphblocks_openai.openai_usage_record_from_response(
+        response,
+        record_id="usage-final",
+        run_id="run-1",
+        attempt_id="attempt-1",
+        occurred_at="2026-06-23T00:00:02Z",
+        execution_scope="turn:turn-1/model:gpt-test",
+    )
+
+    assert record.record_id == "usage-final"
+    assert record.source == "provider_reported"
+    assert record.confidence == "provider_exact"
+    assert record.run_id == "run-1"
+    assert record.attempt_id == "attempt-1"
+    assert record.provider_response_id == "chatcmpl-usage"
+    assert record.execution_scope == "turn:turn-1/model:gpt-test"
+    assert record.metadata == {
+        "finish_reason": "stop",
+        "model": "gpt-test",
+        "provider": "openai-compatible",
+    }
+    assert record.amounts == (
+        UsageAmount(
+            "model_input_tokens",
+            20,
+            "tokens",
+            dimensions={"model": "gpt-test", "provider": "openai-compatible"},
+        ),
+        UsageAmount(
+            "model_output_tokens",
+            5,
+            "tokens",
+            dimensions={"model": "gpt-test", "provider": "openai-compatible"},
+        ),
+        UsageAmount(
+            "model_total_tokens",
+            25,
+            "tokens",
+            dimensions={"model": "gpt-test", "provider": "openai-compatible"},
+        ),
+    )
+
+
+def test_openai_stream_usage_converts_to_reconciliation_record(monkeypatch) -> None:
+    _add_openai_package_paths(monkeypatch)
+    graphblocks_openai = importlib.import_module("graphblocks_openai")
+    delta = graphblocks_openai.openai_chat_delta_from_chunk(
+        {
+            "id": "chatcmpl-late",
+            "choices": [],
+            "usage": {"prompt_tokens": 30, "completion_tokens": 8, "total_tokens": 38},
+        },
+        sequence=42,
+    )
+
+    record = graphblocks_openai.openai_usage_record_from_delta(
+        delta,
+        record_id="usage-reconciled",
+        run_id="run-1",
+        attempt_id="attempt-1",
+        model="gpt-test",
+        occurred_at="2026-06-23T00:01:00Z",
+        reconciliation_of="usage-provisional",
+    )
+
+    assert record.source == "reconciled"
+    assert record.confidence == "exact"
+    assert record.provider_response_id == "chatcmpl-late"
+    assert record.reconciliation_of == "usage-provisional"
+    assert record.metadata == {
+        "model": "gpt-test",
+        "provider": "openai-compatible",
+        "stream_sequence": 42,
+    }
+    assert record.amounts == (
+        UsageAmount(
+            "model_input_tokens",
+            30,
+            "tokens",
+            dimensions={"model": "gpt-test", "provider": "openai-compatible"},
+        ),
+        UsageAmount(
+            "model_output_tokens",
+            8,
+            "tokens",
+            dimensions={"model": "gpt-test", "provider": "openai-compatible"},
+        ),
+        UsageAmount(
+            "model_total_tokens",
+            38,
+            "tokens",
+            dimensions={"model": "gpt-test", "provider": "openai-compatible"},
+        ),
+    )
 
 
 def test_openai_streaming_tool_call_deltas_assemble_graphblocks_drafts(monkeypatch) -> None:
