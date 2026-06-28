@@ -74,6 +74,10 @@ class Plan:
         }
 
 
+def _is_positive_integer(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
 def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None = None) -> Plan:
     diagnostics: list[Diagnostic] = []
     migrated = migrate_document(document)
@@ -252,10 +256,10 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                     or delivery.get("holdbackMaxDurationMs")
                     or delivery.get("holdback_max_duration_ms")
                 )
-                has_token_bound = isinstance(holdback_max_tokens, int) and holdback_max_tokens > 0
-                has_byte_bound = isinstance(holdback_max_bytes, int) and holdback_max_bytes > 0
+                has_token_bound = _is_positive_integer(holdback_max_tokens)
+                has_byte_bound = _is_positive_integer(holdback_max_bytes)
                 has_duration_bound = (
-                    (isinstance(holdback_max_duration, int) and holdback_max_duration > 0)
+                    _is_positive_integer(holdback_max_duration)
                     or (
                         isinstance(holdback_max_duration, str)
                         and bool(holdback_max_duration.strip())
