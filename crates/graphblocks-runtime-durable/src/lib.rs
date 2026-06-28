@@ -427,16 +427,16 @@ impl InMemoryDurableSink {
         &mut self,
         request: SinkCommitRequest,
     ) -> Result<SinkCommitResult, SinkCommitError> {
-        if request.run_id.is_empty() {
+        if request.run_id.trim().is_empty() {
             return Err(SinkCommitError::MissingRunId);
         }
-        if request.node_id.is_empty() {
+        if request.node_id.trim().is_empty() {
             return Err(SinkCommitError::MissingNodeId);
         }
-        if request.node_attempt_id.is_empty() {
+        if request.node_attempt_id.trim().is_empty() {
             return Err(SinkCommitError::MissingNodeAttemptId);
         }
-        if request.idempotency_key.is_empty() {
+        if request.idempotency_key.trim().is_empty() {
             return Err(SinkCommitError::MissingIdempotencyKey);
         }
         if let Some(record) = self

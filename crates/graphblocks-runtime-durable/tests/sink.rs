@@ -160,3 +160,43 @@ fn sink_commit_requires_stable_identity_fields() {
         Err(SinkCommitError::MissingIdempotencyKey),
     );
 }
+
+#[test]
+fn sink_commit_rejects_whitespace_identity_fields() {
+    let mut sink = InMemoryDurableSink::new("warehouse");
+
+    assert_eq!(
+        sink.commit(SinkCommitRequest::new(
+            " ",
+            "load",
+            "attempt",
+            "tx",
+            json!({})
+        )),
+        Err(SinkCommitError::MissingRunId),
+    );
+    assert_eq!(
+        sink.commit(SinkCommitRequest::new(
+            "run",
+            "\t",
+            "attempt",
+            "tx",
+            json!({})
+        )),
+        Err(SinkCommitError::MissingNodeId),
+    );
+    assert_eq!(
+        sink.commit(SinkCommitRequest::new("run", "load", "\n", "tx", json!({}))),
+        Err(SinkCommitError::MissingNodeAttemptId),
+    );
+    assert_eq!(
+        sink.commit(SinkCommitRequest::new(
+            "run",
+            "load",
+            "attempt",
+            " ",
+            json!({})
+        )),
+        Err(SinkCommitError::MissingIdempotencyKey),
+    );
+}
