@@ -1599,6 +1599,11 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
                             PendingToolCallsDisposition::Deny => "deny",
                             PendingToolCallsDisposition::CancelAdmitted => "cancel_admitted",
                         }),
+                        "providerCancellation": update.provider_cancellation.map(|cancellation| match cancellation {
+                            ProviderCancellation::None => "none",
+                            ProviderCancellation::Request => "request",
+                            ProviderCancellation::RequiredIfSupported => "required_if_supported",
+                        }),
                     }));
                 }
             }
@@ -2347,6 +2352,7 @@ mod tests {
                 "decisionId": "decision-abort",
                 "disposition": "abort_response",
                 "inputDigest": "sha256:abort",
+                "providerCancellation": "required_if_supported",
                 "occurredAtUnixMs": 1_010
             }
         ]);
@@ -2407,6 +2413,15 @@ mod tests {
                 .and_then(|delivery| delivery.get("pendingToolCalls"))
                 .and_then(Value::as_str),
             Some("deny")
+        );
+        assert_eq!(
+            result
+                .get("deliveries")
+                .and_then(Value::as_array)
+                .and_then(|deliveries| deliveries.last())
+                .and_then(|delivery| delivery.get("providerCancellation"))
+                .and_then(Value::as_str),
+            Some("required_if_supported")
         );
         assert_eq!(
             result
