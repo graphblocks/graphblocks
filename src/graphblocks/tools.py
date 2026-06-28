@@ -212,6 +212,26 @@ def _validate_optional_non_empty_string(owner: str, field_name: str, value: obje
     return _validate_non_empty_string(owner, field_name, value)
 
 
+def _validate_integer(owner: str, field_name: str, value: object) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ValueError(f"{owner} {field_name} must be an integer")
+    return value
+
+
+def _validate_non_negative_integer(owner: str, field_name: str, value: object) -> int:
+    value = _validate_integer(owner, field_name, value)
+    if value < 0:
+        raise ValueError(f"{owner} {field_name} must be non-negative")
+    return value
+
+
+def _validate_positive_integer(owner: str, field_name: str, value: object) -> int:
+    value = _validate_integer(owner, field_name, value)
+    if value < 1:
+        raise ValueError(f"{owner} {field_name} must be positive")
+    return value
+
+
 def _validate_string_collection(owner: str, field_name: str, value: object) -> frozenset[str]:
     if isinstance(value, str):
         raise ValueError(f"{owner} {field_name} must be a collection of strings")
@@ -638,10 +658,9 @@ class ToolApprovalRequest:
             "principal_id",
         ):
             _validate_non_empty_string("approval", field_name, getattr(self, field_name))
-        if self.revision < 1:
-            raise ValueError("approval revision must be positive")
-        if self.requested_at < 0:
-            raise ValueError("approval requested_at must be non-negative")
+        _validate_positive_integer("approval", "revision", self.revision)
+        _validate_non_negative_integer("approval", "requested_at", self.requested_at)
+        _validate_non_negative_integer("approval", "expires_at", self.expires_at)
         if self.expires_at <= self.requested_at:
             raise ValueError("approval expiration must be after request time")
 
@@ -656,6 +675,11 @@ class ToolApprovalRequest:
         requested_at: int,
         expires_at: int,
     ) -> ToolApprovalRequest:
+        try:
+            _validate_non_negative_integer("approval", "requested_at", requested_at)
+            _validate_non_negative_integer("approval", "expires_at", expires_at)
+        except ValueError as error:
+            raise ToolApprovalError(str(error)) from error
         if expires_at <= requested_at:
             raise ToolApprovalError("approval expiration must be after request time")
         if call.resolved_tool_id != resolved_tool.resolved_tool_id:
@@ -704,10 +728,10 @@ class ToolApprovalRecord:
             _validate_non_empty_string("approval", "reason", self.reason)
         if self.status == "invalidated" and self.invalidated_at is None:
             raise ValueError("invalidated approval record requires invalidated_at")
-        if self.decided_at is not None and self.decided_at < 0:
-            raise ValueError("approval decided_at must be non-negative")
-        if self.invalidated_at is not None and self.invalidated_at < 0:
-            raise ValueError("approval invalidated_at must be non-negative")
+        if self.decided_at is not None:
+            _validate_non_negative_integer("approval", "decided_at", self.decided_at)
+        if self.invalidated_at is not None:
+            _validate_non_negative_integer("approval", "invalidated_at", self.invalidated_at)
 
     @classmethod
     def requested(cls, request: ToolApprovalRequest) -> ToolApprovalRecord:
@@ -911,8 +935,7 @@ class ToolCallDraft:
             _validate_non_empty_string("tool call draft", field_name, getattr(self, field_name))
         if self.status not in VALID_TOOL_CALL_DRAFT_STATUSES:
             raise ValueError(f"invalid tool call draft status {self.status}")
-        if self.sequence < 0:
-            raise ValueError("tool call draft sequence must be non-negative")
+        _validate_non_negative_integer("tool call draft", "sequence", self.sequence)
         if isinstance(self.argument_fragments, str):
             raise ValueError("tool call draft argument fragments must be strings")
         try:
@@ -999,8 +1022,7 @@ class ToolCall:
             _validate_non_empty_string("tool call", field_name, getattr(self, field_name))
         if self.status not in VALID_TOOL_CALL_STATUSES:
             raise ValueError(f"invalid tool call status {self.status}")
-        if self.revision < 1:
-            raise ValueError("tool call revision must be positive")
+        _validate_positive_integer("tool call", "revision", self.revision)
         if isinstance(self.depends_on, str):
             raise ValueError("tool call depends_on must be a collection of strings")
         try:
@@ -1870,8 +1892,7 @@ class ToolResultEvent:
         _validate_non_empty_string("tool result event", "tool_call_id", self.tool_call_id)
         if self.kind not in VALID_TOOL_RESULT_EVENT_KINDS:
             raise ValueError(f"invalid tool result event kind {self.kind}")
-        if self.sequence < 0:
-            raise ValueError("tool result event sequence must be non-negative")
+        _validate_non_negative_integer("tool result event", "sequence", self.sequence)
         try:
             if isinstance(self.output, str):
                 raise TypeError

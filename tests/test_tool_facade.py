@@ -795,6 +795,46 @@ def test_tool_approval_request_validates_revision_and_expiration() -> None:
         ToolApprovalRequest(**{**base, "expires_at": 100})
 
 
+def test_tool_approval_request_rejects_non_integer_counters() -> None:
+    base = {
+        "approval_id": "approval-1",
+        "tool_call_id": "call-1",
+        "tool_name": "knowledge.search",
+        "revision": 1,
+        "definition_digest": "sha256:def",
+        "binding_digest": "sha256:binding",
+        "arguments_digest": "sha256:args",
+        "policy_snapshot_id": "policy-1",
+        "principal_id": "user-1",
+        "requested_at": 100,
+        "expires_at": 200,
+    }
+    cases = (
+        ({"revision": True}, "approval revision must be an integer"),
+        ({"requested_at": False}, "approval requested_at must be an integer"),
+        ({"expires_at": True}, "approval expires_at must be an integer"),
+    )
+
+    for overrides, message in cases:
+        with pytest.raises(ValueError, match=message):
+            ToolApprovalRequest(**{**base, **overrides})  # type: ignore[arg-type]
+
+    request = ToolApprovalRequest(**base)
+    record_cases = (
+        (
+            lambda: ToolApprovalRecord.approve(request, approver_id="admin-1", decided_at=True),
+            "approval decided_at must be an integer",
+        ),
+        (
+            lambda: ToolApprovalRecord.requested(request).invalidate(False),
+            "approval invalidated_at must be an integer",
+        ),
+    )
+    for construct, message in record_cases:
+        with pytest.raises(ValueError, match=message):
+            construct()
+
+
 def test_tool_approval_records_reject_non_string_identity_fields() -> None:
     base = {
         "approval_id": "approval-1",
@@ -844,6 +884,8 @@ def test_tool_lifecycle_counters_are_non_negative_and_positive() -> None:
         ToolCallDraft("response-1", "call-1", " ")
     with pytest.raises(ValueError, match="tool call draft sequence must be non-negative"):
         ToolCallDraft("response-1", "call-1", "knowledge.search", sequence=-1)
+    with pytest.raises(ValueError, match="tool call draft sequence must be an integer"):
+        ToolCallDraft("response-1", "call-1", "knowledge.search", sequence=True)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="tool call draft argument fragments must be strings"):
         ToolCallDraft(
             "response-1",
@@ -856,6 +898,8 @@ def test_tool_lifecycle_counters_are_non_negative_and_positive() -> None:
     call = _search_call(resolved)
     with pytest.raises(ValueError, match="tool call revision must be positive"):
         replace(call, revision=0)
+    with pytest.raises(ValueError, match="tool call revision must be an integer"):
+        replace(call, revision=True)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="tool call tool_call_id must not be empty"):
         replace(call, tool_call_id=" ")
     with pytest.raises(ValueError, match="tool call arguments_digest must not be empty"):
@@ -883,6 +927,8 @@ def test_tool_lifecycle_counters_are_non_negative_and_positive() -> None:
 
     with pytest.raises(ValueError, match="tool result event sequence must be non-negative"):
         ToolResultEvent.started("call-1", -1, started_at="2026-06-23T00:00:00Z")
+    with pytest.raises(ValueError, match="tool result event sequence must be an integer"):
+        ToolResultEvent.started("call-1", True, started_at="2026-06-23T00:00:00Z")  # type: ignore[arg-type]
 
 
 def test_tool_call_lifecycle_rejects_non_string_fields() -> None:
