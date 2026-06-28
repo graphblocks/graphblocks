@@ -9,6 +9,7 @@ from graphblocks import (
     AgentState,
     AgentStateError,
     AgentStatePatch,
+    AgentStatePatchOp,
     AgentStateSchema,
 )
 
@@ -64,6 +65,22 @@ def test_agent_state_patch_rejects_unknown_schema_keys() -> None:
 
     assert state.revision == 0
     assert state.values == {}
+
+
+def test_agent_state_patch_rejects_invalid_operations_without_mutating_state() -> None:
+    state = AgentState(values={"profile": "initial"})
+    patch = AgentStatePatch(
+        (
+            AgentStatePatchOp("set", "profile", "updated"),
+            AgentStatePatchOp("merge", "extra", {"debug": True}),
+        )
+    )
+
+    with pytest.raises(AgentStateError, match="unknown agent state patch operation merge"):
+        state.apply_patch(0, patch)
+
+    assert state.revision == 0
+    assert state.values == {"profile": "initial"}
 
 
 def test_agent_loop_controller_respects_step_and_completion_reserve_boundaries() -> None:

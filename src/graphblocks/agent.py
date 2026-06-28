@@ -105,6 +105,8 @@ class AgentState:
                 f"agent state is at revision {self.revision}, not expected revision {expected_revision}"
             )
         for op in patch.ops:
+            if op.kind not in {"set", "delete"}:
+                raise AgentStateError(f"unknown agent state patch operation {op.kind}")
             if schema is not None and not schema.allows(op.key):
                 raise AgentStateError(f"agent state key {op.key!r} is not allowed")
         for op in patch.ops:
@@ -112,8 +114,6 @@ class AgentState:
                 self.values[op.key] = op.value
             elif op.kind == "delete":
                 self.values.pop(op.key, None)
-            else:
-                raise AgentStateError(f"unknown agent state patch operation {op.kind}")
         self.revision += 1
         return self.revision
 
