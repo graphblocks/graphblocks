@@ -686,6 +686,8 @@ class ApplicationEvent:
                     payload={
                         "response_id": cutoff.response_id,
                         "last_client_delivered_sequence": cutoff.last_client_delivered_sequence,
+                        "terminal_reason": cutoff.terminal_reason,
+                        "draft_disposition": cutoff.draft_disposition,
                         "policy_decision_id": cutoff.policy_decision_id,
                     },
                 )

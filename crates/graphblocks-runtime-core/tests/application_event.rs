@@ -650,6 +650,8 @@ fn output_cutoff_events_include_cutoff_and_retraction_semantics() {
         json!({
             "response_id": "response-1",
             "last_client_delivered_sequence": 2,
+            "terminal_reason": "policy_denied",
+            "draft_disposition": "retract",
             "policy_decision_id": "decision-abort",
         })
     );
@@ -680,6 +682,14 @@ fn output_cutoff_events_mark_incomplete_when_retraction_is_not_required() {
     assert_eq!(
         events[1].payload.get("last_client_delivered_sequence"),
         Some(&json!(1))
+    );
+    assert_eq!(
+        events[1].payload.get("terminal_reason"),
+        Some(&json!("cancelled"))
+    );
+    assert_eq!(
+        events[1].payload.get("draft_disposition"),
+        Some(&json!("mark_incomplete"))
     );
 }
 
@@ -868,10 +878,7 @@ fn application_event_stream_state_discards_late_output_after_cutoff() {
         state.accept(policy_stopped_tool.clone()),
         Some(policy_stopped_tool)
     );
-    assert_eq!(
-        state.accept(incomplete_tool.clone()),
-        Some(incomplete_tool)
-    );
+    assert_eq!(state.accept(incomplete_tool.clone()), Some(incomplete_tool));
     assert_eq!(
         state
             .accepted_events()

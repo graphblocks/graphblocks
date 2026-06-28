@@ -766,8 +766,28 @@ def test_output_cutoff_events_include_cutoff_and_retraction_semantics() -> None:
     assert events[1].payload == {
         "response_id": "response-1",
         "last_client_delivered_sequence": 2,
+        "terminal_reason": "policy_denied",
+        "draft_disposition": "retract",
         "policy_decision_id": "decision-abort",
     }
+
+    incomplete_cutoff = OutputCutoff(
+        stream_id="stream-1",
+        response_id="response-2",
+        last_generated_sequence=3,
+        last_policy_accepted_sequence=1,
+        last_client_delivered_sequence=1,
+        terminal_reason="cancelled",
+        draft_disposition="mark_incomplete",
+        durable_result="incomplete",
+        occurred_at="2026-06-23T00:00:02Z",
+    )
+
+    incomplete_events = ApplicationEvent.output_cutoff(_metadata(), incomplete_cutoff)
+
+    assert incomplete_events[1].kind == "AssistantIncomplete"
+    assert incomplete_events[1].payload["terminal_reason"] == "cancelled"
+    assert incomplete_events[1].payload["draft_disposition"] == "mark_incomplete"
 
 
 def test_application_event_stream_state_rejects_invalid_output_cutoff_payload() -> None:

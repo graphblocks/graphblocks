@@ -496,6 +496,8 @@ impl ApplicationEvent {
                 json!({
                     "response_id": cutoff.response_id,
                     "last_client_delivered_sequence": cutoff.last_client_delivered_sequence,
+                    "terminal_reason": terminal_reason,
+                    "draft_disposition": draft_disposition,
                     "policy_decision_id": cutoff.policy_decision_id,
                 }),
             )?);
