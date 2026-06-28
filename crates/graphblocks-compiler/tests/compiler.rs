@@ -512,6 +512,32 @@ fn compile_graph_rejects_effect_retry_without_idempotency_key() {
 }
 
 #[test]
+fn compile_graph_does_not_coerce_non_numeric_effect_retry_attempts() {
+    for max_attempts in [json!("2"), json!("two"), json!(true)] {
+        let graph = json!({
+            "apiVersion": GRAPH_API_VERSION,
+            "kind": "Graph",
+            "metadata": {"name": "non-numeric-retry"},
+            "spec": {
+                "nodes": {
+                    "write": {
+                        "block": "storage.write@1",
+                        "effects": ["external_write"],
+                        "flow": {"retry": {"maxAttempts": max_attempts}}
+                    }
+                }
+            }
+        });
+
+        let plan = compile_graph(&graph);
+
+        assert!(!plan.diagnostics.iter().any(|diagnostic| {
+            diagnostic.severity == Severity::Error && diagnostic.code == "GB1011"
+        }));
+    }
+}
+
+#[test]
 fn compile_graph_allows_effect_retry_with_idempotency_key() {
     let graph = json!({
         "apiVersion": GRAPH_API_VERSION,

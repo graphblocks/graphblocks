@@ -165,9 +165,11 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
         max_attempts = 1
         idempotency_key = None
         if isinstance(retry, dict):
-            max_attempts = int(retry.get("maxAttempts", 1))
+            configured_max_attempts = retry.get("maxAttempts", retry.get("max_attempts", 1))
+            if isinstance(configured_max_attempts, int) and not isinstance(configured_max_attempts, bool):
+                max_attempts = configured_max_attempts
             idempotency_key = retry.get("idempotencyKey") or retry.get("idempotency_key")
-        elif isinstance(retry, int):
+        elif isinstance(retry, int) and not isinstance(retry, bool):
             max_attempts = retry
         effect_retry_requires_key = bool(effect_set & {"external_write", "destructive", "process"})
         if effect_retry_requires_key and max_attempts > 1 and not idempotency_key:

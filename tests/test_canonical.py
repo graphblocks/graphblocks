@@ -118,6 +118,28 @@ def test_compile_rejects_effect_retry_without_idempotency_key() -> None:
     assert [item.code for item in plan.diagnostics.diagnostics if item.severity == "error"] == ["GB1011"]
 
 
+def test_compile_does_not_coerce_non_numeric_effect_retry_attempts() -> None:
+    for max_attempts in ("2", "two", True):
+        graph = {
+            "apiVersion": "graphblocks.ai/v1alpha3",
+            "kind": "Graph",
+            "metadata": {"name": "non-numeric-retry"},
+            "spec": {
+                "nodes": {
+                    "write": {
+                        "block": "storage.write@1",
+                        "effects": ["external_write"],
+                        "flow": {"retry": {"maxAttempts": max_attempts}},
+                    }
+                }
+            },
+        }
+
+        plan = compile_graph(graph)
+
+        assert "GB1011" not in [item.code for item in plan.diagnostics.diagnostics if item.severity == "error"]
+
+
 def test_compile_allows_effect_retry_with_idempotency_key() -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
