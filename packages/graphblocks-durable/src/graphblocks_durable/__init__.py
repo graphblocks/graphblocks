@@ -47,7 +47,7 @@ class SourcePausedError(DurableError):
 class UnknownSourceCursorError(DurableError):
     def __init__(self, cursor: SourceCursor) -> None:
         self.cursor = cursor
-        super().__init__(f"source cursor stream is not known to this source: {cursor.stream!r}")
+        super().__init__(f"source cursor is not known to this source: {cursor.partition_key()!r}")
 
 
 class DemandExceededError(DurableError):
@@ -237,10 +237,14 @@ class InMemoryDurableSource:
     committed_cursor: SourceCursor | None = None
     paused: bool = False
     _known_streams: frozenset[str] = field(init=False, repr=False)
+    _known_partitions: frozenset[tuple[str, int]] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.events = sorted(self.events, key=lambda event: event.cursor)
         self._known_streams = frozenset(event.cursor.stream for event in self.events)
+        self._known_partitions = frozenset(
+            (event.cursor.stream, event.cursor.partition) for event in self.events
+        )
         if self.committed_cursor is not None:
             self._validate_cursor(self.committed_cursor)
 
@@ -273,6 +277,8 @@ class InMemoryDurableSource:
 
     def _validate_cursor(self, cursor: SourceCursor) -> None:
         if self._known_streams and cursor.stream not in self._known_streams:
+            raise UnknownSourceCursorError(cursor)
+        if self._known_partitions and (cursor.stream, cursor.partition) not in self._known_partitions:
             raise UnknownSourceCursorError(cursor)
 
 
