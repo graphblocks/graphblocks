@@ -145,6 +145,21 @@ fn in_memory_source_rejects_unknown_cursor_partition() {
 }
 
 #[test]
+fn in_memory_source_rejects_empty_cursor_stream() {
+    let mut source = InMemoryDurableSource::new(DeliveryGuarantee::AtLeastOnce, [order_event(10)]);
+    let empty_cursor = SourceCursor::new(" ", 0, 10);
+
+    assert_eq!(
+        source.commit(empty_cursor.clone()),
+        Err(DurableError::InvalidSourceCursor { field: "stream" }),
+    );
+    assert_eq!(
+        source.poll(Some(empty_cursor), 1),
+        Err(DurableError::InvalidSourceCursor { field: "stream" }),
+    );
+}
+
+#[test]
 fn source_batch_rejects_empty_demand_and_preserves_high_watermark() {
     assert_eq!(
         SourceBatch::new(
@@ -182,6 +197,16 @@ fn source_batch_rejects_empty_demand_and_preserves_high_watermark() {
     assert_eq!(
         batch.watermark,
         Some(Watermark::event_time(1_820_000_001_000)),
+    );
+}
+
+#[test]
+fn source_batch_rejects_events_with_empty_cursor_stream() {
+    let event = SourceEvent::new(SourceCursor::new(" ", 0, 10), json!({"n": 1}), None);
+
+    assert_eq!(
+        SourceBatch::new(DeliveryGuarantee::AtMostOnce, [event], None, 1),
+        Err(DurableError::InvalidSourceCursor { field: "stream" }),
     );
 }
 

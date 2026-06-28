@@ -11,6 +11,9 @@ pub enum DeliveryGuarantee {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DurableError {
+    InvalidSourceCursor {
+        field: &'static str,
+    },
     InvalidDemand,
     DemandExceeded {
         demand: usize,
@@ -51,6 +54,13 @@ impl SourceCursor {
     pub fn partition_key(&self) -> String {
         format!("{}:{}", self.stream, self.partition)
     }
+}
+
+fn validate_source_cursor(cursor: &SourceCursor) -> Result<(), DurableError> {
+    if cursor.stream.trim().is_empty() {
+        return Err(DurableError::InvalidSourceCursor { field: "stream" });
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -119,6 +129,9 @@ impl SourceBatch {
             return Err(DurableError::InvalidDemand);
         }
         let events = events.into_iter().collect::<Vec<_>>();
+        for event in &events {
+            validate_source_cursor(&event.cursor)?;
+        }
         if events.len() > demand {
             return Err(DurableError::DemandExceeded {
                 demand,
@@ -221,6 +234,7 @@ impl InMemoryDurableSource {
     }
 
     fn validate_cursor(&self, cursor: &SourceCursor) -> Result<(), DurableError> {
+        validate_source_cursor(cursor)?;
         if !self.known_streams.is_empty() && !self.known_streams.contains(&cursor.stream) {
             return Err(DurableError::UnknownSourceCursor {
                 cursor: cursor.clone(),
