@@ -2649,6 +2649,8 @@ def test_tool_execution_plan_rejects_invalid_metadata_types() -> None:
         ToolPlanCall(call, effects=frozenset({"network", object()}))  # type: ignore[arg-type]
     with pytest.raises(ToolExecutionPlanError, match="tool call call-a effect_key must be a string"):
         ToolPlanCall(call, effect_key=object())  # type: ignore[arg-type]
+    with pytest.raises(ToolExecutionPlanError, match="tool plan call must be a ToolCall"):
+        ToolPlanCall(object())  # type: ignore[arg-type]
 
     plan_cases = (
         ({"plan_id": object()}, "plan_id must be a string"),

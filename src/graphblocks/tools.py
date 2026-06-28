@@ -1192,6 +1192,8 @@ class ToolPlanCall:
     cancellation: ToolCancellation = "cooperative"
 
     def __post_init__(self) -> None:
+        if not isinstance(self.call, ToolCall):
+            raise ToolExecutionPlanError("tool plan call must be a ToolCall")
         try:
             effects = _validate_string_collection("tool plan", "effects", self.effects)
         except ValueError as error:
