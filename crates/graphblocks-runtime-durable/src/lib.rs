@@ -782,22 +782,23 @@ pub struct CheckpointBarrier {
 
 impl CheckpointBarrier {
     pub fn validate(&self) -> Result<(), CheckpointBarrierError> {
-        if self.checkpoint_id.is_empty() {
+        if self.checkpoint_id.trim().is_empty() {
             return Err(CheckpointBarrierError::MissingCheckpointId);
         }
-        if self.run_id.is_empty() {
+        if self.run_id.trim().is_empty() {
             return Err(CheckpointBarrierError::MissingRunId);
         }
-        if self.release_id.is_empty() {
+        if self.release_id.trim().is_empty() {
             return Err(CheckpointBarrierError::MissingReleaseId);
         }
-        if self.deployment_revision_id.is_empty() {
+        if self.deployment_revision_id.trim().is_empty() {
             return Err(CheckpointBarrierError::MissingDeploymentRevisionId);
         }
-        if self.plan_hash.is_empty() {
+        if self.plan_hash.trim().is_empty() {
             return Err(CheckpointBarrierError::MissingPlanHash);
         }
-        if self.checkpoint_schema.schema_id.is_empty() || self.checkpoint_schema.schema_version == 0
+        if self.checkpoint_schema.schema_id.trim().is_empty()
+            || self.checkpoint_schema.schema_version == 0
         {
             return Err(CheckpointBarrierError::InvalidCheckpointSchema);
         }

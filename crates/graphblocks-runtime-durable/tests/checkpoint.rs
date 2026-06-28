@@ -55,6 +55,50 @@ fn checkpoint_barrier_requires_plan_hash_and_schema_versions() {
 }
 
 #[test]
+fn checkpoint_barrier_rejects_whitespace_identity_fields() {
+    let mut barrier = checkpoint(" ", 1, "sha256:plan");
+
+    assert_eq!(
+        barrier.validate(),
+        Err(CheckpointBarrierError::MissingCheckpointId),
+    );
+
+    barrier = checkpoint("checkpoint-000001", 1, "sha256:plan");
+    barrier.run_id = "\t".to_owned();
+    assert_eq!(
+        barrier.validate(),
+        Err(CheckpointBarrierError::MissingRunId)
+    );
+
+    barrier = checkpoint("checkpoint-000001", 1, "sha256:plan");
+    barrier.release_id = "\n".to_owned();
+    assert_eq!(
+        barrier.validate(),
+        Err(CheckpointBarrierError::MissingReleaseId),
+    );
+
+    barrier = checkpoint("checkpoint-000001", 1, "sha256:plan");
+    barrier.deployment_revision_id = " ".to_owned();
+    assert_eq!(
+        barrier.validate(),
+        Err(CheckpointBarrierError::MissingDeploymentRevisionId),
+    );
+
+    barrier = checkpoint("checkpoint-000001", 1, " ");
+    assert_eq!(
+        barrier.validate(),
+        Err(CheckpointBarrierError::MissingPlanHash),
+    );
+
+    barrier = checkpoint("checkpoint-000001", 1, "sha256:plan");
+    barrier.checkpoint_schema = SchemaRef::new(" ", 1);
+    assert_eq!(
+        barrier.validate(),
+        Err(CheckpointBarrierError::InvalidCheckpointSchema),
+    );
+}
+
+#[test]
 fn checkpoint_barrier_builds_deterministic_source_commit_plan() {
     let mut barrier = checkpoint("checkpoint-000001", 1, "sha256:plan");
     barrier
