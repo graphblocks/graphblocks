@@ -86,6 +86,11 @@ def policy_decision_from_cedar_result(
     result: Mapping[str, object],
     evaluated_at: str,
 ) -> PolicyDecision:
+    if not isinstance(decision_id, str) or not decision_id.strip():
+        raise CedarPolicyAdapterError("decision_id must be a non-empty string")
+    if not isinstance(evaluated_at, str) or not evaluated_at.strip():
+        raise CedarPolicyAdapterError("evaluated_at must be a non-empty string")
+
     raw_decision = result.get("decision")
     if raw_decision == "allow":
         effect = "allow"
@@ -114,6 +119,8 @@ def policy_decision_from_cedar_result(
 
 def _string_tuple(value: object) -> tuple[str, ...]:
     if isinstance(value, str):
+        if not value.strip():
+            raise CedarPolicyAdapterError("policy result string collection contains a blank string")
         return (value,)
     if not isinstance(value, list | tuple):
         raise CedarPolicyAdapterError("policy result string collection must be a sequence")
@@ -121,6 +128,8 @@ def _string_tuple(value: object) -> tuple[str, ...]:
     for item in value:
         if not isinstance(item, str):
             raise CedarPolicyAdapterError("policy result string collection contains a non-string item")
+        if not item.strip():
+            raise CedarPolicyAdapterError("policy result string collection contains a blank string")
         items.append(item)
     return tuple(items)
 

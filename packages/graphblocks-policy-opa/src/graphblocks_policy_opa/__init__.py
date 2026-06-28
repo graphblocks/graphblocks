@@ -88,6 +88,11 @@ def policy_decision_from_opa_result(
     result: Mapping[str, object],
     evaluated_at: str,
 ) -> PolicyDecision:
+    if not isinstance(decision_id, str) or not decision_id.strip():
+        raise OpaPolicyAdapterError("decision_id must be a non-empty string")
+    if not isinstance(evaluated_at, str) or not evaluated_at.strip():
+        raise OpaPolicyAdapterError("evaluated_at must be a non-empty string")
+
     result_body = result.get("result", result)
     if not isinstance(result_body, Mapping):
         raise OpaPolicyAdapterError("OPA result must contain an object result")
@@ -138,6 +143,8 @@ def policy_decision_from_opa_result(
 
 def _string_tuple(value: object) -> tuple[str, ...]:
     if isinstance(value, str):
+        if not value.strip():
+            raise OpaPolicyAdapterError("policy result string collection contains a blank string")
         return (value,)
     if not isinstance(value, list | tuple):
         raise OpaPolicyAdapterError("policy result string collection must be a sequence")
@@ -145,6 +152,8 @@ def _string_tuple(value: object) -> tuple[str, ...]:
     for item in value:
         if not isinstance(item, str):
             raise OpaPolicyAdapterError("policy result string collection contains a non-string item")
+        if not item.strip():
+            raise OpaPolicyAdapterError("policy result string collection contains a blank string")
         items.append(item)
     return tuple(items)
 

@@ -138,6 +138,40 @@ def test_opa_adapter_rejects_unknown_effect(monkeypatch) -> None:
         )
 
 
+def test_opa_adapter_rejects_blank_decision_metadata(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-opa" / "src"))
+    graphblocks_policy_opa = importlib.import_module("graphblocks_policy_opa")
+
+    with pytest.raises(graphblocks_policy_opa.OpaPolicyAdapterError, match="decision_id"):
+        graphblocks_policy_opa.policy_decision_from_opa_result(
+            decision_id=" ",
+            request=_policy_request(),
+            result={"result": {"effect": "allow"}},
+            evaluated_at="2026-06-23T00:00:01Z",
+        )
+
+    with pytest.raises(graphblocks_policy_opa.OpaPolicyAdapterError, match="evaluated_at"):
+        graphblocks_policy_opa.policy_decision_from_opa_result(
+            decision_id="decision-opa-1",
+            request=_policy_request(),
+            result={"result": {"effect": "allow"}},
+            evaluated_at=" ",
+        )
+
+
+def test_opa_adapter_rejects_blank_policy_result_strings(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-opa" / "src"))
+    graphblocks_policy_opa = importlib.import_module("graphblocks_policy_opa")
+
+    with pytest.raises(graphblocks_policy_opa.OpaPolicyAdapterError, match="blank string"):
+        graphblocks_policy_opa.policy_decision_from_opa_result(
+            decision_id="decision-opa-1",
+            request=_policy_request(),
+            result={"result": {"effect": "allow", "reason_codes": ["allow-support", " "]}},
+            evaluated_at="2026-06-23T00:00:01Z",
+        )
+
+
 def test_cedar_adapter_prepares_authorization_request(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-cedar" / "src"))
     graphblocks_policy_cedar = importlib.import_module("graphblocks_policy_cedar")
@@ -211,6 +245,40 @@ def test_cedar_adapter_maps_result_to_policy_decision(monkeypatch) -> None:
     assert decision.reason_codes == ("policy::support::deny_write",)
     assert decision.policy_refs == ("policy::support::deny_write",)
     assert decision.input_digest == request.input_digest
+
+
+def test_cedar_adapter_rejects_blank_decision_metadata(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-cedar" / "src"))
+    graphblocks_policy_cedar = importlib.import_module("graphblocks_policy_cedar")
+
+    with pytest.raises(graphblocks_policy_cedar.CedarPolicyAdapterError, match="decision_id"):
+        graphblocks_policy_cedar.policy_decision_from_cedar_result(
+            decision_id=" ",
+            request=_policy_request(),
+            result={"decision": "allow"},
+            evaluated_at="2026-06-23T00:00:01Z",
+        )
+
+    with pytest.raises(graphblocks_policy_cedar.CedarPolicyAdapterError, match="evaluated_at"):
+        graphblocks_policy_cedar.policy_decision_from_cedar_result(
+            decision_id="decision-cedar-1",
+            request=_policy_request(),
+            result={"decision": "allow"},
+            evaluated_at=" ",
+        )
+
+
+def test_cedar_adapter_rejects_blank_policy_result_strings(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-cedar" / "src"))
+    graphblocks_policy_cedar = importlib.import_module("graphblocks_policy_cedar")
+
+    with pytest.raises(graphblocks_policy_cedar.CedarPolicyAdapterError, match="blank string"):
+        graphblocks_policy_cedar.policy_decision_from_cedar_result(
+            decision_id="decision-cedar-1",
+            request=_policy_request(),
+            result={"decision": "allow", "diagnostics": {"reason": ["policy::support::allow", " "]}},
+            evaluated_at="2026-06-23T00:00:01Z",
+        )
 
 
 def test_cedar_adapter_requires_principal(monkeypatch) -> None:
