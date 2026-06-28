@@ -102,6 +102,7 @@ def test_standard_application_event_names_match_tool_and_output_policy_contract(
         "ToolCallDenied",
         "ToolCallCancelled",
         "ToolCallPolicyStopped",
+        "ToolCallIncomplete",
         "OutputPolicyEvaluationStarted",
         "OutputPolicyAllowed",
         "OutputPolicyHeld",
@@ -955,6 +956,11 @@ def test_tool_result_events_map_to_standard_tool_application_events() -> None:
         started_at="2026-06-23T00:00:07Z",
         completed_at="2026-06-23T00:00:08Z",
     )
+    incomplete = ToolResult.incomplete(
+        "call-6",
+        started_at="2026-06-23T00:00:09Z",
+        completed_at="2026-06-23T00:00:10Z",
+    )
 
     events = [
         ToolResultEvent.started("call-0", 1, started_at="2026-06-23T00:00:00Z"),
@@ -963,6 +969,7 @@ def test_tool_result_events_map_to_standard_tool_application_events() -> None:
         ToolResultEvent.denied("call-3", 4, denied),
         ToolResultEvent.cancelled("call-4", 5, cancelled),
         ToolResultEvent.policy_stopped("call-5", 6, policy_stopped),
+        ToolResultEvent.incomplete("call-6", 7, incomplete),
     ]
     converted = [ApplicationEvent.tool_result_event(_metadata(), event) for event in events]
 
@@ -973,6 +980,7 @@ def test_tool_result_events_map_to_standard_tool_application_events() -> None:
         "ToolCallDenied",
         "ToolCallCancelled",
         "ToolCallPolicyStopped",
+        "ToolCallIncomplete",
     ]
     assert converted[0].tool_call_id == "call-0"
     assert converted[1].payload["status"] == "completed"
@@ -980,6 +988,7 @@ def test_tool_result_events_map_to_standard_tool_application_events() -> None:
     assert converted[3].payload["status"] == "denied"
     assert converted[4].payload["status"] == "cancelled"
     assert converted[5].payload["status"] == "policy_stopped"
+    assert converted[6].payload["status"] == "incomplete"
 
 
 def test_tool_result_delta_does_not_become_application_event() -> None:

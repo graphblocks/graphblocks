@@ -55,6 +55,7 @@ fn standard_event_names_match_the_tool_and_output_policy_contract() {
         ApplicationEventKind::ToolCallDenied.as_str(),
         ApplicationEventKind::ToolCallCancelled.as_str(),
         ApplicationEventKind::ToolCallPolicyStopped.as_str(),
+        ApplicationEventKind::ToolCallIncomplete.as_str(),
         ApplicationEventKind::OutputPolicyEvaluationStarted.as_str(),
         ApplicationEventKind::OutputPolicyAllowed.as_str(),
         ApplicationEventKind::OutputPolicyHeld.as_str(),
@@ -86,6 +87,7 @@ fn standard_event_names_match_the_tool_and_output_policy_contract() {
             "ToolCallDenied",
             "ToolCallCancelled",
             "ToolCallPolicyStopped",
+            "ToolCallIncomplete",
             "OutputPolicyEvaluationStarted",
             "OutputPolicyAllowed",
             "OutputPolicyHeld",
@@ -913,6 +915,7 @@ fn tool_result_events_map_to_standard_tool_application_events() {
         1_400,
         1_430,
     );
+    let incomplete = ToolResult::incomplete("call-6", 1_500, 1_530);
 
     let events = [
         ToolResultEvent::started("call-0", 1, 990),
@@ -921,6 +924,7 @@ fn tool_result_events_map_to_standard_tool_application_events() {
         ToolResultEvent::denied("call-3", 4, denied),
         ToolResultEvent::cancelled("call-4", 5, cancelled),
         ToolResultEvent::policy_stopped("call-5", 6, policy_stopped),
+        ToolResultEvent::incomplete("call-6", 7, incomplete),
     ]
     .into_iter()
     .map(|event| {
@@ -939,6 +943,7 @@ fn tool_result_events_map_to_standard_tool_application_events() {
             ApplicationEventKind::ToolCallDenied,
             ApplicationEventKind::ToolCallCancelled,
             ApplicationEventKind::ToolCallPolicyStopped,
+            ApplicationEventKind::ToolCallIncomplete,
         ]
     );
     assert_eq!(events[0].tool_call_id.as_deref(), Some("call-0"));
@@ -950,6 +955,7 @@ fn tool_result_events_map_to_standard_tool_application_events() {
         events[5].payload.get("status"),
         Some(&json!("policy_stopped"))
     );
+    assert_eq!(events[6].payload.get("status"), Some(&json!("incomplete")));
 }
 
 #[test]

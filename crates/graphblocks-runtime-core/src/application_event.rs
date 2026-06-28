@@ -37,6 +37,7 @@ pub enum ApplicationEventKind {
     ToolCallDenied,
     ToolCallCancelled,
     ToolCallPolicyStopped,
+    ToolCallIncomplete,
     OutputPolicyEvaluationStarted,
     OutputPolicyAllowed,
     OutputPolicyHeld,
@@ -68,6 +69,7 @@ impl ApplicationEventKind {
             Self::ToolCallDenied => "ToolCallDenied",
             Self::ToolCallCancelled => "ToolCallCancelled",
             Self::ToolCallPolicyStopped => "ToolCallPolicyStopped",
+            Self::ToolCallIncomplete => "ToolCallIncomplete",
             Self::OutputPolicyEvaluationStarted => "OutputPolicyEvaluationStarted",
             Self::OutputPolicyAllowed => "OutputPolicyAllowed",
             Self::OutputPolicyHeld => "OutputPolicyHeld",
@@ -96,13 +98,17 @@ impl ApplicationEventKind {
                 | Self::ToolCallDenied
                 | Self::ToolCallCancelled
                 | Self::ToolCallPolicyStopped
+                | Self::ToolCallIncomplete
         )
     }
 
     fn is_allowed_after_output_cutoff(&self) -> bool {
         matches!(
             self,
-            Self::ToolCallDenied | Self::ToolCallCancelled | Self::ToolCallPolicyStopped
+            Self::ToolCallDenied
+                | Self::ToolCallCancelled
+                | Self::ToolCallPolicyStopped
+                | Self::ToolCallIncomplete
         )
     }
 }
@@ -367,9 +373,18 @@ impl ApplicationEvent {
                 Self::tool_result_payload(*sequence, result),
             )
             .map(Some),
-            ToolResultEvent::Delta { .. }
-            | ToolResultEvent::ArtifactReady { .. }
-            | ToolResultEvent::Incomplete { .. } => Ok(None),
+            ToolResultEvent::Incomplete {
+                tool_call_id,
+                sequence,
+                result,
+            } => Self::tool(
+                ApplicationEventKind::ToolCallIncomplete,
+                metadata,
+                tool_call_id,
+                Self::tool_result_payload(*sequence, result),
+            )
+            .map(Some),
+            ToolResultEvent::Delta { .. } | ToolResultEvent::ArtifactReady { .. } => Ok(None),
         }
     }
 

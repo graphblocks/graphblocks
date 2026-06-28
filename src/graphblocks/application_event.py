@@ -27,6 +27,7 @@ ApplicationEventKind = Literal[
     "ToolCallDenied",
     "ToolCallCancelled",
     "ToolCallPolicyStopped",
+    "ToolCallIncomplete",
     "OutputPolicyEvaluationStarted",
     "OutputPolicyAllowed",
     "OutputPolicyHeld",
@@ -57,6 +58,7 @@ STANDARD_APPLICATION_EVENT_KINDS: tuple[ApplicationEventKind, ...] = (
     "ToolCallDenied",
     "ToolCallCancelled",
     "ToolCallPolicyStopped",
+    "ToolCallIncomplete",
     "OutputPolicyEvaluationStarted",
     "OutputPolicyAllowed",
     "OutputPolicyHeld",
@@ -83,6 +85,7 @@ TOOL_APPLICATION_EVENT_KINDS: frozenset[ApplicationEventKind] = frozenset(
         "ToolCallDenied",
         "ToolCallCancelled",
         "ToolCallPolicyStopped",
+        "ToolCallIncomplete",
     )
 )
 
@@ -99,6 +102,7 @@ POST_CUTOFF_TOOL_APPLICATION_EVENT_KINDS: frozenset[ApplicationEventKind] = froz
         "ToolCallDenied",
         "ToolCallCancelled",
         "ToolCallPolicyStopped",
+        "ToolCallIncomplete",
     )
 )
 
@@ -553,6 +557,13 @@ class ApplicationEvent:
         if event.kind == "policy_stopped" and event.result is not None:
             return cls.tool(
                 "ToolCallPolicyStopped",
+                metadata,
+                tool_call_id=event.tool_call_id,
+                payload=cls._tool_result_payload(event.sequence, event.result),
+            )
+        if event.kind == "incomplete" and event.result is not None:
+            return cls.tool(
+                "ToolCallIncomplete",
                 metadata,
                 tool_call_id=event.tool_call_id,
                 payload=cls._tool_result_payload(event.sequence, event.result),
