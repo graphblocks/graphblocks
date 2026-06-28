@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from graphblocks import ContentPart, Message, ToolDefinition
+from graphblocks import ContentPart, Message, ToolCallError, ToolDefinition
 
 
 ROOT = Path(__file__).parents[1]
@@ -189,6 +189,15 @@ def test_openai_response_preserves_tool_call_arguments_as_drafts(monkeypatch) ->
     ]
     assert response.finish_reason == "tool_calls"
 
+    drafts = graphblocks_openai.openai_tool_call_drafts_from_response(response)
+
+    assert len(drafts) == 1
+    assert drafts[0].response_id == "chatcmpl-2"
+    assert drafts[0].tool_call_id == "call-1"
+    assert drafts[0].tool_name == "knowledge.search"
+    assert drafts[0].argument_fragments == ('{"query":"refund"}',)
+    assert drafts[0].status == "arguments_complete"
+
 
 def test_openai_stream_chunk_normalizes_content_delta(monkeypatch) -> None:
     _add_openai_package_paths(monkeypatch)
@@ -216,3 +225,126 @@ def test_openai_stream_chunk_normalizes_content_delta(monkeypatch) -> None:
         "tool_call_deltas": [],
         "finish_reason": None,
     }
+
+
+def test_openai_streaming_tool_call_deltas_assemble_graphblocks_drafts(monkeypatch) -> None:
+    _add_openai_package_paths(monkeypatch)
+    graphblocks_openai = importlib.import_module("graphblocks_openai")
+    assembler = graphblocks_openai.OpenAIStreamingToolCallDraftAssembler()
+
+    first = graphblocks_openai.openai_chat_delta_from_chunk(
+        {
+            "id": "chatcmpl-3",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call-1",
+                                "type": "function",
+                                "function": {
+                                    "name": "knowledge.search",
+                                    "arguments": '{"query"',
+                                },
+                            }
+                        ]
+                    },
+                    "finish_reason": None,
+                }
+            ],
+        },
+        sequence=1,
+    )
+    second = graphblocks_openai.openai_chat_delta_from_chunk(
+        {
+            "id": "chatcmpl-3",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "function": {
+                                    "arguments": ':"refund"}',
+                                },
+                            }
+                        ]
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+        },
+        sequence=2,
+    )
+
+    first_drafts = assembler.apply_delta(first)
+    second_drafts = assembler.apply_delta(second)
+
+    assert first_drafts[0].status == "arguments_streaming"
+    with pytest.raises(ToolCallError, match="tool arguments are not complete"):
+        first_drafts[0].into_tool_call("resolved-tool-1", created_at="2026-06-23T00:00:00Z")
+    assert second_drafts[0].argument_fragments == ('{"query"', ':"refund"}')
+    assert second_drafts[0].status == "arguments_streaming"
+
+    completed = assembler.complete_all()
+    call = completed[0].into_tool_call("resolved-tool-1", created_at="2026-06-23T00:00:00Z")
+
+    assert completed[0].status == "arguments_complete"
+    assert call.arguments == {"query": "refund"}
+    assert call.status == "validated"
+
+
+def test_openai_streaming_tool_call_assembler_rejects_unstable_identity(monkeypatch) -> None:
+    _add_openai_package_paths(monkeypatch)
+    graphblocks_openai = importlib.import_module("graphblocks_openai")
+    assembler = graphblocks_openai.OpenAIStreamingToolCallDraftAssembler()
+
+    with pytest.raises(graphblocks_openai.OpenAICompatibleAdapterError, match="requires an id"):
+        assembler.apply_delta(
+            graphblocks_openai.OpenAIChatDelta(
+                response_id="chatcmpl-4",
+                sequence=1,
+                choice_index=0,
+                tool_call_deltas=[
+                    {
+                        "index": 0,
+                        "name": "knowledge.search",
+                        "arguments_delta": "{}",
+                    }
+                ],
+            )
+        )
+
+    assembler.apply_delta(
+        graphblocks_openai.OpenAIChatDelta(
+            response_id="chatcmpl-4",
+            sequence=2,
+            choice_index=0,
+            tool_call_deltas=[
+                {
+                    "index": 0,
+                    "id": "call-1",
+                    "name": "knowledge.search",
+                    "arguments_delta": "{",
+                }
+            ],
+        )
+    )
+    with pytest.raises(graphblocks_openai.OpenAICompatibleAdapterError, match="changed id"):
+        assembler.apply_delta(
+            graphblocks_openai.OpenAIChatDelta(
+                response_id="chatcmpl-4",
+                sequence=3,
+                choice_index=0,
+                tool_call_deltas=[
+                    {
+                        "index": 0,
+                        "id": "call-2",
+                        "arguments_delta": "}",
+                    }
+                ],
+            )
+        )

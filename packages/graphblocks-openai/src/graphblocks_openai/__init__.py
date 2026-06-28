@@ -5,7 +5,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 import math
 
-from graphblocks import ContentPart, Message, ToolDefinition, canonical_dumps
+from graphblocks import ContentPart, Message, ToolCallDraft, ToolDefinition, canonical_dumps
 
 
 class OpenAICompatibleAdapterError(ValueError):
@@ -104,6 +104,76 @@ class OpenAIChatDelta:
         }
 
 
+@dataclass(slots=True)
+class OpenAIStreamingToolCallDraftAssembler:
+    response_id: str | None = None
+    _drafts_by_index: dict[int, ToolCallDraft] = field(default_factory=dict)
+    _index_order: list[int] = field(default_factory=list)
+
+    def apply_delta(self, delta: OpenAIChatDelta) -> tuple[ToolCallDraft, ...]:
+        if not isinstance(delta, OpenAIChatDelta):
+            raise OpenAICompatibleAdapterError("delta must be an OpenAIChatDelta")
+        if self.response_id is None:
+            self.response_id = delta.response_id
+        elif self.response_id != delta.response_id:
+            raise OpenAICompatibleAdapterError(
+                f"streaming tool call delta changed response id from {self.response_id} to {delta.response_id}"
+            )
+
+        updated: list[ToolCallDraft] = []
+        for tool_call_delta in delta.tool_call_deltas:
+            if not isinstance(tool_call_delta, Mapping):
+                raise OpenAICompatibleAdapterError("streaming tool call delta must be a mapping")
+            index = tool_call_delta.get("index", 0)
+            if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+                raise OpenAICompatibleAdapterError("streaming tool call delta index must be a non-negative integer")
+
+            draft = self._drafts_by_index.get(index)
+            call_id = tool_call_delta.get("id")
+            name = tool_call_delta.get("name")
+            if draft is None:
+                if not isinstance(call_id, str) or not call_id.strip():
+                    raise OpenAICompatibleAdapterError("streaming tool call delta requires an id for new index")
+                if not isinstance(name, str) or not name.strip():
+                    raise OpenAICompatibleAdapterError("streaming tool call delta requires a name for new index")
+                draft = ToolCallDraft.proposed(delta.response_id, call_id, name)
+                self._drafts_by_index[index] = draft
+                self._index_order.append(index)
+            else:
+                if call_id is not None and call_id != draft.tool_call_id:
+                    raise OpenAICompatibleAdapterError(
+                        f"streaming tool call delta for index {index} changed id from "
+                        f"{draft.tool_call_id} to {call_id}"
+                    )
+                if name is not None and name != draft.tool_name:
+                    raise OpenAICompatibleAdapterError(
+                        f"streaming tool call delta for index {index} changed name from "
+                        f"{draft.tool_name} to {name}"
+                    )
+
+            arguments_delta = tool_call_delta.get("arguments_delta")
+            if arguments_delta is not None:
+                if not isinstance(arguments_delta, str):
+                    raise OpenAICompatibleAdapterError("streaming tool call arguments_delta must be a string")
+                draft = draft.append_argument_fragment(arguments_delta)
+                self._drafts_by_index[index] = draft
+            updated.append(draft)
+        return tuple(updated)
+
+    def drafts(self) -> tuple[ToolCallDraft, ...]:
+        return tuple(self._drafts_by_index[index] for index in self._index_order)
+
+    def complete_all(self) -> tuple[ToolCallDraft, ...]:
+        completed: list[ToolCallDraft] = []
+        for index in self._index_order:
+            draft = self._drafts_by_index[index]
+            if draft.status != "arguments_complete":
+                draft = draft.complete_arguments()
+                self._drafts_by_index[index] = draft
+            completed.append(draft)
+        return tuple(completed)
+
+
 def openai_chat_completion_request(
     *,
     model: str,
@@ -195,6 +265,31 @@ def openai_chat_completion_request(
         body=body,
         metadata={} if metadata is None else metadata,
     )
+
+
+def openai_tool_call_drafts_from_response(response: OpenAIChatResponse) -> tuple[ToolCallDraft, ...]:
+    if not isinstance(response, OpenAIChatResponse):
+        raise OpenAICompatibleAdapterError("response must be an OpenAIChatResponse")
+
+    drafts: list[ToolCallDraft] = []
+    for tool_call in response.tool_calls:
+        if not isinstance(tool_call, Mapping):
+            raise OpenAICompatibleAdapterError("provider response tool_call must be a mapping")
+        call_id = tool_call.get("id")
+        name = tool_call.get("name")
+        arguments = tool_call.get("arguments", "")
+        if not isinstance(call_id, str) or not call_id.strip():
+            raise OpenAICompatibleAdapterError("provider response tool_call id must not be empty")
+        if not isinstance(name, str) or not name.strip():
+            raise OpenAICompatibleAdapterError("provider response tool_call name must not be empty")
+        if not isinstance(arguments, str):
+            raise OpenAICompatibleAdapterError("provider response tool_call arguments must be a string")
+        drafts.append(
+            ToolCallDraft.proposed(response.response_id, call_id, name)
+            .append_argument_fragment(arguments)
+            .complete_arguments()
+        )
+    return tuple(drafts)
 
 
 def openai_chat_response_from_provider(data: Mapping[str, object]) -> OpenAIChatResponse:
@@ -354,7 +449,9 @@ __all__ = [
     "OpenAIChatDelta",
     "OpenAIChatResponse",
     "OpenAICompatibleAdapterError",
+    "OpenAIStreamingToolCallDraftAssembler",
     "openai_chat_completion_request",
     "openai_chat_delta_from_chunk",
     "openai_chat_response_from_provider",
+    "openai_tool_call_drafts_from_response",
 ]
