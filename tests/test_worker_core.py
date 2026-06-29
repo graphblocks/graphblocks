@@ -351,6 +351,74 @@ def test_worker_invocation_context_rejects_invalid_propagation_fields() -> None:
             build_context()
 
 
+def test_worker_invoke_request_rejects_invalid_envelope_fields() -> None:
+    base_request = {
+        "invocation_id": "invoke-000001",
+        "run_id": "run-000001",
+        "node_id": "render",
+        "node_attempt_id": "render-attempt-1",
+        "lease_epoch": 7,
+        "block": "prompt.render@1",
+        "context": WorkerInvocationContext("release-1", "rev-1"),
+        "inputs": {},
+        "config": {},
+    }
+    invalid_requests = (
+        (
+            {**base_request, "invocation_id": " "},
+            "worker invoke request invocation_id must not be empty",
+        ),
+        (
+            {**base_request, "run_id": object()},
+            "worker invoke request run_id must be a string",
+        ),
+        (
+            {**base_request, "node_id": ""},
+            "worker invoke request node_id must not be empty",
+        ),
+        (
+            {**base_request, "node_attempt_id": " "},
+            "worker invoke request node_attempt_id must not be empty",
+        ),
+        (
+            {**base_request, "block": ""},
+            "worker invoke request block must not be empty",
+        ),
+        (
+            {**base_request, "lease_epoch": True},
+            "worker invoke request lease_epoch must be an integer",
+        ),
+        (
+            {**base_request, "lease_epoch": -1},
+            "worker invoke request lease_epoch must not be negative",
+        ),
+        (
+            {**base_request, "context": object()},
+            "worker invoke request context must be a WorkerInvocationContext",
+        ),
+    )
+
+    for kwargs, message in invalid_requests:
+        with pytest.raises(WorkerProtocolError, match=message):
+            WorkerInvokeRequest(**kwargs)
+
+    encoded = WorkerInvokeRequest(**base_request).to_wire()
+    encoded["invocationId"] = 7
+    with pytest.raises(
+        WorkerProtocolError,
+        match="worker invoke request invocation_id must be a string",
+    ):
+        WorkerInvokeRequest.from_wire(encoded)
+
+    encoded = WorkerInvokeRequest(**base_request).to_wire()
+    encoded["context"] = []
+    with pytest.raises(
+        WorkerProtocolError,
+        match="worker invoke request context must be a mapping",
+    ):
+        WorkerInvokeRequest.from_wire(encoded)
+
+
 def test_worker_drain_plan_closes_admission_and_preserves_inflight_affinity() -> None:
     worker = WorkerAdvertisement.new(
         "worker-a",

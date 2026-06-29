@@ -671,6 +671,32 @@ class WorkerInvokeRequest:
     inputs: object
     config: object
 
+    def __post_init__(self) -> None:
+        for field_name in (
+            "invocation_id",
+            "run_id",
+            "node_id",
+            "node_attempt_id",
+            "block",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_worker_non_empty_string(
+                    "worker invoke request",
+                    field_name,
+                    getattr(self, field_name),
+                ),
+            )
+        if not isinstance(self.lease_epoch, int) or isinstance(self.lease_epoch, bool):
+            raise WorkerProtocolError("worker invoke request lease_epoch must be an integer")
+        if self.lease_epoch < 0:
+            raise WorkerProtocolError("worker invoke request lease_epoch must not be negative")
+        if not isinstance(self.context, WorkerInvocationContext):
+            raise WorkerProtocolError(
+                "worker invoke request context must be a WorkerInvocationContext"
+            )
+
     def to_wire(self) -> dict[str, object]:
         return {
             "invocationId": self.invocation_id,
@@ -687,16 +713,16 @@ class WorkerInvokeRequest:
     @classmethod
     def from_wire(cls, payload: dict[str, object]) -> WorkerInvokeRequest:
         context = payload["context"]
-        if not isinstance(context, dict):
-            raise ValueError("context must be a mapping")
+        if not isinstance(context, Mapping):
+            raise WorkerProtocolError("worker invoke request context must be a mapping")
         return cls(
-            invocation_id=str(payload["invocationId"]),
-            run_id=str(payload["runId"]),
-            node_id=str(payload["nodeId"]),
-            node_attempt_id=str(payload["nodeAttemptId"]),
-            lease_epoch=int(payload["leaseEpoch"]),
-            block=str(payload["block"]),
-            context=WorkerInvocationContext.from_wire(context),
+            invocation_id=payload["invocationId"],
+            run_id=payload["runId"],
+            node_id=payload["nodeId"],
+            node_attempt_id=payload["nodeAttemptId"],
+            lease_epoch=payload["leaseEpoch"],
+            block=payload["block"],
+            context=WorkerInvocationContext.from_wire(dict(context)),
             inputs=payload.get("inputs"),
             config=payload.get("config"),
         )

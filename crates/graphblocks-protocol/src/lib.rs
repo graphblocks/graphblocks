@@ -422,53 +422,53 @@ impl WorkerInvocationContext {
     }
 
     pub fn validate(&self) -> Result<(), WorkerInvocationContextError> {
-        if self.release_id.is_empty() {
+        if self.release_id.trim().is_empty() {
             return Err(WorkerInvocationContextError::EmptyRequiredField {
                 field: "release_id".to_owned(),
             });
         }
-        if self.deployment_revision_id.is_empty() {
+        if self.deployment_revision_id.trim().is_empty() {
             return Err(WorkerInvocationContextError::EmptyRequiredField {
                 field: "deployment_revision_id".to_owned(),
             });
         }
         if let Some(trace_id) = &self.trace_id
-            && trace_id.is_empty()
+            && trace_id.trim().is_empty()
         {
             return Err(WorkerInvocationContextError::EmptyOptionalField {
                 field: "trace_id".to_owned(),
             });
         }
         if let Some(parent_span_id) = &self.parent_span_id
-            && parent_span_id.is_empty()
+            && parent_span_id.trim().is_empty()
         {
             return Err(WorkerInvocationContextError::EmptyOptionalField {
                 field: "parent_span_id".to_owned(),
             });
         }
         if let Some(policy_snapshot_id) = &self.policy_snapshot_id
-            && policy_snapshot_id.is_empty()
+            && policy_snapshot_id.trim().is_empty()
         {
             return Err(WorkerInvocationContextError::EmptyOptionalField {
                 field: "policy_snapshot_id".to_owned(),
             });
         }
         if let Some(policy_snapshot_digest) = &self.policy_snapshot_digest
-            && policy_snapshot_digest.is_empty()
+            && policy_snapshot_digest.trim().is_empty()
         {
             return Err(WorkerInvocationContextError::EmptyOptionalField {
                 field: "policy_snapshot_digest".to_owned(),
             });
         }
         if let Some(budget_permit_id) = &self.budget_permit_id
-            && budget_permit_id.is_empty()
+            && budget_permit_id.trim().is_empty()
         {
             return Err(WorkerInvocationContextError::EmptyOptionalField {
                 field: "budget_permit_id".to_owned(),
             });
         }
         if let Some(budget_permit_digest) = &self.budget_permit_digest
-            && budget_permit_digest.is_empty()
+            && budget_permit_digest.trim().is_empty()
         {
             return Err(WorkerInvocationContextError::EmptyOptionalField {
                 field: "budget_permit_digest".to_owned(),
@@ -486,7 +486,7 @@ impl WorkerInvocationContext {
             (Some(_), None) => return Err(WorkerInvocationContextError::MissingBudgetPermitDigest),
             (None, Some(_)) => return Err(WorkerInvocationContextError::MissingBudgetPermitId),
         }
-        if self.attributes.keys().any(|key| key.is_empty()) {
+        if self.attributes.keys().any(|key| key.trim().is_empty()) {
             return Err(WorkerInvocationContextError::EmptyAttributeKey);
         }
         Ok(())
@@ -505,6 +505,50 @@ pub struct WorkerInvokeRequest {
     pub context: WorkerInvocationContext,
     pub inputs: Value,
     pub config: Value,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WorkerInvokeRequestError {
+    EmptyField {
+        field: String,
+    },
+    InvalidContext {
+        source: WorkerInvocationContextError,
+    },
+}
+
+impl WorkerInvokeRequest {
+    pub fn validate(&self) -> Result<(), WorkerInvokeRequestError> {
+        if self.invocation_id.trim().is_empty() {
+            return Err(WorkerInvokeRequestError::EmptyField {
+                field: "invocation_id".to_owned(),
+            });
+        }
+        if self.run_id.trim().is_empty() {
+            return Err(WorkerInvokeRequestError::EmptyField {
+                field: "run_id".to_owned(),
+            });
+        }
+        if self.node_id.trim().is_empty() {
+            return Err(WorkerInvokeRequestError::EmptyField {
+                field: "node_id".to_owned(),
+            });
+        }
+        if self.node_attempt_id.trim().is_empty() {
+            return Err(WorkerInvokeRequestError::EmptyField {
+                field: "node_attempt_id".to_owned(),
+            });
+        }
+        if self.block.trim().is_empty() {
+            return Err(WorkerInvokeRequestError::EmptyField {
+                field: "block".to_owned(),
+            });
+        }
+        self.context
+            .validate()
+            .map_err(|source| WorkerInvokeRequestError::InvalidContext { source })?;
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

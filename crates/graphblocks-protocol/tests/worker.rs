@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use graphblocks_protocol::{
     BlockCapability, RunOwnershipLease, WORKER_PROTOCOL_VERSION, WorkerAdmissionPolicy,
     WorkerAdvertisement, WorkerInvocationContext, WorkerInvocationContextError,
-    WorkerInvokeRequest, WorkerInvokeResult, WorkerProtocolError, WorkerResultError,
-    WorkerSelectionError, WorkerState, admit_worker, admit_worker_with_policy,
+    WorkerInvokeRequest, WorkerInvokeRequestError, WorkerInvokeResult, WorkerProtocolError,
+    WorkerResultError, WorkerSelectionError, WorkerState, admit_worker, admit_worker_with_policy,
     evaluate_worker_admission, select_worker_for_block, validate_worker_result,
 };
 use serde_json::json;
@@ -231,6 +231,7 @@ fn worker_invocation_envelopes_preserve_json_payloads() -> Result<(), serde_json
         serde_json::from_value::<WorkerInvokeRequest>(encoded_request)?,
         request,
     );
+    assert_eq!(request.validate(), Ok(()));
     assert_eq!(
         serde_json::from_str::<WorkerInvokeResult>(&serde_json::to_string(&result)?)?,
         result,
@@ -280,7 +281,7 @@ fn worker_invocation_context_round_trips_release_policy_budget_and_trace()
 
 #[test]
 fn worker_invocation_context_validation_rejects_empty_required_fields() {
-    let mut context = WorkerInvocationContext::new("", "rev-1");
+    let mut context = WorkerInvocationContext::new(" ", "rev-1");
     assert_eq!(
         context.validate(),
         Err(WorkerInvocationContextError::EmptyRequiredField {
@@ -301,7 +302,7 @@ fn worker_invocation_context_validation_rejects_empty_required_fields() {
 #[test]
 fn worker_invocation_context_validation_rejects_empty_optional_fields() {
     let mut context = WorkerInvocationContext::new("release-1", "rev-1");
-    context.trace_id = Some(String::new());
+    context.trace_id = Some(" ".to_owned());
     assert_eq!(
         context.validate(),
         Err(WorkerInvocationContextError::EmptyOptionalField {
@@ -353,11 +354,93 @@ fn worker_invocation_context_validation_requires_bound_policy_and_budget_pairs()
 #[test]
 fn worker_invocation_context_validation_rejects_empty_attribute_keys() {
     let context =
-        WorkerInvocationContext::new("release-1", "rev-1").with_attribute("", "tenant-acme");
+        WorkerInvocationContext::new("release-1", "rev-1").with_attribute(" ", "tenant-acme");
 
     assert_eq!(
         context.validate(),
         Err(WorkerInvocationContextError::EmptyAttributeKey),
+    );
+}
+
+#[test]
+fn worker_invoke_request_validation_rejects_blank_envelope_fields() {
+    let mut request = WorkerInvokeRequest {
+        invocation_id: " ".to_owned(),
+        run_id: "run-000001".to_owned(),
+        node_id: "render".to_owned(),
+        node_attempt_id: "render-attempt-1".to_owned(),
+        lease_epoch: 7,
+        block: "prompt.render@1".to_owned(),
+        context: WorkerInvocationContext::new("release-1", "rev-1"),
+        inputs: json!({"message": {"text": "Hello"}}),
+        config: json!({"template": "Echo {message.text}"}),
+    };
+
+    assert_eq!(
+        request.validate(),
+        Err(WorkerInvokeRequestError::EmptyField {
+            field: "invocation_id".to_owned(),
+        }),
+    );
+
+    request.invocation_id = "invoke-000001".to_owned();
+    request.run_id.clear();
+    assert_eq!(
+        request.validate(),
+        Err(WorkerInvokeRequestError::EmptyField {
+            field: "run_id".to_owned(),
+        }),
+    );
+
+    request.run_id = "run-000001".to_owned();
+    request.node_id = " ".to_owned();
+    assert_eq!(
+        request.validate(),
+        Err(WorkerInvokeRequestError::EmptyField {
+            field: "node_id".to_owned(),
+        }),
+    );
+
+    request.node_id = "render".to_owned();
+    request.node_attempt_id.clear();
+    assert_eq!(
+        request.validate(),
+        Err(WorkerInvokeRequestError::EmptyField {
+            field: "node_attempt_id".to_owned(),
+        }),
+    );
+
+    request.node_attempt_id = "render-attempt-1".to_owned();
+    request.block = " ".to_owned();
+    assert_eq!(
+        request.validate(),
+        Err(WorkerInvokeRequestError::EmptyField {
+            field: "block".to_owned(),
+        }),
+    );
+}
+
+#[test]
+fn worker_invoke_request_validation_rejects_invalid_context() {
+    let request = WorkerInvokeRequest {
+        invocation_id: "invoke-000001".to_owned(),
+        run_id: "run-000001".to_owned(),
+        node_id: "render".to_owned(),
+        node_attempt_id: "render-attempt-1".to_owned(),
+        lease_epoch: 7,
+        block: "prompt.render@1".to_owned(),
+        context: WorkerInvocationContext::new("release-1", " "),
+        inputs: json!({"message": {"text": "Hello"}}),
+        config: json!({"template": "Echo {message.text}"}),
+    };
+
+    assert_eq!(
+        request.validate(),
+        Err(WorkerInvokeRequestError::InvalidContext {
+            source: WorkerInvocationContextError::EmptyRequiredField {
+                field: "deployment_revision_id".to_owned(),
+            },
+        }),
     );
 }
 
