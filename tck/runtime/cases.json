@@ -241,6 +241,17 @@
       "outputs": {
         "candidate": {
           "finishReason": "scripted",
+          "modelVisibleTools": [
+            {
+              "allowedForPrincipal": true,
+              "bindingDigest": "sha256:0009e032b3ae7f7e91b189fa31c1714f0f5378f17cedc7f64c69932276e289f7",
+              "definitionDigest": "sha256:de8e67b8496b952810f49560dc36761f7b5b05c0c3c11c2657f1b540b35aea23",
+              "effectivePolicySnapshotId": "policy-snapshot-1",
+              "resolvedToolId": "sha256:757dace543cd9b8a9fce1eb1561c4cc72efc7ad371dd7977fcaf81cbbc641bd1",
+              "toolName": "knowledge.search",
+              "validUntil": null
+            }
+          ],
           "text": "Tool-aware response.",
           "toolCount": 1
         }

@@ -666,6 +666,36 @@ def stdlib_registry() -> RuntimeRegistry:
         tools = inputs.get("tools", [])
         if not isinstance(tools, list):
             raise TypeError("agent.run@1 input 'tools' must be a list")
+        model_visible_tools: list[dict[str, Any]] = []
+        for index, tool in enumerate(tools):
+            if not isinstance(tool, dict):
+                raise TypeError(f"agent.run@1 input 'tools[{index}]' must be a mapping")
+            definition = tool.get("definition")
+            definition = definition if isinstance(definition, dict) else {}
+            model_visible_tools.append(
+                {
+                    "toolName": str(definition.get("name", "")),
+                    "resolvedToolId": str(tool.get("resolved_tool_id", tool.get("resolvedToolId", ""))),
+                    "definitionDigest": str(tool.get("definition_digest", tool.get("definitionDigest", ""))),
+                    "bindingDigest": str(tool.get("binding_digest", tool.get("bindingDigest", ""))),
+                    "effectivePolicySnapshotId": str(
+                        tool.get(
+                            "effective_policy_snapshot_id",
+                            tool.get("effectivePolicySnapshotId", ""),
+                        )
+                    ),
+                    "allowedForPrincipal": bool(
+                        tool.get("allowed_for_principal", tool.get("allowedForPrincipal", False))
+                    ),
+                    "validUntil": tool.get("valid_until", tool.get("validUntil")),
+                }
+            )
+        model_visible_tools.sort(
+            key=lambda tool: (
+                str(tool["toolName"]),
+                str(tool["resolvedToolId"]),
+            )
+        )
         messages = inputs.get("messages", [])
         if not isinstance(messages, list):
             raise TypeError("agent.run@1 input 'messages' must be a list")
@@ -687,6 +717,7 @@ def stdlib_registry() -> RuntimeRegistry:
                 "text": text,
                 "finishReason": finish_reason,
                 "toolCount": len(tools),
+                "modelVisibleTools": model_visible_tools,
             }
         }
 

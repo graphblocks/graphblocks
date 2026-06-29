@@ -178,11 +178,22 @@ def test_stdlib_runtime_executes_tool_resolution_and_agent_run() -> None:
     )
 
     assert result.status == "succeeded"
-    assert result.outputs["candidate"] == {
-        "text": "Hello from the agent.",
-        "finishReason": "scripted",
-        "toolCount": 1,
-    }
+    candidate = result.outputs["candidate"]
+    resolved_tool = result.outputs["tools"][0]
+    assert candidate["text"] == "Hello from the agent."
+    assert candidate["finishReason"] == "scripted"
+    assert candidate["toolCount"] == 1
+    assert candidate["modelVisibleTools"] == [
+        {
+            "toolName": "knowledge.search",
+            "resolvedToolId": resolved_tool["resolved_tool_id"],
+            "definitionDigest": resolved_tool["definition_digest"],
+            "bindingDigest": resolved_tool["binding_digest"],
+            "effectivePolicySnapshotId": resolved_tool["effective_policy_snapshot_id"],
+            "allowedForPrincipal": True,
+            "validUntil": None,
+        }
+    ]
     assert result.outputs["tools"][0]["definition"]["name"] == "knowledge.search"
     assert result.outputs["tools"][0]["allowed_for_principal"] is True
     assert result.outputs["tools"][0]["binding"]["timeout_ms"] == 250

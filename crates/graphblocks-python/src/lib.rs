@@ -3750,6 +3750,17 @@ mod tests {
                 .and_then(|outputs| outputs.get("candidate")),
             Some(&json!({
                 "finishReason": "scripted",
+                "modelVisibleTools": [
+                    {
+                        "allowedForPrincipal": false,
+                        "bindingDigest": "",
+                        "definitionDigest": "",
+                        "effectivePolicySnapshotId": "",
+                        "resolvedToolId": "",
+                        "toolName": "knowledge.search",
+                        "validUntil": null
+                    }
+                ],
                 "text": "native scripted response",
                 "toolCount": 1
             }))
@@ -3822,16 +3833,19 @@ mod tests {
             result.get("status").and_then(Value::as_str),
             Some("succeeded")
         );
+        let candidate = result
+            .get("outputs")
+            .and_then(|outputs| outputs.get("candidate"))
+            .ok_or_else(|| "candidate output missing".to_owned())?;
         assert_eq!(
-            result
-                .get("outputs")
-                .and_then(|outputs| outputs.get("candidate")),
-            Some(&json!({
-                "finishReason": "scripted",
-                "text": "Hello from native agent.",
-                "toolCount": 1
-            }))
+            candidate.get("finishReason").and_then(Value::as_str),
+            Some("scripted")
         );
+        assert_eq!(
+            candidate.get("text").and_then(Value::as_str),
+            Some("Hello from native agent.")
+        );
+        assert_eq!(candidate.get("toolCount").and_then(Value::as_u64), Some(1));
         let resolved_tool = result
             .get("outputs")
             .and_then(|outputs| outputs.get("tools"))
@@ -3857,6 +3871,20 @@ mod tests {
                 .and_then(|binding| binding.get("timeout_ms"))
                 .and_then(Value::as_u64),
             Some(250)
+        );
+        assert_eq!(
+            candidate.get("modelVisibleTools"),
+            Some(&json!([
+                {
+                    "allowedForPrincipal": true,
+                    "bindingDigest": resolved_tool["binding_digest"],
+                    "definitionDigest": resolved_tool["definition_digest"],
+                    "effectivePolicySnapshotId": resolved_tool["effective_policy_snapshot_id"],
+                    "resolvedToolId": resolved_tool["resolved_tool_id"],
+                    "toolName": "knowledge.search",
+                    "validUntil": resolved_tool["valid_until"]
+                }
+            ]))
         );
 
         Ok(())

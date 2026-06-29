@@ -932,6 +932,70 @@ fn execute_scripted_agent_run(inputs: &Value, config: &Value) -> Result<Value, B
             false,
         ));
     };
+    let mut model_visible_tools = Vec::new();
+    for (index, tool) in tools.iter().enumerate() {
+        let Some(tool) = tool.as_object() else {
+            return Err(BlockError::new(
+                "agent.run.invalid_tools",
+                ErrorCategory::Configuration,
+                format!("agent.run@1 input 'tools[{index}]' must be an object"),
+                false,
+            ));
+        };
+        let definition = tool.get("definition").and_then(Value::as_object);
+        model_visible_tools.push(json!({
+            "toolName": definition
+                .and_then(|definition| definition.get("name"))
+                .and_then(Value::as_str)
+                .unwrap_or(""),
+            "resolvedToolId": tool
+                .get("resolved_tool_id")
+                .or_else(|| tool.get("resolvedToolId"))
+                .and_then(Value::as_str)
+                .unwrap_or(""),
+            "definitionDigest": tool
+                .get("definition_digest")
+                .or_else(|| tool.get("definitionDigest"))
+                .and_then(Value::as_str)
+                .unwrap_or(""),
+            "bindingDigest": tool
+                .get("binding_digest")
+                .or_else(|| tool.get("bindingDigest"))
+                .and_then(Value::as_str)
+                .unwrap_or(""),
+            "effectivePolicySnapshotId": tool
+                .get("effective_policy_snapshot_id")
+                .or_else(|| tool.get("effectivePolicySnapshotId"))
+                .and_then(Value::as_str)
+                .unwrap_or(""),
+            "allowedForPrincipal": tool
+                .get("allowed_for_principal")
+                .or_else(|| tool.get("allowedForPrincipal"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            "validUntil": tool
+                .get("valid_until")
+                .or_else(|| tool.get("validUntil"))
+                .cloned()
+                .unwrap_or(Value::Null),
+        }));
+    }
+    model_visible_tools.sort_by(|left, right| {
+        let left_key = (
+            left.get("toolName").and_then(Value::as_str).unwrap_or(""),
+            left.get("resolvedToolId")
+                .and_then(Value::as_str)
+                .unwrap_or(""),
+        );
+        let right_key = (
+            right.get("toolName").and_then(Value::as_str).unwrap_or(""),
+            right
+                .get("resolvedToolId")
+                .and_then(Value::as_str)
+                .unwrap_or(""),
+        );
+        left_key.cmp(&right_key)
+    });
     let Some(messages) = inputs.get("messages").and_then(Value::as_array) else {
         return Err(BlockError::new(
             "agent.run.invalid_messages",
@@ -959,6 +1023,7 @@ fn execute_scripted_agent_run(inputs: &Value, config: &Value) -> Result<Value, B
             "text": text,
             "finishReason": finish_reason,
             "toolCount": tools.len(),
+            "modelVisibleTools": model_visible_tools,
         }
     }))
 }
