@@ -756,6 +756,10 @@ def test_remote_edge_payload_envelope_records_inline_digest_and_artifact_refs() 
     assert RemoteEdgePayload.from_wire(inline_wire) == inline_payload
     with pytest.raises(RemotePayloadInvalidModeError):
         RemoteEdgePayload.from_wire(inline_wire | {"valueDigest": "sha256:mismatch"})
+    with pytest.raises(RemotePayloadInvalidModeError):
+        RemoteEdgePayload.from_wire(inline_wire | {"schema": 7})
+    with pytest.raises(RemotePayloadInvalidModeError):
+        RemoteEdgePayload.from_wire(inline_wire | {"valueDigest": object()})
 
     artifact_payload = RemoteEdgePayload.artifact_ref(
         "graphblocks.ai/PdfDocument@1",
@@ -778,6 +782,22 @@ def test_remote_edge_payload_envelope_records_inline_digest_and_artifact_refs() 
     }
     assert validate_remote_payload(artifact_wire, RemotePayloadLimits(max_inline_bytes=8)) is None
     assert RemoteEdgePayload.from_wire(artifact_wire) == artifact_payload
+
+    with pytest.raises(RemotePayloadInvalidArtifactRefError) as artifact_key_error:
+        RemoteEdgePayload(
+            mode="artifact_ref",
+            schema="graphblocks.ai/PdfDocument@1",
+            artifact={object(): "artifact-1", "uri": "s3://graphblocks/documents/source.pdf"},
+        )
+    assert artifact_key_error.value.field == "artifact"
+
+    with pytest.raises(RemotePayloadInvalidArtifactRefError) as artifact_id_error:
+        RemoteEdgePayload(
+            mode="artifact_ref",
+            schema="graphblocks.ai/PdfDocument@1",
+            artifact={"artifact_id": "", "uri": "s3://graphblocks/documents/source.pdf"},
+        )
+    assert artifact_id_error.value.field == "artifact_id"
 
 
 def test_remote_payload_validator_rejects_invalid_artifact_reference() -> None:

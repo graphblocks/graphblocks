@@ -455,9 +455,11 @@ class RemoteEdgePayload:
     value_digest: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.schema.strip():
+        if not isinstance(self.schema, str) or not self.schema.strip():
             raise RemotePayloadInvalidModeError("empty_schema")
         if self.mode == "inline":
+            if self.value_digest is not None and not isinstance(self.value_digest, str):
+                raise RemotePayloadInvalidModeError("value_digest")
             try:
                 encoded = json.dumps(
                     self.value,
@@ -479,10 +481,18 @@ class RemoteEdgePayload:
             object.__setattr__(self, "artifact", None)
             return
         if self.mode == "artifact_ref":
-            artifact = dict(self.artifact or {})
+            if not isinstance(self.artifact, Mapping):
+                raise RemotePayloadInvalidArtifactRefError("artifact")
+            artifact = dict(self.artifact)
+            if any(not isinstance(key, str) for key in artifact):
+                raise RemotePayloadInvalidArtifactRefError("artifact")
             if self.value is not None:
                 raise RemotePayloadInvalidModeError("artifact_ref_with_inline_value")
-            object.__setattr__(self, "artifact", {str(key): artifact[key] for key in sorted(artifact)})
+            validate_remote_payload(
+                {"mode": "artifact_ref", "schema": self.schema, "artifact": artifact},
+                RemotePayloadLimits(max_inline_bytes=0),
+            )
+            object.__setattr__(self, "artifact", {key: artifact[key] for key in sorted(artifact)})
             object.__setattr__(self, "value_digest", None)
             return
         raise RemotePayloadInvalidModeError(self.mode)
@@ -540,17 +550,15 @@ class RemoteEdgePayload:
         if mode == "inline":
             return cls(
                 mode="inline",
-                schema=str(payload["schema"]),
+                schema=payload["schema"],
                 value=payload.get("value"),
-                value_digest=(
-                    None if payload.get("valueDigest") is None else str(payload.get("valueDigest"))
-                ),
+                value_digest=payload.get("valueDigest"),
             )
         if mode == "artifact_ref":
             artifact = payload.get("artifact")
             if not isinstance(artifact, Mapping):
                 raise RemotePayloadInvalidArtifactRefError("artifact")
-            return cls(mode="artifact_ref", schema=str(payload["schema"]), artifact=artifact)
+            return cls(mode="artifact_ref", schema=payload["schema"], artifact=artifact)
         raise RemotePayloadInvalidModeError(mode)
 
     def content_digest(self) -> str:
