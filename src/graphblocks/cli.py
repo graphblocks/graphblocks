@@ -133,6 +133,12 @@ def main(argv: list[str] | None = None) -> int:
     run_parser = subparsers.add_parser("run", help="execute a GraphSpec with the deterministic in-process runtime")
     run_parser.add_argument("path", type=Path)
     run_parser.add_argument("--input-json", default="{}", help="JSON object used as graph input values")
+    run_parser.add_argument(
+        "--runtime",
+        choices=("python", "native"),
+        default="python",
+        help="runtime backend to use; native delegates to graphblocks-runtime's Rust PyO3 bridge",
+    )
 
     migrate_parser = subparsers.add_parser("migrate", help="read legacy alpha documents and emit current YAML")
     migrate_parser.add_argument("path", type=Path)
@@ -351,6 +357,32 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(inputs, dict):
             print("--input-json must decode to a JSON object")
             return 1
+        if args.runtime == "native":
+            try:
+                import graphblocks_runtime
+            except ImportError as error:
+                print(f"graphblocks-runtime is required for --runtime native: {error}")
+                return 1
+            if not graphblocks_runtime.native_extension_available():
+                status = graphblocks_runtime.native_extension_status()
+                print(f"graphblocks-runtime native extension is not available: {status.get('error')}")
+                return 1
+            try:
+                result_payload = json.loads(
+                    graphblocks_runtime.run_stdlib_graph_json(
+                        json.dumps(graph_documents[0], separators=(",", ":"), sort_keys=True),
+                        json.dumps(inputs, separators=(",", ":"), sort_keys=True),
+                    )
+                )
+            except (RuntimeError, TypeError, ValueError, json.JSONDecodeError) as error:
+                print(f"native runtime execution failed: {error}")
+                return 1
+            if not isinstance(result_payload, dict):
+                print("native runtime response must decode to a JSON object")
+                return 1
+            print(json.dumps(result_payload, indent=2, sort_keys=True))
+            return 0 if result_payload.get("status") == "succeeded" else 1
+
         result = InProcessRuntime(stdlib_registry()).run(graph_documents[0], inputs)
         print(
             json.dumps(
