@@ -1,8 +1,8 @@
 use graphblocks_runtime_core::evaluation::{ResourceSnapshotRef, ReviewDecision};
 use graphblocks_runtime_core::policy::PrincipalRef;
 use graphblocks_runtime_core::review::{
-    InMemoryReviewerCredentialProvider, ReviewRequest, ReviewWorkflow, ReviewWorkflowError,
-    ReviewerCredential,
+    InMemoryReviewerCredentialProvider, ReviewRequest, ReviewSubmission, ReviewWorkflow,
+    ReviewWorkflowError, ReviewerCredential,
 };
 
 #[test]
@@ -56,13 +56,14 @@ fn review_workflow_records_review_with_credential_reference() {
 
     let review = workflow
         .record_review(
-            "review-1",
-            reviewer,
-            "quality",
-            ReviewDecision::Accept,
-            "2026-06-24T00:05:00Z",
-            None,
-            ["matches release criteria"],
+            ReviewSubmission::new(
+                "review-1",
+                reviewer,
+                "quality",
+                ReviewDecision::Accept,
+                "2026-06-24T00:05:00Z",
+            )
+            .with_comments(["matches release criteria"]),
         )
         .expect("review is accepted");
 
@@ -93,13 +94,14 @@ fn review_workflow_rejects_changed_subject_and_ignores_invalidated_reviews() {
 
     assert_eq!(
         workflow.record_review(
-            "review-1",
-            reviewer.clone(),
-            "quality",
-            ReviewDecision::Accept,
-            "2026-06-24T00:05:00Z",
-            Some(ResourceSnapshotRef::new("candidate-1", "sha256:changed")),
-            Vec::<String>::new(),
+            ReviewSubmission::new(
+                "review-1",
+                reviewer.clone(),
+                "quality",
+                ReviewDecision::Accept,
+                "2026-06-24T00:05:00Z",
+            )
+            .with_subject(ResourceSnapshotRef::new("candidate-1", "sha256:changed")),
         ),
         Err(ReviewWorkflowError::SubjectChanged {
             expected_digest: "sha256:subject".to_owned(),
@@ -108,15 +110,13 @@ fn review_workflow_rejects_changed_subject_and_ignores_invalidated_reviews() {
     );
 
     let review = workflow
-        .record_review(
+        .record_review(ReviewSubmission::new(
             "review-2",
             reviewer,
             "quality",
             ReviewDecision::Accept,
             "2026-06-24T00:06:00Z",
-            None,
-            Vec::<String>::new(),
-        )
+        ))
         .expect("review is accepted")
         .invalidate("2026-06-24T00:07:00Z");
     let workflow = workflow.with_review(review);
@@ -146,15 +146,13 @@ fn review_workflow_rejects_missing_credential_for_scope() {
     );
 
     assert_eq!(
-        workflow.record_review(
+        workflow.record_review(ReviewSubmission::new(
             "review-1",
             reviewer,
             "security",
             ReviewDecision::Accept,
             "2026-06-24T00:05:00Z",
-            None,
-            Vec::<String>::new(),
-        ),
+        )),
         Err(ReviewWorkflowError::CredentialMissing {
             reviewer_id: "reviewer-1".to_owned(),
             scope: "security".to_owned(),

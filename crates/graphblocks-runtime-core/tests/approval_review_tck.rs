@@ -1,3 +1,5 @@
+#![allow(clippy::panic)]
+
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
@@ -5,8 +7,8 @@ use std::path::PathBuf;
 use graphblocks_runtime_core::evaluation::{ResourceSnapshotRef, ReviewDecision};
 use graphblocks_runtime_core::policy::PrincipalRef;
 use graphblocks_runtime_core::review::{
-    InMemoryReviewerCredentialProvider, ReviewRequest, ReviewWorkflow, ReviewWorkflowError,
-    ReviewerCredential,
+    InMemoryReviewerCredentialProvider, ReviewRequest, ReviewSubmission, ReviewWorkflow,
+    ReviewWorkflowError, ReviewerCredential,
 };
 use serde_json::{Map, Value, json};
 
@@ -207,7 +209,8 @@ fn approval_review_tck_cases_match_runtime_core() {
                 "review_record" => {
                     let review = workflow
                         .record_review(
-                            review_id, reviewer, scope, decision, created_at, None, comments,
+                            ReviewSubmission::new(review_id, reviewer, scope, decision, created_at)
+                                .with_comments(comments),
                         )
                         .expect("review record is accepted");
                     json!({
@@ -225,13 +228,9 @@ fn approval_review_tck_cases_match_runtime_core() {
                             .expect("case changedSubject"),
                     );
                     match workflow.record_review(
-                        review_id,
-                        reviewer,
-                        scope,
-                        decision,
-                        created_at,
-                        Some(changed_subject),
-                        comments,
+                        ReviewSubmission::new(review_id, reviewer, scope, decision, created_at)
+                            .with_subject(changed_subject)
+                            .with_comments(comments),
                     ) {
                         Err(ReviewWorkflowError::SubjectChanged {
                             expected_digest,
@@ -247,7 +246,8 @@ fn approval_review_tck_cases_match_runtime_core() {
                 "review_invalidated" => {
                     let review = workflow
                         .record_review(
-                            review_id, reviewer, scope, decision, created_at, None, comments,
+                            ReviewSubmission::new(review_id, reviewer, scope, decision, created_at)
+                                .with_comments(comments),
                         )
                         .expect("review record is accepted");
                     let invalidated_at =
@@ -259,7 +259,8 @@ fn approval_review_tck_cases_match_runtime_core() {
                     })
                 }
                 "review_missing_credential" => match workflow.record_review(
-                    review_id, reviewer, scope, decision, created_at, None, comments,
+                    ReviewSubmission::new(review_id, reviewer, scope, decision, created_at)
+                        .with_comments(comments),
                 ) {
                     Err(ReviewWorkflowError::CredentialMissing { reviewer_id, scope }) => json!({
                         "error": "review_credential_missing",

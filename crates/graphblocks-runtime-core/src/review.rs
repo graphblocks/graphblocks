@@ -167,6 +167,47 @@ impl fmt::Display for ReviewWorkflowError {
 impl Error for ReviewWorkflowError {}
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct ReviewSubmission {
+    pub review_id: String,
+    pub reviewer: PrincipalRef,
+    pub scope: String,
+    pub decision: ReviewDecision,
+    pub created_at: String,
+    pub subject: Option<ResourceSnapshotRef>,
+    pub comments: Vec<String>,
+}
+
+impl ReviewSubmission {
+    pub fn new(
+        review_id: impl Into<String>,
+        reviewer: PrincipalRef,
+        scope: impl Into<String>,
+        decision: ReviewDecision,
+        created_at: impl Into<String>,
+    ) -> Self {
+        Self {
+            review_id: review_id.into(),
+            reviewer,
+            scope: scope.into(),
+            decision,
+            created_at: created_at.into(),
+            subject: None,
+            comments: Vec::new(),
+        }
+    }
+
+    pub fn with_subject(mut self, subject: ResourceSnapshotRef) -> Self {
+        self.subject = Some(subject);
+        self
+    }
+
+    pub fn with_comments(mut self, comments: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.comments = comments.into_iter().map(Into::into).collect();
+        self
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct ReviewWorkflow {
     pub request: ReviewRequest,
     pub credential_provider: InMemoryReviewerCredentialProvider,
@@ -194,16 +235,13 @@ impl ReviewWorkflow {
 
     pub fn record_review(
         &mut self,
-        review_id: impl Into<String>,
-        reviewer: PrincipalRef,
-        scope: impl Into<String>,
-        decision: ReviewDecision,
-        created_at: impl Into<String>,
-        subject: Option<ResourceSnapshotRef>,
-        comments: impl IntoIterator<Item = impl Into<String>>,
+        submission: ReviewSubmission,
     ) -> Result<ReviewRecord, ReviewWorkflowError> {
-        let subject = subject.unwrap_or_else(|| self.request.subject.clone());
-        let scope = scope.into();
+        let reviewer = submission.reviewer;
+        let subject = submission
+            .subject
+            .unwrap_or_else(|| self.request.subject.clone());
+        let scope = submission.scope;
         if subject.resource_id != self.request.subject.resource_id
             || subject.digest != self.request.subject.digest
         {
@@ -228,15 +266,15 @@ impl ReviewWorkflow {
             });
         }
         let mut review = ReviewRecord::new(
-            review_id,
+            submission.review_id,
             self.request.subject.clone(),
             self.request.subject.digest.clone(),
             &scope,
             reviewer,
-            decision,
+            submission.decision,
         )
-        .with_created_at(created_at);
-        review.comments = comments.into_iter().map(Into::into).collect();
+        .with_created_at(submission.created_at);
+        review.comments = submission.comments;
         review.credential_refs = credentials
             .iter()
             .map(|credential| credential.credential_ref.clone())

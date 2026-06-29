@@ -1,3 +1,5 @@
+#![allow(clippy::panic)]
+
 use graphblocks_runtime_core::cancellation::{
     CancellationGuarantee, CancellationScope, CancellationToken,
 };

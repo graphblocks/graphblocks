@@ -115,10 +115,10 @@ fn run_case(case: &Value) -> Result<(), String> {
         );
     }
 
-    if let Some(expected) = case.get("expected") {
-        if let Some(steps) = optional_u64(expected, "usedAdditionalSteps") {
-            assert_eq!(controller.used_additional_steps, steps as u32, "{name}");
-        }
+    if let Some(expected) = case.get("expected")
+        && let Some(steps) = optional_u64(expected, "usedAdditionalSteps")
+    {
+        assert_eq!(controller.used_additional_steps, steps as u32, "{name}");
     }
     Ok(())
 }

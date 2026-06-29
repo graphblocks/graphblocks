@@ -1,3 +1,5 @@
+#![allow(clippy::panic)]
+
 use graphblocks_runtime_core::documents::{DocumentSpan, SourceRef};
 use graphblocks_runtime_core::rag::{
     Answer, Citation, Claim, ContextPack, FailurePolicy, KnowledgeItemRef, SearchHit,

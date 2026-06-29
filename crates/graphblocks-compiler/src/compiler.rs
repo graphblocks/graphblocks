@@ -1116,10 +1116,10 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
             }
             if let Some(definition) = tool.get("definition").and_then(Value::as_object) {
                 for definition_field in ["name", "description"] {
-                    if !definition
+                    if definition
                         .get(definition_field)
                         .and_then(Value::as_str)
-                        .is_some_and(|value| !value.trim().is_empty())
+                        .is_none_or(|value| value.trim().is_empty())
                     {
                         diagnostics.push(Diagnostic::error(
                             "InvalidToolDefinition",
@@ -1133,9 +1133,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     }
                 }
                 if let Some(version) = definition.get("version")
-                    && !version
-                        .as_str()
-                        .is_some_and(|value| !value.trim().is_empty())
+                    && version.as_str().is_none_or(|value| value.trim().is_empty())
                 {
                     diagnostics.push(Diagnostic::error(
                         "InvalidToolDefinition",
@@ -1146,7 +1144,7 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 if let Some(tags) = definition.get("tags") {
                     if let Some(tags) = tags.as_array() {
                         for (tag_index, tag) in tags.iter().enumerate() {
-                            if !tag.as_str().is_some_and(|value| !value.trim().is_empty()) {
+                            if tag.as_str().is_none_or(|value| value.trim().is_empty()) {
                                 diagnostics.push(Diagnostic::error(
                                     "InvalidToolDefinition",
                                     "tool definition tags must be non-empty strings",
