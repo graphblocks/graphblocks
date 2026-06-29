@@ -456,6 +456,27 @@ fn output_cutoff_rejects_empty_turn_id_when_present() {
 }
 
 #[test]
+fn output_cutoff_requires_positive_occurred_at_unix_ms() {
+    assert_eq!(
+        OutputCutoff {
+            stream_id: "stream-1".to_owned(),
+            response_id: "response-1".to_owned(),
+            turn_id: None,
+            last_generated_sequence: 1,
+            last_policy_accepted_sequence: 1,
+            last_client_delivered_sequence: 1,
+            terminal_reason: TerminalReason::PolicyDenied,
+            draft_disposition: DraftDisposition::Retract,
+            durable_result: DurableResult::None,
+            policy_decision_id: Some("decision-1".to_owned()),
+            occurred_at_unix_ms: 0,
+        }
+        .validate(),
+        Err(OutputCutoffError::MissingOccurredAtUnixMs)
+    );
+}
+
+#[test]
 fn output_gate_rejects_policy_decision_without_input_digest() -> Result<(), OutputGateError> {
     let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
 
@@ -472,6 +493,36 @@ fn output_gate_rejects_policy_decision_without_input_digest() -> Result<(), Outp
     );
     assert_eq!(gate.last_policy_accepted_sequence(), 0);
     assert_eq!(gate.last_client_delivered_sequence(), 0);
+    Ok(())
+}
+
+#[test]
+fn output_gate_terminal_decision_requires_occurred_at_unix_ms() -> Result<(), OutputGateError> {
+    let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
+    gate.record_chunk(GenerationChunk::text(
+        "stream-1",
+        "response-1",
+        1,
+        "blocked",
+    ))?;
+
+    assert_eq!(
+        gate.apply_decision(
+            OutputPolicyDecision::abort_response("decision-abort", "sha256:blocked"),
+            0,
+        ),
+        Err(OutputGateError::MissingOccurredAtUnixMs)
+    );
+    assert_eq!(gate.cutoff(), None);
+    assert_eq!(gate.last_generated_sequence(), 1);
+    assert_eq!(gate.last_policy_accepted_sequence(), 0);
+    assert_eq!(gate.last_client_delivered_sequence(), 0);
+    assert_eq!(
+        gate.pending_chunks()
+            .map(|chunk| (chunk.sequence, chunk.text.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(1, "blocked")]
+    );
     Ok(())
 }
 

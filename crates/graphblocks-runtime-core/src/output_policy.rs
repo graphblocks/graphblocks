@@ -835,6 +835,7 @@ pub struct OutputCutoff {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OutputCutoffError {
+    MissingOccurredAtUnixMs,
     EmptyIdentityField {
         field: &'static str,
     },
@@ -885,6 +886,9 @@ impl OutputCutoff {
                 last_generated_sequence: self.last_generated_sequence,
                 last_client_delivered_sequence: self.last_client_delivered_sequence,
             });
+        }
+        if self.occurred_at_unix_ms == 0 {
+            return Err(OutputCutoffError::MissingOccurredAtUnixMs);
         }
         Ok(())
     }
@@ -974,6 +978,7 @@ pub enum OutputGateError {
     InvalidPolicyRef {
         policy_ref: String,
     },
+    MissingOccurredAtUnixMs,
     PolicyStopped,
 }
 
@@ -1260,6 +1265,9 @@ impl OutputDeliveryGate {
         self.validate_identity()?;
         if self.stopped.is_some() {
             return Err(OutputGateError::PolicyStopped);
+        }
+        if occurred_at_unix_ms == 0 {
+            return Err(OutputGateError::MissingOccurredAtUnixMs);
         }
         if let Err(source) = decision.validate() {
             return match source {

@@ -436,6 +436,7 @@ fn gate_error_name(error: &OutputGateError) -> &'static str {
         OutputGateError::InvalidRedactionInstruction { .. } => "invalid_redaction_instruction",
         OutputGateError::InvalidReasonCode { .. } => "invalid_reason_code",
         OutputGateError::InvalidPolicyRef { .. } => "invalid_policy_ref",
+        OutputGateError::MissingOccurredAtUnixMs => "missing_occurred_at_unix_ms",
         OutputGateError::PendingChunkAlreadyDelivered { .. } => "pending_chunk_already_delivered",
         OutputGateError::PendingChunkBeyondGenerated { .. } => "pending_chunk_beyond_generated",
         OutputGateError::DuplicatePendingChunk { .. } => "duplicate_pending_chunk",
