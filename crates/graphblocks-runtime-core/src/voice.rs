@@ -1,0 +1,745 @@
+use std::collections::{BTreeMap, BTreeSet};
+use std::error::Error;
+use std::fmt;
+
+use graphblocks_compiler::canonical::canonical_hash;
+use serde_json::{Value, json};
+
+fn require_non_empty(field_name: &'static str, value: &str) -> Result<(), VoiceContractError> {
+    if value.trim().is_empty() {
+        return Err(VoiceContractError::Invalid {
+            field_name,
+            message: "must not be empty".to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn sorted_unique(items: impl IntoIterator<Item = String>) -> Vec<String> {
+    items
+        .into_iter()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum VoiceContractError {
+    Invalid {
+        field_name: &'static str,
+        message: String,
+    },
+}
+
+impl fmt::Display for VoiceContractError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Invalid {
+                field_name,
+                message,
+            } => write!(formatter, "{field_name} {message}"),
+        }
+    }
+}
+
+impl Error for VoiceContractError {}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum VoiceTransportKind {
+    Websocket,
+    WebRtc,
+    ProviderRealtime,
+}
+
+impl VoiceTransportKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Websocket => "websocket",
+            Self::WebRtc => "webrtc",
+            Self::ProviderRealtime => "provider_realtime",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VoiceTransport {
+    pub kind: VoiceTransportKind,
+    pub uri: Option<String>,
+    pub codec: String,
+    pub sample_rate_hz: u32,
+    pub channels: u16,
+}
+
+impl VoiceTransport {
+    pub fn new(
+        kind: VoiceTransportKind,
+        uri: Option<String>,
+        codec: impl Into<String>,
+        sample_rate_hz: u32,
+        channels: u16,
+    ) -> Result<Self, VoiceContractError> {
+        let transport = Self {
+            kind,
+            uri,
+            codec: codec.into(),
+            sample_rate_hz,
+            channels,
+        };
+        transport.validate()?;
+        Ok(transport)
+    }
+
+    pub fn websocket(uri: impl Into<String>) -> Result<Self, VoiceContractError> {
+        Self::new(
+            VoiceTransportKind::Websocket,
+            Some(uri.into()),
+            "pcm16",
+            24_000,
+            1,
+        )
+    }
+
+    pub fn with_codec(mut self, codec: impl Into<String>) -> Result<Self, VoiceContractError> {
+        self.codec = codec.into();
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_sample_rate_hz(mut self, sample_rate_hz: u32) -> Result<Self, VoiceContractError> {
+        self.sample_rate_hz = sample_rate_hz;
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_channels(mut self, channels: u16) -> Result<Self, VoiceContractError> {
+        self.channels = channels;
+        self.validate()?;
+        Ok(self)
+    }
+
+    fn validate(&self) -> Result<(), VoiceContractError> {
+        if let Some(uri) = &self.uri {
+            require_non_empty("transport uri", uri)?;
+        }
+        require_non_empty("transport codec", &self.codec)?;
+        if self.sample_rate_hz == 0 {
+            return Err(VoiceContractError::Invalid {
+                field_name: "sample_rate_hz",
+                message: "must be positive".to_string(),
+            });
+        }
+        if self.channels == 0 {
+            return Err(VoiceContractError::Invalid {
+                field_name: "channels",
+                message: "must be positive".to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    pub fn contract(&self) -> Value {
+        json!({
+            "kind": self.kind.as_str(),
+            "uri": self.uri,
+            "codec": self.codec,
+            "sampleRateHz": self.sample_rate_hz,
+            "channels": self.channels,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum VoiceSessionState {
+    Open,
+    Interrupted,
+    Closed,
+}
+
+impl VoiceSessionState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Interrupted => "interrupted",
+            Self::Closed => "closed",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DuplexSession {
+    pub session_id: String,
+    pub transport: VoiceTransport,
+    pub state: VoiceSessionState,
+    pub current_turn_id: Option<String>,
+    pub started_at_ms: u64,
+    pub closed_at_ms: Option<u64>,
+    pub interruption_reason: Option<String>,
+    pub metadata: BTreeMap<String, String>,
+}
+
+impl DuplexSession {
+    pub fn new(
+        session_id: impl Into<String>,
+        transport: VoiceTransport,
+    ) -> Result<Self, VoiceContractError> {
+        Self::from_parts(
+            session_id,
+            transport,
+            VoiceSessionState::Open,
+            None,
+            0,
+            None,
+            None,
+            BTreeMap::new(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_parts(
+        session_id: impl Into<String>,
+        transport: VoiceTransport,
+        state: VoiceSessionState,
+        current_turn_id: Option<String>,
+        started_at_ms: u64,
+        closed_at_ms: Option<u64>,
+        interruption_reason: Option<String>,
+        metadata: BTreeMap<String, String>,
+    ) -> Result<Self, VoiceContractError> {
+        let session = Self {
+            session_id: session_id.into(),
+            transport,
+            state,
+            current_turn_id,
+            started_at_ms,
+            closed_at_ms,
+            interruption_reason,
+            metadata,
+        };
+        session.validate()?;
+        Ok(session)
+    }
+
+    fn validate(&self) -> Result<(), VoiceContractError> {
+        require_non_empty("session_id", &self.session_id)?;
+        if let Some(closed_at_ms) = self.closed_at_ms
+            && closed_at_ms < self.started_at_ms
+        {
+            return Err(VoiceContractError::Invalid {
+                field_name: "closed_at_ms",
+                message: "must be greater than or equal to started_at_ms".to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    pub fn begin_turn(mut self, turn_id: impl Into<String>) -> Result<Self, VoiceContractError> {
+        let turn_id = turn_id.into();
+        require_non_empty("turn_id", &turn_id)?;
+        self.current_turn_id = Some(turn_id);
+        self.state = VoiceSessionState::Open;
+        Ok(self)
+    }
+
+    pub fn interrupt(
+        mut self,
+        occurred_at_ms: u64,
+        reason: impl Into<String>,
+    ) -> Result<Self, VoiceContractError> {
+        if occurred_at_ms < self.started_at_ms {
+            return Err(VoiceContractError::Invalid {
+                field_name: "interruption",
+                message: "occurred before session start".to_string(),
+            });
+        }
+        let reason = reason.into();
+        require_non_empty("interruption reason", &reason)?;
+        self.state = VoiceSessionState::Interrupted;
+        self.closed_at_ms = None;
+        self.interruption_reason = Some(reason);
+        Ok(self)
+    }
+
+    pub fn close(mut self, occurred_at_ms: u64) -> Result<Self, VoiceContractError> {
+        if occurred_at_ms < self.started_at_ms {
+            return Err(VoiceContractError::Invalid {
+                field_name: "close",
+                message: "occurred before session start".to_string(),
+            });
+        }
+        self.state = VoiceSessionState::Closed;
+        self.closed_at_ms = Some(occurred_at_ms);
+        Ok(self)
+    }
+
+    pub fn contract(&self) -> Value {
+        json!({
+            "sessionId": self.session_id,
+            "state": self.state.as_str(),
+            "currentTurnId": self.current_turn_id,
+            "startedAtMs": self.started_at_ms,
+            "closedAtMs": self.closed_at_ms,
+            "interruptionReason": self.interruption_reason,
+            "transport": self.transport.contract(),
+            "metadata": self.metadata,
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AudioFrame {
+    pub stream_id: String,
+    pub sequence: u64,
+    pub start_ms: u64,
+    pub duration_ms: u64,
+    pub speech_probability: f64,
+}
+
+impl AudioFrame {
+    pub fn new(
+        stream_id: impl Into<String>,
+        sequence: u64,
+        start_ms: u64,
+        duration_ms: u64,
+        speech_probability: f64,
+    ) -> Result<Self, VoiceContractError> {
+        let frame = Self {
+            stream_id: stream_id.into(),
+            sequence,
+            start_ms,
+            duration_ms,
+            speech_probability,
+        };
+        frame.validate()?;
+        Ok(frame)
+    }
+
+    fn validate(&self) -> Result<(), VoiceContractError> {
+        require_non_empty("stream_id", &self.stream_id)?;
+        if self.duration_ms == 0 {
+            return Err(VoiceContractError::Invalid {
+                field_name: "duration_ms",
+                message: "must be positive".to_string(),
+            });
+        }
+        if !self.speech_probability.is_finite() || !(0.0..=1.0).contains(&self.speech_probability) {
+            return Err(VoiceContractError::Invalid {
+                field_name: "speech_probability",
+                message: "must be between 0 and 1".to_string(),
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum VadDecisionKind {
+    Silence,
+    SpeechStart,
+    Speech,
+    SpeechEnd,
+}
+
+impl VadDecisionKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Silence => "silence",
+            Self::SpeechStart => "speech_start",
+            Self::Speech => "speech",
+            Self::SpeechEnd => "speech_end",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct VadDecision {
+    pub authority_id: String,
+    pub stream_id: String,
+    pub sequence: u64,
+    pub kind: VadDecisionKind,
+    pub speech_probability: f64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct VadAuthority {
+    pub authority_id: String,
+    pub speech_threshold: f64,
+}
+
+impl VadAuthority {
+    pub fn new(
+        authority_id: impl Into<String>,
+        speech_threshold: f64,
+    ) -> Result<Self, VoiceContractError> {
+        let authority = Self {
+            authority_id: authority_id.into(),
+            speech_threshold,
+        };
+        authority.validate()?;
+        Ok(authority)
+    }
+
+    fn validate(&self) -> Result<(), VoiceContractError> {
+        require_non_empty("authority_id", &self.authority_id)?;
+        if !self.speech_threshold.is_finite() || !(0.0..=1.0).contains(&self.speech_threshold) {
+            return Err(VoiceContractError::Invalid {
+                field_name: "speech_threshold",
+                message: "must be between 0 and 1".to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    pub fn evaluate(&self, frame: &AudioFrame, already_in_speech: bool) -> VadDecision {
+        let kind = if frame.speech_probability >= self.speech_threshold {
+            if already_in_speech {
+                VadDecisionKind::Speech
+            } else {
+                VadDecisionKind::SpeechStart
+            }
+        } else if already_in_speech {
+            VadDecisionKind::SpeechEnd
+        } else {
+            VadDecisionKind::Silence
+        };
+        VadDecision {
+            authority_id: self.authority_id.clone(),
+            stream_id: frame.stream_id.clone(),
+            sequence: frame.sequence,
+            kind,
+            speech_probability: frame.speech_probability,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PlaybackStatus {
+    Queued,
+    Started,
+    Completed,
+    Interrupted,
+}
+
+impl PlaybackStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Started => "started",
+            Self::Completed => "completed",
+            Self::Interrupted => "interrupted",
+        }
+    }
+
+    pub fn from_status(status: &str) -> Result<Self, VoiceContractError> {
+        match status {
+            "queued" => Ok(Self::Queued),
+            "started" => Ok(Self::Started),
+            "completed" => Ok(Self::Completed),
+            "interrupted" => Ok(Self::Interrupted),
+            _ => Err(VoiceContractError::Invalid {
+                field_name: "playback status",
+                message: format!("unsupported status {status:?}"),
+            }),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlaybackEntry {
+    pub playback_id: String,
+    pub sequence: u64,
+    pub status: PlaybackStatus,
+    pub audio_ref: Option<String>,
+    pub started_at_ms: Option<u64>,
+    pub completed_at_ms: Option<u64>,
+    pub reason: Option<String>,
+}
+
+impl PlaybackEntry {
+    pub fn new(
+        playback_id: impl Into<String>,
+        sequence: u64,
+        status: PlaybackStatus,
+    ) -> Result<Self, VoiceContractError> {
+        let entry = Self {
+            playback_id: playback_id.into(),
+            sequence,
+            status,
+            audio_ref: None,
+            started_at_ms: None,
+            completed_at_ms: None,
+            reason: None,
+        };
+        entry.validate()?;
+        Ok(entry)
+    }
+
+    pub fn with_audio_ref(
+        mut self,
+        audio_ref: impl Into<String>,
+    ) -> Result<Self, VoiceContractError> {
+        self.audio_ref = Some(audio_ref.into());
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_started_at_ms(mut self, started_at_ms: u64) -> Self {
+        self.started_at_ms = Some(started_at_ms);
+        self
+    }
+
+    pub fn with_completed_at_ms(mut self, completed_at_ms: u64) -> Self {
+        self.completed_at_ms = Some(completed_at_ms);
+        self
+    }
+
+    pub fn with_reason(mut self, reason: impl Into<String>) -> Result<Self, VoiceContractError> {
+        let reason = reason.into();
+        require_non_empty("playback reason", &reason)?;
+        self.reason = Some(reason);
+        Ok(self)
+    }
+
+    fn validate(&self) -> Result<(), VoiceContractError> {
+        require_non_empty("playback_id", &self.playback_id)?;
+        if let Some(audio_ref) = &self.audio_ref {
+            require_non_empty("audio_ref", audio_ref)?;
+        }
+        Ok(())
+    }
+
+    fn contract(&self) -> Value {
+        json!({
+            "playbackId": self.playback_id,
+            "sequence": self.sequence,
+            "status": self.status.as_str(),
+            "audioRef": self.audio_ref,
+            "startedAtMs": self.started_at_ms,
+            "completedAtMs": self.completed_at_ms,
+            "reason": self.reason,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlaybackLedger {
+    pub entries: Vec<PlaybackEntry>,
+}
+
+impl PlaybackLedger {
+    pub fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+
+    pub fn from_entries<I>(entries: I) -> Self
+    where
+        I: IntoIterator<Item = PlaybackEntry>,
+    {
+        let mut ledger = Self {
+            entries: entries.into_iter().collect(),
+        };
+        ledger
+            .entries
+            .sort_by(|left, right| left.sequence.cmp(&right.sequence));
+        ledger
+    }
+
+    pub fn append(mut self, entry: PlaybackEntry) -> Self {
+        self.entries.push(entry);
+        self.entries
+            .sort_by(|left, right| left.sequence.cmp(&right.sequence));
+        self
+    }
+
+    pub fn active_playback_ids(&self) -> Vec<String> {
+        self.entries
+            .iter()
+            .filter(|entry| entry.status == PlaybackStatus::Started)
+            .map(|entry| entry.playback_id.clone())
+            .collect()
+    }
+
+    pub fn interrupt_active(
+        &self,
+        occurred_at_ms: u64,
+        reason: impl Into<String>,
+    ) -> Result<Self, VoiceContractError> {
+        let reason = reason.into();
+        require_non_empty("interruption reason", &reason)?;
+        Ok(Self::from_entries(self.entries.iter().cloned().map(
+            |mut entry| {
+                if entry.status == PlaybackStatus::Started {
+                    entry.status = PlaybackStatus::Interrupted;
+                    entry.completed_at_ms = Some(occurred_at_ms);
+                    entry.reason = Some(reason.clone());
+                }
+                entry
+            },
+        )))
+    }
+
+    pub fn content_digest(&self) -> String {
+        canonical_hash(&json!({
+            "entries": self.entries.iter().map(PlaybackEntry::contract).collect::<Vec<_>>(),
+        }))
+    }
+}
+
+impl Default for PlaybackLedger {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InterruptionKind {
+    Continue,
+    Interrupt,
+}
+
+impl InterruptionKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Continue => "continue",
+            Self::Interrupt => "interrupt",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InterruptionDecision {
+    pub classifier_id: String,
+    pub session_id: String,
+    pub kind: InterruptionKind,
+    pub occurred_at_ms: u64,
+    pub interrupted_playback_ids: Vec<String>,
+    pub reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InterruptionClassifier {
+    pub classifier_id: String,
+}
+
+impl InterruptionClassifier {
+    pub fn new(classifier_id: impl Into<String>) -> Result<Self, VoiceContractError> {
+        let classifier = Self {
+            classifier_id: classifier_id.into(),
+        };
+        require_non_empty("classifier_id", &classifier.classifier_id)?;
+        Ok(classifier)
+    }
+
+    pub fn classify(
+        &self,
+        session_id: impl Into<String>,
+        vad_decision: &VadDecision,
+        playback: &PlaybackLedger,
+        occurred_at_ms: u64,
+    ) -> Result<InterruptionDecision, VoiceContractError> {
+        let session_id = session_id.into();
+        require_non_empty("session_id", &session_id)?;
+        let active_ids = playback.active_playback_ids();
+        if !active_ids.is_empty()
+            && matches!(
+                vad_decision.kind,
+                VadDecisionKind::SpeechStart | VadDecisionKind::Speech
+            )
+        {
+            return Ok(InterruptionDecision {
+                classifier_id: self.classifier_id.clone(),
+                session_id,
+                kind: InterruptionKind::Interrupt,
+                occurred_at_ms,
+                interrupted_playback_ids: active_ids,
+                reason: Some("user_speech_during_playback".to_string()),
+            });
+        }
+        Ok(InterruptionDecision {
+            classifier_id: self.classifier_id.clone(),
+            session_id,
+            kind: InterruptionKind::Continue,
+            occurred_at_ms,
+            interrupted_playback_ids: Vec::new(),
+            reason: None,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RealtimeSessionRequest {
+    pub session: DuplexSession,
+    pub model: String,
+    pub instructions: String,
+    pub modalities: Vec<String>,
+    pub tools: Vec<String>,
+}
+
+impl RealtimeSessionRequest {
+    pub fn new(
+        session: DuplexSession,
+        model: impl Into<String>,
+        instructions: impl Into<String>,
+    ) -> Result<Self, VoiceContractError> {
+        let request = Self {
+            session,
+            model: model.into(),
+            instructions: instructions.into(),
+            modalities: vec!["audio".to_string()],
+            tools: Vec::new(),
+        };
+        request.validated()
+    }
+
+    pub fn with_modalities<I, S>(mut self, modalities: I) -> Result<Self, VoiceContractError>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.modalities = modalities.into_iter().map(Into::into).collect();
+        self.validated()
+    }
+
+    pub fn with_tools<I, S>(mut self, tools: I) -> Result<Self, VoiceContractError>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.tools = tools.into_iter().map(Into::into).collect();
+        self.validated()
+    }
+
+    pub fn with_tool(mut self, tool_name: impl Into<String>) -> Result<Self, VoiceContractError> {
+        let tool_name = tool_name.into();
+        require_non_empty("tool_name", &tool_name)?;
+        self.tools.push(tool_name);
+        self.validated()
+    }
+
+    fn validated(mut self) -> Result<Self, VoiceContractError> {
+        require_non_empty("model", &self.model)?;
+        require_non_empty("instructions", &self.instructions)?;
+        for modality in &self.modalities {
+            require_non_empty("modality", modality)?;
+        }
+        for tool in &self.tools {
+            require_non_empty("tool_name", tool)?;
+        }
+        self.modalities = sorted_unique(self.modalities);
+        self.tools = sorted_unique(self.tools);
+        Ok(self)
+    }
+
+    pub fn provider_contract(&self) -> Value {
+        json!({
+            "sessionId": self.session.session_id,
+            "model": self.model,
+            "instructions": self.instructions,
+            "modalities": self.modalities,
+            "transport": self.session.transport.contract(),
+            "tools": self.tools,
+            "turnId": self.session.current_turn_id,
+        })
+    }
+}
