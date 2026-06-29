@@ -1,0 +1,88 @@
+[
+  {
+    "name": "competing_reservations_serialize_against_available_budget",
+    "kind": "reservation_race",
+    "budgetId": "budget-1",
+    "scope": "tenant:acme",
+    "policyRef": "policy-1",
+    "allocated": [
+      {
+        "kind": "model_total_tokens",
+        "amount": 100,
+        "unit": "tokens"
+      }
+    ],
+    "owners": [
+      "run:1",
+      "run:2"
+    ],
+    "reservationPurpose": "provider_call",
+    "reservationAmounts": [
+      {
+        "kind": "model_total_tokens",
+        "amount": 70,
+        "unit": "tokens"
+      }
+    ],
+    "expiresAt": "later",
+    "expectedAllowed": 1,
+    "expectedDenied": 1,
+    "expectedDeniedError": "BudgetExceeded",
+    "expectedReserved": [
+      {
+        "kind": "model_total_tokens",
+        "amount": 70,
+        "unit": "tokens"
+      }
+    ],
+    "expectedAvailable": [
+      {
+        "kind": "model_total_tokens",
+        "amount": 30,
+        "unit": "tokens"
+      }
+    ]
+  },
+  {
+    "name": "completion_reserve_allows_only_one_concurrent_spender",
+    "kind": "completion_reserve_race",
+    "budgetId": "budget-1",
+    "scope": "tenant:acme",
+    "policyRef": "policy-1",
+    "allocated": [
+      {
+        "kind": "model_total_tokens",
+        "amount": 100,
+        "unit": "tokens"
+      }
+    ],
+    "reserveId": "finalization-reserve",
+    "reservePurpose": "finalization",
+    "reserveAmounts": [
+      {
+        "kind": "model_total_tokens",
+        "amount": 20,
+        "unit": "tokens"
+      }
+    ],
+    "spendableBy": [
+      "agent.finalize"
+    ],
+    "spenders": [
+      "agent.finalize",
+      "agent.finalize"
+    ],
+    "expiresAt": "later",
+    "expectedAllowed": 1,
+    "expectedDenied": 1,
+    "expectedDeniedError": "CompletionReserveState",
+    "expectedReserveStatus": "spent",
+    "expectedReserved": [
+      {
+        "kind": "model_total_tokens",
+        "amount": 20,
+        "unit": "tokens"
+      }
+    ]
+  }
+]
