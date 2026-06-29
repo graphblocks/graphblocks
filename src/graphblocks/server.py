@@ -263,6 +263,7 @@ class GraphBlocksServerApp:
     auth_hook: ServerAuthHook | None = None
     health: ServerHealth = field(default_factory=lambda: ServerHealth("graphblocks-api"))
     registry: RuntimeRegistry = field(default_factory=stdlib_registry)
+    _events_by_run_id: dict[str, tuple[dict[str, object], ...]] = field(default_factory=dict, init=False, repr=False)
 
     def handle(self, request: ServerRequest) -> ServerResponse:
         try:
@@ -305,6 +306,25 @@ class GraphBlocksServerApp:
                     "ok": True,
                     "runId": route_match.path_params.get("run_id", ""),
                     "status": "cancel_requested",
+                },
+            )
+        if route.operation == "application_events":
+            run_id = route_match.path_params.get("run_id", "")
+            events = self._events_by_run_id.get(run_id)
+            if events is None:
+                return ServerResponse.json(
+                    404,
+                    {
+                        "ok": False,
+                        "error": f"run events not found for run {run_id!r}",
+                    },
+                )
+            return ServerResponse.json(
+                200,
+                {
+                    "ok": True,
+                    "runId": run_id,
+                    "events": [dict(event) for event in events],
                 },
             )
         if route.operation == "invoke_graph":
@@ -390,6 +410,7 @@ class GraphBlocksServerApp:
                     if event.tool_call_id is not None:
                         event_payload["toolCallId"] = event.tool_call_id
                     events.append(event_payload)
+                self._events_by_run_id[result.run_id] = tuple(dict(event) for event in events)
                 return ServerResponse.json(
                     200,
                     {

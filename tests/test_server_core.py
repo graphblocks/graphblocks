@@ -281,3 +281,76 @@ def test_server_app_handles_authenticated_cancel_request() -> None:
         "runId": "run-server-1",
         "status": "cancel_requested",
     }
+
+
+def test_server_app_serves_stored_run_events_after_invocation() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "server-events"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Events {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "ok"}},
+                    "runId": "run-events-1",
+                    "responseId": "response-events-1",
+                }
+            ).encode("utf-8"),
+        )
+    )
+    response = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-events-1/events",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+        )
+    )
+
+    payload = json.loads(response.body.decode("utf-8"))
+    assert response.status_code == 200
+    assert payload["ok"] is True
+    assert payload["runId"] == "run-events-1"
+    assert [event["kind"] for event in payload["events"]] == ["RunStarted", "RunSucceeded"]
+    assert payload["events"][0]["metadata"]["responseId"] == "response-events-1"
+
+
+def test_server_app_reports_missing_run_events() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+
+    response = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/missing-run/events",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+        )
+    )
+
+    assert response.status_code == 404
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "run events not found for run 'missing-run'",
+    }
