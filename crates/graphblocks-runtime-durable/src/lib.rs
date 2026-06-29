@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use graphblocks_runtime_core::output_policy::{
     DraftDisposition, DurableResult, OutputCutoff, TerminalReason,
 };
+use graphblocks_runtime_core::tool_result::{ToolResult, ToolResultStatus};
 use serde_json::Value;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -553,6 +554,28 @@ impl DurableToolTerminalRecord {
         }
     }
 
+    pub fn from_tool_result(
+        run_id: impl Into<String>,
+        response_id: impl Into<String>,
+        revision: u32,
+        arguments_digest: impl Into<String>,
+        result: &ToolResult,
+        completed_at_unix_ms: u64,
+    ) -> Self {
+        let mut record = Self::new(
+            run_id,
+            response_id,
+            result.tool_call_id.clone(),
+            revision,
+            DurableToolTerminalState::from(result.status),
+            arguments_digest,
+            result.completed_at_unix_ms.unwrap_or(completed_at_unix_ms),
+        );
+        record.output_digest = result.output_digest.clone();
+        record.effect_committed = result.effect_was_committed();
+        record
+    }
+
     pub fn with_output_digest(mut self, output_digest: impl Into<String>) -> Self {
         self.output_digest = Some(output_digest.into());
         self
@@ -571,6 +594,19 @@ impl DurableToolTerminalRecord {
     pub fn with_durable_result_committed(mut self) -> Self {
         self.durable_result_committed = true;
         self
+    }
+}
+
+impl From<ToolResultStatus> for DurableToolTerminalState {
+    fn from(status: ToolResultStatus) -> Self {
+        match status {
+            ToolResultStatus::Completed => Self::Completed,
+            ToolResultStatus::Failed => Self::Failed,
+            ToolResultStatus::Denied => Self::Denied,
+            ToolResultStatus::Cancelled => Self::Cancelled,
+            ToolResultStatus::PolicyStopped => Self::PolicyStopped,
+            ToolResultStatus::Incomplete => Self::Incomplete,
+        }
     }
 }
 

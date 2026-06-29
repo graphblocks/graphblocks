@@ -1,4 +1,8 @@
+use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory};
 use graphblocks_runtime_core::output_policy::{DraftDisposition, DurableResult, TerminalReason};
+use graphblocks_runtime_core::tool_result::{
+    ContentPart, ToolEffectOutcome, ToolResult, ToolResultStatus,
+};
 use graphblocks_runtime_durable::{
     DurableOutputCutoffDraftDisposition, DurableOutputCutoffDurableResult,
     DurableOutputCutoffTerminalReason, DurableResponsePolicyStopRecord, DurableToolTerminalRecord,
@@ -19,6 +23,122 @@ fn completed_tool_record() -> DurableToolTerminalRecord {
     .with_idempotency_key("ticket-create:call-1")
     .with_effect_committed()
     .with_durable_result_committed()
+}
+
+#[test]
+fn tool_terminal_record_projects_completed_tool_result() {
+    let result = ToolResult::completed(
+        "call-3",
+        [ContentPart::text("created")],
+        1_820_000_000_100,
+        1_820_000_000_200,
+    )
+    .with_effect_outcome(ToolEffectOutcome::Committed);
+    let record = DurableToolTerminalRecord::from_tool_result(
+        "run-000001",
+        "response-1",
+        1,
+        "sha256:arguments-3",
+        &result,
+        1_820_000_000_900,
+    )
+    .with_idempotency_key("ticket-create:call-3")
+    .with_durable_result_committed();
+
+    assert_eq!(record.tool_call_id, "call-3");
+    assert_eq!(record.terminal_state, DurableToolTerminalState::Completed);
+    assert_eq!(record.arguments_digest, "sha256:arguments-3");
+    assert_eq!(record.output_digest, result.output_digest);
+    assert!(record.effect_committed);
+    assert!(record.durable_result_committed);
+    assert_eq!(record.completed_at_unix_ms, 1_820_000_000_200);
+
+    let mut store = InMemoryDurableToolTerminalStore::new();
+    let committed = store
+        .record_tool_terminal(record)
+        .expect("projected tool result should commit");
+    assert_eq!(committed.sequence, 1);
+    assert!(!committed.replayed);
+}
+
+#[test]
+fn tool_terminal_record_projects_policy_stopped_committed_effect() {
+    let result = ToolResult::policy_stopped(
+        "call-4",
+        BlockError::new(
+            "output_policy_stopped",
+            ErrorCategory::Policy,
+            "output policy stopped the response",
+            false,
+        ),
+        1_820_000_000_100,
+        1_820_000_000_250,
+    )
+    .with_effect_outcome(ToolEffectOutcome::Committed);
+    let record = DurableToolTerminalRecord::from_tool_result(
+        "run-000001",
+        "response-2",
+        1,
+        "sha256:arguments-4",
+        &result,
+        1_820_000_000_900,
+    );
+
+    assert_eq!(
+        record.terminal_state,
+        DurableToolTerminalState::PolicyStopped
+    );
+    assert_eq!(record.output_digest, None);
+    assert!(record.effect_committed);
+    assert!(!record.durable_result_committed);
+
+    let mut store = InMemoryDurableToolTerminalStore::new();
+    store
+        .record_response_policy_stopped("response-2", "decision-1", 7, 1_820_000_000_300)
+        .expect("policy stop barrier should commit");
+    let committed = store
+        .record_tool_terminal(record)
+        .expect("late committed effect should remain auditable after policy stop");
+    assert_eq!(
+        committed.record.terminal_state,
+        DurableToolTerminalState::PolicyStopped,
+    );
+    assert!(committed.record.effect_committed);
+    assert!(!committed.record.durable_result_committed);
+}
+
+#[test]
+fn tool_terminal_record_uses_fallback_completion_time() {
+    let result = ToolResult {
+        tool_call_id: "call-5".to_owned(),
+        status: ToolResultStatus::Incomplete,
+        output: Vec::new(),
+        output_digest: None,
+        artifacts: Vec::new(),
+        diagnostics: Vec::new(),
+        error: None,
+        started_at_unix_ms: Some(1_820_000_000_100),
+        completed_at_unix_ms: None,
+        effect_outcome: ToolEffectOutcome::Unknown,
+    };
+    let record = DurableToolTerminalRecord::from_tool_result(
+        "run-000001",
+        "response-3",
+        1,
+        "sha256:arguments-5",
+        &result,
+        1_820_000_000_400,
+    );
+
+    assert_eq!(record.terminal_state, DurableToolTerminalState::Incomplete);
+    assert_eq!(record.output_digest, None);
+    assert!(!record.effect_committed);
+    assert_eq!(record.completed_at_unix_ms, 1_820_000_000_400);
+
+    let mut store = InMemoryDurableToolTerminalStore::new();
+    store
+        .record_tool_terminal(record)
+        .expect("fallback completion time should produce a valid terminal record");
 }
 
 fn incomplete_tool_record() -> DurableToolTerminalRecord {
