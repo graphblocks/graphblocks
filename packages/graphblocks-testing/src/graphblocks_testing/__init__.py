@@ -1420,6 +1420,26 @@ def load_tck_suite_manifests(root: str | Path) -> tuple[TckSuiteManifest, ...]:
     return tuple(manifests)
 
 
+def load_tck_cases_for_suite(suite: str, path: str | Path) -> tuple[TckCase, ...]:
+    if suite == "application-events":
+        return load_application_event_tck_cases(path)
+    if suite == "budget-race":
+        return load_budget_race_tck_cases(path)
+    if suite == "compiler":
+        return load_compiler_tck_cases(path)
+    if suite == "exhaustion":
+        return load_exhaustion_tck_cases(path)
+    if suite == "policy":
+        return load_policy_tck_cases(path)
+    if suite == "runtime":
+        return load_runtime_tck_cases(path)
+    if suite == "schema":
+        return load_schema_tck_cases(path)
+    if suite == "sequence":
+        return load_sequence_tck_cases(path)
+    raise ValueError(f"unsupported TCK suite {suite!r}")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="graphblocks-tck")
     subparsers = parser.add_subparsers(dest="command")
@@ -1449,6 +1469,10 @@ def main(argv: list[str] | None = None) -> int:
     run_parser.add_argument("path", type=Path, help="cases.json fixture path")
     run_parser.add_argument("--profile", default="local", help="profile label for the generated report")
     run_parser.add_argument("--json", action="store_true", help="emit JSON")
+    run_all_parser = subparsers.add_parser("run-all", help="run every supported shared TCK fixture under a root")
+    run_all_parser.add_argument("root", nargs="?", type=Path, default=Path("tck"))
+    run_all_parser.add_argument("--profile", default="local", help="profile label for the generated reports")
+    run_all_parser.add_argument("--json", action="store_true", help="emit JSON")
 
     args = parser.parse_args(argv)
     if args.command == "list":
@@ -1484,22 +1508,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{issue.code} {issue.suite}: {issue.message}")
         return 0 if coverage.ok else 1
     if args.command == "run":
-        if args.suite == "application-events":
-            cases = load_application_event_tck_cases(args.path)
-        elif args.suite == "compiler":
-            cases = load_compiler_tck_cases(args.path)
-        elif args.suite == "runtime":
-            cases = load_runtime_tck_cases(args.path)
-        elif args.suite == "exhaustion":
-            cases = load_exhaustion_tck_cases(args.path)
-        elif args.suite == "budget-race":
-            cases = load_budget_race_tck_cases(args.path)
-        elif args.suite == "schema":
-            cases = load_schema_tck_cases(args.path)
-        elif args.suite == "sequence":
-            cases = load_sequence_tck_cases(args.path)
-        else:
-            cases = load_policy_tck_cases(args.path)
+        cases = load_tck_cases_for_suite(args.suite, args.path)
         report = TckRunner(stdlib_registry(), profile=args.profile).run_cases(cases)
         payload = report.report_contract()
         payload["contentDigest"] = report.content_digest()
@@ -1511,6 +1520,29 @@ def main(argv: list[str] | None = None) -> int:
                 if result.status != "passed":
                     print(f"{result.case_id} {result.status}")
         return 0 if report.ok else 1
+    if args.command == "run-all":
+        reports: dict[str, dict[str, object]] = {}
+        ok = True
+        for manifest in load_tck_suite_manifests(args.root):
+            report = TckRunner(stdlib_registry(), profile=args.profile).run_cases(
+                load_tck_cases_for_suite(manifest.suite_id, args.root / manifest.path)
+            )
+            reports[manifest.suite_id] = report.report_contract()
+            ok = ok and report.ok
+        payload = {
+            "profile": args.profile,
+            "ok": ok,
+            "reports": reports,
+        }
+        payload["contentDigest"] = canonical_hash(payload)
+        if args.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(f"{'OK' if ok else 'FAILED'} {len(reports)} TCK suites")
+            for suite_id, report in reports.items():
+                if not report["ok"]:
+                    print(f"{suite_id} failed")
+        return 0 if ok else 1
     parser.print_help()
     return 0
 
@@ -3142,6 +3174,7 @@ __all__ = [
     "load_runtime_tck_cases",
     "load_schema_tck_cases",
     "load_sequence_tck_cases",
+    "load_tck_cases_for_suite",
     "load_tck_suite_manifests",
     "main",
     "migrate_document",

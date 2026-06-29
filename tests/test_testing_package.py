@@ -363,6 +363,29 @@ def test_testing_package_cli_runs_budget_race_tck_suite(monkeypatch, capsys) -> 
     assert payload["contentDigest"].startswith("sha256:")
 
 
+def test_testing_package_cli_runs_all_supported_tck_suites(monkeypatch, capsys) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    exit_code = graphblocks_testing.main(["run-all", str(ROOT / "tck"), "--json"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert tuple(payload["reports"]) == (
+        "application-events",
+        "budget-race",
+        "compiler",
+        "exhaustion",
+        "policy",
+        "runtime",
+        "schema",
+        "sequence",
+    )
+    assert all(report["ok"] for report in payload["reports"].values())
+    assert payload["contentDigest"].startswith("sha256:")
+
+
 def test_testing_package_tck_loaders_accept_camel_case_aliases(monkeypatch, tmp_path) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
