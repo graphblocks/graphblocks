@@ -80,6 +80,9 @@ pub enum ToolExecutionPlanError {
     ConflictingToolEffects {
         tool_call_id: String,
     },
+    UnsafeParallelEffects {
+        tool_call_id: String,
+    },
     InvalidEffectKeyTemplate {
         template: String,
     },
@@ -323,6 +326,36 @@ impl ToolExecutionPlan {
             return Err(ToolExecutionPlanError::DependencyCycle {
                 tool_call_id: tool_call_id.clone(),
             });
+        }
+        if maximum_parallelism > 1 {
+            let call_ids = indexed_calls.keys().cloned().collect::<Vec<_>>();
+            for (left_index, left_id) in call_ids.iter().enumerate() {
+                let left_call = &indexed_calls[left_id];
+                if !has_state_changing_tool_effects(&left_call.effects) {
+                    continue;
+                }
+                for right_id in call_ids.iter().skip(left_index + 1) {
+                    let right_call = &indexed_calls[right_id];
+                    if !has_state_changing_tool_effects(&right_call.effects) {
+                        continue;
+                    }
+                    if depends_on(&indexed_calls, left_id, right_id)
+                        || depends_on(&indexed_calls, right_id, left_id)
+                    {
+                        continue;
+                    }
+                    if left_call.effect_key.is_none() {
+                        return Err(ToolExecutionPlanError::UnsafeParallelEffects {
+                            tool_call_id: left_id.clone(),
+                        });
+                    }
+                    if right_call.effect_key.is_none() {
+                        return Err(ToolExecutionPlanError::UnsafeParallelEffects {
+                            tool_call_id: right_id.clone(),
+                        });
+                    }
+                }
+            }
         }
 
         Ok(Self {
@@ -643,4 +676,30 @@ impl ToolExecutionPlan {
             .iter()
             .all(|dependency| self.states.get(dependency) == Some(&ToolExecutionState::Completed))
     }
+}
+
+fn has_state_changing_tool_effects(effects: &BTreeSet<ToolEffect>) -> bool {
+    effects.iter().any(|effect| {
+        matches!(
+            effect,
+            ToolEffect::ExternalWrite
+                | ToolEffect::FilesystemWrite
+                | ToolEffect::Process
+                | ToolEffect::Destructive
+        )
+    })
+}
+
+fn depends_on(
+    calls: &BTreeMap<String, ToolPlanCall>,
+    tool_call_id: &str,
+    dependency_id: &str,
+) -> bool {
+    let Some(call) = calls.get(tool_call_id) else {
+        return false;
+    };
+    call.call
+        .depends_on
+        .iter()
+        .any(|candidate| candidate == dependency_id || depends_on(calls, candidate, dependency_id))
 }

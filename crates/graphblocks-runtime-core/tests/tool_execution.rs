@@ -288,6 +288,26 @@ fn conflicting_effect_keys_are_serialized() -> Result<(), ToolExecutionPlanError
 }
 
 #[test]
+fn parallel_state_changing_calls_require_effect_keys() {
+    assert_eq!(
+        ToolExecutionPlan::new(
+            "plan-1",
+            "response-1",
+            [
+                ToolPlanCall::new(tool_call("call-a", "{\"resource_id\":\"ticket-1\"}"))
+                    .with_effects([ToolEffect::ExternalWrite]),
+                ToolPlanCall::new(tool_call("call-b", "{\"resource_id\":\"ticket-2\"}"))
+                    .with_effects([ToolEffect::ExternalWrite]),
+            ],
+            2,
+        ),
+        Err(ToolExecutionPlanError::UnsafeParallelEffects {
+            tool_call_id: "call-a".to_owned(),
+        }),
+    );
+}
+
+#[test]
 fn plan_rejects_empty_effect_key() {
     assert_eq!(
         ToolExecutionPlan::new(
