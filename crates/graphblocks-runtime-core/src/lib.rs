@@ -27,6 +27,7 @@ pub mod retry;
 pub mod review;
 pub mod run_store;
 pub mod scheduler;
+pub mod stdlib_runtime;
 pub mod task_group;
 pub mod test_runtime;
 pub mod timeout;
