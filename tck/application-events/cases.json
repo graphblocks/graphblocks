@@ -80,5 +80,54 @@
       "AssistantIncomplete",
       "RunSucceeded"
     ]
+  },
+  {
+    "name": "tool_result_delta_is_draft_until_completed",
+    "responseId": "response-tools-1",
+    "turnId": "turn-tools-1",
+    "operations": [
+      {
+        "op": "tool_result_started",
+        "toolCallId": "call-tool-1",
+        "toolResultSequence": 1,
+        "startedAt": "2026-06-23T00:00:00Z",
+        "startedAtUnixMs": 1700000
+      },
+      {
+        "op": "tool_result_delta",
+        "toolCallId": "call-tool-1",
+        "toolResultSequence": 2,
+        "output": [
+          {
+            "kind": "text",
+            "text": "draft chunk",
+            "metadata": {
+              "trust_designation": "untrusted_external"
+            }
+          }
+        ],
+        "expectAccepted": false
+      },
+      {
+        "op": "tool_result_completed",
+        "toolCallId": "call-tool-1",
+        "toolResultSequence": 3,
+        "output": [
+          {
+            "kind": "text",
+            "text": "final result"
+          }
+        ],
+        "startedAt": "2026-06-23T00:00:00Z",
+        "completedAt": "2026-06-23T00:00:01Z",
+        "startedAtUnixMs": 1700000,
+        "completedAtUnixMs": 1700001,
+        "effectOutcome": "no_external_effect"
+      }
+    ],
+    "expectedAcceptedKinds": [
+      "ToolCallStarted",
+      "ToolCallCompleted"
+    ]
   }
 ]

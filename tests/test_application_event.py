@@ -1011,6 +1011,52 @@ def test_application_event_stream_state_matches_shared_tck_cases() -> None:
                 )
                 accepted = state.accept(event)
                 assert (accepted is not None) is operation.get("expectAccepted", True), case_name
+            elif operation["op"] in {
+                "tool_result_started",
+                "tool_result_delta",
+                "tool_result_completed",
+            }:
+                tool_call_id = operation["toolCallId"]
+                tool_result_sequence = operation["toolResultSequence"]
+                if operation["op"] == "tool_result_started":
+                    result_event = ToolResultEvent.started(
+                        tool_call_id,
+                        tool_result_sequence,
+                        started_at=operation["startedAt"],
+                    )
+                else:
+                    output = tuple(
+                        ContentPart(
+                            kind=part.get("kind", "text"),
+                            text=part.get("text"),
+                            data=part.get("data"),
+                            metadata=dict(part.get("metadata", {})),
+                        )
+                        for part in operation.get("output", ())
+                    )
+                    if operation["op"] == "tool_result_delta":
+                        result_event = ToolResultEvent.delta(
+                            tool_call_id,
+                            tool_result_sequence,
+                            output,
+                        )
+                    else:
+                        result = ToolResult.completed(
+                            tool_call_id,
+                            output,
+                            started_at=operation["startedAt"],
+                            completed_at=operation["completedAt"],
+                        )
+                        if operation.get("effectOutcome") is not None:
+                            result = result.with_effect_outcome(operation["effectOutcome"])
+                        result_event = ToolResultEvent.completed(
+                            tool_call_id,
+                            tool_result_sequence,
+                            result,
+                        )
+                event = ApplicationEvent.tool_result_event(metadata, result_event)
+                accepted = state.accept(event) if event is not None else None
+                assert (accepted is not None) is operation.get("expectAccepted", True), case_name
             else:
                 raise AssertionError(f"unknown application event TCK operation {operation['op']!r}")
 

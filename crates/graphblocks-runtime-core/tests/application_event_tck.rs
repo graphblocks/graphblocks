@@ -4,6 +4,9 @@ use graphblocks_runtime_core::application_event::{
 use graphblocks_runtime_core::output_policy::{
     DraftDisposition, DurableResult, OutputCutoff, TerminalReason,
 };
+use graphblocks_runtime_core::tool_result::{
+    ContentPart, ToolEffectOutcome, ToolResult, ToolResultEvent,
+};
 use serde_json::{Value, json};
 
 #[test]
@@ -98,6 +101,96 @@ fn run_case(case: &Value) -> Result<(), String> {
                 )
                 .map_err(|error| format!("{case_name}: {error:?}"))?;
                 let accepted = state.accept(event).is_some();
+                assert_eq!(
+                    accepted,
+                    optional_bool(operation, "expectAccepted").unwrap_or(true),
+                    "{case_name}",
+                );
+            }
+            "tool_result_started" | "tool_result_delta" | "tool_result_completed" => {
+                let tool_call_id = required_str(operation, "toolCallId")?;
+                let tool_result_sequence = required_u64(operation, "toolResultSequence")?;
+                let result_event = match op {
+                    "tool_result_started" => ToolResultEvent::started(
+                        tool_call_id,
+                        tool_result_sequence,
+                        required_u64(operation, "startedAtUnixMs")?,
+                    ),
+                    "tool_result_delta" | "tool_result_completed" => {
+                        let raw_output = operation
+                            .get("output")
+                            .and_then(Value::as_array)
+                            .ok_or_else(|| {
+                                format!(
+                                    "application-events TCK case {case_name} tool result output must be an array"
+                                )
+                            })?;
+                        let mut output = Vec::new();
+                        for (part_index, raw_part) in raw_output.iter().enumerate() {
+                            let part_kind = optional_str(raw_part, "kind").unwrap_or("text");
+                            let mut part = match part_kind {
+                                "text" => ContentPart::text(required_str(raw_part, "text")?),
+                                "json" => ContentPart::json(raw_part.get("data").cloned().ok_or_else(
+                                    || {
+                                        format!(
+                                            "application-events TCK case {case_name} output part {part_index} missing data"
+                                        )
+                                    },
+                                )?),
+                                other => {
+                                    return Err(format!(
+                                        "application-events TCK case {case_name} has unsupported output part kind {other}"
+                                    ));
+                                }
+                            };
+                            if let Some(metadata) = raw_part.get("metadata") {
+                                let metadata = metadata.as_object().ok_or_else(|| {
+                                    format!(
+                                        "application-events TCK case {case_name} output part {part_index} metadata must be an object"
+                                    )
+                                })?;
+                                for (key, value) in metadata {
+                                    part = part.with_metadata(key, value.clone());
+                                }
+                            }
+                            output.push(part);
+                        }
+                        if op == "tool_result_delta" {
+                            ToolResultEvent::delta(tool_call_id, tool_result_sequence, output)
+                        } else {
+                            let effect_outcome = match optional_str(operation, "effectOutcome")
+                                .unwrap_or("unknown")
+                            {
+                                "no_external_effect" => ToolEffectOutcome::NoExternalEffect,
+                                "committed" => ToolEffectOutcome::Committed,
+                                "not_committed" => ToolEffectOutcome::NotCommitted,
+                                "unknown" => ToolEffectOutcome::Unknown,
+                                other => {
+                                    return Err(format!(
+                                        "application-events TCK case {case_name} has unknown effect outcome {other}"
+                                    ));
+                                }
+                            };
+                            let result = ToolResult::completed(
+                                tool_call_id,
+                                output,
+                                required_u64(operation, "startedAtUnixMs")?,
+                                required_u64(operation, "completedAtUnixMs")?,
+                            )
+                            .with_effect_outcome(effect_outcome);
+                            ToolResultEvent::completed(tool_call_id, tool_result_sequence, result)
+                        }
+                    }
+                    _ => unreachable!(),
+                };
+                let accepted = if let Some(event) =
+                    ApplicationEvent::tool_result_event(metadata, &result_event)
+                        .map_err(|error| format!("{case_name}: {error:?}"))?
+                {
+                    state.accept(event).is_some()
+                } else {
+                    false
+                };
                 assert_eq!(
                     accepted,
                     optional_bool(operation, "expectAccepted").unwrap_or(true),

@@ -63,6 +63,7 @@ from graphblocks.runtime import (
     SQLiteExecutionJournal,
     stdlib_registry,
 )
+from graphblocks.tools import ToolResult, ToolResultEvent
 
 
 TckCaseKind = Literal[
@@ -2228,6 +2229,130 @@ class TckRunner:
                 )
                 accepted = state.accept(event)
                 if (accepted is not None) is not bool(operation.get("expectAccepted", True)):
+                    diagnostics.append(
+                        {
+                            "code": "ApplicationEventAcceptanceMismatch",
+                            "message": "application event acceptance did not match expected result",
+                            "path": f"$.operations[{sequence - 1}].expectAccepted",
+                        }
+                    )
+            elif operation.get("op") in {
+                "tool_result_started",
+                "tool_result_delta",
+                "tool_result_completed",
+            }:
+                tool_call_id = str(operation.get("toolCallId", operation.get("tool_call_id", "")))
+                tool_result_sequence = int(
+                    operation.get("toolResultSequence", operation.get("tool_result_sequence", sequence))
+                )
+                op = str(operation["op"])
+                if op == "tool_result_started":
+                    result_event = ToolResultEvent.started(
+                        tool_call_id,
+                        tool_result_sequence,
+                        started_at=str(operation.get("startedAt", "2026-06-23T00:00:00Z")),
+                    )
+                else:
+                    raw_output = operation.get("output", [])
+                    if not isinstance(raw_output, list):
+                        diagnostics.append(
+                            {
+                                "code": "ApplicationEventToolResultOutputInvalid",
+                                "message": "tool result output must be a list",
+                                "path": f"$.operations[{sequence - 1}].output",
+                            }
+                        )
+                        continue
+                    output_parts: list[ContentPart] = []
+                    invalid_output = False
+                    for part_index, raw_part in enumerate(raw_output):
+                        if not isinstance(raw_part, Mapping):
+                            diagnostics.append(
+                                {
+                                    "code": "ApplicationEventToolResultOutputInvalid",
+                                    "message": "tool result output part must be a mapping",
+                                    "path": f"$.operations[{sequence - 1}].output[{part_index}]",
+                                }
+                            )
+                            invalid_output = True
+                            break
+                        metadata_value = raw_part.get("metadata", {})
+                        if not isinstance(metadata_value, dict):
+                            diagnostics.append(
+                                {
+                                    "code": "ApplicationEventToolResultOutputInvalid",
+                                    "message": "tool result output metadata must be a mapping",
+                                    "path": f"$.operations[{sequence - 1}].output[{part_index}].metadata",
+                                }
+                            )
+                            invalid_output = True
+                            break
+                        part_kind = str(raw_part.get("kind", "text"))
+                        if part_kind == "text":
+                            text = raw_part.get("text")
+                            if not isinstance(text, str):
+                                diagnostics.append(
+                                    {
+                                        "code": "ApplicationEventToolResultOutputInvalid",
+                                        "message": "text tool result output part requires text",
+                                        "path": f"$.operations[{sequence - 1}].output[{part_index}].text",
+                                    }
+                                )
+                                invalid_output = True
+                                break
+                            output_parts.append(
+                                ContentPart(kind="text", text=text, metadata=dict(metadata_value))
+                            )
+                        elif part_kind in {"json", "artifact_ref"}:
+                            data = raw_part.get("data")
+                            if not isinstance(data, dict):
+                                diagnostics.append(
+                                    {
+                                        "code": "ApplicationEventToolResultOutputInvalid",
+                                        "message": f"{part_kind} tool result output part requires object data",
+                                        "path": f"$.operations[{sequence - 1}].output[{part_index}].data",
+                                    }
+                                )
+                                invalid_output = True
+                                break
+                            output_parts.append(
+                                ContentPart(kind=part_kind, data=dict(data), metadata=dict(metadata_value))
+                            )
+                        else:
+                            diagnostics.append(
+                                {
+                                    "code": "ApplicationEventToolResultOutputInvalid",
+                                    "message": f"unsupported tool result output kind {part_kind!r}",
+                                    "path": f"$.operations[{sequence - 1}].output[{part_index}].kind",
+                                }
+                            )
+                            invalid_output = True
+                            break
+                    if invalid_output:
+                        continue
+                    if op == "tool_result_delta":
+                        result_event = ToolResultEvent.delta(
+                            tool_call_id,
+                            tool_result_sequence,
+                            tuple(output_parts),
+                        )
+                    else:
+                        result = ToolResult.completed(
+                            tool_call_id,
+                            tuple(output_parts),
+                            started_at=str(operation.get("startedAt", "2026-06-23T00:00:00Z")),
+                            completed_at=str(operation.get("completedAt", "2026-06-23T00:00:00Z")),
+                        )
+                        if operation.get("effectOutcome") is not None:
+                            result = result.with_effect_outcome(str(operation["effectOutcome"]))
+                        result_event = ToolResultEvent.completed(
+                            tool_call_id,
+                            tool_result_sequence,
+                            result,
+                        )
+                event = ApplicationEvent.tool_result_event(metadata, result_event)
+                accepted = event is not None and state.accept(event) is not None
+                if accepted is not bool(operation.get("expectAccepted", True)):
                     diagnostics.append(
                         {
                             "code": "ApplicationEventAcceptanceMismatch",
