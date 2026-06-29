@@ -639,6 +639,16 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
 
             definition = tool.get("definition")
             if isinstance(definition, dict):
+                for definition_field in ("name", "description"):
+                    definition_value = definition.get(definition_field)
+                    if not isinstance(definition_value, str) or not definition_value.strip():
+                        diagnostics.append(
+                            Diagnostic(
+                                "InvalidToolDefinition",
+                                f"tool definition {definition_field} must be a non-empty string",
+                                f"$.spec.bindings.tools.{tool_key}.definition.{definition_field}",
+                            )
+                        )
                 input_schema = definition.get("inputSchema") or definition.get("input_schema")
                 if not isinstance(input_schema, str) or not input_schema.strip():
                     diagnostics.append(

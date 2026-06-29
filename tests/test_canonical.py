@@ -578,6 +578,52 @@ def test_compile_reports_malformed_tool_implementation_bindings() -> None:
     assert _error_codes(missing_openapi_operation) == ["ToolBindingMissing"]
 
 
+def test_compile_reports_malformed_tool_definition_identity_fields() -> None:
+    blank_name = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "blank-tool-definition-name"},
+        "spec": {
+            "nodes": {"model": {"block": "model.generate@1"}},
+            "bindings": {
+                "tools": {
+                    "search": {
+                        "definition": {
+                            "name": " ",
+                            "description": "Search documentation.",
+                            "inputSchema": "schemas/Search@1",
+                        },
+                        "implementation": {"kind": "block", "block": "blocks.search"},
+                    }
+                }
+            },
+        },
+    }
+    non_string_description = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "non-string-tool-definition-description"},
+        "spec": {
+            "nodes": {"model": {"block": "model.generate@1"}},
+            "bindings": {
+                "tools": {
+                    "search": {
+                        "definition": {
+                            "name": "knowledge.search",
+                            "description": {"text": "Search documentation."},
+                            "inputSchema": "schemas/Search@1",
+                        },
+                        "implementation": {"kind": "block", "block": "blocks.search"},
+                    }
+                }
+            },
+        },
+    }
+
+    assert _error_codes(blank_name) == ["InvalidToolDefinition"]
+    assert _error_codes(non_string_description) == ["InvalidToolDefinition"]
+
+
 def test_compile_reports_invalid_tool_effect_literals() -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",

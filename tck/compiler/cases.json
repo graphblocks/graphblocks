@@ -1033,6 +1033,42 @@
     }
   },
   {
+    "name": "malformed_tool_definition_identity",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "blank-tool-definition-name"
+      },
+      "spec": {
+        "nodes": {
+          "model": {
+            "block": "model.generate@1"
+          }
+        },
+        "bindings": {
+          "tools": {
+            "search": {
+              "definition": {
+                "name": " ",
+                "description": "Search documentation.",
+                "inputSchema": "schemas/Search@1"
+              },
+              "implementation": {
+                "kind": "block",
+                "block": "blocks.search"
+              }
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:3f97f4eed214d318750a061e7e1eec5919e8521809c2850f00c6d85465864b8d",
+      "error_codes": ["InvalidToolDefinition"]
+    }
+  },
+  {
     "name": "nonidempotent_tool_retry",
     "document": {
       "apiVersion": "graphblocks.ai/v1alpha3",
