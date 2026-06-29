@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from types import MappingProxyType
 from typing import Literal
 
 from .canonical import canonical_hash
@@ -9,6 +10,21 @@ from .policy import PrincipalRef
 
 
 ApprovalStatus = Literal["requested", "approved", "denied", "expired", "cancelled", "invalidated"]
+VALID_APPROVAL_STATUSES = frozenset(("requested", "approved", "denied", "expired", "cancelled", "invalidated"))
+
+
+def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{owner} {field_name} must be a string")
+    if not value.strip():
+        raise ValueError(f"{owner} {field_name} must not be empty")
+    return value
+
+
+def _validate_optional_non_empty_string(owner: str, field_name: str, value: object | None) -> str | None:
+    if value is None:
+        return None
+    return _validate_non_empty_string(owner, field_name, value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +38,14 @@ class ApprovalRequest:
     summary: str
     expires_at: str | None = None
     metadata: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        for field_name in ("approval_id", "run_id", "action", "arguments_digest", "risk", "summary"):
+            _validate_non_empty_string("approval request", field_name, getattr(self, field_name))
+        if not isinstance(self.subject, ResourceSnapshotRef):
+            raise ValueError("approval request subject must be a ResourceSnapshotRef")
+        _validate_optional_non_empty_string("approval request", "expires_at", self.expires_at)
+        object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
 
     @classmethod
     def from_arguments(
@@ -61,6 +85,44 @@ class ApprovalRecord:
     invalidated_at: str | None = None
     credential_refs: tuple[str, ...] = field(default_factory=tuple)
     metadata: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        _validate_non_empty_string("approval record", "approval_id", self.approval_id)
+        if not isinstance(self.request, ApprovalRequest):
+            raise ValueError("approval record request must be an ApprovalRequest")
+        if self.approval_id != self.request.approval_id:
+            raise ValueError("approval record id must match request approval_id")
+        if self.status not in VALID_APPROVAL_STATUSES:
+            raise ValueError(f"invalid approval status {self.status}")
+        if self.approver is not None and not isinstance(self.approver, PrincipalRef):
+            raise ValueError("approval record approver must be a PrincipalRef")
+        _validate_optional_non_empty_string("approval record", "decided_at", self.decided_at)
+        _validate_optional_non_empty_string("approval record", "reason", self.reason)
+        _validate_optional_non_empty_string("approval record", "invalidated_at", self.invalidated_at)
+
+        if self.status in {"approved", "denied"}:
+            if self.approver is None:
+                raise ValueError(f"{self.status} approval record requires approver")
+            if self.decided_at is None:
+                raise ValueError(f"{self.status} approval record requires decided_at")
+        if self.status == "denied" and self.reason is None:
+            raise ValueError("denied approval record requires reason")
+        if self.status == "invalidated" and self.invalidated_at is None:
+            raise ValueError("invalidated approval record requires invalidated_at")
+
+        if isinstance(self.credential_refs, str):
+            raise ValueError("approval credential_refs must be a collection of strings")
+        try:
+            credential_refs = tuple(self.credential_refs)
+        except TypeError as error:
+            raise ValueError("approval credential_refs must be a collection of strings") from error
+        for credential_ref in credential_refs:
+            if not isinstance(credential_ref, str):
+                raise ValueError("approval credential_refs items must be strings")
+            if not credential_ref.strip():
+                raise ValueError("approval credential_refs item must not be empty")
+        object.__setattr__(self, "credential_refs", credential_refs)
+        object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
 
     @classmethod
     def requested(cls, request: ApprovalRequest) -> ApprovalRecord:
