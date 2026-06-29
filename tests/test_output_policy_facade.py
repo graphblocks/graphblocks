@@ -869,6 +869,24 @@ def test_output_delivery_gate_policy_abort_cuts_off_and_rejects_late_chunks() ->
     assert str(error.value) == "output gate is policy stopped"
 
 
+def test_output_delivery_gate_terminal_decision_records_accepted_prefix() -> None:
+    gate = OutputDeliveryGate("stream-1", "response-1")
+    gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "safe "))
+    gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 2, "blocked"))
+
+    stopped = gate.apply_decision(
+        OutputPolicyDecision.abort_response("decision-abort", input_digest="sha256:blocked")
+        .with_accepted_through_sequence(1),
+        occurred_at="2026-06-23T00:00:02Z",
+    )
+
+    assert stopped.cutoff is not None
+    assert stopped.cutoff.last_generated_sequence == 2
+    assert stopped.cutoff.last_policy_accepted_sequence == 1
+    assert stopped.cutoff.last_client_delivered_sequence == 0
+    assert gate.last_policy_accepted_sequence == 1
+
+
 def test_output_delivery_gate_policy_abort_denies_kept_pending_tool_calls() -> None:
     gate = OutputDeliveryGate("stream-1", "response-1")
     gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "blocked"))

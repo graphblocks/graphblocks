@@ -449,6 +449,9 @@ class OutputPolicyDecision:
     def with_pending_tool_calls(self, pending_tool_calls: PendingToolCallsDisposition) -> OutputPolicyDecision:
         return replace(self, pending_tool_calls=pending_tool_calls)
 
+    def with_accepted_through_sequence(self, accepted_through_sequence: int | None) -> OutputPolicyDecision:
+        return replace(self, accepted_through_sequence=accepted_through_sequence)
+
     def with_reason_codes(self, reason_codes: tuple[str, ...]) -> OutputPolicyDecision:
         return replace(self, reason_codes=tuple(reason_codes))
 
@@ -900,6 +903,17 @@ class OutputDeliveryGate:
             return OutputGateUpdate(deliverable=self.commit_accepted_output())
 
         if decision.disposition in {"abort_response", "abort_turn", "deny_commit"}:
+            if decision.accepted_through_sequence is not None:
+                if decision.accepted_through_sequence > self.last_generated_sequence:
+                    raise OutputGateError(
+                        "accepted sequence "
+                        f"{decision.accepted_through_sequence} exceeds last generated sequence "
+                        f"{self.last_generated_sequence}"
+                    )
+                self.last_policy_accepted_sequence = max(
+                    self.last_policy_accepted_sequence,
+                    decision.accepted_through_sequence,
+                )
             pending_tool_calls = "deny" if decision.pending_tool_calls == "keep" else decision.pending_tool_calls
             cutoff = OutputCutoff(
                 stream_id=self.stream_id,

@@ -610,6 +610,31 @@ fn policy_abort_cuts_off_delivery_and_rejects_late_chunks() -> Result<(), Output
 }
 
 #[test]
+fn terminal_decision_records_accepted_prefix_in_cutoff() -> Result<(), OutputGateError> {
+    let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
+    gate.record_chunk(GenerationChunk::text("stream-1", "response-1", 1, "safe "))?;
+    gate.record_chunk(GenerationChunk::text(
+        "stream-1",
+        "response-1",
+        2,
+        "blocked",
+    ))?;
+
+    let stopped = gate.apply_decision(
+        OutputPolicyDecision::abort_response("decision-abort", "sha256:blocked")
+            .with_accepted_through_sequence(1),
+        1_100,
+    )?;
+
+    let cutoff = stopped.cutoff.expect("policy abort records cutoff");
+    assert_eq!(cutoff.last_generated_sequence, 2);
+    assert_eq!(cutoff.last_policy_accepted_sequence, 1);
+    assert_eq!(cutoff.last_client_delivered_sequence, 0);
+    assert_eq!(gate.last_policy_accepted_sequence(), 1);
+    Ok(())
+}
+
+#[test]
 fn policy_abort_cannot_keep_pending_tool_calls() -> Result<(), OutputGateError> {
     let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
     gate.record_chunk(GenerationChunk::text(

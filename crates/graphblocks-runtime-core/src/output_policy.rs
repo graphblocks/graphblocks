@@ -485,6 +485,11 @@ impl OutputPolicyDecision {
         self
     }
 
+    pub fn with_accepted_through_sequence(mut self, accepted_through_sequence: u64) -> Self {
+        self.accepted_through_sequence = Some(accepted_through_sequence);
+        self
+    }
+
     pub fn evaluated_at_unix_ms(mut self, evaluated_at_unix_ms: u64) -> Self {
         self.evaluated_at_unix_ms = Some(evaluated_at_unix_ms);
         self
@@ -1454,6 +1459,17 @@ impl OutputDeliveryGate {
             OutputDisposition::AbortResponse
             | OutputDisposition::AbortTurn
             | OutputDisposition::DenyCommit => {
+                if let Some(accepted_through_sequence) = decision.accepted_through_sequence {
+                    if accepted_through_sequence > self.last_generated_sequence {
+                        return Err(OutputGateError::AcceptedSequenceBeyondGenerated {
+                            last_generated_sequence: self.last_generated_sequence,
+                            accepted_through_sequence,
+                        });
+                    }
+                    if accepted_through_sequence > self.last_policy_accepted_sequence {
+                        self.last_policy_accepted_sequence = accepted_through_sequence;
+                    }
+                }
                 let pending_tool_calls = match decision.pending_tool_calls {
                     PendingToolCallsDisposition::Keep => PendingToolCallsDisposition::Deny,
                     disposition => disposition,
