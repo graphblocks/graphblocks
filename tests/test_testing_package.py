@@ -485,6 +485,27 @@ def test_testing_package_loads_shared_usage_tck_cases(monkeypatch) -> None:
     assert "load_usage_tck_cases" in graphblocks_testing.__all__
 
 
+def test_testing_package_loads_shared_voice_tck_cases(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-voice" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    cases = graphblocks_testing.load_voice_tck_cases(ROOT / "tck" / "voice" / "cases.json")
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
+
+    assert [case.kind for case in cases] == ["voice"] * 4
+    assert report.ok
+    assert {case.case_id for case in cases} == {
+        "duplex_session_request_contract_tracks_turn_and_tools",
+        "vad_authority_drives_interruption_classifier",
+        "playback_ledger_interrupts_active_items_only",
+        "voice_contract_validation_errors_are_explicit",
+    }
+    assert any(result.observed.get("interruptionKind") == "interrupt" for result in report.results)
+    assert any(result.observed.get("transportError") == "voice_contract_error" for result in report.results)
+    assert "load_voice_tck_cases" in graphblocks_testing.__all__
+
+
 def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -513,6 +534,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "tool-execution",
         "tool-lifecycle",
         "usage",
+        "voice",
     )
     assert by_suite["budget-race"].case_ids == (
         "competing_reservations_serialize_against_available_budget",
@@ -604,6 +626,12 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "policy_abort_cancels_running_read_and_denies_pending",
         "policy_abort_preserves_running_state_changing_call_without_safe_cancellation",
     )
+    assert by_suite["voice"].case_ids == (
+        "duplex_session_request_contract_tracks_turn_and_tools",
+        "vad_authority_drives_interruption_classifier",
+        "playback_ledger_interrupts_active_items_only",
+        "voice_contract_validation_errors_are_explicit",
+    )
     assert by_suite["budget-race"].content_digest().startswith("sha256:")
     assert "TckSuiteManifest" in graphblocks_testing.__all__
     assert "load_tck_suite_manifests" in graphblocks_testing.__all__
@@ -616,7 +644,7 @@ def test_testing_package_cli_lists_tck_suite_manifests(monkeypatch, capsys) -> N
     assert graphblocks_testing.main(["list", str(ROOT / "tck"), "--json"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload["suiteCount"] == 20
+    assert payload["suiteCount"] == 21
     assert payload["suites"][0]["suite_id"] == "application-events"
     assert payload["suites"][0]["case_count"] == 3
     assert payload["contentDigest"].startswith("sha256:")
@@ -928,8 +956,25 @@ def test_testing_package_cli_runs_usage_tck_suite(monkeypatch, capsys) -> None:
     assert payload["contentDigest"].startswith("sha256:")
 
 
+def test_testing_package_cli_runs_voice_tck_suite(monkeypatch, capsys) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-voice" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    exit_code = graphblocks_testing.main(
+        ["run", "voice", str(ROOT / "tck" / "voice" / "cases.json"), "--json"]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert {result["kind"] for result in payload["results"]} == {"voice"}
+    assert payload["contentDigest"].startswith("sha256:")
+
+
 def test_testing_package_cli_runs_all_supported_tck_suites(monkeypatch, capsys) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-voice" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
 
@@ -959,6 +1004,7 @@ def test_testing_package_cli_runs_all_supported_tck_suites(monkeypatch, capsys) 
         "tool-execution",
         "tool-lifecycle",
         "usage",
+        "voice",
     )
     assert all(report["ok"] for report in payload["reports"].values())
     assert payload["contentDigest"].startswith("sha256:")

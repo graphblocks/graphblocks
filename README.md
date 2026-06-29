@@ -83,6 +83,7 @@ Shared TCK fixtures live under `tck/`:
 - `tool-execution`
 - `tool-lifecycle`
 - `usage`
+- `voice`
 
 Rust and Python harnesses consume these fixtures where the suite is applicable.
 The implemented profile catalog is in `src/graphblocks/data/conformance-profiles.yaml`.

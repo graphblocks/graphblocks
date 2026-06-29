@@ -180,6 +180,7 @@ TckCaseKind = Literal[
     "tool-lifecycle",
     "tool-execution",
     "usage",
+    "voice",
 ]
 TckResultStatus = Literal["passed", "failed"]
 PerformanceThresholdOperator = Literal["at_most", "at_least"]
@@ -270,6 +271,7 @@ class TckCase:
     tool_lifecycle_fixture: dict[str, object] = field(default_factory=dict)
     tool_execution_fixture: dict[str, object] = field(default_factory=dict)
     usage_fixture: dict[str, object] = field(default_factory=dict)
+    voice_fixture: dict[str, object] = field(default_factory=dict)
     approval_review_fixture: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -296,6 +298,7 @@ class TckCase:
             "tool-lifecycle",
             "tool-execution",
             "usage",
+            "voice",
         }:
             raise ValueError(f"invalid TCK case kind {self.kind}")
         object.__setattr__(self, "graph", dict(self.graph))
@@ -326,6 +329,7 @@ class TckCase:
         object.__setattr__(self, "tool_lifecycle_fixture", dict(self.tool_lifecycle_fixture))
         object.__setattr__(self, "tool_execution_fixture", dict(self.tool_execution_fixture))
         object.__setattr__(self, "usage_fixture", dict(self.usage_fixture))
+        object.__setattr__(self, "voice_fixture", dict(self.voice_fixture))
         object.__setattr__(self, "approval_review_fixture", dict(self.approval_review_fixture))
         if self.kind == "policy":
             if not self.policy_stream_id.strip():
@@ -365,6 +369,8 @@ class TckCase:
             raise ValueError("tool-execution TCK case requires fixture")
         if self.kind == "usage" and not self.usage_fixture:
             raise ValueError("usage TCK case requires fixture")
+        if self.kind == "voice" and not self.voice_fixture:
+            raise ValueError("voice TCK case requires fixture")
         if self.kind == "approval-review" and not self.approval_review_fixture:
             raise ValueError("approval-review TCK case requires fixture")
         if self.expected_outputs is not None:
@@ -550,6 +556,10 @@ class TckCase:
     @classmethod
     def usage(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
         return cls(case_id=case_id, kind="usage", usage_fixture=fixture)
+
+    @classmethod
+    def voice(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
+        return cls(case_id=case_id, kind="voice", voice_fixture=fixture)
 
     @classmethod
     def approval_review(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
@@ -1802,6 +1812,32 @@ def load_usage_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     return tuple(cases)
 
 
+def load_voice_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
+    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(raw_cases, list):
+        raise ValueError("voice TCK root must be a list")
+    cases: list[TckCase] = []
+    for index, raw_case in enumerate(raw_cases):
+        if not isinstance(raw_case, Mapping):
+            raise ValueError(f"voice TCK case {index} must be a mapping")
+        case_id = _first_mapping_value(raw_case, "name", "case_id", "caseId")
+        if not isinstance(case_id, str) or not case_id.strip():
+            raise ValueError(f"voice TCK case {index} requires name")
+        case_kind = raw_case.get("kind")
+        if case_kind not in {
+            "session_request",
+            "vad_interruption",
+            "playback_interrupt",
+            "validation_errors",
+        }:
+            raise ValueError(f"voice TCK case {case_id} has unsupported kind {case_kind!r}")
+        expected = raw_case.get("expected")
+        if not isinstance(expected, Mapping):
+            raise ValueError(f"voice TCK case {case_id} requires expected result")
+        cases.append(TckCase.voice(case_id=case_id, fixture=dict(raw_case)))
+    return tuple(cases)
+
+
 def load_policy_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(raw_cases, list):
@@ -2004,6 +2040,8 @@ def load_tck_cases_for_suite(suite: str, path: str | Path) -> tuple[TckCase, ...
         return load_tool_execution_tck_cases(path)
     if suite == "usage":
         return load_usage_tck_cases(path)
+    if suite == "voice":
+        return load_voice_tck_cases(path)
     raise ValueError(f"unsupported TCK suite {suite!r}")
 
 
@@ -2042,6 +2080,7 @@ def main(argv: list[str] | None = None) -> int:
             "tool-lifecycle",
             "tool-execution",
             "usage",
+            "voice",
         ),
         help="TCK suite kind",
     )
@@ -2654,6 +2693,8 @@ class TckRunner:
                 results.append(self._run_tool_lifecycle_case(case))
             elif case.kind == "usage":
                 results.append(self._run_usage_case(case))
+            elif case.kind == "voice":
+                results.append(self._run_voice_case(case))
             else:
                 results.append(self._run_schema_case(case))
         return TckReport(profile=self.profile, results=tuple(results))
@@ -6616,6 +6657,289 @@ class TckRunner:
             observed=observed,
         )
 
+    def _run_voice_case(self, case: TckCase) -> TckResult:
+        diagnostics: list[dict[str, str]] = []
+        fixture = case.voice_fixture
+        kind = str(fixture.get("kind", ""))
+        expected = fixture.get("expected", {})
+        if not isinstance(expected, Mapping):
+            expected = {}
+            diagnostics.append(
+                {
+                    "code": "VoiceExpectedInvalid",
+                    "message": "voice TCK expected result must be a mapping",
+                    "path": "$.expected",
+                }
+            )
+
+        try:
+            voice = importlib.import_module("graphblocks_voice")
+        except ModuleNotFoundError as error:
+            diagnostics.append(
+                {
+                    "code": "VoicePackageMissing",
+                    "message": str(error),
+                    "path": "$",
+                }
+            )
+            return TckResult(
+                case_id=case.case_id,
+                kind=case.kind,
+                status="failed",
+                diagnostics=tuple(diagnostics),
+                observed={},
+            )
+
+        observed: dict[str, object] = {}
+        try:
+            if kind == "session_request":
+                raw_transport = fixture.get("transport", {})
+                raw_session = fixture.get("session", {})
+                raw_request = fixture.get("request", {})
+                if not isinstance(raw_transport, Mapping) or not isinstance(raw_session, Mapping) or not isinstance(raw_request, Mapping):
+                    raise ValueError("voice session_request case requires transport, session, and request")
+                metadata = raw_session.get("metadata", {})
+                if not isinstance(metadata, Mapping):
+                    metadata = {}
+                transport = voice.VoiceTransport(
+                    str(raw_transport.get("kind", "")),
+                    uri=(
+                        str(raw_transport.get("uri"))
+                        if raw_transport.get("uri") is not None
+                        else None
+                    ),
+                    codec=str(raw_transport.get("codec", "pcm16")),
+                    sample_rate_hz=int(raw_transport.get("sampleRateHz", raw_transport.get("sample_rate_hz", 24_000))),
+                    channels=int(raw_transport.get("channels", 1)),
+                )
+                session = voice.DuplexSession(
+                    str(raw_session.get("sessionId", raw_session.get("session_id", ""))),
+                    transport,
+                    started_at_ms=int(raw_session.get("startedAtMs", raw_session.get("started_at_ms", 0))),
+                    metadata={str(key): str(value) for key, value in metadata.items()},
+                ).begin_turn(str(raw_session.get("turnId", raw_session.get("turn_id", ""))))
+                raw_modalities = raw_request.get("modalities", ())
+                if not isinstance(raw_modalities, list):
+                    raw_modalities = []
+                request = voice.RealtimeSessionRequest(
+                    session=session,
+                    model=str(raw_request.get("model", "")),
+                    instructions=str(raw_request.get("instructions", "")),
+                    modalities=tuple(str(item) for item in raw_modalities),
+                )
+                raw_tools = raw_request.get("tools", [])
+                if not isinstance(raw_tools, list):
+                    raw_tools = []
+                for tool_name in raw_tools:
+                    request = request.with_tool(str(tool_name))
+                contract = request.provider_contract()
+                observed = {
+                    "sessionState": session.state,
+                    "currentTurnId": session.current_turn_id,
+                    "contractSessionId": contract["sessionId"],
+                    "transportKind": contract["transport"]["kind"],
+                    "transportSampleRateHz": contract["transport"]["sampleRateHz"],
+                    "modalities": contract["modalities"],
+                    "tools": contract["tools"],
+                }
+            elif kind == "vad_interruption":
+                raw_authority = fixture.get("authority", {})
+                raw_frames = fixture.get("frames", [])
+                raw_playback = fixture.get("playback", [])
+                raw_classifier = fixture.get("classifier", {})
+                if not isinstance(raw_authority, Mapping) or not isinstance(raw_frames, list) or not isinstance(raw_playback, list) or not isinstance(raw_classifier, Mapping):
+                    raise ValueError("voice vad_interruption case requires authority, frames, playback, and classifier")
+                authority = voice.VadAuthority(
+                    str(raw_authority.get("authorityId", raw_authority.get("authority_id", ""))),
+                    speech_threshold=float(raw_authority.get("speechThreshold", raw_authority.get("speech_threshold", 0.5))),
+                )
+                decisions = []
+                for raw_frame in raw_frames:
+                    if not isinstance(raw_frame, Mapping):
+                        raise ValueError("voice frame must be a mapping")
+                    decisions.append(
+                        authority.evaluate(
+                            voice.AudioFrame(
+                                str(raw_frame.get("streamId", raw_frame.get("stream_id", ""))),
+                                sequence=int(raw_frame.get("sequence", 0)),
+                                start_ms=int(raw_frame.get("startMs", raw_frame.get("start_ms", 0))),
+                                duration_ms=int(raw_frame.get("durationMs", raw_frame.get("duration_ms", 0))),
+                                speech_probability=float(raw_frame.get("speechProbability", raw_frame.get("speech_probability", 0))),
+                            ),
+                            already_in_speech=bool(raw_frame.get("alreadyInSpeech", raw_frame.get("already_in_speech", False))),
+                        )
+                    )
+                playback = voice.PlaybackLedger()
+                for raw_entry in raw_playback:
+                    if not isinstance(raw_entry, Mapping):
+                        raise ValueError("voice playback entry must be a mapping")
+                    playback = playback.append(
+                        voice.PlaybackEntry(
+                            str(raw_entry.get("playbackId", raw_entry.get("playback_id", ""))),
+                            sequence=int(raw_entry.get("sequence", 0)),
+                            status=str(raw_entry.get("status", "")),
+                            audio_ref=(
+                                str(raw_entry.get("audioRef", raw_entry.get("audio_ref")))
+                                if raw_entry.get("audioRef", raw_entry.get("audio_ref")) is not None
+                                else None
+                            ),
+                            started_at_ms=(
+                                int(raw_entry.get("startedAtMs", raw_entry.get("started_at_ms")))
+                                if raw_entry.get("startedAtMs", raw_entry.get("started_at_ms")) is not None
+                                else None
+                            ),
+                            completed_at_ms=(
+                                int(raw_entry.get("completedAtMs", raw_entry.get("completed_at_ms")))
+                                if raw_entry.get("completedAtMs", raw_entry.get("completed_at_ms")) is not None
+                                else None
+                            ),
+                            reason=(
+                                str(raw_entry.get("reason"))
+                                if raw_entry.get("reason") is not None
+                                else None
+                            ),
+                        )
+                    )
+                decision = voice.InterruptionClassifier(
+                    str(raw_classifier.get("classifierId", raw_classifier.get("classifier_id", "")))
+                ).classify(
+                    session_id=str(raw_classifier.get("sessionId", raw_classifier.get("session_id", ""))),
+                    vad_decision=decisions[-1],
+                    playback=playback,
+                    occurred_at_ms=int(raw_classifier.get("occurredAtMs", raw_classifier.get("occurred_at_ms", 0))),
+                )
+                observed = {
+                    "decisionKinds": [decision.kind for decision in decisions],
+                    "interruptionKind": decision.kind,
+                    "interruptedPlaybackIds": list(decision.interrupted_playback_ids),
+                    "interruptionReason": decision.reason,
+                }
+            elif kind == "playback_interrupt":
+                raw_entries = fixture.get("entries", [])
+                raw_interrupt = fixture.get("interrupt", {})
+                if not isinstance(raw_entries, list) or not isinstance(raw_interrupt, Mapping):
+                    raise ValueError("voice playback_interrupt case requires entries and interrupt")
+                ledger = voice.PlaybackLedger()
+                for raw_entry in raw_entries:
+                    if not isinstance(raw_entry, Mapping):
+                        raise ValueError("voice playback entry must be a mapping")
+                    ledger = ledger.append(
+                        voice.PlaybackEntry(
+                            str(raw_entry.get("playbackId", raw_entry.get("playback_id", ""))),
+                            sequence=int(raw_entry.get("sequence", 0)),
+                            status=str(raw_entry.get("status", "")),
+                            audio_ref=(
+                                str(raw_entry.get("audioRef", raw_entry.get("audio_ref")))
+                                if raw_entry.get("audioRef", raw_entry.get("audio_ref")) is not None
+                                else None
+                            ),
+                            started_at_ms=(
+                                int(raw_entry.get("startedAtMs", raw_entry.get("started_at_ms")))
+                                if raw_entry.get("startedAtMs", raw_entry.get("started_at_ms")) is not None
+                                else None
+                            ),
+                            completed_at_ms=(
+                                int(raw_entry.get("completedAtMs", raw_entry.get("completed_at_ms")))
+                                if raw_entry.get("completedAtMs", raw_entry.get("completed_at_ms")) is not None
+                                else None
+                            ),
+                            reason=(
+                                str(raw_entry.get("reason"))
+                                if raw_entry.get("reason") is not None
+                                else None
+                            ),
+                        )
+                    )
+                active_before = list(ledger.active_playback_ids())
+                interrupted = ledger.interrupt_active(
+                    occurred_at_ms=int(raw_interrupt.get("occurredAtMs", raw_interrupt.get("occurred_at_ms", 0))),
+                    reason=str(raw_interrupt.get("reason", "")),
+                )
+                observed = {
+                    "activeBefore": active_before,
+                    "statuses": [entry.status for entry in interrupted.entries],
+                    "completedAtMs": [entry.completed_at_ms for entry in interrupted.entries],
+                    "reasons": [entry.reason for entry in interrupted.entries],
+                    "digestPrefix": interrupted.content_digest()[:7],
+                }
+            elif kind == "validation_errors":
+                raw_transport = fixture.get("invalidTransport", fixture.get("invalid_transport", {}))
+                raw_session = fixture.get("invalidSession", fixture.get("invalid_session", {}))
+                raw_frame = fixture.get("invalidFrame", fixture.get("invalid_frame", {}))
+                if not isinstance(raw_transport, Mapping) or not isinstance(raw_session, Mapping) or not isinstance(raw_frame, Mapping):
+                    raise ValueError("voice validation_errors case requires invalidTransport, invalidSession, and invalidFrame")
+                transport_error = None
+                session_error = None
+                frame_error = None
+                try:
+                    voice.VoiceTransport(
+                        str(raw_transport.get("kind", "")),
+                        uri=(
+                            str(raw_transport.get("uri"))
+                            if raw_transport.get("uri") is not None
+                            else None
+                        ),
+                        sample_rate_hz=int(raw_transport.get("sampleRateHz", raw_transport.get("sample_rate_hz", 24_000))),
+                    )
+                except voice.VoiceContractError:
+                    transport_error = "voice_contract_error"
+                try:
+                    voice.DuplexSession(
+                        str(raw_session.get("sessionId", raw_session.get("session_id", ""))),
+                        voice.VoiceTransport.websocket("wss://voice.example.com/session"),
+                        started_at_ms=int(raw_session.get("startedAtMs", raw_session.get("started_at_ms", 0))),
+                    ).close(occurred_at_ms=int(raw_session.get("closeAtMs", raw_session.get("close_at_ms", 0))))
+                except voice.VoiceContractError:
+                    session_error = "voice_contract_error"
+                try:
+                    voice.AudioFrame(
+                        str(raw_frame.get("streamId", raw_frame.get("stream_id", ""))),
+                        sequence=int(raw_frame.get("sequence", 0)),
+                        start_ms=int(raw_frame.get("startMs", raw_frame.get("start_ms", 0))),
+                        duration_ms=int(raw_frame.get("durationMs", raw_frame.get("duration_ms", 0))),
+                        speech_probability=float(raw_frame.get("speechProbability", raw_frame.get("speech_probability", 0))),
+                    )
+                except voice.VoiceContractError:
+                    frame_error = "voice_contract_error"
+                observed = {
+                    "transportError": transport_error,
+                    "sessionError": session_error,
+                    "frameError": frame_error,
+                }
+            else:
+                diagnostics.append(
+                    {
+                        "code": "VoiceKindUnknown",
+                        "message": f"voice TCK kind {kind!r} is not supported",
+                        "path": "$.kind",
+                    }
+                )
+        except Exception as error:
+            diagnostics.append(
+                {
+                    "code": "VoiceExecutionError",
+                    "message": str(error),
+                    "path": "$",
+                }
+            )
+
+        for key, expected_value in expected.items():
+            if observed.get(str(key)) != expected_value:
+                diagnostics.append(
+                    {
+                        "code": "VoiceExpectedMismatch",
+                        "message": f"voice observed {key} did not match expected value",
+                        "path": f"$.expected.{key}",
+                    }
+                )
+        return TckResult(
+            case_id=case.case_id,
+            kind=case.kind,
+            status="passed" if not diagnostics else "failed",
+            diagnostics=tuple(diagnostics),
+            observed=observed,
+        )
+
     def _run_policy_case(self, case: TckCase) -> TckResult:
         diagnostics: list[dict[str, str]] = []
         delivery = case.policy_delivery
@@ -7088,6 +7412,7 @@ __all__ = [
     "load_tool_execution_tck_cases",
     "load_tool_lifecycle_tck_cases",
     "load_usage_tck_cases",
+    "load_voice_tck_cases",
     "main",
     "migrate_document",
     "stdlib_registry",

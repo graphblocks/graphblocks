@@ -108,6 +108,8 @@ spec:
     - vad-authority
     - interruption
     - playback-ledger
+    tck:
+    - voice
   - id: GB-X3-DURABLE-STREAM
     status: experimental-extension
     extends:
