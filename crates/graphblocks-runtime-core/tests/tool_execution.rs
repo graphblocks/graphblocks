@@ -416,6 +416,30 @@ fn policy_stop_denies_pending_tool_calls() -> Result<(), ToolExecutionPlanError>
 }
 
 #[test]
+fn policy_stop_coerces_keep_to_deny_for_pending_tool_calls() -> Result<(), ToolExecutionPlanError> {
+    let mut plan = ToolExecutionPlan::new(
+        "plan-1",
+        "response-1",
+        [
+            ToolPlanCall::new(tool_call("call-a", "{\"resource_id\":\"a\"}")),
+            ToolPlanCall::new(tool_call("call-b", "{\"resource_id\":\"b\"}")),
+        ],
+        2,
+    )?;
+
+    plan.record_started("call-a")?;
+
+    assert_eq!(
+        plan.apply_policy_stop(PendingToolCallsDisposition::Keep),
+        vec!["call-b".to_owned()],
+    );
+    assert_eq!(plan.state("call-a"), Some(ToolExecutionState::Running));
+    assert_eq!(plan.state("call-b"), Some(ToolExecutionState::Denied));
+    assert_eq!(plan.ready_call_ids(), Vec::<String>::new());
+    Ok(())
+}
+
+#[test]
 fn policy_stop_can_cancel_admitted_tool_calls() -> Result<(), ToolExecutionPlanError> {
     let mut plan = ToolExecutionPlan::new(
         "plan-1",

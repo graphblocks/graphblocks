@@ -2981,6 +2981,19 @@ def test_tool_execution_plan_policy_stop_denies_pending_and_can_cancel_running()
         plan.record_started("call-b")
     assert str(error.value) == "tool call call-b is denied, not pending"
 
+    keep_plan = ToolExecutionPlan(
+        plan_id="plan-keep",
+        response_id="response-1",
+        calls=(ToolPlanCall(_tool_call("call-a")), ToolPlanCall(_tool_call("call-b"))),
+        maximum_parallelism=2,
+    )
+    keep_plan.record_started("call-a")
+
+    assert keep_plan.apply_policy_stop("keep") == ["call-b"]
+    assert keep_plan.state("call-a") == "running"
+    assert keep_plan.state("call-b") == "denied"
+    assert keep_plan.ready_call_ids() == []
+
     cancel_plan = ToolExecutionPlan(
         plan_id="plan-2",
         response_id="response-1",

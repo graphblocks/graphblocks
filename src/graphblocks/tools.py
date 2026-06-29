@@ -1513,7 +1513,7 @@ class ToolExecutionPlan:
     def apply_policy_stop(self, pending_tool_calls: PendingToolCallsDisposition) -> list[str]:
         affected: list[str] = []
         if pending_tool_calls == "keep":
-            return affected
+            pending_tool_calls = "deny"
         if pending_tool_calls == "deny":
             for planned_call in self.calls:
                 tool_call_id = planned_call.call.tool_call_id
