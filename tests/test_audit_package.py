@@ -78,6 +78,15 @@ def test_audit_package_records_tool_effect_precondition_and_outcome(monkeypatch)
     ).complete_arguments().into_tool_call(
         resolved_tool.resolved_tool_id,
         created_at="2026-06-23T00:00:00Z",
+    ).with_status("admitted", admitted_at="2026-06-23T00:00:00Z")
+    precondition = graphblocks_audit.ToolEffectPrecondition.from_admitted_call(
+        resolved_tool=resolved_tool,
+        call=call,
+        effect_key="ticket.create:cust-1",
+        idempotency_key="idem-ticket-1",
+        policy_decision_id="decision-tool-1",
+        execution_target="worker:local",
+        sandbox_id="sandbox-1",
     )
     result = graphblocks.ToolResult.completed(
         "call-1",
@@ -94,7 +103,7 @@ def test_audit_package_records_tool_effect_precondition_and_outcome(monkeypatch)
         call=call,
         result=result,
         effect_key="ticket.create:cust-1",
-        precondition_digest="sha256:precondition",
+        precondition_digest=precondition.digest,
         idempotency_key="idem-ticket-1",
         policy_decision_id="decision-tool-1",
     )
@@ -114,7 +123,7 @@ def test_audit_package_records_tool_effect_precondition_and_outcome(monkeypatch)
         "effective_policy_snapshot_id": "policy-snapshot-1",
         "effects": ["destructive", "external_write", "network"],
         "effect_key": "ticket.create:cust-1",
-        "precondition_digest": "sha256:precondition",
+        "precondition_digest": precondition.digest,
         "idempotency_key": "idem-ticket-1",
         "policy_decision_id": "decision-tool-1",
         "result_status": "completed",
@@ -124,6 +133,127 @@ def test_audit_package_records_tool_effect_precondition_and_outcome(monkeypatch)
         "completed_at": "2026-06-23T00:00:02Z",
     }
     assert record.payload_digest().startswith("sha256:")
+
+
+def test_audit_package_builds_tool_effect_precondition(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-audit" / "src"))
+    graphblocks = importlib.import_module("graphblocks")
+    graphblocks_audit = importlib.import_module("graphblocks_audit")
+
+    catalog = graphblocks.ToolCatalog(
+        definitions=(
+            graphblocks.ToolDefinition(
+                "ticket.create",
+                "Create a support ticket.",
+                "schemas/TicketCreate@1",
+            ),
+        ),
+        bindings=(
+            graphblocks.ToolBinding(
+                "binding-ticket-create",
+                "ticket.create",
+                graphblocks.BlockToolImplementation("blocks.ticket_create"),
+                effects=frozenset({"destructive", "external_write", "network"}),
+            ),
+        ),
+    )
+    resolved_tool = catalog.resolve(
+        graphblocks.ToolResolutionScope(),
+        effective_policy_snapshot_id="policy-snapshot-1",
+    )[0]
+    call = graphblocks.ToolCallDraft.proposed("response-1", "call-1", "ticket.create").append_argument_fragment(
+        '{"customer_id":"cust-1","title":"Help"}'
+    ).complete_arguments().into_tool_call(
+        resolved_tool.resolved_tool_id,
+        created_at="2026-06-23T00:00:00Z",
+    ).with_status(
+        "admitted",
+        admitted_at="2026-06-23T00:00:00Z",
+    )
+
+    precondition = graphblocks_audit.ToolEffectPrecondition.from_admitted_call(
+        resolved_tool=resolved_tool,
+        call=call,
+        effect_key="ticket.create:cust-1",
+        idempotency_key="idem-ticket-1",
+        policy_decision_id="decision-tool-1",
+        execution_target="worker:local",
+        sandbox_id="sandbox-1",
+    )
+    same_precondition = graphblocks_audit.ToolEffectPrecondition.from_admitted_call(
+        resolved_tool=resolved_tool,
+        call=call,
+        effect_key="ticket.create:cust-1",
+        idempotency_key="idem-ticket-1",
+        policy_decision_id="decision-tool-1",
+        execution_target="worker:local",
+        sandbox_id="sandbox-1",
+    )
+
+    assert precondition.digest == same_precondition.digest
+    assert precondition.digest.startswith("sha256:")
+    assert dict(precondition.payload) == {
+        "tool_call_id": "call-1",
+        "response_id": "response-1",
+        "resolved_tool_id": resolved_tool.resolved_tool_id,
+        "binding_id": "binding-ticket-create",
+        "tool_name": "ticket.create",
+        "tool_call_revision": 1,
+        "arguments_digest": call.arguments_digest,
+        "definition_digest": resolved_tool.definition_digest,
+        "binding_digest": resolved_tool.binding_digest,
+        "effective_policy_snapshot_id": "policy-snapshot-1",
+        "effects": ["destructive", "external_write", "network"],
+        "effect_key": "ticket.create:cust-1",
+        "idempotency_key": "idem-ticket-1",
+        "policy_decision_id": "decision-tool-1",
+        "execution_target": "worker:local",
+        "sandbox_id": "sandbox-1",
+        "admitted_at": "2026-06-23T00:00:00Z",
+    }
+    assert "ToolEffectPrecondition" in graphblocks_audit.__all__
+
+
+def test_audit_package_rejects_precondition_before_admission(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-audit" / "src"))
+    graphblocks = importlib.import_module("graphblocks")
+    graphblocks_audit = importlib.import_module("graphblocks_audit")
+
+    definition = graphblocks.ToolDefinition(
+        "knowledge.search",
+        "Search documentation.",
+        "schemas/Search@1",
+    )
+    binding = graphblocks.ToolBinding(
+        "binding-search",
+        "knowledge.search",
+        graphblocks.BlockToolImplementation("blocks.search"),
+    )
+    resolved_tool = graphblocks.ResolvedTool.from_definition_and_binding(
+        resolved_tool_id="resolved-search",
+        definition=definition,
+        binding=binding,
+        effective_policy_snapshot_id="policy-snapshot-1",
+        allowed_for_principal=True,
+    )
+    call = graphblocks.ToolCall(
+        tool_call_id="call-1",
+        response_id="response-1",
+        resolved_tool_id="resolved-search",
+        name="knowledge.search",
+        arguments={},
+        arguments_digest=graphblocks.canonical_hash({}),
+    )
+
+    try:
+        graphblocks_audit.ToolEffectPrecondition.from_admitted_call(
+            resolved_tool=resolved_tool,
+            call=call,
+        )
+    except graphblocks_audit.ToolEffectAuditError as error:
+        assert "must be admitted" in str(error)
+    else:
+        raise AssertionError("precondition should require admitted tool call")
 
 
 def test_audit_package_rejects_mismatched_tool_effect_record_inputs(monkeypatch) -> None:

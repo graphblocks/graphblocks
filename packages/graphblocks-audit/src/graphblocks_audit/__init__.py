@@ -202,6 +202,54 @@ class SQLiteAuditOutbox:
 
 
 @dataclass(frozen=True, slots=True)
+class ToolEffectPrecondition:
+    payload: Mapping[str, object]
+    digest: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "payload", MappingProxyType(dict(self.payload)))
+
+    @classmethod
+    def from_admitted_call(
+        cls,
+        *,
+        resolved_tool: ResolvedTool,
+        call: ToolCall,
+        effect_key: str | None = None,
+        idempotency_key: str | None = None,
+        policy_decision_id: str | None = None,
+        execution_target: str | None = None,
+        sandbox_id: str | None = None,
+    ) -> ToolEffectPrecondition:
+        _validate_tool_effect_context(resolved_tool, call)
+        if call.status != "admitted":
+            raise ToolEffectAuditError(
+                f"tool call {call.tool_call_id} must be admitted before recording an effect precondition"
+            )
+
+        payload = {
+            "tool_call_id": call.tool_call_id,
+            "response_id": call.response_id,
+            "resolved_tool_id": resolved_tool.resolved_tool_id,
+            "binding_id": resolved_tool.binding.binding_id,
+            "tool_name": resolved_tool.definition.name,
+            "tool_call_revision": call.revision,
+            "arguments_digest": call.arguments_digest,
+            "definition_digest": resolved_tool.definition_digest,
+            "binding_digest": resolved_tool.binding_digest,
+            "effective_policy_snapshot_id": resolved_tool.effective_policy_snapshot_id,
+            "effects": sorted(resolved_tool.binding.effects),
+            "effect_key": effect_key,
+            "idempotency_key": idempotency_key,
+            "policy_decision_id": policy_decision_id,
+            "execution_target": execution_target,
+            "sandbox_id": sandbox_id,
+            "admitted_at": call.admitted_at,
+        }
+        return cls(payload=payload, digest=canonical_hash(payload))
+
+
+@dataclass(frozen=True, slots=True)
 class ToolEffectAuditRecord:
     event_id: str
     target_kind: str
@@ -230,15 +278,7 @@ class ToolEffectAuditRecord:
         idempotency_key: str | None = None,
         policy_decision_id: str | None = None,
     ) -> ToolEffectAuditRecord:
-        if call.resolved_tool_id != resolved_tool.resolved_tool_id:
-            raise ToolEffectAuditError(
-                f"tool call resolved tool {call.resolved_tool_id} does not match "
-                f"audited resolved tool {resolved_tool.resolved_tool_id}"
-            )
-        if call.name != resolved_tool.definition.name:
-            raise ToolEffectAuditError(
-                f"tool call name {call.name} does not match audited tool {resolved_tool.definition.name}"
-            )
+        _validate_tool_effect_context(resolved_tool, call)
         if result.tool_call_id != call.tool_call_id:
             raise ToolEffectAuditError(
                 f"tool result {result.tool_call_id} does not match tool call {call.tool_call_id}"
@@ -302,6 +342,18 @@ class ToolEffectAuditRecord:
         )
 
 
+def _validate_tool_effect_context(resolved_tool: ResolvedTool, call: ToolCall) -> None:
+    if call.resolved_tool_id != resolved_tool.resolved_tool_id:
+        raise ToolEffectAuditError(
+            f"tool call resolved tool {call.resolved_tool_id} does not match "
+            f"audited resolved tool {resolved_tool.resolved_tool_id}"
+        )
+    if call.name != resolved_tool.definition.name:
+        raise ToolEffectAuditError(
+            f"tool call name {call.name} does not match audited tool {resolved_tool.definition.name}"
+        )
+
+
 __all__ = [
     "STANDARD_APPLICATION_EVENT_KINDS",
     "TOOL_APPLICATION_EVENT_KINDS",
@@ -324,6 +376,7 @@ __all__ = [
     "SQLiteAuditOutbox",
     "ToolEffectAuditError",
     "ToolEffectAuditRecord",
+    "ToolEffectPrecondition",
     "ToolApprovalRecord",
     "ToolApprovalRequest",
     "ToolApprovalStatus",
