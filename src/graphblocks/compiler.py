@@ -649,6 +649,35 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                                 f"$.spec.bindings.tools.{tool_key}.definition.{definition_field}",
                             )
                         )
+                version = definition.get("version")
+                if version is not None and (not isinstance(version, str) or not version.strip()):
+                    diagnostics.append(
+                        Diagnostic(
+                            "InvalidToolDefinition",
+                            "tool definition version must be a non-empty string",
+                            f"$.spec.bindings.tools.{tool_key}.definition.version",
+                        )
+                    )
+                tags = definition.get("tags")
+                if tags is not None:
+                    if isinstance(tags, list):
+                        for tag_index, tag in enumerate(tags):
+                            if not isinstance(tag, str) or not tag.strip():
+                                diagnostics.append(
+                                    Diagnostic(
+                                        "InvalidToolDefinition",
+                                        "tool definition tags must be non-empty strings",
+                                        f"$.spec.bindings.tools.{tool_key}.definition.tags[{tag_index}]",
+                                    )
+                                )
+                    else:
+                        diagnostics.append(
+                            Diagnostic(
+                                "InvalidToolDefinition",
+                                "tool definition tags must be a list of non-empty strings",
+                                f"$.spec.bindings.tools.{tool_key}.definition.tags",
+                            )
+                        )
                 input_schema = definition.get("inputSchema") or definition.get("input_schema")
                 if not isinstance(input_schema, str) or not input_schema.strip():
                     diagnostics.append(

@@ -1300,8 +1300,65 @@ fn compile_graph_reports_malformed_tool_definition_identity_fields() {
             }
         }
     });
+    let blank_version = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "blank-tool-definition-version"},
+        "spec": {
+            "bindings": {
+                "tools": {
+                    "search": {
+                        "definition": {
+                            "name": "knowledge.search",
+                            "description": "Search documentation.",
+                            "inputSchema": "schemas/Search@1",
+                            "version": " "
+                        },
+                        "implementation": {
+                            "kind": "block",
+                            "block": "blocks.search"
+                        }
+                    }
+                }
+            },
+            "nodes": {
+                "model": {"block": "model.generate@1"}
+            }
+        }
+    });
+    let non_string_tag = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "non-string-tool-definition-tag"},
+        "spec": {
+            "bindings": {
+                "tools": {
+                    "search": {
+                        "definition": {
+                            "name": "knowledge.search",
+                            "description": "Search documentation.",
+                            "inputSchema": "schemas/Search@1",
+                            "tags": ["knowledge", 7]
+                        },
+                        "implementation": {
+                            "kind": "block",
+                            "block": "blocks.search"
+                        }
+                    }
+                }
+            },
+            "nodes": {
+                "model": {"block": "model.generate@1"}
+            }
+        }
+    });
 
-    for graph in [blank_name, non_string_description] {
+    for graph in [
+        blank_name,
+        non_string_description,
+        blank_version,
+        non_string_tag,
+    ] {
         let plan = compile_graph(&graph);
 
         assert_eq!(

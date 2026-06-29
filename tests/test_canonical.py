@@ -619,9 +619,53 @@ def test_compile_reports_malformed_tool_definition_identity_fields() -> None:
             },
         },
     }
+    blank_version = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "blank-tool-definition-version"},
+        "spec": {
+            "nodes": {"model": {"block": "model.generate@1"}},
+            "bindings": {
+                "tools": {
+                    "search": {
+                        "definition": {
+                            "name": "knowledge.search",
+                            "description": "Search documentation.",
+                            "inputSchema": "schemas/Search@1",
+                            "version": " ",
+                        },
+                        "implementation": {"kind": "block", "block": "blocks.search"},
+                    }
+                }
+            },
+        },
+    }
+    non_string_tag = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "non-string-tool-definition-tag"},
+        "spec": {
+            "nodes": {"model": {"block": "model.generate@1"}},
+            "bindings": {
+                "tools": {
+                    "search": {
+                        "definition": {
+                            "name": "knowledge.search",
+                            "description": "Search documentation.",
+                            "inputSchema": "schemas/Search@1",
+                            "tags": ["knowledge", 7],
+                        },
+                        "implementation": {"kind": "block", "block": "blocks.search"},
+                    }
+                }
+            },
+        },
+    }
 
     assert _error_codes(blank_name) == ["InvalidToolDefinition"]
     assert _error_codes(non_string_description) == ["InvalidToolDefinition"]
+    assert _error_codes(blank_version) == ["InvalidToolDefinition"]
+    assert _error_codes(non_string_tag) == ["InvalidToolDefinition"]
 
 
 def test_compile_reports_invalid_tool_effect_literals() -> None:

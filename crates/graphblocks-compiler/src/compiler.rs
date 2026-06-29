@@ -1120,6 +1120,38 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                         ));
                     }
                 }
+                if let Some(version) = definition.get("version")
+                    && !version
+                        .as_str()
+                        .is_some_and(|value| !value.trim().is_empty())
+                {
+                    diagnostics.push(Diagnostic::error(
+                        "InvalidToolDefinition",
+                        "tool definition version must be a non-empty string",
+                        format!("$.spec.bindings.tools.{tool_key}.definition.version"),
+                    ));
+                }
+                if let Some(tags) = definition.get("tags") {
+                    if let Some(tags) = tags.as_array() {
+                        for (tag_index, tag) in tags.iter().enumerate() {
+                            if !tag.as_str().is_some_and(|value| !value.trim().is_empty()) {
+                                diagnostics.push(Diagnostic::error(
+                                    "InvalidToolDefinition",
+                                    "tool definition tags must be non-empty strings",
+                                    format!(
+                                        "$.spec.bindings.tools.{tool_key}.definition.tags[{tag_index}]"
+                                    ),
+                                ));
+                            }
+                        }
+                    } else {
+                        diagnostics.push(Diagnostic::error(
+                            "InvalidToolDefinition",
+                            "tool definition tags must be a list of non-empty strings",
+                            format!("$.spec.bindings.tools.{tool_key}.definition.tags"),
+                        ));
+                    }
+                }
                 let input_schema = definition
                     .get("inputSchema")
                     .or_else(|| definition.get("input_schema"))
