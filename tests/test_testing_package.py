@@ -104,6 +104,20 @@ def test_testing_package_loads_shared_runtime_tck_cases_with_terminal_expectatio
     assert "load_runtime_tck_cases" in graphblocks_testing.__all__
 
 
+def test_testing_package_loads_shared_schema_tck_cases(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    cases = graphblocks_testing.load_schema_tck_cases(ROOT / "tck" / "schema" / "cases.json")
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
+
+    assert [case.kind for case in cases] == ["schema"] * 4
+    assert any(not case.expected_ok for case in cases)
+    assert report.ok
+    assert {result.observed["valid"] for result in report.results} == {False, True}
+    assert "load_schema_tck_cases" in graphblocks_testing.__all__
+
+
 def test_testing_package_tck_loaders_accept_camel_case_aliases(monkeypatch, tmp_path) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -174,6 +188,31 @@ def test_testing_package_tck_loaders_accept_camel_case_aliases(monkeypatch, tmp_
     assert runtime_case.case_id == "runtime/alias"
     assert runtime_case.expected_outputs == {"prompt": "Hi Ada"}
     assert runtime_case.expected_terminal_kind == "run_succeeded"
+
+    schema_cases = tmp_path / "schema.json"
+    schema_cases.write_text(
+        json.dumps(
+            [
+                {
+                    "caseId": "schema/alias",
+                    "schemaId": "schemas/Alias@2",
+                    "expected": {
+                        "valid": True,
+                        "canonicalSchemaId": "schemas/Alias@2",
+                        "schemaName": "schemas/Alias",
+                        "majorVersion": 2,
+                    },
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    schema_case = graphblocks_testing.load_schema_tck_cases(schema_cases)[0]
+
+    assert schema_case.case_id == "schema/alias"
+    assert schema_case.expected_canonical_schema_id == "schemas/Alias@2"
+    assert schema_case.expected_schema_name == "schemas/Alias"
+    assert schema_case.expected_major_version == 2
 
 
 def test_testing_package_runs_runtime_tck_case_and_reports_output_mismatch(monkeypatch) -> None:

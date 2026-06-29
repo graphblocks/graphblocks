@@ -20,6 +20,7 @@ from graphblocks.run_store import (
     SQLiteRunStore,
     StateConflictError,
 )
+from graphblocks.schema import SchemaId, SchemaIdError
 from graphblocks.runtime import (
     CancellationToken,
     ExecutionJournal,
@@ -33,7 +34,7 @@ from graphblocks.runtime import (
 )
 
 
-TckCaseKind = Literal["compiler", "runtime"]
+TckCaseKind = Literal["compiler", "runtime", "schema"]
 TckResultStatus = Literal["passed", "failed"]
 PerformanceThresholdOperator = Literal["at_most", "at_least"]
 MigrationDirection = Literal["upgrade", "downgrade"]
@@ -67,7 +68,7 @@ def _string_tuple(value: object) -> tuple[str, ...]:
 class TckCase:
     case_id: str
     kind: TckCaseKind
-    graph: dict[str, object]
+    graph: dict[str, object] = field(default_factory=dict)
     inputs: dict[str, object] = field(default_factory=dict)
     expected_hash: str | None = None
     expected_error_codes: tuple[str, ...] = field(default_factory=tuple)
@@ -77,11 +78,16 @@ class TckCase:
     expected_status: str = "succeeded"
     expected_terminal_kind: str | None = None
     block_catalog: tuple[dict[str, object], ...] = field(default_factory=tuple)
+    schema_id: str | None = None
+    expected_canonical_schema_id: str | None = None
+    expected_schema_name: str | None = None
+    expected_major_version: int | None = None
+    expected_error: str | None = None
 
     def __post_init__(self) -> None:
         if not self.case_id.strip():
             raise ValueError("TCK case_id must not be empty")
-        if self.kind not in {"compiler", "runtime"}:
+        if self.kind not in {"compiler", "runtime", "schema"}:
             raise ValueError(f"invalid TCK case kind {self.kind}")
         object.__setattr__(self, "graph", dict(self.graph))
         object.__setattr__(self, "inputs", dict(self.inputs))
@@ -92,6 +98,11 @@ class TckCase:
             object.__setattr__(self, "expected_outputs", dict(self.expected_outputs))
         if self.expected_terminal_kind is not None and not self.expected_terminal_kind.strip():
             raise ValueError("TCK expected_terminal_kind must not be empty")
+        if self.kind == "schema":
+            if not isinstance(self.schema_id, str) or not self.schema_id.strip():
+                raise ValueError("schema TCK case requires schema_id")
+            if self.expected_major_version is not None and self.expected_major_version <= 0:
+                raise ValueError("schema TCK expected_major_version must be positive")
 
     @classmethod
     def compiler(
@@ -135,6 +146,29 @@ class TckCase:
             expected_outputs=expected_outputs,
             expected_status=expected_status,
             expected_terminal_kind=expected_terminal_kind,
+        )
+
+    @classmethod
+    def schema(
+        cls,
+        *,
+        case_id: str,
+        schema_id: str,
+        expected_ok: bool,
+        expected_canonical_schema_id: str | None = None,
+        expected_schema_name: str | None = None,
+        expected_major_version: int | None = None,
+        expected_error: str | None = None,
+    ) -> TckCase:
+        return cls(
+            case_id=case_id,
+            kind="schema",
+            schema_id=schema_id,
+            expected_ok=expected_ok,
+            expected_canonical_schema_id=expected_canonical_schema_id,
+            expected_schema_name=expected_schema_name,
+            expected_major_version=expected_major_version,
+            expected_error=expected_error,
         )
 
 
@@ -970,6 +1004,62 @@ def load_runtime_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     return tuple(cases)
 
 
+def load_schema_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
+    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(raw_cases, list):
+        raise ValueError("schema TCK root must be a list")
+    cases: list[TckCase] = []
+    for index, raw_case in enumerate(raw_cases):
+        if not isinstance(raw_case, Mapping):
+            raise ValueError(f"schema TCK case {index} must be a mapping")
+        case_id = _first_mapping_value(raw_case, "name", "case_id", "caseId")
+        if not isinstance(case_id, str) or not case_id.strip():
+            raise ValueError(f"schema TCK case {index} requires name")
+        schema_id = _first_mapping_value(raw_case, "schema_id", "schemaId", "id")
+        if not isinstance(schema_id, str) or not schema_id.strip():
+            raise ValueError(f"schema TCK case {case_id} requires schema_id")
+        expected = raw_case.get("expected")
+        if not isinstance(expected, Mapping):
+            raise ValueError(f"schema TCK case {case_id} requires expected result")
+        expected_ok = _first_mapping_value(expected, "valid", "expected_ok", "expectedOk")
+        if not isinstance(expected_ok, bool):
+            raise ValueError(f"schema TCK case {case_id} requires boolean expected valid")
+        expected_canonical = _first_mapping_value(
+            expected,
+            "canonical",
+            "canonical_schema_id",
+            "canonicalSchemaId",
+            "schema_id",
+            "schemaId",
+        )
+        if expected_canonical is not None and not isinstance(expected_canonical, str):
+            raise ValueError(f"schema TCK case {case_id} canonical schema id must be a string")
+        expected_schema_name = _first_mapping_value(expected, "name", "schema_name", "schemaName")
+        if expected_schema_name is not None and not isinstance(expected_schema_name, str):
+            raise ValueError(f"schema TCK case {case_id} expected name must be a string")
+        expected_major_version = _first_mapping_value(expected, "major_version", "majorVersion")
+        if expected_major_version is not None:
+            if isinstance(expected_major_version, bool) or not isinstance(expected_major_version, int):
+                raise ValueError(f"schema TCK case {case_id} expected major_version must be an integer")
+            if expected_major_version <= 0:
+                raise ValueError(f"schema TCK case {case_id} expected major_version must be positive")
+        expected_error = _first_mapping_value(expected, "error", "error_type", "errorType")
+        if expected_error is not None and not isinstance(expected_error, str):
+            raise ValueError(f"schema TCK case {case_id} expected error must be a string")
+        cases.append(
+            TckCase.schema(
+                case_id=case_id,
+                schema_id=schema_id,
+                expected_ok=expected_ok,
+                expected_canonical_schema_id=expected_canonical,
+                expected_schema_name=expected_schema_name,
+                expected_major_version=expected_major_version,
+                expected_error=expected_error,
+            )
+        )
+    return tuple(cases)
+
+
 @dataclass(frozen=True, slots=True)
 class AcceptanceApplication:
     application_id: str
@@ -1384,8 +1474,10 @@ class TckRunner:
         for case in cases:
             if case.kind == "compiler":
                 results.append(self._run_compiler_case(case))
-            else:
+            elif case.kind == "runtime":
                 results.append(self._run_runtime_case(case))
+            else:
+                results.append(self._run_schema_case(case))
         return TckReport(profile=self.profile, results=tuple(results))
 
     def _run_compiler_case(self, case: TckCase) -> TckResult:
@@ -1436,6 +1528,73 @@ class TckRunner:
                     "code": "WarningCodesMismatch",
                     "message": "compiler warning codes did not match expected diagnostics",
                     "path": "$.expected_warning_codes",
+                }
+            )
+        return TckResult(
+            case_id=case.case_id,
+            kind=case.kind,
+            status="passed" if not diagnostics else "failed",
+            diagnostics=tuple(diagnostics),
+            observed=observed,
+        )
+
+    def _run_schema_case(self, case: TckCase) -> TckResult:
+        try:
+            schema_id = SchemaId.parse(case.schema_id or "")
+            observed = {
+                "valid": True,
+                "canonical": schema_id.as_str(),
+                "name": schema_id.name,
+                "major_version": schema_id.major_version,
+            }
+        except SchemaIdError as error:
+            observed = {
+                "valid": False,
+                "error": type(error).__name__,
+                "message": str(error),
+            }
+        diagnostics: list[dict[str, str]] = []
+        if observed["valid"] != case.expected_ok:
+            diagnostics.append(
+                {
+                    "code": "SchemaValidityMismatch",
+                    "message": "schema id validity did not match expected result",
+                    "path": "$.expected_ok",
+                }
+            )
+        if (
+            case.expected_canonical_schema_id is not None
+            and observed.get("canonical") != case.expected_canonical_schema_id
+        ):
+            diagnostics.append(
+                {
+                    "code": "SchemaCanonicalMismatch",
+                    "message": "schema id canonical value did not match expected value",
+                    "path": "$.expected_canonical_schema_id",
+                }
+            )
+        if case.expected_schema_name is not None and observed.get("name") != case.expected_schema_name:
+            diagnostics.append(
+                {
+                    "code": "SchemaNameMismatch",
+                    "message": "schema id name did not match expected value",
+                    "path": "$.expected_schema_name",
+                }
+            )
+        if case.expected_major_version is not None and observed.get("major_version") != case.expected_major_version:
+            diagnostics.append(
+                {
+                    "code": "SchemaMajorVersionMismatch",
+                    "message": "schema id major version did not match expected value",
+                    "path": "$.expected_major_version",
+                }
+            )
+        if case.expected_error is not None and observed.get("error") != case.expected_error:
+            diagnostics.append(
+                {
+                    "code": "SchemaErrorMismatch",
+                    "message": "schema id error type did not match expected error",
+                    "path": "$.expected_error",
                 }
             )
         return TckResult(
@@ -1537,6 +1696,7 @@ __all__ = [
     "compile_graph",
     "load_compiler_tck_cases",
     "load_runtime_tck_cases",
+    "load_schema_tck_cases",
     "migrate_document",
     "stdlib_registry",
 ]

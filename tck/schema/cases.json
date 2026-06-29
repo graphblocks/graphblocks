@@ -1,0 +1,38 @@
+[
+  {
+    "name": "canonical_schema_id",
+    "schema_id": "schemas/Message@1",
+    "expected": {
+      "valid": true,
+      "canonical": "schemas/Message@1",
+      "name": "schemas/Message",
+      "major_version": 1
+    }
+  },
+  {
+    "name": "nested_schema_id",
+    "schema_id": "graphblocks.ai/v1alpha3/graph.schema.json@3",
+    "expected": {
+      "valid": true,
+      "canonical": "graphblocks.ai/v1alpha3/graph.schema.json@3",
+      "name": "graphblocks.ai/v1alpha3/graph.schema.json",
+      "major_version": 3
+    }
+  },
+  {
+    "name": "missing_major_version",
+    "schema_id": "schemas/Message",
+    "expected": {
+      "valid": false,
+      "error": "SchemaIdError"
+    }
+  },
+  {
+    "name": "noncanonical_major_version",
+    "schema_id": "schemas/Message@01",
+    "expected": {
+      "valid": false,
+      "error": "SchemaIdError"
+    }
+  }
+]
