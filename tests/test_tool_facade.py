@@ -2259,11 +2259,14 @@ def test_completed_tool_result_model_output_applies_redactions_before_model_retu
         resolved,
         registry,
         redactions=({"path": "/parts/0/text", "start": 5, "end": 11, "replacement": "[redacted]"},),
+        capture_policy={"mode": "redacted_preview", "retention_policy": "records-30d"},
     )
 
     assert output[0].text == "safe [redacted] suffix"
     assert result.output[0].text == "safe secret suffix"
     assert output[0].metadata["prompt_injection_label"] == "untrusted_tool_output"
+    assert output[0].metadata["capture"]["preview"] == "safe [redacted] suffix"
+    assert output[0].metadata["capture"]["redaction_count"] == 1
 
 
 def test_artifact_reference_tool_result_mode_rejects_inline_model_output() -> None:
@@ -2371,6 +2374,7 @@ def test_completed_tool_result_model_output_records_capture_policy_before_model_
     assert capture["preview"] is None
     assert capture["retention_policy"] == "records-30d"
     assert capture["consent_ref"] == "consent-1"
+    assert capture["redaction_count"] == 0
     assert "secret" not in repr(capture)
     assert "capture" not in result.output[0].metadata
 

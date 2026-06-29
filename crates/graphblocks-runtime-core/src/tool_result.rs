@@ -757,6 +757,7 @@ impl ToolResultValidation {
             })
             .collect::<Vec<_>>();
 
+        let mut redaction_counts_by_part: BTreeMap<usize, u64> = BTreeMap::new();
         if !content_policy.redactions.is_empty() {
             let mut redactions_by_part: BTreeMap<usize, Vec<&RedactionInstruction>> =
                 BTreeMap::new();
@@ -834,12 +835,14 @@ impl ToolResultValidation {
                             .unwrap_or(text.len())
                     };
                     text.replace_range(start_byte..end_byte, &redaction.replacement);
+                    let redaction_count = redaction_counts_by_part.entry(part_index).or_default();
+                    *redaction_count = redaction_count.saturating_add(1);
                 }
             }
         }
 
         if let Some(capture_decision) = content_policy.capture_decision.as_ref() {
-            for part in &mut model_output {
+            for (part_index, part) in model_output.iter_mut().enumerate() {
                 let capture_input = match part.kind {
                     ContentPartKind::Text => part
                         .text
@@ -886,7 +889,9 @@ impl ToolResultValidation {
                         "content_ref": captured.content_ref,
                         "retention_policy": captured.retention_policy,
                         "consent_ref": captured.consent_ref,
-                        "redaction_count": captured.redaction_count,
+                        "redaction_count": captured.redaction_count.saturating_add(
+                            redaction_counts_by_part.get(&part_index).copied().unwrap_or(0),
+                        ),
                         "original_bytes": captured.original_bytes,
                     }),
                 );

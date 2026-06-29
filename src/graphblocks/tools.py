@@ -1821,6 +1821,7 @@ def validate_tool_result_for_model(
         metadata["content_classification"] = content_classification
         model_output.append(replace(part, metadata=metadata))
 
+    redaction_counts_by_part: dict[int, int] = {}
     if redactions:
         redactions_by_part: dict[int, list[dict[str, object]]] = {}
         for redaction in redactions:
@@ -1856,6 +1857,7 @@ def validate_tool_result_for_model(
                         f"invalid tool result redaction range for {redaction.get('path')!r}"
                     )
                 text = text[:start] + replacement + text[end:]
+                redaction_counts_by_part[part_index] = redaction_counts_by_part.get(part_index, 0) + 1
             model_output[part_index] = replace(model_output[part_index], text=text)
 
     if capture_policy is not None:
@@ -1891,7 +1893,7 @@ def validate_tool_result_for_model(
                 "content_ref": stored_ref,
                 "retention_policy": retention_policy,
                 "consent_ref": consent_ref if isinstance(consent_ref, str) else None,
-                "redaction_count": 0,
+                "redaction_count": redaction_counts_by_part.get(index, 0),
                 "original_bytes": len(capture_text.encode("utf-8")),
             }
             model_output[index] = replace(part, metadata=metadata)

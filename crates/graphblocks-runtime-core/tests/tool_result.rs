@@ -541,13 +541,14 @@ fn completed_tool_result_model_output_applies_redactions_before_model_return() {
         1_100,
         1_200,
     );
-    let policy =
-        ToolResultContentPolicy::new().with_redactions([RedactionInstruction::text_range(
+    let policy = ToolResultContentPolicy::new()
+        .with_redactions([RedactionInstruction::text_range(
             "/parts/0/text",
             5,
             11,
             "[redacted]",
-        )]);
+        )])
+        .with_capture_decision(CaptureDecision::redacted_preview("records-30d"));
 
     let output = ToolResultValidation::prepare_for_model_with_content_policy(
         ToolResultValidationRequest {
@@ -565,6 +566,20 @@ fn completed_tool_result_model_output_applies_redactions_before_model_return() {
     assert_eq!(
         output[0].metadata.get("prompt_injection_label"),
         Some(&json!("untrusted_tool_output"))
+    );
+    assert_eq!(
+        output[0]
+            .metadata
+            .get("capture")
+            .and_then(|capture| capture.get("preview")),
+        Some(&json!("safe [redacted] suffix"))
+    );
+    assert_eq!(
+        output[0]
+            .metadata
+            .get("capture")
+            .and_then(|capture| capture.get("redaction_count")),
+        Some(&json!(1))
     );
 }
 
