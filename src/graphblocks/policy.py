@@ -39,6 +39,35 @@ class PolicyUnavailableError(RuntimeError):
     pass
 
 
+def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{owner} {field_name} must be a string")
+    if not value.strip():
+        raise ValueError(f"{owner} {field_name} must not be empty")
+    return value
+
+
+def _validate_optional_non_empty_string(owner: str, field_name: str, value: object | None) -> str | None:
+    if value is None:
+        return None
+    return _validate_non_empty_string(owner, field_name, value)
+
+
+def _validate_string_tuple(owner: str, field_name: str, values: object) -> tuple[str, ...]:
+    if isinstance(values, str):
+        raise ValueError(f"{owner} {field_name} must be a collection of strings")
+    try:
+        normalized = tuple(values)  # type: ignore[arg-type]
+    except TypeError as error:
+        raise ValueError(f"{owner} {field_name} must be a collection of strings") from error
+    for item in normalized:
+        if not isinstance(item, str):
+            raise ValueError(f"{owner} {field_name} items must be strings")
+        if not item.strip():
+            raise ValueError(f"{owner} {field_name} item must not be empty")
+    return normalized
+
+
 @dataclass(frozen=True, slots=True)
 class PrincipalRef:
     principal_id: str
@@ -48,8 +77,18 @@ class PrincipalRef:
     attributes: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "groups", tuple(self.groups))
-        object.__setattr__(self, "roles", tuple(self.roles))
+        object.__setattr__(
+            self,
+            "principal_id",
+            _validate_non_empty_string("principal", "principal_id", self.principal_id),
+        )
+        object.__setattr__(
+            self,
+            "tenant_id",
+            _validate_optional_non_empty_string("principal", "tenant_id", self.tenant_id),
+        )
+        object.__setattr__(self, "groups", _validate_string_tuple("principal", "groups", self.groups))
+        object.__setattr__(self, "roles", _validate_string_tuple("principal", "roles", self.roles))
         object.__setattr__(self, "attributes", MappingProxyType(dict(self.attributes)))
 
 
@@ -61,6 +100,21 @@ class ResourceRef:
     attributes: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "resource_id",
+            _validate_non_empty_string("resource", "resource_id", self.resource_id),
+        )
+        object.__setattr__(
+            self,
+            "resource_kind",
+            _validate_optional_non_empty_string("resource", "resource_kind", self.resource_kind),
+        )
+        object.__setattr__(
+            self,
+            "tenant_id",
+            _validate_optional_non_empty_string("resource", "tenant_id", self.tenant_id),
+        )
         object.__setattr__(self, "attributes", MappingProxyType(dict(self.attributes)))
 
 
@@ -204,9 +258,28 @@ class PolicyRequest:
     input_digest: str = ""
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "request_id",
+            _validate_non_empty_string("policy request", "request_id", self.request_id),
+        )
+        object.__setattr__(self, "action", _validate_non_empty_string("policy request", "action", self.action))
+        object.__setattr__(
+            self,
+            "occurred_at",
+            _validate_non_empty_string("policy request", "occurred_at", self.occurred_at),
+        )
+        if not isinstance(self.resource, ResourceRef):
+            raise ValueError("policy request resource must be a ResourceRef")
+        if self.principal is not None and not isinstance(self.principal, PrincipalRef):
+            raise ValueError("policy request principal must be a PrincipalRef")
+        if self.tenant is not None and not isinstance(self.tenant, ResourceRef):
+            raise ValueError("policy request tenant must be a ResourceRef")
+        if self.atomic_unit is not None and not isinstance(self.atomic_unit, ResourceRef):
+            raise ValueError("policy request atomic_unit must be a ResourceRef")
         if self.enforcement_point not in VALID_ENFORCEMENT_POINTS:
             raise ValueError(f"unknown enforcement point {self.enforcement_point!r}")
-        object.__setattr__(self, "data_labels", tuple(self.data_labels))
+        object.__setattr__(self, "data_labels", _validate_string_tuple("policy request", "data_labels", self.data_labels))
         object.__setattr__(
             self,
             "requested_usage",

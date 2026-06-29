@@ -127,6 +127,60 @@ def test_policy_models_reject_unknown_typed_values() -> None:
         )
 
 
+def test_policy_models_reject_empty_identity_fields() -> None:
+    with pytest.raises(ValueError, match="principal principal_id must not be empty"):
+        PrincipalRef(" ")
+    with pytest.raises(ValueError, match="principal tenant_id must not be empty"):
+        PrincipalRef("user-1", tenant_id="")
+    with pytest.raises(ValueError, match="principal groups item must not be empty"):
+        PrincipalRef("user-1", groups=("support", " "))
+    with pytest.raises(ValueError, match="resource resource_id must not be empty"):
+        ResourceRef("")
+    with pytest.raises(ValueError, match="resource resource_kind must not be empty"):
+        ResourceRef("tool:search", resource_kind=" ")
+    with pytest.raises(ValueError, match="policy request request_id must not be empty"):
+        PolicyRequest(
+            request_id=" ",
+            enforcement_point="before_tool_or_effect",
+            action="tool.run",
+            resource=ResourceRef("tool:search"),
+            occurred_at="2026-06-23T00:00:00Z",
+        )
+    with pytest.raises(ValueError, match="policy request action must not be empty"):
+        PolicyRequest(
+            request_id="req-1",
+            enforcement_point="before_tool_or_effect",
+            action="",
+            resource=ResourceRef("tool:search"),
+            occurred_at="2026-06-23T00:00:00Z",
+        )
+    with pytest.raises(ValueError, match="policy request occurred_at must not be empty"):
+        PolicyRequest(
+            request_id="req-1",
+            enforcement_point="before_tool_or_effect",
+            action="tool.run",
+            resource=ResourceRef("tool:search"),
+            occurred_at=" ",
+        )
+    with pytest.raises(ValueError, match="policy request resource must be a ResourceRef"):
+        PolicyRequest(
+            request_id="req-1",
+            enforcement_point="before_tool_or_effect",
+            action="tool.run",
+            resource=object(),  # type: ignore[arg-type]
+            occurred_at="2026-06-23T00:00:00Z",
+        )
+    with pytest.raises(ValueError, match="policy request data_labels item must not be empty"):
+        PolicyRequest(
+            request_id="req-1",
+            enforcement_point="before_tool_or_effect",
+            action="tool.run",
+            resource=ResourceRef("tool:search"),
+            occurred_at="2026-06-23T00:00:00Z",
+            data_labels=("restricted", ""),
+        )
+
+
 def test_policy_obligation_parameters_are_copied_and_read_only() -> None:
     parameters = {"max_tokens": 4000}
 
