@@ -612,7 +612,7 @@ class OutputDeliveryGate:
     delivery_policy: OutputDeliveryPolicy = field(
         default_factory=lambda: OutputDeliveryPolicy.bounded_holdback(
             on_violation="abort_response",
-            holdback_max_tokens=1,
+            holdback_max_tokens=48,
         )
     )
     pending: dict[int, GenerationChunk] = field(default_factory=dict)
@@ -660,6 +660,15 @@ class OutputDeliveryGate:
         if chunk.sequence != expected_sequence:
             raise OutputGateError(
                 f"chunk sequence {chunk.sequence} must be next after {self.last_generated_sequence}"
+            )
+        if (
+            self.delivery_policy.mode == "bounded_holdback"
+            and self.delivery_policy.holdback_max_tokens is not None
+            and sum(len(pending.text.split()) for pending in self.pending.values()) + len(chunk.text.split())
+            > self.delivery_policy.holdback_max_tokens
+        ):
+            raise OutputGateError(
+                f"bounded_holdback pending output exceeds {self.delivery_policy.holdback_max_tokens} tokens"
             )
         if (
             self.delivery_policy.mode == "bounded_holdback"

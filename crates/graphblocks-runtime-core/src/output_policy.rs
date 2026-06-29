@@ -927,6 +927,9 @@ pub enum OutputGateError {
     BoundedHoldbackExceeded {
         max_bytes: u64,
     },
+    BoundedHoldbackTokensExceeded {
+        max_tokens: u64,
+    },
     InvalidRedactionInstruction {
         path: String,
     },
@@ -977,7 +980,7 @@ impl OutputDeliveryGate {
                 ViolationAction::AbortResponse,
                 DraftDisposition::Retract,
             )
-            .with_holdback_max_tokens(1),
+            .with_holdback_max_tokens(48),
             pending: BTreeMap::new(),
             last_generated_sequence: 0,
             last_policy_accepted_sequence: 0,
@@ -1080,6 +1083,21 @@ impl OutputDeliveryGate {
                 last_generated_sequence: self.last_generated_sequence,
                 attempted_sequence: chunk.sequence,
             });
+        }
+        if self.delivery_policy.mode == DeliveryMode::BoundedHoldback
+            && let Some(max_tokens) = self.delivery_policy.holdback_max_tokens
+        {
+            let mut pending_tokens = chunk.text.split_whitespace().count() as u64;
+            for pending in self.pending.values() {
+                pending_tokens =
+                    pending_tokens.saturating_add(pending.text.split_whitespace().count() as u64);
+                if pending_tokens > max_tokens {
+                    return Err(OutputGateError::BoundedHoldbackTokensExceeded { max_tokens });
+                }
+            }
+            if pending_tokens > max_tokens {
+                return Err(OutputGateError::BoundedHoldbackTokensExceeded { max_tokens });
+            }
         }
         if self.delivery_policy.mode == DeliveryMode::BoundedHoldback
             && let Some(max_bytes) = self.delivery_policy.holdback_max_bytes

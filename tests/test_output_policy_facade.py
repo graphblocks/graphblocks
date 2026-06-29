@@ -591,6 +591,27 @@ def test_output_delivery_gate_enforces_bounded_holdback_byte_limit() -> None:
     assert sorted(gate.pending) == [1, 2]
 
 
+def test_output_delivery_gate_enforces_bounded_holdback_token_limit() -> None:
+    gate = OutputDeliveryGate(
+        "stream-1",
+        "response-1",
+        delivery_policy=OutputDeliveryPolicy.bounded_holdback(
+            on_violation="abort_response",
+            holdback_max_tokens=3,
+        ),
+    )
+
+    gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "safe text"))
+    gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 2, "still"))
+
+    with pytest.raises(OutputGateError) as error:
+        gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 3, "blocked"))
+
+    assert str(error.value) == "bounded_holdback pending output exceeds 3 tokens"
+    assert gate.last_generated_sequence == 2
+    assert sorted(gate.pending) == [1, 2]
+
+
 def test_output_delivery_gate_applies_typed_redaction_instruction_before_delivery() -> None:
     gate = OutputDeliveryGate("stream-1", "response-1")
     gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "hello secret world"))
