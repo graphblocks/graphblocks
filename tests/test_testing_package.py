@@ -182,6 +182,20 @@ def test_testing_package_loads_shared_exhaustion_tck_cases(monkeypatch) -> None:
     assert "load_exhaustion_tck_cases" in graphblocks_testing.__all__
 
 
+def test_testing_package_loads_shared_budget_race_tck_cases(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    cases = graphblocks_testing.load_budget_race_tck_cases(ROOT / "tck" / "budget-race" / "cases.json")
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
+
+    assert [case.kind for case in cases] == ["budget-race"] * 2
+    assert report.ok
+    assert {result.observed["allowed"] for result in report.results} == {1}
+    assert {result.observed["denied"] for result in report.results} == {1}
+    assert "load_budget_race_tck_cases" in graphblocks_testing.__all__
+
+
 def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -331,6 +345,21 @@ def test_testing_package_cli_runs_exhaustion_tck_suite(monkeypatch, capsys) -> N
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
     assert {result["kind"] for result in payload["results"]} == {"exhaustion"}
+    assert payload["contentDigest"].startswith("sha256:")
+
+
+def test_testing_package_cli_runs_budget_race_tck_suite(monkeypatch, capsys) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    exit_code = graphblocks_testing.main(
+        ["run", "budget-race", str(ROOT / "tck" / "budget-race" / "cases.json"), "--json"]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert {result["kind"] for result in payload["results"]} == {"budget-race"}
     assert payload["contentDigest"].startswith("sha256:")
 
 

@@ -17,7 +17,13 @@ from graphblocks.application_event import (
 from graphblocks.canonical import canonical_hash
 from graphblocks.compiler import compile_graph
 from graphblocks.conversation import ContentPart
-from graphblocks.budget import BudgetPermit, UsageAmount
+from graphblocks.budget import (
+    BudgetCompletionReserveStateError,
+    BudgetExceededError,
+    BudgetPermit,
+    InMemoryBudgetLedger,
+    UsageAmount,
+)
 from graphblocks.exhaustion import (
     ContinuationEnvelope,
     ExhaustionController,
@@ -67,6 +73,7 @@ TckCaseKind = Literal[
     "application-events",
     "sequence",
     "exhaustion",
+    "budget-race",
 ]
 TckResultStatus = Literal["passed", "failed"]
 PerformanceThresholdOperator = Literal["at_most", "at_least"]
@@ -128,6 +135,7 @@ class TckCase:
     expected_sequence_state: str | None = None
     expected_sequence_creation_error: str | None = None
     exhaustion_fixture: dict[str, object] = field(default_factory=dict)
+    budget_race_fixture: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.case_id.strip():
@@ -140,6 +148,7 @@ class TckCase:
             "application-events",
             "sequence",
             "exhaustion",
+            "budget-race",
         }:
             raise ValueError(f"invalid TCK case kind {self.kind}")
         object.__setattr__(self, "graph", dict(self.graph))
@@ -158,6 +167,7 @@ class TckCase:
         object.__setattr__(self, "expected_accepted_event_kinds", tuple(self.expected_accepted_event_kinds))
         object.__setattr__(self, "sequence_operations", tuple(dict(operation) for operation in self.sequence_operations))
         object.__setattr__(self, "exhaustion_fixture", dict(self.exhaustion_fixture))
+        object.__setattr__(self, "budget_race_fixture", dict(self.budget_race_fixture))
         if self.kind == "policy":
             if not self.policy_stream_id.strip():
                 raise ValueError("policy TCK stream_id must not be empty")
@@ -172,6 +182,8 @@ class TckCase:
                 raise ValueError("sequence TCK case requires expected state or creation error")
         if self.kind == "exhaustion" and not self.exhaustion_fixture:
             raise ValueError("exhaustion TCK case requires fixture")
+        if self.kind == "budget-race" and not self.budget_race_fixture:
+            raise ValueError("budget-race TCK case requires fixture")
         if self.expected_outputs is not None:
             object.__setattr__(self, "expected_outputs", dict(self.expected_outputs))
         if self.expected_terminal_kind is not None and not self.expected_terminal_kind.strip():
@@ -307,6 +319,10 @@ class TckCase:
     @classmethod
     def exhaustion(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
         return cls(case_id=case_id, kind="exhaustion", exhaustion_fixture=fixture)
+
+    @classmethod
+    def budget_race(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
+        return cls(case_id=case_id, kind="budget-race", budget_race_fixture=fixture)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1225,6 +1241,24 @@ def load_exhaustion_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     return tuple(cases)
 
 
+def load_budget_race_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
+    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(raw_cases, list):
+        raise ValueError("budget-race TCK root must be a list")
+    cases: list[TckCase] = []
+    for index, raw_case in enumerate(raw_cases):
+        if not isinstance(raw_case, Mapping):
+            raise ValueError(f"budget-race TCK case {index} must be a mapping")
+        case_id = _first_mapping_value(raw_case, "name", "case_id", "caseId")
+        if not isinstance(case_id, str) or not case_id.strip():
+            raise ValueError(f"budget-race TCK case {index} requires name")
+        case_kind = raw_case.get("kind")
+        if case_kind not in {"reservation_race", "completion_reserve_race"}:
+            raise ValueError(f"budget-race TCK case {case_id} has unsupported kind {case_kind!r}")
+        cases.append(TckCase.budget_race(case_id=case_id, fixture=dict(raw_case)))
+    return tuple(cases)
+
+
 def load_policy_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(raw_cases, list):
@@ -1400,7 +1434,16 @@ def main(argv: list[str] | None = None) -> int:
     run_parser = subparsers.add_parser("run", help="run a shared TCK fixture")
     run_parser.add_argument(
         "suite",
-        choices=("application-events", "compiler", "runtime", "schema", "policy", "sequence", "exhaustion"),
+        choices=(
+            "application-events",
+            "compiler",
+            "runtime",
+            "schema",
+            "policy",
+            "sequence",
+            "exhaustion",
+            "budget-race",
+        ),
         help="TCK suite kind",
     )
     run_parser.add_argument("path", type=Path, help="cases.json fixture path")
@@ -1449,6 +1492,8 @@ def main(argv: list[str] | None = None) -> int:
             cases = load_runtime_tck_cases(args.path)
         elif args.suite == "exhaustion":
             cases = load_exhaustion_tck_cases(args.path)
+        elif args.suite == "budget-race":
+            cases = load_budget_race_tck_cases(args.path)
         elif args.suite == "schema":
             cases = load_schema_tck_cases(args.path)
         elif args.suite == "sequence":
@@ -1972,6 +2017,8 @@ class TckRunner:
                 results.append(self._run_sequence_case(case))
             elif case.kind == "exhaustion":
                 results.append(self._run_exhaustion_case(case))
+            elif case.kind == "budget-race":
+                results.append(self._run_budget_race_case(case))
             else:
                 results.append(self._run_schema_case(case))
         return TckReport(profile=self.profile, results=tuple(results))
@@ -2409,6 +2456,237 @@ class TckRunner:
                     }
                 )
 
+        return TckResult(
+            case_id=case.case_id,
+            kind=case.kind,
+            status="passed" if not diagnostics else "failed",
+            diagnostics=tuple(diagnostics),
+            observed=observed,
+        )
+
+    def _run_budget_race_case(self, case: TckCase) -> TckResult:
+        diagnostics: list[dict[str, str]] = []
+        fixture = case.budget_race_fixture
+        ledger = InMemoryBudgetLedger()
+
+        allocated = []
+        raw_allocated = fixture.get("allocated", [])
+        if isinstance(raw_allocated, list):
+            for amount in raw_allocated:
+                if isinstance(amount, Mapping):
+                    allocated.append(
+                        UsageAmount(
+                            kind=str(amount.get("kind", "")),
+                            amount=amount.get("amount", 0),
+                            unit=str(amount.get("unit", "")),
+                        )
+                    )
+        budget_id = str(fixture.get("budgetId", ""))
+        ledger.allocate(
+            budget_id,
+            PolicyResourceRef(str(fixture.get("scope", ""))),
+            allocated,
+            policy_ref=str(fixture.get("policyRef", "")),
+        )
+
+        outcomes: list[dict[str, object]] = []
+        if fixture.get("kind") == "reservation_race":
+            reservation_amounts = []
+            raw_reservation_amounts = fixture.get("reservationAmounts", [])
+            if isinstance(raw_reservation_amounts, list):
+                for amount in raw_reservation_amounts:
+                    if isinstance(amount, Mapping):
+                        reservation_amounts.append(
+                            UsageAmount(
+                                kind=str(amount.get("kind", "")),
+                                amount=amount.get("amount", 0),
+                                unit=str(amount.get("unit", "")),
+                            )
+                        )
+            for owner in fixture.get("owners", []) or []:
+                try:
+                    ledger.reserve(
+                        budget_id,
+                        PolicyResourceRef(str(owner)),
+                        reservation_amounts,
+                        purpose=str(fixture.get("reservationPurpose", "provider_call")),
+                        expires_at=str(fixture.get("expiresAt", "")),
+                    )
+                    outcomes.append({"allowed": True, "error": None})
+                except BudgetExceededError:
+                    outcomes.append({"allowed": False, "error": "BudgetExceeded"})
+            balance = ledger.balance(budget_id)
+            observed_reserved = [
+                {
+                    "kind": amount.kind,
+                    "amount": int(amount.amount) if amount.amount == amount.amount.to_integral_value() else str(amount.amount),
+                    "unit": amount.unit,
+                }
+                for amount in balance.reserved
+            ]
+            observed_available = [
+                {
+                    "kind": amount.kind,
+                    "amount": int(amount.amount) if amount.amount == amount.amount.to_integral_value() else str(amount.amount),
+                    "unit": amount.unit,
+                }
+                for amount in balance.available
+            ]
+            expected_reserved = [
+                {
+                    "kind": str(amount.get("kind", "")),
+                    "amount": int(amount.get("amount", 0)),
+                    "unit": str(amount.get("unit", "")),
+                }
+                for amount in fixture.get("expectedReserved", [])
+                if isinstance(amount, Mapping)
+            ]
+            expected_available = [
+                {
+                    "kind": str(amount.get("kind", "")),
+                    "amount": int(amount.get("amount", 0)),
+                    "unit": str(amount.get("unit", "")),
+                }
+                for amount in fixture.get("expectedAvailable", [])
+                if isinstance(amount, Mapping)
+            ]
+            if observed_reserved != expected_reserved:
+                diagnostics.append(
+                    {
+                        "code": "BudgetRaceReservedMismatch",
+                        "message": "budget-race reserved amounts did not match expected result",
+                        "path": "$.expectedReserved",
+                    }
+                )
+            if observed_available != expected_available:
+                diagnostics.append(
+                    {
+                        "code": "BudgetRaceAvailableMismatch",
+                        "message": "budget-race available amounts did not match expected result",
+                        "path": "$.expectedAvailable",
+                    }
+                )
+            observed: dict[str, object] = {
+                "allowed": sum(1 for outcome in outcomes if outcome["allowed"]),
+                "denied": sum(1 for outcome in outcomes if not outcome["allowed"]),
+                "denied_errors": [outcome["error"] for outcome in outcomes if not outcome["allowed"]],
+                "reserved": observed_reserved,
+                "available": observed_available,
+            }
+        elif fixture.get("kind") == "completion_reserve_race":
+            reserve_amounts = []
+            raw_reserve_amounts = fixture.get("reserveAmounts", [])
+            if isinstance(raw_reserve_amounts, list):
+                for amount in raw_reserve_amounts:
+                    if isinstance(amount, Mapping):
+                        reserve_amounts.append(
+                            UsageAmount(
+                                kind=str(amount.get("kind", "")),
+                                amount=amount.get("amount", 0),
+                                unit=str(amount.get("unit", "")),
+                            )
+                        )
+            ledger.create_completion_reserve(
+                str(fixture.get("reserveId", "")),
+                budget_id,
+                purpose=str(fixture.get("reservePurpose", "finalization")),
+                amounts=reserve_amounts,
+                spendable_by=tuple(str(spender) for spender in fixture.get("spendableBy", []) or []),
+            )
+            for spender in fixture.get("spenders", []) or []:
+                try:
+                    ledger.spend_completion_reserve(
+                        str(fixture.get("reserveId", "")),
+                        str(spender),
+                        expires_at=str(fixture.get("expiresAt", "")),
+                    )
+                    outcomes.append({"allowed": True, "error": None})
+                except BudgetCompletionReserveStateError:
+                    outcomes.append({"allowed": False, "error": "CompletionReserveState"})
+            reserve = ledger.completion_reserve(str(fixture.get("reserveId", "")))
+            balance = ledger.balance(budget_id)
+            observed_reserved = [
+                {
+                    "kind": amount.kind,
+                    "amount": int(amount.amount) if amount.amount == amount.amount.to_integral_value() else str(amount.amount),
+                    "unit": amount.unit,
+                }
+                for amount in balance.reserved
+            ]
+            expected_reserved = [
+                {
+                    "kind": str(amount.get("kind", "")),
+                    "amount": int(amount.get("amount", 0)),
+                    "unit": str(amount.get("unit", "")),
+                }
+                for amount in fixture.get("expectedReserved", [])
+                if isinstance(amount, Mapping)
+            ]
+            if reserve.status != fixture.get("expectedReserveStatus"):
+                diagnostics.append(
+                    {
+                        "code": "BudgetRaceReserveStatusMismatch",
+                        "message": "budget-race completion reserve status did not match expected result",
+                        "path": "$.expectedReserveStatus",
+                    }
+                )
+            if observed_reserved != expected_reserved:
+                diagnostics.append(
+                    {
+                        "code": "BudgetRaceReservedMismatch",
+                        "message": "budget-race reserved amounts did not match expected result",
+                        "path": "$.expectedReserved",
+                    }
+                )
+            observed = {
+                "allowed": sum(1 for outcome in outcomes if outcome["allowed"]),
+                "denied": sum(1 for outcome in outcomes if not outcome["allowed"]),
+                "denied_errors": [outcome["error"] for outcome in outcomes if not outcome["allowed"]],
+                "reserve_status": reserve.status,
+                "reserved": observed_reserved,
+            }
+        else:
+            return TckResult(
+                case_id=case.case_id,
+                kind=case.kind,
+                status="failed",
+                diagnostics=(
+                    {
+                        "code": "BudgetRaceKindUnknown",
+                        "message": f"budget-race TCK kind {fixture.get('kind')!r} is not supported",
+                        "path": "$.kind",
+                    },
+                ),
+                observed={},
+            )
+
+        if observed["allowed"] != fixture.get("expectedAllowed"):
+            diagnostics.append(
+                {
+                    "code": "BudgetRaceAllowedMismatch",
+                    "message": "budget-race allowed count did not match expected result",
+                    "path": "$.expectedAllowed",
+                }
+            )
+        if observed["denied"] != fixture.get("expectedDenied"):
+            diagnostics.append(
+                {
+                    "code": "BudgetRaceDeniedMismatch",
+                    "message": "budget-race denied count did not match expected result",
+                    "path": "$.expectedDenied",
+                }
+            )
+        expected_denied_error = fixture.get("expectedDeniedError")
+        if expected_denied_error is not None and any(
+            error != expected_denied_error for error in observed["denied_errors"]
+        ):
+            diagnostics.append(
+                {
+                    "code": "BudgetRaceDeniedErrorMismatch",
+                    "message": "budget-race denied error did not match expected result",
+                    "path": "$.expectedDeniedError",
+                }
+            )
         return TckResult(
             case_id=case.case_id,
             kind=case.kind,
@@ -2857,6 +3135,7 @@ __all__ = [
     "check_tck_suite_coverage",
     "compile_graph",
     "load_application_event_tck_cases",
+    "load_budget_race_tck_cases",
     "load_compiler_tck_cases",
     "load_exhaustion_tck_cases",
     "load_policy_tck_cases",
