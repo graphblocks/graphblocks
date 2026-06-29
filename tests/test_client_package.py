@@ -382,3 +382,84 @@ def test_client_package_reads_run_events_over_http_transport(monkeypatch) -> Non
     assert [event.kind for event in events] == ["RunStarted", "RunSucceeded"]
     assert events[0].metadata.response_id == "response-events-http-1"
     assert events[1].payload["outputs"] == {"prompt": "Client events ok"}
+
+
+def test_client_package_opens_run_stream_over_http_transport(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+    from graphblocks.policy import PrincipalRef
+    from graphblocks.server import GraphBlocksServerApp, ServerRequest, StaticBearerAuthHook
+
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "client-stream"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Client stream {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "ok"}},
+                    "runId": "run-stream-http-1",
+                    "responseId": "response-stream-http-1",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    def transport(request: object, *, timeout: float) -> object:
+        assert timeout == 4.0
+        path = urlparse(request.full_url).path.removeprefix("/api")
+        headers = {key.lower(): value for key, value in request.headers.items()}
+        assert path == "/runs/run-stream-http-1/stream"
+        assert headers["authorization"] == "Bearer token-1"
+        assert headers["upgrade"] == "websocket"
+        assert "Upgrade" in headers["connection"]
+        return app.handle(
+            ServerRequest(
+                method=request.get_method(),
+                path=path,
+                headers=dict(request.headers),
+                query={},
+                cookies={},
+                body=request.data or b"",
+            )
+        )
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        bearer_token="token-1",
+        timeout=4.0,
+        transport=transport,
+    )
+
+    snapshot = client.run_stream("run-stream-http-1")
+
+    assert snapshot.run_id == "run-stream-http-1"
+    assert snapshot.stream == {
+        "transport": "websocket",
+        "status": "accepted",
+        "cursor": "run-stream-http-1:2",
+        "eventCount": 2,
+    }
+    assert [event.kind for event in snapshot.events] == ["RunStarted", "RunSucceeded"]
+    assert snapshot.events[0].metadata.response_id == "response-stream-http-1"
+    assert snapshot.events[1].payload["outputs"] == {"prompt": "Client stream ok"}
+    assert "RunStreamSnapshot" in graphblocks_client.__all__

@@ -56,6 +56,18 @@ class RunGraphResponse:
         object.__setattr__(self, "events", tuple(self.events))
 
 
+@dataclass(frozen=True, slots=True)
+class RunStreamSnapshot:
+    run_id: str
+    stream: dict[str, object]
+    events: tuple[ApplicationEvent, ...]
+    event_stream: ApplicationEventStreamState
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "stream", deepcopy(self.stream))
+        object.__setattr__(self, "events", tuple(self.events))
+
+
 @dataclass(slots=True)
 class LocalGraphBlocksClient:
     registry: RuntimeRegistry = field(default_factory=stdlib_registry)
@@ -171,6 +183,37 @@ class HttpGraphBlocksClient:
             raise ValueError("GraphBlocks run events response must be a JSON object")
         return _application_events_from_payloads(payload.get("events", ()) or ())
 
+    def run_stream(self, run_id: str) -> RunStreamSnapshot:
+        headers = {
+            "Accept": "application/json",
+            "Connection": "Upgrade",
+            "Upgrade": "websocket",
+        }
+        if self.bearer_token is not None:
+            headers["Authorization"] = f"Bearer {self.bearer_token}"
+        request = Request(
+            f"{self.base_url.rstrip('/')}/runs/{run_id}/stream",
+            headers=headers,
+            method="GET",
+        )
+        response = (self.transport or urlopen)(request, timeout=self.timeout)
+        payload = json.loads(response.read().decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("GraphBlocks run stream response must be a JSON object")
+        stream_payload = payload.get("stream", {}) or {}
+        if not isinstance(stream_payload, dict):
+            raise ValueError("GraphBlocks run stream metadata must be a JSON object")
+        events = _application_events_from_payloads(payload.get("events", ()) or ())
+        stream_state = ApplicationEventStreamState()
+        for event in events:
+            stream_state.accept(event)
+        return RunStreamSnapshot(
+            run_id=str(payload.get("runId", payload.get("run_id", ""))),
+            stream=dict(stream_payload),
+            events=events,
+            event_stream=stream_state,
+        )
+
     def run_graph(self, command: RunGraphCommand) -> RunGraphResponse:
         body = json.dumps(
             {
@@ -279,4 +322,5 @@ __all__ = [
     "LocalGraphBlocksClient",
     "RunGraphCommand",
     "RunGraphResponse",
+    "RunStreamSnapshot",
 ]
