@@ -1,6 +1,7 @@
 use graphblocks_runtime_durable::{
-    DurableToolTerminalRecord, DurableToolTerminalState, InMemoryDurableToolTerminalStore,
-    ToolTerminalStoreError,
+    DurableOutputCutoffDraftDisposition, DurableOutputCutoffDurableResult,
+    DurableOutputCutoffTerminalReason, DurableResponsePolicyStopRecord, DurableToolTerminalRecord,
+    DurableToolTerminalState, InMemoryDurableToolTerminalStore, ToolTerminalStoreError,
 };
 
 fn completed_tool_record() -> DurableToolTerminalRecord {
@@ -145,7 +146,52 @@ fn response_policy_stop_barrier_replays_matching_record() {
         .expect("matching policy stop barrier should replay");
 
     assert_eq!(committed.sequence, duplicate.sequence);
+    assert_eq!(committed.record.stream_id, "response-1");
+    assert_eq!(committed.record.turn_id, None);
+    assert_eq!(committed.record.last_generated_sequence, 7);
+    assert_eq!(committed.record.last_client_delivered_sequence, 7);
     assert!(!committed.replayed);
+    assert!(duplicate.replayed);
+}
+
+#[test]
+fn response_policy_stop_barrier_persists_full_output_cutoff_state() {
+    let mut store = InMemoryDurableToolTerminalStore::new();
+    let record =
+        DurableResponsePolicyStopRecord::new("response-1", "decision-1", 7, 1_820_000_000_000)
+            .with_stream_id("stream-1")
+            .with_turn_id("turn-1")
+            .with_last_generated_sequence(9)
+            .with_last_client_delivered_sequence(6)
+            .with_terminal_reason(DurableOutputCutoffTerminalReason::PolicyDenied)
+            .with_draft_disposition(DurableOutputCutoffDraftDisposition::Retract)
+            .with_durable_result(DurableOutputCutoffDurableResult::None);
+
+    let committed = store
+        .record_response_policy_stop(record.clone())
+        .expect("full policy stop record should commit");
+    let duplicate = store
+        .record_response_policy_stop(record)
+        .expect("matching full policy stop record should replay");
+
+    assert_eq!(committed.record.stream_id, "stream-1");
+    assert_eq!(committed.record.turn_id.as_deref(), Some("turn-1"));
+    assert_eq!(committed.record.last_generated_sequence, 9);
+    assert_eq!(committed.record.last_policy_accepted_sequence, 7);
+    assert_eq!(committed.record.last_client_delivered_sequence, 6);
+    assert_eq!(
+        committed.record.terminal_reason,
+        DurableOutputCutoffTerminalReason::PolicyDenied,
+    );
+    assert_eq!(
+        committed.record.draft_disposition,
+        DurableOutputCutoffDraftDisposition::Retract,
+    );
+    assert_eq!(
+        committed.record.durable_result,
+        DurableOutputCutoffDurableResult::None,
+    );
+    assert_eq!(duplicate.sequence, committed.sequence);
     assert!(duplicate.replayed);
 }
 
@@ -279,5 +325,44 @@ fn policy_stop_barrier_rejects_whitespace_identity_fields() {
     assert_eq!(
         store.record_response_policy_stopped("response-1", "\t", 7, 1_820_000_000_000),
         Err(ToolTerminalStoreError::MissingPolicyDecisionId),
+    );
+    assert_eq!(
+        store.record_response_policy_stop(
+            DurableResponsePolicyStopRecord::new("response-1", "decision-1", 7, 1_820_000_000_000,)
+                .with_stream_id(" "),
+        ),
+        Err(ToolTerminalStoreError::MissingStreamId),
+    );
+    assert_eq!(
+        store.record_response_policy_stop(
+            DurableResponsePolicyStopRecord::new("response-1", "decision-1", 7, 1_820_000_000_000,)
+                .with_turn_id("\n"),
+        ),
+        Err(ToolTerminalStoreError::MissingTurnId),
+    );
+    assert_eq!(
+        store.record_response_policy_stop(
+            DurableResponsePolicyStopRecord::new("response-1", "decision-1", 7, 1_820_000_000_000,)
+                .with_last_generated_sequence(6),
+        ),
+        Err(
+            ToolTerminalStoreError::PolicyAcceptedSequenceBeyondGenerated {
+                last_generated_sequence: 6,
+                last_policy_accepted_sequence: 7,
+            }
+        ),
+    );
+    assert_eq!(
+        store.record_response_policy_stop(
+            DurableResponsePolicyStopRecord::new("response-1", "decision-1", 7, 1_820_000_000_000,)
+                .with_last_generated_sequence(8)
+                .with_last_client_delivered_sequence(9),
+        ),
+        Err(
+            ToolTerminalStoreError::ClientDeliveredSequenceBeyondGenerated {
+                last_generated_sequence: 8,
+                last_client_delivered_sequence: 9,
+            }
+        ),
     );
 }

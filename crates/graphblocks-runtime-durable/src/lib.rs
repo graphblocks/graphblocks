@@ -488,6 +488,28 @@ pub enum DurableToolTerminalState {
     Expired,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DurableOutputCutoffTerminalReason {
+    PolicyDenied,
+    BudgetExhausted,
+    Cancelled,
+    ClientDisconnected,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DurableOutputCutoffDraftDisposition {
+    Keep,
+    MarkIncomplete,
+    Retract,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DurableOutputCutoffDurableResult {
+    None,
+    Incomplete,
+    Partial,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DurableToolTerminalRecord {
     pub run_id: String,
@@ -559,9 +581,81 @@ pub struct DurableToolTerminalCommit {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DurableResponsePolicyStopRecord {
     pub response_id: String,
+    pub stream_id: String,
+    pub turn_id: Option<String>,
     pub policy_decision_id: String,
+    pub last_generated_sequence: u64,
     pub last_policy_accepted_sequence: u64,
+    pub last_client_delivered_sequence: u64,
+    pub terminal_reason: DurableOutputCutoffTerminalReason,
+    pub draft_disposition: DurableOutputCutoffDraftDisposition,
+    pub durable_result: DurableOutputCutoffDurableResult,
     pub occurred_at_unix_ms: u64,
+}
+
+impl DurableResponsePolicyStopRecord {
+    pub fn new(
+        response_id: impl Into<String>,
+        policy_decision_id: impl Into<String>,
+        last_policy_accepted_sequence: u64,
+        occurred_at_unix_ms: u64,
+    ) -> Self {
+        let response_id = response_id.into();
+        Self {
+            stream_id: response_id.clone(),
+            response_id,
+            turn_id: None,
+            policy_decision_id: policy_decision_id.into(),
+            last_generated_sequence: last_policy_accepted_sequence,
+            last_policy_accepted_sequence,
+            last_client_delivered_sequence: last_policy_accepted_sequence,
+            terminal_reason: DurableOutputCutoffTerminalReason::PolicyDenied,
+            draft_disposition: DurableOutputCutoffDraftDisposition::Retract,
+            durable_result: DurableOutputCutoffDurableResult::None,
+            occurred_at_unix_ms,
+        }
+    }
+
+    pub fn with_stream_id(mut self, stream_id: impl Into<String>) -> Self {
+        self.stream_id = stream_id.into();
+        self
+    }
+
+    pub fn with_turn_id(mut self, turn_id: impl Into<String>) -> Self {
+        self.turn_id = Some(turn_id.into());
+        self
+    }
+
+    pub fn with_last_generated_sequence(mut self, sequence: u64) -> Self {
+        self.last_generated_sequence = sequence;
+        self
+    }
+
+    pub fn with_last_client_delivered_sequence(mut self, sequence: u64) -> Self {
+        self.last_client_delivered_sequence = sequence;
+        self
+    }
+
+    pub fn with_terminal_reason(
+        mut self,
+        terminal_reason: DurableOutputCutoffTerminalReason,
+    ) -> Self {
+        self.terminal_reason = terminal_reason;
+        self
+    }
+
+    pub fn with_draft_disposition(
+        mut self,
+        draft_disposition: DurableOutputCutoffDraftDisposition,
+    ) -> Self {
+        self.draft_disposition = draft_disposition;
+        self
+    }
+
+    pub fn with_durable_result(mut self, durable_result: DurableOutputCutoffDurableResult) -> Self {
+        self.durable_result = durable_result;
+        self
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -580,8 +674,18 @@ pub enum ToolTerminalStoreError {
     MissingOutputDigest,
     MissingIdempotencyKey,
     MissingPolicyDecisionId,
+    MissingStreamId,
+    MissingTurnId,
     InvalidRevision,
     InvalidCompletedAt,
+    PolicyAcceptedSequenceBeyondGenerated {
+        last_generated_sequence: u64,
+        last_policy_accepted_sequence: u64,
+    },
+    ClientDeliveredSequenceBeyondGenerated {
+        last_generated_sequence: u64,
+        last_client_delivered_sequence: u64,
+    },
     TerminalStateConflict {
         response_id: String,
         tool_call_id: String,
@@ -696,17 +800,49 @@ impl InMemoryDurableToolTerminalStore {
         last_policy_accepted_sequence: u64,
         occurred_at_unix_ms: u64,
     ) -> Result<DurableResponsePolicyStopCommit, ToolTerminalStoreError> {
-        let record = DurableResponsePolicyStopRecord {
-            response_id: response_id.into(),
-            policy_decision_id: policy_decision_id.into(),
+        self.record_response_policy_stop(DurableResponsePolicyStopRecord::new(
+            response_id,
+            policy_decision_id,
             last_policy_accepted_sequence,
             occurred_at_unix_ms,
-        };
+        ))
+    }
+
+    pub fn record_response_policy_stop(
+        &mut self,
+        record: DurableResponsePolicyStopRecord,
+    ) -> Result<DurableResponsePolicyStopCommit, ToolTerminalStoreError> {
         if record.response_id.trim().is_empty() {
             return Err(ToolTerminalStoreError::MissingResponseId);
         }
+        if record.stream_id.trim().is_empty() {
+            return Err(ToolTerminalStoreError::MissingStreamId);
+        }
+        if record
+            .turn_id
+            .as_deref()
+            .is_some_and(|turn_id| turn_id.trim().is_empty())
+        {
+            return Err(ToolTerminalStoreError::MissingTurnId);
+        }
         if record.policy_decision_id.trim().is_empty() {
             return Err(ToolTerminalStoreError::MissingPolicyDecisionId);
+        }
+        if record.last_policy_accepted_sequence > record.last_generated_sequence {
+            return Err(
+                ToolTerminalStoreError::PolicyAcceptedSequenceBeyondGenerated {
+                    last_generated_sequence: record.last_generated_sequence,
+                    last_policy_accepted_sequence: record.last_policy_accepted_sequence,
+                },
+            );
+        }
+        if record.last_client_delivered_sequence > record.last_generated_sequence {
+            return Err(
+                ToolTerminalStoreError::ClientDeliveredSequenceBeyondGenerated {
+                    last_generated_sequence: record.last_generated_sequence,
+                    last_client_delivered_sequence: record.last_client_delivered_sequence,
+                },
+            );
         }
         if record.occurred_at_unix_ms == 0 {
             return Err(ToolTerminalStoreError::InvalidCompletedAt);
