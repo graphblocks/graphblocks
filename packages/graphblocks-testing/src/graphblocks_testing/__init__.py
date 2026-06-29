@@ -2897,6 +2897,9 @@ class TckRunner:
                 "tool_result_delta",
                 "tool_result_artifact_ready",
                 "tool_result_completed",
+                "tool_result_cancelled",
+                "tool_result_policy_stopped",
+                "tool_result_incomplete",
             }:
                 tool_call_id = str(operation.get("toolCallId", operation.get("tool_call_id", "")))
                 tool_result_sequence = int(
@@ -2943,6 +2946,63 @@ class TckRunner:
                             media_type=media_type if isinstance(media_type, str) else None,
                         ),
                     )
+                elif op in {
+                    "tool_result_cancelled",
+                    "tool_result_policy_stopped",
+                    "tool_result_incomplete",
+                }:
+                    if op == "tool_result_cancelled":
+                        result = ToolResult.cancelled(
+                            tool_call_id,
+                            started_at=str(operation.get("startedAt", "2026-06-23T00:00:00Z")),
+                            completed_at=str(operation.get("completedAt", "2026-06-23T00:00:00Z")),
+                        )
+                    elif op == "tool_result_policy_stopped":
+                        raw_error = operation.get(
+                            "error",
+                            {"code": "policy.tool_output_denied", "message": "tool output was stopped by policy"},
+                        )
+                        if not isinstance(raw_error, Mapping):
+                            diagnostics.append(
+                                {
+                                    "code": "ApplicationEventToolResultErrorInvalid",
+                                    "message": "policy-stopped tool result error must be a mapping",
+                                    "path": f"$.operations[{sequence - 1}].error",
+                                }
+                            )
+                            continue
+                        result = ToolResult.policy_stopped(
+                            tool_call_id,
+                            error=dict(raw_error),
+                            started_at=str(operation.get("startedAt", "2026-06-23T00:00:00Z")),
+                            completed_at=str(operation.get("completedAt", "2026-06-23T00:00:00Z")),
+                        )
+                    else:
+                        result = ToolResult.incomplete(
+                            tool_call_id,
+                            started_at=str(operation.get("startedAt", "2026-06-23T00:00:00Z")),
+                            completed_at=str(operation.get("completedAt", "2026-06-23T00:00:00Z")),
+                        )
+                    if operation.get("effectOutcome") is not None:
+                        result = result.with_effect_outcome(str(operation["effectOutcome"]))
+                    if op == "tool_result_cancelled":
+                        result_event = ToolResultEvent.cancelled(
+                            tool_call_id,
+                            tool_result_sequence,
+                            result,
+                        )
+                    elif op == "tool_result_policy_stopped":
+                        result_event = ToolResultEvent.policy_stopped(
+                            tool_call_id,
+                            tool_result_sequence,
+                            result,
+                        )
+                    else:
+                        result_event = ToolResultEvent.incomplete(
+                            tool_call_id,
+                            tool_result_sequence,
+                            result,
+                        )
                 else:
                     raw_output = operation.get("output", [])
                     if not isinstance(raw_output, list):

@@ -1,6 +1,7 @@
 use graphblocks_runtime_core::application_event::{
     ApplicationEvent, ApplicationEventKind, ApplicationEventMetadata, ApplicationEventStreamState,
 };
+use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory};
 use graphblocks_runtime_core::output_policy::{
     DraftDisposition, DurableResult, OutputCutoff, TerminalReason,
 };
@@ -110,7 +111,10 @@ fn run_case(case: &Value) -> Result<(), String> {
             "tool_result_started"
             | "tool_result_delta"
             | "tool_result_artifact_ready"
-            | "tool_result_completed" => {
+            | "tool_result_completed"
+            | "tool_result_cancelled"
+            | "tool_result_policy_stopped"
+            | "tool_result_incomplete" => {
                 let tool_call_id = required_str(operation, "toolCallId")?;
                 let tool_result_sequence = required_u64(operation, "toolResultSequence")?;
                 let result_event = match op {
@@ -143,6 +147,70 @@ fn run_case(case: &Value) -> Result<(), String> {
                             tool_result_sequence,
                             artifact,
                         )
+                    }
+                    "tool_result_cancelled"
+                    | "tool_result_policy_stopped"
+                    | "tool_result_incomplete" => {
+                        let effect_outcome = tool_effect_outcome(
+                            optional_str(operation, "effectOutcome"),
+                            case_name,
+                        )?;
+                        match op {
+                            "tool_result_cancelled" => {
+                                let result = ToolResult::cancelled(
+                                    tool_call_id,
+                                    required_u64(operation, "startedAtUnixMs")?,
+                                    required_u64(operation, "completedAtUnixMs")?,
+                                )
+                                .with_effect_outcome(effect_outcome);
+                                ToolResultEvent::cancelled(
+                                    tool_call_id,
+                                    tool_result_sequence,
+                                    result,
+                                )
+                            }
+                            "tool_result_policy_stopped" => {
+                                let raw_error = operation
+                                    .get("error")
+                                    .and_then(Value::as_object)
+                                    .ok_or_else(|| {
+                                        format!(
+                                            "application-events TCK case {case_name} policy stopped error must be an object"
+                                        )
+                                    })?;
+                                let result = ToolResult::policy_stopped(
+                                    tool_call_id,
+                                    BlockError::new(
+                                        required_str_object(raw_error, "code")?,
+                                        ErrorCategory::Policy,
+                                        required_str_object(raw_error, "message")?,
+                                        false,
+                                    ),
+                                    required_u64(operation, "startedAtUnixMs")?,
+                                    required_u64(operation, "completedAtUnixMs")?,
+                                )
+                                .with_effect_outcome(effect_outcome);
+                                ToolResultEvent::policy_stopped(
+                                    tool_call_id,
+                                    tool_result_sequence,
+                                    result,
+                                )
+                            }
+                            "tool_result_incomplete" => {
+                                let result = ToolResult::incomplete(
+                                    tool_call_id,
+                                    required_u64(operation, "startedAtUnixMs")?,
+                                    required_u64(operation, "completedAtUnixMs")?,
+                                )
+                                .with_effect_outcome(effect_outcome);
+                                ToolResultEvent::incomplete(
+                                    tool_call_id,
+                                    tool_result_sequence,
+                                    result,
+                                )
+                            }
+                            _ => unreachable!(),
+                        }
                     }
                     "tool_result_delta" | "tool_result_completed" => {
                         let raw_output = operation
@@ -186,19 +254,10 @@ fn run_case(case: &Value) -> Result<(), String> {
                         if op == "tool_result_delta" {
                             ToolResultEvent::delta(tool_call_id, tool_result_sequence, output)
                         } else {
-                            let effect_outcome = match optional_str(operation, "effectOutcome")
-                                .unwrap_or("unknown")
-                            {
-                                "no_external_effect" => ToolEffectOutcome::NoExternalEffect,
-                                "committed" => ToolEffectOutcome::Committed,
-                                "not_committed" => ToolEffectOutcome::NotCommitted,
-                                "unknown" => ToolEffectOutcome::Unknown,
-                                other => {
-                                    return Err(format!(
-                                        "application-events TCK case {case_name} has unknown effect outcome {other}"
-                                    ));
-                                }
-                            };
+                            let effect_outcome = tool_effect_outcome(
+                                optional_str(operation, "effectOutcome"),
+                                case_name,
+                            )?;
                             let result = ToolResult::completed(
                                 tool_call_id,
                                 output,
@@ -296,6 +355,18 @@ fn optional_u64(value: &Value, key: &str) -> Option<u64> {
 
 fn optional_bool(value: &Value, key: &str) -> Option<bool> {
     value.get(key).and_then(Value::as_bool)
+}
+
+fn tool_effect_outcome(value: Option<&str>, case_name: &str) -> Result<ToolEffectOutcome, String> {
+    match value.unwrap_or("unknown") {
+        "no_external_effect" => Ok(ToolEffectOutcome::NoExternalEffect),
+        "committed" => Ok(ToolEffectOutcome::Committed),
+        "not_committed" => Ok(ToolEffectOutcome::NotCommitted),
+        "unknown" => Ok(ToolEffectOutcome::Unknown),
+        other => Err(format!(
+            "application-events TCK case {case_name} has unknown effect outcome {other}"
+        )),
+    }
 }
 
 fn terminal_reason(value: &str) -> Result<TerminalReason, String> {

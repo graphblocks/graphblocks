@@ -1191,6 +1191,9 @@ def test_application_event_stream_state_matches_shared_tck_cases() -> None:
                 "tool_result_delta",
                 "tool_result_artifact_ready",
                 "tool_result_completed",
+                "tool_result_cancelled",
+                "tool_result_policy_stopped",
+                "tool_result_incomplete",
             }:
                 tool_call_id = operation["toolCallId"]
                 tool_result_sequence = operation["toolResultSequence"]
@@ -1212,6 +1215,53 @@ def test_application_event_stream_state_matches_shared_tck_cases() -> None:
                             media_type=artifact.get("mediaType"),
                         ),
                     )
+                elif operation["op"] in {
+                    "tool_result_cancelled",
+                    "tool_result_policy_stopped",
+                    "tool_result_incomplete",
+                }:
+                    if operation["op"] == "tool_result_cancelled":
+                        result = ToolResult.cancelled(
+                            tool_call_id,
+                            started_at=operation["startedAt"],
+                            completed_at=operation["completedAt"],
+                        )
+                        result_event = ToolResultEvent.cancelled(
+                            tool_call_id,
+                            tool_result_sequence,
+                            result,
+                        )
+                    elif operation["op"] == "tool_result_policy_stopped":
+                        result = ToolResult.policy_stopped(
+                            tool_call_id,
+                            error=dict(operation["error"]),
+                            started_at=operation["startedAt"],
+                            completed_at=operation["completedAt"],
+                        )
+                        result_event = ToolResultEvent.policy_stopped(
+                            tool_call_id,
+                            tool_result_sequence,
+                            result,
+                        )
+                    else:
+                        result = ToolResult.incomplete(
+                            tool_call_id,
+                            started_at=operation["startedAt"],
+                            completed_at=operation["completedAt"],
+                        )
+                        result_event = ToolResultEvent.incomplete(
+                            tool_call_id,
+                            tool_result_sequence,
+                            result,
+                        )
+                    if operation.get("effectOutcome") is not None:
+                        result = result.with_effect_outcome(operation["effectOutcome"])
+                        result_event = ToolResultEvent(
+                            kind=result.status,
+                            tool_call_id=tool_call_id,
+                            sequence=tool_result_sequence,
+                            result=result,
+                        )
                 else:
                     output = tuple(
                         ContentPart(

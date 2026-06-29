@@ -141,5 +141,110 @@
       "ToolResultArtifactReady",
       "ToolResultCompleted"
     ]
+  },
+  {
+    "name": "terminal_tool_result_events_preserve_partial_status",
+    "responseId": "response-tools-2",
+    "turnId": "turn-tools-2",
+    "operations": [
+      {
+        "op": "tool_result_started",
+        "toolCallId": "call-cancelled",
+        "toolResultSequence": 1,
+        "startedAt": "2026-06-23T00:01:00Z",
+        "startedAtUnixMs": 1700060
+      },
+      {
+        "op": "tool_result_delta",
+        "toolCallId": "call-cancelled",
+        "toolResultSequence": 2,
+        "output": [
+          {
+            "kind": "text",
+            "text": "partial before cancellation"
+          }
+        ]
+      },
+      {
+        "op": "tool_result_cancelled",
+        "toolCallId": "call-cancelled",
+        "toolResultSequence": 3,
+        "startedAt": "2026-06-23T00:01:00Z",
+        "completedAt": "2026-06-23T00:01:01Z",
+        "startedAtUnixMs": 1700060,
+        "completedAtUnixMs": 1700061,
+        "effectOutcome": "not_committed"
+      },
+      {
+        "op": "tool_result_started",
+        "toolCallId": "call-policy-stopped",
+        "toolResultSequence": 4,
+        "startedAt": "2026-06-23T00:02:00Z",
+        "startedAtUnixMs": 1700120
+      },
+      {
+        "op": "tool_result_delta",
+        "toolCallId": "call-policy-stopped",
+        "toolResultSequence": 5,
+        "output": [
+          {
+            "kind": "text",
+            "text": "partial before policy stop"
+          }
+        ]
+      },
+      {
+        "op": "tool_result_policy_stopped",
+        "toolCallId": "call-policy-stopped",
+        "toolResultSequence": 6,
+        "startedAt": "2026-06-23T00:02:00Z",
+        "completedAt": "2026-06-23T00:02:01Z",
+        "startedAtUnixMs": 1700120,
+        "completedAtUnixMs": 1700121,
+        "effectOutcome": "committed",
+        "error": {
+          "code": "policy.tool_output_denied",
+          "message": "tool output was stopped by policy"
+        }
+      },
+      {
+        "op": "tool_result_started",
+        "toolCallId": "call-incomplete",
+        "toolResultSequence": 7,
+        "startedAt": "2026-06-23T00:03:00Z",
+        "startedAtUnixMs": 1700180
+      },
+      {
+        "op": "tool_result_delta",
+        "toolCallId": "call-incomplete",
+        "toolResultSequence": 8,
+        "output": [
+          {
+            "kind": "text",
+            "text": "partial before incomplete"
+          }
+        ]
+      },
+      {
+        "op": "tool_result_incomplete",
+        "toolCallId": "call-incomplete",
+        "toolResultSequence": 9,
+        "startedAt": "2026-06-23T00:03:00Z",
+        "completedAt": "2026-06-23T00:03:01Z",
+        "startedAtUnixMs": 1700180,
+        "completedAtUnixMs": 1700181
+      }
+    ],
+    "expectedAcceptedKinds": [
+      "ToolResultStarted",
+      "ToolResultDelta",
+      "ToolResultCancelled",
+      "ToolResultStarted",
+      "ToolResultDelta",
+      "ToolResultPolicyStopped",
+      "ToolResultStarted",
+      "ToolResultDelta",
+      "ToolResultIncomplete"
+    ]
   }
 ]
