@@ -163,5 +163,155 @@
       }
     ],
     "expectedCreationError": "unsafe_parallel_effects"
+  },
+  {
+    "name": "policy_abort_denies_pending_tool_calls",
+    "kind": "execution_plan",
+    "planId": "plan-4",
+    "responseId": "response-1",
+    "maximumParallelism": 2,
+    "calls": [
+      {
+        "toolCallId": "call-a",
+        "toolName": "knowledge.search",
+        "arguments": {
+          "query": "runtime"
+        },
+        "effects": [
+          "external_read"
+        ]
+      },
+      {
+        "toolCallId": "call-b",
+        "toolName": "ticket.read",
+        "arguments": {
+          "resource_id": "ticket-1"
+        },
+        "effects": [
+          "external_read"
+        ]
+      }
+    ],
+    "operations": [
+      {
+        "op": "start",
+        "toolCallId": "call-a"
+      },
+      {
+        "op": "policy_stop",
+        "pendingToolCalls": "deny",
+        "expectAffected": [
+          "call-b"
+        ]
+      },
+      {
+        "op": "ready",
+        "expect": []
+      },
+      {
+        "op": "start",
+        "toolCallId": "call-b",
+        "expectError": "tool_call_not_pending"
+      }
+    ],
+    "expectedStates": {
+      "call-a": "running",
+      "call-b": "denied"
+    }
+  },
+  {
+    "name": "policy_abort_cancels_running_read_and_denies_pending",
+    "kind": "execution_plan",
+    "planId": "plan-5",
+    "responseId": "response-1",
+    "maximumParallelism": 2,
+    "calls": [
+      {
+        "toolCallId": "call-a",
+        "toolName": "knowledge.search",
+        "arguments": {
+          "query": "runtime"
+        },
+        "effects": [
+          "external_read"
+        ]
+      },
+      {
+        "toolCallId": "call-b",
+        "toolName": "ticket.read",
+        "arguments": {
+          "resource_id": "ticket-1"
+        },
+        "effects": [
+          "external_read"
+        ]
+      }
+    ],
+    "operations": [
+      {
+        "op": "start",
+        "toolCallId": "call-a"
+      },
+      {
+        "op": "policy_stop",
+        "pendingToolCalls": "cancel_admitted",
+        "expectAffected": [
+          "call-a",
+          "call-b"
+        ]
+      }
+    ],
+    "expectedStates": {
+      "call-a": "cancelled",
+      "call-b": "denied"
+    }
+  },
+  {
+    "name": "policy_abort_preserves_running_state_changing_call_without_safe_cancellation",
+    "kind": "execution_plan",
+    "planId": "plan-6",
+    "responseId": "response-1",
+    "maximumParallelism": 2,
+    "calls": [
+      {
+        "toolCallId": "call-a",
+        "toolName": "ticket.create",
+        "arguments": {
+          "resource_id": "ticket-1"
+        },
+        "effects": [
+          "external_write"
+        ],
+        "effectKey": "ticket.create:ticket-1",
+        "cancellation": "cooperative"
+      },
+      {
+        "toolCallId": "call-b",
+        "toolName": "ticket.read",
+        "arguments": {
+          "resource_id": "ticket-2"
+        },
+        "effects": [
+          "external_read"
+        ]
+      }
+    ],
+    "operations": [
+      {
+        "op": "start",
+        "toolCallId": "call-a"
+      },
+      {
+        "op": "policy_stop",
+        "pendingToolCalls": "cancel_admitted",
+        "expectAffected": [
+          "call-b"
+        ]
+      }
+    ],
+    "expectedStates": {
+      "call-a": "running",
+      "call-b": "denied"
+    }
   }
 ]

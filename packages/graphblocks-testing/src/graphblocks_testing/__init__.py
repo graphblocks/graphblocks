@@ -134,6 +134,10 @@ def _tool_execution_error_code(error: ToolExecutionPlanError) -> str:
     message = str(error)
     if "requires an effect key" in message:
         return "unsafe_parallel_effects"
+    if "not pending" in message:
+        return "tool_call_not_pending"
+    if "not running" in message:
+        return "tool_call_not_running"
     if "already running" in message:
         return "effect_conflict"
     if "maximum parallelism" in message:
@@ -3406,12 +3410,75 @@ class TckRunner:
                     )
             elif op == "start":
                 tool_call_id = str(operation.get("toolCallId", operation.get("tool_call_id", "")))
-                plan.record_started(tool_call_id)
-                operation_observations.append({"op": "start", "toolCallId": tool_call_id})
+                expected_error = operation.get("expectError")
+                actual_error = None
+                try:
+                    plan.record_started(tool_call_id)
+                except ToolExecutionPlanError as error:
+                    actual_error = _tool_execution_error_code(error)
+                operation_observations.append(
+                    {"op": "start", "toolCallId": tool_call_id, "error": actual_error}
+                )
+                if expected_error is not None:
+                    if actual_error != expected_error:
+                        diagnostics.append(
+                            {
+                                "code": "ToolExecutionOperationErrorMismatch",
+                                "message": "tool-execution operation error did not match expected result",
+                                "path": f"$.operations[{operation_index}].expectError",
+                            }
+                        )
+                elif actual_error is not None:
+                    diagnostics.append(
+                        {
+                            "code": "ToolExecutionOperationUnexpectedError",
+                            "message": "tool-execution start operation failed unexpectedly",
+                            "path": f"$.operations[{operation_index}]",
+                        }
+                    )
             elif op == "complete":
                 tool_call_id = str(operation.get("toolCallId", operation.get("tool_call_id", "")))
-                plan.record_completed(tool_call_id)
-                operation_observations.append({"op": "complete", "toolCallId": tool_call_id})
+                expected_error = operation.get("expectError")
+                actual_error = None
+                try:
+                    plan.record_completed(tool_call_id)
+                except ToolExecutionPlanError as error:
+                    actual_error = _tool_execution_error_code(error)
+                operation_observations.append(
+                    {"op": "complete", "toolCallId": tool_call_id, "error": actual_error}
+                )
+                if expected_error is not None:
+                    if actual_error != expected_error:
+                        diagnostics.append(
+                            {
+                                "code": "ToolExecutionOperationErrorMismatch",
+                                "message": "tool-execution operation error did not match expected result",
+                                "path": f"$.operations[{operation_index}].expectError",
+                            }
+                        )
+                elif actual_error is not None:
+                    diagnostics.append(
+                        {
+                            "code": "ToolExecutionOperationUnexpectedError",
+                            "message": "tool-execution complete operation failed unexpectedly",
+                            "path": f"$.operations[{operation_index}]",
+                        }
+                    )
+            elif op == "policy_stop":
+                pending_tool_calls = str(operation.get("pendingToolCalls", "deny"))
+                affected = plan.apply_policy_stop(pending_tool_calls)
+                operation_observations.append(
+                    {"op": "policy_stop", "pendingToolCalls": pending_tool_calls, "affected": affected}
+                )
+                expected_affected = operation.get("expectAffected", [])
+                if affected != [str(tool_call_id) for tool_call_id in expected_affected or ()]:
+                    diagnostics.append(
+                        {
+                            "code": "ToolExecutionPolicyStopAffectedMismatch",
+                            "message": "tool-execution policy_stop affected calls did not match expected result",
+                            "path": f"$.operations[{operation_index}].expectAffected",
+                        }
+                    )
             else:
                 diagnostics.append(
                     {

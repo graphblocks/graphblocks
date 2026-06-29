@@ -236,16 +236,27 @@ def test_testing_package_loads_shared_tool_execution_tck_cases(monkeypatch) -> N
     )
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["tool-execution"] * 3
+    assert [case.kind for case in cases] == ["tool-execution"] * 6
     assert report.ok
     assert {case.case_id for case in cases} == {
         "independent_read_tools_execute_concurrently",
         "conflicting_write_tools_are_serialized_by_effect_key",
         "parallel_state_changing_tools_require_effect_keys",
+        "policy_abort_denies_pending_tool_calls",
+        "policy_abort_cancels_running_read_and_denies_pending",
+        "policy_abort_preserves_running_state_changing_call_without_safe_cancellation",
     }
     assert any(result.observed.get("creationError") == "unsafe_parallel_effects" for result in report.results)
     assert any(
         result.observed.get("states") == {"call-a": "running", "call-b": "running"}
+        for result in report.results
+    )
+    assert any(
+        result.observed.get("states") == {"call-a": "running", "call-b": "denied"}
+        for result in report.results
+    )
+    assert any(
+        result.observed.get("states") == {"call-a": "cancelled", "call-b": "denied"}
         for result in report.results
     )
     assert "load_tool_execution_tck_cases" in graphblocks_testing.__all__
@@ -319,6 +330,9 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "independent_read_tools_execute_concurrently",
         "conflicting_write_tools_are_serialized_by_effect_key",
         "parallel_state_changing_tools_require_effect_keys",
+        "policy_abort_denies_pending_tool_calls",
+        "policy_abort_cancels_running_read_and_denies_pending",
+        "policy_abort_preserves_running_state_changing_call_without_safe_cancellation",
     )
     assert by_suite["budget-race"].content_digest().startswith("sha256:")
     assert "TckSuiteManifest" in graphblocks_testing.__all__

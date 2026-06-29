@@ -1,3 +1,4 @@
+use graphblocks_runtime_core::output_policy::PendingToolCallsDisposition;
 use graphblocks_runtime_core::tool::{ToolCancellation, ToolEffect};
 use graphblocks_runtime_core::tool_call::{ToolCall, ToolCallDraft};
 use graphblocks_runtime_core::tool_execution::{
@@ -82,20 +83,33 @@ fn run_case(case: &Value) -> Result<(), String> {
                 assert_eq!(ready, expected, "{case_name} operation {operation_index}");
             }
             "start" => {
-                plan.record_started(required_str(operation, "toolCallId")?)
-                    .map_err(|error| {
-                        format!(
-                            "tool-execution TCK case {case_name} operation {operation_index} failed: {error:?}"
-                        )
-                    })?;
+                let actual_error = plan
+                    .record_started(required_str(operation, "toolCallId")?)
+                    .err()
+                    .map(|error| execution_error_code(&error));
+                assert_operation_error(case_name, operation_index, operation, actual_error)?;
             }
             "complete" => {
-                plan.record_completed(required_str(operation, "toolCallId")?)
-                    .map_err(|error| {
-                        format!(
-                            "tool-execution TCK case {case_name} operation {operation_index} failed: {error:?}"
-                        )
-                    })?;
+                let actual_error = plan
+                    .record_completed(required_str(operation, "toolCallId")?)
+                    .err()
+                    .map(|error| execution_error_code(&error));
+                assert_operation_error(case_name, operation_index, operation, actual_error)?;
+            }
+            "policy_stop" => {
+                let affected = plan.apply_policy_stop(pending_tool_calls_disposition(
+                    required_str(operation, "pendingToolCalls")?,
+                )?);
+                let expected = string_array(
+                    operation
+                        .as_object()
+                        .ok_or_else(|| "tool-execution operation must be an object".to_owned())?,
+                    "expectAffected",
+                )?;
+                assert_eq!(
+                    affected, expected,
+                    "{case_name} operation {operation_index}"
+                );
             }
             other => {
                 return Err(format!(
@@ -225,8 +239,36 @@ fn execution_error_code(error: &ToolExecutionPlanError) -> &'static str {
         ToolExecutionPlanError::EffectConflict { .. } => "effect_conflict",
         ToolExecutionPlanError::ParallelismExhausted => "parallelism_exhausted",
         ToolExecutionPlanError::DependenciesNotReady { .. } => "dependencies_not_ready",
+        ToolExecutionPlanError::ToolCallNotPending { .. } => "tool_call_not_pending",
+        ToolExecutionPlanError::ToolCallNotRunning { .. } => "tool_call_not_running",
         _ => "tool_execution_plan_error",
     }
+}
+
+fn pending_tool_calls_disposition(
+    disposition: &str,
+) -> Result<PendingToolCallsDisposition, String> {
+    match disposition {
+        "keep" => Ok(PendingToolCallsDisposition::Keep),
+        "deny" => Ok(PendingToolCallsDisposition::Deny),
+        "cancel_admitted" => Ok(PendingToolCallsDisposition::CancelAdmitted),
+        other => Err(format!("unknown pending tool calls disposition {other}")),
+    }
+}
+
+fn assert_operation_error(
+    case_name: &str,
+    operation_index: usize,
+    operation: &Value,
+    actual_error: Option<&str>,
+) -> Result<(), String> {
+    let expected_error = optional_str(operation, "expectError");
+    if actual_error != expected_error {
+        return Err(format!(
+            "tool-execution TCK case {case_name} operation {operation_index} error mismatch: expected {expected_error:?}, actual {actual_error:?}"
+        ));
+    }
+    Ok(())
 }
 
 fn execution_state_str(state: ToolExecutionState) -> &'static str {
