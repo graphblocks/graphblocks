@@ -83,6 +83,7 @@ def test_hard_stop_blocks_new_work_and_late_output_delivery() -> None:
         terminal_reason="budget_exhausted",
         draft_disposition="mark_incomplete",
         durable_result="incomplete",
+        occurred_at="2026-06-23T00:00:00Z",
     )
 
     cleanup = controller.admit("cleanup", work_epoch=2)

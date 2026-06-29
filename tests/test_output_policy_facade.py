@@ -227,6 +227,9 @@ def test_output_policy_contract_rejects_unknown_literals() -> None:
     with pytest.raises(ValueError, match="output cutoff policy_decision_id must not be empty"):
         OutputCutoff(stream_id="stream-1", response_id="response-1", policy_decision_id=" ")
 
+    with pytest.raises(ValueError, match="output cutoff occurred_at must not be empty"):
+        OutputCutoff(stream_id="stream-1", response_id="response-1", occurred_at=" ")
+
     with pytest.raises(ValueError, match="invalid output durable result committed"):
         OutputCutoff(stream_id="stream-1", response_id="response-1", durable_result="committed")
 
@@ -885,6 +888,23 @@ def test_output_delivery_gate_terminal_decision_records_accepted_prefix() -> Non
     assert stopped.cutoff.last_policy_accepted_sequence == 1
     assert stopped.cutoff.last_client_delivered_sequence == 0
     assert gate.last_policy_accepted_sequence == 1
+
+
+def test_output_delivery_gate_terminal_decision_requires_occurred_at() -> None:
+    gate = OutputDeliveryGate("stream-1", "response-1")
+    gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "blocked"))
+
+    with pytest.raises(ValueError, match="output gate occurred_at must not be empty"):
+        gate.apply_decision(
+            OutputPolicyDecision.abort_response("decision-abort", input_digest="sha256:blocked"),
+            occurred_at=" ",
+        )
+
+    assert gate.cutoff is None
+    assert gate.last_generated_sequence == 1
+    assert gate.last_policy_accepted_sequence == 0
+    assert gate.last_client_delivered_sequence == 0
+    assert [(chunk.sequence, chunk.text) for chunk in gate.pending_chunks()] == [(1, "blocked")]
 
 
 def test_output_delivery_gate_policy_abort_denies_kept_pending_tool_calls() -> None:

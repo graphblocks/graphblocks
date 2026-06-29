@@ -585,6 +585,7 @@ class OutputCutoff:
             raise ValueError("last_policy_accepted_sequence cannot exceed last_generated_sequence")
         if self.last_client_delivered_sequence > self.last_generated_sequence:
             raise ValueError("last_client_delivered_sequence cannot exceed last_generated_sequence")
+        _validate_non_empty_string("output cutoff", "occurred_at", self.occurred_at)
 
     def accepts(self, output: GenerationChunk) -> bool:
         if not isinstance(output, GenerationChunk):
@@ -796,6 +797,7 @@ class OutputDeliveryGate:
     def apply_decision(self, decision: OutputPolicyDecision, *, occurred_at: str) -> OutputGateUpdate:
         if self.cutoff is not None:
             raise OutputGateError("output gate is policy stopped")
+        _validate_non_empty_string("output gate", "occurred_at", occurred_at)
 
         if decision.disposition == "allow":
             if decision.accepted_through_sequence is not None:
