@@ -115,6 +115,29 @@ def test_conformance_profile_set_resolves_inherited_tck_and_acceptance_requireme
     assert "ConformanceProfileSet" in graphblocks_testing.__all__
 
 
+def test_conformance_profile_tck_suites_have_shared_fixture_manifests(monkeypatch) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    profile_set = graphblocks_testing.ConformanceProfileSet.from_document(
+        _load_yaml(ROOT / "src" / "graphblocks" / "data" / "conformance-profiles.yaml")
+    )
+
+    claim = profile_set.claim_requirements(("GB-C3-GOVERNED-RUNTIME",))
+    available_suites = {
+        manifest.suite_id for manifest in graphblocks_testing.load_tck_suite_manifests(ROOT / "tck")
+    }
+
+    assert claim.tck_suites == (
+        "budget-race",
+        "compiler",
+        "exhaustion",
+        "policy",
+        "runtime",
+        "schema",
+        "sequence",
+    )
+    assert set(claim.tck_suites) <= available_suites
+
+
 def test_conformance_profile_claim_validates_tck_and_acceptance_evidence(monkeypatch) -> None:
     graphblocks_testing = _import_testing(monkeypatch)
     profile_set = graphblocks_testing.ConformanceProfileSet.from_document(

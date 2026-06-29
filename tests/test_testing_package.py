@@ -118,6 +118,41 @@ def test_testing_package_loads_shared_schema_tck_cases(monkeypatch) -> None:
     assert "load_schema_tck_cases" in graphblocks_testing.__all__
 
 
+def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    manifests = graphblocks_testing.load_tck_suite_manifests(ROOT / "tck")
+    by_suite = {manifest.suite_id: manifest for manifest in manifests}
+
+    assert tuple(by_suite) == (
+        "budget-race",
+        "compiler",
+        "exhaustion",
+        "policy",
+        "runtime",
+        "schema",
+        "sequence",
+    )
+    assert by_suite["budget-race"].case_ids == (
+        "competing_reservations_serialize_against_available_budget",
+        "completion_reserve_allows_only_one_concurrent_spender",
+    )
+    assert by_suite["policy"].case_count >= 4
+    assert by_suite["budget-race"].manifest_contract() == {
+        "suite_id": "budget-race",
+        "path": "budget-race/cases.json",
+        "case_count": 2,
+        "case_ids": [
+            "competing_reservations_serialize_against_available_budget",
+            "completion_reserve_allows_only_one_concurrent_spender",
+        ],
+    }
+    assert by_suite["budget-race"].content_digest().startswith("sha256:")
+    assert "TckSuiteManifest" in graphblocks_testing.__all__
+    assert "load_tck_suite_manifests" in graphblocks_testing.__all__
+
+
 def test_testing_package_tck_loaders_accept_camel_case_aliases(monkeypatch, tmp_path) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")

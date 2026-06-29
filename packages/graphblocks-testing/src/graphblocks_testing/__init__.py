@@ -215,6 +215,38 @@ class TckReport:
 
 
 @dataclass(frozen=True, slots=True)
+class TckSuiteManifest:
+    suite_id: str
+    path: str
+    case_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not self.suite_id.strip():
+            raise ValueError("TCK suite_id must not be empty")
+        if not self.path.strip():
+            raise ValueError("TCK suite path must not be empty")
+        case_ids = tuple(str(case_id) for case_id in self.case_ids)
+        if any(not case_id.strip() for case_id in case_ids):
+            raise ValueError("TCK suite case ids must not be empty")
+        object.__setattr__(self, "case_ids", case_ids)
+
+    @property
+    def case_count(self) -> int:
+        return len(self.case_ids)
+
+    def manifest_contract(self) -> dict[str, object]:
+        return {
+            "suite_id": self.suite_id,
+            "path": self.path,
+            "case_count": self.case_count,
+            "case_ids": list(self.case_ids),
+        }
+
+    def content_digest(self) -> str:
+        return canonical_hash(self.manifest_contract())
+
+
+@dataclass(frozen=True, slots=True)
 class PerformanceThreshold:
     metric_name: str
     operator: PerformanceThresholdOperator
@@ -1060,6 +1092,38 @@ def load_schema_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     return tuple(cases)
 
 
+def load_tck_suite_manifests(root: str | Path) -> tuple[TckSuiteManifest, ...]:
+    root_path = Path(root)
+    if not root_path.is_dir():
+        raise ValueError("TCK root must be a directory")
+    manifests: list[TckSuiteManifest] = []
+    for path in sorted(root_path.glob("*/cases.json"), key=lambda item: item.parent.name):
+        suite_id = path.parent.name
+        raw_cases = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw_cases, list):
+            raise ValueError(f"TCK suite {suite_id} root must be a list")
+        case_ids: list[str] = []
+        seen: set[str] = set()
+        for index, raw_case in enumerate(raw_cases):
+            if not isinstance(raw_case, Mapping):
+                raise ValueError(f"TCK suite {suite_id} case {index} must be a mapping")
+            case_id = _first_mapping_value(raw_case, "name", "case_id", "caseId")
+            if not isinstance(case_id, str) or not case_id.strip():
+                raise ValueError(f"TCK suite {suite_id} case {index} requires name")
+            if case_id in seen:
+                raise ValueError(f"TCK suite {suite_id} has duplicate case id {case_id!r}")
+            seen.add(case_id)
+            case_ids.append(case_id)
+        manifests.append(
+            TckSuiteManifest(
+                suite_id=suite_id,
+                path=path.relative_to(root_path).as_posix(),
+                case_ids=tuple(case_ids),
+            )
+        )
+    return tuple(manifests)
+
+
 @dataclass(frozen=True, slots=True)
 class AcceptanceApplication:
     application_id: str
@@ -1692,11 +1756,13 @@ __all__ = [
     "TckReport",
     "TckResult",
     "TckRunner",
+    "TckSuiteManifest",
     "canonical_hash",
     "compile_graph",
     "load_compiler_tck_cases",
     "load_runtime_tck_cases",
     "load_schema_tck_cases",
+    "load_tck_suite_manifests",
     "migrate_document",
     "stdlib_registry",
 ]
