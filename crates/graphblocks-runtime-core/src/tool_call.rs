@@ -123,7 +123,9 @@ impl ToolCallDraft {
         resolved_tool_id: impl Into<String>,
         created_at_unix_ms: u64,
     ) -> Result<ToolCall, ToolCallError> {
-        self.complete_arguments()?;
+        if self.status != ToolCallDraftStatus::ArgumentsComplete {
+            self.complete_arguments()?;
+        }
         self.into_tool_call(resolved_tool_id, created_at_unix_ms)
     }
 

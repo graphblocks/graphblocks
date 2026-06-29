@@ -32,6 +32,21 @@ fn incremental_arguments_do_not_create_final_tool_call() -> Result<(), ToolCallE
 }
 
 #[test]
+fn completed_draft_can_use_completed_tool_call_conversion() -> Result<(), ToolCallError> {
+    let mut draft = ToolCallDraft::proposed("response-1", "call-1", "knowledge.search");
+
+    draft.append_argument_fragment("{\"query\":\"runtime policy\"}")?;
+    draft.complete_arguments()?;
+
+    let call = draft.into_completed_tool_call("resolved-tool-1", 1_000)?;
+
+    assert_eq!(call.tool_call_id, "call-1");
+    assert_eq!(call.status, ToolCallStatus::Validated);
+    assert_eq!(call.arguments, json!({"query": "runtime policy"}));
+    Ok(())
+}
+
+#[test]
 fn invalid_arguments_are_rejected_before_validated_call_exists() -> Result<(), ToolCallError> {
     let mut draft = ToolCallDraft::proposed("response-1", "call-1", "knowledge.search");
 
