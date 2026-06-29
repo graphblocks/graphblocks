@@ -149,6 +149,44 @@ def run_test_graph(
     )
 
 
+def finalize_tool_call(
+    draft: dict[str, object],
+    *,
+    resolved_tool_id: str,
+    created_at_unix_ms: int,
+) -> dict[str, object]:
+    return _json_object_result(
+        finalize_tool_call_json(_canonical_json(draft), resolved_tool_id, created_at_unix_ms),
+        "native finalized tool call",
+    )
+
+
+def evaluate_output_gate(
+    gate: dict[str, object],
+    operations: object,
+) -> dict[str, object]:
+    return _json_object_result(
+        evaluate_output_gate_json(_canonical_json(gate), _canonical_json(operations)),
+        "native output gate result",
+    )
+
+
+def evaluate_declarative_output_policy(
+    rules: object,
+    chunk: dict[str, object],
+    *,
+    evaluated_at_unix_ms: int,
+) -> dict[str, object]:
+    return _json_object_result(
+        evaluate_declarative_output_policy_json(
+            _canonical_json(rules),
+            _canonical_json(chunk),
+            evaluated_at_unix_ms,
+        ),
+        "native output policy decision",
+    )
+
+
 __all__ = [
     "__version__",
     "admit_exhaustion_work_json",
@@ -156,8 +194,11 @@ __all__ = [
     "compile_graph",
     "compile_graph_json",
     "decide_agent_step_json",
+    "evaluate_declarative_output_policy",
     "evaluate_declarative_output_policy_json",
+    "evaluate_output_gate",
     "evaluate_output_gate_json",
+    "finalize_tool_call",
     "finalize_tool_call_json",
     "native_extension_available",
     "native_extension_status",
