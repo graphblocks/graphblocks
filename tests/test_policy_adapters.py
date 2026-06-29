@@ -41,6 +41,26 @@ def _policy_request() -> PolicyRequest:
     ).with_input_digest()
 
 
+def _output_policy_request() -> PolicyRequest:
+    return PolicyRequest(
+        request_id="output-policy-req-1",
+        enforcement_point="before_client_delivery",
+        action="output.deliver",
+        principal=PrincipalRef("user-1", tenant_id="tenant-1"),
+        resource=ResourceRef(
+            "response:response-1",
+            resource_kind="assistant_response",
+            tenant_id="tenant-1",
+            attributes={"stream_id": "stream-1"},
+        ),
+        attributes={"response_id": "response-1", "sequence": 2},
+        policy_snapshot_id="policy-snapshot-1",
+        release_id="release-1",
+        run_id="run-1",
+        occurred_at="2026-06-23T00:00:00Z",
+    ).with_input_digest()
+
+
 def test_opa_adapter_prepares_canonical_policy_input(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-opa" / "src"))
     graphblocks_policy_opa = importlib.import_module("graphblocks_policy_opa")
@@ -172,6 +192,63 @@ def test_opa_adapter_rejects_blank_policy_result_strings(monkeypatch) -> None:
         )
 
 
+def test_opa_adapter_maps_output_policy_result(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-opa" / "src"))
+    graphblocks_policy_opa = importlib.import_module("graphblocks_policy_opa")
+    request = _output_policy_request()
+
+    decision = graphblocks_policy_opa.output_policy_decision_from_opa_result(
+        decision_id="output-decision-opa-1",
+        request=request,
+        result={
+            "result": {
+                "disposition": "replace",
+                "acceptedThroughSequence": 2,
+                "replacementParts": [{"kind": "text", "text": "[policy-approved replacement]"}],
+                "reasonCodes": ["blocked-output"],
+                "policyRefs": ["policies/output.rego#blocked-output"],
+                "providerCancellation": "required_if_supported",
+                "draftDisposition": "retract",
+                "pendingToolCalls": "cancel_admitted",
+            }
+        },
+        evaluated_at="2026-06-23T00:00:01Z",
+    )
+
+    assert decision.disposition == "replace"
+    assert decision.accepted_through_sequence == 2
+    assert decision.replacement_parts[0].text == "[policy-approved replacement]"
+    assert decision.reason_codes == ("blocked-output",)
+    assert decision.policy_refs == ("policies/output.rego#blocked-output",)
+    assert decision.provider_cancellation == "required_if_supported"
+    assert decision.draft_disposition == "retract"
+    assert decision.pending_tool_calls == "cancel_admitted"
+    assert decision.evaluated_at == "2026-06-23T00:00:01Z"
+    assert decision.input_digest == request.input_digest
+    assert "output_policy_decision_from_opa_result" in graphblocks_policy_opa.__all__
+
+
+def test_opa_adapter_rejects_invalid_output_policy_result(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-opa" / "src"))
+    graphblocks_policy_opa = importlib.import_module("graphblocks_policy_opa")
+
+    with pytest.raises(graphblocks_policy_opa.OpaPolicyAdapterError, match="unknown output policy disposition"):
+        graphblocks_policy_opa.output_policy_decision_from_opa_result(
+            decision_id="output-decision-opa-1",
+            request=_output_policy_request(),
+            result={"result": {"disposition": "stream"}},
+            evaluated_at="2026-06-23T00:00:01Z",
+        )
+
+    with pytest.raises(graphblocks_policy_opa.OpaPolicyAdapterError, match="requires string text"):
+        graphblocks_policy_opa.output_policy_decision_from_opa_result(
+            decision_id="output-decision-opa-1",
+            request=_output_policy_request(),
+            result={"result": {"disposition": "replace", "replacementParts": [{"kind": "text", "text": 42}]}},
+            evaluated_at="2026-06-23T00:00:01Z",
+        )
+
+
 def test_cedar_adapter_prepares_authorization_request(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-cedar" / "src"))
     graphblocks_policy_cedar = importlib.import_module("graphblocks_policy_cedar")
@@ -294,3 +371,61 @@ def test_cedar_adapter_requires_principal(monkeypatch) -> None:
 
     with pytest.raises(graphblocks_policy_cedar.CedarPolicyAdapterError, match="requires a principal"):
         graphblocks_policy_cedar.prepare_cedar_authorization_request(request)
+
+
+def test_cedar_adapter_maps_nested_output_policy_result(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-cedar" / "src"))
+    graphblocks_policy_cedar = importlib.import_module("graphblocks_policy_cedar")
+    request = _output_policy_request()
+
+    decision = graphblocks_policy_cedar.output_policy_decision_from_cedar_result(
+        decision_id="output-decision-cedar-1",
+        request=request,
+        result={
+            "decision": "deny",
+            "diagnostics": {"reason": ["policy::output::pii"]},
+            "outputPolicy": {
+                "disposition": "redact",
+                "acceptedThroughSequence": 2,
+                "redactions": [{"path": "/chunks/2/text", "start": 6, "end": 12, "replacement": "[redacted]"}],
+                "providerCancellation": "request",
+                "draftDisposition": "mark_incomplete",
+                "pendingToolCalls": "deny",
+            },
+        },
+        evaluated_at="2026-06-23T00:00:01Z",
+    )
+
+    assert decision.disposition == "redact"
+    assert decision.accepted_through_sequence == 2
+    assert dict(decision.redactions[0]) == {
+        "path": "/chunks/2/text",
+        "start": 6,
+        "end": 12,
+        "replacement": "[redacted]",
+    }
+    assert decision.reason_codes == ("policy::output::pii",)
+    assert decision.policy_refs == ("policy::output::pii",)
+    assert decision.draft_disposition == "mark_incomplete"
+    assert decision.input_digest == request.input_digest
+    assert "output_policy_decision_from_cedar_result" in graphblocks_policy_cedar.__all__
+
+
+def test_cedar_adapter_maps_native_deny_to_output_abort(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-cedar" / "src"))
+    graphblocks_policy_cedar = importlib.import_module("graphblocks_policy_cedar")
+
+    decision = graphblocks_policy_cedar.output_policy_decision_from_cedar_result(
+        decision_id="output-decision-cedar-1",
+        request=_output_policy_request(),
+        result={
+            "decision": "deny",
+            "diagnostics": {"reason": ["policy::output::deny"]},
+        },
+        evaluated_at="2026-06-23T00:00:01Z",
+    )
+
+    assert decision.disposition == "abort_response"
+    assert decision.provider_cancellation == "request"
+    assert decision.pending_tool_calls == "deny"
+    assert decision.reason_codes == ("policy::output::deny",)
