@@ -900,6 +900,50 @@ fn declarative_output_policy_evaluator_redacts_literal_match() {
 }
 
 #[test]
+fn output_redaction_offsets_are_character_positions() -> Result<(), OutputGateError> {
+    let evaluator = DeclarativeOutputPolicyEvaluator::new([DeclarativeOutputPolicyRule::new(
+        "redact-secret",
+        "secret",
+        OutputDisposition::Redact,
+    )
+    .with_replacement("[redacted]")]);
+    let decision = evaluator.evaluate_chunk(
+        &GenerationChunk::text("stream-1", "response-1", 1, "safe 🔐 secret suffix"),
+        1_010,
+    );
+
+    assert_eq!(
+        decision.redactions,
+        vec![RedactionInstruction::text_range(
+            "/chunks/1/text",
+            7,
+            13,
+            "[redacted]",
+        )]
+    );
+
+    let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
+    gate.record_chunk(GenerationChunk::text(
+        "stream-1",
+        "response-1",
+        1,
+        "safe 🔐 secret suffix",
+    ))?;
+
+    let update = gate.apply_decision(decision, 1_020)?;
+
+    assert_eq!(
+        update
+            .deliverable
+            .iter()
+            .map(|chunk| chunk.text.as_str())
+            .collect::<Vec<_>>(),
+        vec!["safe 🔐 [redacted] suffix"],
+    );
+    Ok(())
+}
+
+#[test]
 fn declarative_output_policy_evaluator_aborts_on_blocked_literal() {
     let evaluator = DeclarativeOutputPolicyEvaluator::new([DeclarativeOutputPolicyRule::new(
         "blocked-secret",

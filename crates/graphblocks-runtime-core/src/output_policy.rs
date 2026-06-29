@@ -742,15 +742,17 @@ impl DeclarativeOutputPolicyEvaluator {
         let mut redactions = Vec::new();
         let mut search_start = 0;
         while let Some(offset) = chunk.text[search_start..].find(&rule.literal) {
-            let start = search_start + offset;
-            let end = start + rule.literal.len();
+            let start_byte = search_start + offset;
+            let end_byte = start_byte + rule.literal.len();
+            let start = chunk.text[..start_byte].chars().count();
+            let end = start + rule.literal.chars().count();
             redactions.push(RedactionInstruction::text_range(
                 format!("/chunks/{}/text", chunk.sequence),
                 start as u64,
                 end as u64,
                 rule.replacement.clone().unwrap_or_default(),
             ));
-            search_start = end;
+            search_start = end_byte;
         }
         redactions
     }
@@ -1386,16 +1388,35 @@ impl OutputDeliveryGate {
                                     path: redaction.path,
                                 });
                             };
-                            if start > end
-                                || end > chunk.text.len()
-                                || !chunk.text.is_char_boundary(start)
-                                || !chunk.text.is_char_boundary(end)
-                            {
+                            let char_count = chunk.text.chars().count();
+                            if start > end || end > char_count {
                                 return Err(OutputGateError::InvalidRedactionInstruction {
                                     path: redaction.path,
                                 });
                             }
-                            chunk.text.replace_range(start..end, &redaction.replacement);
+                            let start_byte = if start == char_count {
+                                chunk.text.len()
+                            } else {
+                                chunk
+                                    .text
+                                    .char_indices()
+                                    .nth(start)
+                                    .map(|(index, _)| index)
+                                    .unwrap_or(chunk.text.len())
+                            };
+                            let end_byte = if end == char_count {
+                                chunk.text.len()
+                            } else {
+                                chunk
+                                    .text
+                                    .char_indices()
+                                    .nth(end)
+                                    .map(|(index, _)| index)
+                                    .unwrap_or(chunk.text.len())
+                            };
+                            chunk
+                                .text
+                                .replace_range(start_byte..end_byte, &redaction.replacement);
                         }
                     }
                 }

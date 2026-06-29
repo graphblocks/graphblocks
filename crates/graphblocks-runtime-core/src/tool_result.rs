@@ -810,17 +810,30 @@ impl ToolResultValidation {
                             path: redaction.path.clone(),
                         });
                     };
-                    if start > end
-                        || end > text.len()
-                        || !text.is_char_boundary(start)
-                        || !text.is_char_boundary(end)
-                    {
+                    let char_count = text.chars().count();
+                    if start > end || end > char_count {
                         return Err(ToolResultValidationError::ModelOutputRedactionInvalid {
                             tool_call_id: request.result.tool_call_id.clone(),
                             path: redaction.path.clone(),
                         });
                     }
-                    text.replace_range(start..end, &redaction.replacement);
+                    let start_byte = if start == char_count {
+                        text.len()
+                    } else {
+                        text.char_indices()
+                            .nth(start)
+                            .map(|(index, _)| index)
+                            .unwrap_or(text.len())
+                    };
+                    let end_byte = if end == char_count {
+                        text.len()
+                    } else {
+                        text.char_indices()
+                            .nth(end)
+                            .map(|(index, _)| index)
+                            .unwrap_or(text.len())
+                    };
+                    text.replace_range(start_byte..end_byte, &redaction.replacement);
                 }
             }
         }
