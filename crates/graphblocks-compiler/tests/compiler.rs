@@ -1249,6 +1249,73 @@ fn compile_graph_reports_malformed_tool_implementation_bindings() {
 }
 
 #[test]
+fn compile_graph_reports_malformed_tool_definition_identity_fields() {
+    let blank_name = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "blank-tool-definition-name"},
+        "spec": {
+            "bindings": {
+                "tools": {
+                    "search": {
+                        "definition": {
+                            "name": " ",
+                            "description": "Search documentation.",
+                            "inputSchema": "schemas/Search@1"
+                        },
+                        "implementation": {
+                            "kind": "block",
+                            "block": "blocks.search"
+                        }
+                    }
+                }
+            },
+            "nodes": {
+                "model": {"block": "model.generate@1"}
+            }
+        }
+    });
+    let non_string_description = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "non-string-tool-definition-description"},
+        "spec": {
+            "bindings": {
+                "tools": {
+                    "search": {
+                        "definition": {
+                            "name": "knowledge.search",
+                            "description": {"text": "Search documentation."},
+                            "inputSchema": "schemas/Search@1"
+                        },
+                        "implementation": {
+                            "kind": "block",
+                            "block": "blocks.search"
+                        }
+                    }
+                }
+            },
+            "nodes": {
+                "model": {"block": "model.generate@1"}
+            }
+        }
+    });
+
+    for graph in [blank_name, non_string_description] {
+        let plan = compile_graph(&graph);
+
+        assert_eq!(
+            plan.diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.severity == Severity::Error)
+                .map(|diagnostic| diagnostic.code.as_str())
+                .collect::<Vec<_>>(),
+            vec!["InvalidToolDefinition"]
+        );
+    }
+}
+
+#[test]
 fn compile_graph_reports_tool_definition_with_invalid_input_schema() {
     let graph = json!({
         "apiVersion": GRAPH_API_VERSION,

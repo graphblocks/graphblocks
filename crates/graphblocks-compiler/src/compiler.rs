@@ -1103,6 +1103,23 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 ));
             }
             if let Some(definition) = tool.get("definition").and_then(Value::as_object) {
+                for definition_field in ["name", "description"] {
+                    if !definition
+                        .get(definition_field)
+                        .and_then(Value::as_str)
+                        .is_some_and(|value| !value.trim().is_empty())
+                    {
+                        diagnostics.push(Diagnostic::error(
+                            "InvalidToolDefinition",
+                            format!(
+                                "tool definition {definition_field} must be a non-empty string"
+                            ),
+                            format!(
+                                "$.spec.bindings.tools.{tool_key}.definition.{definition_field}"
+                            ),
+                        ));
+                    }
+                }
                 let input_schema = definition
                     .get("inputSchema")
                     .or_else(|| definition.get("input_schema"))
