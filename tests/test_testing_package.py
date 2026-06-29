@@ -126,6 +126,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
     by_suite = {manifest.suite_id: manifest for manifest in manifests}
 
     assert tuple(by_suite) == (
+        "application-events",
         "budget-race",
         "compiler",
         "exhaustion",
@@ -148,6 +149,9 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
             "completion_reserve_allows_only_one_concurrent_spender",
         ],
     }
+    assert by_suite["application-events"].case_ids == (
+        "output_cutoff_discards_late_commit_for_same_response",
+    )
     assert by_suite["budget-race"].content_digest().startswith("sha256:")
     assert "TckSuiteManifest" in graphblocks_testing.__all__
     assert "load_tck_suite_manifests" in graphblocks_testing.__all__
@@ -160,9 +164,9 @@ def test_testing_package_cli_lists_tck_suite_manifests(monkeypatch, capsys) -> N
     assert graphblocks_testing.main(["list", str(ROOT / "tck"), "--json"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload["suiteCount"] == 7
-    assert payload["suites"][0]["suite_id"] == "budget-race"
-    assert payload["suites"][0]["case_count"] == 2
+    assert payload["suiteCount"] == 8
+    assert payload["suites"][0]["suite_id"] == "application-events"
+    assert payload["suites"][0]["case_count"] == 1
     assert payload["contentDigest"].startswith("sha256:")
     assert "main" in graphblocks_testing.__all__
 
@@ -187,6 +191,7 @@ def test_testing_package_cli_checks_tck_suite_coverage(monkeypatch, capsys) -> N
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
     assert payload["claim"]["tck_suites"] == [
+        "application-events",
         "budget-race",
         "compiler",
         "exhaustion",

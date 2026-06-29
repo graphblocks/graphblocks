@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 import graphblocks
@@ -34,6 +37,9 @@ from graphblocks import (
     ToolResult,
     ToolResultEvent,
 )
+
+
+ROOT = Path(__file__).parents[1]
 
 
 def _metadata() -> ApplicationEventMetadata:
@@ -959,6 +965,56 @@ def test_application_event_stream_state_discards_late_output_after_cutoff() -> N
         "ToolCallPolicyStopped",
         "ToolCallIncomplete",
     ]
+
+
+def test_application_event_stream_state_matches_shared_tck_cases() -> None:
+    cases = json.loads(
+        (ROOT / "tck" / "application-events" / "cases.json").read_text(encoding="utf-8")
+    )
+
+    for case in cases:
+        state = ApplicationEventStreamState()
+        case_name = case["name"]
+        for sequence, operation in enumerate(case["operations"], start=1):
+            response_id = operation.get("responseId", case.get("responseId", "response-1"))
+            metadata = ApplicationEventMetadata(
+                event_id=f"{case_name}:{sequence}",
+                run_id=case.get("runId", "run-1"),
+                response_id=response_id,
+                turn_id=operation.get("turnId", case.get("turnId")),
+                sequence=sequence,
+                release_id=case.get("releaseId", "release-1"),
+                policy_snapshot_id=case.get("policySnapshotId", "policy-1"),
+                occurred_at=operation.get("occurredAt", "2026-06-23T00:00:00Z"),
+            )
+            if operation["op"] == "output_cutoff":
+                cutoff = OutputCutoff(
+                    stream_id=operation.get("streamId", case.get("streamId", "stream-1")),
+                    response_id=response_id,
+                    turn_id=operation.get("turnId", case.get("turnId")),
+                    last_generated_sequence=operation["lastGeneratedSequence"],
+                    last_policy_accepted_sequence=operation["lastPolicyAcceptedSequence"],
+                    last_client_delivered_sequence=operation["lastClientDeliveredSequence"],
+                    terminal_reason=operation["terminalReason"],
+                    draft_disposition=operation["draftDisposition"],
+                    durable_result=operation["durableResult"],
+                    policy_decision_id=operation.get("policyDecisionId"),
+                    occurred_at=operation["occurredAt"],
+                )
+                for event in ApplicationEvent.output_cutoff(metadata, cutoff):
+                    assert state.accept(event) == event, case_name
+            elif operation["op"] == "run_succeeded":
+                event = ApplicationEvent.new(
+                    "RunSucceeded",
+                    metadata,
+                    payload={"status": "succeeded", "outputs": operation.get("outputs", {})},
+                )
+                accepted = state.accept(event)
+                assert (accepted is not None) is operation.get("expectAccepted", True), case_name
+            else:
+                raise AssertionError(f"unknown application event TCK operation {operation['op']!r}")
+
+        assert [event.kind for event in state.accepted_events] == case["expectedAcceptedKinds"]
 
 
 def test_application_event_stream_state_uses_metadata_response_when_payload_response_id_is_invalid() -> None:

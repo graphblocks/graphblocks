@@ -37,6 +37,7 @@ graphblocks schemas manifest schemas
 
 ```bash
 graphblocks-tck list tck
+graphblocks-tck check tck --profiles src/graphblocks/data/conformance-profiles.yaml --profile GB-C3-GOVERNED-RUNTIME
 ```
 
 ## Runtime
@@ -59,6 +60,7 @@ integration package explicitly declares an optional extra.
 
 Shared TCK fixtures live under `tck/`:
 
+- `application-events`
 - `compiler`
 - `schema`
 - `runtime`

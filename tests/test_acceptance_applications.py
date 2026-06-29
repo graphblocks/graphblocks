@@ -105,7 +105,7 @@ def test_conformance_profile_set_resolves_inherited_tck_and_acceptance_requireme
     claim = profile_set.claim_requirements(("GB-C2-AI-APPLICATION",))
 
     assert claim.profile_ids == ("GB-C0-SCHEMA", "GB-C1-LOCAL-RUNTIME", "GB-C2-AI-APPLICATION")
-    assert claim.tck_suites == ("compiler", "runtime", "schema", "sequence")
+    assert claim.tck_suites == ("application-events", "compiler", "runtime", "schema", "sequence")
     assert claim.acceptance_applications == (
         "direct-file-analysis",
         "document-ingestion",
@@ -129,6 +129,7 @@ def test_conformance_profile_tck_suites_have_shared_fixture_manifests(monkeypatc
 
     assert coverage.ok
     assert coverage.claim.tck_suites == (
+        "application-events",
         "budget-race",
         "compiler",
         "exhaustion",
@@ -138,6 +139,7 @@ def test_conformance_profile_tck_suites_have_shared_fixture_manifests(monkeypatc
         "sequence",
     )
     assert coverage.available_suites == (
+        "application-events",
         "budget-race",
         "compiler",
         "exhaustion",
@@ -208,7 +210,7 @@ def test_conformance_profile_claim_validates_tck_and_acceptance_evidence(monkeyp
             profile=suite,
             results=(graphblocks_testing.TckResult(suite, "compiler", "passed"),),
         )
-        for suite in ("compiler", "runtime", "schema", "sequence")
+        for suite in ("application-events", "compiler", "runtime", "schema", "sequence")
     }
 
     validation = profile_set.validate_claim(
@@ -241,6 +243,13 @@ def test_conformance_profile_claim_reports_missing_inherited_tck(monkeypatch) ->
 
     assert not validation.ok
     assert validation.issue_contracts() == [
+        {
+            "code": "ConformanceTckMissing",
+            "profile_id": "GB-C2-AI-APPLICATION",
+            "suite": "application-events",
+            "path": "$.profiles.GB-C2-AI-APPLICATION.tck.application-events",
+            "message": "claimed conformance profile requires a passing TCK suite with no report",
+        },
         {
             "code": "ConformanceTckMissing",
             "profile_id": "GB-C2-AI-APPLICATION",

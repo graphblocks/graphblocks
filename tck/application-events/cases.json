@@ -1,0 +1,43 @@
+[
+  {
+    "name": "output_cutoff_discards_late_commit_for_same_response",
+    "streamId": "stream-1",
+    "responseId": "response-1",
+    "turnId": "turn-1",
+    "operations": [
+      {
+        "op": "output_cutoff",
+        "lastGeneratedSequence": 3,
+        "lastPolicyAcceptedSequence": 1,
+        "lastClientDeliveredSequence": 1,
+        "terminalReason": "policy_denied",
+        "draftDisposition": "retract",
+        "durableResult": "none",
+        "policyDecisionId": "decision-abort",
+        "occurredAt": "2026-06-23T00:00:01Z",
+        "occurredAtUnixMs": 1700001
+      },
+      {
+        "op": "run_succeeded",
+        "responseId": "response-1",
+        "outputs": {
+          "answer": "should not commit"
+        },
+        "expectAccepted": false
+      },
+      {
+        "op": "run_succeeded",
+        "responseId": "response-2",
+        "outputs": {
+          "answer": "replacement"
+        },
+        "expectAccepted": true
+      }
+    ],
+    "expectedAcceptedKinds": [
+      "OutputCutoff",
+      "AssistantRetracted",
+      "RunSucceeded"
+    ]
+  }
+]

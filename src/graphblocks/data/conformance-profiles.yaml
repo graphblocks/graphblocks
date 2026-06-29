@@ -28,6 +28,7 @@ spec:
     - local-flow
     - python-binding
     tck:
+    - application-events
     - runtime
     - sequence
   - id: GB-C2-AI-APPLICATION
