@@ -68,6 +68,7 @@ class TckCase:
     expected_outputs: dict[str, object] | None = None
     expected_ok: bool = True
     expected_status: str = "succeeded"
+    expected_terminal_kind: str | None = None
     block_catalog: tuple[dict[str, object], ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
@@ -82,6 +83,8 @@ class TckCase:
         object.__setattr__(self, "block_catalog", tuple(dict(block) for block in self.block_catalog))
         if self.expected_outputs is not None:
             object.__setattr__(self, "expected_outputs", dict(self.expected_outputs))
+        if self.expected_terminal_kind is not None and not self.expected_terminal_kind.strip():
+            raise ValueError("TCK expected_terminal_kind must not be empty")
 
     @classmethod
     def compiler(
@@ -115,6 +118,7 @@ class TckCase:
         inputs: dict[str, object],
         expected_outputs: dict[str, object] | None = None,
         expected_status: str = "succeeded",
+        expected_terminal_kind: str | None = None,
     ) -> TckCase:
         return cls(
             case_id=case_id,
@@ -123,6 +127,7 @@ class TckCase:
             inputs=inputs,
             expected_outputs=expected_outputs,
             expected_status=expected_status,
+            expected_terminal_kind=expected_terminal_kind,
         )
 
 
@@ -897,6 +902,50 @@ def load_compiler_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     return tuple(cases)
 
 
+def load_runtime_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
+    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(raw_cases, list):
+        raise ValueError("runtime TCK root must be a list")
+    cases: list[TckCase] = []
+    for index, raw_case in enumerate(raw_cases):
+        if not isinstance(raw_case, Mapping):
+            raise ValueError(f"runtime TCK case {index} must be a mapping")
+        case_id = raw_case.get("name")
+        if not isinstance(case_id, str) or not case_id.strip():
+            raise ValueError(f"runtime TCK case {index} requires name")
+        graph = raw_case.get("document")
+        if not isinstance(graph, dict):
+            raise ValueError(f"runtime TCK case {case_id} requires document")
+        inputs = raw_case.get("inputs", {})
+        if not isinstance(inputs, dict):
+            raise ValueError(f"runtime TCK case {case_id} inputs must be a mapping")
+        expected = raw_case.get("expected")
+        if not isinstance(expected, Mapping):
+            raise ValueError(f"runtime TCK case {case_id} requires expected result")
+        expected_status = expected.get("status", "succeeded")
+        if not isinstance(expected_status, str) or not expected_status.strip():
+            raise ValueError(f"runtime TCK case {case_id} requires expected status")
+        expected_outputs = expected.get("outputs")
+        if expected_outputs is not None and not isinstance(expected_outputs, dict):
+            raise ValueError(f"runtime TCK case {case_id} expected outputs must be a mapping")
+        expected_terminal_kind = expected.get("terminal_kind")
+        if expected_terminal_kind is not None and (
+            not isinstance(expected_terminal_kind, str) or not expected_terminal_kind.strip()
+        ):
+            raise ValueError(f"runtime TCK case {case_id} expected terminal_kind must be a string")
+        cases.append(
+            TckCase.runtime(
+                case_id=case_id,
+                graph=graph,
+                inputs=inputs,
+                expected_outputs=expected_outputs,
+                expected_status=expected_status,
+                expected_terminal_kind=expected_terminal_kind,
+            )
+        )
+    return tuple(cases)
+
+
 @dataclass(frozen=True, slots=True)
 class AcceptanceApplication:
     application_id: str
@@ -1400,6 +1449,17 @@ class TckRunner:
                     "path": "$.expected_outputs",
                 }
             )
+        if (
+            case.expected_terminal_kind is not None
+            and observed.get("terminal_kind") != case.expected_terminal_kind
+        ):
+            diagnostics.append(
+                {
+                    "code": "TerminalKindMismatch",
+                    "message": "runtime terminal kind did not match expected terminal kind",
+                    "path": "$.expected_terminal_kind",
+                }
+            )
         return TckResult(
             case_id=case.case_id,
             kind=case.kind,
@@ -1452,6 +1512,7 @@ __all__ = [
     "canonical_hash",
     "compile_graph",
     "load_compiler_tck_cases",
+    "load_runtime_tck_cases",
     "migrate_document",
     "stdlib_registry",
 ]

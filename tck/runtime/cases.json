@@ -1,0 +1,119 @@
+[
+  {
+    "name": "prompt_render_output",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "runtime-prompt-render"
+      },
+      "spec": {
+        "interface": {
+          "inputs": {
+            "message": "graphblocks.ai/Text@1"
+          },
+          "outputs": {
+            "prompt": "graphblocks.ai/Text@1"
+          }
+        },
+        "nodes": {
+          "render": {
+            "block": "prompt.render@1",
+            "config": {
+              "template": "Test {message.text}"
+            },
+            "inputs": {
+              "message": "$input.message"
+            },
+            "outputs": {
+              "prompt": "$output.prompt"
+            }
+          }
+        }
+      }
+    },
+    "inputs": {
+      "message": {
+        "text": "ok"
+      }
+    },
+    "expected": {
+      "status": "succeeded",
+      "terminal_kind": "run_succeeded",
+      "outputs": {
+        "prompt": "Test ok"
+      }
+    }
+  },
+  {
+    "name": "policy_stopped_turn_rejects_commit",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "runtime-policy-stopped-turn"
+      },
+      "spec": {
+        "interface": {
+          "inputs": {
+            "message": "graphblocks.ai/Message@1"
+          },
+          "outputs": {
+            "answer": "graphblocks.ai/Answer@1"
+          }
+        },
+        "nodes": {
+          "begin": {
+            "block": "conversation.begin_turn@1"
+          },
+          "render": {
+            "block": "prompt.render@1",
+            "config": {
+              "template": "Answer: {message.text}"
+            },
+            "inputs": {
+              "message": "$input.message"
+            }
+          },
+          "generate": {
+            "block": "model.generate@1",
+            "config": {
+              "script": {
+                "Answer: Hello": "blocked answer"
+              }
+            },
+            "inputs": {
+              "prompt": "render.prompt"
+            }
+          },
+          "stop": {
+            "block": "conversation.policy_stop_turn@1",
+            "inputs": {
+              "transaction": "begin.transaction"
+            }
+          },
+          "commit": {
+            "block": "conversation.commit_turn@1",
+            "inputs": {
+              "transaction": "stop.transaction",
+              "candidate": "generate.response"
+            },
+            "outputs": {
+              "answer": "$output.answer"
+            }
+          }
+        }
+      }
+    },
+    "inputs": {
+      "message": {
+        "text": "Hello"
+      }
+    },
+    "expected": {
+      "status": "failed",
+      "terminal_kind": "run_failed",
+      "outputs": {}
+    }
+  }
+]
