@@ -93,13 +93,41 @@ def test_client_package_exposes_application_protocol_envelopes(monkeypatch) -> N
         ),
         payload={"delta": "hello"},
     )
+    cutoff = graphblocks_client.ApplicationProtocolEvent.new(
+        "OutputCutoff",
+        graphblocks_client.ApplicationProtocolEventMetadata(
+            event_id="event-2",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            sequence=3,
+            cursor="cursor-3",
+            occurred_at_unix_ms=1_765_843_202_000,
+        ),
+        payload={"response_id": "response-1", "last_client_delivered_sequence": 1},
+    )
+    late = graphblocks_client.ApplicationProtocolEvent.new(
+        "AssistantDraftDelta",
+        graphblocks_client.ApplicationProtocolEventMetadata(
+            event_id="event-3",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            sequence=4,
+            cursor="cursor-4",
+            occurred_at_unix_ms=1_765_843_203_000,
+        ),
+        payload={"response_id": "response-1", "chunk_sequence": 2, "delta": "blocked"},
+    )
+    state = graphblocks_client.ApplicationProtocolStreamState()
 
     assert command.payload == {"graph": "support-agent-turn"}
     assert event.kind == "AssistantDraftDelta"
+    assert state.accept(cutoff) == cutoff
+    assert state.accept(late) is None
     assert "RequestSnapshot" in graphblocks_client.APPLICATION_COMMAND_KINDS
     assert "AssistantDraftDelta" in graphblocks_client.APPLICATION_PROTOCOL_EVENT_KINDS
     assert "ApplicationCommand" in graphblocks_client.__all__
     assert "ApplicationProtocolEvent" in graphblocks_client.__all__
+    assert "ApplicationProtocolStreamState" in graphblocks_client.__all__
 
 
 def test_client_package_runs_local_graph_command_and_emits_events(monkeypatch) -> None:

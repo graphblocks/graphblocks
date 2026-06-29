@@ -1,7 +1,7 @@
 use graphblocks_runtime_core::application_event::{
     ApplicationCommand, ApplicationCommandKind, ApplicationCommandMetadata,
     ApplicationProtocolCapabilities, ApplicationProtocolEvent, ApplicationProtocolEventKind,
-    ApplicationProtocolEventMetadata,
+    ApplicationProtocolEventMetadata, ApplicationProtocolStreamState,
 };
 use serde_json::{Value, json};
 
@@ -213,6 +213,77 @@ fn run_case(case: &Value) -> Result<Value, String> {
                 "sequence": event.metadata.sequence,
                 "cursor": event.metadata.cursor,
                 "payload": event.payload,
+            }))
+        }
+        "stream_cutoff" => {
+            let operations = case
+                .get("operations")
+                .and_then(Value::as_array)
+                .ok_or_else(|| "stream_cutoff case missing operations".to_owned())?;
+            let mut state = ApplicationProtocolStreamState::new();
+            for (operation_index, operation) in operations.iter().enumerate() {
+                let metadata = operation
+                    .get("metadata")
+                    .and_then(Value::as_object)
+                    .ok_or_else(|| {
+                        format!("stream_cutoff operation {operation_index} missing metadata")
+                    })?;
+                let event = ApplicationProtocolEvent::new(
+                    event_kind(required_str(operation, "eventKind")?)?,
+                    ApplicationProtocolEventMetadata {
+                        event_id: required_str(&operation["metadata"], "eventId")?.to_owned(),
+                        protocol_version: required_str(&operation["metadata"], "protocolVersion")?
+                            .to_owned(),
+                        run_id: required_str(&operation["metadata"], "runId")?.to_owned(),
+                        turn_id: metadata
+                            .get("turnId")
+                            .and_then(Value::as_str)
+                            .map(ToOwned::to_owned),
+                        sequence: metadata
+                            .get("sequence")
+                            .and_then(Value::as_u64)
+                            .unwrap_or(0),
+                        cursor: metadata
+                            .get("cursor")
+                            .and_then(Value::as_str)
+                            .map(ToOwned::to_owned),
+                        occurred_at_unix_ms: metadata
+                            .get("occurredAtUnixMs")
+                            .and_then(Value::as_u64)
+                            .unwrap_or(0),
+                    },
+                    operation
+                        .get("payload")
+                        .cloned()
+                        .unwrap_or_else(|| json!({})),
+                )
+                .map_err(|error| error.to_string())?;
+                let expected_accepted = operation
+                    .get("expectAccepted")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true);
+                let accepted = state.accept(event).is_some();
+                if accepted != expected_accepted {
+                    return Err(format!(
+                        "stream_cutoff operation {operation_index} acceptance mismatch"
+                    ));
+                }
+            }
+            let cutoff_response_id = state
+                .accepted_events()
+                .iter()
+                .find(|event| event.kind == ApplicationProtocolEventKind::OutputCutoff)
+                .and_then(|event| event.payload.get("response_id"))
+                .and_then(Value::as_str);
+            Ok(json!({
+                "acceptedKinds": state
+                    .accepted_events()
+                    .iter()
+                    .map(|event| event.kind.as_str())
+                    .collect::<Vec<_>>(),
+                "cutoffResponseId": cutoff_response_id,
+                "cutoffLastClientDeliveredSequence": cutoff_response_id
+                    .and_then(|response_id| state.cutoff_for_response(response_id)),
             }))
         }
         "capability_negotiation" => {

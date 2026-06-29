@@ -3,7 +3,7 @@ use graphblocks_runtime_core::application_event::{
     ApplicationEventError, ApplicationEventKind, ApplicationEventMetadata,
     ApplicationEventStreamState, ApplicationProtocolCapabilities, ApplicationProtocolError,
     ApplicationProtocolEvent, ApplicationProtocolEventKind, ApplicationProtocolEventMetadata,
-    ApplicationProtocolLog,
+    ApplicationProtocolLog, ApplicationProtocolStreamState,
 };
 use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory};
 use graphblocks_runtime_core::output_policy::{
@@ -1395,6 +1395,104 @@ fn application_protocol_events_reject_empty_required_metadata() {
             json!({}),
         ),
         Err(ApplicationProtocolError::EmptyMetadataField { field: "cursor" })
+    );
+}
+
+#[test]
+fn protocol_stream_state_discards_deltas_after_cutoff() {
+    let mut state = ApplicationProtocolStreamState::new();
+    let first_delta = ApplicationProtocolEvent::new(
+        ApplicationProtocolEventKind::AssistantDraftDelta,
+        protocol_event_metadata("event-delta-1", 1, "cursor-1"),
+        json!({
+            "response_id": "response-1",
+            "chunk_sequence": 1,
+            "delta": "allowed",
+        }),
+    )
+    .expect("delta event is valid");
+    let cutoff = ApplicationProtocolEvent::new(
+        ApplicationProtocolEventKind::OutputCutoff,
+        protocol_event_metadata("event-cutoff", 2, "cursor-2"),
+        json!({
+            "response_id": "response-1",
+            "last_client_delivered_sequence": 1,
+            "terminal_reason": "policy_denied",
+        }),
+    )
+    .expect("cutoff event is valid");
+    let late_delta = ApplicationProtocolEvent::new(
+        ApplicationProtocolEventKind::AssistantDraftDelta,
+        protocol_event_metadata("event-delta-2", 3, "cursor-3"),
+        json!({
+            "response_id": "response-1",
+            "chunk_sequence": 2,
+            "delta": "blocked",
+        }),
+    )
+    .expect("late delta event is valid");
+    let incomplete = ApplicationProtocolEvent::new(
+        ApplicationProtocolEventKind::AssistantIncomplete,
+        protocol_event_metadata("event-incomplete", 4, "cursor-4"),
+        json!({
+            "response_id": "response-1",
+            "terminal_reason": "policy_denied",
+        }),
+    )
+    .expect("incomplete event is valid");
+    let replacement_delta = ApplicationProtocolEvent::new(
+        ApplicationProtocolEventKind::AssistantDraftDelta,
+        protocol_event_metadata("event-delta-replacement", 5, "cursor-5"),
+        json!({
+            "response_id": "response-2",
+            "chunk_sequence": 1,
+            "delta": "replacement",
+        }),
+    )
+    .expect("replacement delta event is valid");
+    let duplicate_cutoff = ApplicationProtocolEvent::new(
+        ApplicationProtocolEventKind::OutputCutoff,
+        protocol_event_metadata("event-cutoff-duplicate", 6, "cursor-6"),
+        json!({
+            "response_id": "response-1",
+            "last_client_delivered_sequence": 1,
+            "terminal_reason": "policy_denied",
+        }),
+    )
+    .expect("duplicate cutoff event is valid");
+    let invalid_cutoff = ApplicationProtocolEvent::new(
+        ApplicationProtocolEventKind::OutputCutoff,
+        protocol_event_metadata("event-cutoff-invalid", 7, "cursor-7"),
+        json!({
+            "response_id": "response-3",
+            "terminal_reason": "policy_denied",
+        }),
+    )
+    .expect("invalid cutoff envelope is valid");
+
+    assert_eq!(state.accept(first_delta.clone()), Some(first_delta));
+    assert_eq!(state.accept(cutoff.clone()), Some(cutoff));
+    assert_eq!(state.cutoff_for_response("response-1"), Some(1));
+    assert_eq!(state.accept(late_delta), None);
+    assert_eq!(state.accept(incomplete.clone()), Some(incomplete));
+    assert_eq!(
+        state.accept(replacement_delta.clone()),
+        Some(replacement_delta)
+    );
+    assert_eq!(state.accept(duplicate_cutoff), None);
+    assert_eq!(state.accept(invalid_cutoff), None);
+    assert_eq!(
+        state
+            .accepted_events()
+            .iter()
+            .map(|event| event.kind)
+            .collect::<Vec<_>>(),
+        vec![
+            ApplicationProtocolEventKind::AssistantDraftDelta,
+            ApplicationProtocolEventKind::OutputCutoff,
+            ApplicationProtocolEventKind::AssistantIncomplete,
+            ApplicationProtocolEventKind::AssistantDraftDelta,
+        ]
     );
 }
 

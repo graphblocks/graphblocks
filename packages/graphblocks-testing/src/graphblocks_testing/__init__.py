@@ -21,6 +21,7 @@ from graphblocks.application_event import (
     ApplicationEventStreamState,
     ApplicationProtocolEvent,
     ApplicationProtocolEventMetadata,
+    ApplicationProtocolStreamState,
 )
 from graphblocks.canonical import canonical_hash
 from graphblocks.compiler import compile_graph
@@ -1481,7 +1482,13 @@ def load_application_protocol_tck_cases(path: str | Path) -> tuple[TckCase, ...]
         if not isinstance(case_id, str) or not case_id.strip():
             raise ValueError(f"application-protocol TCK case {index} requires name")
         case_kind = raw_case.get("kind")
-        if case_kind not in {"kind_sets", "command_envelope", "event_envelope", "capability_negotiation"}:
+        if case_kind not in {
+            "kind_sets",
+            "command_envelope",
+            "event_envelope",
+            "capability_negotiation",
+            "stream_cutoff",
+        }:
             raise ValueError(f"application-protocol TCK case {case_id} has unsupported kind {case_kind!r}")
         expected = raw_case.get("expected")
         if not isinstance(expected, Mapping):
@@ -3185,6 +3192,66 @@ class TckRunner:
                     "sequence": event.metadata.sequence,
                     "cursor": event.metadata.cursor,
                     "payload": dict(event.payload),
+                }
+            elif kind == "stream_cutoff":
+                raw_operations = fixture.get("operations", [])
+                if not isinstance(raw_operations, list):
+                    raise ValueError("application-protocol stream_cutoff operations must be a list")
+                state = ApplicationProtocolStreamState()
+                for operation_index, raw_operation in enumerate(raw_operations):
+                    if not isinstance(raw_operation, Mapping):
+                        raise ValueError("application-protocol stream_cutoff operation must be a mapping")
+                    raw_metadata = raw_operation.get("metadata", {})
+                    if not isinstance(raw_metadata, Mapping):
+                        raise ValueError("application-protocol stream_cutoff operation metadata must be a mapping")
+                    raw_payload = raw_operation.get("payload", {})
+                    if not isinstance(raw_payload, Mapping):
+                        raise ValueError("application-protocol stream_cutoff operation payload must be a mapping")
+                    event = ApplicationProtocolEvent.new(
+                        str(raw_operation.get("eventKind", raw_operation.get("event_kind", "RunStarted"))),
+                        ApplicationProtocolEventMetadata(
+                            event_id=str(raw_metadata.get("eventId", raw_metadata.get("event_id", ""))),
+                            protocol_version=str(
+                                raw_metadata.get("protocolVersion", raw_metadata.get("protocol_version", ""))
+                            ),
+                            run_id=str(raw_metadata.get("runId", raw_metadata.get("run_id", ""))),
+                            turn_id=(
+                                str(raw_metadata["turnId"])
+                                if raw_metadata.get("turnId") is not None
+                                else (
+                                    str(raw_metadata["turn_id"])
+                                    if raw_metadata.get("turn_id") is not None
+                                    else None
+                                )
+                            ),
+                            sequence=int(raw_metadata.get("sequence", 0)),
+                            cursor=(
+                                str(raw_metadata["cursor"]) if raw_metadata.get("cursor") is not None else None
+                            ),
+                            occurred_at_unix_ms=int(
+                                raw_metadata.get("occurredAtUnixMs", raw_metadata.get("occurred_at_unix_ms", 0))
+                            ),
+                        ),
+                        payload=dict(raw_payload),
+                    )
+                    accepted = state.accept(event) is not None
+                    if accepted is not bool(raw_operation.get("expectAccepted", True)):
+                        diagnostics.append(
+                            {
+                                "code": "ApplicationProtocolAcceptanceMismatch",
+                                "message": "application protocol event acceptance did not match expected result",
+                                "path": f"$.operations[{operation_index}].expectAccepted",
+                            }
+                        )
+                cutoff_response_id = next(iter(state.cutoffs), None)
+                observed = {
+                    "acceptedKinds": [event.kind for event in state.accepted_events],
+                    "cutoffResponseId": cutoff_response_id,
+                    "cutoffLastClientDeliveredSequence": (
+                        state.cutoff_for_response(cutoff_response_id)
+                        if cutoff_response_id is not None
+                        else None
+                    ),
                 }
             elif kind == "capability_negotiation":
                 raw_server = fixture.get("server", {})

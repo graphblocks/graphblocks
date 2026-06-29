@@ -19,6 +19,7 @@ from graphblocks import (
     ApplicationProtocolError,
     ApplicationProtocolEvent,
     ApplicationProtocolEventMetadata,
+    ApplicationProtocolStreamState,
     ArtifactRef,
     BlockToolImplementation,
     ContentPart,
@@ -332,6 +333,124 @@ def test_application_protocol_metadata_rejects_empty_required_fields() -> None:
             sequence=1,
             occurred_at_unix_ms=1_765_843_201_000,
         )
+
+
+def test_application_protocol_stream_state_discards_deltas_after_cutoff() -> None:
+    state = ApplicationProtocolStreamState()
+    first_delta = ApplicationProtocolEvent.new(
+        "AssistantDraftDelta",
+        ApplicationProtocolEventMetadata(
+            event_id="event-delta-1",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            turn_id="turn-1",
+            sequence=1,
+            cursor="cursor-1",
+            occurred_at_unix_ms=1_765_843_200_000,
+        ),
+        payload={"response_id": "response-1", "chunk_sequence": 1, "delta": "allowed"},
+    )
+    cutoff = ApplicationProtocolEvent.new(
+        "OutputCutoff",
+        ApplicationProtocolEventMetadata(
+            event_id="event-cutoff",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            turn_id="turn-1",
+            sequence=2,
+            cursor="cursor-2",
+            occurred_at_unix_ms=1_765_843_200_100,
+        ),
+        payload={
+            "response_id": "response-1",
+            "last_client_delivered_sequence": 1,
+            "terminal_reason": "policy_denied",
+        },
+    )
+    late_delta = ApplicationProtocolEvent.new(
+        "AssistantDraftDelta",
+        ApplicationProtocolEventMetadata(
+            event_id="event-delta-2",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            turn_id="turn-1",
+            sequence=3,
+            cursor="cursor-3",
+            occurred_at_unix_ms=1_765_843_200_200,
+        ),
+        payload={"response_id": "response-1", "chunk_sequence": 2, "delta": "blocked"},
+    )
+    incomplete = ApplicationProtocolEvent.new(
+        "AssistantIncomplete",
+        ApplicationProtocolEventMetadata(
+            event_id="event-incomplete",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            turn_id="turn-1",
+            sequence=4,
+            cursor="cursor-4",
+            occurred_at_unix_ms=1_765_843_200_300,
+        ),
+        payload={"response_id": "response-1", "terminal_reason": "policy_denied"},
+    )
+    replacement_delta = ApplicationProtocolEvent.new(
+        "AssistantDraftDelta",
+        ApplicationProtocolEventMetadata(
+            event_id="event-delta-replacement",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            turn_id="turn-1",
+            sequence=5,
+            cursor="cursor-5",
+            occurred_at_unix_ms=1_765_843_200_400,
+        ),
+        payload={"response_id": "response-2", "chunk_sequence": 1, "delta": "replacement"},
+    )
+    duplicate_cutoff = ApplicationProtocolEvent.new(
+        "OutputCutoff",
+        ApplicationProtocolEventMetadata(
+            event_id="event-cutoff-duplicate",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            turn_id="turn-1",
+            sequence=6,
+            cursor="cursor-6",
+            occurred_at_unix_ms=1_765_843_200_500,
+        ),
+        payload={
+            "response_id": "response-1",
+            "last_client_delivered_sequence": 1,
+            "terminal_reason": "policy_denied",
+        },
+    )
+    invalid_cutoff = ApplicationProtocolEvent.new(
+        "OutputCutoff",
+        ApplicationProtocolEventMetadata(
+            event_id="event-cutoff-invalid",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            turn_id="turn-1",
+            sequence=7,
+            cursor="cursor-7",
+            occurred_at_unix_ms=1_765_843_200_600,
+        ),
+        payload={"response_id": "response-3", "terminal_reason": "policy_denied"},
+    )
+
+    assert state.accept(first_delta) == first_delta
+    assert state.accept(cutoff) == cutoff
+    assert state.cutoff_for_response("response-1") == 1
+    assert state.accept(late_delta) is None
+    assert state.accept(incomplete) == incomplete
+    assert state.accept(replacement_delta) == replacement_delta
+    assert state.accept(duplicate_cutoff) is None
+    assert state.accept(invalid_cutoff) is None
+    assert [event.kind for event in state.accepted_events] == [
+        "AssistantDraftDelta",
+        "OutputCutoff",
+        "AssistantIncomplete",
+        "AssistantDraftDelta",
+    ]
 
 
 def test_protocol_events_represent_streaming_tool_result_deltas_and_artifacts() -> None:

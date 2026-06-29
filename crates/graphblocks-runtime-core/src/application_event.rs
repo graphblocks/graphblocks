@@ -1156,6 +1156,65 @@ impl ApplicationProtocolEvent {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ApplicationProtocolStreamState {
+    cutoffs: BTreeMap<String, u64>,
+    accepted_events: Vec<ApplicationProtocolEvent>,
+}
+
+impl ApplicationProtocolStreamState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn accept(&mut self, event: ApplicationProtocolEvent) -> Option<ApplicationProtocolEvent> {
+        if event.kind == ApplicationProtocolEventKind::OutputCutoff {
+            let response_id = event
+                .payload
+                .get("response_id")
+                .and_then(Value::as_str)?
+                .to_owned();
+            if response_id.trim().is_empty() || self.cutoffs.contains_key(&response_id) {
+                return None;
+            }
+            let last_client_delivered_sequence = event
+                .payload
+                .get("last_client_delivered_sequence")
+                .and_then(Value::as_u64)?;
+            self.cutoffs
+                .insert(response_id, last_client_delivered_sequence);
+            self.accepted_events.push(event.clone());
+            return Some(event);
+        }
+
+        let response_id = event.payload.get("response_id").and_then(Value::as_str);
+        if let Some(response_id) = response_id
+            && self.cutoffs.contains_key(response_id)
+        {
+            if matches!(
+                event.kind,
+                ApplicationProtocolEventKind::AssistantIncomplete
+                    | ApplicationProtocolEventKind::AssistantRetracted
+            ) {
+                self.accepted_events.push(event.clone());
+                return Some(event);
+            }
+            return None;
+        }
+
+        self.accepted_events.push(event.clone());
+        Some(event)
+    }
+
+    pub fn accepted_events(&self) -> &[ApplicationProtocolEvent] {
+        &self.accepted_events
+    }
+
+    pub fn cutoff_for_response(&self, response_id: &str) -> Option<u64> {
+        self.cutoffs.get(response_id).copied()
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct ApplicationProtocolLog {
     events: Vec<ApplicationProtocolEvent>,

@@ -384,6 +384,45 @@ class ApplicationProtocolEvent:
         return None
 
 
+@dataclass(slots=True)
+class ApplicationProtocolStreamState:
+    cutoffs: dict[str, int] = field(default_factory=dict)
+    accepted_events: list[ApplicationProtocolEvent] = field(default_factory=list)
+
+    def accept(self, event: ApplicationProtocolEvent) -> ApplicationProtocolEvent | None:
+        if event.kind == "OutputCutoff":
+            response_id = event.payload.get("response_id")
+            last_client_delivered_sequence = event.payload.get("last_client_delivered_sequence")
+            if (
+                not isinstance(response_id, str)
+                or not response_id.strip()
+                or not isinstance(last_client_delivered_sequence, int)
+                or isinstance(last_client_delivered_sequence, bool)
+                or last_client_delivered_sequence < 0
+                or response_id in self.cutoffs
+            ):
+                return None
+            self.cutoffs[response_id] = last_client_delivered_sequence
+            self.accepted_events.append(event)
+            return event
+
+        payload_response_id = event.payload.get("response_id")
+        response_id = payload_response_id if isinstance(payload_response_id, str) else None
+        if response_id is not None and response_id in self.cutoffs:
+            if event.kind in {"AssistantIncomplete", "AssistantRetracted"}:
+                self.accepted_events.append(event)
+                return event
+            if event.kind == "AssistantDraftDelta":
+                return None
+            return None
+
+        self.accepted_events.append(event)
+        return event
+
+    def cutoff_for_response(self, response_id: str) -> int | None:
+        return self.cutoffs.get(response_id)
+
+
 @dataclass(frozen=True, slots=True)
 class ApplicationEventMetadata:
     event_id: str
