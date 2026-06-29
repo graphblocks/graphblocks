@@ -5352,4 +5352,66 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn run_stdlib_graph_json_passes_shared_runtime_tck_cases() -> Result<(), String> {
+        let cases_path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tck/runtime/cases.json");
+        let cases_text = std::fs::read_to_string(&cases_path).map_err(|error| error.to_string())?;
+        let cases =
+            serde_json::from_str::<Value>(&cases_text).map_err(|error| error.to_string())?;
+        let cases = cases
+            .as_array()
+            .ok_or_else(|| "runtime TCK root must be an array".to_owned())?;
+
+        for case in cases {
+            let case_name = case
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "runtime TCK case missing name".to_owned())?;
+            let document = case
+                .get("document")
+                .ok_or_else(|| format!("runtime TCK case {case_name} missing document"))?;
+            let expected = case
+                .get("expected")
+                .and_then(Value::as_object)
+                .ok_or_else(|| format!("runtime TCK case {case_name} missing expected object"))?;
+            let inputs = case.get("inputs").cloned().unwrap_or_else(|| json!({}));
+            let result_json = run_stdlib_graph_json(
+                &serde_json::to_string(document).map_err(|error| error.to_string())?,
+                &serde_json::to_string(&inputs).map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())?;
+            let result =
+                serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+            let terminal_kind = result
+                .get("journal")
+                .and_then(Value::as_array)
+                .and_then(|journal| {
+                    journal.iter().rev().find(|record| {
+                        record.get("terminal").and_then(Value::as_bool) == Some(true)
+                    })
+                })
+                .and_then(|record| record.get("kind"))
+                .and_then(Value::as_str);
+
+            assert_eq!(
+                result.get("status").and_then(Value::as_str),
+                expected.get("status").and_then(Value::as_str),
+                "runtime TCK case {case_name} status mismatch",
+            );
+            assert_eq!(
+                terminal_kind,
+                expected.get("terminal_kind").and_then(Value::as_str),
+                "runtime TCK case {case_name} terminal kind mismatch",
+            );
+            assert_eq!(
+                result.get("outputs"),
+                expected.get("outputs"),
+                "runtime TCK case {case_name} outputs mismatch",
+            );
+        }
+
+        Ok(())
+    }
 }
