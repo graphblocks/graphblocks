@@ -290,6 +290,31 @@ def test_testing_package_loads_shared_documents_tck_cases(monkeypatch) -> None:
     assert "load_documents_tck_cases" in graphblocks_testing.__all__
 
 
+def test_testing_package_loads_shared_deployment_tck_cases(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    cases = graphblocks_testing.load_deployment_tck_cases(ROOT / "tck" / "deployment" / "cases.json")
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
+
+    assert [case.kind for case in cases] == ["deployment"] * 5
+    assert report.ok
+    assert {case.case_id for case in cases} == {
+        "deployment_revision_digest_ignores_record_identity",
+        "mutable_production_release_references_are_rejected",
+        "workload_aware_upgrade_policy_preserves_drain_semantics",
+        "rollout_gate_holds_advances_and_aborts_without_unsafe_rollback",
+        "slo_profile_reports_failed_and_missing_conditions",
+    }
+    assert any(result.observed.get("error") == "mutable_references" for result in report.results)
+    assert any(
+        {"kind": "drain_on_old", "revisionId": "rev-old", "fromRevisionId": None, "toRevisionId": None}
+        in result.observed.get("decisions", [])
+        for result in report.results
+    )
+    assert "load_deployment_tck_cases" in graphblocks_testing.__all__
+
+
 def test_testing_package_loads_shared_rag_tck_cases(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -427,6 +452,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "budget-race",
         "compiler",
         "conversation",
+        "deployment",
         "documents",
         "exhaustion",
         "policy",
@@ -478,6 +504,13 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "commit_conflict_marks_turn_failed",
         "branch_and_regenerate_preserve_lineage",
     )
+    assert by_suite["deployment"].case_ids == (
+        "deployment_revision_digest_ignores_record_identity",
+        "mutable_production_release_references_are_rejected",
+        "workload_aware_upgrade_policy_preserves_drain_semantics",
+        "rollout_gate_holds_advances_and_aborts_without_unsafe_rollback",
+        "slo_profile_reports_failed_and_missing_conditions",
+    )
     assert by_suite["documents"].case_ids == (
         "plain_text_revision_parse_preserves_lineage",
         "line_chunks_preserve_source_spans_and_acl",
@@ -518,7 +551,7 @@ def test_testing_package_cli_lists_tck_suite_manifests(monkeypatch, capsys) -> N
     assert graphblocks_testing.main(["list", str(ROOT / "tck"), "--json"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload["suiteCount"] == 17
+    assert payload["suiteCount"] == 18
     assert payload["suites"][0]["suite_id"] == "application-events"
     assert payload["suites"][0]["case_count"] == 3
     assert payload["contentDigest"].startswith("sha256:")
@@ -754,6 +787,21 @@ def test_testing_package_cli_runs_documents_tck_suite(monkeypatch, capsys) -> No
     assert payload["contentDigest"].startswith("sha256:")
 
 
+def test_testing_package_cli_runs_deployment_tck_suite(monkeypatch, capsys) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    exit_code = graphblocks_testing.main(
+        ["run", "deployment", str(ROOT / "tck" / "deployment" / "cases.json"), "--json"]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert {result["kind"] for result in payload["results"]} == {"deployment"}
+    assert payload["contentDigest"].startswith("sha256:")
+
+
 def test_testing_package_cli_runs_tool_execution_tck_suite(monkeypatch, capsys) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -800,6 +848,7 @@ def test_testing_package_cli_runs_all_supported_tck_suites(monkeypatch, capsys) 
         "budget-race",
         "compiler",
         "conversation",
+        "deployment",
         "documents",
         "exhaustion",
         "policy",

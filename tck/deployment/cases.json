@@ -1,0 +1,268 @@
+[
+  {
+    "name": "deployment_revision_digest_ignores_record_identity",
+    "kind": "deployment_revision_digest",
+    "left": {
+      "revisionId": "rev-1",
+      "releaseDigest": "sha256:release",
+      "deploymentSpecHash": "sha256:deployment",
+      "physicalPlanHash": "sha256:physical",
+      "resolvedBindingHash": "sha256:binding",
+      "targetCapabilityHash": "sha256:target",
+      "createdAt": "2026-06-25T00:00:00Z"
+    },
+    "right": {
+      "revisionId": "rev-2",
+      "releaseDigest": "sha256:release",
+      "deploymentSpecHash": "sha256:deployment",
+      "physicalPlanHash": "sha256:physical",
+      "resolvedBindingHash": "sha256:binding",
+      "targetCapabilityHash": "sha256:target",
+      "createdAt": "2026-06-25T00:01:00Z"
+    },
+    "changed": {
+      "revisionId": "rev-3",
+      "releaseDigest": "sha256:other-release",
+      "deploymentSpecHash": "sha256:deployment",
+      "physicalPlanHash": "sha256:physical",
+      "resolvedBindingHash": "sha256:binding",
+      "targetCapabilityHash": "sha256:target",
+      "createdAt": "2026-06-25T00:02:00Z"
+    },
+    "expected": {
+      "sameDigest": true,
+      "changedDigestDifferent": true
+    }
+  },
+  {
+    "name": "mutable_production_release_references_are_rejected",
+    "kind": "release_pins",
+    "release": {
+      "name": "support-agent",
+      "version": "2026.06.25.1",
+      "bundleDigest": "latest",
+      "bundleMediaType": "application/vnd.graphblocks.release.v1",
+      "graphs": {
+        "turn": {
+          "graphHash": "main",
+          "normalizedPlanHash": "sha256:plan-turn"
+        }
+      },
+      "images": {
+        "control": "registry.example.com/graphblocks/control:latest"
+      },
+      "locks": {
+        "python": {
+          "ref": "locks/pylock.toml"
+        }
+      },
+      "knowledge": {
+        "support_docs": {
+          "indexRevision": "current"
+        }
+      },
+      "promptLocks": {
+        "answer": {
+          "kind": "label",
+          "name": "support.answer",
+          "label": "production"
+        }
+      },
+      "supplyChain": {
+        "sbomRef": "oci://registry/sbom:latest",
+        "provenanceRef": "oci://registry/provenance:latest"
+      }
+    },
+    "expected": {
+      "error": "mutable_references",
+      "references": [
+        "bundle.digest",
+        "graphs.turn.graph_hash",
+        "images.control",
+        "locks.python.digest",
+        "knowledge.support_docs.index_revision",
+        "prompts.answer",
+        "supply_chain.provenance_ref",
+        "supply_chain.sbom_ref"
+      ]
+    }
+  },
+  {
+    "name": "workload_aware_upgrade_policy_preserves_drain_semantics",
+    "kind": "upgrade_policy",
+    "oldRevisionId": "rev-old",
+    "newRevisionId": "rev-new",
+    "decisions": [
+      {
+        "workload": "new_request",
+        "checkpointCompatible": false
+      },
+      {
+        "workload": "existing_request",
+        "affinityRevisionId": "rev-old",
+        "checkpointCompatible": false
+      },
+      {
+        "workload": "conversation",
+        "affinityRevisionId": "rev-affinity",
+        "checkpointCompatible": false
+      },
+      {
+        "workload": "durable_job",
+        "affinityRevisionId": "rev-old",
+        "checkpointCompatible": true
+      },
+      {
+        "workload": "realtime_session",
+        "affinityRevisionId": "rev-old",
+        "checkpointCompatible": true
+      }
+    ],
+    "expected": {
+      "decisions": [
+        {
+          "kind": "admit_on_new",
+          "revisionId": "rev-new",
+          "fromRevisionId": null,
+          "toRevisionId": null
+        },
+        {
+          "kind": "finish_on_old",
+          "revisionId": "rev-old",
+          "fromRevisionId": null,
+          "toRevisionId": null
+        },
+        {
+          "kind": "keep_affinity",
+          "revisionId": "rev-affinity",
+          "fromRevisionId": null,
+          "toRevisionId": null
+        },
+        {
+          "kind": "checkpoint_and_migrate",
+          "revisionId": null,
+          "fromRevisionId": "rev-old",
+          "toRevisionId": "rev-new"
+        },
+        {
+          "kind": "drain_on_old",
+          "revisionId": "rev-old",
+          "fromRevisionId": null,
+          "toRevisionId": null
+        }
+      ]
+    }
+  },
+  {
+    "name": "rollout_gate_holds_advances_and_aborts_without_unsafe_rollback",
+    "kind": "rollout_gate",
+    "rolloutId": "rollout-1",
+    "stableRevisionId": "rev-stable",
+    "candidateRevisionId": "rev-canary",
+    "canarySteps": [
+      {
+        "stepId": "canary-10",
+        "trafficPercent": 10,
+        "minimumSamples": 20,
+        "minimumDurationSeconds": 60
+      }
+    ],
+    "evaluations": [
+      {
+        "currentStepIndex": 2,
+        "stepId": "canary-10",
+        "passed": true,
+        "sampleCount": 19,
+        "durationSeconds": 120
+      },
+      {
+        "currentStepIndex": 2,
+        "stepId": "canary-10",
+        "passed": true,
+        "sampleCount": 20,
+        "durationSeconds": 60
+      },
+      {
+        "currentStepIndex": 2,
+        "stepId": "canary-10",
+        "passed": false,
+        "reason": "quality_gate_failed",
+        "sampleCount": 20,
+        "durationSeconds": 60,
+        "nonReversibleEffectObserved": true
+      }
+    ],
+    "expected": {
+      "decisions": [
+        {
+          "decision": "hold",
+          "reason": "minimum_samples_not_met",
+          "nextStepIndex": 2,
+          "nextStatus": "running",
+          "automaticRollbackAllowed": true
+        },
+        {
+          "decision": "advance",
+          "reason": "gate_passed",
+          "nextStepIndex": 3,
+          "nextStatus": "running",
+          "automaticRollbackAllowed": true
+        },
+        {
+          "decision": "abort",
+          "reason": "quality_gate_failed",
+          "nextStepIndex": 2,
+          "nextStatus": "aborted",
+          "automaticRollbackAllowed": false
+        }
+      ]
+    }
+  },
+  {
+    "name": "slo_profile_reports_failed_and_missing_conditions",
+    "kind": "slo_condition",
+    "profileId": "support-prod",
+    "objectives": [
+      "availability",
+      "p95-latency"
+    ],
+    "evaluations": [
+      {
+        "reports": [
+          {
+            "sloId": "availability",
+            "status": "pass"
+          },
+          {
+            "sloId": "p95-latency",
+            "status": "fail"
+          }
+        ]
+      },
+      {
+        "reports": [
+          {
+            "sloId": "availability",
+            "status": "no_data"
+          }
+        ]
+      }
+    ],
+    "expected": {
+      "conditions": [
+        {
+          "type": "SLOWithinBudget",
+          "status": "false",
+          "reason": "slo_failed",
+          "message": "failed SLO objectives: p95-latency"
+        },
+        {
+          "type": "SLOWithinBudget",
+          "status": "unknown",
+          "reason": "slo_no_data",
+          "message": "missing or no-data SLO objectives: availability, p95-latency"
+        }
+      ]
+    }
+  }
+]

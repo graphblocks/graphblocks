@@ -163,6 +163,7 @@ def test_conformance_profile_tck_suites_have_shared_fixture_manifests(monkeypatc
         "budget-race",
         "compiler",
         "conversation",
+        "deployment",
         "documents",
         "exhaustion",
         "policy",
@@ -181,6 +182,23 @@ def test_conformance_profile_tck_suites_have_shared_fixture_manifests(monkeypatc
     assert coverage.content_digest().startswith("sha256:")
     assert "TckSuiteCoverageResult" in graphblocks_testing.__all__
     assert "check_tck_suite_coverage" in graphblocks_testing.__all__
+
+
+def test_c4_conformance_profile_includes_deployment_tck_coverage(monkeypatch) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    profile_set = graphblocks_testing.ConformanceProfileSet.from_document(
+        _load_yaml(ROOT / "src" / "graphblocks" / "data" / "conformance-profiles.yaml")
+    )
+
+    coverage = graphblocks_testing.check_tck_suite_coverage(
+        profile_set,
+        ("GB-C4-PRODUCTION",),
+        graphblocks_testing.load_tck_suite_manifests(ROOT / "tck"),
+    )
+
+    assert coverage.ok
+    assert "deployment" in coverage.claim.tck_suites
+    assert coverage.missing_suites == ()
 
 
 def test_conformance_profile_tck_suite_coverage_reports_missing_fixtures(monkeypatch) -> None:

@@ -66,6 +66,7 @@ Shared TCK fixtures live under `tck/`:
 - `application-events`
 - `application-protocol`
 - `approval-review`
+- `deployment`
 - `compiler`
 - `schema`
 - `runtime`

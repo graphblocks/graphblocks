@@ -33,8 +33,24 @@ from graphblocks.conversation import (
     RegenerateRequest,
     TurnConflictError,
 )
+from graphblocks.deployment import (
+    DeploymentRevision,
+    DeploymentSloProfile,
+    GraphRelease,
+    GraphReleaseGraph,
+    GraphReleaseMutableReferencesError,
+    ImageRef,
+    KnowledgeBinding,
+    PromptLock,
+    ReleaseLockRef,
+    RolloutAnalysisResult,
+    RolloutPlan,
+    RolloutStep,
+    SupplyChainLock,
+    UpgradePolicy,
+)
 from graphblocks.documents import create_local_text_revision, chunk_document_by_lines, parse_plain_text_document
-from graphblocks.evaluation import ResourceSnapshotRef
+from graphblocks.evaluation import ResourceSnapshotRef, SloReport
 from graphblocks.budget import (
     BudgetCompletionReserveStateError,
     BudgetExceededError,
@@ -136,6 +152,7 @@ TckCaseKind = Literal[
     "budget-race",
     "conversation",
     "documents",
+    "deployment",
     "rag",
     "retry",
     "tool-lifecycle",
@@ -223,6 +240,7 @@ class TckCase:
     budget_race_fixture: dict[str, object] = field(default_factory=dict)
     conversation_fixture: dict[str, object] = field(default_factory=dict)
     documents_fixture: dict[str, object] = field(default_factory=dict)
+    deployment_fixture: dict[str, object] = field(default_factory=dict)
     rag_fixture: dict[str, object] = field(default_factory=dict)
     retry_fixture: dict[str, object] = field(default_factory=dict)
     tool_lifecycle_fixture: dict[str, object] = field(default_factory=dict)
@@ -246,6 +264,7 @@ class TckCase:
             "budget-race",
             "conversation",
             "documents",
+            "deployment",
             "rag",
             "retry",
             "tool-lifecycle",
@@ -273,6 +292,7 @@ class TckCase:
         object.__setattr__(self, "budget_race_fixture", dict(self.budget_race_fixture))
         object.__setattr__(self, "conversation_fixture", dict(self.conversation_fixture))
         object.__setattr__(self, "documents_fixture", dict(self.documents_fixture))
+        object.__setattr__(self, "deployment_fixture", dict(self.deployment_fixture))
         object.__setattr__(self, "rag_fixture", dict(self.rag_fixture))
         object.__setattr__(self, "retry_fixture", dict(self.retry_fixture))
         object.__setattr__(self, "tool_lifecycle_fixture", dict(self.tool_lifecycle_fixture))
@@ -301,6 +321,8 @@ class TckCase:
             raise ValueError("conversation TCK case requires fixture")
         if self.kind == "documents" and not self.documents_fixture:
             raise ValueError("documents TCK case requires fixture")
+        if self.kind == "deployment" and not self.deployment_fixture:
+            raise ValueError("deployment TCK case requires fixture")
         if self.kind == "rag" and not self.rag_fixture:
             raise ValueError("rag TCK case requires fixture")
         if self.kind == "retry" and not self.retry_fixture:
@@ -464,6 +486,10 @@ class TckCase:
     @classmethod
     def documents(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
         return cls(case_id=case_id, kind="documents", documents_fixture=fixture)
+
+    @classmethod
+    def deployment(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
+        return cls(case_id=case_id, kind="deployment", deployment_fixture=fixture)
 
     @classmethod
     def rag(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
@@ -1520,6 +1546,33 @@ def load_documents_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     return tuple(cases)
 
 
+def load_deployment_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
+    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(raw_cases, list):
+        raise ValueError("deployment TCK root must be a list")
+    cases: list[TckCase] = []
+    for index, raw_case in enumerate(raw_cases):
+        if not isinstance(raw_case, Mapping):
+            raise ValueError(f"deployment TCK case {index} must be a mapping")
+        case_id = _first_mapping_value(raw_case, "name", "case_id", "caseId")
+        if not isinstance(case_id, str) or not case_id.strip():
+            raise ValueError(f"deployment TCK case {index} requires name")
+        case_kind = raw_case.get("kind")
+        if case_kind not in {
+            "deployment_revision_digest",
+            "release_pins",
+            "upgrade_policy",
+            "rollout_gate",
+            "slo_condition",
+        }:
+            raise ValueError(f"deployment TCK case {case_id} has unsupported kind {case_kind!r}")
+        expected = raw_case.get("expected")
+        if not isinstance(expected, Mapping):
+            raise ValueError(f"deployment TCK case {case_id} requires expected result")
+        cases.append(TckCase.deployment(case_id=case_id, fixture=dict(raw_case)))
+    return tuple(cases)
+
+
 def load_rag_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(raw_cases, list):
@@ -1827,6 +1880,8 @@ def load_tck_cases_for_suite(suite: str, path: str | Path) -> tuple[TckCase, ...
         return load_compiler_tck_cases(path)
     if suite == "conversation":
         return load_conversation_tck_cases(path)
+    if suite == "deployment":
+        return load_deployment_tck_cases(path)
     if suite == "documents":
         return load_documents_tck_cases(path)
     if suite == "exhaustion":
@@ -1872,6 +1927,7 @@ def main(argv: list[str] | None = None) -> int:
             "approval-review",
             "compiler",
             "conversation",
+            "deployment",
             "documents",
             "runtime",
             "schema",
@@ -2478,6 +2534,8 @@ class TckRunner:
                 results.append(self._run_budget_race_case(case))
             elif case.kind == "conversation":
                 results.append(self._run_conversation_case(case))
+            elif case.kind == "deployment":
+                results.append(self._run_deployment_case(case))
             elif case.kind == "documents":
                 results.append(self._run_documents_case(case))
             elif case.kind == "rag":
@@ -4149,6 +4207,367 @@ class TckRunner:
             observed=observed,
         )
 
+    def _run_deployment_case(self, case: TckCase) -> TckResult:
+        diagnostics: list[dict[str, str]] = []
+        fixture = case.deployment_fixture
+        kind = str(fixture.get("kind", ""))
+        expected = fixture.get("expected", {})
+        if not isinstance(expected, Mapping):
+            expected = {}
+            diagnostics.append(
+                {
+                    "code": "DeploymentExpectedInvalid",
+                    "message": "deployment TCK expected result must be a mapping",
+                    "path": "$.expected",
+                }
+            )
+
+        observed: dict[str, object] = {}
+        try:
+            if kind == "deployment_revision_digest":
+                raw_left = fixture.get("left", {})
+                raw_right = fixture.get("right", {})
+                raw_changed = fixture.get("changed", {})
+                if not isinstance(raw_left, Mapping) or not isinstance(raw_right, Mapping) or not isinstance(raw_changed, Mapping):
+                    raise ValueError("deployment revision digest case requires left, right, and changed mappings")
+                left = DeploymentRevision(
+                    revision_id=str(raw_left.get("revisionId", raw_left.get("revision_id", ""))),
+                    release_digest=str(raw_left.get("releaseDigest", raw_left.get("release_digest", ""))),
+                    deployment_spec_hash=str(
+                        raw_left.get("deploymentSpecHash", raw_left.get("deployment_spec_hash", ""))
+                    ),
+                    physical_plan_hash=str(raw_left.get("physicalPlanHash", raw_left.get("physical_plan_hash", ""))),
+                    resolved_binding_hash=str(
+                        raw_left.get("resolvedBindingHash", raw_left.get("resolved_binding_hash", ""))
+                    ),
+                    target_capability_hash=str(
+                        raw_left.get("targetCapabilityHash", raw_left.get("target_capability_hash", ""))
+                    ),
+                    created_at=str(raw_left.get("createdAt", raw_left.get("created_at", ""))),
+                )
+                right = DeploymentRevision(
+                    revision_id=str(raw_right.get("revisionId", raw_right.get("revision_id", ""))),
+                    release_digest=str(raw_right.get("releaseDigest", raw_right.get("release_digest", ""))),
+                    deployment_spec_hash=str(
+                        raw_right.get("deploymentSpecHash", raw_right.get("deployment_spec_hash", ""))
+                    ),
+                    physical_plan_hash=str(raw_right.get("physicalPlanHash", raw_right.get("physical_plan_hash", ""))),
+                    resolved_binding_hash=str(
+                        raw_right.get("resolvedBindingHash", raw_right.get("resolved_binding_hash", ""))
+                    ),
+                    target_capability_hash=str(
+                        raw_right.get("targetCapabilityHash", raw_right.get("target_capability_hash", ""))
+                    ),
+                    created_at=str(raw_right.get("createdAt", raw_right.get("created_at", ""))),
+                )
+                changed = DeploymentRevision(
+                    revision_id=str(raw_changed.get("revisionId", raw_changed.get("revision_id", ""))),
+                    release_digest=str(raw_changed.get("releaseDigest", raw_changed.get("release_digest", ""))),
+                    deployment_spec_hash=str(
+                        raw_changed.get("deploymentSpecHash", raw_changed.get("deployment_spec_hash", ""))
+                    ),
+                    physical_plan_hash=str(raw_changed.get("physicalPlanHash", raw_changed.get("physical_plan_hash", ""))),
+                    resolved_binding_hash=str(
+                        raw_changed.get("resolvedBindingHash", raw_changed.get("resolved_binding_hash", ""))
+                    ),
+                    target_capability_hash=str(
+                        raw_changed.get("targetCapabilityHash", raw_changed.get("target_capability_hash", ""))
+                    ),
+                    created_at=str(raw_changed.get("createdAt", raw_changed.get("created_at", ""))),
+                )
+                observed = {
+                    "sameDigest": left.content_digest() == right.content_digest(),
+                    "changedDigestDifferent": left.content_digest() != changed.content_digest(),
+                }
+            elif kind == "release_pins":
+                raw_release = fixture.get("release", {})
+                if not isinstance(raw_release, Mapping):
+                    raise ValueError("deployment release_pins case requires release")
+                release = GraphRelease(
+                    name=str(raw_release.get("name", "")),
+                    version=str(raw_release.get("version", "")),
+                )
+                bundle_digest = raw_release.get("bundleDigest", raw_release.get("bundle_digest"))
+                bundle_media_type = raw_release.get("bundleMediaType", raw_release.get("bundle_media_type"))
+                if bundle_digest is not None and bundle_media_type is not None:
+                    release = release.with_bundle(str(bundle_digest), str(bundle_media_type))
+                application_hash = raw_release.get("applicationHash", raw_release.get("application_hash"))
+                if application_hash is not None:
+                    release = release.with_application_hash(str(application_hash))
+                raw_graphs = raw_release.get("graphs", {})
+                if isinstance(raw_graphs, Mapping):
+                    for graph_name, raw_graph in raw_graphs.items():
+                        if isinstance(raw_graph, Mapping):
+                            release = release.with_graph(
+                                str(graph_name),
+                                GraphReleaseGraph(
+                                    str(raw_graph.get("graphHash", raw_graph.get("graph_hash", ""))),
+                                    str(
+                                        raw_graph.get(
+                                            "normalizedPlanHash",
+                                            raw_graph.get("normalized_plan_hash", ""),
+                                        )
+                                    ),
+                                ),
+                            )
+                raw_images = raw_release.get("images", {})
+                if isinstance(raw_images, Mapping):
+                    for image_name, image_ref in raw_images.items():
+                        release = release.with_image(str(image_name), ImageRef(str(image_ref)))
+                raw_locks = raw_release.get("locks", {})
+                if isinstance(raw_locks, Mapping):
+                    for lock_name, raw_lock in raw_locks.items():
+                        if isinstance(raw_lock, Mapping):
+                            release = release.with_lock(
+                                str(lock_name),
+                                ReleaseLockRef(
+                                    str(raw_lock.get("ref", raw_lock.get("reference", ""))),
+                                    digest=(
+                                        str(raw_lock.get("digest")) if raw_lock.get("digest") is not None else None
+                                    ),
+                                    lock_type=(
+                                        str(raw_lock.get("lockType", raw_lock.get("lock_type")))
+                                        if raw_lock.get("lockType", raw_lock.get("lock_type")) is not None
+                                        else None
+                                    ),
+                                ),
+                            )
+                raw_knowledge = raw_release.get("knowledge", {})
+                if isinstance(raw_knowledge, Mapping):
+                    for index_id, raw_binding in raw_knowledge.items():
+                        if isinstance(raw_binding, Mapping):
+                            release = release.with_knowledge(
+                                KnowledgeBinding(
+                                    str(index_id),
+                                    str(raw_binding.get("indexRevision", raw_binding.get("index_revision", ""))),
+                                )
+                            )
+                raw_prompt_locks = raw_release.get("promptLocks", raw_release.get("prompt_locks", {}))
+                if isinstance(raw_prompt_locks, Mapping):
+                    for prompt_name, raw_prompt in raw_prompt_locks.items():
+                        if isinstance(raw_prompt, Mapping):
+                            prompt_kind = str(raw_prompt.get("kind", ""))
+                            if prompt_kind == "versioned":
+                                prompt_lock = PromptLock.versioned(
+                                    str(raw_prompt.get("name", prompt_name)),
+                                    str(raw_prompt.get("version", "")),
+                                )
+                            else:
+                                prompt_lock = PromptLock.label(
+                                    str(raw_prompt.get("name", prompt_name)),
+                                    str(raw_prompt.get("label", raw_prompt.get("lockLabel", ""))),
+                                )
+                            release = release.with_prompt_lock(str(prompt_name), prompt_lock)
+                raw_supply_chain = raw_release.get("supplyChain", raw_release.get("supply_chain"))
+                if isinstance(raw_supply_chain, Mapping):
+                    release = release.with_supply_chain(
+                        SupplyChainLock(
+                            sbom_ref=(
+                                str(raw_supply_chain.get("sbomRef", raw_supply_chain.get("sbom_ref")))
+                                if raw_supply_chain.get("sbomRef", raw_supply_chain.get("sbom_ref")) is not None
+                                else None
+                            ),
+                            provenance_ref=(
+                                str(
+                                    raw_supply_chain.get(
+                                        "provenanceRef",
+                                        raw_supply_chain.get("provenance_ref"),
+                                    )
+                                )
+                                if raw_supply_chain.get("provenanceRef", raw_supply_chain.get("provenance_ref"))
+                                is not None
+                                else None
+                            ),
+                            signature_policy=(
+                                str(
+                                    raw_supply_chain.get(
+                                        "signaturePolicy",
+                                        raw_supply_chain.get("signature_policy"),
+                                    )
+                                )
+                                if raw_supply_chain.get("signaturePolicy", raw_supply_chain.get("signature_policy"))
+                                is not None
+                                else None
+                            ),
+                        )
+                    )
+                try:
+                    release.validate_production_pins()
+                    observed = {"error": None, "references": []}
+                except GraphReleaseMutableReferencesError as error:
+                    observed = {"error": "mutable_references", "references": list(error.references)}
+            elif kind == "upgrade_policy":
+                policy = UpgradePolicy.workload_aware(
+                    str(fixture.get("oldRevisionId", fixture.get("old_revision_id", ""))),
+                    str(fixture.get("newRevisionId", fixture.get("new_revision_id", ""))),
+                )
+                observed_decisions = []
+                raw_decisions = fixture.get("decisions", [])
+                if not isinstance(raw_decisions, list):
+                    raise ValueError("deployment upgrade_policy case decisions must be a list")
+                for raw_decision in raw_decisions:
+                    if not isinstance(raw_decision, Mapping):
+                        raise ValueError("deployment upgrade_policy decision must be a mapping")
+                    decision = policy.decide(
+                        str(raw_decision.get("workload", "")),
+                        (
+                            str(raw_decision.get("affinityRevisionId", raw_decision.get("affinity_revision_id")))
+                            if raw_decision.get("affinityRevisionId", raw_decision.get("affinity_revision_id"))
+                            is not None
+                            else None
+                        ),
+                        bool(raw_decision.get("checkpointCompatible", raw_decision.get("checkpoint_compatible", False))),
+                    )
+                    observed_decisions.append(
+                        {
+                            "kind": decision.kind,
+                            "revisionId": decision.revision_id,
+                            "fromRevisionId": decision.from_revision_id,
+                            "toRevisionId": decision.to_revision_id,
+                        }
+                    )
+                observed = {"decisions": observed_decisions}
+            elif kind == "rollout_gate":
+                raw_steps = fixture.get("canarySteps", fixture.get("canary_steps", []))
+                if not isinstance(raw_steps, list):
+                    raise ValueError("deployment rollout_gate case canarySteps must be a list")
+                canary_steps = []
+                for raw_step in raw_steps:
+                    if not isinstance(raw_step, Mapping):
+                        raise ValueError("deployment rollout_gate canary step must be a mapping")
+                    canary_steps.append(
+                        RolloutStep.canary(
+                            str(raw_step.get("stepId", raw_step.get("step_id", ""))),
+                            traffic_percent=int(raw_step.get("trafficPercent", raw_step.get("traffic_percent", 0))),
+                            minimum_samples=(
+                                int(raw_step.get("minimumSamples", raw_step.get("minimum_samples")))
+                                if raw_step.get("minimumSamples", raw_step.get("minimum_samples")) is not None
+                                else None
+                            ),
+                            minimum_duration_seconds=(
+                                int(
+                                    raw_step.get(
+                                        "minimumDurationSeconds",
+                                        raw_step.get("minimum_duration_seconds"),
+                                    )
+                                )
+                                if raw_step.get(
+                                    "minimumDurationSeconds",
+                                    raw_step.get("minimum_duration_seconds"),
+                                )
+                                is not None
+                                else None
+                            ),
+                        )
+                    )
+                plan = RolloutPlan.canary(
+                    str(fixture.get("rolloutId", fixture.get("rollout_id", ""))),
+                    str(fixture.get("stableRevisionId", fixture.get("stable_revision_id", ""))),
+                    str(fixture.get("candidateRevisionId", fixture.get("candidate_revision_id", ""))),
+                    canary_steps=tuple(canary_steps),
+                )
+                observed_decisions = []
+                raw_evaluations = fixture.get("evaluations", [])
+                if not isinstance(raw_evaluations, list):
+                    raise ValueError("deployment rollout_gate case evaluations must be a list")
+                for raw_evaluation in raw_evaluations:
+                    if not isinstance(raw_evaluation, Mapping):
+                        raise ValueError("deployment rollout_gate evaluation must be a mapping")
+                    state = plan.initial_state().advance_for_test(
+                        int(raw_evaluation.get("currentStepIndex", raw_evaluation.get("current_step_index", 0)))
+                    )
+                    result = RolloutAnalysisResult(
+                        step_id=str(raw_evaluation.get("stepId", raw_evaluation.get("step_id", ""))),
+                        passed=bool(raw_evaluation.get("passed", False)),
+                        sample_count=int(raw_evaluation.get("sampleCount", raw_evaluation.get("sample_count", 0))),
+                        duration_seconds=int(
+                            raw_evaluation.get("durationSeconds", raw_evaluation.get("duration_seconds", 0))
+                        ),
+                        reason=(
+                            str(raw_evaluation.get("reason")) if raw_evaluation.get("reason") is not None else None
+                        ),
+                        non_reversible_effect_observed=bool(
+                            raw_evaluation.get(
+                                "nonReversibleEffectObserved",
+                                raw_evaluation.get("non_reversible_effect_observed", False),
+                            )
+                        ),
+                    )
+                    decision = state.evaluate_gate(result)
+                    observed_decisions.append(
+                        {
+                            "decision": decision.decision,
+                            "reason": decision.reason,
+                            "nextStepIndex": decision.next_state.current_step_index,
+                            "nextStatus": decision.next_state.status,
+                            "automaticRollbackAllowed": decision.automatic_rollback_allowed,
+                        }
+                    )
+                observed = {"decisions": observed_decisions}
+            elif kind == "slo_condition":
+                profile = DeploymentSloProfile(
+                    profile_id=str(fixture.get("profileId", fixture.get("profile_id", ""))),
+                    slo_objective_ids=_string_tuple(fixture.get("objectives")),
+                )
+                raw_evaluations = fixture.get("evaluations", [])
+                if not isinstance(raw_evaluations, list):
+                    raise ValueError("deployment slo_condition case evaluations must be a list")
+                conditions = []
+                for raw_evaluation in raw_evaluations:
+                    if not isinstance(raw_evaluation, Mapping):
+                        raise ValueError("deployment slo_condition evaluation must be a mapping")
+                    raw_reports = raw_evaluation.get("reports", [])
+                    if not isinstance(raw_reports, list):
+                        raise ValueError("deployment slo_condition reports must be a list")
+                    reports = []
+                    for raw_report in raw_reports:
+                        if not isinstance(raw_report, Mapping):
+                            raise ValueError("deployment slo_condition report must be a mapping")
+                        reports.append(
+                            SloReport(
+                                slo_id=str(raw_report.get("sloId", raw_report.get("slo_id", ""))),
+                                indicator="",
+                                window="",
+                                status=str(raw_report.get("status", "")),
+                                objective=0.0,
+                            )
+                        )
+                    conditions.append(profile.evaluate_slo_reports(reports).condition_contract())
+                observed = {"conditions": conditions}
+            else:
+                diagnostics.append(
+                    {
+                        "code": "DeploymentKindUnknown",
+                        "message": f"deployment TCK kind {kind!r} is not supported",
+                        "path": "$.kind",
+                    }
+                )
+        except Exception as error:
+            diagnostics.append(
+                {
+                    "code": "DeploymentExecutionError",
+                    "message": str(error),
+                    "path": "$",
+                }
+            )
+
+        for key, expected_value in expected.items():
+            if observed.get(str(key)) != expected_value:
+                diagnostics.append(
+                    {
+                        "code": "DeploymentExpectedMismatch",
+                        "message": f"deployment observed {key} did not match expected value",
+                        "path": f"$.expected.{key}",
+                    }
+                )
+        return TckResult(
+            case_id=case.case_id,
+            kind=case.kind,
+            status="passed" if not diagnostics else "failed",
+            diagnostics=tuple(diagnostics),
+            observed=observed,
+        )
+
     def _run_rag_case(self, case: TckCase) -> TckResult:
         diagnostics: list[dict[str, str]] = []
         fixture = case.rag_fixture
@@ -5624,6 +6043,7 @@ __all__ = [
     "load_budget_race_tck_cases",
     "load_compiler_tck_cases",
     "load_conversation_tck_cases",
+    "load_deployment_tck_cases",
     "load_documents_tck_cases",
     "load_exhaustion_tck_cases",
     "load_policy_tck_cases",
