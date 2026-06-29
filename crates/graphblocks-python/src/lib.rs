@@ -426,6 +426,40 @@ fn required_alias_u64(
         })
 }
 
+fn optional_alias_string<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    primary: &str,
+    alternate: &str,
+    label: &str,
+) -> PyResult<Option<&'a str>> {
+    object
+        .get(primary)
+        .or_else(|| object.get(alternate))
+        .map(|value| {
+            value
+                .as_str()
+                .ok_or_else(|| PyValueError::new_err(format!("{label}.{primary} must be a string")))
+        })
+        .transpose()
+}
+
+fn optional_alias_u64(
+    object: &serde_json::Map<String, Value>,
+    primary: &str,
+    alternate: &str,
+    label: &str,
+) -> PyResult<Option<u64>> {
+    object
+        .get(primary)
+        .or_else(|| object.get(alternate))
+        .map(|value| {
+            value.as_u64().ok_or_else(|| {
+                PyValueError::new_err(format!("{label}.{primary} must be an unsigned integer"))
+            })
+        })
+        .transpose()
+}
+
 fn parse_work_kind(value: &Value, label: &str) -> PyResult<WorkKind> {
     let Some(value) = value.as_str() else {
         return Err(PyValueError::new_err(format!("{label} must be a string")));
@@ -1227,37 +1261,29 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
     let gate_value = parse_json_argument(gate_json, "output gate")?;
     let operations_value = parse_json_argument(operations_json, "output gate operations")?;
     let gate_object = json_object(&gate_value, "gate")?;
-    let stream_id = required_string(gate_object, "streamId", "gate")?;
-    let response_id = required_string(gate_object, "responseId", "gate")?;
-    let last_generated_sequence = gate_object
-        .get("lastGeneratedSequence")
-        .map(|value| {
-            value.as_u64().ok_or_else(|| {
-                PyValueError::new_err("gate.lastGeneratedSequence must be an unsigned integer")
-            })
-        })
-        .transpose()?
-        .unwrap_or(0);
-    let last_policy_accepted_sequence = gate_object
-        .get("lastPolicyAcceptedSequence")
-        .map(|value| {
-            value.as_u64().ok_or_else(|| {
-                PyValueError::new_err("gate.lastPolicyAcceptedSequence must be an unsigned integer")
-            })
-        })
-        .transpose()?
-        .unwrap_or(0);
-    let last_client_delivered_sequence = gate_object
-        .get("lastClientDeliveredSequence")
-        .map(|value| {
-            value.as_u64().ok_or_else(|| {
-                PyValueError::new_err(
-                    "gate.lastClientDeliveredSequence must be an unsigned integer",
-                )
-            })
-        })
-        .transpose()?
-        .unwrap_or(0);
+    let stream_id = required_alias_string(gate_object, "streamId", "stream_id", "gate")?;
+    let response_id = required_alias_string(gate_object, "responseId", "response_id", "gate")?;
+    let last_generated_sequence = optional_alias_u64(
+        gate_object,
+        "lastGeneratedSequence",
+        "last_generated_sequence",
+        "gate",
+    )?
+    .unwrap_or(0);
+    let last_policy_accepted_sequence = optional_alias_u64(
+        gate_object,
+        "lastPolicyAcceptedSequence",
+        "last_policy_accepted_sequence",
+        "gate",
+    )?
+    .unwrap_or(0);
+    let last_client_delivered_sequence = optional_alias_u64(
+        gate_object,
+        "lastClientDeliveredSequence",
+        "last_client_delivered_sequence",
+        "gate",
+    )?
+    .unwrap_or(0);
     let mut pending_chunks = Vec::new();
     if let Some(pending) = gate_object.get("pending") {
         let Some(pending) = pending.as_array() else {
@@ -1267,13 +1293,9 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
             let pending_label = format!("gate.pending[{pending_index}]");
             let pending_chunk = json_object(pending_chunk, &pending_label)?;
             pending_chunks.push(GenerationChunk::text(
-                pending_chunk
-                    .get("streamId")
-                    .and_then(Value::as_str)
+                optional_alias_string(pending_chunk, "streamId", "stream_id", &pending_label)?
                     .unwrap_or(stream_id),
-                pending_chunk
-                    .get("responseId")
-                    .and_then(Value::as_str)
+                optional_alias_string(pending_chunk, "responseId", "response_id", &pending_label)?
                     .unwrap_or(response_id),
                 required_u64(pending_chunk, "sequence", &pending_label)?,
                 required_string(pending_chunk, "text", &pending_label)?,
@@ -1282,7 +1304,12 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
     }
     let mut gate = if let Some(cutoff) = gate_object.get("cutoff") {
         let cutoff = json_object(cutoff, "gate.cutoff")?;
-        let terminal_reason = match required_string(cutoff, "terminalReason", "gate.cutoff")? {
+        let terminal_reason = match required_alias_string(
+            cutoff,
+            "terminalReason",
+            "terminal_reason",
+            "gate.cutoff",
+        )? {
             "policy_denied" => TerminalReason::PolicyDenied,
             "budget_exhausted" => TerminalReason::BudgetExhausted,
             "cancelled" => TerminalReason::Cancelled,
@@ -1293,7 +1320,12 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
                 )));
             }
         };
-        let draft_disposition = match required_string(cutoff, "draftDisposition", "gate.cutoff")? {
+        let draft_disposition = match required_alias_string(
+            cutoff,
+            "draftDisposition",
+            "draft_disposition",
+            "gate.cutoff",
+        )? {
             "keep" => DraftDisposition::Keep,
             "mark_incomplete" => DraftDisposition::MarkIncomplete,
             "retract" => DraftDisposition::Retract,
@@ -1303,7 +1335,12 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
                 )));
             }
         };
-        let durable_result = match required_string(cutoff, "durableResult", "gate.cutoff")? {
+        let durable_result = match required_alias_string(
+            cutoff,
+            "durableResult",
+            "durable_result",
+            "gate.cutoff",
+        )? {
             "none" => DurableResult::None,
             "incomplete" => DurableResult::Incomplete,
             "partial" => DurableResult::Partial,
@@ -1313,51 +1350,51 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
                 )));
             }
         };
-        let turn_id = cutoff
-            .get("turnId")
-            .map(|value| {
-                value
-                    .as_str()
-                    .map(str::to_owned)
-                    .ok_or_else(|| PyValueError::new_err("gate.cutoff.turnId must be a string"))
-            })
-            .transpose()?;
-        let policy_decision_id = cutoff
-            .get("policyDecisionId")
-            .map(|value| {
-                value.as_str().map(str::to_owned).ok_or_else(|| {
-                    PyValueError::new_err("gate.cutoff.policyDecisionId must be a string")
-                })
-            })
-            .transpose()?;
+        let turn_id =
+            optional_alias_string(cutoff, "turnId", "turn_id", "gate.cutoff")?.map(str::to_owned);
+        let policy_decision_id = optional_alias_string(
+            cutoff,
+            "policyDecisionId",
+            "policy_decision_id",
+            "gate.cutoff",
+        )?
+        .map(str::to_owned);
         OutputDeliveryGate::from_cutoff(OutputCutoff {
-            stream_id: cutoff
-                .get("streamId")
-                .and_then(Value::as_str)
+            stream_id: optional_alias_string(cutoff, "streamId", "stream_id", "gate.cutoff")?
                 .unwrap_or(stream_id)
                 .to_owned(),
-            response_id: cutoff
-                .get("responseId")
-                .and_then(Value::as_str)
+            response_id: optional_alias_string(cutoff, "responseId", "response_id", "gate.cutoff")?
                 .unwrap_or(response_id)
                 .to_owned(),
             turn_id,
-            last_generated_sequence: required_u64(cutoff, "lastGeneratedSequence", "gate.cutoff")?,
-            last_policy_accepted_sequence: required_u64(
+            last_generated_sequence: required_alias_u64(
                 cutoff,
-                "lastPolicyAcceptedSequence",
+                "lastGeneratedSequence",
+                "last_generated_sequence",
                 "gate.cutoff",
             )?,
-            last_client_delivered_sequence: required_u64(
+            last_policy_accepted_sequence: required_alias_u64(
+                cutoff,
+                "lastPolicyAcceptedSequence",
+                "last_policy_accepted_sequence",
+                "gate.cutoff",
+            )?,
+            last_client_delivered_sequence: required_alias_u64(
                 cutoff,
                 "lastClientDeliveredSequence",
+                "last_client_delivered_sequence",
                 "gate.cutoff",
             )?,
             terminal_reason,
             draft_disposition,
             durable_result,
             policy_decision_id,
-            occurred_at_unix_ms: required_u64(cutoff, "occurredAtUnixMs", "gate.cutoff")?,
+            occurred_at_unix_ms: required_alias_u64(
+                cutoff,
+                "occurredAtUnixMs",
+                "occurred_at_unix_ms",
+                "gate.cutoff",
+            )?,
         })
     } else {
         OutputDeliveryGate::from_state(
@@ -1370,10 +1407,7 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
         )
     }
     .map_err(|error| PyValueError::new_err(format!("invalid output gate state: {error:?}")))?;
-    if let Some(turn_id) = gate_object.get("turnId") {
-        let Some(turn_id) = turn_id.as_str() else {
-            return Err(PyValueError::new_err("gate.turnId must be a string"));
-        };
+    if let Some(turn_id) = optional_alias_string(gate_object, "turnId", "turn_id", "gate")? {
         gate = gate.with_turn_id(turn_id);
     }
     if let Some(delivery_policy) = gate_object.get("deliveryPolicy") {
@@ -2946,6 +2980,53 @@ mod tests {
         let error = evaluate_output_gate_json(&gate_json, &late_operations)
             .expect_err("late chunks must remain blocked after a resumed cutoff");
         assert!(error.to_string().contains("PolicyStopped"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_output_gate_json_accepts_snake_case_cutoff_state() -> Result<(), String> {
+        pyo3::Python::initialize();
+        let gate = json!({
+            "stream_id": "stream-1",
+            "response_id": "response-1",
+            "cutoff": {
+                "stream_id": "stream-1",
+                "response_id": "response-1",
+                "turn_id": "turn-1",
+                "last_generated_sequence": 2,
+                "last_policy_accepted_sequence": 1,
+                "last_client_delivered_sequence": 1,
+                "terminal_reason": "policy_denied",
+                "draft_disposition": "retract",
+                "durable_result": "none",
+                "policy_decision_id": "decision-abort",
+                "occurred_at_unix_ms": 1_100
+            }
+        });
+        let gate_json = serde_json::to_string(&gate).map_err(|error| error.to_string())?;
+        let empty_operations =
+            serde_json::to_string(&json!([])).map_err(|error| error.to_string())?;
+
+        let result_json = evaluate_output_gate_json(&gate_json, &empty_operations)
+            .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            result
+                .get("cutoff")
+                .and_then(|cutoff| cutoff.get("policyDecisionId"))
+                .and_then(Value::as_str),
+            Some("decision-abort")
+        );
+        assert_eq!(
+            result
+                .get("cutoff")
+                .and_then(|cutoff| cutoff.get("lastClientDeliveredSequence"))
+                .and_then(Value::as_u64),
+            Some(1)
+        );
 
         Ok(())
     }
