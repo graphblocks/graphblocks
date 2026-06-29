@@ -1,0 +1,389 @@
+[
+  {
+    "name": "source_cursor_replay_and_commit_advances",
+    "kind": "source_replay",
+    "guarantee": "at_least_once",
+    "events": [
+      {
+        "stream": "orders",
+        "partition": 0,
+        "offset": 10,
+        "payload": {
+          "orderId": "ord-10"
+        },
+        "eventTimeUnixMs": 1820000000010
+      },
+      {
+        "stream": "orders",
+        "partition": 0,
+        "offset": 11,
+        "payload": {
+          "orderId": "ord-11"
+        },
+        "eventTimeUnixMs": 1820000000011
+      },
+      {
+        "stream": "orders",
+        "partition": 0,
+        "offset": 12,
+        "payload": {
+          "orderId": "ord-12"
+        },
+        "eventTimeUnixMs": 1820000000012
+      }
+    ],
+    "firstPoll": {
+      "demand": 2
+    },
+    "commitCursor": {
+      "stream": "orders",
+      "partition": 0,
+      "offset": 11
+    },
+    "afterCommitPoll": {
+      "demand": 2
+    },
+    "replayPoll": {
+      "cursor": {
+        "stream": "orders",
+        "partition": 0,
+        "offset": 10
+      },
+      "demand": 2
+    },
+    "expected": {
+      "firstOffsets": [
+        10,
+        11
+      ],
+      "firstHighCursor": {
+        "stream": "orders",
+        "partition": 0,
+        "offset": 11
+      },
+      "firstWatermarkUnixMs": 1820000000011,
+      "afterCommitOffsets": [
+        12
+      ],
+      "replayOffsets": [
+        11,
+        12
+      ]
+    }
+  },
+  {
+    "name": "source_rejects_unknown_cursor_and_stale_commit",
+    "kind": "source_errors",
+    "guarantee": "at_least_once",
+    "events": [
+      {
+        "stream": "orders",
+        "partition": 0,
+        "offset": 10,
+        "payload": {
+          "orderId": "ord-10"
+        },
+        "eventTimeUnixMs": 1820000000010
+      }
+    ],
+    "committedCursor": {
+      "stream": "orders",
+      "partition": 0,
+      "offset": 10
+    },
+    "staleCursor": {
+      "stream": "orders",
+      "partition": 0,
+      "offset": 9
+    },
+    "unknownCursor": {
+      "stream": "payments",
+      "partition": 0,
+      "offset": 10
+    },
+    "expected": {
+      "pausedError": "source_paused",
+      "staleError": "stale_commit",
+      "staleCurrentOffset": 10,
+      "staleAttemptedOffset": 9,
+      "unknownCommitError": "unknown_source_cursor",
+      "unknownPollError": "unknown_source_cursor"
+    }
+  },
+  {
+    "name": "window_watermark_closes_after_allowed_lateness",
+    "kind": "window_lateness",
+    "policy": {
+      "sizeMs": 1000,
+      "allowedLatenessMs": 250,
+      "accumulationMode": "discarding"
+    },
+    "events": [
+      {
+        "stream": "orders",
+        "partition": 0,
+        "offset": 100,
+        "payload": {
+          "orderId": "ord-100"
+        },
+        "eventTimeUnixMs": 1820000000100
+      },
+      {
+        "stream": "orders",
+        "partition": 0,
+        "offset": 900,
+        "payload": {
+          "orderId": "ord-900"
+        },
+        "eventTimeUnixMs": 1820000000900
+      }
+    ],
+    "watermarks": [
+      1820000001249,
+      1820000001250
+    ],
+    "lateEvent": {
+      "stream": "orders",
+      "partition": 0,
+      "offset": 999,
+      "payload": {
+        "orderId": "ord-999"
+      },
+      "eventTimeUnixMs": 1820000000999
+    },
+    "expected": {
+      "closedBefore": 0,
+      "closedAfter": 1,
+      "paneStartUnixMs": 1820000000000,
+      "paneEndUnixMs": 1820000001000,
+      "paneOffsets": [
+        100,
+        900
+      ],
+      "lateError": "late_event",
+      "lateWatermarkUnixMs": 1820000001250
+    }
+  },
+  {
+    "name": "sink_idempotency_replays_and_rejects_conflict",
+    "kind": "sink_idempotency",
+    "sinkId": "warehouse",
+    "request": {
+      "runId": "run-000001",
+      "nodeId": "load",
+      "nodeAttemptId": "load-attempt-1",
+      "idempotencyKey": "warehouse-tx-1",
+      "preconditionDigest": "sha256:conversation-revision-1",
+      "payload": {
+        "rows": 2
+      }
+    },
+    "conflictPayload": {
+      "rows": 3
+    },
+    "expected": {
+      "firstSequence": 1,
+      "replaySequence": 1,
+      "replayReplayed": true,
+      "committedCount": 1,
+      "conflictError": "idempotency_conflict"
+    }
+  },
+  {
+    "name": "checkpoint_barrier_and_replay_latest_compatible",
+    "kind": "checkpoint_replay",
+    "missingPlanBarrier": {
+      "checkpointId": "checkpoint-000000",
+      "runId": "run-000001",
+      "releaseId": "release-2026-06-23",
+      "deploymentRevisionId": "deployment-rev-1",
+      "planHash": "",
+      "checkpointSchema": {
+        "schemaId": "graphblocks.ai/Checkpoint",
+        "schemaVersion": 1
+      },
+      "stateRevision": 0,
+      "schemaVersions": {
+        "checkpoint": 1
+      }
+    },
+    "barrier": {
+      "checkpointId": "checkpoint-000002",
+      "runId": "run-000001",
+      "releaseId": "release-2026-06-23",
+      "deploymentRevisionId": "deployment-rev-1",
+      "planHash": "sha256:plan",
+      "checkpointSchema": {
+        "schemaId": "graphblocks.ai/Checkpoint",
+        "schemaVersion": 1
+      },
+      "stateRevision": 2,
+      "completedNodes": [
+        "extract"
+      ],
+      "pendingNodes": [
+        "load"
+      ],
+      "sourceCursors": {
+        "orders": {
+          "stream": "orders",
+          "partition": 0,
+          "offset": 42
+        },
+        "payments": {
+          "stream": "payments",
+          "partition": 1,
+          "offset": 7
+        }
+      },
+      "operatorState": {
+        "dedupe": {
+          "seen": 2
+        }
+      },
+      "sinkCommitMetadata": {
+        "warehouse": {
+          "tx": "checkpoint-000002"
+        }
+      },
+      "schemaVersions": {
+        "checkpoint": 1
+      },
+      "createdAtUnixMs": 1820000000002
+    },
+    "checkpoints": [
+      {
+        "checkpointId": "checkpoint-000001",
+        "runId": "run-000001",
+        "releaseId": "release-2026-06-23",
+        "deploymentRevisionId": "deployment-rev-1",
+        "planHash": "sha256:plan",
+        "checkpointSchema": {
+          "schemaId": "graphblocks.ai/Checkpoint",
+          "schemaVersion": 1
+        },
+        "stateRevision": 1,
+        "sourceCursors": {
+          "orders": {
+            "stream": "orders",
+            "partition": 0,
+            "offset": 41
+          }
+        },
+        "schemaVersions": {
+          "checkpoint": 1
+        },
+        "createdAtUnixMs": 1820000000001
+      },
+      {
+        "checkpointId": "checkpoint-000002",
+        "runId": "run-000001",
+        "releaseId": "release-2026-06-23",
+        "deploymentRevisionId": "deployment-rev-1",
+        "planHash": "sha256:plan",
+        "checkpointSchema": {
+          "schemaId": "graphblocks.ai/Checkpoint",
+          "schemaVersion": 1
+        },
+        "stateRevision": 2,
+        "sourceCursors": {
+          "orders": {
+            "stream": "orders",
+            "partition": 0,
+            "offset": 42
+          }
+        },
+        "schemaVersions": {
+          "checkpoint": 1
+        },
+        "createdAtUnixMs": 1820000000002
+      },
+      {
+        "checkpointId": "checkpoint-000003",
+        "runId": "run-000001",
+        "releaseId": "release-2026-06-23",
+        "deploymentRevisionId": "deployment-rev-1",
+        "planHash": "sha256:other-plan",
+        "checkpointSchema": {
+          "schemaId": "graphblocks.ai/Checkpoint",
+          "schemaVersion": 1
+        },
+        "stateRevision": 3,
+        "sourceCursors": {
+          "orders": {
+            "stream": "orders",
+            "partition": 0,
+            "offset": 43
+          }
+        },
+        "schemaVersions": {
+          "checkpoint": 1
+        },
+        "createdAtUnixMs": 1820000000003
+      }
+    ],
+    "lookup": {
+      "runId": "run-000001",
+      "releaseId": "release-2026-06-23",
+      "deploymentRevisionId": "deployment-rev-1",
+      "planHash": "sha256:plan"
+    },
+    "missingLookup": {
+      "runId": "run-000001",
+      "releaseId": "release-2026-06-23",
+      "deploymentRevisionId": "deployment-rev-2",
+      "planHash": "sha256:plan"
+    },
+    "expected": {
+      "missingPlanError": "missing_plan_hash",
+      "commitPlan": [
+        "orders:orders:0:42",
+        "payments:payments:1:7"
+      ],
+      "latestCheckpointId": "checkpoint-000002",
+      "latestStateRevision": 2,
+      "missingCompatible": true
+    }
+  },
+  {
+    "name": "policy_stop_denies_late_durable_result_but_records_effect_outcome",
+    "kind": "tool_terminal_policy_stop",
+    "policyStop": {
+      "responseId": "response-1",
+      "policyDecisionId": "decision-abort",
+      "lastPolicyAcceptedSequence": 7,
+      "occurredAtUnixMs": 1820000000000
+    },
+    "lateDurableResult": {
+      "runId": "run-000001",
+      "responseId": "response-1",
+      "toolCallId": "call-1",
+      "revision": 1,
+      "terminalState": "completed",
+      "argumentsDigest": "sha256:arguments",
+      "completedAtUnixMs": 1820000000100,
+      "outputDigest": "sha256:output",
+      "durableResultCommitted": true
+    },
+    "auditedLateEffect": {
+      "runId": "run-000001",
+      "responseId": "response-1",
+      "toolCallId": "call-2",
+      "revision": 1,
+      "terminalState": "cancelled",
+      "argumentsDigest": "sha256:arguments-late",
+      "completedAtUnixMs": 1820000000200,
+      "effectCommitted": true
+    },
+    "expected": {
+      "policyStopSequence": 1,
+      "policyStopReplaySequence": 1,
+      "policyStopReplayReplayed": true,
+      "lateDurableResultError": "response_policy_stopped",
+      "auditedTerminalState": "cancelled",
+      "auditedEffectCommitted": true,
+      "auditedDurableResultCommitted": false,
+      "toolTerminalCount": 1
+    }
+  }
+]

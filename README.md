@@ -71,6 +71,7 @@ Shared TCK fixtures live under `tck/`:
 - `conversation`
 - `deployment`
 - `documents`
+- `durable`
 - `exhaustion`
 - `orchestration`
 - `policy`

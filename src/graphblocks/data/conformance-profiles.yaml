@@ -117,3 +117,5 @@ spec:
     - watermarks
     - checkpoint-barriers
     - sink-commit
+    tck:
+    - durable

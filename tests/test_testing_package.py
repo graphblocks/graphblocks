@@ -315,6 +315,29 @@ def test_testing_package_loads_shared_deployment_tck_cases(monkeypatch) -> None:
     assert "load_deployment_tck_cases" in graphblocks_testing.__all__
 
 
+def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
+
+    assert [case.kind for case in cases] == ["durable"] * 6
+    assert report.ok
+    assert {case.case_id for case in cases} == {
+        "source_cursor_replay_and_commit_advances",
+        "source_rejects_unknown_cursor_and_stale_commit",
+        "window_watermark_closes_after_allowed_lateness",
+        "sink_idempotency_replays_and_rejects_conflict",
+        "checkpoint_barrier_and_replay_latest_compatible",
+        "policy_stop_denies_late_durable_result_but_records_effect_outcome",
+    }
+    assert any(result.observed.get("replayOffsets") == [11, 12] for result in report.results)
+    assert any(result.observed.get("lateDurableResultError") == "response_policy_stopped" for result in report.results)
+    assert "load_durable_tck_cases" in graphblocks_testing.__all__
+
+
 def test_testing_package_loads_shared_orchestration_tck_cases(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -478,6 +501,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "conversation",
         "deployment",
         "documents",
+        "durable",
         "exhaustion",
         "orchestration",
         "policy",
@@ -541,6 +565,14 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "line_chunks_preserve_source_spans_and_acl",
         "invalid_chunk_size_is_rejected",
     )
+    assert by_suite["durable"].case_ids == (
+        "source_cursor_replay_and_commit_advances",
+        "source_rejects_unknown_cursor_and_stale_commit",
+        "window_watermark_closes_after_allowed_lateness",
+        "sink_idempotency_replays_and_rejects_conflict",
+        "checkpoint_barrier_and_replay_latest_compatible",
+        "policy_stop_denies_late_durable_result_but_records_effect_outcome",
+    )
     assert by_suite["orchestration"].case_ids == (
         "task_plan_patch_revises_steps_and_preserves_noop_digest",
         "task_plan_dependency_and_cycle_errors_are_explicit",
@@ -584,7 +616,7 @@ def test_testing_package_cli_lists_tck_suite_manifests(monkeypatch, capsys) -> N
     assert graphblocks_testing.main(["list", str(ROOT / "tck"), "--json"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload["suiteCount"] == 19
+    assert payload["suiteCount"] == 20
     assert payload["suites"][0]["suite_id"] == "application-events"
     assert payload["suites"][0]["case_count"] == 3
     assert payload["contentDigest"].startswith("sha256:")
@@ -835,6 +867,22 @@ def test_testing_package_cli_runs_deployment_tck_suite(monkeypatch, capsys) -> N
     assert payload["contentDigest"].startswith("sha256:")
 
 
+def test_testing_package_cli_runs_durable_tck_suite(monkeypatch, capsys) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    exit_code = graphblocks_testing.main(
+        ["run", "durable", str(ROOT / "tck" / "durable" / "cases.json"), "--json"]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert {result["kind"] for result in payload["results"]} == {"durable"}
+    assert payload["contentDigest"].startswith("sha256:")
+
+
 def test_testing_package_cli_runs_orchestration_tck_suite(monkeypatch, capsys) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -881,6 +929,7 @@ def test_testing_package_cli_runs_usage_tck_suite(monkeypatch, capsys) -> None:
 
 
 def test_testing_package_cli_runs_all_supported_tck_suites(monkeypatch, capsys) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-durable" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
 
@@ -898,6 +947,7 @@ def test_testing_package_cli_runs_all_supported_tck_suites(monkeypatch, capsys) 
         "conversation",
         "deployment",
         "documents",
+        "durable",
         "exhaustion",
         "orchestration",
         "policy",

@@ -165,6 +165,7 @@ def test_conformance_profile_tck_suites_have_shared_fixture_manifests(monkeypatc
         "conversation",
         "deployment",
         "documents",
+        "durable",
         "exhaustion",
         "orchestration",
         "policy",
@@ -216,6 +217,23 @@ def test_x1_conformance_profile_includes_orchestration_tck_coverage(monkeypatch)
 
     assert coverage.ok
     assert "orchestration" in coverage.claim.tck_suites
+    assert coverage.missing_suites == ()
+
+
+def test_x3_conformance_profile_includes_durable_tck_coverage(monkeypatch) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    profile_set = graphblocks_testing.ConformanceProfileSet.from_document(
+        _load_yaml(ROOT / "src" / "graphblocks" / "data" / "conformance-profiles.yaml")
+    )
+
+    coverage = graphblocks_testing.check_tck_suite_coverage(
+        profile_set,
+        ("GB-X3-DURABLE-STREAM",),
+        graphblocks_testing.load_tck_suite_manifests(ROOT / "tck"),
+    )
+
+    assert coverage.ok
+    assert "durable" in coverage.claim.tck_suites
     assert coverage.missing_suites == ()
 
 

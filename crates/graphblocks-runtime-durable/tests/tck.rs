@@ -1,0 +1,615 @@
+use std::collections::BTreeMap;
+
+use graphblocks_runtime_durable::{
+    AccumulationMode, CheckpointBarrier, CheckpointBarrierError, DeliveryGuarantee, DurableError,
+    DurableToolTerminalRecord, DurableToolTerminalState, InMemoryCheckpointStore,
+    InMemoryDurableSink, InMemoryDurableSource, InMemoryDurableToolTerminalStore, SchemaRef,
+    SinkCommitError, SinkCommitRequest, SourceCursor, SourceEvent, ToolTerminalStoreError,
+    Watermark, WindowAccumulator, WindowPolicy,
+};
+use serde_json::{Map, Value, json};
+
+#[test]
+fn rust_durable_runtime_matches_shared_tck_cases() -> Result<(), String> {
+    let cases = serde_json::from_str::<Value>(include_str!("../../../tck/durable/cases.json"))
+        .map_err(|error| error.to_string())?;
+    let cases = cases
+        .as_array()
+        .ok_or_else(|| "durable TCK root must be an array".to_owned())?;
+
+    for case in cases {
+        run_case(case)?;
+    }
+
+    Ok(())
+}
+
+fn run_case(case: &Value) -> Result<(), String> {
+    let name = required_str(case, "name", "durable TCK case")?;
+    let kind = required_str(case, "kind", name)?;
+    let expected = case
+        .get("expected")
+        .and_then(Value::as_object)
+        .ok_or_else(|| format!("durable TCK case {name} is missing expected result"))?;
+
+    let observed = match kind {
+        "source_replay" => {
+            let events = event_list(case, "events", name)?;
+            let mut source = InMemoryDurableSource::new(
+                guarantee_from(required_str(case, "guarantee", name)?)?,
+                events,
+            );
+            let first_poll = required_object(case, "firstPoll", name)?;
+            let first = source
+                .poll(None, required_u64_map(first_poll, "demand", name)? as usize)
+                .map_err(|error| format!("{name} first poll failed: {error:?}"))?;
+            let commit_cursor = cursor_from(required_object(case, "commitCursor", name)?)?;
+            source
+                .commit(commit_cursor)
+                .map_err(|error| format!("{name} commit failed: {error:?}"))?;
+            let after_commit_poll = required_object(case, "afterCommitPoll", name)?;
+            let after_commit = source
+                .poll(
+                    None,
+                    required_u64_map(after_commit_poll, "demand", name)? as usize,
+                )
+                .map_err(|error| format!("{name} after commit poll failed: {error:?}"))?;
+            let replay_poll = required_object(case, "replayPoll", name)?;
+            let replay_cursor = cursor_from(required_object_map(replay_poll, "cursor", name)?)?;
+            let replay = source
+                .poll(
+                    Some(replay_cursor),
+                    required_u64_map(replay_poll, "demand", name)? as usize,
+                )
+                .map_err(|error| format!("{name} replay poll failed: {error:?}"))?;
+            let high_cursor = first.high_cursor().cloned();
+            json!({
+                "firstOffsets": offsets(&first.events),
+                "firstHighCursor": high_cursor.map(|cursor| cursor_contract(&cursor)),
+                "firstWatermarkUnixMs": first.watermark.map(|watermark| watermark.unix_ms),
+                "afterCommitOffsets": offsets(&after_commit.events),
+                "replayOffsets": offsets(&replay.events),
+            })
+        }
+        "source_errors" => {
+            let events = event_list(case, "events", name)?;
+            let mut source = InMemoryDurableSource::new(
+                guarantee_from(required_str(case, "guarantee", name)?)?,
+                events,
+            );
+            source.pause();
+            let paused_error = match source.poll(None, 1) {
+                Err(DurableError::SourcePaused) => Some("source_paused"),
+                _ => None,
+            };
+            source.resume();
+            source
+                .commit(cursor_from(required_object(
+                    case,
+                    "committedCursor",
+                    name,
+                )?)?)
+                .map_err(|error| format!("{name} initial commit failed: {error:?}"))?;
+            let mut stale_error = None;
+            let mut stale_current_offset = None;
+            let mut stale_attempted_offset = None;
+            if let Err(DurableError::StaleCommit { current, attempted }) =
+                source.commit(cursor_from(required_object(case, "staleCursor", name)?)?)
+            {
+                stale_error = Some("stale_commit");
+                stale_current_offset = Some(current.offset);
+                stale_attempted_offset = Some(attempted.offset);
+            }
+            let unknown_cursor = cursor_from(required_object(case, "unknownCursor", name)?)?;
+            let unknown_commit_error = match source.commit(unknown_cursor.clone()) {
+                Err(DurableError::UnknownSourceCursor { .. }) => Some("unknown_source_cursor"),
+                _ => None,
+            };
+            let unknown_poll_error = match source.poll(Some(unknown_cursor), 1) {
+                Err(DurableError::UnknownSourceCursor { .. }) => Some("unknown_source_cursor"),
+                _ => None,
+            };
+            json!({
+                "pausedError": paused_error,
+                "staleError": stale_error,
+                "staleCurrentOffset": stale_current_offset,
+                "staleAttemptedOffset": stale_attempted_offset,
+                "unknownCommitError": unknown_commit_error,
+                "unknownPollError": unknown_poll_error,
+            })
+        }
+        "window_lateness" => {
+            let policy = required_object(case, "policy", name)?;
+            let policy = WindowPolicy::tumbling_event_time(
+                required_u64_map(policy, "sizeMs", name)?,
+                required_u64_map(policy, "allowedLatenessMs", name)?,
+                accumulation_from(required_str_map(policy, "accumulationMode", name)?)?,
+            )
+            .map_err(|error| format!("{name} policy failed: {error:?}"))?;
+            let mut windows = WindowAccumulator::new(policy);
+            for event in event_list(case, "events", name)? {
+                windows
+                    .ingest(event)
+                    .map_err(|error| format!("{name} ingest failed: {error:?}"))?;
+            }
+            let watermarks = case
+                .get("watermarks")
+                .and_then(Value::as_array)
+                .ok_or_else(|| format!("{name} is missing watermarks"))?;
+            let before = windows.advance_watermark(Watermark::event_time(
+                watermarks
+                    .first()
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| format!("{name} has invalid first watermark"))?,
+            ));
+            let after = windows.advance_watermark(Watermark::event_time(
+                watermarks
+                    .get(1)
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| format!("{name} has invalid second watermark"))?,
+            ));
+            let mut late_error = None;
+            let mut late_watermark_unix_ms = None;
+            if let Err(DurableError::LateEvent {
+                watermark_unix_ms, ..
+            }) = windows.ingest(event_from(required_object(case, "lateEvent", name)?)?)
+            {
+                late_error = Some("late_event");
+                late_watermark_unix_ms = Some(watermark_unix_ms);
+            }
+            let pane = after.first();
+            json!({
+                "closedBefore": before.len(),
+                "closedAfter": after.len(),
+                "paneStartUnixMs": pane.map(|pane| pane.start_unix_ms),
+                "paneEndUnixMs": pane.map(|pane| pane.end_unix_ms),
+                "paneOffsets": pane.map(|pane| offsets(&pane.events)).unwrap_or_default(),
+                "lateError": late_error,
+                "lateWatermarkUnixMs": late_watermark_unix_ms,
+            })
+        }
+        "sink_idempotency" => {
+            let mut sink = InMemoryDurableSink::new(required_str(case, "sinkId", name)?);
+            let request = sink_request_from(required_object(case, "request", name)?)?;
+            let first = sink
+                .commit(request.clone())
+                .map_err(|error| format!("{name} first sink commit failed: {error:?}"))?;
+            let replay = sink
+                .commit(request.clone())
+                .map_err(|error| format!("{name} replay sink commit failed: {error:?}"))?;
+            let conflict = SinkCommitRequest {
+                payload: case.get("conflictPayload").cloned().unwrap_or(Value::Null),
+                ..request
+            };
+            let conflict_error = match sink.commit(conflict) {
+                Err(SinkCommitError::IdempotencyConflict { .. }) => Some("idempotency_conflict"),
+                _ => None,
+            };
+            json!({
+                "firstSequence": first.sequence,
+                "replaySequence": replay.sequence,
+                "replayReplayed": replay.replayed,
+                "committedCount": sink.committed_count(),
+                "conflictError": conflict_error,
+            })
+        }
+        "checkpoint_replay" => {
+            let missing_plan = barrier_from(required_object(case, "missingPlanBarrier", name)?)?;
+            let missing_plan_error = match missing_plan.validate() {
+                Err(error) => Some(checkpoint_error_name(&error)),
+                Ok(()) => None,
+            };
+            let barrier = barrier_from(required_object(case, "barrier", name)?)?;
+            barrier
+                .validate()
+                .map_err(|error| format!("{name} barrier failed: {error:?}"))?;
+            let commit_plan = barrier
+                .source_commit_plan()
+                .cursors
+                .iter()
+                .map(|(source_id, cursor)| {
+                    format!(
+                        "{}:{}:{}:{}",
+                        source_id, cursor.stream, cursor.partition, cursor.offset
+                    )
+                })
+                .collect::<Vec<_>>();
+            let mut store = InMemoryCheckpointStore::new();
+            for raw_checkpoint in required_array(case, "checkpoints", name)? {
+                store
+                    .put(barrier_from(raw_checkpoint.as_object().ok_or_else(
+                        || format!("{name} checkpoint entry must be an object"),
+                    )?)?)
+                    .map_err(|error| format!("{name} checkpoint store put failed: {error:?}"))?;
+            }
+            let lookup = required_object(case, "lookup", name)?;
+            let latest = store.latest_compatible(
+                required_str_map(lookup, "runId", name)?,
+                required_str_map(lookup, "releaseId", name)?,
+                required_str_map(lookup, "deploymentRevisionId", name)?,
+                required_str_map(lookup, "planHash", name)?,
+            );
+            let missing_lookup = required_object(case, "missingLookup", name)?;
+            let missing = store.latest_compatible(
+                required_str_map(missing_lookup, "runId", name)?,
+                required_str_map(missing_lookup, "releaseId", name)?,
+                required_str_map(missing_lookup, "deploymentRevisionId", name)?,
+                required_str_map(missing_lookup, "planHash", name)?,
+            );
+            json!({
+                "missingPlanError": missing_plan_error,
+                "commitPlan": commit_plan,
+                "latestCheckpointId": latest.as_ref().map(|checkpoint| checkpoint.checkpoint_id.clone()),
+                "latestStateRevision": latest.as_ref().map(|checkpoint| checkpoint.state_revision),
+                "missingCompatible": missing.is_none(),
+            })
+        }
+        "tool_terminal_policy_stop" => {
+            let mut store = InMemoryDurableToolTerminalStore::new();
+            let policy_stop = required_object(case, "policyStop", name)?;
+            let committed = store
+                .record_response_policy_stopped(
+                    required_str_map(policy_stop, "responseId", name)?,
+                    required_str_map(policy_stop, "policyDecisionId", name)?,
+                    required_u64_map(policy_stop, "lastPolicyAcceptedSequence", name)?,
+                    required_u64_map(policy_stop, "occurredAtUnixMs", name)?,
+                )
+                .map_err(|error| format!("{name} policy stop failed: {error:?}"))?;
+            let replay = store
+                .record_response_policy_stopped(
+                    required_str_map(policy_stop, "responseId", name)?,
+                    required_str_map(policy_stop, "policyDecisionId", name)?,
+                    required_u64_map(policy_stop, "lastPolicyAcceptedSequence", name)?,
+                    required_u64_map(policy_stop, "occurredAtUnixMs", name)?,
+                )
+                .map_err(|error| format!("{name} policy stop replay failed: {error:?}"))?;
+            let late_result_error = match store.record_tool_terminal(tool_terminal_from(
+                required_object(case, "lateDurableResult", name)?,
+            )?) {
+                Err(ToolTerminalStoreError::ResponsePolicyStopped { .. }) => {
+                    Some("response_policy_stopped")
+                }
+                _ => None,
+            };
+            let audited = store
+                .record_tool_terminal(tool_terminal_from(required_object(
+                    case,
+                    "auditedLateEffect",
+                    name,
+                )?)?)
+                .map_err(|error| format!("{name} audited terminal failed: {error:?}"))?;
+            json!({
+                "policyStopSequence": committed.sequence,
+                "policyStopReplaySequence": replay.sequence,
+                "policyStopReplayReplayed": replay.replayed,
+                "lateDurableResultError": late_result_error,
+                "auditedTerminalState": terminal_state_name(&audited.record.terminal_state),
+                "auditedEffectCommitted": audited.record.effect_committed,
+                "auditedDurableResultCommitted": audited.record.durable_result_committed,
+                "toolTerminalCount": store.tool_terminal_count(),
+            })
+        }
+        other => return Err(format!("durable TCK case {name} has unknown kind {other}")),
+    };
+
+    for (key, expected_value) in expected {
+        assert_eq!(
+            observed.get(key).unwrap_or(&Value::Null),
+            expected_value,
+            "{name} expected field {key}"
+        );
+    }
+
+    Ok(())
+}
+
+fn required_object<'a>(
+    value: &'a Value,
+    key: &str,
+    owner: &str,
+) -> Result<&'a Map<String, Value>, String> {
+    value
+        .get(key)
+        .and_then(Value::as_object)
+        .ok_or_else(|| format!("{owner} is missing object field {key}"))
+}
+
+fn required_object_map<'a>(
+    mapping: &'a Map<String, Value>,
+    key: &str,
+    owner: &str,
+) -> Result<&'a Map<String, Value>, String> {
+    mapping
+        .get(key)
+        .and_then(Value::as_object)
+        .ok_or_else(|| format!("{owner} is missing object field {key}"))
+}
+
+fn required_array<'a>(value: &'a Value, key: &str, owner: &str) -> Result<&'a Vec<Value>, String> {
+    value
+        .get(key)
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("{owner} is missing array field {key}"))
+}
+
+fn required_str<'a>(value: &'a Value, key: &str, owner: &str) -> Result<&'a str, String> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("{owner} is missing string field {key}"))
+}
+
+fn required_str_map<'a>(
+    mapping: &'a Map<String, Value>,
+    key: &str,
+    owner: &str,
+) -> Result<&'a str, String> {
+    mapping
+        .get(key)
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("{owner} is missing string field {key}"))
+}
+
+fn required_u64_map(mapping: &Map<String, Value>, key: &str, owner: &str) -> Result<u64, String> {
+    mapping
+        .get(key)
+        .and_then(Value::as_u64)
+        .ok_or_else(|| format!("{owner} is missing integer field {key}"))
+}
+
+fn guarantee_from(value: &str) -> Result<DeliveryGuarantee, String> {
+    match value {
+        "best_effort" => Ok(DeliveryGuarantee::BestEffort),
+        "at_most_once" => Ok(DeliveryGuarantee::AtMostOnce),
+        "at_least_once" => Ok(DeliveryGuarantee::AtLeastOnce),
+        other => Err(format!("unsupported delivery guarantee {other:?}")),
+    }
+}
+
+fn accumulation_from(value: &str) -> Result<AccumulationMode, String> {
+    match value {
+        "discarding" => Ok(AccumulationMode::Discarding),
+        "accumulating" => Ok(AccumulationMode::Accumulating),
+        other => Err(format!("unsupported accumulation mode {other:?}")),
+    }
+}
+
+fn terminal_state_from(value: &str) -> Result<DurableToolTerminalState, String> {
+    match value {
+        "completed" => Ok(DurableToolTerminalState::Completed),
+        "failed" => Ok(DurableToolTerminalState::Failed),
+        "denied" => Ok(DurableToolTerminalState::Denied),
+        "cancelled" => Ok(DurableToolTerminalState::Cancelled),
+        "policy_stopped" => Ok(DurableToolTerminalState::PolicyStopped),
+        "incomplete" => Ok(DurableToolTerminalState::Incomplete),
+        "expired" => Ok(DurableToolTerminalState::Expired),
+        other => Err(format!("unsupported terminal state {other:?}")),
+    }
+}
+
+fn terminal_state_name(value: &DurableToolTerminalState) -> &'static str {
+    match value {
+        DurableToolTerminalState::Completed => "completed",
+        DurableToolTerminalState::Failed => "failed",
+        DurableToolTerminalState::Denied => "denied",
+        DurableToolTerminalState::Cancelled => "cancelled",
+        DurableToolTerminalState::PolicyStopped => "policy_stopped",
+        DurableToolTerminalState::Incomplete => "incomplete",
+        DurableToolTerminalState::Expired => "expired",
+    }
+}
+
+fn cursor_from(mapping: &Map<String, Value>) -> Result<SourceCursor, String> {
+    Ok(SourceCursor::new(
+        required_str_map(mapping, "stream", "cursor")?,
+        required_u64_map(mapping, "partition", "cursor")? as u32,
+        required_u64_map(mapping, "offset", "cursor")?,
+    ))
+}
+
+fn event_from(mapping: &Map<String, Value>) -> Result<SourceEvent, String> {
+    Ok(SourceEvent::new(
+        cursor_from(mapping)?,
+        mapping.get("payload").cloned().unwrap_or(Value::Null),
+        mapping.get("eventTimeUnixMs").and_then(Value::as_u64),
+    ))
+}
+
+fn event_list(value: &Value, key: &str, owner: &str) -> Result<Vec<SourceEvent>, String> {
+    required_array(value, key, owner)?
+        .iter()
+        .map(|item| {
+            let mapping = item
+                .as_object()
+                .ok_or_else(|| format!("{owner} event must be an object"))?;
+            event_from(mapping)
+        })
+        .collect()
+}
+
+fn offsets(events: &[SourceEvent]) -> Vec<u64> {
+    events.iter().map(|event| event.cursor.offset).collect()
+}
+
+fn cursor_contract(cursor: &SourceCursor) -> Value {
+    json!({
+        "stream": cursor.stream,
+        "partition": cursor.partition,
+        "offset": cursor.offset,
+    })
+}
+
+fn sink_request_from(mapping: &Map<String, Value>) -> Result<SinkCommitRequest, String> {
+    let mut request = SinkCommitRequest::new(
+        required_str_map(mapping, "runId", "sink request")?,
+        required_str_map(mapping, "nodeId", "sink request")?,
+        required_str_map(mapping, "nodeAttemptId", "sink request")?,
+        required_str_map(mapping, "idempotencyKey", "sink request")?,
+        mapping.get("payload").cloned().unwrap_or(Value::Null),
+    );
+    if let Some(precondition_digest) = mapping.get("preconditionDigest").and_then(Value::as_str) {
+        request = request.with_precondition_digest(precondition_digest);
+    }
+    Ok(request)
+}
+
+fn barrier_from(mapping: &Map<String, Value>) -> Result<CheckpointBarrier, String> {
+    let raw_schema = required_object_map(mapping, "checkpointSchema", "checkpoint barrier")?;
+    let source_cursors = mapping
+        .get("sourceCursors")
+        .and_then(Value::as_object)
+        .map(|cursors| {
+            cursors
+                .iter()
+                .map(|(source_id, raw_cursor)| {
+                    Ok((
+                        source_id.clone(),
+                        cursor_from(raw_cursor.as_object().ok_or_else(|| {
+                            "checkpoint source cursor must be an object".to_owned()
+                        })?)?,
+                    ))
+                })
+                .collect::<Result<BTreeMap<_, _>, String>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let completed_nodes = mapping
+        .get("completedNodes")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .map(|item| {
+                    item.as_str()
+                        .map(str::to_owned)
+                        .ok_or_else(|| "completedNodes item must be a string".to_owned())
+                })
+                .collect::<Result<Vec<_>, String>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let pending_nodes = mapping
+        .get("pendingNodes")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .map(|item| {
+                    item.as_str()
+                        .map(str::to_owned)
+                        .ok_or_else(|| "pendingNodes item must be a string".to_owned())
+                })
+                .collect::<Result<Vec<_>, String>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let schema_versions = mapping
+        .get("schemaVersions")
+        .and_then(Value::as_object)
+        .map(|versions| {
+            versions
+                .iter()
+                .map(|(key, value)| {
+                    value
+                        .as_u64()
+                        .map(|version| (key.clone(), version as u32))
+                        .ok_or_else(|| "schemaVersions value must be an integer".to_owned())
+                })
+                .collect::<Result<BTreeMap<_, _>, String>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let operator_state = mapping
+        .get("operatorState")
+        .and_then(Value::as_object)
+        .map(|state| {
+            state
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect::<BTreeMap<_, _>>()
+        })
+        .unwrap_or_default();
+    let sink_commit_metadata = mapping
+        .get("sinkCommitMetadata")
+        .and_then(Value::as_object)
+        .map(|metadata| {
+            metadata
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect::<BTreeMap<_, _>>()
+        })
+        .unwrap_or_default();
+
+    Ok(CheckpointBarrier {
+        checkpoint_id: required_str_map(mapping, "checkpointId", "checkpoint barrier")?.to_owned(),
+        run_id: required_str_map(mapping, "runId", "checkpoint barrier")?.to_owned(),
+        release_id: required_str_map(mapping, "releaseId", "checkpoint barrier")?.to_owned(),
+        deployment_revision_id: required_str_map(
+            mapping,
+            "deploymentRevisionId",
+            "checkpoint barrier",
+        )?
+        .to_owned(),
+        plan_hash: required_str_map(mapping, "planHash", "checkpoint barrier")?.to_owned(),
+        checkpoint_schema: SchemaRef::new(
+            required_str_map(raw_schema, "schemaId", "checkpoint schema")?,
+            required_u64_map(raw_schema, "schemaVersion", "checkpoint schema")? as u32,
+        ),
+        state_revision: required_u64_map(mapping, "stateRevision", "checkpoint barrier")?,
+        completed_nodes,
+        pending_nodes,
+        source_cursors,
+        operator_state,
+        sink_commit_metadata,
+        schema_versions,
+        created_at_unix_ms: mapping
+            .get("createdAtUnixMs")
+            .and_then(Value::as_u64)
+            .unwrap_or_default(),
+    })
+}
+
+fn checkpoint_error_name(error: &CheckpointBarrierError) -> &'static str {
+    match error {
+        CheckpointBarrierError::MissingCheckpointId => "missing_checkpoint_id",
+        CheckpointBarrierError::MissingRunId => "missing_run_id",
+        CheckpointBarrierError::MissingReleaseId => "missing_release_id",
+        CheckpointBarrierError::MissingDeploymentRevisionId => "missing_deployment_revision_id",
+        CheckpointBarrierError::MissingPlanHash => "missing_plan_hash",
+        CheckpointBarrierError::InvalidCheckpointSchema => "invalid_checkpoint_schema",
+        CheckpointBarrierError::MissingSchemaVersions => "missing_schema_versions",
+    }
+}
+
+fn tool_terminal_from(mapping: &Map<String, Value>) -> Result<DurableToolTerminalRecord, String> {
+    let mut record = DurableToolTerminalRecord::new(
+        required_str_map(mapping, "runId", "tool terminal")?,
+        required_str_map(mapping, "responseId", "tool terminal")?,
+        required_str_map(mapping, "toolCallId", "tool terminal")?,
+        required_u64_map(mapping, "revision", "tool terminal")? as u32,
+        terminal_state_from(required_str_map(mapping, "terminalState", "tool terminal")?)?,
+        required_str_map(mapping, "argumentsDigest", "tool terminal")?,
+        required_u64_map(mapping, "completedAtUnixMs", "tool terminal")?,
+    );
+    if let Some(output_digest) = mapping.get("outputDigest").and_then(Value::as_str) {
+        record = record.with_output_digest(output_digest);
+    }
+    if let Some(idempotency_key) = mapping.get("idempotencyKey").and_then(Value::as_str) {
+        record = record.with_idempotency_key(idempotency_key);
+    }
+    if mapping
+        .get("effectCommitted")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        record = record.with_effect_committed();
+    }
+    if mapping
+        .get("durableResultCommitted")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        record = record.with_durable_result_committed();
+    }
+    Ok(record)
+}

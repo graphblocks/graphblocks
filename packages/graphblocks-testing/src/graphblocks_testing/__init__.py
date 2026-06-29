@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
+import importlib
 import json
 import math
 from pathlib import Path
@@ -172,6 +173,7 @@ TckCaseKind = Literal[
     "conversation",
     "documents",
     "deployment",
+    "durable",
     "orchestration",
     "rag",
     "retry",
@@ -261,6 +263,7 @@ class TckCase:
     conversation_fixture: dict[str, object] = field(default_factory=dict)
     documents_fixture: dict[str, object] = field(default_factory=dict)
     deployment_fixture: dict[str, object] = field(default_factory=dict)
+    durable_fixture: dict[str, object] = field(default_factory=dict)
     orchestration_fixture: dict[str, object] = field(default_factory=dict)
     rag_fixture: dict[str, object] = field(default_factory=dict)
     retry_fixture: dict[str, object] = field(default_factory=dict)
@@ -286,6 +289,7 @@ class TckCase:
             "conversation",
             "documents",
             "deployment",
+            "durable",
             "orchestration",
             "rag",
             "retry",
@@ -315,6 +319,7 @@ class TckCase:
         object.__setattr__(self, "conversation_fixture", dict(self.conversation_fixture))
         object.__setattr__(self, "documents_fixture", dict(self.documents_fixture))
         object.__setattr__(self, "deployment_fixture", dict(self.deployment_fixture))
+        object.__setattr__(self, "durable_fixture", dict(self.durable_fixture))
         object.__setattr__(self, "orchestration_fixture", dict(self.orchestration_fixture))
         object.__setattr__(self, "rag_fixture", dict(self.rag_fixture))
         object.__setattr__(self, "retry_fixture", dict(self.retry_fixture))
@@ -346,6 +351,8 @@ class TckCase:
             raise ValueError("documents TCK case requires fixture")
         if self.kind == "deployment" and not self.deployment_fixture:
             raise ValueError("deployment TCK case requires fixture")
+        if self.kind == "durable" and not self.durable_fixture:
+            raise ValueError("durable TCK case requires fixture")
         if self.kind == "orchestration" and not self.orchestration_fixture:
             raise ValueError("orchestration TCK case requires fixture")
         if self.kind == "rag" and not self.rag_fixture:
@@ -515,6 +522,10 @@ class TckCase:
     @classmethod
     def deployment(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
         return cls(case_id=case_id, kind="deployment", deployment_fixture=fixture)
+
+    @classmethod
+    def durable(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
+        return cls(case_id=case_id, kind="durable", durable_fixture=fixture)
 
     @classmethod
     def orchestration(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
@@ -1602,6 +1613,34 @@ def load_deployment_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     return tuple(cases)
 
 
+def load_durable_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
+    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(raw_cases, list):
+        raise ValueError("durable TCK root must be a list")
+    cases: list[TckCase] = []
+    for index, raw_case in enumerate(raw_cases):
+        if not isinstance(raw_case, Mapping):
+            raise ValueError(f"durable TCK case {index} must be a mapping")
+        case_id = _first_mapping_value(raw_case, "name", "case_id", "caseId")
+        if not isinstance(case_id, str) or not case_id.strip():
+            raise ValueError(f"durable TCK case {index} requires name")
+        case_kind = raw_case.get("kind")
+        if case_kind not in {
+            "source_replay",
+            "source_errors",
+            "window_lateness",
+            "sink_idempotency",
+            "checkpoint_replay",
+            "tool_terminal_policy_stop",
+        }:
+            raise ValueError(f"durable TCK case {case_id} has unsupported kind {case_kind!r}")
+        expected = raw_case.get("expected")
+        if not isinstance(expected, Mapping):
+            raise ValueError(f"durable TCK case {case_id} requires expected result")
+        cases.append(TckCase.durable(case_id=case_id, fixture=dict(raw_case)))
+    return tuple(cases)
+
+
 def load_orchestration_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(raw_cases, list):
@@ -1939,6 +1978,8 @@ def load_tck_cases_for_suite(suite: str, path: str | Path) -> tuple[TckCase, ...
         return load_conversation_tck_cases(path)
     if suite == "deployment":
         return load_deployment_tck_cases(path)
+    if suite == "durable":
+        return load_durable_tck_cases(path)
     if suite == "documents":
         return load_documents_tck_cases(path)
     if suite == "exhaustion":
@@ -1987,6 +2028,7 @@ def main(argv: list[str] | None = None) -> int:
             "compiler",
             "conversation",
             "deployment",
+            "durable",
             "documents",
             "runtime",
             "orchestration",
@@ -2596,6 +2638,8 @@ class TckRunner:
                 results.append(self._run_conversation_case(case))
             elif case.kind == "deployment":
                 results.append(self._run_deployment_case(case))
+            elif case.kind == "durable":
+                results.append(self._run_durable_case(case))
             elif case.kind == "documents":
                 results.append(self._run_documents_case(case))
             elif case.kind == "orchestration":
@@ -4630,6 +4674,535 @@ class TckRunner:
             observed=observed,
         )
 
+    def _run_durable_case(self, case: TckCase) -> TckResult:
+        diagnostics: list[dict[str, str]] = []
+        fixture = case.durable_fixture
+        kind = str(fixture.get("kind", ""))
+        expected = fixture.get("expected", {})
+        if not isinstance(expected, Mapping):
+            expected = {}
+            diagnostics.append(
+                {
+                    "code": "DurableExpectedInvalid",
+                    "message": "durable TCK expected result must be a mapping",
+                    "path": "$.expected",
+                }
+            )
+
+        try:
+            durable = importlib.import_module("graphblocks_durable")
+        except ModuleNotFoundError as error:
+            diagnostics.append(
+                {
+                    "code": "DurablePackageMissing",
+                    "message": str(error),
+                    "path": "$",
+                }
+            )
+            return TckResult(
+                case_id=case.case_id,
+                kind=case.kind,
+                status="failed",
+                diagnostics=tuple(diagnostics),
+                observed={},
+            )
+
+        observed: dict[str, object] = {}
+        try:
+            if kind == "source_replay":
+                raw_events = fixture.get("events", [])
+                if not isinstance(raw_events, list):
+                    raise ValueError("durable source_replay case requires events")
+                events = []
+                for raw_event in raw_events:
+                    if not isinstance(raw_event, Mapping):
+                        raise ValueError("durable source event must be a mapping")
+                    event_time = raw_event.get("eventTimeUnixMs", raw_event.get("event_time_unix_ms"))
+                    events.append(
+                        durable.SourceEvent(
+                            durable.SourceCursor(
+                                str(raw_event.get("stream", "")),
+                                int(raw_event.get("partition", 0)),
+                                int(raw_event.get("offset", 0)),
+                            ),
+                            deepcopy(raw_event.get("payload")),
+                            event_time_unix_ms=int(event_time) if event_time is not None else None,
+                        )
+                    )
+                source = durable.InMemoryDurableSource(str(fixture.get("guarantee", "")), events)
+                raw_first_poll = fixture.get("firstPoll", fixture.get("first_poll", {}))
+                if not isinstance(raw_first_poll, Mapping):
+                    raw_first_poll = {}
+                first = source.poll(None, demand=int(raw_first_poll.get("demand", 1)))
+                raw_commit = fixture.get("commitCursor", fixture.get("commit_cursor", {}))
+                if not isinstance(raw_commit, Mapping):
+                    raise ValueError("durable source_replay case requires commitCursor")
+                source.commit(
+                    durable.SourceCursor(
+                        str(raw_commit.get("stream", "")),
+                        int(raw_commit.get("partition", 0)),
+                        int(raw_commit.get("offset", 0)),
+                    )
+                )
+                raw_after_commit = fixture.get("afterCommitPoll", fixture.get("after_commit_poll", {}))
+                if not isinstance(raw_after_commit, Mapping):
+                    raw_after_commit = {}
+                after_commit = source.poll(None, demand=int(raw_after_commit.get("demand", 1)))
+                raw_replay = fixture.get("replayPoll", fixture.get("replay_poll", {}))
+                if not isinstance(raw_replay, Mapping):
+                    raise ValueError("durable source_replay case requires replayPoll")
+                raw_replay_cursor = raw_replay.get("cursor", {})
+                if not isinstance(raw_replay_cursor, Mapping):
+                    raise ValueError("durable source_replay case requires replay cursor")
+                replay = source.poll(
+                    durable.SourceCursor(
+                        str(raw_replay_cursor.get("stream", "")),
+                        int(raw_replay_cursor.get("partition", 0)),
+                        int(raw_replay_cursor.get("offset", 0)),
+                    ),
+                    demand=int(raw_replay.get("demand", 1)),
+                )
+                high_cursor = first.high_cursor()
+                observed = {
+                    "firstOffsets": [event.cursor.offset for event in first.events],
+                    "firstHighCursor": (
+                        {
+                            "stream": high_cursor.stream,
+                            "partition": high_cursor.partition,
+                            "offset": high_cursor.offset,
+                        }
+                        if high_cursor is not None
+                        else None
+                    ),
+                    "firstWatermarkUnixMs": first.watermark.unix_ms if first.watermark is not None else None,
+                    "afterCommitOffsets": [event.cursor.offset for event in after_commit.events],
+                    "replayOffsets": [event.cursor.offset for event in replay.events],
+                }
+            elif kind == "source_errors":
+                raw_events = fixture.get("events", [])
+                if not isinstance(raw_events, list):
+                    raise ValueError("durable source_errors case requires events")
+                events = []
+                for raw_event in raw_events:
+                    if not isinstance(raw_event, Mapping):
+                        raise ValueError("durable source event must be a mapping")
+                    event_time = raw_event.get("eventTimeUnixMs", raw_event.get("event_time_unix_ms"))
+                    events.append(
+                        durable.SourceEvent(
+                            durable.SourceCursor(
+                                str(raw_event.get("stream", "")),
+                                int(raw_event.get("partition", 0)),
+                                int(raw_event.get("offset", 0)),
+                            ),
+                            deepcopy(raw_event.get("payload")),
+                            event_time_unix_ms=int(event_time) if event_time is not None else None,
+                        )
+                    )
+                source = durable.InMemoryDurableSource(str(fixture.get("guarantee", "")), events)
+                paused_error = None
+                source.pause()
+                try:
+                    source.poll(None, demand=1)
+                except durable.SourcePausedError:
+                    paused_error = "source_paused"
+                source.resume()
+                raw_committed = fixture.get("committedCursor", fixture.get("committed_cursor", {}))
+                raw_stale = fixture.get("staleCursor", fixture.get("stale_cursor", {}))
+                raw_unknown = fixture.get("unknownCursor", fixture.get("unknown_cursor", {}))
+                if not isinstance(raw_committed, Mapping) or not isinstance(raw_stale, Mapping) or not isinstance(raw_unknown, Mapping):
+                    raise ValueError("durable source_errors case requires committed, stale, and unknown cursors")
+                source.commit(
+                    durable.SourceCursor(
+                        str(raw_committed.get("stream", "")),
+                        int(raw_committed.get("partition", 0)),
+                        int(raw_committed.get("offset", 0)),
+                    )
+                )
+                stale_error = None
+                stale_current_offset = None
+                stale_attempted_offset = None
+                try:
+                    source.commit(
+                        durable.SourceCursor(
+                            str(raw_stale.get("stream", "")),
+                            int(raw_stale.get("partition", 0)),
+                            int(raw_stale.get("offset", 0)),
+                        )
+                    )
+                except durable.StaleCommitError as error:
+                    stale_error = "stale_commit"
+                    stale_current_offset = error.current.offset
+                    stale_attempted_offset = error.attempted.offset
+                unknown_cursor = durable.SourceCursor(
+                    str(raw_unknown.get("stream", "")),
+                    int(raw_unknown.get("partition", 0)),
+                    int(raw_unknown.get("offset", 0)),
+                )
+                unknown_commit_error = None
+                unknown_poll_error = None
+                try:
+                    source.commit(unknown_cursor)
+                except durable.UnknownSourceCursorError:
+                    unknown_commit_error = "unknown_source_cursor"
+                try:
+                    source.poll(unknown_cursor, demand=1)
+                except durable.UnknownSourceCursorError:
+                    unknown_poll_error = "unknown_source_cursor"
+                observed = {
+                    "pausedError": paused_error,
+                    "staleError": stale_error,
+                    "staleCurrentOffset": stale_current_offset,
+                    "staleAttemptedOffset": stale_attempted_offset,
+                    "unknownCommitError": unknown_commit_error,
+                    "unknownPollError": unknown_poll_error,
+                }
+            elif kind == "window_lateness":
+                raw_policy = fixture.get("policy", {})
+                raw_events = fixture.get("events", [])
+                raw_watermarks = fixture.get("watermarks", [])
+                raw_late_event = fixture.get("lateEvent", fixture.get("late_event", {}))
+                if not isinstance(raw_policy, Mapping) or not isinstance(raw_events, list) or not isinstance(raw_watermarks, list) or not isinstance(raw_late_event, Mapping):
+                    raise ValueError("durable window_lateness case requires policy, events, watermarks, and lateEvent")
+                policy = durable.WindowPolicy.tumbling_event_time(
+                    size_ms=int(raw_policy.get("sizeMs", raw_policy.get("size_ms", 0))),
+                    allowed_lateness_ms=int(raw_policy.get("allowedLatenessMs", raw_policy.get("allowed_lateness_ms", 0))),
+                    accumulation_mode=str(raw_policy.get("accumulationMode", raw_policy.get("accumulation_mode", ""))),
+                )
+                windows = durable.WindowAccumulator(policy)
+                for raw_event in raw_events:
+                    if not isinstance(raw_event, Mapping):
+                        raise ValueError("durable window event must be a mapping")
+                    event_time = raw_event.get("eventTimeUnixMs", raw_event.get("event_time_unix_ms"))
+                    windows.ingest(
+                        durable.SourceEvent(
+                            durable.SourceCursor(
+                                str(raw_event.get("stream", "")),
+                                int(raw_event.get("partition", 0)),
+                                int(raw_event.get("offset", 0)),
+                            ),
+                            deepcopy(raw_event.get("payload")),
+                            event_time_unix_ms=int(event_time) if event_time is not None else None,
+                        )
+                    )
+                closed_before = windows.advance_watermark(durable.Watermark.event_time(int(raw_watermarks[0])))
+                closed_after = windows.advance_watermark(durable.Watermark.event_time(int(raw_watermarks[1])))
+                late_error = None
+                late_watermark_unix_ms = None
+                try:
+                    late_event_time = raw_late_event.get("eventTimeUnixMs", raw_late_event.get("event_time_unix_ms"))
+                    windows.ingest(
+                        durable.SourceEvent(
+                            durable.SourceCursor(
+                                str(raw_late_event.get("stream", "")),
+                                int(raw_late_event.get("partition", 0)),
+                                int(raw_late_event.get("offset", 0)),
+                            ),
+                            deepcopy(raw_late_event.get("payload")),
+                            event_time_unix_ms=int(late_event_time) if late_event_time is not None else None,
+                        )
+                    )
+                except durable.LateEventError as error:
+                    late_error = "late_event"
+                    late_watermark_unix_ms = error.watermark_unix_ms
+                first_pane = closed_after[0] if closed_after else None
+                observed = {
+                    "closedBefore": len(closed_before),
+                    "closedAfter": len(closed_after),
+                    "paneStartUnixMs": first_pane.start_unix_ms if first_pane is not None else None,
+                    "paneEndUnixMs": first_pane.end_unix_ms if first_pane is not None else None,
+                    "paneOffsets": [event.cursor.offset for event in first_pane.events] if first_pane is not None else [],
+                    "lateError": late_error,
+                    "lateWatermarkUnixMs": late_watermark_unix_ms,
+                }
+            elif kind == "sink_idempotency":
+                raw_request = fixture.get("request", {})
+                if not isinstance(raw_request, Mapping):
+                    raise ValueError("durable sink_idempotency case requires request")
+                sink = durable.InMemoryDurableSink(str(fixture.get("sinkId", fixture.get("sink_id", ""))))
+                request = durable.SinkCommitRequest(
+                    run_id=str(raw_request.get("runId", raw_request.get("run_id", ""))),
+                    node_id=str(raw_request.get("nodeId", raw_request.get("node_id", ""))),
+                    node_attempt_id=str(raw_request.get("nodeAttemptId", raw_request.get("node_attempt_id", ""))),
+                    idempotency_key=str(raw_request.get("idempotencyKey", raw_request.get("idempotency_key", ""))),
+                    payload=deepcopy(raw_request.get("payload")),
+                )
+                precondition = raw_request.get("preconditionDigest", raw_request.get("precondition_digest"))
+                if precondition is not None:
+                    request = request.with_precondition_digest(str(precondition))
+                first = sink.commit(request)
+                replay = sink.commit(request)
+                conflict_error = None
+                conflict = durable.SinkCommitRequest(
+                    run_id=request.run_id,
+                    node_id=request.node_id,
+                    node_attempt_id=request.node_attempt_id,
+                    idempotency_key=request.idempotency_key,
+                    payload=deepcopy(fixture.get("conflictPayload", fixture.get("conflict_payload"))),
+                )
+                if request.precondition_digest is not None:
+                    conflict = conflict.with_precondition_digest(request.precondition_digest)
+                try:
+                    sink.commit(conflict)
+                except durable.IdempotencyConflictError:
+                    conflict_error = "idempotency_conflict"
+                observed = {
+                    "firstSequence": first.sequence,
+                    "replaySequence": replay.sequence,
+                    "replayReplayed": replay.replayed,
+                    "committedCount": sink.committed_count(),
+                    "conflictError": conflict_error,
+                }
+            elif kind == "checkpoint_replay":
+                raw_missing_plan = fixture.get("missingPlanBarrier", fixture.get("missing_plan_barrier", {}))
+                raw_barrier = fixture.get("barrier", {})
+                raw_checkpoints = fixture.get("checkpoints", [])
+                if not isinstance(raw_missing_plan, Mapping) or not isinstance(raw_barrier, Mapping) or not isinstance(raw_checkpoints, list):
+                    raise ValueError("durable checkpoint_replay case requires missingPlanBarrier, barrier, and checkpoints")
+
+                raw_schema = raw_missing_plan.get("checkpointSchema", raw_missing_plan.get("checkpoint_schema", {}))
+                if not isinstance(raw_schema, Mapping):
+                    raw_schema = {}
+                missing_plan = durable.CheckpointBarrier(
+                    checkpoint_id=str(raw_missing_plan.get("checkpointId", raw_missing_plan.get("checkpoint_id", ""))),
+                    run_id=str(raw_missing_plan.get("runId", raw_missing_plan.get("run_id", ""))),
+                    release_id=str(raw_missing_plan.get("releaseId", raw_missing_plan.get("release_id", ""))),
+                    deployment_revision_id=str(raw_missing_plan.get("deploymentRevisionId", raw_missing_plan.get("deployment_revision_id", ""))),
+                    plan_hash=str(raw_missing_plan.get("planHash", raw_missing_plan.get("plan_hash", ""))),
+                    checkpoint_schema=durable.SchemaRef(
+                        str(raw_schema.get("schemaId", raw_schema.get("schema_id", ""))),
+                        int(raw_schema.get("schemaVersion", raw_schema.get("schema_version", 0))),
+                    ),
+                    state_revision=int(raw_missing_plan.get("stateRevision", raw_missing_plan.get("state_revision", 0))),
+                    schema_versions=dict(raw_missing_plan.get("schemaVersions", raw_missing_plan.get("schema_versions", {})))
+                    if isinstance(raw_missing_plan.get("schemaVersions", raw_missing_plan.get("schema_versions", {})), Mapping)
+                    else {},
+                )
+                missing_plan_error = None
+                try:
+                    missing_plan.validate()
+                except durable.CheckpointBarrierError as error:
+                    missing_plan_error = error.reason
+
+                raw_schema = raw_barrier.get("checkpointSchema", raw_barrier.get("checkpoint_schema", {}))
+                if not isinstance(raw_schema, Mapping):
+                    raw_schema = {}
+                raw_source_cursors = raw_barrier.get("sourceCursors", raw_barrier.get("source_cursors", {}))
+                source_cursors = {}
+                if isinstance(raw_source_cursors, Mapping):
+                    for source_id, raw_cursor in raw_source_cursors.items():
+                        if isinstance(raw_cursor, Mapping):
+                            source_cursors[str(source_id)] = durable.SourceCursor(
+                                str(raw_cursor.get("stream", "")),
+                                int(raw_cursor.get("partition", 0)),
+                                int(raw_cursor.get("offset", 0)),
+                            )
+                barrier = durable.CheckpointBarrier(
+                    checkpoint_id=str(raw_barrier.get("checkpointId", raw_barrier.get("checkpoint_id", ""))),
+                    run_id=str(raw_barrier.get("runId", raw_barrier.get("run_id", ""))),
+                    release_id=str(raw_barrier.get("releaseId", raw_barrier.get("release_id", ""))),
+                    deployment_revision_id=str(raw_barrier.get("deploymentRevisionId", raw_barrier.get("deployment_revision_id", ""))),
+                    plan_hash=str(raw_barrier.get("planHash", raw_barrier.get("plan_hash", ""))),
+                    checkpoint_schema=durable.SchemaRef(
+                        str(raw_schema.get("schemaId", raw_schema.get("schema_id", ""))),
+                        int(raw_schema.get("schemaVersion", raw_schema.get("schema_version", 0))),
+                    ),
+                    state_revision=int(raw_barrier.get("stateRevision", raw_barrier.get("state_revision", 0))),
+                    completed_nodes=tuple(
+                        str(node) for node in raw_barrier.get("completedNodes", raw_barrier.get("completed_nodes", []))
+                    ),
+                    pending_nodes=tuple(
+                        str(node) for node in raw_barrier.get("pendingNodes", raw_barrier.get("pending_nodes", []))
+                    ),
+                    source_cursors=source_cursors,
+                    operator_state=deepcopy(raw_barrier.get("operatorState", raw_barrier.get("operator_state", {})))
+                    if isinstance(raw_barrier.get("operatorState", raw_barrier.get("operator_state", {})), Mapping)
+                    else {},
+                    sink_commit_metadata=deepcopy(raw_barrier.get("sinkCommitMetadata", raw_barrier.get("sink_commit_metadata", {})))
+                    if isinstance(raw_barrier.get("sinkCommitMetadata", raw_barrier.get("sink_commit_metadata", {})), Mapping)
+                    else {},
+                    schema_versions=dict(raw_barrier.get("schemaVersions", raw_barrier.get("schema_versions", {})))
+                    if isinstance(raw_barrier.get("schemaVersions", raw_barrier.get("schema_versions", {})), Mapping)
+                    else {},
+                    created_at_unix_ms=int(raw_barrier.get("createdAtUnixMs", raw_barrier.get("created_at_unix_ms", 0))),
+                )
+                commit_plan = [
+                    f"{source_id}:{cursor.stream}:{cursor.partition}:{cursor.offset}"
+                    for source_id, cursor in barrier.validate().source_commit_plan().cursors
+                ]
+                store = durable.InMemoryCheckpointStore()
+                for raw_checkpoint in raw_checkpoints:
+                    if not isinstance(raw_checkpoint, Mapping):
+                        raise ValueError("durable checkpoint must be a mapping")
+                    raw_schema = raw_checkpoint.get("checkpointSchema", raw_checkpoint.get("checkpoint_schema", {}))
+                    if not isinstance(raw_schema, Mapping):
+                        raw_schema = {}
+                    raw_source_cursors = raw_checkpoint.get("sourceCursors", raw_checkpoint.get("source_cursors", {}))
+                    checkpoint_source_cursors = {}
+                    if isinstance(raw_source_cursors, Mapping):
+                        for source_id, raw_cursor in raw_source_cursors.items():
+                            if isinstance(raw_cursor, Mapping):
+                                checkpoint_source_cursors[str(source_id)] = durable.SourceCursor(
+                                    str(raw_cursor.get("stream", "")),
+                                    int(raw_cursor.get("partition", 0)),
+                                    int(raw_cursor.get("offset", 0)),
+                                )
+                    store.put(
+                        durable.CheckpointBarrier(
+                            checkpoint_id=str(raw_checkpoint.get("checkpointId", raw_checkpoint.get("checkpoint_id", ""))),
+                            run_id=str(raw_checkpoint.get("runId", raw_checkpoint.get("run_id", ""))),
+                            release_id=str(raw_checkpoint.get("releaseId", raw_checkpoint.get("release_id", ""))),
+                            deployment_revision_id=str(raw_checkpoint.get("deploymentRevisionId", raw_checkpoint.get("deployment_revision_id", ""))),
+                            plan_hash=str(raw_checkpoint.get("planHash", raw_checkpoint.get("plan_hash", ""))),
+                            checkpoint_schema=durable.SchemaRef(
+                                str(raw_schema.get("schemaId", raw_schema.get("schema_id", ""))),
+                                int(raw_schema.get("schemaVersion", raw_schema.get("schema_version", 0))),
+                            ),
+                            state_revision=int(raw_checkpoint.get("stateRevision", raw_checkpoint.get("state_revision", 0))),
+                            completed_nodes=tuple(
+                                str(node) for node in raw_checkpoint.get("completedNodes", raw_checkpoint.get("completed_nodes", []))
+                            ),
+                            pending_nodes=tuple(
+                                str(node) for node in raw_checkpoint.get("pendingNodes", raw_checkpoint.get("pending_nodes", []))
+                            ),
+                            source_cursors=checkpoint_source_cursors,
+                            operator_state=deepcopy(raw_checkpoint.get("operatorState", raw_checkpoint.get("operator_state", {})))
+                            if isinstance(raw_checkpoint.get("operatorState", raw_checkpoint.get("operator_state", {})), Mapping)
+                            else {},
+                            sink_commit_metadata=deepcopy(raw_checkpoint.get("sinkCommitMetadata", raw_checkpoint.get("sink_commit_metadata", {})))
+                            if isinstance(raw_checkpoint.get("sinkCommitMetadata", raw_checkpoint.get("sink_commit_metadata", {})), Mapping)
+                            else {},
+                            schema_versions=dict(raw_checkpoint.get("schemaVersions", raw_checkpoint.get("schema_versions", {})))
+                            if isinstance(raw_checkpoint.get("schemaVersions", raw_checkpoint.get("schema_versions", {})), Mapping)
+                            else {},
+                            created_at_unix_ms=int(raw_checkpoint.get("createdAtUnixMs", raw_checkpoint.get("created_at_unix_ms", 0))),
+                        )
+                    )
+                raw_lookup = fixture.get("lookup", {})
+                raw_missing_lookup = fixture.get("missingLookup", fixture.get("missing_lookup", {}))
+                if not isinstance(raw_lookup, Mapping) or not isinstance(raw_missing_lookup, Mapping):
+                    raise ValueError("durable checkpoint_replay case requires lookup and missingLookup")
+                latest = store.latest_compatible(
+                    run_id=str(raw_lookup.get("runId", raw_lookup.get("run_id", ""))),
+                    release_id=str(raw_lookup.get("releaseId", raw_lookup.get("release_id", ""))),
+                    deployment_revision_id=str(raw_lookup.get("deploymentRevisionId", raw_lookup.get("deployment_revision_id", ""))),
+                    plan_hash=str(raw_lookup.get("planHash", raw_lookup.get("plan_hash", ""))),
+                )
+                missing = store.latest_compatible(
+                    run_id=str(raw_missing_lookup.get("runId", raw_missing_lookup.get("run_id", ""))),
+                    release_id=str(raw_missing_lookup.get("releaseId", raw_missing_lookup.get("release_id", ""))),
+                    deployment_revision_id=str(raw_missing_lookup.get("deploymentRevisionId", raw_missing_lookup.get("deployment_revision_id", ""))),
+                    plan_hash=str(raw_missing_lookup.get("planHash", raw_missing_lookup.get("plan_hash", ""))),
+                )
+                observed = {
+                    "missingPlanError": missing_plan_error,
+                    "commitPlan": commit_plan,
+                    "latestCheckpointId": latest.checkpoint_id if latest is not None else None,
+                    "latestStateRevision": latest.state_revision if latest is not None else None,
+                    "missingCompatible": missing is None,
+                }
+            elif kind == "tool_terminal_policy_stop":
+                store = durable.InMemoryDurableToolTerminalStore()
+                raw_stop = fixture.get("policyStop", fixture.get("policy_stop", {}))
+                raw_late_result = fixture.get("lateDurableResult", fixture.get("late_durable_result", {}))
+                raw_audited = fixture.get("auditedLateEffect", fixture.get("audited_late_effect", {}))
+                if not isinstance(raw_stop, Mapping) or not isinstance(raw_late_result, Mapping) or not isinstance(raw_audited, Mapping):
+                    raise ValueError("durable tool_terminal_policy_stop case requires policyStop and terminal records")
+                policy_stop = store.record_response_policy_stopped(
+                    str(raw_stop.get("responseId", raw_stop.get("response_id", ""))),
+                    str(raw_stop.get("policyDecisionId", raw_stop.get("policy_decision_id", ""))),
+                    last_policy_accepted_sequence=int(raw_stop.get("lastPolicyAcceptedSequence", raw_stop.get("last_policy_accepted_sequence", 0))),
+                    occurred_at_unix_ms=int(raw_stop.get("occurredAtUnixMs", raw_stop.get("occurred_at_unix_ms", 0))),
+                )
+                replay = store.record_response_policy_stopped(
+                    str(raw_stop.get("responseId", raw_stop.get("response_id", ""))),
+                    str(raw_stop.get("policyDecisionId", raw_stop.get("policy_decision_id", ""))),
+                    last_policy_accepted_sequence=int(raw_stop.get("lastPolicyAcceptedSequence", raw_stop.get("last_policy_accepted_sequence", 0))),
+                    occurred_at_unix_ms=int(raw_stop.get("occurredAtUnixMs", raw_stop.get("occurred_at_unix_ms", 0))),
+                )
+                late_error = None
+                try:
+                    store.record_tool_terminal(
+                        durable.DurableToolTerminalRecord(
+                            run_id=str(raw_late_result.get("runId", raw_late_result.get("run_id", ""))),
+                            response_id=str(raw_late_result.get("responseId", raw_late_result.get("response_id", ""))),
+                            tool_call_id=str(raw_late_result.get("toolCallId", raw_late_result.get("tool_call_id", ""))),
+                            revision=int(raw_late_result.get("revision", 0)),
+                            terminal_state=str(raw_late_result.get("terminalState", raw_late_result.get("terminal_state", ""))),
+                            arguments_digest=str(raw_late_result.get("argumentsDigest", raw_late_result.get("arguments_digest", ""))),
+                            completed_at_unix_ms=int(raw_late_result.get("completedAtUnixMs", raw_late_result.get("completed_at_unix_ms", 0))),
+                            output_digest=(
+                                str(raw_late_result.get("outputDigest", raw_late_result.get("output_digest")))
+                                if raw_late_result.get("outputDigest", raw_late_result.get("output_digest")) is not None
+                                else None
+                            ),
+                            effect_committed=bool(raw_late_result.get("effectCommitted", raw_late_result.get("effect_committed", False))),
+                            durable_result_committed=bool(raw_late_result.get("durableResultCommitted", raw_late_result.get("durable_result_committed", False))),
+                        )
+                    )
+                except durable.ResponsePolicyStoppedError:
+                    late_error = "response_policy_stopped"
+                audited = store.record_tool_terminal(
+                    durable.DurableToolTerminalRecord(
+                        run_id=str(raw_audited.get("runId", raw_audited.get("run_id", ""))),
+                        response_id=str(raw_audited.get("responseId", raw_audited.get("response_id", ""))),
+                        tool_call_id=str(raw_audited.get("toolCallId", raw_audited.get("tool_call_id", ""))),
+                        revision=int(raw_audited.get("revision", 0)),
+                        terminal_state=str(raw_audited.get("terminalState", raw_audited.get("terminal_state", ""))),
+                        arguments_digest=str(raw_audited.get("argumentsDigest", raw_audited.get("arguments_digest", ""))),
+                        completed_at_unix_ms=int(raw_audited.get("completedAtUnixMs", raw_audited.get("completed_at_unix_ms", 0))),
+                        output_digest=(
+                            str(raw_audited.get("outputDigest", raw_audited.get("output_digest")))
+                            if raw_audited.get("outputDigest", raw_audited.get("output_digest")) is not None
+                            else None
+                        ),
+                        effect_committed=bool(raw_audited.get("effectCommitted", raw_audited.get("effect_committed", False))),
+                        durable_result_committed=bool(raw_audited.get("durableResultCommitted", raw_audited.get("durable_result_committed", False))),
+                    )
+                )
+                observed = {
+                    "policyStopSequence": policy_stop.sequence,
+                    "policyStopReplaySequence": replay.sequence,
+                    "policyStopReplayReplayed": replay.replayed,
+                    "lateDurableResultError": late_error,
+                    "auditedTerminalState": audited.record.terminal_state,
+                    "auditedEffectCommitted": audited.record.effect_committed,
+                    "auditedDurableResultCommitted": audited.record.durable_result_committed,
+                    "toolTerminalCount": store.tool_terminal_count(),
+                }
+            else:
+                diagnostics.append(
+                    {
+                        "code": "DurableKindUnknown",
+                        "message": f"durable TCK kind {kind!r} is not supported",
+                        "path": "$.kind",
+                    }
+                )
+        except Exception as error:
+            diagnostics.append(
+                {
+                    "code": "DurableExecutionError",
+                    "message": str(error),
+                    "path": "$",
+                }
+            )
+
+        for key, expected_value in expected.items():
+            if observed.get(str(key)) != expected_value:
+                diagnostics.append(
+                    {
+                        "code": "DurableExpectedMismatch",
+                        "message": f"durable observed {key} did not match expected value",
+                        "path": f"$.expected.{key}",
+                    }
+                )
+        return TckResult(
+            case_id=case.case_id,
+            kind=case.kind,
+            status="passed" if not diagnostics else "failed",
+            diagnostics=tuple(diagnostics),
+            observed=observed,
+        )
+
     def _run_orchestration_case(self, case: TckCase) -> TckResult:
         diagnostics: list[dict[str, str]] = []
         fixture = case.orchestration_fixture
@@ -6501,6 +7074,7 @@ __all__ = [
     "load_conversation_tck_cases",
     "load_deployment_tck_cases",
     "load_documents_tck_cases",
+    "load_durable_tck_cases",
     "load_exhaustion_tck_cases",
     "load_orchestration_tck_cases",
     "load_policy_tck_cases",
