@@ -6,12 +6,14 @@ import json
 
 from graphblocks import (
     AdmittedToolCall,
+    ArtifactRef,
     ContentPart,
     OpenApiToolImplementation,
     ResolvedTool,
     ToolBinding,
     ToolDefinition,
     ToolResult,
+    ToolResultEvent,
     ToolResultValidationError,
     ToolSchemaRegistry,
     ToolSchemaValidationError,
@@ -195,6 +197,47 @@ def openapi_tool_result_from_response(
     return result
 
 
+def openapi_tool_result_started(
+    admitted: AdmittedToolCall,
+    resolved_tool: ResolvedTool,
+    *,
+    sequence: int,
+    started_at: str,
+) -> ToolResultEvent:
+    prepare_openapi_operation_invocation(admitted, resolved_tool)
+    return ToolResultEvent.started(admitted.call.tool_call_id, sequence, started_at=started_at)
+
+
+def openapi_tool_result_delta(
+    admitted: AdmittedToolCall,
+    resolved_tool: ResolvedTool,
+    *,
+    sequence: int,
+    output: Iterable[ContentPart | Mapping[str, object] | str],
+) -> ToolResultEvent:
+    prepare_openapi_operation_invocation(admitted, resolved_tool)
+    return ToolResultEvent.delta(
+        admitted.call.tool_call_id,
+        sequence,
+        _stream_content_parts(output, owner="OpenAPI"),
+    )
+
+
+def openapi_tool_result_artifact_ready(
+    admitted: AdmittedToolCall,
+    resolved_tool: ResolvedTool,
+    *,
+    sequence: int,
+    artifact: ArtifactRef | Mapping[str, object],
+) -> ToolResultEvent:
+    prepare_openapi_operation_invocation(admitted, resolved_tool)
+    return ToolResultEvent.artifact_ready(
+        admitted.call.tool_call_id,
+        sequence,
+        _artifact_ref(artifact, owner="OpenAPI"),
+    )
+
+
 def prepare_openapi_tool_result_for_model(
     admitted: AdmittedToolCall,
     resolved_tool: ResolvedTool,
@@ -306,16 +349,115 @@ def openapi_tool_result_incomplete(
         raise OpenApiToolAdapterError("OpenAPI tool result has an invalid effect outcome") from error
 
 
+def _stream_content_parts(
+    output: Iterable[ContentPart | Mapping[str, object] | str],
+    *,
+    owner: str,
+) -> tuple[ContentPart, ...]:
+    if isinstance(output, str):
+        raise OpenApiToolAdapterError(f"{owner} tool result delta output must be a sequence")
+    try:
+        raw_parts = tuple(output)
+    except TypeError as error:
+        raise OpenApiToolAdapterError(f"{owner} tool result delta output must be a sequence") from error
+    parts: list[ContentPart] = []
+    for raw_part in raw_parts:
+        if isinstance(raw_part, ContentPart):
+            parts.append(raw_part)
+        elif isinstance(raw_part, str):
+            parts.append(ContentPart(kind="text", text=raw_part, metadata={"adapter": "openapi"}))
+        elif isinstance(raw_part, Mapping):
+            parts.append(_content_part(raw_part, owner=owner))
+        else:
+            raise OpenApiToolAdapterError(f"{owner} tool result delta output entries must be content parts")
+    return tuple(parts)
+
+
+def _content_part(raw_part: Mapping[str, object], *, owner: str) -> ContentPart:
+    kind = raw_part.get("kind")
+    metadata = raw_part.get("metadata", {})
+    if not isinstance(metadata, Mapping):
+        raise OpenApiToolAdapterError(f"{owner} tool result delta metadata must be an object")
+    if kind is None:
+        kind = "text" if "text" in raw_part else "json" if "data" in raw_part else None
+    if kind == "text":
+        text = raw_part.get("text")
+        if not isinstance(text, str):
+            raise OpenApiToolAdapterError(f"{owner} text delta output requires string text")
+        return ContentPart(kind="text", text=text, metadata=dict(metadata))
+    if kind in {"json", "artifact_ref"}:
+        data = raw_part.get("data")
+        if not isinstance(data, Mapping):
+            raise OpenApiToolAdapterError(f"{owner} {kind} delta output requires object data")
+        return ContentPart(kind=kind, data=dict(data), metadata=dict(metadata))  # type: ignore[arg-type]
+    raise OpenApiToolAdapterError(f"{owner} tool result delta has unknown content kind {kind!r}")
+
+
+def _artifact_ref(artifact: ArtifactRef | Mapping[str, object], *, owner: str) -> ArtifactRef:
+    if isinstance(artifact, ArtifactRef):
+        return artifact
+    if not isinstance(artifact, Mapping):
+        raise OpenApiToolAdapterError(f"{owner} tool result artifact must be an ArtifactRef or object")
+    artifact_id = artifact.get("artifact_id", artifact.get("artifactId"))
+    uri = artifact.get("uri")
+    if not isinstance(artifact_id, str) or not isinstance(uri, str):
+        raise OpenApiToolAdapterError(f"{owner} tool result artifact requires artifact_id and uri")
+    metadata = artifact.get("metadata", {})
+    if not isinstance(metadata, Mapping) or any(
+        not isinstance(key, str) or not isinstance(value, str) for key, value in metadata.items()
+    ):
+        raise OpenApiToolAdapterError(f"{owner} tool result artifact metadata must be a string object")
+    try:
+        return ArtifactRef(
+            artifact_id=artifact_id,
+            uri=uri,
+            media_type=_optional_string(artifact, "media_type", "mediaType", owner=owner),
+            size_bytes=_optional_integer(artifact, "size_bytes", "sizeBytes", owner=owner),
+            checksum=_optional_string(artifact, "checksum", owner=owner),
+            etag=_optional_string(artifact, "etag", owner=owner),
+            version=_optional_string(artifact, "version", owner=owner),
+            filename=_optional_string(artifact, "filename", owner=owner),
+            metadata=dict(metadata),
+        )
+    except ValueError as error:
+        raise OpenApiToolAdapterError(f"{owner} tool result artifact is invalid") from error
+
+
+def _optional_string(artifact: Mapping[str, object], *names: str, owner: str) -> str | None:
+    for name in names:
+        if name in artifact:
+            value = artifact[name]
+            if value is None or isinstance(value, str):
+                return value
+            raise OpenApiToolAdapterError(f"{owner} tool result artifact {name} must be a string")
+    return None
+
+
+def _optional_integer(artifact: Mapping[str, object], *names: str, owner: str) -> int | None:
+    for name in names:
+        if name in artifact:
+            value = artifact[name]
+            if value is None:
+                return None
+            if isinstance(value, int) and not isinstance(value, bool):
+                return value
+            raise OpenApiToolAdapterError(f"{owner} tool result artifact {name} must be an integer")
+    return None
+
+
 __all__ = [
     "OpenApiOperationInvocation",
     "OpenApiToolAdapterError",
     "bind_openapi_operation",
     "define_openapi_tool",
+    "openapi_tool_result_artifact_ready",
     "openapi_tool_result_cancelled",
+    "openapi_tool_result_delta",
     "openapi_tool_result_from_error",
     "openapi_tool_result_from_response",
     "openapi_tool_result_incomplete",
     "openapi_tool_result_policy_stopped",
+    "openapi_tool_result_started",
     "prepare_openapi_operation_invocation",
     "prepare_openapi_tool_result_for_model",
 ]

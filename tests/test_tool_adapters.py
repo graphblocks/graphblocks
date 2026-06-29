@@ -7,6 +7,7 @@ import pytest
 
 from graphblocks import (
     AdmittedToolCall,
+    ArtifactRef,
     ContentPart,
     JsonSchema,
     JsonSchemaNode,
@@ -335,6 +336,82 @@ def test_mcp_adapter_converts_cancelled_and_incomplete_terminal_results(monkeypa
     assert incomplete.effect_outcome == "unknown"
 
 
+def test_mcp_adapter_builds_streaming_tool_result_events(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
+    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    admitted, resolved = _admitted_call_for(
+        McpToolImplementation(server="support-mcp", remote_name="search"),
+        tool_name="knowledge.search",
+        binding_id="binding-mcp-search",
+        arguments={"query": "billing"},
+    )
+
+    started = graphblocks_mcp.mcp_tool_result_started(
+        admitted,
+        resolved,
+        sequence=1,
+        started_at="2026-06-23T00:00:01Z",
+    )
+    delta = graphblocks_mcp.mcp_tool_result_delta(
+        admitted,
+        resolved,
+        sequence=2,
+        output=(
+            "partial",
+            {"kind": "json", "data": {"count": 1}, "metadata": {"phase": "draft"}},
+        ),
+    )
+    artifact = graphblocks_mcp.mcp_tool_result_artifact_ready(
+        admitted,
+        resolved,
+        sequence=3,
+        artifact={
+            "artifactId": "artifact-1",
+            "uri": "blob://tool-results/1",
+            "mediaType": "text/plain",
+            "metadata": {"source": "mcp"},
+        },
+    )
+
+    assert started.kind == "started"
+    assert started.started_at == "2026-06-23T00:00:01Z"
+    assert delta.kind == "delta"
+    assert delta.output[0] == ContentPart(kind="text", text="partial", metadata={"adapter": "mcp"})
+    assert delta.output[1].data == {"count": 1}
+    assert delta.output[1].metadata == {"phase": "draft"}
+    assert delta.into_result() is None
+    assert artifact.kind == "artifact_ready"
+    assert artifact.artifact == ArtifactRef(
+        "artifact-1",
+        "blob://tool-results/1",
+        media_type="text/plain",
+        metadata={"source": "mcp"},
+    )
+    assert "mcp_tool_result_delta" in graphblocks_mcp.__all__
+
+
+def test_mcp_adapter_rejects_invalid_streaming_tool_result_events(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
+    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    admitted, resolved = _admitted_call_for(
+        McpToolImplementation(server="support-mcp", remote_name="search"),
+        tool_name="knowledge.search",
+        binding_id="binding-mcp-search",
+        arguments={"query": "billing"},
+    )
+
+    with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="delta output must be a sequence"):
+        graphblocks_mcp.mcp_tool_result_delta(admitted, resolved, sequence=1, output="draft")
+
+    with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="requires artifact_id and uri"):
+        graphblocks_mcp.mcp_tool_result_artifact_ready(
+            admitted,
+            resolved,
+            sequence=2,
+            artifact={"artifact_id": "artifact-1"},
+        )
+
+
 def test_openapi_adapter_builds_tool_definition_and_binding(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
     graphblocks_openapi = importlib.import_module("graphblocks_openapi")
@@ -586,3 +663,72 @@ def test_openapi_adapter_converts_cancelled_and_incomplete_terminal_results(monk
     assert cancelled.effect_outcome == "not_committed"
     assert incomplete.status == "incomplete"
     assert incomplete.effect_outcome == "unknown"
+
+
+def test_openapi_adapter_builds_streaming_tool_result_events(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
+    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    admitted, resolved = _admitted_call_for(
+        OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
+        tool_name="ticket.create",
+        binding_id="binding-ticket-create",
+        arguments={"title": "Need help"},
+    )
+
+    started = graphblocks_openapi.openapi_tool_result_started(
+        admitted,
+        resolved,
+        sequence=1,
+        started_at="2026-06-23T00:00:01Z",
+    )
+    delta = graphblocks_openapi.openapi_tool_result_delta(
+        admitted,
+        resolved,
+        sequence=2,
+        output=(
+            {"text": "draft ticket"},
+            ContentPart(kind="text", text="continuation", metadata={"phase": "draft"}),
+        ),
+    )
+    artifact = graphblocks_openapi.openapi_tool_result_artifact_ready(
+        admitted,
+        resolved,
+        sequence=3,
+        artifact=ArtifactRef("artifact-2", "blob://tool-results/2", checksum="sha256:artifact"),
+    )
+
+    assert started.kind == "started"
+    assert delta.kind == "delta"
+    assert delta.output[0] == ContentPart(kind="text", text="draft ticket")
+    assert delta.output[1].metadata == {"phase": "draft"}
+    assert delta.into_result() is None
+    assert artifact.kind == "artifact_ready"
+    assert artifact.artifact == ArtifactRef("artifact-2", "blob://tool-results/2", checksum="sha256:artifact")
+    assert "openapi_tool_result_artifact_ready" in graphblocks_openapi.__all__
+
+
+def test_openapi_adapter_rejects_invalid_streaming_tool_result_events(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
+    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    admitted, resolved = _admitted_call_for(
+        OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
+        tool_name="ticket.create",
+        binding_id="binding-ticket-create",
+        arguments={"title": "Need help"},
+    )
+
+    with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="metadata must be an object"):
+        graphblocks_openapi.openapi_tool_result_delta(
+            admitted,
+            resolved,
+            sequence=1,
+            output=({"kind": "text", "text": "draft", "metadata": "bad"},),
+        )
+
+    with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="sizeBytes must be an integer"):
+        graphblocks_openapi.openapi_tool_result_artifact_ready(
+            admitted,
+            resolved,
+            sequence=2,
+            artifact={"artifactId": "artifact-1", "uri": "blob://tool-results/1", "sizeBytes": "large"},
+        )
