@@ -1641,6 +1641,7 @@ def load_durable_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
             "window_lateness",
             "sink_idempotency",
             "checkpoint_replay",
+            "tool_terminal_from_tool_result",
             "tool_terminal_policy_stop",
         }:
             raise ValueError(f"durable TCK case {case_id} has unsupported kind {case_kind!r}")
@@ -5140,6 +5141,116 @@ class TckRunner:
                     "latestCheckpointId": latest.checkpoint_id if latest is not None else None,
                     "latestStateRevision": latest.state_revision if latest is not None else None,
                     "missingCompatible": missing is None,
+                }
+            elif kind == "tool_terminal_from_tool_result":
+                store = durable.InMemoryDurableToolTerminalStore()
+                raw_result = fixture.get("toolResult", fixture.get("tool_result", {}))
+                raw_record = fixture.get("record", {})
+                if not isinstance(raw_result, Mapping) or not isinstance(raw_record, Mapping):
+                    raise ValueError("durable tool_terminal_from_tool_result case requires toolResult and record")
+
+                status = str(raw_result.get("status", ""))
+                tool_call_id = str(raw_result.get("toolCallId", raw_result.get("tool_call_id", "")))
+                started_at = str(raw_result.get("startedAt", raw_result.get("started_at", "2026-06-23T00:00:00Z")))
+                completed_at = str(raw_result.get("completedAt", raw_result.get("completed_at", "2026-06-23T00:00:00Z")))
+                raw_error = raw_result.get("error", {"code": status, "message": status})
+                if not isinstance(raw_error, Mapping):
+                    raise ValueError("durable tool_terminal_from_tool_result error must be a mapping")
+                raw_output = raw_result.get("output", [])
+                if not isinstance(raw_output, list):
+                    raise ValueError("durable tool_terminal_from_tool_result output must be a list")
+                output_parts: list[ContentPart] = []
+                for part_index, raw_part in enumerate(raw_output):
+                    if not isinstance(raw_part, Mapping):
+                        raise ValueError(f"durable tool terminal output part {part_index} must be a mapping")
+                    metadata_value = raw_part.get("metadata", {})
+                    if not isinstance(metadata_value, Mapping):
+                        raise ValueError(f"durable tool terminal output part {part_index} metadata must be a mapping")
+                    part_kind = str(raw_part.get("kind", "text"))
+                    if part_kind == "text":
+                        text = raw_part.get("text")
+                        if not isinstance(text, str):
+                            raise ValueError(f"durable tool terminal output part {part_index} text must be a string")
+                        output_parts.append(ContentPart(kind="text", text=text, metadata=dict(metadata_value)))
+                    elif part_kind in {"json", "artifact_ref"}:
+                        data = raw_part.get("data")
+                        if not isinstance(data, Mapping):
+                            raise ValueError(f"durable tool terminal output part {part_index} data must be a mapping")
+                        output_parts.append(ContentPart(kind=part_kind, data=dict(data), metadata=dict(metadata_value)))
+                    else:
+                        raise ValueError(f"durable tool terminal output part {part_index} has unsupported kind {part_kind!r}")
+
+                if status == "completed":
+                    tool_result = ToolResult.completed(
+                        tool_call_id,
+                        tuple(output_parts),
+                        started_at=started_at,
+                        completed_at=completed_at,
+                    )
+                elif status == "failed":
+                    tool_result = ToolResult.failed(
+                        tool_call_id,
+                        error=dict(raw_error),
+                        started_at=started_at,
+                        completed_at=completed_at,
+                    )
+                elif status == "denied":
+                    tool_result = ToolResult.denied(
+                        tool_call_id,
+                        error=dict(raw_error),
+                        completed_at=completed_at,
+                    )
+                elif status == "cancelled":
+                    tool_result = ToolResult.cancelled(
+                        tool_call_id,
+                        started_at=started_at,
+                        completed_at=completed_at,
+                    )
+                elif status == "policy_stopped":
+                    tool_result = ToolResult.policy_stopped(
+                        tool_call_id,
+                        error=dict(raw_error),
+                        started_at=started_at,
+                        completed_at=completed_at,
+                    )
+                elif status == "incomplete":
+                    tool_result = ToolResult.incomplete(
+                        tool_call_id,
+                        started_at=started_at,
+                        completed_at=completed_at,
+                    )
+                else:
+                    raise ValueError(f"durable tool_terminal_from_tool_result has unsupported status {status!r}")
+
+                effect_outcome = raw_result.get("effectOutcome", raw_result.get("effect_outcome"))
+                if effect_outcome is not None:
+                    tool_result = tool_result.with_effect_outcome(str(effect_outcome))
+                idempotency_key = raw_record.get("idempotencyKey", raw_record.get("idempotency_key"))
+                record = durable.DurableToolTerminalRecord.from_tool_result(
+                    tool_result,
+                    run_id=str(raw_record.get("runId", raw_record.get("run_id", ""))),
+                    response_id=str(raw_record.get("responseId", raw_record.get("response_id", ""))),
+                    revision=int(raw_record.get("revision", 0)),
+                    arguments_digest=str(raw_record.get("argumentsDigest", raw_record.get("arguments_digest", ""))),
+                    completed_at_unix_ms=int(raw_record.get("completedAtUnixMs", raw_record.get("completed_at_unix_ms", 0))),
+                    idempotency_key=str(idempotency_key) if idempotency_key is not None else None,
+                    durable_result_committed=bool(raw_record.get("durableResultCommitted", raw_record.get("durable_result_committed", False))),
+                )
+                committed = store.record_tool_terminal(record)
+                observed = {
+                    "commitSequence": committed.sequence,
+                    "toolCallId": committed.record.tool_call_id,
+                    "terminalState": committed.record.terminal_state,
+                    "outputDigestMatchesResult": committed.record.output_digest == tool_result.output_digest,
+                    "outputDigestPrefix": (
+                        committed.record.output_digest[:7]
+                        if committed.record.output_digest is not None
+                        else None
+                    ),
+                    "idempotencyKey": committed.record.idempotency_key,
+                    "effectCommitted": committed.record.effect_committed,
+                    "durableResultCommitted": committed.record.durable_result_committed,
+                    "toolTerminalCount": store.tool_terminal_count(),
                 }
             elif kind == "tool_terminal_policy_stop":
                 store = durable.InMemoryDurableToolTerminalStore()

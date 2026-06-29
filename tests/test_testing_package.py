@@ -323,7 +323,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_durable_tck_cases(ROOT / "tck" / "durable" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["durable"] * 6
+    assert [case.kind for case in cases] == ["durable"] * 7
     assert report.ok
     assert {case.case_id for case in cases} == {
         "source_cursor_replay_and_commit_advances",
@@ -331,6 +331,7 @@ def test_testing_package_loads_shared_durable_tck_cases(monkeypatch) -> None:
         "window_watermark_closes_after_allowed_lateness",
         "sink_idempotency_replays_and_rejects_conflict",
         "checkpoint_barrier_and_replay_latest_compatible",
+        "tool_terminal_record_projects_tool_result",
         "policy_stop_denies_late_durable_result_but_records_effect_outcome",
     }
     assert any(result.observed.get("replayOffsets") == [11, 12] for result in report.results)
@@ -593,6 +594,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "window_watermark_closes_after_allowed_lateness",
         "sink_idempotency_replays_and_rejects_conflict",
         "checkpoint_barrier_and_replay_latest_compatible",
+        "tool_terminal_record_projects_tool_result",
         "policy_stop_denies_late_durable_result_but_records_effect_outcome",
     )
     assert by_suite["orchestration"].case_ids == (

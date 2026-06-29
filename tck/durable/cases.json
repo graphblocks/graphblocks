@@ -346,6 +346,43 @@
     }
   },
   {
+    "name": "tool_terminal_record_projects_tool_result",
+    "kind": "tool_terminal_from_tool_result",
+    "toolResult": {
+      "toolCallId": "call-3",
+      "status": "completed",
+      "output": [
+        {
+          "kind": "text",
+          "text": "ticket created"
+        }
+      ],
+      "startedAt": "2026-06-23T00:00:00Z",
+      "completedAt": "2026-06-23T00:00:01Z",
+      "effectOutcome": "committed"
+    },
+    "record": {
+      "runId": "run-000001",
+      "responseId": "response-1",
+      "revision": 1,
+      "argumentsDigest": "sha256:arguments-tool-result",
+      "completedAtUnixMs": 1820000000100,
+      "idempotencyKey": "ticket-create:call-3",
+      "durableResultCommitted": true
+    },
+    "expected": {
+      "commitSequence": 1,
+      "toolCallId": "call-3",
+      "terminalState": "completed",
+      "outputDigestMatchesResult": true,
+      "outputDigestPrefix": "sha256:",
+      "idempotencyKey": "ticket-create:call-3",
+      "effectCommitted": true,
+      "durableResultCommitted": true,
+      "toolTerminalCount": 1
+    }
+  },
+  {
     "name": "policy_stop_denies_late_durable_result_but_records_effect_outcome",
     "kind": "tool_terminal_policy_stop",
     "policyStop": {
