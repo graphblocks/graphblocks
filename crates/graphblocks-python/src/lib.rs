@@ -22,6 +22,7 @@ use graphblocks_runtime_core::output_policy::{
 use graphblocks_runtime_core::readiness::{InputDependency, PortRef, ResolvedInput};
 use graphblocks_runtime_core::scheduler::{ScheduledNode, StartedNode};
 use graphblocks_runtime_core::test_runtime::{InProcessTestRuntime, NodeExecutor, TestRunStatus};
+use graphblocks_runtime_core::tool_call::{ToolCallDraft, ToolCallDraftStatus, ToolCallStatus};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use serde_json::{Value, json};
@@ -29,6 +30,102 @@ use serde_json::{Value, json};
 #[pyfunction]
 fn binding_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
+}
+
+#[pyfunction]
+fn finalize_tool_call_json(
+    draft_json: &str,
+    resolved_tool_id: &str,
+    created_at_unix_ms: u64,
+) -> PyResult<String> {
+    let draft_value = parse_json_argument(draft_json, "tool call draft")?;
+    let draft_object = json_object(&draft_value, "draft")?;
+    let status = match required_alias_string(draft_object, "status", "status", "draft")? {
+        "proposed" => ToolCallDraftStatus::Proposed,
+        "arguments_streaming" => ToolCallDraftStatus::ArgumentsStreaming,
+        "arguments_complete" => ToolCallDraftStatus::ArgumentsComplete,
+        value => {
+            return Err(PyValueError::new_err(format!(
+                "draft.status has unknown status {value:?}"
+            )));
+        }
+    };
+    let expected_sequence = required_alias_u64(draft_object, "sequence", "sequence", "draft")?;
+    let fragments = draft_object
+        .get("argumentFragments")
+        .or_else(|| draft_object.get("argument_fragments"))
+        .ok_or_else(|| PyValueError::new_err("draft.argumentFragments is required"))?
+        .as_array()
+        .ok_or_else(|| PyValueError::new_err("draft.argumentFragments must be an array"))?;
+
+    let mut draft = ToolCallDraft::proposed(
+        required_alias_string(draft_object, "responseId", "response_id", "draft")?,
+        required_alias_string(draft_object, "toolCallId", "tool_call_id", "draft")?,
+        required_alias_string(draft_object, "toolName", "tool_name", "draft")?,
+    );
+    for (fragment_index, fragment) in fragments.iter().enumerate() {
+        let Some(fragment) = fragment.as_str() else {
+            return Err(PyValueError::new_err(format!(
+                "draft.argumentFragments[{fragment_index}] must be a string"
+            )));
+        };
+        draft.append_argument_fragment(fragment).map_err(|error| {
+            PyValueError::new_err(format!(
+                "failed to append tool argument fragment {fragment_index}: {error:?}"
+            ))
+        })?;
+    }
+    if status == ToolCallDraftStatus::ArgumentsComplete {
+        draft.complete_arguments().map_err(|error| {
+            PyValueError::new_err(format!("failed to complete tool arguments: {error:?}"))
+        })?;
+    }
+    if draft.status != status {
+        return Err(PyValueError::new_err(format!(
+            "draft.status does not match argument fragments: expected {status:?}, reconstructed {:?}",
+            draft.status
+        )));
+    }
+    if draft.sequence != expected_sequence {
+        return Err(PyValueError::new_err(format!(
+            "draft.sequence does not match argument fragments: expected {expected_sequence}, reconstructed {}",
+            draft.sequence
+        )));
+    }
+
+    let call = draft
+        .into_tool_call(resolved_tool_id, created_at_unix_ms)
+        .map_err(|error| PyValueError::new_err(format!("invalid tool call draft: {error:?}")))?;
+    let status = match call.status {
+        ToolCallStatus::Validated => "validated",
+        ToolCallStatus::PolicyPending => "policy_pending",
+        ToolCallStatus::ApprovalPending => "approval_pending",
+        ToolCallStatus::Admitted => "admitted",
+        ToolCallStatus::Running => "running",
+        ToolCallStatus::Completed => "completed",
+        ToolCallStatus::Failed => "failed",
+        ToolCallStatus::Denied => "denied",
+        ToolCallStatus::Cancelled => "cancelled",
+        ToolCallStatus::PolicyStopped => "policy_stopped",
+        ToolCallStatus::Expired => "expired",
+    };
+    let payload = json!({
+        "toolCallId": call.tool_call_id,
+        "responseId": call.response_id,
+        "resolvedToolId": call.resolved_tool_id,
+        "name": call.name,
+        "arguments": call.arguments,
+        "argumentsDigest": call.arguments_digest,
+        "revision": call.revision,
+        "status": status,
+        "dependsOn": call.depends_on,
+        "createdAtUnixMs": call.created_at_unix_ms,
+        "admittedAtUnixMs": call.admitted_at_unix_ms,
+        "completedAtUnixMs": call.completed_at_unix_ms,
+    });
+    serde_json::to_string(&payload).map_err(|error| {
+        PyRuntimeError::new_err(format!("failed to serialize finalized tool call: {error}"))
+    })
 }
 
 #[pyfunction]
@@ -291,6 +388,19 @@ fn required_string<'a>(
         .ok_or_else(|| PyValueError::new_err(format!("{label}.{field} must be a string")))
 }
 
+fn required_alias_string<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    primary: &str,
+    alternate: &str,
+    label: &str,
+) -> PyResult<&'a str> {
+    object
+        .get(primary)
+        .or_else(|| object.get(alternate))
+        .and_then(Value::as_str)
+        .ok_or_else(|| PyValueError::new_err(format!("{label}.{primary} must be a string")))
+}
+
 fn required_u64(
     object: &serde_json::Map<String, Value>,
     field: &str,
@@ -299,6 +409,21 @@ fn required_u64(
     object.get(field).and_then(Value::as_u64).ok_or_else(|| {
         PyValueError::new_err(format!("{label}.{field} must be an unsigned integer"))
     })
+}
+
+fn required_alias_u64(
+    object: &serde_json::Map<String, Value>,
+    primary: &str,
+    alternate: &str,
+    label: &str,
+) -> PyResult<u64> {
+    object
+        .get(primary)
+        .or_else(|| object.get(alternate))
+        .and_then(Value::as_u64)
+        .ok_or_else(|| {
+            PyValueError::new_err(format!("{label}.{primary} must be an unsigned integer"))
+        })
 }
 
 fn parse_work_kind(value: &Value, label: &str) -> PyResult<WorkKind> {
@@ -1823,6 +1948,7 @@ fn evaluate_declarative_output_policy_json(
 fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("__version__", env!("CARGO_PKG_VERSION"))?;
     module.add_function(wrap_pyfunction!(binding_version, module)?)?;
+    module.add_function(wrap_pyfunction!(finalize_tool_call_json, module)?)?;
     module.add_function(wrap_pyfunction!(compile_graph_json, module)?)?;
     module.add_function(wrap_pyfunction!(
         validate_worker_advertisement_json,
@@ -1847,9 +1973,102 @@ mod tests {
 
     use super::{
         admit_exhaustion_work_json, compile_graph_json, decide_agent_step_json,
-        evaluate_declarative_output_policy_json, evaluate_output_gate_json, run_stdlib_graph_json,
-        run_test_graph_json, validate_remote_payload_json, validate_worker_advertisement_json,
+        evaluate_declarative_output_policy_json, evaluate_output_gate_json,
+        finalize_tool_call_json, run_stdlib_graph_json, run_test_graph_json,
+        validate_remote_payload_json, validate_worker_advertisement_json,
     };
+
+    #[test]
+    fn finalize_tool_call_json_assembles_validated_call_with_canonical_digest() -> Result<(), String>
+    {
+        let draft = json!({
+            "responseId": "response-1",
+            "toolCallId": "call-1",
+            "toolName": "knowledge.search",
+            "argumentFragments": ["{\"b\":2,", "\"a\":1}"],
+            "sequence": 2,
+            "status": "arguments_complete"
+        });
+        let reversed_draft = json!({
+            "response_id": "response-1",
+            "tool_call_id": "call-2",
+            "tool_name": "knowledge.search",
+            "argument_fragments": ["{\"a\":1,", "\"b\":2}"],
+            "sequence": 2,
+            "status": "arguments_complete"
+        });
+        let draft_json = serde_json::to_string(&draft).map_err(|error| error.to_string())?;
+        let reversed_draft_json =
+            serde_json::to_string(&reversed_draft).map_err(|error| error.to_string())?;
+
+        let result_json = finalize_tool_call_json(&draft_json, "resolved-tool-1", 1_000)
+            .map_err(|error| error.to_string())?;
+        let reversed_result_json =
+            finalize_tool_call_json(&reversed_draft_json, "resolved-tool-1", 1_001)
+                .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+        let reversed_result = serde_json::from_str::<Value>(&reversed_result_json)
+            .map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            result.get("toolCallId").and_then(Value::as_str),
+            Some("call-1")
+        );
+        assert_eq!(
+            result.get("responseId").and_then(Value::as_str),
+            Some("response-1")
+        );
+        assert_eq!(
+            result.get("resolvedToolId").and_then(Value::as_str),
+            Some("resolved-tool-1")
+        );
+        assert_eq!(
+            result.get("name").and_then(Value::as_str),
+            Some("knowledge.search")
+        );
+        assert_eq!(result.get("arguments"), Some(&json!({"a": 1, "b": 2})));
+        assert_eq!(result.get("revision").and_then(Value::as_u64), Some(1));
+        assert_eq!(
+            result.get("status").and_then(Value::as_str),
+            Some("validated")
+        );
+        assert_eq!(result.get("dependsOn"), Some(&json!([])));
+        assert_eq!(
+            result.get("createdAtUnixMs").and_then(Value::as_u64),
+            Some(1_000)
+        );
+        assert_eq!(
+            result.get("argumentsDigest").and_then(Value::as_str),
+            reversed_result
+                .get("argumentsDigest")
+                .and_then(Value::as_str)
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn finalize_tool_call_json_rejects_incomplete_arguments() -> Result<(), String> {
+        pyo3::Python::initialize();
+
+        let draft = json!({
+            "responseId": "response-1",
+            "toolCallId": "call-1",
+            "toolName": "knowledge.search",
+            "argumentFragments": ["{\"query\":\"runtime\"}"],
+            "sequence": 1,
+            "status": "arguments_streaming"
+        });
+        let draft_json = serde_json::to_string(&draft).map_err(|error| error.to_string())?;
+
+        let error = finalize_tool_call_json(&draft_json, "resolved-tool-1", 1_000)
+            .expect_err("streaming arguments must not finalize")
+            .to_string();
+
+        assert!(error.contains("ArgumentsNotComplete"));
+        Ok(())
+    }
 
     #[test]
     fn compile_graph_json_matches_shared_tck_cases() -> Result<(), String> {
