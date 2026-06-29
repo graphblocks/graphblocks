@@ -163,6 +163,57 @@ def test_tui_package_projects_standard_tool_approval_and_incomplete_events(monke
     }
 
 
+def test_tui_package_projects_job_progress_from_streaming_tool_results(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-tui" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+    graphblocks_tui = importlib.import_module("graphblocks_tui")
+
+    def event(kind: str, sequence: int, payload: dict[str, object] | None = None):
+        return graphblocks_client.ApplicationProtocolEvent.new(
+            kind,
+            graphblocks_client.ApplicationProtocolEventMetadata(
+                event_id=f"event-{sequence}",
+                protocol_version="graphblocks.app.v1",
+                run_id="run-1",
+                sequence=sequence,
+                occurred_at_unix_ms=sequence * 1000,
+            ),
+            payload=payload or {},
+        )
+
+    state = graphblocks_tui.TuiProtocolSession("run-1").apply_all(
+        (
+            event("RunStarted", 1, {"status": "running"}),
+            event(
+                "JobProgress",
+                2,
+                {
+                    "tool_call_id": "tool-call-1",
+                    "tool_result_sequence": 2,
+                    "output": [
+                        {
+                            "kind": "text",
+                            "text": "searching docs",
+                            "metadata": {"trust_designation": "untrusted_external"},
+                        }
+                    ],
+                },
+            ),
+            event("JobProgress", 3, {"tool_call_id": "tool-call-1", "message": "ranked 4 hits"}),
+            event("JobProgress", 4, {"job_id": "embedding", "tool_result_sequence": 7}),
+        )
+    )
+    screen = graphblocks_tui.workspace_assistant_screen(state)
+
+    assert state.tool_progress == {"embedding": "sequence 7", "tool-call-1": "ranked 4 hits"}
+    assert state.counters["JobProgress"] == 3
+    assert screen.screen_contract()["sections"][3] == {
+        "title": "Progress",
+        "rows": {"embedding": "sequence 7", "tool-call-1": "ranked 4 hits"},
+    }
+
+
 def test_tui_package_projects_output_cutoff_events(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-tui" / "src"))

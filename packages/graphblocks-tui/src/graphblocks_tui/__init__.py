@@ -112,6 +112,7 @@ class TuiProtocolSession:
     assistant_state: str = "empty"
     pending_actions: tuple[str, ...] = field(default_factory=tuple)
     artifacts: tuple[str, ...] = field(default_factory=tuple)
+    tool_progress: Mapping[str, object] = field(default_factory=dict)
     counters: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -125,6 +126,7 @@ class TuiProtocolSession:
             raise TuiContractError("last_sequence must be at least -1")
         object.__setattr__(self, "pending_actions", tuple(dict.fromkeys(str(item) for item in self.pending_actions)))
         object.__setattr__(self, "artifacts", tuple(dict.fromkeys(str(item) for item in self.artifacts)))
+        object.__setattr__(self, "tool_progress", _sorted_str_mapping(self.tool_progress))
         object.__setattr__(
             self,
             "counters",
@@ -145,6 +147,7 @@ class TuiProtocolSession:
         assistant_state = self.assistant_state
         pending_actions = list(self.pending_actions)
         artifacts = list(self.artifacts)
+        tool_progress = dict(self.tool_progress)
         counters = dict(self.counters)
         counters[event.kind] = counters.get(event.kind, 0) + 1
 
@@ -209,6 +212,33 @@ class TuiProtocolSession:
             if isinstance(artifact_id, str) and artifact_id.strip() and artifact_id not in artifacts:
                 artifacts.append(artifact_id)
 
+        if event.kind == "JobProgress":
+            progress_id = (
+                payload.get("tool_call_id")
+                or payload.get("toolCallId")
+                or payload.get("job_id")
+                or payload.get("jobId")
+                or "progress"
+            )
+            if isinstance(progress_id, str) and progress_id.strip():
+                summary = payload.get("message")
+                if not isinstance(summary, str):
+                    summary = payload.get("delta")
+                if not isinstance(summary, str):
+                    output = payload.get("output")
+                    if isinstance(output, list):
+                        text_parts = []
+                        for part in output:
+                            if isinstance(part, dict):
+                                text = part.get("text")
+                                if isinstance(text, str) and text:
+                                    text_parts.append(text)
+                        summary = " ".join(text_parts) if text_parts else None
+                if not isinstance(summary, str) or not summary.strip():
+                    sequence = payload.get("tool_result_sequence", payload.get("toolResultSequence"))
+                    summary = f"sequence {sequence}" if isinstance(sequence, int) else "updated"
+                tool_progress[progress_id] = summary
+
         return replace(
             self,
             status=status,
@@ -218,6 +248,7 @@ class TuiProtocolSession:
             assistant_state=assistant_state,
             pending_actions=tuple(pending_actions),
             artifacts=tuple(artifacts),
+            tool_progress=tool_progress,
             counters=counters,
         )
 
@@ -267,34 +298,38 @@ def workspace_assistant_screen(state: TuiProtocolSession) -> TuiScreen:
                 TuiCommand("Deny", "deny", "d"),
             ]
         )
+    sections = [
+        TuiSection(
+            "Run",
+            {
+                "status": state.status,
+                "last_event": state.last_event,
+                "sequence": state.last_sequence,
+            },
+        ),
+        TuiSection(
+            "Assistant",
+            {
+                "state": state.assistant_state,
+                "text": state.assistant_text,
+            },
+        ),
+        TuiSection(
+            "Pending",
+            {
+                "actions": ", ".join(state.pending_actions),
+                "artifacts": ", ".join(state.artifacts),
+            },
+        ),
+    ]
+    if state.tool_progress:
+        sections.append(TuiSection("Progress", state.tool_progress))
+    sections.append(TuiSection("Counters", state.counters))
+
     return TuiScreen(
         name="workspace-assistant",
         title=f"Workspace {state.run_id}",
-        sections=(
-            TuiSection(
-                "Run",
-                {
-                    "status": state.status,
-                    "last_event": state.last_event,
-                    "sequence": state.last_sequence,
-                },
-            ),
-            TuiSection(
-                "Assistant",
-                {
-                    "state": state.assistant_state,
-                    "text": state.assistant_text,
-                },
-            ),
-            TuiSection(
-                "Pending",
-                {
-                    "actions": ", ".join(state.pending_actions),
-                    "artifacts": ", ".join(state.artifacts),
-                },
-            ),
-            TuiSection("Counters", state.counters),
-        ),
+        sections=tuple(sections),
         commands=tuple(commands),
     )
 
