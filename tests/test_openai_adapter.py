@@ -5,7 +5,14 @@ from pathlib import Path
 
 import pytest
 
-from graphblocks import ContentPart, Message, ToolCallError, ToolDefinition, UsageAmount
+from graphblocks import (
+    ContentPart,
+    GenerationChunk,
+    Message,
+    ToolCallError,
+    ToolDefinition,
+    UsageAmount,
+)
 
 
 ROOT = Path(__file__).parents[1]
@@ -226,6 +233,92 @@ def test_openai_stream_chunk_normalizes_content_delta(monkeypatch) -> None:
         "finish_reason": None,
         "usage_delta": {},
     }
+
+
+def test_openai_stream_content_delta_normalizes_to_generation_chunk(monkeypatch) -> None:
+    _add_openai_package_paths(monkeypatch)
+    graphblocks_openai = importlib.import_module("graphblocks_openai")
+
+    delta = graphblocks_openai.openai_chat_delta_from_chunk(
+        {
+            "id": "chatcmpl-1",
+            "choices": [{"index": 0, "delta": {"content": "Ref"}}],
+        },
+        sequence=7,
+    )
+
+    assert graphblocks_openai.openai_generation_chunk_from_delta(delta) == GenerationChunk.text(
+        "chatcmpl-1",
+        "chatcmpl-1",
+        7,
+        "Ref",
+    )
+    assert graphblocks_openai.openai_generation_chunk_from_delta(
+        delta,
+        stream_id="stream-1",
+        sequence=3,
+    ) == GenerationChunk.text("stream-1", "chatcmpl-1", 3, "Ref")
+    assert "openai_generation_chunk_from_delta" in graphblocks_openai.__all__
+
+
+def test_openai_stream_non_content_delta_has_no_generation_chunk(monkeypatch) -> None:
+    _add_openai_package_paths(monkeypatch)
+    graphblocks_openai = importlib.import_module("graphblocks_openai")
+
+    usage_delta = graphblocks_openai.openai_chat_delta_from_chunk(
+        {
+            "id": "chatcmpl-usage",
+            "choices": [],
+            "usage": {"prompt_tokens": 20, "completion_tokens": 5, "total_tokens": 25},
+        },
+        sequence=99,
+    )
+    tool_delta = graphblocks_openai.openai_chat_delta_from_chunk(
+        {
+            "id": "chatcmpl-tool",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call-1",
+                                "function": {
+                                    "name": "knowledge.search",
+                                    "arguments": "{\"query\"",
+                                },
+                            }
+                        ]
+                    },
+                }
+            ],
+        },
+        sequence=8,
+    )
+
+    assert graphblocks_openai.openai_generation_chunk_from_delta(usage_delta) is None
+    assert graphblocks_openai.openai_generation_chunk_from_delta(tool_delta) is None
+
+
+def test_openai_generation_chunk_helper_rejects_invalid_inputs(monkeypatch) -> None:
+    _add_openai_package_paths(monkeypatch)
+    graphblocks_openai = importlib.import_module("graphblocks_openai")
+    delta = graphblocks_openai.OpenAIChatDelta(
+        response_id="chatcmpl-1",
+        sequence=1,
+        choice_index=0,
+        content_delta="hello",
+    )
+
+    with pytest.raises(graphblocks_openai.OpenAICompatibleAdapterError, match="delta must be"):
+        graphblocks_openai.openai_generation_chunk_from_delta("not-a-delta")
+    with pytest.raises(graphblocks_openai.OpenAICompatibleAdapterError, match="stream_id"):
+        graphblocks_openai.openai_generation_chunk_from_delta(delta, stream_id=" ")
+    with pytest.raises(graphblocks_openai.OpenAICompatibleAdapterError, match="generation sequence"):
+        graphblocks_openai.openai_generation_chunk_from_delta(delta, sequence=True)
+    with pytest.raises(graphblocks_openai.OpenAICompatibleAdapterError, match="generation sequence"):
+        graphblocks_openai.openai_generation_chunk_from_delta(delta, sequence=-1)
 
 
 def test_openai_stream_chunk_normalizes_usage_only_final_chunk(monkeypatch) -> None:

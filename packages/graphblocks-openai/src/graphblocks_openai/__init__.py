@@ -5,7 +5,16 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 import math
 
-from graphblocks import ContentPart, Message, ToolCallDraft, ToolDefinition, UsageAmount, UsageRecord, canonical_dumps
+from graphblocks import (
+    ContentPart,
+    GenerationChunk,
+    Message,
+    ToolCallDraft,
+    ToolDefinition,
+    UsageAmount,
+    UsageRecord,
+    canonical_dumps,
+)
 
 
 class OpenAICompatibleAdapterError(ValueError):
@@ -319,6 +328,34 @@ def openai_tool_call_drafts_from_response(response: OpenAIChatResponse) -> tuple
     return tuple(drafts)
 
 
+def openai_generation_chunk_from_delta(
+    delta: OpenAIChatDelta,
+    *,
+    stream_id: str | None = None,
+    sequence: int | None = None,
+) -> GenerationChunk | None:
+    if not isinstance(delta, OpenAIChatDelta):
+        raise OpenAICompatibleAdapterError("delta must be an OpenAIChatDelta")
+    if delta.content_delta is None:
+        return None
+    generation_stream_id = delta.response_id if stream_id is None else stream_id
+    if not isinstance(generation_stream_id, str) or not generation_stream_id.strip():
+        raise OpenAICompatibleAdapterError("stream_id must not be empty")
+    generation_sequence = delta.sequence if sequence is None else sequence
+    if (
+        isinstance(generation_sequence, bool)
+        or not isinstance(generation_sequence, int)
+        or generation_sequence < 0
+    ):
+        raise OpenAICompatibleAdapterError("generation sequence must be non-negative")
+    return GenerationChunk.text(
+        generation_stream_id,
+        delta.response_id,
+        generation_sequence,
+        delta.content_delta,
+    )
+
+
 def openai_usage_record_from_response(
     response: OpenAIChatResponse,
     *,
@@ -571,6 +608,7 @@ __all__ = [
     "openai_chat_completion_request",
     "openai_chat_delta_from_chunk",
     "openai_chat_response_from_provider",
+    "openai_generation_chunk_from_delta",
     "openai_tool_call_drafts_from_response",
     "openai_usage_record_from_delta",
     "openai_usage_record_from_response",
