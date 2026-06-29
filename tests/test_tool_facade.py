@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 from math import nan
 
@@ -1926,7 +1927,13 @@ def test_completed_tool_result_rejects_non_canonical_json_values() -> None:
 
 
 def test_tool_result_metadata_mappings_are_copied_and_read_only() -> None:
-    artifacts = [{"artifact_id": "artifact-1", "uri": "blob://artifact-1"}]
+    artifacts = [
+        {
+            "artifact_id": "artifact-1",
+            "uri": "blob://artifact-1",
+            "metadata": {"source": "tool"},
+        }
+    ]
     diagnostics = [{"code": "tool.warning", "message": "partial data"}]
     error = {"code": "tool.failed", "message": "tool execution failed"}
 
@@ -1941,10 +1948,17 @@ def test_tool_result_metadata_mappings_are_copied_and_read_only() -> None:
     )
 
     artifacts[0]["uri"] = "blob://mutated"
+    artifacts[0]["metadata"]["source"] = "mutated"
     diagnostics[0]["message"] = "mutated"
     error["message"] = "mutated"
 
-    assert result.artifacts == ({"artifact_id": "artifact-1", "uri": "blob://artifact-1"},)
+    assert result.artifacts == (
+        {
+            "artifact_id": "artifact-1",
+            "uri": "blob://artifact-1",
+            "metadata": {"source": "tool"},
+        },
+    )
     assert result.diagnostics == ({"code": "tool.warning", "message": "partial data"},)
     assert result.error == {"code": "tool.failed", "message": "tool execution failed"}
     with pytest.raises(AttributeError):
@@ -1954,10 +1968,104 @@ def test_tool_result_metadata_mappings_are_copied_and_read_only() -> None:
     with pytest.raises(TypeError):
         result.artifacts[0]["uri"] = "blob://direct-mutation"
     with pytest.raises(TypeError):
+        result.artifacts[0]["metadata"]["source"] = "direct mutation"
+    with pytest.raises(TypeError):
         result.diagnostics[0]["message"] = "direct mutation"
     assert result.error is not None
     with pytest.raises(TypeError):
         result.error["message"] = "direct mutation"
+
+
+def test_tool_result_artifacts_accept_artifact_refs_and_camel_case_payloads() -> None:
+    result = ToolResult(
+        tool_call_id="call-1",
+        status="completed",
+        artifacts=(
+            ArtifactRef(
+                "artifact-1",
+                "blob://artifact-1",
+                media_type="text/plain",
+                size_bytes=12,
+                checksum="sha256:artifact",
+                metadata={"source": "tool"},
+            ),
+            {
+                "artifactId": "artifact-2",
+                "uri": "blob://artifact-2",
+                "mediaType": "application/json",
+                "sizeBytes": 7,
+            },
+        ),
+    )
+
+    assert result.artifacts[0] == {
+        "artifact_id": "artifact-1",
+        "uri": "blob://artifact-1",
+        "media_type": "text/plain",
+        "size_bytes": 12,
+        "checksum": "sha256:artifact",
+        "metadata": {"source": "tool"},
+    }
+    assert result.artifacts[1] == {
+        "artifact_id": "artifact-2",
+        "uri": "blob://artifact-2",
+        "media_type": "application/json",
+        "size_bytes": 7,
+    }
+
+
+def test_tool_result_rejects_invalid_artifact_references() -> None:
+    invalid_artifacts = (
+        (object(), "tool result artifact entries must be artifact references"),
+        (
+            {"artifact_id": object(), "uri": "blob://artifact-1"},
+            "tool result artifact artifact_id must be a string",
+        ),
+        (
+            {"artifact_id": " ", "uri": "blob://artifact-1"},
+            "tool result artifact artifact_id must not be empty",
+        ),
+        (
+            {"artifact_id": "artifact-1", "uri": object()},
+            "tool result artifact uri must be a string",
+        ),
+        (
+            {"artifact_id": "artifact-1", "uri": " "},
+            "tool result artifact uri must not be empty",
+        ),
+        (
+            {"artifact_id": "artifact-1", "uri": "blob://artifact-1", "media_type": object()},
+            "tool result artifact media_type must be a string",
+        ),
+        (
+            {"artifact_id": "artifact-1", "uri": "blob://artifact-1", "checksum": " "},
+            "tool result artifact checksum must not be empty",
+        ),
+        (
+            {"artifact_id": "artifact-1", "uri": "blob://artifact-1", "size_bytes": True},
+            "tool result artifact size_bytes must be an integer",
+        ),
+        (
+            {"artifact_id": "artifact-1", "uri": "blob://artifact-1", "size_bytes": -1},
+            "tool result artifact size_bytes must be non-negative",
+        ),
+        (
+            {"artifact_id": "artifact-1", "uri": "blob://artifact-1", "metadata": "tool"},
+            "tool result artifact metadata must be a mapping",
+        ),
+        (
+            {
+                "artifact_id": "artifact-1",
+                "uri": "blob://artifact-1",
+                "metadata": {"source": object()},
+            },
+            "tool result artifact metadata entries must be strings",
+        ),
+    )
+
+    for artifact, message in invalid_artifacts:
+        with pytest.raises(ValueError, match=re.escape(message)):
+            ToolResult(tool_call_id="call-1", status="completed", artifacts=(artifact,))
 
 
 def test_completed_tool_result_validates_output_schema_before_model_return() -> None:

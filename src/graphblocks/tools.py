@@ -1612,7 +1612,7 @@ class ToolResult:
         object.__setattr__(
             self,
             "artifacts",
-            tuple(MappingProxyType(dict(artifact)) for artifact in self.artifacts),
+            tuple(_tool_result_artifact_mapping(artifact) for artifact in self.artifacts),
         )
         diagnostics: list[MappingProxyType[str, object]] = []
         for diagnostic in self.diagnostics:
@@ -1766,6 +1766,69 @@ def _tool_result_output_value(output: tuple[ContentPart, ...]) -> list[dict[str,
 
 def _tool_result_output_digest(output: tuple[ContentPart, ...]) -> str:
     return canonical_hash(_tool_result_output_value(output))
+
+
+def _tool_result_artifact_mapping(artifact: object) -> MappingProxyType[str, object]:
+    if isinstance(artifact, ArtifactRef):
+        artifact_copy: dict[str, object] = {
+            "artifact_id": artifact.artifact_id,
+            "uri": artifact.uri,
+        }
+        for field_name in ("media_type", "size_bytes", "checksum", "etag", "version", "filename"):
+            value = getattr(artifact, field_name)
+            if value is not None:
+                artifact_copy[field_name] = value
+        if artifact.metadata:
+            artifact_copy["metadata"] = dict(artifact.metadata)
+    elif isinstance(artifact, Mapping):
+        artifact_copy = dict(artifact)
+        artifact_id = artifact_copy.pop("artifactId", None)
+        if artifact_id is not None and "artifact_id" not in artifact_copy:
+            artifact_copy["artifact_id"] = artifact_id
+        media_type = artifact_copy.pop("mediaType", None)
+        if media_type is not None and "media_type" not in artifact_copy:
+            artifact_copy["media_type"] = media_type
+        size_bytes = artifact_copy.pop("sizeBytes", None)
+        if size_bytes is not None and "size_bytes" not in artifact_copy:
+            artifact_copy["size_bytes"] = size_bytes
+    else:
+        raise ValueError("tool result artifact entries must be artifact references")
+
+    artifact_id = artifact_copy.get("artifact_id")
+    if not isinstance(artifact_id, str):
+        raise ValueError("tool result artifact artifact_id must be a string")
+    if not artifact_id.strip():
+        raise ValueError("tool result artifact artifact_id must not be empty")
+    uri = artifact_copy.get("uri")
+    if not isinstance(uri, str):
+        raise ValueError("tool result artifact uri must be a string")
+    if not uri.strip():
+        raise ValueError("tool result artifact uri must not be empty")
+    for field_name in ("media_type", "checksum", "etag", "version", "filename"):
+        value = artifact_copy.get(field_name)
+        if value is not None:
+            if not isinstance(value, str):
+                raise ValueError(f"tool result artifact {field_name} must be a string")
+            if not value.strip():
+                raise ValueError(f"tool result artifact {field_name} must not be empty")
+    size_bytes = artifact_copy.get("size_bytes")
+    if size_bytes is not None:
+        if not isinstance(size_bytes, int) or isinstance(size_bytes, bool):
+            raise ValueError("tool result artifact size_bytes must be an integer")
+        if size_bytes < 0:
+            raise ValueError("tool result artifact size_bytes must be non-negative")
+    metadata = artifact_copy.get("metadata")
+    if metadata is not None:
+        if not isinstance(metadata, Mapping):
+            raise ValueError("tool result artifact metadata must be a mapping")
+        metadata_copy = dict(metadata)
+        if any(
+            not isinstance(key, str) or not isinstance(value, str)
+            for key, value in metadata_copy.items()
+        ):
+            raise ValueError("tool result artifact metadata entries must be strings")
+        artifact_copy["metadata"] = MappingProxyType(metadata_copy)
+    return MappingProxyType(artifact_copy)
 
 
 def validate_tool_result_for_model(
