@@ -22,5 +22,8 @@ classifiers = [
 ]
 dependencies = ["graphblocks-core~=1.0"]
 
+[project.scripts]
+graphblocks-tck = "graphblocks_testing:main"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/graphblocks_testing"]

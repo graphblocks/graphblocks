@@ -153,6 +153,20 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
     assert "load_tck_suite_manifests" in graphblocks_testing.__all__
 
 
+def test_testing_package_cli_lists_tck_suite_manifests(monkeypatch, capsys) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    assert graphblocks_testing.main(["list", str(ROOT / "tck"), "--json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["suiteCount"] == 7
+    assert payload["suites"][0]["suite_id"] == "budget-race"
+    assert payload["suites"][0]["case_count"] == 2
+    assert payload["contentDigest"].startswith("sha256:")
+    assert "main" in graphblocks_testing.__all__
+
+
 def test_testing_package_tck_loaders_accept_camel_case_aliases(monkeypatch, tmp_path) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")

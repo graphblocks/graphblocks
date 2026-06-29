@@ -502,6 +502,7 @@ def test_testing_package_has_pure_python_layout_without_provider_dependencies() 
     assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
         "src/graphblocks_testing"
     ]
+    assert pyproject["project"]["scripts"] == {"graphblocks-tck": "graphblocks_testing:main"}
     assert (package_root / "src" / "graphblocks_testing" / "__init__.py").exists()
     assert (package_root / "src" / "graphblocks_testing" / "py.typed").exists()
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -1124,6 +1125,31 @@ def load_tck_suite_manifests(root: str | Path) -> tuple[TckSuiteManifest, ...]:
     return tuple(manifests)
 
 
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="graphblocks-tck")
+    subparsers = parser.add_subparsers(dest="command")
+    list_parser = subparsers.add_parser("list", help="list shared TCK suite manifests")
+    list_parser.add_argument("root", nargs="?", type=Path, default=Path("tck"))
+    list_parser.add_argument("--json", action="store_true", help="emit JSON")
+
+    args = parser.parse_args(argv)
+    if args.command == "list":
+        manifests = load_tck_suite_manifests(args.root)
+        payload = {
+            "suiteCount": len(manifests),
+            "suites": [manifest.manifest_contract() for manifest in manifests],
+        }
+        payload["contentDigest"] = canonical_hash(payload)
+        if args.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            for manifest in manifests:
+                print(f"{manifest.suite_id} cases={manifest.case_count} path={manifest.path}")
+        return 0
+    parser.print_help()
+    return 0
+
+
 @dataclass(frozen=True, slots=True)
 class AcceptanceApplication:
     application_id: str
@@ -1763,6 +1789,7 @@ __all__ = [
     "load_runtime_tck_cases",
     "load_schema_tck_cases",
     "load_tck_suite_manifests",
+    "main",
     "migrate_document",
     "stdlib_registry",
 ]
