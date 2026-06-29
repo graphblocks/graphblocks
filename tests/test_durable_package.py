@@ -357,8 +357,54 @@ def test_durable_tool_terminal_store_replays_response_policy_stop_barrier(monkey
 
     assert committed.sequence == 1
     assert committed.record.response_id == "response-1"
+    assert committed.record.stream_id == "response-1"
     assert committed.record.policy_decision_id == "decision-abort"
+    assert committed.record.last_generated_sequence == 7
+    assert committed.record.last_client_delivered_sequence == 7
     assert replayed.sequence == committed.sequence
+    assert replayed.record == committed.record
+    assert replayed.replayed is True
+
+
+def test_durable_tool_terminal_store_persists_full_output_cutoff_state(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    store = graphblocks_durable.InMemoryDurableToolTerminalStore()
+
+    committed = store.record_response_policy_stopped(
+        "response-1",
+        "decision-abort",
+        stream_id="stream-1",
+        turn_id="turn-1",
+        last_generated_sequence=9,
+        last_policy_accepted_sequence=7,
+        last_client_delivered_sequence=6,
+        terminal_reason="policy_denied",
+        draft_disposition="retract",
+        durable_result="none",
+        occurred_at_unix_ms=1_820_000_000_000,
+    )
+    replayed = store.record_response_policy_stopped(
+        "response-1",
+        "decision-abort",
+        stream_id="stream-1",
+        turn_id="turn-1",
+        last_generated_sequence=9,
+        last_policy_accepted_sequence=7,
+        last_client_delivered_sequence=6,
+        terminal_reason="policy_denied",
+        draft_disposition="retract",
+        durable_result="none",
+        occurred_at_unix_ms=1_820_000_000_000,
+    )
+
+    assert committed.record.stream_id == "stream-1"
+    assert committed.record.turn_id == "turn-1"
+    assert committed.record.last_generated_sequence == 9
+    assert committed.record.last_policy_accepted_sequence == 7
+    assert committed.record.last_client_delivered_sequence == 6
+    assert committed.record.terminal_reason == "policy_denied"
+    assert committed.record.draft_disposition == "retract"
+    assert committed.record.durable_result == "none"
     assert replayed.record == committed.record
     assert replayed.replayed is True
 

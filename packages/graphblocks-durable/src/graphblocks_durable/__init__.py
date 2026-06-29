@@ -9,6 +9,9 @@ from typing import Literal
 DeliveryGuarantee = Literal["best_effort", "at_most_once", "at_least_once"]
 WatermarkKind = Literal["event_time", "processing_time"]
 AccumulationMode = Literal["discarding", "accumulating"]
+OutputCutoffTerminalReason = Literal["policy_denied", "budget_exhausted", "cancelled", "client_disconnected"]
+OutputCutoffDraftDisposition = Literal["keep", "mark_incomplete", "retract"]
+OutputCutoffDurableResult = Literal["none", "incomplete", "partial"]
 DurableToolTerminalState = Literal[
     "completed",
     "failed",
@@ -20,6 +23,11 @@ DurableToolTerminalState = Literal[
 ]
 
 VALID_DELIVERY_GUARANTEES = frozenset({"best_effort", "at_most_once", "at_least_once"})
+VALID_OUTPUT_CUTOFF_TERMINAL_REASONS = frozenset(
+    {"policy_denied", "budget_exhausted", "cancelled", "client_disconnected"}
+)
+VALID_OUTPUT_CUTOFF_DRAFT_DISPOSITIONS = frozenset({"keep", "mark_incomplete", "retract"})
+VALID_OUTPUT_CUTOFF_DURABLE_RESULTS = frozenset({"none", "incomplete", "partial"})
 VALID_DURABLE_TOOL_TERMINAL_STATES = frozenset(
     {
         "completed",
@@ -504,14 +512,41 @@ class DurableResponsePolicyStopRecord:
     policy_decision_id: str
     last_policy_accepted_sequence: int
     occurred_at_unix_ms: int
+    stream_id: str | None = None
+    last_generated_sequence: int = 0
+    last_client_delivered_sequence: int = 0
+    terminal_reason: OutputCutoffTerminalReason = "policy_denied"
+    draft_disposition: OutputCutoffDraftDisposition = "retract"
+    durable_result: OutputCutoffDurableResult = "none"
+    turn_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.response_id.strip():
             raise ToolTerminalStoreError("response_id must not be empty")
         if not self.policy_decision_id.strip():
             raise ToolTerminalStoreError("policy_decision_id must not be empty")
+        if self.stream_id is None:
+            object.__setattr__(self, "stream_id", self.response_id)
+        if not self.stream_id.strip():
+            raise ToolTerminalStoreError("stream_id must not be empty")
+        if self.turn_id is not None and not self.turn_id.strip():
+            raise ToolTerminalStoreError("turn_id must not be empty")
+        if self.last_generated_sequence < 0:
+            raise ToolTerminalStoreError("last_generated_sequence must be non-negative")
         if self.last_policy_accepted_sequence < 0:
             raise ToolTerminalStoreError("last_policy_accepted_sequence must be non-negative")
+        if self.last_client_delivered_sequence < 0:
+            raise ToolTerminalStoreError("last_client_delivered_sequence must be non-negative")
+        if self.last_policy_accepted_sequence > self.last_generated_sequence:
+            raise ToolTerminalStoreError("last_policy_accepted_sequence cannot exceed last_generated_sequence")
+        if self.last_client_delivered_sequence > self.last_generated_sequence:
+            raise ToolTerminalStoreError("last_client_delivered_sequence cannot exceed last_generated_sequence")
+        if self.terminal_reason not in VALID_OUTPUT_CUTOFF_TERMINAL_REASONS:
+            raise ToolTerminalStoreError(f"invalid terminal_reason {self.terminal_reason}")
+        if self.draft_disposition not in VALID_OUTPUT_CUTOFF_DRAFT_DISPOSITIONS:
+            raise ToolTerminalStoreError(f"invalid draft_disposition {self.draft_disposition}")
+        if self.durable_result not in VALID_OUTPUT_CUTOFF_DURABLE_RESULTS:
+            raise ToolTerminalStoreError(f"invalid durable_result {self.durable_result}")
         if self.occurred_at_unix_ms <= 0:
             raise ToolTerminalStoreError("occurred_at_unix_ms must be positive")
 
@@ -561,14 +596,35 @@ class InMemoryDurableToolTerminalStore:
         response_id: str,
         policy_decision_id: str,
         *,
+        stream_id: str | None = None,
+        turn_id: str | None = None,
+        last_generated_sequence: int | None = None,
         last_policy_accepted_sequence: int,
+        last_client_delivered_sequence: int | None = None,
+        terminal_reason: OutputCutoffTerminalReason = "policy_denied",
+        draft_disposition: OutputCutoffDraftDisposition = "retract",
+        durable_result: OutputCutoffDurableResult = "none",
         occurred_at_unix_ms: int,
     ) -> DurableResponsePolicyStopCommit:
+        last_generated_sequence = (
+            last_policy_accepted_sequence if last_generated_sequence is None else last_generated_sequence
+        )
         record = DurableResponsePolicyStopRecord(
             response_id=response_id,
             policy_decision_id=policy_decision_id,
             last_policy_accepted_sequence=last_policy_accepted_sequence,
             occurred_at_unix_ms=occurred_at_unix_ms,
+            stream_id=stream_id,
+            last_generated_sequence=last_generated_sequence,
+            last_client_delivered_sequence=(
+                last_policy_accepted_sequence
+                if last_client_delivered_sequence is None
+                else last_client_delivered_sequence
+            ),
+            terminal_reason=terminal_reason,
+            draft_disposition=draft_disposition,
+            durable_result=durable_result,
+            turn_id=turn_id,
         )
         existing = self.policy_stopped_responses.get(record.response_id)
         if existing is not None:
@@ -760,6 +816,9 @@ __all__ = [
     "MissingNodeAttemptIdError",
     "MissingNodeIdError",
     "MissingRunIdError",
+    "OutputCutoffDraftDisposition",
+    "OutputCutoffDurableResult",
+    "OutputCutoffTerminalReason",
     "SinkCommitError",
     "SinkCommitRequest",
     "SinkCommitResult",
