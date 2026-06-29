@@ -167,6 +167,38 @@ def test_testing_package_cli_lists_tck_suite_manifests(monkeypatch, capsys) -> N
     assert "main" in graphblocks_testing.__all__
 
 
+def test_testing_package_cli_checks_tck_suite_coverage(monkeypatch, capsys) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    exit_code = graphblocks_testing.main(
+        [
+            "check",
+            str(ROOT / "tck"),
+            "--profiles",
+            str(ROOT / "src" / "graphblocks" / "data" / "conformance-profiles.yaml"),
+            "--profile",
+            "GB-C3-GOVERNED-RUNTIME",
+            "--json",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["claim"]["tck_suites"] == [
+        "budget-race",
+        "compiler",
+        "exhaustion",
+        "policy",
+        "runtime",
+        "schema",
+        "sequence",
+    ]
+    assert payload["missing_suites"] == []
+    assert payload["contentDigest"].startswith("sha256:")
+
+
 def test_testing_package_tck_loaders_accept_camel_case_aliases(monkeypatch, tmp_path) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")

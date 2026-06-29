@@ -121,12 +121,14 @@ def test_conformance_profile_tck_suites_have_shared_fixture_manifests(monkeypatc
         _load_yaml(ROOT / "src" / "graphblocks" / "data" / "conformance-profiles.yaml")
     )
 
-    claim = profile_set.claim_requirements(("GB-C3-GOVERNED-RUNTIME",))
-    available_suites = {
-        manifest.suite_id for manifest in graphblocks_testing.load_tck_suite_manifests(ROOT / "tck")
-    }
+    coverage = graphblocks_testing.check_tck_suite_coverage(
+        profile_set,
+        ("GB-C3-GOVERNED-RUNTIME",),
+        graphblocks_testing.load_tck_suite_manifests(ROOT / "tck"),
+    )
 
-    assert claim.tck_suites == (
+    assert coverage.ok
+    assert coverage.claim.tck_suites == (
         "budget-race",
         "compiler",
         "exhaustion",
@@ -135,7 +137,58 @@ def test_conformance_profile_tck_suites_have_shared_fixture_manifests(monkeypatc
         "schema",
         "sequence",
     )
-    assert set(claim.tck_suites) <= available_suites
+    assert coverage.available_suites == (
+        "budget-race",
+        "compiler",
+        "exhaustion",
+        "policy",
+        "runtime",
+        "schema",
+        "sequence",
+    )
+    assert coverage.missing_suites == ()
+    assert coverage.issue_contracts() == []
+    assert coverage.coverage_contract()["ok"] is True
+    assert coverage.content_digest().startswith("sha256:")
+    assert "TckSuiteCoverageResult" in graphblocks_testing.__all__
+    assert "check_tck_suite_coverage" in graphblocks_testing.__all__
+
+
+def test_conformance_profile_tck_suite_coverage_reports_missing_fixtures(monkeypatch) -> None:
+    graphblocks_testing = _import_testing(monkeypatch)
+    profile_set = graphblocks_testing.ConformanceProfileSet.from_document(
+        _load_yaml(ROOT / "src" / "graphblocks" / "data" / "conformance-profiles.yaml")
+    )
+    manifests = tuple(
+        manifest
+        for manifest in graphblocks_testing.load_tck_suite_manifests(ROOT / "tck")
+        if manifest.suite_id not in {"exhaustion", "policy"}
+    )
+
+    coverage = graphblocks_testing.check_tck_suite_coverage(
+        profile_set,
+        ("GB-C3-GOVERNED-RUNTIME",),
+        manifests,
+    )
+
+    assert not coverage.ok
+    assert coverage.missing_suites == ("exhaustion", "policy")
+    assert coverage.issue_contracts() == [
+        {
+            "code": "TckSuiteFixtureMissing",
+            "profile_id": "GB-C3-GOVERNED-RUNTIME",
+            "suite": "exhaustion",
+            "path": "$.profiles.GB-C3-GOVERNED-RUNTIME.tck.exhaustion",
+            "message": "conformance profile requires a TCK suite with no shared fixture manifest",
+        },
+        {
+            "code": "TckSuiteFixtureMissing",
+            "profile_id": "GB-C3-GOVERNED-RUNTIME",
+            "suite": "policy",
+            "path": "$.profiles.GB-C3-GOVERNED-RUNTIME.tck.policy",
+            "message": "conformance profile requires a TCK suite with no shared fixture manifest",
+        },
+    ]
 
 
 def test_conformance_profile_claim_validates_tck_and_acceptance_evidence(monkeypatch) -> None:

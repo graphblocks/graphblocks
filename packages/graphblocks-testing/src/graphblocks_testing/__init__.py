@@ -11,6 +11,7 @@ from typing import Literal
 
 from graphblocks.canonical import canonical_hash
 from graphblocks.compiler import compile_graph
+from graphblocks.loader import load_documents
 from graphblocks.migration import GRAPH_API_VERSION, migrate_document
 from graphblocks.plugins import BlockCatalog
 from graphblocks.run_store import (
@@ -1131,6 +1132,11 @@ def main(argv: list[str] | None = None) -> int:
     list_parser = subparsers.add_parser("list", help="list shared TCK suite manifests")
     list_parser.add_argument("root", nargs="?", type=Path, default=Path("tck"))
     list_parser.add_argument("--json", action="store_true", help="emit JSON")
+    check_parser = subparsers.add_parser("check", help="check TCK fixture coverage for conformance profiles")
+    check_parser.add_argument("root", nargs="?", type=Path, default=Path("tck"))
+    check_parser.add_argument("--profiles", required=True, type=Path, help="conformance profile YAML document")
+    check_parser.add_argument("--profile", dest="profile_ids", action="append", required=True, help="claimed profile id")
+    check_parser.add_argument("--json", action="store_true", help="emit JSON")
 
     args = parser.parse_args(argv)
     if args.command == "list":
@@ -1146,6 +1152,25 @@ def main(argv: list[str] | None = None) -> int:
             for manifest in manifests:
                 print(f"{manifest.suite_id} cases={manifest.case_count} path={manifest.path}")
         return 0
+    if args.command == "check":
+        documents = load_documents(args.profiles)
+        if not documents:
+            raise ValueError("conformance profile document must not be empty")
+        coverage = check_tck_suite_coverage(
+            ConformanceProfileSet.from_document(documents[0]),
+            tuple(args.profile_ids),
+            load_tck_suite_manifests(args.root),
+        )
+        payload = coverage.coverage_contract()
+        payload["contentDigest"] = coverage.content_digest()
+        if args.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        elif coverage.ok:
+            print(f"OK {len(coverage.claim.tck_suites)} TCK suites covered")
+        else:
+            for issue in coverage.issues:
+                print(f"{issue.code} {issue.suite}: {issue.message}")
+        return 0 if coverage.ok else 1
     parser.print_help()
     return 0
 
@@ -1307,6 +1332,56 @@ class ConformanceClaimValidation:
 
 
 @dataclass(frozen=True, slots=True)
+class TckSuiteCoverageIssue:
+    code: str
+    profile_id: str
+    suite: str
+    path: str
+    message: str
+
+    def issue_contract(self) -> dict[str, str]:
+        return {
+            "code": self.code,
+            "profile_id": self.profile_id,
+            "suite": self.suite,
+            "path": self.path,
+            "message": self.message,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class TckSuiteCoverageResult:
+    claim: ConformanceClaimRequirements
+    available_suites: tuple[str, ...]
+    missing_suites: tuple[str, ...]
+    issues: tuple[TckSuiteCoverageIssue, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "available_suites", tuple(str(suite) for suite in self.available_suites))
+        object.__setattr__(self, "missing_suites", tuple(str(suite) for suite in self.missing_suites))
+        object.__setattr__(self, "issues", tuple(self.issues))
+
+    @property
+    def ok(self) -> bool:
+        return not self.issues
+
+    def issue_contracts(self) -> list[dict[str, str]]:
+        return [issue.issue_contract() for issue in self.issues]
+
+    def coverage_contract(self) -> dict[str, object]:
+        return {
+            "ok": self.ok,
+            "claim": self.claim.claim_contract(),
+            "available_suites": list(self.available_suites),
+            "missing_suites": list(self.missing_suites),
+            "issues": self.issue_contracts(),
+        }
+
+    def content_digest(self) -> str:
+        return canonical_hash(self.coverage_contract())
+
+
+@dataclass(frozen=True, slots=True)
 class ConformanceProfileSet:
     profiles: tuple[ConformanceProfile, ...]
 
@@ -1442,6 +1517,34 @@ class ConformanceProfileSet:
                     )
                 )
         return ConformanceClaimValidation(claim=claim, issues=tuple(issues))
+
+
+def check_tck_suite_coverage(
+    profile_set: ConformanceProfileSet,
+    profile_ids: tuple[str, ...],
+    manifests: tuple[TckSuiteManifest, ...],
+) -> TckSuiteCoverageResult:
+    claim = profile_set.claim_requirements(profile_ids)
+    available_suites = tuple(sorted({manifest.suite_id for manifest in manifests}))
+    available = set(available_suites)
+    missing_suites = tuple(suite for suite in claim.tck_suites if suite not in available)
+    claimed_profile = profile_ids[-1] if profile_ids else ""
+    issues = tuple(
+        TckSuiteCoverageIssue(
+            code="TckSuiteFixtureMissing",
+            profile_id=claimed_profile,
+            suite=suite,
+            path=f"$.profiles.{claimed_profile}.tck.{suite}",
+            message="conformance profile requires a TCK suite with no shared fixture manifest",
+        )
+        for suite in missing_suites
+    )
+    return TckSuiteCoverageResult(
+        claim=claim,
+        available_suites=available_suites,
+        missing_suites=missing_suites,
+        issues=issues,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1782,8 +1885,11 @@ __all__ = [
     "TckReport",
     "TckResult",
     "TckRunner",
+    "TckSuiteCoverageIssue",
+    "TckSuiteCoverageResult",
     "TckSuiteManifest",
     "canonical_hash",
+    "check_tck_suite_coverage",
     "compile_graph",
     "load_compiler_tck_cases",
     "load_runtime_tck_cases",
