@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 
 use crate::policy::{PrincipalRef, ResourceRef};
 use crate::tool::{ResolvedTool, ToolEffect, canonical_effect_names};
-use crate::tool_call::ToolCall;
+use crate::tool_call::{ToolCall, ToolCallStatus};
 use crate::tool_result::{ToolEffectOutcome, ToolResult, ToolResultStatus};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -63,11 +63,41 @@ pub struct ToolEffectAuditContext<'a> {
     pub policy_decision_id: Option<&'a str>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct ToolEffectPreconditionContext<'a> {
+    pub resolved_tool: &'a ResolvedTool,
+    pub call: &'a ToolCall,
+    pub effect_key: Option<&'a str>,
+    pub idempotency_key: Option<&'a str>,
+    pub policy_decision_id: Option<&'a str>,
+    pub execution_target: Option<&'a str>,
+    pub sandbox_id: Option<&'a str>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ToolEffectPrecondition {
+    pub payload: Value,
+    pub digest: String,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ToolEffectAuditError {
-    ResolvedToolMismatch { expected: String, actual: String },
-    ToolNameMismatch { expected: String, actual: String },
-    ToolResultMismatch { expected: String, actual: String },
+    ResolvedToolMismatch {
+        expected: String,
+        actual: String,
+    },
+    ToolNameMismatch {
+        expected: String,
+        actual: String,
+    },
+    ToolResultMismatch {
+        expected: String,
+        actual: String,
+    },
+    ToolCallNotAdmitted {
+        tool_call_id: String,
+        current: ToolCallStatus,
+    },
 }
 
 impl fmt::Display for ToolEffectAuditError {
@@ -85,11 +115,54 @@ impl fmt::Display for ToolEffectAuditError {
                 formatter,
                 "tool result call id {actual:?} does not match audited tool call {expected:?}"
             ),
+            Self::ToolCallNotAdmitted {
+                tool_call_id,
+                current,
+            } => write!(
+                formatter,
+                "tool call {tool_call_id:?} must be admitted before recording an effect precondition, current status is {current:?}"
+            ),
         }
     }
 }
 
 impl Error for ToolEffectAuditError {}
+
+impl ToolEffectPrecondition {
+    pub fn from_admitted_call(
+        context: ToolEffectPreconditionContext<'_>,
+    ) -> Result<Self, ToolEffectAuditError> {
+        validate_tool_effect_context(context.resolved_tool, context.call)?;
+        if context.call.status != ToolCallStatus::Admitted {
+            return Err(ToolEffectAuditError::ToolCallNotAdmitted {
+                tool_call_id: context.call.tool_call_id.clone(),
+                current: context.call.status,
+            });
+        }
+
+        let payload = json!({
+            "tool_call_id": &context.call.tool_call_id,
+            "response_id": &context.call.response_id,
+            "resolved_tool_id": &context.resolved_tool.resolved_tool_id,
+            "binding_id": &context.resolved_tool.binding.binding_id,
+            "tool_name": &context.resolved_tool.definition.name,
+            "tool_call_revision": context.call.revision,
+            "arguments_digest": &context.call.arguments_digest,
+            "definition_digest": &context.resolved_tool.definition_digest,
+            "binding_digest": &context.resolved_tool.binding_digest,
+            "effective_policy_snapshot_id": &context.resolved_tool.effective_policy_snapshot_id,
+            "effects": canonical_effect_names(&context.resolved_tool.binding.effects),
+            "effect_key": context.effect_key,
+            "idempotency_key": context.idempotency_key,
+            "policy_decision_id": context.policy_decision_id,
+            "execution_target": context.execution_target,
+            "sandbox_id": context.sandbox_id,
+            "admitted_at_unix_ms": context.call.admitted_at_unix_ms,
+        });
+        let digest = canonical_hash(&payload);
+        Ok(Self { payload, digest })
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct AuditEvent {
@@ -149,18 +222,7 @@ impl AuditEvent {
     pub fn tool_effect_outcome(
         context: ToolEffectAuditContext<'_>,
     ) -> Result<Self, ToolEffectAuditError> {
-        if context.call.resolved_tool_id != context.resolved_tool.resolved_tool_id {
-            return Err(ToolEffectAuditError::ResolvedToolMismatch {
-                expected: context.resolved_tool.resolved_tool_id.clone(),
-                actual: context.call.resolved_tool_id.clone(),
-            });
-        }
-        if context.call.name != context.resolved_tool.definition.name {
-            return Err(ToolEffectAuditError::ToolNameMismatch {
-                expected: context.resolved_tool.definition.name.clone(),
-                actual: context.call.name.clone(),
-            });
-        }
+        validate_tool_effect_context(context.resolved_tool, context.call)?;
         if context.result.tool_call_id != context.call.tool_call_id {
             return Err(ToolEffectAuditError::ToolResultMismatch {
                 expected: context.call.tool_call_id.clone(),
@@ -248,6 +310,25 @@ impl AuditEvent {
             "metadata": self.metadata,
         }))
     }
+}
+
+fn validate_tool_effect_context(
+    resolved_tool: &ResolvedTool,
+    call: &ToolCall,
+) -> Result<(), ToolEffectAuditError> {
+    if call.resolved_tool_id != resolved_tool.resolved_tool_id {
+        return Err(ToolEffectAuditError::ResolvedToolMismatch {
+            expected: resolved_tool.resolved_tool_id.clone(),
+            actual: call.resolved_tool_id.clone(),
+        });
+    }
+    if call.name != resolved_tool.definition.name {
+        return Err(ToolEffectAuditError::ToolNameMismatch {
+            expected: resolved_tool.definition.name.clone(),
+            actual: call.name.clone(),
+        });
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

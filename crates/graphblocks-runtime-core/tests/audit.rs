@@ -1,13 +1,14 @@
 use graphblocks_runtime_core::audit::{
     AuditEvent, AuditOutboxError, AuditQuery, AuditSinkError, AuditTargetKind, InMemoryAuditOutbox,
-    InMemoryAuditSink, ToolEffectAuditContext, ToolEffectAuditError,
+    InMemoryAuditSink, ToolEffectAuditContext, ToolEffectAuditError, ToolEffectPrecondition,
+    ToolEffectPreconditionContext,
 };
 use graphblocks_runtime_core::policy::{PrincipalRef, ResourceRef};
 use graphblocks_runtime_core::tool::{
     BlockToolImplementation, ToolBinding, ToolCatalog, ToolDefinition, ToolEffect,
     ToolImplementation, ToolResolutionScope,
 };
-use graphblocks_runtime_core::tool_call::ToolCallDraft;
+use graphblocks_runtime_core::tool_call::{ToolCallDraft, ToolCallStatus};
 use graphblocks_runtime_core::tool_result::{ContentPart, ToolEffectOutcome, ToolResult};
 use serde_json::json;
 
@@ -212,7 +213,19 @@ fn in_memory_audit_outbox_treats_published_records_as_terminal() -> Result<(), A
 #[test]
 fn tool_effect_audit_event_records_precondition_outcome_and_immutable_digests() {
     let resolved_tool = resolved_ticket_tool();
-    let call = ticket_call(&resolved_tool.resolved_tool_id);
+    let mut call = ticket_call(&resolved_tool.resolved_tool_id);
+    call.status = ToolCallStatus::Admitted;
+    call.admitted_at_unix_ms = Some(1_050);
+    let precondition = ToolEffectPrecondition::from_admitted_call(ToolEffectPreconditionContext {
+        resolved_tool: &resolved_tool,
+        call: &call,
+        effect_key: Some("ticket.create:cust-1"),
+        idempotency_key: Some("idem-ticket-1"),
+        policy_decision_id: Some("decision-tool-1"),
+        execution_target: Some("worker:local"),
+        sandbox_id: Some("sandbox-1"),
+    })
+    .expect("admitted call precondition is recorded");
     let result = ToolResult::completed(
         "call-1",
         [ContentPart::json(json!({"ticket_id": "T-1"}))],
@@ -229,7 +242,7 @@ fn tool_effect_audit_event_records_precondition_outcome_and_immutable_digests() 
         call: &call,
         result: &result,
         effect_key: Some("ticket.create:cust-1"),
-        precondition_digest: Some("sha256:precondition"),
+        precondition_digest: Some(&precondition.digest),
         idempotency_key: Some("idem-ticket-1"),
         policy_decision_id: Some("decision-tool-1"),
     })
@@ -257,7 +270,7 @@ fn tool_effect_audit_event_records_precondition_outcome_and_immutable_digests() 
             "effective_policy_snapshot_id": "policy-snapshot-1",
             "effects": ["destructive", "external_write", "network"],
             "effect_key": "ticket.create:cust-1",
-            "precondition_digest": "sha256:precondition",
+            "precondition_digest": precondition.digest,
             "idempotency_key": "idem-ticket-1",
             "policy_decision_id": "decision-tool-1",
             "result_status": "completed",
@@ -273,6 +286,83 @@ fn tool_effect_audit_event_records_precondition_outcome_and_immutable_digests() 
             .contains(&"tool_effect.committed".to_owned())
     );
     assert!(event.payload_digest().starts_with("sha256:"));
+}
+
+#[test]
+fn tool_effect_precondition_records_admitted_effect_context() {
+    let resolved_tool = resolved_ticket_tool();
+    let mut call = ticket_call(&resolved_tool.resolved_tool_id);
+    call.status = ToolCallStatus::Admitted;
+    call.admitted_at_unix_ms = Some(1_050);
+
+    let precondition = ToolEffectPrecondition::from_admitted_call(ToolEffectPreconditionContext {
+        resolved_tool: &resolved_tool,
+        call: &call,
+        effect_key: Some("ticket.create:cust-1"),
+        idempotency_key: Some("idem-ticket-1"),
+        policy_decision_id: Some("decision-tool-1"),
+        execution_target: Some("worker:local"),
+        sandbox_id: Some("sandbox-1"),
+    })
+    .expect("admitted call precondition is recorded");
+    let same_precondition =
+        ToolEffectPrecondition::from_admitted_call(ToolEffectPreconditionContext {
+            resolved_tool: &resolved_tool,
+            call: &call,
+            effect_key: Some("ticket.create:cust-1"),
+            idempotency_key: Some("idem-ticket-1"),
+            policy_decision_id: Some("decision-tool-1"),
+            execution_target: Some("worker:local"),
+            sandbox_id: Some("sandbox-1"),
+        })
+        .expect("same admitted call precondition is recorded");
+
+    assert_eq!(precondition.digest, same_precondition.digest);
+    assert!(precondition.digest.starts_with("sha256:"));
+    assert_eq!(
+        precondition.payload,
+        json!({
+            "tool_call_id": "call-1",
+            "response_id": "response-1",
+            "resolved_tool_id": resolved_tool.resolved_tool_id,
+            "binding_id": "binding-ticket-create",
+            "tool_name": "ticket.create",
+            "tool_call_revision": 1,
+            "arguments_digest": call.arguments_digest,
+            "definition_digest": resolved_tool.definition_digest,
+            "binding_digest": resolved_tool.binding_digest,
+            "effective_policy_snapshot_id": "policy-snapshot-1",
+            "effects": ["destructive", "external_write", "network"],
+            "effect_key": "ticket.create:cust-1",
+            "idempotency_key": "idem-ticket-1",
+            "policy_decision_id": "decision-tool-1",
+            "execution_target": "worker:local",
+            "sandbox_id": "sandbox-1",
+            "admitted_at_unix_ms": 1050,
+        })
+    );
+}
+
+#[test]
+fn tool_effect_precondition_rejects_non_admitted_calls() {
+    let resolved_tool = resolved_ticket_tool();
+    let call = ticket_call(&resolved_tool.resolved_tool_id);
+
+    assert_eq!(
+        ToolEffectPrecondition::from_admitted_call(ToolEffectPreconditionContext {
+            resolved_tool: &resolved_tool,
+            call: &call,
+            effect_key: None,
+            idempotency_key: None,
+            policy_decision_id: None,
+            execution_target: None,
+            sandbox_id: None,
+        }),
+        Err(ToolEffectAuditError::ToolCallNotAdmitted {
+            tool_call_id: "call-1".to_owned(),
+            current: ToolCallStatus::Validated,
+        })
+    );
 }
 
 #[test]
