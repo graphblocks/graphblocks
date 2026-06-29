@@ -594,6 +594,24 @@ fn validate_usage_record(record: &UsageRecord) -> Result<(), UsageLedgerError> {
             message: "usage record_id must not be empty".to_string(),
         });
     }
+    for (field, value) in [
+        ("run_id", record.run_id.as_deref()),
+        ("attempt_id", record.attempt_id.as_deref()),
+        (
+            "provider_response_id",
+            record.provider_response_id.as_deref(),
+        ),
+        ("pricing_ref", record.pricing_ref.as_deref()),
+        ("quota_window_id", record.quota_window_id.as_deref()),
+        ("execution_scope", record.execution_scope.as_deref()),
+        ("reconciliation_of", record.reconciliation_of.as_deref()),
+    ] {
+        if value.is_some_and(|value| value.trim().is_empty()) {
+            return Err(UsageLedgerError::InvalidRecord {
+                message: format!("usage {field} must not be empty"),
+            });
+        }
+    }
     for amount in &record.amounts {
         if amount.kind.trim().is_empty() {
             return Err(UsageLedgerError::InvalidRecord {

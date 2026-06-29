@@ -99,6 +99,23 @@ def test_usage_record_rejects_invalid_identity_source_and_confidence() -> None:
             occurred_at="",
         )
 
+    optional_identity_cases = (
+        ({"run_id": " "}, "usage run_id must not be empty"),
+        ({"attempt_id": ""}, "usage attempt_id must not be empty"),
+        ({"provider_response_id": "\t"}, "usage provider_response_id must not be empty"),
+        ({"reconciliation_of": " "}, "usage reconciliation_of must not be empty"),
+    )
+    for overrides, message in optional_identity_cases:
+        with pytest.raises(ValueError, match=message):
+            UsageRecord(
+                record_id="usage-1",
+                source="runtime_measured",
+                confidence="estimated",
+                amounts=[_tokens("12")],
+                occurred_at="2026-06-22T00:00:00Z",
+                **overrides,
+            )
+
 
 def test_usage_ledger_replays_identical_records_without_double_counting() -> None:
     ledger = InMemoryUsageLedger()

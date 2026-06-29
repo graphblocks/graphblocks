@@ -68,6 +68,22 @@ class UsageRecord:
             raise ValueError(f"invalid usage confidence {self.confidence}")
         if not self.occurred_at.strip():
             raise ValueError("usage occurred_at must not be empty")
+        for field_name in (
+            "run_id",
+            "attempt_id",
+            "provider_response_id",
+            "pricing_ref",
+            "quota_window_id",
+            "execution_scope",
+            "reconciliation_of",
+        ):
+            value = getattr(self, field_name)
+            if value is None:
+                continue
+            if not isinstance(value, str):
+                raise ValueError(f"usage {field_name} must be a string")
+            if not value.strip():
+                raise ValueError(f"usage {field_name} must not be empty")
         amounts = tuple(
             UsageAmount(
                 kind=amount.kind,

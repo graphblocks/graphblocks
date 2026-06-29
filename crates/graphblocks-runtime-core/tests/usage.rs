@@ -48,6 +48,22 @@ fn usage_ledgers_reject_invalid_usage_records() -> Result<(), UsageLedgerError> 
         [UsageAmount::new("model_output_tokens", 12, "   ")],
         1_000,
     );
+    let blank_run_id = UsageRecord::new(
+        "usage-3",
+        UsageSource::RuntimeMeasured,
+        UsageConfidence::Estimated,
+        [tokens(12)],
+        1_000,
+    )
+    .with_run_id(" ");
+    let blank_provider_response_id = UsageRecord::new(
+        "usage-4",
+        UsageSource::ProviderReported,
+        UsageConfidence::ProviderExact,
+        [tokens(12)],
+        1_000,
+    )
+    .with_provider_response_id("");
 
     assert_eq!(
         memory.append(blank_record_id.clone()),
@@ -71,6 +87,18 @@ fn usage_ledgers_reject_invalid_usage_records() -> Result<(), UsageLedgerError> 
         sqlite.append(blank_amount_unit),
         Err(UsageLedgerError::InvalidRecord {
             message: "usage amount unit must not be empty".to_string()
+        })
+    );
+    assert_eq!(
+        memory.append(blank_run_id),
+        Err(UsageLedgerError::InvalidRecord {
+            message: "usage run_id must not be empty".to_string()
+        })
+    );
+    assert_eq!(
+        sqlite.append(blank_provider_response_id),
+        Err(UsageLedgerError::InvalidRecord {
+            message: "usage provider_response_id must not be empty".to_string()
         })
     );
     Ok(())
