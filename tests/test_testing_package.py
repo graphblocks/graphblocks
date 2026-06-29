@@ -168,6 +168,20 @@ def test_testing_package_loads_shared_sequence_tck_cases(monkeypatch) -> None:
     assert "load_sequence_tck_cases" in graphblocks_testing.__all__
 
 
+def test_testing_package_loads_shared_exhaustion_tck_cases(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    cases = graphblocks_testing.load_exhaustion_tck_cases(ROOT / "tck" / "exhaustion" / "cases.json")
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
+
+    assert [case.kind for case in cases] == ["exhaustion"] * 5
+    assert report.ok
+    assert any(result.observed.get("validation_error") == "missing_exhaustion_boundary" for result in report.results)
+    assert {result.observed.get("usedAdditionalSteps") for result in report.results} >= {0, 1, 2}
+    assert "load_exhaustion_tck_cases" in graphblocks_testing.__all__
+
+
 def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -302,6 +316,21 @@ def test_testing_package_cli_runs_sequence_tck_suite(monkeypatch, capsys) -> Non
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
     assert {result["kind"] for result in payload["results"]} == {"sequence"}
+    assert payload["contentDigest"].startswith("sha256:")
+
+
+def test_testing_package_cli_runs_exhaustion_tck_suite(monkeypatch, capsys) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    exit_code = graphblocks_testing.main(
+        ["run", "exhaustion", str(ROOT / "tck" / "exhaustion" / "cases.json"), "--json"]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert {result["kind"] for result in payload["results"]} == {"exhaustion"}
     assert payload["contentDigest"].startswith("sha256:")
 
 

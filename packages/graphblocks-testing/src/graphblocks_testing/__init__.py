@@ -17,6 +17,14 @@ from graphblocks.application_event import (
 from graphblocks.canonical import canonical_hash
 from graphblocks.compiler import compile_graph
 from graphblocks.conversation import ContentPart
+from graphblocks.budget import BudgetPermit, UsageAmount
+from graphblocks.exhaustion import (
+    ContinuationEnvelope,
+    ExhaustionController,
+    ExhaustionPolicy,
+    MissingExhaustionBoundaryError,
+    validate_exhaustion_policy,
+)
 from graphblocks.loader import load_documents
 from graphblocks.migration import GRAPH_API_VERSION, migrate_document
 from graphblocks.output_policy import (
@@ -27,6 +35,7 @@ from graphblocks.output_policy import (
     OutputCutoff,
     OutputPolicyDecision,
 )
+from graphblocks.policy import ResourceRef as PolicyResourceRef
 from graphblocks.plugins import BlockCatalog
 from graphblocks.run_store import (
     InMemoryRunStore,
@@ -50,7 +59,15 @@ from graphblocks.runtime import (
 )
 
 
-TckCaseKind = Literal["compiler", "runtime", "schema", "policy", "application-events", "sequence"]
+TckCaseKind = Literal[
+    "compiler",
+    "runtime",
+    "schema",
+    "policy",
+    "application-events",
+    "sequence",
+    "exhaustion",
+]
 TckResultStatus = Literal["passed", "failed"]
 PerformanceThresholdOperator = Literal["at_most", "at_least"]
 MigrationDirection = Literal["upgrade", "downgrade"]
@@ -110,11 +127,20 @@ class TckCase:
     sequence_operations: tuple[dict[str, object], ...] = field(default_factory=tuple)
     expected_sequence_state: str | None = None
     expected_sequence_creation_error: str | None = None
+    exhaustion_fixture: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.case_id.strip():
             raise ValueError("TCK case_id must not be empty")
-        if self.kind not in {"compiler", "runtime", "schema", "policy", "application-events", "sequence"}:
+        if self.kind not in {
+            "compiler",
+            "runtime",
+            "schema",
+            "policy",
+            "application-events",
+            "sequence",
+            "exhaustion",
+        }:
             raise ValueError(f"invalid TCK case kind {self.kind}")
         object.__setattr__(self, "graph", dict(self.graph))
         object.__setattr__(self, "inputs", dict(self.inputs))
@@ -131,6 +157,7 @@ class TckCase:
         )
         object.__setattr__(self, "expected_accepted_event_kinds", tuple(self.expected_accepted_event_kinds))
         object.__setattr__(self, "sequence_operations", tuple(dict(operation) for operation in self.sequence_operations))
+        object.__setattr__(self, "exhaustion_fixture", dict(self.exhaustion_fixture))
         if self.kind == "policy":
             if not self.policy_stream_id.strip():
                 raise ValueError("policy TCK stream_id must not be empty")
@@ -143,6 +170,8 @@ class TckCase:
                 raise ValueError("sequence TCK case requires integer capacity")
             if self.expected_sequence_state is None and self.expected_sequence_creation_error is None:
                 raise ValueError("sequence TCK case requires expected state or creation error")
+        if self.kind == "exhaustion" and not self.exhaustion_fixture:
+            raise ValueError("exhaustion TCK case requires fixture")
         if self.expected_outputs is not None:
             object.__setattr__(self, "expected_outputs", dict(self.expected_outputs))
         if self.expected_terminal_kind is not None and not self.expected_terminal_kind.strip():
@@ -274,6 +303,10 @@ class TckCase:
             expected_sequence_state=expected_state,
             expected_sequence_creation_error=expected_creation_error,
         )
+
+    @classmethod
+    def exhaustion(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
+        return cls(case_id=case_id, kind="exhaustion", exhaustion_fixture=fixture)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1174,6 +1207,24 @@ def load_application_event_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     return tuple(cases)
 
 
+def load_exhaustion_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
+    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(raw_cases, list):
+        raise ValueError("exhaustion TCK root must be a list")
+    cases: list[TckCase] = []
+    for index, raw_case in enumerate(raw_cases):
+        if not isinstance(raw_case, Mapping):
+            raise ValueError(f"exhaustion TCK case {index} must be a mapping")
+        case_id = _first_mapping_value(raw_case, "name", "case_id", "caseId")
+        if not isinstance(case_id, str) or not case_id.strip():
+            raise ValueError(f"exhaustion TCK case {index} requires name")
+        policy = raw_case.get("policy")
+        if not isinstance(policy, Mapping):
+            raise ValueError(f"exhaustion TCK case {case_id} requires policy")
+        cases.append(TckCase.exhaustion(case_id=case_id, fixture=dict(raw_case)))
+    return tuple(cases)
+
+
 def load_policy_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(raw_cases, list):
@@ -1349,7 +1400,7 @@ def main(argv: list[str] | None = None) -> int:
     run_parser = subparsers.add_parser("run", help="run a shared TCK fixture")
     run_parser.add_argument(
         "suite",
-        choices=("application-events", "compiler", "runtime", "schema", "policy", "sequence"),
+        choices=("application-events", "compiler", "runtime", "schema", "policy", "sequence", "exhaustion"),
         help="TCK suite kind",
     )
     run_parser.add_argument("path", type=Path, help="cases.json fixture path")
@@ -1396,6 +1447,8 @@ def main(argv: list[str] | None = None) -> int:
             cases = load_compiler_tck_cases(args.path)
         elif args.suite == "runtime":
             cases = load_runtime_tck_cases(args.path)
+        elif args.suite == "exhaustion":
+            cases = load_exhaustion_tck_cases(args.path)
         elif args.suite == "schema":
             cases = load_schema_tck_cases(args.path)
         elif args.suite == "sequence":
@@ -1917,6 +1970,8 @@ class TckRunner:
                 results.append(self._run_application_event_case(case))
             elif case.kind == "sequence":
                 results.append(self._run_sequence_case(case))
+            elif case.kind == "exhaustion":
+                results.append(self._run_exhaustion_case(case))
             else:
                 results.append(self._run_schema_case(case))
         return TckReport(profile=self.profile, results=tuple(results))
@@ -2125,6 +2180,241 @@ class TckRunner:
             status="passed" if not diagnostics else "failed",
             diagnostics=tuple(diagnostics),
             observed={"accepted_kinds": accepted_kinds},
+        )
+
+    def _run_exhaustion_case(self, case: TckCase) -> TckResult:
+        diagnostics: list[dict[str, str]] = []
+        fixture = case.exhaustion_fixture
+        policy_mapping = fixture.get("policy")
+        if not isinstance(policy_mapping, Mapping):
+            return TckResult(
+                case_id=case.case_id,
+                kind=case.kind,
+                status="failed",
+                diagnostics=(
+                    {
+                        "code": "ExhaustionPolicyMissing",
+                        "message": "exhaustion TCK case requires policy",
+                        "path": "$.policy",
+                    },
+                ),
+                observed={},
+            )
+
+        continuation = None
+        continuation_mapping = policy_mapping.get("continuation")
+        if isinstance(continuation_mapping, Mapping):
+            max_additional_usage = []
+            raw_usage = continuation_mapping.get("maxAdditionalUsage", [])
+            if isinstance(raw_usage, list):
+                for amount in raw_usage:
+                    if isinstance(amount, Mapping):
+                        max_additional_usage.append(
+                            UsageAmount(
+                                kind=str(amount.get("kind", "")),
+                                amount=amount.get("amount", 0),
+                                unit=str(amount.get("unit", "")),
+                            )
+                        )
+            max_steps = continuation_mapping.get("maxAdditionalSteps")
+            continuation = ContinuationEnvelope(
+                allowed_work=set(str(item) for item in continuation_mapping.get("allowedWork", []) or []),
+                forbidden_work=set(str(item) for item in continuation_mapping.get("forbiddenWork", []) or []),
+                max_additional_usage=max_additional_usage,
+                max_additional_steps=int(max_steps) if max_steps is not None else None,
+                deadline=str(continuation_mapping["deadline"]) if continuation_mapping.get("deadline") else None,
+            )
+
+        policy = ExhaustionPolicy.from_preset(
+            str(policy_mapping.get("preset", "")),
+            unit=str(policy_mapping.get("unit", "")),
+            continuation=continuation,
+        )
+        observed: dict[str, object] = {"admissions": []}
+
+        validation = fixture.get("validate")
+        if isinstance(validation, Mapping):
+            validation_error = None
+            try:
+                validate_exhaustion_policy(policy, production=bool(validation.get("production", False)))
+            except MissingExhaustionBoundaryError:
+                validation_error = "missing_exhaustion_boundary"
+            observed["validation_error"] = validation_error
+            expected_error = validation.get("expectError")
+            if expected_error is not None:
+                if validation_error != expected_error:
+                    diagnostics.append(
+                        {
+                            "code": "ExhaustionValidationErrorMismatch",
+                            "message": "exhaustion validation error did not match expected result",
+                            "path": "$.validate.expectError",
+                        }
+                    )
+            elif validation_error is not None:
+                diagnostics.append(
+                    {
+                        "code": "ExhaustionValidationUnexpectedError",
+                        "message": "exhaustion validation failed unexpectedly",
+                        "path": "$.validate",
+                    }
+                )
+
+        atomic_unit = str(fixture.get("atomicUnit", "turn:1"))
+        admission_epoch = int(fixture.get("admissionEpoch", 7))
+        profile = str(policy.preset or "finish_current_turn")
+        stored_permit = None
+        stored_permit_mapping = fixture.get("continuationPermit")
+        if isinstance(stored_permit_mapping, Mapping):
+            authorized_usage = []
+            raw_authorized_usage = stored_permit_mapping.get(
+                "authorizedUsage",
+                [{"kind": "model_output_tokens", "amount": 100, "unit": "tokens"}],
+            )
+            if isinstance(raw_authorized_usage, list):
+                for amount in raw_authorized_usage:
+                    if isinstance(amount, Mapping):
+                        authorized_usage.append(
+                            UsageAmount(
+                                kind=str(amount.get("kind", "")),
+                                amount=amount.get("amount", 0),
+                                unit=str(amount.get("unit", "")),
+                            )
+                        )
+            stored_permit = BudgetPermit(
+                permit_id=str(stored_permit_mapping.get("permitId", "permit-1")),
+                reservation_refs=("reservation-1",),
+                owner=PolicyResourceRef(str(stored_permit_mapping.get("owner", "worker:1"))),
+                atomic_unit=PolicyResourceRef(
+                    str(stored_permit_mapping.get("atomicUnit", atomic_unit)),
+                    resource_kind="turn",
+                ),
+                admission_epoch=int(stored_permit_mapping.get("admissionEpoch", admission_epoch)),
+                authorized_amounts=authorized_usage,
+                continuation_profile=str(stored_permit_mapping.get("continuationProfile", profile)),
+                policy_snapshot_digest="sha256:policy",
+                expires_at=str(stored_permit_mapping.get("expiresAt", "2026-06-22T01:00:00Z")),
+                fencing_tokens={"budget-1": 1},
+            )
+
+        controller = ExhaustionController(
+            policy,
+            atomic_unit_id=atomic_unit,
+            admission_epoch=admission_epoch,
+            continuation_permit=stored_permit,
+            validation_time=str(fixture["validationTime"]) if fixture.get("validationTime") else None,
+        )
+
+        admission_results: list[dict[str, object]] = []
+        admissions = fixture.get("admissions", [])
+        if isinstance(admissions, list):
+            for operation_index, operation in enumerate(admissions):
+                if not isinstance(operation, Mapping):
+                    diagnostics.append(
+                        {
+                            "code": "ExhaustionAdmissionInvalid",
+                            "message": "exhaustion admission operation must be a mapping",
+                            "path": f"$.admissions[{operation_index}]",
+                        }
+                    )
+                    continue
+                permit = None
+                permit_value = operation.get("permit")
+                if isinstance(permit_value, Mapping):
+                    authorized_usage = []
+                    raw_authorized_usage = permit_value.get(
+                        "authorizedUsage",
+                        [{"kind": "model_output_tokens", "amount": 100, "unit": "tokens"}],
+                    )
+                    if isinstance(raw_authorized_usage, list):
+                        for amount in raw_authorized_usage:
+                            if isinstance(amount, Mapping):
+                                authorized_usage.append(
+                                    UsageAmount(
+                                        kind=str(amount.get("kind", "")),
+                                        amount=amount.get("amount", 0),
+                                        unit=str(amount.get("unit", "")),
+                                    )
+                                )
+                    permit = BudgetPermit(
+                        permit_id=str(permit_value.get("permitId", "permit-1")),
+                        reservation_refs=("reservation-1",),
+                        owner=PolicyResourceRef(str(permit_value.get("owner", "worker:1"))),
+                        atomic_unit=PolicyResourceRef(
+                            str(permit_value.get("atomicUnit", atomic_unit)),
+                            resource_kind="turn",
+                        ),
+                        admission_epoch=int(permit_value.get("admissionEpoch", admission_epoch)),
+                        authorized_amounts=authorized_usage,
+                        continuation_profile=str(permit_value.get("continuationProfile", profile)),
+                        policy_snapshot_digest="sha256:policy",
+                        expires_at=str(permit_value.get("expiresAt", "2026-06-22T01:00:00Z")),
+                        fencing_tokens={"budget-1": 1},
+                    )
+                elif permit_value == "stored":
+                    permit = stored_permit
+                elif permit_value not in (None, "none"):
+                    diagnostics.append(
+                        {
+                            "code": "ExhaustionPermitReferenceUnknown",
+                            "message": "exhaustion admission references an unknown permit",
+                            "path": f"$.admissions[{operation_index}].permit",
+                        }
+                    )
+
+                requested_usage = []
+                raw_requested_usage = operation.get("usage", [])
+                if isinstance(raw_requested_usage, list):
+                    for amount in raw_requested_usage:
+                        if isinstance(amount, Mapping):
+                            requested_usage.append(
+                                UsageAmount(
+                                    kind=str(amount.get("kind", "")),
+                                    amount=amount.get("amount", 0),
+                                    unit=str(amount.get("unit", "")),
+                                )
+                            )
+                decision = controller.admit(
+                    str(operation.get("workKind", "")),
+                    work_epoch=int(operation.get("workEpoch", 0)),
+                    permit=permit,
+                    requested_usage=requested_usage or None,
+                )
+                admission_results.append({"allowed": decision.allowed, "reason": decision.reason})
+                if decision.allowed is not operation.get("allowed"):
+                    diagnostics.append(
+                        {
+                            "code": "ExhaustionAdmissionAllowedMismatch",
+                            "message": "exhaustion admission allowed value did not match expected result",
+                            "path": f"$.admissions[{operation_index}].allowed",
+                        }
+                    )
+                if decision.reason != operation.get("reason"):
+                    diagnostics.append(
+                        {
+                            "code": "ExhaustionAdmissionReasonMismatch",
+                            "message": "exhaustion admission reason did not match expected result",
+                            "path": f"$.admissions[{operation_index}].reason",
+                        }
+                    )
+        observed["admissions"] = admission_results
+        observed["usedAdditionalSteps"] = controller.used_additional_steps
+        expected = fixture.get("expected")
+        if isinstance(expected, Mapping) and "usedAdditionalSteps" in expected:
+            if controller.used_additional_steps != expected["usedAdditionalSteps"]:
+                diagnostics.append(
+                    {
+                        "code": "ExhaustionUsedStepsMismatch",
+                        "message": "exhaustion used additional steps did not match expected result",
+                        "path": "$.expected.usedAdditionalSteps",
+                    }
+                )
+
+        return TckResult(
+            case_id=case.case_id,
+            kind=case.kind,
+            status="passed" if not diagnostics else "failed",
+            diagnostics=tuple(diagnostics),
+            observed=observed,
         )
 
     def _run_policy_case(self, case: TckCase) -> TckResult:
@@ -2568,6 +2858,7 @@ __all__ = [
     "compile_graph",
     "load_application_event_tck_cases",
     "load_compiler_tck_cases",
+    "load_exhaustion_tck_cases",
     "load_policy_tck_cases",
     "load_runtime_tck_cases",
     "load_schema_tck_cases",
