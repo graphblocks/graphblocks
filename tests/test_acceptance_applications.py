@@ -111,6 +111,7 @@ def test_conformance_profile_set_resolves_inherited_tck_and_acceptance_requireme
         "runtime",
         "schema",
         "sequence",
+        "tool-execution",
         "tool-lifecycle",
     )
     assert claim.acceptance_applications == (
@@ -144,6 +145,7 @@ def test_conformance_profile_tck_suites_have_shared_fixture_manifests(monkeypatc
         "runtime",
         "schema",
         "sequence",
+        "tool-execution",
         "tool-lifecycle",
         "usage",
     )
@@ -156,6 +158,7 @@ def test_conformance_profile_tck_suites_have_shared_fixture_manifests(monkeypatc
         "runtime",
         "schema",
         "sequence",
+        "tool-execution",
         "tool-lifecycle",
         "usage",
     )
@@ -227,6 +230,7 @@ def test_conformance_profile_claim_validates_tck_and_acceptance_evidence(monkeyp
             "runtime",
             "schema",
             "sequence",
+            "tool-execution",
             "tool-lifecycle",
         )
     }
@@ -287,6 +291,13 @@ def test_conformance_profile_claim_reports_missing_inherited_tck(monkeypatch) ->
             "profile_id": "GB-C2-AI-APPLICATION",
             "suite": "sequence",
             "path": "$.profiles.GB-C2-AI-APPLICATION.tck.sequence",
+            "message": "claimed conformance profile requires a passing TCK suite with no report",
+        },
+        {
+            "code": "ConformanceTckMissing",
+            "profile_id": "GB-C2-AI-APPLICATION",
+            "suite": "tool-execution",
+            "path": "$.profiles.GB-C2-AI-APPLICATION.tck.tool-execution",
             "message": "claimed conformance profile requires a passing TCK suite with no report",
         },
         {

@@ -1,0 +1,167 @@
+[
+  {
+    "name": "independent_read_tools_execute_concurrently",
+    "kind": "execution_plan",
+    "planId": "plan-1",
+    "responseId": "response-1",
+    "maximumParallelism": 2,
+    "calls": [
+      {
+        "toolCallId": "call-a",
+        "toolName": "knowledge.search",
+        "arguments": {
+          "query": "runtime"
+        },
+        "effects": [
+          "external_read"
+        ]
+      },
+      {
+        "toolCallId": "call-b",
+        "toolName": "ticket.read",
+        "arguments": {
+          "resource_id": "ticket-1"
+        },
+        "effects": [
+          "external_read"
+        ]
+      }
+    ],
+    "operations": [
+      {
+        "op": "ready",
+        "expect": [
+          "call-a",
+          "call-b"
+        ]
+      },
+      {
+        "op": "start",
+        "toolCallId": "call-a"
+      },
+      {
+        "op": "ready",
+        "expect": [
+          "call-b"
+        ]
+      },
+      {
+        "op": "start",
+        "toolCallId": "call-b"
+      },
+      {
+        "op": "ready",
+        "expect": []
+      }
+    ],
+    "expectedStates": {
+      "call-a": "running",
+      "call-b": "running"
+    }
+  },
+  {
+    "name": "conflicting_write_tools_are_serialized_by_effect_key",
+    "kind": "execution_plan",
+    "planId": "plan-2",
+    "responseId": "response-1",
+    "maximumParallelism": 3,
+    "effectKeyTemplate": "{tool.name}:{arguments.resource_id}",
+    "calls": [
+      {
+        "toolCallId": "call-a",
+        "toolName": "ticket.create",
+        "arguments": {
+          "resource_id": "ticket-1"
+        },
+        "effects": [
+          "external_write"
+        ]
+      },
+      {
+        "toolCallId": "call-b",
+        "toolName": "ticket.create",
+        "arguments": {
+          "resource_id": "ticket-1"
+        },
+        "effects": [
+          "external_write"
+        ]
+      },
+      {
+        "toolCallId": "call-c",
+        "toolName": "ticket.create",
+        "arguments": {
+          "resource_id": "ticket-2"
+        },
+        "effects": [
+          "external_write"
+        ]
+      }
+    ],
+    "operations": [
+      {
+        "op": "ready",
+        "expect": [
+          "call-a",
+          "call-c"
+        ]
+      },
+      {
+        "op": "start",
+        "toolCallId": "call-a"
+      },
+      {
+        "op": "ready",
+        "expect": [
+          "call-c"
+        ]
+      },
+      {
+        "op": "complete",
+        "toolCallId": "call-a"
+      },
+      {
+        "op": "ready",
+        "expect": [
+          "call-b",
+          "call-c"
+        ]
+      }
+    ],
+    "expectedStates": {
+      "call-a": "completed",
+      "call-b": "pending",
+      "call-c": "pending"
+    }
+  },
+  {
+    "name": "parallel_state_changing_tools_require_effect_keys",
+    "kind": "execution_plan",
+    "planId": "plan-3",
+    "responseId": "response-1",
+    "maximumParallelism": 2,
+    "calls": [
+      {
+        "toolCallId": "call-a",
+        "toolName": "ticket.create",
+        "arguments": {
+          "resource_id": "ticket-1"
+        },
+        "effects": [
+          "external_write"
+        ]
+      },
+      {
+        "toolCallId": "call-b",
+        "toolName": "ticket.create",
+        "arguments": {
+          "resource_id": "ticket-2"
+        },
+        "effects": [
+          "external_write"
+        ]
+      }
+    ],
+    "expectedCreationError": "unsafe_parallel_effects"
+  }
+]

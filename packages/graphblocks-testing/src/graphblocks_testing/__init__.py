@@ -71,10 +71,14 @@ from graphblocks.tools import (
     ToolApprovalRecord,
     ToolApprovalRequest,
     ToolBinding,
+    ToolCall,
     ToolCallDraft,
     ToolCallError,
     ToolCatalog,
     ToolDefinition,
+    ToolExecutionPlan,
+    ToolExecutionPlanError,
+    ToolPlanCall,
     ToolResult,
     ToolResultEvent,
     ToolResolutionScope,
@@ -94,6 +98,7 @@ TckCaseKind = Literal[
     "exhaustion",
     "budget-race",
     "tool-lifecycle",
+    "tool-execution",
     "usage",
 ]
 TckResultStatus = Literal["passed", "failed"]
@@ -123,6 +128,19 @@ def _string_tuple(value: object) -> tuple[str, ...]:
     if isinstance(value, str):
         return (value,)
     return tuple(str(item) for item in value or ())
+
+
+def _tool_execution_error_code(error: ToolExecutionPlanError) -> str:
+    message = str(error)
+    if "requires an effect key" in message:
+        return "unsafe_parallel_effects"
+    if "already running" in message:
+        return "effect_conflict"
+    if "maximum parallelism" in message:
+        return "parallelism_exhausted"
+    if "dependencies are not ready" in message:
+        return "dependencies_not_ready"
+    return type(error).__name__
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +176,7 @@ class TckCase:
     exhaustion_fixture: dict[str, object] = field(default_factory=dict)
     budget_race_fixture: dict[str, object] = field(default_factory=dict)
     tool_lifecycle_fixture: dict[str, object] = field(default_factory=dict)
+    tool_execution_fixture: dict[str, object] = field(default_factory=dict)
     usage_fixture: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -173,6 +192,7 @@ class TckCase:
             "exhaustion",
             "budget-race",
             "tool-lifecycle",
+            "tool-execution",
             "usage",
         }:
             raise ValueError(f"invalid TCK case kind {self.kind}")
@@ -194,6 +214,7 @@ class TckCase:
         object.__setattr__(self, "exhaustion_fixture", dict(self.exhaustion_fixture))
         object.__setattr__(self, "budget_race_fixture", dict(self.budget_race_fixture))
         object.__setattr__(self, "tool_lifecycle_fixture", dict(self.tool_lifecycle_fixture))
+        object.__setattr__(self, "tool_execution_fixture", dict(self.tool_execution_fixture))
         object.__setattr__(self, "usage_fixture", dict(self.usage_fixture))
         if self.kind == "policy":
             if not self.policy_stream_id.strip():
@@ -213,6 +234,8 @@ class TckCase:
             raise ValueError("budget-race TCK case requires fixture")
         if self.kind == "tool-lifecycle" and not self.tool_lifecycle_fixture:
             raise ValueError("tool-lifecycle TCK case requires fixture")
+        if self.kind == "tool-execution" and not self.tool_execution_fixture:
+            raise ValueError("tool-execution TCK case requires fixture")
         if self.kind == "usage" and not self.usage_fixture:
             raise ValueError("usage TCK case requires fixture")
         if self.expected_outputs is not None:
@@ -358,6 +381,10 @@ class TckCase:
     @classmethod
     def tool_lifecycle(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
         return cls(case_id=case_id, kind="tool-lifecycle", tool_lifecycle_fixture=fixture)
+
+    @classmethod
+    def tool_execution(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
+        return cls(case_id=case_id, kind="tool-execution", tool_execution_fixture=fixture)
 
     @classmethod
     def usage(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
@@ -1323,6 +1350,33 @@ def load_tool_lifecycle_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     return tuple(cases)
 
 
+def load_tool_execution_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
+    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(raw_cases, list):
+        raise ValueError("tool-execution TCK root must be a list")
+    cases: list[TckCase] = []
+    for index, raw_case in enumerate(raw_cases):
+        if not isinstance(raw_case, Mapping):
+            raise ValueError(f"tool-execution TCK case {index} must be a mapping")
+        case_id = _first_mapping_value(raw_case, "name", "case_id", "caseId")
+        if not isinstance(case_id, str) or not case_id.strip():
+            raise ValueError(f"tool-execution TCK case {index} requires name")
+        case_kind = raw_case.get("kind")
+        if case_kind != "execution_plan":
+            raise ValueError(f"tool-execution TCK case {case_id} has unsupported kind {case_kind!r}")
+        calls = raw_case.get("calls")
+        if not isinstance(calls, list) or not all(isinstance(call, dict) for call in calls):
+            raise ValueError(f"tool-execution TCK case {case_id} calls must be a list of mappings")
+        operations = raw_case.get("operations", [])
+        if not isinstance(operations, list) or not all(isinstance(operation, dict) for operation in operations):
+            raise ValueError(f"tool-execution TCK case {case_id} operations must be a list of mappings")
+        expected_states = raw_case.get("expectedStates", {})
+        if not isinstance(expected_states, Mapping):
+            raise ValueError(f"tool-execution TCK case {case_id} expectedStates must be a mapping")
+        cases.append(TckCase.tool_execution(case_id=case_id, fixture=dict(raw_case)))
+    return tuple(cases)
+
+
 def load_usage_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(raw_cases, list):
@@ -1524,6 +1578,8 @@ def load_tck_cases_for_suite(suite: str, path: str | Path) -> tuple[TckCase, ...
         return load_sequence_tck_cases(path)
     if suite == "tool-lifecycle":
         return load_tool_lifecycle_tck_cases(path)
+    if suite == "tool-execution":
+        return load_tool_execution_tck_cases(path)
     if suite == "usage":
         return load_usage_tck_cases(path)
     raise ValueError(f"unsupported TCK suite {suite!r}")
@@ -1553,6 +1609,7 @@ def main(argv: list[str] | None = None) -> int:
             "exhaustion",
             "budget-race",
             "tool-lifecycle",
+            "tool-execution",
             "usage",
         ),
         help="TCK suite kind",
@@ -2142,6 +2199,8 @@ class TckRunner:
                 results.append(self._run_exhaustion_case(case))
             elif case.kind == "budget-race":
                 results.append(self._run_budget_race_case(case))
+            elif case.kind == "tool-execution":
+                results.append(self._run_tool_execution_case(case))
             elif case.kind == "tool-lifecycle":
                 results.append(self._run_tool_lifecycle_case(case))
             elif case.kind == "usage":
@@ -3217,6 +3276,184 @@ class TckRunner:
             observed=observed,
         )
 
+    def _run_tool_execution_case(self, case: TckCase) -> TckResult:
+        diagnostics: list[dict[str, str]] = []
+        fixture = case.tool_execution_fixture
+        response_id = str(fixture.get("responseId", "response-1"))
+        effect_key_template = fixture.get("effectKeyTemplate")
+        raw_calls = fixture.get("calls", [])
+        planned_calls: list[ToolPlanCall] = []
+        for call_index, raw_call in enumerate(raw_calls if isinstance(raw_calls, list) else []):
+            if not isinstance(raw_call, Mapping):
+                diagnostics.append(
+                    {
+                        "code": "ToolExecutionCallInvalid",
+                        "message": "tool-execution TCK call must be a mapping",
+                        "path": f"$.calls[{call_index}]",
+                    }
+                )
+                continue
+            raw_arguments = raw_call.get("arguments", {})
+            if not isinstance(raw_arguments, Mapping):
+                diagnostics.append(
+                    {
+                        "code": "ToolExecutionArgumentsInvalid",
+                        "message": "tool-execution TCK call arguments must be a mapping",
+                        "path": f"$.calls[{call_index}].arguments",
+                    }
+                )
+                continue
+            draft = ToolCallDraft.proposed(
+                response_id,
+                str(raw_call.get("toolCallId", "")),
+                str(raw_call.get("toolName", "tool.run")),
+            )
+            draft = draft.append_argument_fragment(json.dumps(raw_arguments, sort_keys=True))
+            call = draft.complete_arguments().into_tool_call(
+                str(raw_call.get("resolvedToolId", "resolved-tool-1")),
+                created_at=str(raw_call.get("createdAt", "2026-06-23T00:00:00Z")),
+            )
+            depends_on = raw_call.get("dependsOn", raw_call.get("depends_on", ()))
+            if isinstance(depends_on, str):
+                depends_on = (depends_on,)
+            call = replace(call, depends_on=tuple(str(dependency) for dependency in depends_on or ()))
+            raw_effects = raw_call.get("effects", [])
+            if isinstance(raw_effects, str):
+                raw_effects = [raw_effects]
+            planned_call = ToolPlanCall(
+                call,
+                effect_key=(str(raw_call["effectKey"]) if raw_call.get("effectKey") is not None else None),
+                effects=frozenset(str(effect) for effect in raw_effects or ()),
+                cancellation=str(raw_call.get("cancellation", "cooperative")),
+            )
+            if effect_key_template is not None and raw_call.get("effectKey") is None:
+                planned_call = planned_call.with_effect_key_template(str(effect_key_template))
+            planned_calls.append(planned_call)
+
+        observed: dict[str, object] = {"operations": []}
+        expected_creation_error = fixture.get("expectedCreationError")
+        try:
+            plan = ToolExecutionPlan(
+                plan_id=str(fixture.get("planId", "plan-1")),
+                response_id=response_id,
+                calls=tuple(planned_calls),
+                maximum_parallelism=int(fixture.get("maximumParallelism", 1)),
+                failure_policy=str(fixture.get("failurePolicy", "return_failures_to_model")),
+                cancellation_policy=str(fixture.get("cancellationPolicy", "cancel_dependents")),
+            )
+            observed["creationError"] = None
+        except ToolExecutionPlanError as error:
+            creation_error = _tool_execution_error_code(error)
+            observed["creationError"] = creation_error
+            if expected_creation_error != creation_error:
+                diagnostics.append(
+                    {
+                        "code": "ToolExecutionCreationErrorMismatch",
+                        "message": "tool-execution plan creation error did not match expected result",
+                        "path": "$.expectedCreationError",
+                    }
+                )
+            return TckResult(
+                case_id=case.case_id,
+                kind=case.kind,
+                status="passed" if not diagnostics else "failed",
+                diagnostics=tuple(diagnostics),
+                observed=observed,
+            )
+
+        if expected_creation_error is not None:
+            diagnostics.append(
+                {
+                    "code": "ToolExecutionCreationUnexpectedSuccess",
+                    "message": "tool-execution TCK case expected creation failure but plan was created",
+                    "path": "$.expectedCreationError",
+                }
+            )
+
+        operations = fixture.get("operations", [])
+        if not isinstance(operations, list):
+            operations = []
+            diagnostics.append(
+                {
+                    "code": "ToolExecutionOperationsInvalid",
+                    "message": "tool-execution TCK operations must be a list",
+                    "path": "$.operations",
+                }
+            )
+        operation_observations: list[dict[str, object]] = []
+        for operation_index, operation in enumerate(operations):
+            if not isinstance(operation, Mapping):
+                diagnostics.append(
+                    {
+                        "code": "ToolExecutionOperationInvalid",
+                        "message": "tool-execution TCK operation must be a mapping",
+                        "path": f"$.operations[{operation_index}]",
+                    }
+                )
+                continue
+            op = str(operation.get("op", ""))
+            if op == "ready":
+                ready = plan.ready_call_ids()
+                operation_observations.append({"op": "ready", "ready": ready})
+                expected_ready = operation.get("expect", [])
+                if ready != [str(call_id) for call_id in expected_ready or ()]:
+                    diagnostics.append(
+                        {
+                            "code": "ToolExecutionReadyMismatch",
+                            "message": "tool-execution ready call ids did not match expected result",
+                            "path": f"$.operations[{operation_index}].expect",
+                        }
+                    )
+            elif op == "start":
+                tool_call_id = str(operation.get("toolCallId", operation.get("tool_call_id", "")))
+                plan.record_started(tool_call_id)
+                operation_observations.append({"op": "start", "toolCallId": tool_call_id})
+            elif op == "complete":
+                tool_call_id = str(operation.get("toolCallId", operation.get("tool_call_id", "")))
+                plan.record_completed(tool_call_id)
+                operation_observations.append({"op": "complete", "toolCallId": tool_call_id})
+            else:
+                diagnostics.append(
+                    {
+                        "code": "ToolExecutionOperationUnknown",
+                        "message": f"tool-execution TCK operation {op!r} is not supported",
+                        "path": f"$.operations[{operation_index}].op",
+                    }
+                )
+
+        expected_states = fixture.get("expectedStates", {})
+        observed_states = {
+            planned_call.call.tool_call_id: plan.state(planned_call.call.tool_call_id)
+            for planned_call in planned_calls
+        }
+        if isinstance(expected_states, Mapping):
+            for tool_call_id, expected_state in expected_states.items():
+                if observed_states.get(str(tool_call_id)) != expected_state:
+                    diagnostics.append(
+                        {
+                            "code": "ToolExecutionStateMismatch",
+                            "message": "tool-execution final state did not match expected result",
+                            "path": f"$.expectedStates.{tool_call_id}",
+                        }
+                    )
+        else:
+            diagnostics.append(
+                {
+                    "code": "ToolExecutionExpectedStatesInvalid",
+                    "message": "tool-execution expectedStates must be a mapping",
+                    "path": "$.expectedStates",
+                }
+            )
+        observed["operations"] = operation_observations
+        observed["states"] = observed_states
+        return TckResult(
+            case_id=case.case_id,
+            kind=case.kind,
+            status="passed" if not diagnostics else "failed",
+            diagnostics=tuple(diagnostics),
+            observed=observed,
+        )
+
     def _run_usage_case(self, case: TckCase) -> TckResult:
         diagnostics: list[dict[str, str]] = []
         fixture = case.usage_fixture
@@ -3900,6 +4137,7 @@ __all__ = [
     "load_sequence_tck_cases",
     "load_tck_cases_for_suite",
     "load_tck_suite_manifests",
+    "load_tool_execution_tck_cases",
     "load_tool_lifecycle_tck_cases",
     "load_usage_tck_cases",
     "main",

@@ -227,6 +227,30 @@ def test_testing_package_loads_shared_tool_lifecycle_tck_cases(monkeypatch) -> N
     assert "load_tool_lifecycle_tck_cases" in graphblocks_testing.__all__
 
 
+def test_testing_package_loads_shared_tool_execution_tck_cases(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    cases = graphblocks_testing.load_tool_execution_tck_cases(
+        ROOT / "tck" / "tool-execution" / "cases.json"
+    )
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
+
+    assert [case.kind for case in cases] == ["tool-execution"] * 3
+    assert report.ok
+    assert {case.case_id for case in cases} == {
+        "independent_read_tools_execute_concurrently",
+        "conflicting_write_tools_are_serialized_by_effect_key",
+        "parallel_state_changing_tools_require_effect_keys",
+    }
+    assert any(result.observed.get("creationError") == "unsafe_parallel_effects" for result in report.results)
+    assert any(
+        result.observed.get("states") == {"call-a": "running", "call-b": "running"}
+        for result in report.results
+    )
+    assert "load_tool_execution_tck_cases" in graphblocks_testing.__all__
+
+
 def test_testing_package_loads_shared_usage_tck_cases(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -263,6 +287,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "runtime",
         "schema",
         "sequence",
+        "tool-execution",
         "tool-lifecycle",
         "usage",
     )
@@ -290,6 +315,11 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "invalid_arguments_denied_before_policy_admission",
         "approval_invalid_after_argument_mutation",
     )
+    assert by_suite["tool-execution"].case_ids == (
+        "independent_read_tools_execute_concurrently",
+        "conflicting_write_tools_are_serialized_by_effect_key",
+        "parallel_state_changing_tools_require_effect_keys",
+    )
     assert by_suite["budget-race"].content_digest().startswith("sha256:")
     assert "TckSuiteManifest" in graphblocks_testing.__all__
     assert "load_tck_suite_manifests" in graphblocks_testing.__all__
@@ -302,7 +332,7 @@ def test_testing_package_cli_lists_tck_suite_manifests(monkeypatch, capsys) -> N
     assert graphblocks_testing.main(["list", str(ROOT / "tck"), "--json"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload["suiteCount"] == 10
+    assert payload["suiteCount"] == 11
     assert payload["suites"][0]["suite_id"] == "application-events"
     assert payload["suites"][0]["case_count"] == 3
     assert payload["contentDigest"].startswith("sha256:")
@@ -337,6 +367,7 @@ def test_testing_package_cli_checks_tck_suite_coverage(monkeypatch, capsys) -> N
         "runtime",
         "schema",
         "sequence",
+        "tool-execution",
         "tool-lifecycle",
         "usage",
     ]
@@ -440,6 +471,21 @@ def test_testing_package_cli_runs_tool_lifecycle_tck_suite(monkeypatch, capsys) 
     assert payload["contentDigest"].startswith("sha256:")
 
 
+def test_testing_package_cli_runs_tool_execution_tck_suite(monkeypatch, capsys) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    exit_code = graphblocks_testing.main(
+        ["run", "tool-execution", str(ROOT / "tck" / "tool-execution" / "cases.json"), "--json"]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert {result["kind"] for result in payload["results"]} == {"tool-execution"}
+    assert payload["contentDigest"].startswith("sha256:")
+
+
 def test_testing_package_cli_runs_usage_tck_suite(monkeypatch, capsys) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -473,6 +519,7 @@ def test_testing_package_cli_runs_all_supported_tck_suites(monkeypatch, capsys) 
         "runtime",
         "schema",
         "sequence",
+        "tool-execution",
         "tool-lifecycle",
         "usage",
     )
