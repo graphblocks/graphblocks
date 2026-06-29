@@ -169,6 +169,7 @@ name = "graphblocks-runtime-seq"
 version = "0.1.0"
 dependencies = [
  "graphblocks-runtime-core",
+ "serde_json",
 ]
 
 [[package]]
