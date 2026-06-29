@@ -1211,6 +1211,11 @@ def main(argv: list[str] | None = None) -> int:
     check_parser.add_argument("--profiles", required=True, type=Path, help="conformance profile YAML document")
     check_parser.add_argument("--profile", dest="profile_ids", action="append", required=True, help="claimed profile id")
     check_parser.add_argument("--json", action="store_true", help="emit JSON")
+    run_parser = subparsers.add_parser("run", help="run a shared TCK fixture")
+    run_parser.add_argument("suite", choices=("compiler", "runtime", "schema", "policy"), help="TCK suite kind")
+    run_parser.add_argument("path", type=Path, help="cases.json fixture path")
+    run_parser.add_argument("--profile", default="local", help="profile label for the generated report")
+    run_parser.add_argument("--json", action="store_true", help="emit JSON")
 
     args = parser.parse_args(argv)
     if args.command == "list":
@@ -1245,6 +1250,26 @@ def main(argv: list[str] | None = None) -> int:
             for issue in coverage.issues:
                 print(f"{issue.code} {issue.suite}: {issue.message}")
         return 0 if coverage.ok else 1
+    if args.command == "run":
+        if args.suite == "compiler":
+            cases = load_compiler_tck_cases(args.path)
+        elif args.suite == "runtime":
+            cases = load_runtime_tck_cases(args.path)
+        elif args.suite == "schema":
+            cases = load_schema_tck_cases(args.path)
+        else:
+            cases = load_policy_tck_cases(args.path)
+        report = TckRunner(stdlib_registry(), profile=args.profile).run_cases(cases)
+        payload = report.report_contract()
+        payload["contentDigest"] = report.content_digest()
+        if args.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(f"{'OK' if report.ok else 'FAILED'} {len(report.results)} {args.suite} TCK cases")
+            for result in report.results:
+                if result.status != "passed":
+                    print(f"{result.case_id} {result.status}")
+        return 0 if report.ok else 1
     parser.print_help()
     return 0
 

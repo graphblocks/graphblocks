@@ -218,6 +218,22 @@ def test_testing_package_cli_checks_tck_suite_coverage(monkeypatch, capsys) -> N
     assert payload["contentDigest"].startswith("sha256:")
 
 
+def test_testing_package_cli_runs_policy_tck_suite(monkeypatch, capsys) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    exit_code = graphblocks_testing.main(
+        ["run", "policy", str(ROOT / "tck" / "policy" / "cases.json"), "--json"]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["profile"] == "local"
+    assert {result["kind"] for result in payload["results"]} == {"policy"}
+    assert payload["contentDigest"].startswith("sha256:")
+
+
 def test_testing_package_tck_loaders_accept_camel_case_aliases(monkeypatch, tmp_path) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
