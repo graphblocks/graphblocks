@@ -150,7 +150,7 @@
     }
   },
   {
-    "name": "protocol_stream_cutoff_discards_late_deltas",
+    "name": "protocol_stream_cutoff_discards_late_output",
     "kind": "stream_cutoff",
     "operations": [
       {
@@ -206,15 +206,61 @@
         "expectAccepted": false
       },
       {
-        "eventKind": "AssistantIncomplete",
+        "eventKind": "JobProgress",
         "metadata": {
-          "eventId": "event-incomplete-1",
+          "eventId": "event-tool-delta-late",
           "protocolVersion": "graphblocks.app.v1",
           "runId": "run-1",
           "turnId": "turn-1",
           "sequence": 4,
           "cursor": "cursor-4",
           "occurredAtUnixMs": 1765843200300
+        },
+        "payload": {
+          "response_id": "response-1",
+          "tool_call_id": "tool-call-late",
+          "tool_result_sequence": 2,
+          "output": [
+            {
+              "kind": "text",
+              "text": "late tool result"
+            }
+          ]
+        },
+        "expectAccepted": false
+      },
+      {
+        "eventKind": "ArtifactReady",
+        "metadata": {
+          "eventId": "event-tool-artifact-late",
+          "protocolVersion": "graphblocks.app.v1",
+          "runId": "run-1",
+          "turnId": "turn-1",
+          "sequence": 5,
+          "cursor": "cursor-5",
+          "occurredAtUnixMs": 1765843200400
+        },
+        "payload": {
+          "response_id": "response-1",
+          "tool_call_id": "tool-call-late",
+          "tool_result_sequence": 3,
+          "artifact": {
+            "artifact_id": "artifact-late",
+            "uri": "file:///tmp/late.txt"
+          }
+        },
+        "expectAccepted": false
+      },
+      {
+        "eventKind": "AssistantIncomplete",
+        "metadata": {
+          "eventId": "event-incomplete-1",
+          "protocolVersion": "graphblocks.app.v1",
+          "runId": "run-1",
+          "turnId": "turn-1",
+          "sequence": 6,
+          "cursor": "cursor-6",
+          "occurredAtUnixMs": 1765843200500
         },
         "payload": {
           "response_id": "response-1",
@@ -228,9 +274,9 @@
           "protocolVersion": "graphblocks.app.v1",
           "runId": "run-1",
           "turnId": "turn-1",
-          "sequence": 5,
-          "cursor": "cursor-5",
-          "occurredAtUnixMs": 1765843200400
+          "sequence": 7,
+          "cursor": "cursor-7",
+          "occurredAtUnixMs": 1765843200600
         },
         "payload": {
           "response_id": "response-2",
