@@ -536,15 +536,16 @@ def openai_chat_delta_from_chunk(data: Mapping[str, object], *, sequence: int) -
             function = {}
         if not isinstance(function, Mapping):
             raise OpenAICompatibleAdapterError("provider chunk tool_call function delta must be a mapping")
+        arguments = function.get("arguments")
+        if arguments is not None and not isinstance(arguments, str):
+            raise OpenAICompatibleAdapterError("provider chunk tool_call function arguments must be a string")
         tool_call_deltas.append(
             {
                 "index": raw_delta.get("index", 0),
                 "id": raw_delta.get("id") if isinstance(raw_delta.get("id"), str) else None,
                 "type": raw_delta.get("type") if isinstance(raw_delta.get("type"), str) else "function",
                 "name": function.get("name") if isinstance(function.get("name"), str) else None,
-                "arguments_delta": (
-                    function.get("arguments") if isinstance(function.get("arguments"), str) else None
-                ),
+                "arguments_delta": arguments,
             }
         )
     finish_reason = choice.get("finish_reason")

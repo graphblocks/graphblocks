@@ -436,6 +436,39 @@ def test_openai_streaming_tool_call_deltas_assemble_graphblocks_drafts(monkeypat
     assert call.status == "validated"
 
 
+def test_openai_stream_chunk_rejects_non_string_tool_argument_delta(monkeypatch) -> None:
+    _add_openai_package_paths(monkeypatch)
+    graphblocks_openai = importlib.import_module("graphblocks_openai")
+
+    with pytest.raises(
+        graphblocks_openai.OpenAICompatibleAdapterError,
+        match="provider chunk tool_call function arguments must be a string",
+    ):
+        graphblocks_openai.openai_chat_delta_from_chunk(
+            {
+                "id": "chatcmpl-arguments",
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "call-1",
+                                    "function": {
+                                        "name": "knowledge.search",
+                                        "arguments": {"query": "refund"},
+                                    },
+                                }
+                            ]
+                        },
+                    }
+                ],
+            },
+            sequence=1,
+        )
+
+
 def test_openai_streaming_tool_call_assembler_rejects_unstable_identity(monkeypatch) -> None:
     _add_openai_package_paths(monkeypatch)
     graphblocks_openai = importlib.import_module("graphblocks_openai")
