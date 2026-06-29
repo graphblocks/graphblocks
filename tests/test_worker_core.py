@@ -25,6 +25,7 @@ from graphblocks.worker import (
     WorkerInvokeResult,
     WorkerMismatchedNodeAttemptError,
     WorkerNoEligibleWorkerError,
+    WorkerProtocolError,
     WorkerStaleLeaseEpochError,
     admit_worker,
     admit_worker_with_policy,
@@ -259,10 +260,95 @@ def test_worker_invocation_envelopes_preserve_json_payloads_and_context() -> Non
     assert encoded["leaseEpoch"] == 7
     assert encoded["context"]["deploymentRevisionId"] == "rev-1"
     assert encoded["context"]["policySnapshotDigest"] == "sha256:policy"
+    assert encoded["context"]["budgetPermitId"] == "permit-1"
+    assert encoded["context"]["budgetPermitDigest"] == "sha256:budget-permit"
     assert encoded["context"]["attributes"]["tenant"] == "acme"
     assert WorkerInvokeRequest.from_wire(encoded) == request
     assert WorkerInvokeResult.from_wire(result.to_wire()) == result
     assert validate_worker_result(request, result) is None
+
+
+def test_worker_invocation_context_rejects_invalid_propagation_fields() -> None:
+    invalid_contexts = (
+        (
+            lambda: WorkerInvocationContext(7, "rev-1"),  # type: ignore[arg-type]
+            "worker invocation context release_id must be a string",
+        ),
+        (
+            lambda: WorkerInvocationContext(" ", "rev-1"),
+            "worker invocation context release_id must not be empty",
+        ),
+        (
+            lambda: WorkerInvocationContext("release-1", ""),
+            "worker invocation context deployment_revision_id must not be empty",
+        ),
+        (
+            lambda: WorkerInvocationContext("release-1", "rev-1", trace_id=" "),
+            "worker invocation context trace_id must not be empty",
+        ),
+        (
+            lambda: WorkerInvocationContext(
+                "release-1",
+                "rev-1",
+                policy_snapshot_id="policy-snapshot-1",
+            ),
+            "worker invocation context policy snapshot id and digest must be provided together",
+        ),
+        (
+            lambda: WorkerInvocationContext(
+                "release-1",
+                "rev-1",
+                budget_permit_digest="sha256:budget-permit",
+            ),
+            "worker invocation context budget permit id and digest must be provided together",
+        ),
+        (
+            lambda: WorkerInvocationContext(  # type: ignore[arg-type]
+                "release-1",
+                "rev-1",
+                attributes="tenant",
+            ),
+            "worker invocation context attributes must be a mapping",
+        ),
+        (
+            lambda: WorkerInvocationContext(  # type: ignore[arg-type]
+                "release-1",
+                "rev-1",
+                attributes={object(): "acme"},
+            ),
+            "worker invocation context attribute keys must be strings",
+        ),
+        (
+            lambda: WorkerInvocationContext("release-1", "rev-1", attributes={" ": "acme"}),
+            "worker invocation context attribute keys must not be empty",
+        ),
+        (
+            lambda: WorkerInvocationContext(  # type: ignore[arg-type]
+                "release-1",
+                "rev-1",
+                attributes={"tenant": object()},
+            ),
+            "worker invocation context attribute values must be strings",
+        ),
+        (
+            lambda: WorkerInvocationContext("release-1", "rev-1").with_attribute(" ", "acme"),
+            "worker invocation context attribute keys must not be empty",
+        ),
+        (
+            lambda: WorkerInvocationContext.from_wire(
+                {
+                    "releaseId": "release-1",
+                    "deploymentRevisionId": "rev-1",
+                    "attributes": [("tenant", "acme")],
+                }
+            ),
+            "worker invocation context attributes must be a mapping",
+        ),
+    )
+
+    for build_context, message in invalid_contexts:
+        with pytest.raises(WorkerProtocolError, match=message):
+            build_context()
 
 
 def test_worker_drain_plan_closes_admission_and_preserves_inflight_affinity() -> None:

@@ -220,6 +220,38 @@ class WorkerMissingRequiredBlockError(WorkerProtocolError):
         super().__init__(f"worker does not support required block {required_block!r}")
 
 
+def _validate_worker_non_empty_string(owner: str, field_name: str, value: object) -> str:
+    if not isinstance(value, str):
+        raise WorkerProtocolError(f"{owner} {field_name} must be a string")
+    if not value.strip():
+        raise WorkerProtocolError(f"{owner} {field_name} must not be empty")
+    return value
+
+
+def _validate_worker_optional_non_empty_string(
+    owner: str,
+    field_name: str,
+    value: object,
+) -> str | None:
+    if value is None:
+        return None
+    return _validate_worker_non_empty_string(owner, field_name, value)
+
+
+def _validate_worker_string_attributes(owner: str, value: object) -> dict[str, str]:
+    if not isinstance(value, Mapping):
+        raise WorkerProtocolError(f"{owner} attributes must be a mapping")
+    attributes = dict(value)
+    for key, item in attributes.items():
+        if not isinstance(key, str):
+            raise WorkerProtocolError(f"{owner} attribute keys must be strings")
+        if not key.strip():
+            raise WorkerProtocolError(f"{owner} attribute keys must not be empty")
+        if not isinstance(item, str):
+            raise WorkerProtocolError(f"{owner} attribute values must be strings")
+    return attributes
+
+
 def admit_worker(advertisement: WorkerAdvertisement) -> None:
     admit_worker_with_policy(WorkerAdmissionPolicy.current(), advertisement)
 
@@ -531,7 +563,54 @@ class WorkerInvocationContext:
     attributes: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "attributes", dict(self.attributes))
+        object.__setattr__(
+            self,
+            "release_id",
+            _validate_worker_non_empty_string(
+                "worker invocation context",
+                "release_id",
+                self.release_id,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "deployment_revision_id",
+            _validate_worker_non_empty_string(
+                "worker invocation context",
+                "deployment_revision_id",
+                self.deployment_revision_id,
+            ),
+        )
+        for field_name in (
+            "trace_id",
+            "parent_span_id",
+            "policy_snapshot_id",
+            "policy_snapshot_digest",
+            "budget_permit_id",
+            "budget_permit_digest",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_worker_optional_non_empty_string(
+                    "worker invocation context",
+                    field_name,
+                    getattr(self, field_name),
+                ),
+            )
+        if (self.policy_snapshot_id is None) != (self.policy_snapshot_digest is None):
+            raise WorkerProtocolError(
+                "worker invocation context policy snapshot id and digest must be provided together"
+            )
+        if (self.budget_permit_id is None) != (self.budget_permit_digest is None):
+            raise WorkerProtocolError(
+                "worker invocation context budget permit id and digest must be provided together"
+            )
+        object.__setattr__(
+            self,
+            "attributes",
+            _validate_worker_string_attributes("worker invocation context", self.attributes),
+        )
 
     def with_trace(self, trace_id: str, parent_span_id: str) -> WorkerInvocationContext:
         return replace(self, trace_id=trace_id, parent_span_id=parent_span_id)
@@ -567,21 +646,16 @@ class WorkerInvocationContext:
     @classmethod
     def from_wire(cls, payload: dict[str, object]) -> WorkerInvocationContext:
         attributes = payload.get("attributes", {})
-        attributes = attributes if isinstance(attributes, dict) else {}
         return cls(
-            release_id=str(payload["releaseId"]),
-            deployment_revision_id=str(payload["deploymentRevisionId"]),
-            trace_id=None if payload.get("traceId") is None else str(payload.get("traceId")),
-            parent_span_id=None if payload.get("parentSpanId") is None else str(payload.get("parentSpanId")),
-            policy_snapshot_id=None if payload.get("policySnapshotId") is None else str(payload.get("policySnapshotId")),
-            policy_snapshot_digest=None
-            if payload.get("policySnapshotDigest") is None
-            else str(payload.get("policySnapshotDigest")),
-            budget_permit_id=None if payload.get("budgetPermitId") is None else str(payload.get("budgetPermitId")),
-            budget_permit_digest=None
-            if payload.get("budgetPermitDigest") is None
-            else str(payload.get("budgetPermitDigest")),
-            attributes={str(key): str(value) for key, value in attributes.items()},
+            release_id=payload.get("releaseId"),
+            deployment_revision_id=payload.get("deploymentRevisionId"),
+            trace_id=payload.get("traceId"),
+            parent_span_id=payload.get("parentSpanId"),
+            policy_snapshot_id=payload.get("policySnapshotId"),
+            policy_snapshot_digest=payload.get("policySnapshotDigest"),
+            budget_permit_id=payload.get("budgetPermitId"),
+            budget_permit_digest=payload.get("budgetPermitDigest"),
+            attributes=attributes,
         )
 
 
