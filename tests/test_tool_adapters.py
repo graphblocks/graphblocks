@@ -272,6 +272,38 @@ def test_mcp_adapter_converts_error_to_failed_tool_result(monkeypatch) -> None:
     assert result.effect_outcome == "not_committed"
 
 
+def test_mcp_adapter_converts_denied_terminal_result(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
+    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    admitted, resolved = _admitted_call_for(
+        McpToolImplementation(server="support-mcp", remote_name="search"),
+        tool_name="knowledge.search",
+        binding_id="binding-mcp-search",
+        arguments={"query": "billing"},
+    )
+    error = {"code": "mcp.denied", "message": "MCP server denied the tool call"}
+
+    result = graphblocks_mcp.mcp_tool_result_denied(
+        admitted,
+        resolved,
+        error=error,
+        completed_at="2026-06-23T00:00:02Z",
+    )
+    error["message"] = "mutated"
+    prepared = graphblocks_mcp.prepare_mcp_tool_result_for_model(
+        admitted,
+        resolved,
+        _tool_output_registry(),
+        result,
+    )
+
+    assert result.status == "denied"
+    assert result.error == {"code": "mcp.denied", "message": "MCP server denied the tool call"}
+    assert result.effect_outcome == "not_committed"
+    assert prepared == ()
+    assert "mcp_tool_result_denied" in graphblocks_mcp.__all__
+
+
 def test_mcp_adapter_converts_policy_stopped_terminal_result(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
     graphblocks_mcp = importlib.import_module("graphblocks_mcp")
@@ -602,6 +634,38 @@ def test_openapi_adapter_converts_error_to_failed_tool_result(monkeypatch) -> No
     assert result.status == "failed"
     assert result.error == {"code": "openapi.conflict", "message": "duplicate ticket"}
     assert result.effect_outcome == "unknown"
+
+
+def test_openapi_adapter_converts_denied_terminal_result(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
+    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    admitted, resolved = _admitted_call_for(
+        OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
+        tool_name="ticket.create",
+        binding_id="binding-ticket-create",
+        arguments={"title": "Need help"},
+    )
+    error = {"code": "openapi.denied", "message": "ticket system denied the operation"}
+
+    result = graphblocks_openapi.openapi_tool_result_denied(
+        admitted,
+        resolved,
+        error=error,
+        completed_at="2026-06-23T00:00:02Z",
+    )
+    error["message"] = "mutated"
+    prepared = graphblocks_openapi.prepare_openapi_tool_result_for_model(
+        admitted,
+        resolved,
+        _tool_output_registry(),
+        result,
+    )
+
+    assert result.status == "denied"
+    assert result.error == {"code": "openapi.denied", "message": "ticket system denied the operation"}
+    assert result.effect_outcome == "not_committed"
+    assert prepared == ()
+    assert "openapi_tool_result_denied" in graphblocks_openapi.__all__
 
 
 def test_openapi_adapter_converts_policy_stopped_terminal_result(monkeypatch) -> None:

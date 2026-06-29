@@ -287,6 +287,23 @@ def mcp_tool_result_from_error(
         raise McpToolAdapterError("MCP tool result has an invalid effect outcome") from error
 
 
+def mcp_tool_result_denied(
+    admitted: AdmittedToolCall,
+    resolved_tool: ResolvedTool,
+    *,
+    error: Mapping[str, object],
+    completed_at: str,
+) -> ToolResult:
+    prepare_mcp_tool_invocation(admitted, resolved_tool)
+    if not isinstance(error, Mapping):
+        raise McpToolAdapterError("MCP tool denial error must be an object")
+    return ToolResult.denied(
+        admitted.call.tool_call_id,
+        error=dict(error),
+        completed_at=completed_at,
+    )
+
+
 def mcp_tool_result_policy_stopped(
     admitted: AdmittedToolCall,
     resolved_tool: ResolvedTool,
@@ -452,6 +469,7 @@ __all__ = [
     "define_mcp_tool",
     "mcp_tool_result_artifact_ready",
     "mcp_tool_result_cancelled",
+    "mcp_tool_result_denied",
     "mcp_tool_result_delta",
     "mcp_tool_result_from_error",
     "mcp_tool_result_from_response",

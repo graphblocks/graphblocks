@@ -287,6 +287,23 @@ def openapi_tool_result_from_error(
         raise OpenApiToolAdapterError("OpenAPI tool result has an invalid effect outcome") from error
 
 
+def openapi_tool_result_denied(
+    admitted: AdmittedToolCall,
+    resolved_tool: ResolvedTool,
+    *,
+    error: Mapping[str, object],
+    completed_at: str,
+) -> ToolResult:
+    prepare_openapi_operation_invocation(admitted, resolved_tool)
+    if not isinstance(error, Mapping):
+        raise OpenApiToolAdapterError("OpenAPI operation denial error must be an object")
+    return ToolResult.denied(
+        admitted.call.tool_call_id,
+        error=dict(error),
+        completed_at=completed_at,
+    )
+
+
 def openapi_tool_result_policy_stopped(
     admitted: AdmittedToolCall,
     resolved_tool: ResolvedTool,
@@ -452,6 +469,7 @@ __all__ = [
     "define_openapi_tool",
     "openapi_tool_result_artifact_ready",
     "openapi_tool_result_cancelled",
+    "openapi_tool_result_denied",
     "openapi_tool_result_delta",
     "openapi_tool_result_from_error",
     "openapi_tool_result_from_response",
