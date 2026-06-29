@@ -1541,14 +1541,20 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
                 )?;
                 let text =
                     required_string(operation, "text", &format!("operations[{operation_index}]"))?;
-                let operation_stream_id = operation
-                    .get("streamId")
-                    .and_then(Value::as_str)
-                    .unwrap_or(stream_id);
-                let operation_response_id = operation
-                    .get("responseId")
-                    .and_then(Value::as_str)
-                    .unwrap_or(response_id);
+                let operation_stream_id = optional_alias_string(
+                    operation,
+                    "streamId",
+                    "stream_id",
+                    &format!("operations[{operation_index}]"),
+                )?
+                .unwrap_or(stream_id);
+                let operation_response_id = optional_alias_string(
+                    operation,
+                    "responseId",
+                    "response_id",
+                    &format!("operations[{operation_index}]"),
+                )?
+                .unwrap_or(response_id);
                 let deliverable = gate
                     .record_chunk(GenerationChunk::text(
                         operation_stream_id,
@@ -3182,6 +3188,34 @@ mod tests {
                 .and_then(Value::as_str),
             Some("safe draft")
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_output_gate_json_honors_snake_case_chunk_identity() -> Result<(), String> {
+        pyo3::Python::initialize();
+        let gate = json!({
+            "streamId": "stream-1",
+            "responseId": "response-1"
+        });
+        let operations = json!([
+            {
+                "kind": "chunk",
+                "stream_id": "stream-other",
+                "response_id": "response-1",
+                "sequence": 1,
+                "text": "misrouted"
+            }
+        ]);
+        let gate_json = serde_json::to_string(&gate).map_err(|error| error.to_string())?;
+        let operations_json =
+            serde_json::to_string(&operations).map_err(|error| error.to_string())?;
+
+        let error = evaluate_output_gate_json(&gate_json, &operations_json)
+            .expect_err("snake_case chunk stream mismatch should be rejected");
+
+        assert!(error.to_string().contains("StreamMismatch"));
 
         Ok(())
     }
