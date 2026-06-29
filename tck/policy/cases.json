@@ -1,0 +1,183 @@
+[
+  {
+    "name": "bounded_holdback_releases_accepted_prefix",
+    "delivery": {
+      "mode": "bounded_holdback",
+      "holdbackMaxTokens": 8
+    },
+    "operations": [
+      {
+        "op": "chunk",
+        "sequence": 1,
+        "text": "safe "
+      },
+      {
+        "op": "chunk",
+        "sequence": 2,
+        "text": "answer"
+      },
+      {
+        "op": "allow",
+        "decisionId": "decision-1",
+        "acceptedThrough": 1,
+        "inputDigest": "sha256:first",
+        "occurredAt": 1000,
+        "deliver": [
+          {
+            "sequence": 1,
+            "text": "safe "
+          }
+        ]
+      }
+    ],
+    "expected": {
+      "lastGeneratedSequence": 2,
+      "lastPolicyAcceptedSequence": 1,
+      "lastClientDeliveredSequence": 1,
+      "stopped": false
+    }
+  },
+  {
+    "name": "policy_abort_cuts_off_delivery",
+    "delivery": {
+      "mode": "bounded_holdback",
+      "holdbackMaxTokens": 8
+    },
+    "operations": [
+      {
+        "op": "chunk",
+        "sequence": 1,
+        "text": "safe "
+      },
+      {
+        "op": "chunk",
+        "sequence": 2,
+        "text": "blocked"
+      },
+      {
+        "op": "allow",
+        "decisionId": "decision-1",
+        "acceptedThrough": 1,
+        "inputDigest": "sha256:first",
+        "occurredAt": 1000,
+        "deliver": [
+          {
+            "sequence": 1,
+            "text": "safe "
+          }
+        ]
+      },
+      {
+        "op": "abort_response",
+        "decisionId": "decision-abort",
+        "inputDigest": "sha256:abort",
+        "providerCancellation": "required_if_supported",
+        "draftDisposition": "retract",
+        "pendingToolCalls": "deny",
+        "occurredAt": 1100,
+        "cutoff": {
+          "lastGeneratedSequence": 2,
+          "lastPolicyAcceptedSequence": 1,
+          "lastClientDeliveredSequence": 1,
+          "draftDisposition": "retract",
+          "policyDecisionId": "decision-abort"
+        }
+      },
+      {
+        "op": "chunk",
+        "sequence": 3,
+        "text": "late",
+        "expectError": "policy_stopped"
+      },
+      {
+        "op": "allow",
+        "decisionId": "decision-late",
+        "acceptedThrough": 3,
+        "inputDigest": "sha256:late",
+        "occurredAt": 1200,
+        "expectError": "policy_stopped"
+      }
+    ],
+    "expected": {
+      "lastGeneratedSequence": 2,
+      "lastPolicyAcceptedSequence": 1,
+      "lastClientDeliveredSequence": 1,
+      "stopped": true
+    }
+  },
+  {
+    "name": "bounded_holdback_rejects_byte_overflow",
+    "delivery": {
+      "mode": "bounded_holdback",
+      "holdbackMaxBytes": 8
+    },
+    "operations": [
+      {
+        "op": "chunk",
+        "sequence": 1,
+        "text": "safe"
+      },
+      {
+        "op": "chunk",
+        "sequence": 2,
+        "text": "text"
+      },
+      {
+        "op": "chunk",
+        "sequence": 3,
+        "text": "!",
+        "expectError": "bounded_holdback_bytes"
+      }
+    ],
+    "expected": {
+      "lastGeneratedSequence": 2,
+      "lastPolicyAcceptedSequence": 0,
+      "lastClientDeliveredSequence": 0,
+      "stopped": false
+    }
+  },
+  {
+    "name": "buffer_until_commit_holds_until_commit",
+    "delivery": {
+      "mode": "buffer_until_commit"
+    },
+    "operations": [
+      {
+        "op": "chunk",
+        "sequence": 1,
+        "text": "buffered "
+      },
+      {
+        "op": "chunk",
+        "sequence": 2,
+        "text": "answer"
+      },
+      {
+        "op": "allow",
+        "decisionId": "decision-1",
+        "acceptedThrough": 2,
+        "inputDigest": "sha256:accepted",
+        "occurredAt": 1000
+      },
+      {
+        "op": "commit",
+        "deliver": [
+          {
+            "sequence": 1,
+            "text": "buffered "
+          },
+          {
+            "sequence": 2,
+            "text": "answer"
+          }
+        ]
+      }
+    ],
+    "expected": {
+      "lastGeneratedSequence": 2,
+      "lastPolicyAcceptedSequence": 2,
+      "lastClientDeliveredSequence": 2,
+      "stopped": false
+    }
+  }
+]
