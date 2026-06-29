@@ -1584,19 +1584,17 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
             }
             "decision" => {
                 let label = format!("operations[{operation_index}]");
-                let decision_id = required_string(operation, "decisionId", &label)?;
-                let input_digest = required_string(operation, "inputDigest", &label)?;
+                let decision_id =
+                    required_alias_string(operation, "decisionId", "decision_id", &label)?;
+                let input_digest =
+                    required_alias_string(operation, "inputDigest", "input_digest", &label)?;
                 let disposition = required_string(operation, "disposition", &label)?;
-                let accepted_through_sequence = operation
-                    .get("acceptedThroughSequence")
-                    .map(|value| {
-                        value.as_u64().ok_or_else(|| {
-                            PyValueError::new_err(format!(
-                                "{label}.acceptedThroughSequence must be an unsigned integer"
-                            ))
-                        })
-                    })
-                    .transpose()?;
+                let accepted_through_sequence = optional_alias_u64(
+                    operation,
+                    "acceptedThroughSequence",
+                    "accepted_through_sequence",
+                    &label,
+                )?;
                 let mut decision = match disposition {
                     "allow" => OutputPolicyDecision::allow(
                         decision_id,
@@ -1606,14 +1604,18 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
                     "hold" => OutputPolicyDecision::hold(decision_id, input_digest),
                     "redact" | "replace" => {
                         let mut replacement_chunks = Vec::new();
-                        if operation.get("replacementParts").is_some()
-                            && operation.get("replacementChunks").is_some()
-                        {
+                        let replacement_parts = operation
+                            .get("replacementParts")
+                            .or_else(|| operation.get("replacement_parts"));
+                        let replacement_chunks_value = operation
+                            .get("replacementChunks")
+                            .or_else(|| operation.get("replacement_chunks"));
+                        if replacement_parts.is_some() && replacement_chunks_value.is_some() {
                             return Err(PyValueError::new_err(format!(
                                 "{label} must not specify both replacementParts and replacementChunks"
                             )));
                         }
-                        if let Some(parts) = operation.get("replacementParts") {
+                        if let Some(parts) = replacement_parts {
                             let Some(parts) = parts.as_array() else {
                                 return Err(PyValueError::new_err(format!(
                                     "{label}.replacementParts must be an array"
@@ -1644,7 +1646,7 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
                                     required_string(part, "text", &part_label)?,
                                 ));
                             }
-                        } else if let Some(chunks) = operation.get("replacementChunks") {
+                        } else if let Some(chunks) = replacement_chunks_value {
                             let Some(chunks) = chunks.as_array() else {
                                 return Err(PyValueError::new_err(format!(
                                     "{label}.replacementChunks must be an array"
@@ -1655,25 +1657,25 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
                                     chunk,
                                     &format!("{label}.replacementChunks[{chunk_index}]"),
                                 )?;
+                                let chunk_label =
+                                    format!("{label}.replacementChunks[{chunk_index}]");
                                 replacement_chunks.push(GenerationChunk::text(
-                                    chunk
-                                        .get("streamId")
-                                        .and_then(Value::as_str)
-                                        .unwrap_or(stream_id),
-                                    chunk
-                                        .get("responseId")
-                                        .and_then(Value::as_str)
-                                        .unwrap_or(response_id),
-                                    required_u64(
+                                    optional_alias_string(
                                         chunk,
-                                        "sequence",
-                                        &format!("{label}.replacementChunks[{chunk_index}]"),
-                                    )?,
-                                    required_string(
+                                        "streamId",
+                                        "stream_id",
+                                        &chunk_label,
+                                    )?
+                                    .unwrap_or(stream_id),
+                                    optional_alias_string(
                                         chunk,
-                                        "text",
-                                        &format!("{label}.replacementChunks[{chunk_index}]"),
-                                    )?,
+                                        "responseId",
+                                        "response_id",
+                                        &chunk_label,
+                                    )?
+                                    .unwrap_or(response_id),
+                                    required_u64(chunk, "sequence", &chunk_label)?,
+                                    required_string(chunk, "text", &chunk_label)?,
                                 ));
                             }
                         }
@@ -1723,7 +1725,10 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
                     }
                     decision = decision.with_redactions(parsed_redactions);
                 }
-                if let Some(values) = operation.get("reasonCodes") {
+                if let Some(values) = operation
+                    .get("reasonCodes")
+                    .or_else(|| operation.get("reason_codes"))
+                {
                     let Some(values) = values.as_array() else {
                         return Err(PyValueError::new_err(format!(
                             "{label}.reasonCodes must be an array"
@@ -1740,7 +1745,10 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
                     }
                     decision = decision.with_reason_codes(parsed_reason_codes);
                 }
-                if let Some(values) = operation.get("policyRefs") {
+                if let Some(values) = operation
+                    .get("policyRefs")
+                    .or_else(|| operation.get("policy_refs"))
+                {
                     let Some(values) = values.as_array() else {
                         return Err(PyValueError::new_err(format!(
                             "{label}.policyRefs must be an array"
@@ -1757,7 +1765,10 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
                     }
                     decision = decision.with_policy_refs(parsed_policy_refs);
                 }
-                if let Some(value) = operation.get("providerCancellation") {
+                if let Some(value) = operation
+                    .get("providerCancellation")
+                    .or_else(|| operation.get("provider_cancellation"))
+                {
                     let Some(value) = value.as_str() else {
                         return Err(PyValueError::new_err(format!(
                             "{label}.providerCancellation must be a string"
@@ -1774,7 +1785,10 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
                         }
                     });
                 }
-                if let Some(value) = operation.get("draftDisposition") {
+                if let Some(value) = operation
+                    .get("draftDisposition")
+                    .or_else(|| operation.get("draft_disposition"))
+                {
                     let Some(value) = value.as_str() else {
                         return Err(PyValueError::new_err(format!(
                             "{label}.draftDisposition must be a string"
@@ -1791,7 +1805,10 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
                         }
                     });
                 }
-                if let Some(value) = operation.get("pendingToolCalls") {
+                if let Some(value) = operation
+                    .get("pendingToolCalls")
+                    .or_else(|| operation.get("pending_tool_calls"))
+                {
                     let Some(value) = value.as_str() else {
                         return Err(PyValueError::new_err(format!(
                             "{label}.pendingToolCalls must be a string"
@@ -1808,15 +1825,20 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
                         }
                     });
                 }
-                if let Some(value) = operation.get("evaluatedAtUnixMs") {
-                    let Some(value) = value.as_u64() else {
-                        return Err(PyValueError::new_err(format!(
-                            "{label}.evaluatedAtUnixMs must be an unsigned integer"
-                        )));
-                    };
+                if let Some(value) = optional_alias_u64(
+                    operation,
+                    "evaluatedAtUnixMs",
+                    "evaluated_at_unix_ms",
+                    &label,
+                )? {
                     decision = decision.evaluated_at_unix_ms(value);
                 }
-                let occurred_at_unix_ms = required_u64(operation, "occurredAtUnixMs", &label)?;
+                let occurred_at_unix_ms = required_alias_u64(
+                    operation,
+                    "occurredAtUnixMs",
+                    "occurred_at_unix_ms",
+                    &label,
+                )?;
                 let decision_trace = json!({
                     "operationIndex": operation_index,
                     "decisionId": decision.decision_id.as_str(),
@@ -3026,6 +3048,73 @@ mod tests {
                 .and_then(|cutoff| cutoff.get("lastClientDeliveredSequence"))
                 .and_then(Value::as_u64),
             Some(1)
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_output_gate_json_accepts_snake_case_decision_operation() -> Result<(), String> {
+        pyo3::Python::initialize();
+        let gate = json!({
+            "streamId": "stream-1",
+            "responseId": "response-1",
+            "deliveryPolicy": {
+                "mode": "bounded_holdback",
+                "onViolation": "abort_response",
+                "holdbackMaxTokens": 16
+            }
+        });
+        let operations = json!([
+            {
+                "kind": "chunk",
+                "sequence": 1,
+                "text": "safe draft"
+            },
+            {
+                "kind": "decision",
+                "decision_id": "decision-allow",
+                "disposition": "allow",
+                "accepted_through_sequence": 1,
+                "input_digest": "sha256:accepted",
+                "reason_codes": ["safe"],
+                "policy_refs": ["policy/output"],
+                "provider_cancellation": "none",
+                "draft_disposition": "keep",
+                "pending_tool_calls": "keep",
+                "evaluated_at_unix_ms": 1_000,
+                "occurred_at_unix_ms": 1_010
+            }
+        ]);
+        let gate_json = serde_json::to_string(&gate).map_err(|error| error.to_string())?;
+        let operations_json =
+            serde_json::to_string(&operations).map_err(|error| error.to_string())?;
+
+        let result_json = evaluate_output_gate_json(&gate_json, &operations_json)
+            .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            result
+                .get("deliveries")
+                .and_then(Value::as_array)
+                .and_then(|deliveries| deliveries.first())
+                .and_then(|delivery| delivery.get("chunks"))
+                .and_then(Value::as_array)
+                .and_then(|chunks| chunks.first())
+                .and_then(|chunk| chunk.get("text"))
+                .and_then(Value::as_str),
+            Some("safe draft")
+        );
+        assert_eq!(
+            result
+                .get("decisions")
+                .and_then(Value::as_array)
+                .and_then(|decisions| decisions.first())
+                .and_then(|decision| decision.get("decisionId"))
+                .and_then(Value::as_str),
+            Some("decision-allow")
         );
 
         Ok(())
