@@ -71,6 +71,12 @@ Shared TCK fixtures live under `tck/`:
 - `policy`
 - `exhaustion`
 - `budget-race`
+- `conversation`
+- `rag`
+- `retry`
+- `tool-execution`
+- `tool-lifecycle`
+- `usage`
 
 Rust and Python harnesses consume these fixtures where the suite is applicable.
 The implemented profile catalog is in `src/graphblocks/data/conformance-profiles.yaml`.

@@ -1,0 +1,145 @@
+[
+  {
+    "name": "turn_draft_commits_atomically",
+    "kind": "turn_commit",
+    "conversationId": "conv-turn-commit",
+    "turnId": "turn-commit",
+    "message": {
+      "messageId": "msg-assistant",
+      "role": "assistant",
+      "text": "hello"
+    },
+    "expected": {
+      "draftStatus": "model_running",
+      "draftMessageStatuses": [
+        "draft"
+      ],
+      "preCommitMessageCount": 0,
+      "turnStatus": "completed",
+      "committedRevision": 1,
+      "committedMessageIds": [
+        "msg-assistant"
+      ],
+      "conversationRevision": 1,
+      "conversationMessageIds": [
+        "msg-assistant"
+      ],
+      "conversationMessageStatuses": [
+        "committed"
+      ]
+    }
+  },
+  {
+    "name": "abort_turn_retracts_draft_without_commit",
+    "kind": "abort_turn",
+    "conversationId": "conv-abort",
+    "turnId": "turn-abort",
+    "message": {
+      "messageId": "msg-draft",
+      "role": "assistant",
+      "text": "draft"
+    },
+    "expected": {
+      "turnStatus": "cancelled",
+      "turnMessageStatuses": [
+        "retracted"
+      ],
+      "conversationMessageCount": 0,
+      "terminalCommitDenied": true
+    }
+  },
+  {
+    "name": "policy_stop_retracts_draft_without_commit",
+    "kind": "policy_stop_turn",
+    "conversationId": "conv-policy-stop",
+    "turnId": "turn-policy-stop",
+    "message": {
+      "messageId": "msg-blocked",
+      "role": "assistant",
+      "text": "blocked"
+    },
+    "expected": {
+      "turnStatus": "policy_stopped",
+      "turnMessageStatuses": [
+        "retracted"
+      ],
+      "conversationMessageCount": 0,
+      "terminalCommitDenied": true
+    }
+  },
+  {
+    "name": "commit_conflict_marks_turn_failed",
+    "kind": "commit_conflict",
+    "conversationId": "conv-conflict",
+    "turnId": "turn-conflict",
+    "draftMessage": {
+      "messageId": "msg-draft",
+      "role": "assistant",
+      "text": "draft"
+    },
+    "conflictingMessage": {
+      "messageId": "msg-other",
+      "role": "user",
+      "text": "other"
+    },
+    "expected": {
+      "commitConflict": true,
+      "turnStatus": "failed",
+      "conversationRevision": 1,
+      "conversationMessageIds": [
+        "msg-other"
+      ],
+      "committedMessageIds": []
+    }
+  },
+  {
+    "name": "branch_and_regenerate_preserve_lineage",
+    "kind": "branch_regenerate",
+    "conversationId": "conv-lineage",
+    "messages": [
+      {
+        "messageId": "msg-user",
+        "role": "user",
+        "text": "try again"
+      },
+      {
+        "messageId": "msg-assistant",
+        "role": "assistant",
+        "text": "first answer",
+        "parentMessageId": "msg-user"
+      },
+      {
+        "messageId": "msg-later",
+        "role": "user",
+        "text": "later"
+      }
+    ],
+    "branchFromMessageId": "msg-user",
+    "branchConversationId": "conv-branch",
+    "regenerateAssistantMessageId": "msg-assistant",
+    "regenerateConversationId": "conv-regenerated",
+    "expected": {
+      "branchId": "conv-branch",
+      "branchOf": "conv-lineage",
+      "branchFrom": "msg-user",
+      "branchMessageIds": [
+        "msg-user"
+      ],
+      "branchSourceRevision": 1,
+      "regenerateId": "conv-regenerated",
+      "regenerateBranchOf": "conv-lineage",
+      "regenerateFrom": "msg-user",
+      "regenerateMessageIds": [
+        "msg-user"
+      ],
+      "regeneratedFromMessageId": "msg-assistant",
+      "regenerateSourceRevision": 1,
+      "sourceRevision": 2,
+      "sourceMessageStatuses": [
+        "committed",
+        "superseded",
+        "committed"
+      ]
+    }
+  }
+]

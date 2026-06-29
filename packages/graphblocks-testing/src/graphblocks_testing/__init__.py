@@ -17,7 +17,16 @@ from graphblocks.application_event import (
 )
 from graphblocks.canonical import canonical_hash
 from graphblocks.compiler import compile_graph
-from graphblocks.conversation import ContentPart
+from graphblocks.conversation import (
+    BranchRequest,
+    ContentPart,
+    Conversation,
+    ConversationConflictError,
+    InMemoryConversationStore,
+    Message,
+    RegenerateRequest,
+    TurnConflictError,
+)
 from graphblocks.documents import create_local_text_revision, chunk_document_by_lines, parse_plain_text_document
 from graphblocks.budget import (
     BudgetCompletionReserveStateError,
@@ -106,6 +115,7 @@ TckCaseKind = Literal[
     "sequence",
     "exhaustion",
     "budget-race",
+    "conversation",
     "rag",
     "retry",
     "tool-lifecycle",
@@ -190,6 +200,7 @@ class TckCase:
     expected_sequence_creation_error: str | None = None
     exhaustion_fixture: dict[str, object] = field(default_factory=dict)
     budget_race_fixture: dict[str, object] = field(default_factory=dict)
+    conversation_fixture: dict[str, object] = field(default_factory=dict)
     rag_fixture: dict[str, object] = field(default_factory=dict)
     retry_fixture: dict[str, object] = field(default_factory=dict)
     tool_lifecycle_fixture: dict[str, object] = field(default_factory=dict)
@@ -208,6 +219,7 @@ class TckCase:
             "sequence",
             "exhaustion",
             "budget-race",
+            "conversation",
             "rag",
             "retry",
             "tool-lifecycle",
@@ -232,6 +244,7 @@ class TckCase:
         object.__setattr__(self, "sequence_operations", tuple(dict(operation) for operation in self.sequence_operations))
         object.__setattr__(self, "exhaustion_fixture", dict(self.exhaustion_fixture))
         object.__setattr__(self, "budget_race_fixture", dict(self.budget_race_fixture))
+        object.__setattr__(self, "conversation_fixture", dict(self.conversation_fixture))
         object.__setattr__(self, "rag_fixture", dict(self.rag_fixture))
         object.__setattr__(self, "retry_fixture", dict(self.retry_fixture))
         object.__setattr__(self, "tool_lifecycle_fixture", dict(self.tool_lifecycle_fixture))
@@ -253,6 +266,8 @@ class TckCase:
             raise ValueError("exhaustion TCK case requires fixture")
         if self.kind == "budget-race" and not self.budget_race_fixture:
             raise ValueError("budget-race TCK case requires fixture")
+        if self.kind == "conversation" and not self.conversation_fixture:
+            raise ValueError("conversation TCK case requires fixture")
         if self.kind == "rag" and not self.rag_fixture:
             raise ValueError("rag TCK case requires fixture")
         if self.kind == "retry" and not self.retry_fixture:
@@ -402,6 +417,10 @@ class TckCase:
     @classmethod
     def budget_race(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
         return cls(case_id=case_id, kind="budget-race", budget_race_fixture=fixture)
+
+    @classmethod
+    def conversation(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
+        return cls(case_id=case_id, kind="conversation", conversation_fixture=fixture)
 
     @classmethod
     def rag(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
@@ -1358,6 +1377,33 @@ def load_budget_race_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     return tuple(cases)
 
 
+def load_conversation_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
+    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(raw_cases, list):
+        raise ValueError("conversation TCK root must be a list")
+    cases: list[TckCase] = []
+    for index, raw_case in enumerate(raw_cases):
+        if not isinstance(raw_case, Mapping):
+            raise ValueError(f"conversation TCK case {index} must be a mapping")
+        case_id = _first_mapping_value(raw_case, "name", "case_id", "caseId")
+        if not isinstance(case_id, str) or not case_id.strip():
+            raise ValueError(f"conversation TCK case {index} requires name")
+        case_kind = raw_case.get("kind")
+        if case_kind not in {
+            "turn_commit",
+            "abort_turn",
+            "policy_stop_turn",
+            "commit_conflict",
+            "branch_regenerate",
+        }:
+            raise ValueError(f"conversation TCK case {case_id} has unsupported kind {case_kind!r}")
+        expected = raw_case.get("expected")
+        if not isinstance(expected, Mapping):
+            raise ValueError(f"conversation TCK case {case_id} requires expected result")
+        cases.append(TckCase.conversation(case_id=case_id, fixture=dict(raw_case)))
+    return tuple(cases)
+
+
 def load_rag_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(raw_cases, list):
@@ -1659,6 +1705,8 @@ def load_tck_cases_for_suite(suite: str, path: str | Path) -> tuple[TckCase, ...
         return load_budget_race_tck_cases(path)
     if suite == "compiler":
         return load_compiler_tck_cases(path)
+    if suite == "conversation":
+        return load_conversation_tck_cases(path)
     if suite == "exhaustion":
         return load_exhaustion_tck_cases(path)
     if suite == "policy":
@@ -1699,6 +1747,7 @@ def main(argv: list[str] | None = None) -> int:
         choices=(
             "application-events",
             "compiler",
+            "conversation",
             "runtime",
             "schema",
             "policy",
@@ -2298,6 +2347,8 @@ class TckRunner:
                 results.append(self._run_exhaustion_case(case))
             elif case.kind == "budget-race":
                 results.append(self._run_budget_race_case(case))
+            elif case.kind == "conversation":
+                results.append(self._run_conversation_case(case))
             elif case.kind == "rag":
                 results.append(self._run_rag_case(case))
             elif case.kind == "retry":
@@ -3100,6 +3151,272 @@ class TckRunner:
                     "path": "$.expectedDeniedError",
                 }
             )
+        return TckResult(
+            case_id=case.case_id,
+            kind=case.kind,
+            status="passed" if not diagnostics else "failed",
+            diagnostics=tuple(diagnostics),
+            observed=observed,
+        )
+
+    def _run_conversation_case(self, case: TckCase) -> TckResult:
+        diagnostics: list[dict[str, str]] = []
+        fixture = case.conversation_fixture
+        kind = str(fixture.get("kind", ""))
+        expected = fixture.get("expected", {})
+        if not isinstance(expected, Mapping):
+            expected = {}
+            diagnostics.append(
+                {
+                    "code": "ConversationExpectedInvalid",
+                    "message": "conversation TCK expected result must be a mapping",
+                    "path": "$.expected",
+                }
+            )
+
+        observed: dict[str, object] = {}
+        store = InMemoryConversationStore()
+        conversation_id = str(fixture.get("conversationId", fixture.get("conversation_id", "conv-1")))
+
+        try:
+            if kind == "turn_commit":
+                turn_id = str(fixture.get("turnId", fixture.get("turn_id", "turn-1")))
+                raw_message = fixture.get("message", {})
+                if not isinstance(raw_message, Mapping):
+                    raw_message = {}
+                    diagnostics.append(
+                        {
+                            "code": "ConversationMessageInvalid",
+                            "message": "conversation TCK message must be a mapping",
+                            "path": "$.message",
+                        }
+                    )
+                parent_message_id = raw_message.get("parentMessageId", raw_message.get("parent_message_id"))
+                store.create(Conversation(conversation_id=conversation_id))
+                store.begin_turn(conversation_id, expected_revision=0, turn_id=turn_id)
+                draft_turn = store.append_turn_message(
+                    turn_id,
+                    Message(
+                        message_id=str(raw_message.get("messageId", raw_message.get("message_id", "msg-1"))),
+                        role=str(raw_message.get("role", "assistant")),
+                        parts=(ContentPart(kind="text", text=str(raw_message.get("text", ""))),),
+                        parent_message_id=parent_message_id if isinstance(parent_message_id, str) else None,
+                    ),
+                )
+                before_commit = store.get(conversation_id)
+                completed_turn = store.commit_turn(turn_id)
+                after_commit = store.get(conversation_id)
+                observed = {
+                    "draftStatus": draft_turn.status,
+                    "draftMessageStatuses": [message.status for message in draft_turn.messages],
+                    "preCommitMessageCount": len(before_commit.conversation.messages),
+                    "turnStatus": completed_turn.status,
+                    "committedRevision": completed_turn.committed_revision,
+                    "committedMessageIds": list(completed_turn.committed_message_ids),
+                    "conversationRevision": after_commit.revision,
+                    "conversationMessageIds": [message.message_id for message in after_commit.conversation.messages],
+                    "conversationMessageStatuses": [
+                        message.status for message in after_commit.conversation.messages
+                    ],
+                }
+            elif kind in {"abort_turn", "policy_stop_turn"}:
+                turn_id = str(fixture.get("turnId", fixture.get("turn_id", "turn-1")))
+                raw_message = fixture.get("message", {})
+                if not isinstance(raw_message, Mapping):
+                    raw_message = {}
+                    diagnostics.append(
+                        {
+                            "code": "ConversationMessageInvalid",
+                            "message": "conversation TCK message must be a mapping",
+                            "path": "$.message",
+                        }
+                    )
+                parent_message_id = raw_message.get("parentMessageId", raw_message.get("parent_message_id"))
+                store.create(Conversation(conversation_id=conversation_id))
+                store.begin_turn(conversation_id, expected_revision=0, turn_id=turn_id)
+                store.append_turn_message(
+                    turn_id,
+                    Message(
+                        message_id=str(raw_message.get("messageId", raw_message.get("message_id", "msg-1"))),
+                        role=str(raw_message.get("role", "assistant")),
+                        parts=(ContentPart(kind="text", text=str(raw_message.get("text", ""))),),
+                        parent_message_id=parent_message_id if isinstance(parent_message_id, str) else None,
+                    ),
+                )
+                terminal_turn = (
+                    store.abort_turn(turn_id) if kind == "abort_turn" else store.policy_stop_turn(turn_id)
+                )
+                terminal_commit_denied = False
+                try:
+                    store.commit_turn(turn_id)
+                except TurnConflictError:
+                    terminal_commit_denied = True
+                snapshot = store.get(conversation_id)
+                observed = {
+                    "turnStatus": terminal_turn.status,
+                    "turnMessageStatuses": [message.status for message in terminal_turn.messages],
+                    "conversationMessageCount": len(snapshot.conversation.messages),
+                    "terminalCommitDenied": terminal_commit_denied,
+                }
+            elif kind == "commit_conflict":
+                turn_id = str(fixture.get("turnId", fixture.get("turn_id", "turn-1")))
+                raw_draft = fixture.get("draftMessage", fixture.get("draft_message", {}))
+                if not isinstance(raw_draft, Mapping):
+                    raw_draft = {}
+                    diagnostics.append(
+                        {
+                            "code": "ConversationDraftInvalid",
+                            "message": "conversation TCK draftMessage must be a mapping",
+                            "path": "$.draftMessage",
+                        }
+                    )
+                raw_conflict = fixture.get("conflictingMessage", fixture.get("conflicting_message", {}))
+                if not isinstance(raw_conflict, Mapping):
+                    raw_conflict = {}
+                    diagnostics.append(
+                        {
+                            "code": "ConversationConflictMessageInvalid",
+                            "message": "conversation TCK conflictingMessage must be a mapping",
+                            "path": "$.conflictingMessage",
+                        }
+                    )
+                store.create(Conversation(conversation_id=conversation_id))
+                store.begin_turn(conversation_id, expected_revision=0, turn_id=turn_id)
+                draft_parent = raw_draft.get("parentMessageId", raw_draft.get("parent_message_id"))
+                store.append_turn_message(
+                    turn_id,
+                    Message(
+                        message_id=str(raw_draft.get("messageId", raw_draft.get("message_id", "msg-draft"))),
+                        role=str(raw_draft.get("role", "assistant")),
+                        parts=(ContentPart(kind="text", text=str(raw_draft.get("text", ""))),),
+                        parent_message_id=draft_parent if isinstance(draft_parent, str) else None,
+                    ),
+                )
+                conflict_parent = raw_conflict.get("parentMessageId", raw_conflict.get("parent_message_id"))
+                store.append_messages(
+                    conversation_id,
+                    expected_revision=0,
+                    messages=[
+                        Message(
+                            message_id=str(raw_conflict.get("messageId", raw_conflict.get("message_id", "msg-other"))),
+                            role=str(raw_conflict.get("role", "user")),
+                            parts=(ContentPart(kind="text", text=str(raw_conflict.get("text", ""))),),
+                            parent_message_id=conflict_parent if isinstance(conflict_parent, str) else None,
+                        )
+                    ],
+                )
+                commit_conflict = False
+                try:
+                    store.commit_turn(turn_id)
+                except ConversationConflictError:
+                    commit_conflict = True
+                failed_turn = store.get_turn(turn_id)
+                snapshot = store.get(conversation_id)
+                observed = {
+                    "commitConflict": commit_conflict,
+                    "turnStatus": failed_turn.status,
+                    "conversationRevision": snapshot.revision,
+                    "conversationMessageIds": [message.message_id for message in snapshot.conversation.messages],
+                    "committedMessageIds": list(failed_turn.committed_message_ids),
+                }
+            elif kind == "branch_regenerate":
+                raw_messages = fixture.get("messages", [])
+                if not isinstance(raw_messages, list) or not all(isinstance(message, Mapping) for message in raw_messages):
+                    raw_messages = []
+                    diagnostics.append(
+                        {
+                            "code": "ConversationMessagesInvalid",
+                            "message": "conversation TCK messages must be a list of mappings",
+                            "path": "$.messages",
+                        }
+                    )
+                messages: list[Message] = []
+                for raw_message in raw_messages:
+                    parent_message_id = raw_message.get("parentMessageId", raw_message.get("parent_message_id"))
+                    messages.append(
+                        Message(
+                            message_id=str(raw_message.get("messageId", raw_message.get("message_id", "msg"))),
+                            role=str(raw_message.get("role", "user")),
+                            parts=(ContentPart(kind="text", text=str(raw_message.get("text", ""))),),
+                            parent_message_id=parent_message_id if isinstance(parent_message_id, str) else None,
+                        )
+                    )
+                branch_from_message_id = str(
+                    fixture.get("branchFromMessageId", fixture.get("branch_from_message_id", "msg-user"))
+                )
+                branch_conversation_id = str(
+                    fixture.get("branchConversationId", fixture.get("branch_conversation_id", "conv-branch"))
+                )
+                regenerate_assistant_message_id = str(
+                    fixture.get(
+                        "regenerateAssistantMessageId",
+                        fixture.get("regenerate_assistant_message_id", "msg-assistant"),
+                    )
+                )
+                regenerate_conversation_id = str(
+                    fixture.get(
+                        "regenerateConversationId",
+                        fixture.get("regenerate_conversation_id", "conv-regenerated"),
+                    )
+                )
+                store.create(Conversation(conversation_id=conversation_id))
+                store.append_messages(conversation_id, expected_revision=0, messages=messages)
+                branch = store.branch(
+                    BranchRequest(
+                        conversation_id=conversation_id,
+                        from_message_id=branch_from_message_id,
+                        new_conversation_id=branch_conversation_id,
+                    )
+                )
+                regenerated = store.regenerate(
+                    RegenerateRequest(
+                        conversation_id=conversation_id,
+                        assistant_message_id=regenerate_assistant_message_id,
+                        new_conversation_id=regenerate_conversation_id,
+                    )
+                )
+                source = store.get(conversation_id)
+                observed = {
+                    "branchId": branch.conversation_id,
+                    "branchOf": branch.branch_of,
+                    "branchFrom": branch.branched_from_message_id,
+                    "branchMessageIds": [message.message_id for message in branch.messages],
+                    "branchSourceRevision": branch.metadata.get("source_revision"),
+                    "regenerateId": regenerated.conversation_id,
+                    "regenerateBranchOf": regenerated.branch_of,
+                    "regenerateFrom": regenerated.branched_from_message_id,
+                    "regenerateMessageIds": [message.message_id for message in regenerated.messages],
+                    "regeneratedFromMessageId": regenerated.metadata.get("regenerated_from_message_id"),
+                    "regenerateSourceRevision": regenerated.metadata.get("source_revision"),
+                    "sourceRevision": source.revision,
+                    "sourceMessageStatuses": [message.status for message in source.conversation.messages],
+                }
+            else:
+                diagnostics.append(
+                    {
+                        "code": "ConversationKindUnknown",
+                        "message": f"conversation TCK kind {kind!r} is not supported",
+                        "path": "$.kind",
+                    }
+                )
+        except Exception as error:
+            diagnostics.append(
+                {
+                    "code": "ConversationExecutionError",
+                    "message": str(error),
+                    "path": "$",
+                }
+            )
+
+        for key, expected_value in expected.items():
+            if observed.get(str(key)) != expected_value:
+                diagnostics.append(
+                    {
+                        "code": "ConversationExpectedMismatch",
+                        "message": f"conversation observed {key} did not match expected value",
+                        "path": f"$.expected.{key}",
+                    }
+                )
         return TckResult(
             case_id=case.case_id,
             kind=case.kind,
@@ -4580,6 +4897,7 @@ __all__ = [
     "load_application_event_tck_cases",
     "load_budget_race_tck_cases",
     "load_compiler_tck_cases",
+    "load_conversation_tck_cases",
     "load_exhaustion_tck_cases",
     "load_policy_tck_cases",
     "load_rag_tck_cases",

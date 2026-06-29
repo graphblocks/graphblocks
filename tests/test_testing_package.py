@@ -205,6 +205,27 @@ def test_testing_package_loads_shared_budget_race_tck_cases(monkeypatch) -> None
     assert "load_budget_race_tck_cases" in graphblocks_testing.__all__
 
 
+def test_testing_package_loads_shared_conversation_tck_cases(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    cases = graphblocks_testing.load_conversation_tck_cases(ROOT / "tck" / "conversation" / "cases.json")
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
+
+    assert [case.kind for case in cases] == ["conversation"] * 5
+    assert report.ok
+    assert {case.case_id for case in cases} == {
+        "turn_draft_commits_atomically",
+        "abort_turn_retracts_draft_without_commit",
+        "policy_stop_retracts_draft_without_commit",
+        "commit_conflict_marks_turn_failed",
+        "branch_and_regenerate_preserve_lineage",
+    }
+    assert any(result.observed.get("terminalCommitDenied") is True for result in report.results)
+    assert any(result.observed.get("sourceMessageStatuses") == ["committed", "superseded", "committed"] for result in report.results)
+    assert "load_conversation_tck_cases" in graphblocks_testing.__all__
+
+
 def test_testing_package_loads_shared_rag_tck_cases(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -339,6 +360,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "application-events",
         "budget-race",
         "compiler",
+        "conversation",
         "exhaustion",
         "policy",
         "rag",
@@ -368,6 +390,13 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "output_cutoff_discards_late_commit_for_same_response",
         "output_cutoff_marks_draft_incomplete",
         "tool_result_delta_is_draft_until_completed",
+    )
+    assert by_suite["conversation"].case_ids == (
+        "turn_draft_commits_atomically",
+        "abort_turn_retracts_draft_without_commit",
+        "policy_stop_retracts_draft_without_commit",
+        "commit_conflict_marks_turn_failed",
+        "branch_and_regenerate_preserve_lineage",
     )
     assert by_suite["tool-lifecycle"].case_ids == (
         "incremental_arguments_do_not_finalize_call",
@@ -404,7 +433,7 @@ def test_testing_package_cli_lists_tck_suite_manifests(monkeypatch, capsys) -> N
     assert graphblocks_testing.main(["list", str(ROOT / "tck"), "--json"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload["suiteCount"] == 13
+    assert payload["suiteCount"] == 14
     assert payload["suites"][0]["suite_id"] == "application-events"
     assert payload["suites"][0]["case_count"] == 3
     assert payload["contentDigest"].startswith("sha256:")
@@ -574,6 +603,21 @@ def test_testing_package_cli_runs_rag_tck_suite(monkeypatch, capsys) -> None:
     assert payload["contentDigest"].startswith("sha256:")
 
 
+def test_testing_package_cli_runs_conversation_tck_suite(monkeypatch, capsys) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    exit_code = graphblocks_testing.main(
+        ["run", "conversation", str(ROOT / "tck" / "conversation" / "cases.json"), "--json"]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert {result["kind"] for result in payload["results"]} == {"conversation"}
+    assert payload["contentDigest"].startswith("sha256:")
+
+
 def test_testing_package_cli_runs_tool_execution_tck_suite(monkeypatch, capsys) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -617,6 +661,7 @@ def test_testing_package_cli_runs_all_supported_tck_suites(monkeypatch, capsys) 
         "application-events",
         "budget-race",
         "compiler",
+        "conversation",
         "exhaustion",
         "policy",
         "rag",
