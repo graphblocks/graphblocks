@@ -1,7 +1,10 @@
-use graphblocks_cli_native::{NativeCliMode, run_compiler_workflow};
+use std::io::Write;
+use std::process::{Command, Stdio};
+
+use graphblocks_cli_native::{NativeCliMode, run_compiler_workflow, run_stdlib_workflow};
 use graphblocks_compiler::diagnostics::Severity;
 use graphblocks_compiler::graph::GRAPH_API_VERSION;
-use serde_json::json;
+use serde_json::{Value, json};
 
 #[test]
 fn native_validate_reports_ok_and_plan_hash_without_expanded_plan() {
@@ -70,4 +73,95 @@ fn native_validate_returns_structured_diagnostics() {
     assert_eq!(report.normalized, None);
     assert_eq!(report.diagnostics[0].code, "GB0003");
     assert_eq!(report.diagnostics[0].severity, Severity::Error);
+}
+
+#[test]
+fn native_run_executes_stdlib_graph_with_inputs() {
+    let graph = prompt_graph("Native {message.text}");
+
+    let report = run_stdlib_workflow(&graph, &json!({"message": {"text": "ok"}}));
+
+    assert!(report.ok);
+    assert_eq!(
+        report
+            .result
+            .as_ref()
+            .and_then(|result| result.pointer("/outputs/prompt"))
+            .and_then(Value::as_str),
+        Some("Native ok"),
+    );
+    assert_eq!(report.error, None);
+}
+
+#[test]
+fn native_run_reports_failed_runtime_status_as_not_ok() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "native-run-fails"},
+        "spec": {
+            "nodes": {
+                "missing": {"block": "missing.block@1"}
+            }
+        }
+    });
+
+    let report = run_stdlib_workflow(&graph, &json!({}));
+
+    assert!(!report.ok);
+    assert_eq!(
+        report
+            .result
+            .as_ref()
+            .and_then(|result| result.get("status"))
+            .and_then(Value::as_str),
+        Some("failed"),
+    );
+    assert_eq!(report.error, None);
+}
+
+#[test]
+fn native_binary_run_accepts_input_json() -> Result<(), Box<dyn std::error::Error>> {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_graphblocks-native"))
+        .args(["run", "--input-json", r#"{"message":{"text":"ok"}}"#])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()?;
+    let stdin = child
+        .stdin
+        .as_mut()
+        .ok_or("native binary stdin pipe was not available")?;
+    stdin.write_all(serde_json::to_string(&prompt_graph("CLI {message.text}"))?.as_bytes())?;
+
+    let output = child.wait_with_output()?;
+    assert!(output.status.success());
+    let payload = serde_json::from_slice::<Value>(&output.stdout)?;
+
+    assert_eq!(
+        payload.pointer("/status").and_then(Value::as_str),
+        Some("succeeded"),
+    );
+    assert_eq!(
+        payload.pointer("/outputs/prompt").and_then(Value::as_str),
+        Some("CLI ok"),
+    );
+    Ok(())
+}
+
+fn prompt_graph(template: &str) -> Value {
+    json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "native-run"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": template},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"}
+                }
+            }
+        }
+    })
 }
