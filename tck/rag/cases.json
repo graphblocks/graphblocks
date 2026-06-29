@@ -1,0 +1,105 @@
+[
+  {
+    "name": "grounded_answer_accepts_current_context_source",
+    "kind": "grounding",
+    "context": {
+      "contextId": "ctx-1",
+      "sourceUri": "file:///tmp/grounding.txt",
+      "text": "Alpha policy requires audit logs.\n",
+      "query": "audit",
+      "topK": 1
+    },
+    "answer": {
+      "answerId": "answer-1",
+      "text": "Alpha policy requires audit logs.",
+      "claims": [
+        {
+          "claimId": "claim-1",
+          "text": "Alpha policy requires audit logs.",
+          "citationIds": [
+            "cite-1"
+          ]
+        }
+      ],
+      "citations": [
+        {
+          "citationId": "cite-1",
+          "sourceHitIndex": 0,
+          "citedText": "requires audit logs"
+        }
+      ]
+    },
+    "expected": {
+      "ok": true,
+      "issueCodes": [],
+      "abstentionReason": null
+    }
+  },
+  {
+    "name": "ungrounded_answer_abstains_when_context_empty",
+    "kind": "grounding",
+    "context": {
+      "contextId": "ctx-empty",
+      "hits": []
+    },
+    "answer": {
+      "answerId": "answer-1",
+      "text": "Alpha policy requires audit logs.",
+      "claims": [
+        {
+          "claimId": "claim-1",
+          "text": "Alpha policy requires audit logs.",
+          "citationIds": [
+            "cite-1"
+          ]
+        }
+      ],
+      "citations": []
+    },
+    "expected": {
+      "ok": false,
+      "issueCodes": [
+        "grounding.insufficient_context"
+      ],
+      "abstentionReason": "insufficient_context"
+    }
+  },
+  {
+    "name": "unsupported_claim_abstains_with_validation_failure",
+    "kind": "grounding",
+    "context": {
+      "contextId": "ctx-1",
+      "sourceUri": "file:///tmp/grounding.txt",
+      "text": "Alpha policy requires audit logs.\n",
+      "query": "audit",
+      "topK": 1
+    },
+    "answer": {
+      "answerId": "answer-1",
+      "text": "Beta policy requires approval.",
+      "claims": [
+        {
+          "claimId": "claim-1",
+          "text": "Beta policy requires approval.",
+          "citationIds": [
+            "cite-1"
+          ]
+        }
+      ],
+      "citations": [
+        {
+          "citationId": "cite-1",
+          "sourceHitIndex": 0,
+          "citedText": "requires audit logs"
+        }
+      ]
+    },
+    "expected": {
+      "ok": false,
+      "issueCodes": [
+        "claim.unsupported_by_citation"
+      ],
+      "abstentionReason": "citation_validation_failed"
+    }
+  }
+]

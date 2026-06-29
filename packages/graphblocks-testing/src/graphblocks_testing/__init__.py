@@ -18,6 +18,7 @@ from graphblocks.application_event import (
 from graphblocks.canonical import canonical_hash
 from graphblocks.compiler import compile_graph
 from graphblocks.conversation import ContentPart
+from graphblocks.documents import create_local_text_revision, chunk_document_by_lines, parse_plain_text_document
 from graphblocks.budget import (
     BudgetCompletionReserveStateError,
     BudgetExceededError,
@@ -44,6 +45,14 @@ from graphblocks.output_policy import (
 )
 from graphblocks.policy import PolicyDecision, ResourceRef as PolicyResourceRef
 from graphblocks.plugins import BlockCatalog
+from graphblocks.rag import (
+    Answer,
+    Citation,
+    Claim,
+    ContextPack,
+    InMemoryChunkRetriever,
+    validate_answer_grounding,
+)
 from graphblocks.run_store import (
     InMemoryRunStore,
     RunDeploymentProvenance,
@@ -97,6 +106,7 @@ TckCaseKind = Literal[
     "sequence",
     "exhaustion",
     "budget-race",
+    "rag",
     "retry",
     "tool-lifecycle",
     "tool-execution",
@@ -180,6 +190,7 @@ class TckCase:
     expected_sequence_creation_error: str | None = None
     exhaustion_fixture: dict[str, object] = field(default_factory=dict)
     budget_race_fixture: dict[str, object] = field(default_factory=dict)
+    rag_fixture: dict[str, object] = field(default_factory=dict)
     retry_fixture: dict[str, object] = field(default_factory=dict)
     tool_lifecycle_fixture: dict[str, object] = field(default_factory=dict)
     tool_execution_fixture: dict[str, object] = field(default_factory=dict)
@@ -197,6 +208,7 @@ class TckCase:
             "sequence",
             "exhaustion",
             "budget-race",
+            "rag",
             "retry",
             "tool-lifecycle",
             "tool-execution",
@@ -220,6 +232,7 @@ class TckCase:
         object.__setattr__(self, "sequence_operations", tuple(dict(operation) for operation in self.sequence_operations))
         object.__setattr__(self, "exhaustion_fixture", dict(self.exhaustion_fixture))
         object.__setattr__(self, "budget_race_fixture", dict(self.budget_race_fixture))
+        object.__setattr__(self, "rag_fixture", dict(self.rag_fixture))
         object.__setattr__(self, "retry_fixture", dict(self.retry_fixture))
         object.__setattr__(self, "tool_lifecycle_fixture", dict(self.tool_lifecycle_fixture))
         object.__setattr__(self, "tool_execution_fixture", dict(self.tool_execution_fixture))
@@ -240,6 +253,8 @@ class TckCase:
             raise ValueError("exhaustion TCK case requires fixture")
         if self.kind == "budget-race" and not self.budget_race_fixture:
             raise ValueError("budget-race TCK case requires fixture")
+        if self.kind == "rag" and not self.rag_fixture:
+            raise ValueError("rag TCK case requires fixture")
         if self.kind == "retry" and not self.retry_fixture:
             raise ValueError("retry TCK case requires fixture")
         if self.kind == "tool-lifecycle" and not self.tool_lifecycle_fixture:
@@ -387,6 +402,10 @@ class TckCase:
     @classmethod
     def budget_race(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
         return cls(case_id=case_id, kind="budget-race", budget_race_fixture=fixture)
+
+    @classmethod
+    def rag(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
+        return cls(case_id=case_id, kind="rag", rag_fixture=fixture)
 
     @classmethod
     def retry(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
@@ -1339,6 +1358,32 @@ def load_budget_race_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     return tuple(cases)
 
 
+def load_rag_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
+    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(raw_cases, list):
+        raise ValueError("rag TCK root must be a list")
+    cases: list[TckCase] = []
+    for index, raw_case in enumerate(raw_cases):
+        if not isinstance(raw_case, Mapping):
+            raise ValueError(f"rag TCK case {index} must be a mapping")
+        case_id = _first_mapping_value(raw_case, "name", "case_id", "caseId")
+        if not isinstance(case_id, str) or not case_id.strip():
+            raise ValueError(f"rag TCK case {index} requires name")
+        if raw_case.get("kind") != "grounding":
+            raise ValueError(f"rag TCK case {case_id} has unsupported kind {raw_case.get('kind')!r}")
+        context = raw_case.get("context")
+        if not isinstance(context, Mapping):
+            raise ValueError(f"rag TCK case {case_id} requires context")
+        answer = raw_case.get("answer")
+        if not isinstance(answer, Mapping):
+            raise ValueError(f"rag TCK case {case_id} requires answer")
+        expected = raw_case.get("expected")
+        if not isinstance(expected, Mapping):
+            raise ValueError(f"rag TCK case {case_id} requires expected result")
+        cases.append(TckCase.rag(case_id=case_id, fixture=dict(raw_case)))
+    return tuple(cases)
+
+
 def load_retry_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(raw_cases, list):
@@ -1618,6 +1663,8 @@ def load_tck_cases_for_suite(suite: str, path: str | Path) -> tuple[TckCase, ...
         return load_exhaustion_tck_cases(path)
     if suite == "policy":
         return load_policy_tck_cases(path)
+    if suite == "rag":
+        return load_rag_tck_cases(path)
     if suite == "retry":
         return load_retry_tck_cases(path)
     if suite == "runtime":
@@ -1655,6 +1702,7 @@ def main(argv: list[str] | None = None) -> int:
             "runtime",
             "schema",
             "policy",
+            "rag",
             "retry",
             "sequence",
             "exhaustion",
@@ -2250,6 +2298,8 @@ class TckRunner:
                 results.append(self._run_exhaustion_case(case))
             elif case.kind == "budget-race":
                 results.append(self._run_budget_race_case(case))
+            elif case.kind == "rag":
+                results.append(self._run_rag_case(case))
             elif case.kind == "retry":
                 results.append(self._run_retry_case(case))
             elif case.kind == "tool-execution":
@@ -3050,6 +3100,170 @@ class TckRunner:
                     "path": "$.expectedDeniedError",
                 }
             )
+        return TckResult(
+            case_id=case.case_id,
+            kind=case.kind,
+            status="passed" if not diagnostics else "failed",
+            diagnostics=tuple(diagnostics),
+            observed=observed,
+        )
+
+    def _run_rag_case(self, case: TckCase) -> TckResult:
+        diagnostics: list[dict[str, str]] = []
+        fixture = case.rag_fixture
+        kind = str(fixture.get("kind", ""))
+        expected = fixture.get("expected", {})
+        if not isinstance(expected, Mapping):
+            expected = {}
+            diagnostics.append(
+                {
+                    "code": "RagExpectedInvalid",
+                    "message": "rag TCK expected result must be a mapping",
+                    "path": "$.expected",
+                }
+            )
+        context_fixture = fixture.get("context", {})
+        if not isinstance(context_fixture, Mapping):
+            context_fixture = {}
+            diagnostics.append(
+                {
+                    "code": "RagContextInvalid",
+                    "message": "rag TCK context must be a mapping",
+                    "path": "$.context",
+                }
+            )
+        answer_fixture = fixture.get("answer", {})
+        if not isinstance(answer_fixture, Mapping):
+            answer_fixture = {}
+            diagnostics.append(
+                {
+                    "code": "RagAnswerInvalid",
+                    "message": "rag TCK answer must be a mapping",
+                    "path": "$.answer",
+                }
+            )
+
+        context_id = str(context_fixture.get("contextId", context_fixture.get("context_id", "ctx-1")))
+        context_text = context_fixture.get("text")
+        if isinstance(context_text, str):
+            source_uri = str(context_fixture.get("sourceUri", context_fixture.get("source_uri", "file:///tmp/context.txt")))
+            observed_at = str(context_fixture.get("observedAt", context_fixture.get("observed_at", "2026-06-23T00:00:00Z")))
+            asset, revision = create_local_text_revision(source_uri, context_text, observed_at)
+            document = parse_plain_text_document(asset, revision, context_text)
+            chunks = chunk_document_by_lines(document, revision, max_elements=1)
+            retriever = InMemoryChunkRetriever(
+                chunks,
+                retriever_id=str(context_fixture.get("retrieverId", context_fixture.get("retriever_id", "local-test"))),
+            )
+            query = str(context_fixture.get("query", ""))
+            top_k = int(context_fixture.get("topK", context_fixture.get("top_k", 1)))
+            context = ContextPack(context_id=context_id, hits=retriever.search(query, top_k=top_k))
+        else:
+            context = ContextPack(context_id=context_id, hits=[])
+
+        claims: list[Claim] = []
+        raw_claims = answer_fixture.get("claims", [])
+        if isinstance(raw_claims, list):
+            for claim_index, raw_claim in enumerate(raw_claims):
+                if not isinstance(raw_claim, Mapping):
+                    diagnostics.append(
+                        {
+                            "code": "RagClaimInvalid",
+                            "message": "rag TCK claim must be a mapping",
+                            "path": f"$.answer.claims[{claim_index}]",
+                        }
+                    )
+                    continue
+                raw_citation_ids = raw_claim.get("citationIds", raw_claim.get("citation_ids", []))
+                citation_ids = [str(item) for item in raw_citation_ids] if isinstance(raw_citation_ids, list) else []
+                claims.append(
+                    Claim(
+                        claim_id=str(raw_claim.get("claimId", raw_claim.get("claim_id", ""))),
+                        text=str(raw_claim.get("text", "")),
+                        citation_ids=citation_ids,
+                    )
+                )
+        citations: list[Citation] = []
+        raw_citations = answer_fixture.get("citations", [])
+        if isinstance(raw_citations, list):
+            for citation_index, raw_citation in enumerate(raw_citations):
+                if not isinstance(raw_citation, Mapping):
+                    diagnostics.append(
+                        {
+                            "code": "RagCitationInvalid",
+                            "message": "rag TCK citation must be a mapping",
+                            "path": f"$.answer.citations[{citation_index}]",
+                        }
+                    )
+                    continue
+                source_hit_index = raw_citation.get("sourceHitIndex", raw_citation.get("source_hit_index", 0))
+                if not isinstance(source_hit_index, int) or isinstance(source_hit_index, bool):
+                    diagnostics.append(
+                        {
+                            "code": "RagCitationSourceInvalid",
+                            "message": "rag TCK citation sourceHitIndex must be an integer",
+                            "path": f"$.answer.citations[{citation_index}].sourceHitIndex",
+                        }
+                    )
+                    continue
+                if source_hit_index < 0 or source_hit_index >= len(context.hits):
+                    diagnostics.append(
+                        {
+                            "code": "RagCitationSourceMissing",
+                            "message": "rag TCK citation sourceHitIndex does not point to context",
+                            "path": f"$.answer.citations[{citation_index}].sourceHitIndex",
+                        }
+                    )
+                    continue
+                claim_id = raw_citation.get("claimId", raw_citation.get("claim_id"))
+                cited_text = raw_citation.get("citedText", raw_citation.get("cited_text"))
+                citations.append(
+                    Citation(
+                        citation_id=str(raw_citation.get("citationId", raw_citation.get("citation_id", ""))),
+                        source=context.hits[source_hit_index].item.source,
+                        claim_id=claim_id if isinstance(claim_id, str) else None,
+                        cited_text=cited_text if isinstance(cited_text, str) else None,
+                    )
+                )
+
+        answer = Answer(
+            answer_id=str(answer_fixture.get("answerId", answer_fixture.get("answer_id", "answer-1"))),
+            text=str(answer_fixture.get("text", "")),
+            claims=claims,
+            citations=citations,
+        )
+        result = validate_answer_grounding(
+            answer,
+            context,
+            require_citations=bool(fixture.get("requireCitations", fixture.get("require_citations", True))),
+            failure_policy=str(fixture.get("failurePolicy", fixture.get("failure_policy", "abstain"))),
+        )
+        observed = {
+            "ok": result.ok,
+            "issueCodes": [issue.code for issue in result.issues],
+            "warningCodes": [issue.code for issue in result.issues if issue.severity == "warning"],
+            "abstentionReason": None if result.abstention is None else result.abstention.reason,
+            "repaired": result.repaired_answer is not None,
+            "contextHitCount": len(context.hits),
+        }
+
+        if kind != "grounding":
+            diagnostics.append(
+                {
+                    "code": "RagKindUnknown",
+                    "message": f"rag TCK kind {kind!r} is not supported",
+                    "path": "$.kind",
+                }
+            )
+        for key, expected_value in expected.items():
+            if observed.get(str(key)) != expected_value:
+                diagnostics.append(
+                    {
+                        "code": "RagExpectedMismatch",
+                        "message": f"rag observed {key} did not match expected value",
+                        "path": f"$.expected.{key}",
+                    }
+                )
         return TckResult(
             case_id=case.case_id,
             kind=case.kind,
@@ -4368,6 +4582,7 @@ __all__ = [
     "load_compiler_tck_cases",
     "load_exhaustion_tck_cases",
     "load_policy_tck_cases",
+    "load_rag_tck_cases",
     "load_retry_tck_cases",
     "load_runtime_tck_cases",
     "load_schema_tck_cases",

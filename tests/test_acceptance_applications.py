@@ -108,6 +108,7 @@ def test_conformance_profile_set_resolves_inherited_tck_and_acceptance_requireme
     assert claim.tck_suites == (
         "application-events",
         "compiler",
+        "rag",
         "retry",
         "runtime",
         "schema",
@@ -157,6 +158,7 @@ def test_conformance_profile_tck_suites_have_shared_fixture_manifests(monkeypatc
         "compiler",
         "exhaustion",
         "policy",
+        "rag",
         "retry",
         "runtime",
         "schema",
@@ -230,6 +232,7 @@ def test_conformance_profile_claim_validates_tck_and_acceptance_evidence(monkeyp
         for suite in (
             "application-events",
             "compiler",
+            "rag",
             "retry",
             "runtime",
             "schema",
@@ -274,6 +277,13 @@ def test_conformance_profile_claim_reports_missing_inherited_tck(monkeypatch) ->
             "profile_id": "GB-C2-AI-APPLICATION",
             "suite": "application-events",
             "path": "$.profiles.GB-C2-AI-APPLICATION.tck.application-events",
+            "message": "claimed conformance profile requires a passing TCK suite with no report",
+        },
+        {
+            "code": "ConformanceTckMissing",
+            "profile_id": "GB-C2-AI-APPLICATION",
+            "suite": "rag",
+            "path": "$.profiles.GB-C2-AI-APPLICATION.tck.rag",
             "message": "claimed conformance profile requires a passing TCK suite with no report",
         },
         {

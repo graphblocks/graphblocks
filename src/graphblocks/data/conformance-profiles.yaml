@@ -43,6 +43,8 @@ spec:
     - rag
     - conversation
     - application-protocol
+    tck:
+    - rag
     acceptanceApplications:
     - direct-file-analysis
     - document-ingestion
