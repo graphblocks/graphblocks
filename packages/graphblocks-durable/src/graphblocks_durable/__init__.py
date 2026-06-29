@@ -3,7 +3,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from graphblocks.output_policy import OutputCutoff
 
 
 DeliveryGuarantee = Literal["best_effort", "at_most_once", "at_least_once"]
@@ -549,6 +552,26 @@ class DurableResponsePolicyStopRecord:
             raise ToolTerminalStoreError(f"invalid durable_result {self.durable_result}")
         if self.occurred_at_unix_ms <= 0:
             raise ToolTerminalStoreError("occurred_at_unix_ms must be positive")
+
+    def to_output_cutoff(self, *, occurred_at: str) -> OutputCutoff:
+        if not isinstance(occurred_at, str) or not occurred_at.strip():
+            raise ToolTerminalStoreError("occurred_at must not be empty")
+
+        from graphblocks.output_policy import OutputCutoff
+
+        return OutputCutoff(
+            stream_id=self.stream_id,
+            response_id=self.response_id,
+            turn_id=self.turn_id,
+            last_generated_sequence=self.last_generated_sequence,
+            last_policy_accepted_sequence=self.last_policy_accepted_sequence,
+            last_client_delivered_sequence=self.last_client_delivered_sequence,
+            terminal_reason=self.terminal_reason,
+            draft_disposition=self.draft_disposition,
+            durable_result=self.durable_result,
+            policy_decision_id=self.policy_decision_id,
+            occurred_at=occurred_at,
+        )
 
 
 @dataclass(frozen=True, slots=True)

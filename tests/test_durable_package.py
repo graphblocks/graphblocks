@@ -409,6 +409,37 @@ def test_durable_tool_terminal_store_persists_full_output_cutoff_state(monkeypat
     assert replayed.replayed is True
 
 
+def test_durable_response_policy_stop_record_converts_to_output_cutoff(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    record = graphblocks_durable.DurableResponsePolicyStopRecord(
+        response_id="response-1",
+        policy_decision_id="decision-abort",
+        last_policy_accepted_sequence=7,
+        occurred_at_unix_ms=1_820_000_000_000,
+        stream_id="stream-1",
+        turn_id="turn-1",
+        last_generated_sequence=9,
+        last_client_delivered_sequence=6,
+        terminal_reason="policy_denied",
+        draft_disposition="retract",
+        durable_result="none",
+    )
+
+    cutoff = record.to_output_cutoff(occurred_at="2026-06-23T00:00:02Z")
+
+    assert cutoff.stream_id == "stream-1"
+    assert cutoff.response_id == "response-1"
+    assert cutoff.turn_id == "turn-1"
+    assert cutoff.last_generated_sequence == 9
+    assert cutoff.last_policy_accepted_sequence == 7
+    assert cutoff.last_client_delivered_sequence == 6
+    assert cutoff.terminal_reason == "policy_denied"
+    assert cutoff.draft_disposition == "retract"
+    assert cutoff.durable_result == "none"
+    assert cutoff.policy_decision_id == "decision-abort"
+    assert cutoff.occurred_at == "2026-06-23T00:00:02Z"
+
+
 def test_durable_tool_terminal_store_rejects_late_result_commit_after_policy_stop(monkeypatch) -> None:
     graphblocks_durable = _import_durable(monkeypatch)
     store = graphblocks_durable.InMemoryDurableToolTerminalStore()
