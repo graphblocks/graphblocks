@@ -784,7 +784,8 @@ class ApplicationEventStreamState:
             self.accepted_events.append(event)
             return event
 
-        response_id = str(event.payload.get("response_id", event.metadata.response_id))
+        payload_response_id = event.payload.get("response_id")
+        response_id = payload_response_id if isinstance(payload_response_id, str) else event.metadata.response_id
         cutoff = self.cutoffs.get(response_id)
         if cutoff is not None:
             if event.kind in {"AssistantRetracted", "AssistantIncomplete"}:
