@@ -1,7 +1,7 @@
 use graphblocks_runtime_core::output_policy::{
     DraftDisposition, GenerationChunk, OutputDeliveryGate, OutputDeliveryPolicy, OutputGateError,
     OutputGateUpdate, OutputPolicyDecision, PendingToolCallsDisposition, ProviderCancellation,
-    ViolationAction,
+    RedactionInstruction, ViolationAction,
 };
 use serde_json::Value;
 
@@ -58,6 +58,49 @@ fn run_case(case: &Value) -> Result<(), String> {
                     optional_u64(operation, "acceptedThrough"),
                     required_str(operation, "inputDigest", name)?,
                 );
+                let result =
+                    gate.apply_decision(decision, required_u64(operation, "occurredAt", name)?);
+                assert_update_result(name, operation, result)?;
+            }
+            "redact" | "replace" => {
+                let mut replacement_chunks = Vec::new();
+                if let Some(chunks) = operation.get("replacementChunks").and_then(Value::as_array) {
+                    for chunk in chunks {
+                        replacement_chunks.push(GenerationChunk::text(
+                            optional_str(chunk, "streamId").unwrap_or(stream_id),
+                            optional_str(chunk, "responseId").unwrap_or(response_id),
+                            required_u64(chunk, "sequence", name)?,
+                            required_str(chunk, "text", name)?,
+                        ));
+                    }
+                }
+                let mut decision = if op == "redact" {
+                    OutputPolicyDecision::redact(
+                        required_str(operation, "decisionId", name)?,
+                        optional_u64(operation, "acceptedThrough"),
+                        replacement_chunks,
+                        required_str(operation, "inputDigest", name)?,
+                    )
+                } else {
+                    OutputPolicyDecision::replace(
+                        required_str(operation, "decisionId", name)?,
+                        optional_u64(operation, "acceptedThrough"),
+                        replacement_chunks,
+                        required_str(operation, "inputDigest", name)?,
+                    )
+                };
+                if let Some(redactions) = operation.get("redactions").and_then(Value::as_array) {
+                    let mut parsed_redactions = Vec::new();
+                    for redaction in redactions {
+                        parsed_redactions.push(RedactionInstruction::text_range(
+                            required_str(redaction, "path", name)?,
+                            required_u64(redaction, "start", name)?,
+                            required_u64(redaction, "end", name)?,
+                            required_str(redaction, "replacement", name)?,
+                        ));
+                    }
+                    decision = decision.with_redactions(parsed_redactions);
+                }
                 let result =
                     gate.apply_decision(decision, required_u64(operation, "occurredAt", name)?);
                 assert_update_result(name, operation, result)?;

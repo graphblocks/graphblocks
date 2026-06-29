@@ -125,7 +125,7 @@ def test_testing_package_loads_shared_policy_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_policy_tck_cases(ROOT / "tck" / "policy" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["policy"] * 4
+    assert [case.kind for case in cases] == ["policy"] * 7
     assert report.ok
     assert any(result.observed["stopped"] for result in report.results)
     assert any(result.observed["lastClientDeliveredSequence"] == 2 for result in report.results)

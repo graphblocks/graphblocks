@@ -179,5 +179,139 @@
       "lastClientDeliveredSequence": 2,
       "stopped": false
     }
+  },
+  {
+    "name": "redact_releases_sanitized_chunk",
+    "delivery": {
+      "mode": "bounded_holdback",
+      "holdbackMaxTokens": 8
+    },
+    "operations": [
+      {
+        "op": "chunk",
+        "sequence": 1,
+        "text": "hello secret world"
+      },
+      {
+        "op": "redact",
+        "decisionId": "decision-redact",
+        "acceptedThrough": 1,
+        "inputDigest": "sha256:redact",
+        "occurredAt": 1000,
+        "redactions": [
+          {
+            "path": "/chunks/1/text",
+            "start": 6,
+            "end": 12,
+            "replacement": "[redacted]"
+          }
+        ],
+        "deliver": [
+          {
+            "sequence": 1,
+            "text": "hello [redacted] world"
+          }
+        ]
+      }
+    ],
+    "expected": {
+      "lastGeneratedSequence": 1,
+      "lastPolicyAcceptedSequence": 1,
+      "lastClientDeliveredSequence": 1,
+      "stopped": false
+    }
+  },
+  {
+    "name": "replace_releases_policy_approved_chunks",
+    "delivery": {
+      "mode": "bounded_holdback",
+      "holdbackMaxTokens": 8
+    },
+    "operations": [
+      {
+        "op": "chunk",
+        "sequence": 1,
+        "text": "blocked draft"
+      },
+      {
+        "op": "replace",
+        "decisionId": "decision-replace",
+        "acceptedThrough": 1,
+        "inputDigest": "sha256:replace",
+        "occurredAt": 1000,
+        "replacementChunks": [
+          {
+            "sequence": 1,
+            "text": "policy-approved "
+          },
+          {
+            "sequence": 2,
+            "text": "replacement"
+          }
+        ],
+        "deliver": [
+          {
+            "sequence": 1,
+            "text": "policy-approved "
+          },
+          {
+            "sequence": 2,
+            "text": "replacement"
+          }
+        ]
+      }
+    ],
+    "expected": {
+      "lastGeneratedSequence": 2,
+      "lastPolicyAcceptedSequence": 2,
+      "lastClientDeliveredSequence": 2,
+      "stopped": false
+    }
+  },
+  {
+    "name": "immediate_draft_retracts_after_policy_abort",
+    "delivery": {
+      "mode": "immediate_draft"
+    },
+    "operations": [
+      {
+        "op": "chunk",
+        "sequence": 1,
+        "text": "provisional draft",
+        "deliver": [
+          {
+            "sequence": 1,
+            "text": "provisional draft"
+          }
+        ]
+      },
+      {
+        "op": "abort_response",
+        "decisionId": "decision-abort",
+        "inputDigest": "sha256:blocked",
+        "draftDisposition": "retract",
+        "pendingToolCalls": "deny",
+        "occurredAt": 1100,
+        "cutoff": {
+          "lastGeneratedSequence": 1,
+          "lastPolicyAcceptedSequence": 0,
+          "lastClientDeliveredSequence": 1,
+          "draftDisposition": "retract",
+          "policyDecisionId": "decision-abort"
+        }
+      },
+      {
+        "op": "chunk",
+        "sequence": 2,
+        "text": "late",
+        "expectError": "policy_stopped"
+      }
+    ],
+    "expected": {
+      "lastGeneratedSequence": 1,
+      "lastPolicyAcceptedSequence": 0,
+      "lastClientDeliveredSequence": 1,
+      "stopped": true
+    }
   }
 ]

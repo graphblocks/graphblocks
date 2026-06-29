@@ -11,6 +11,7 @@ from typing import Literal
 
 from graphblocks.canonical import canonical_hash
 from graphblocks.compiler import compile_graph
+from graphblocks.conversation import ContentPart
 from graphblocks.loader import load_documents
 from graphblocks.migration import GRAPH_API_VERSION, migrate_document
 from graphblocks.output_policy import (
@@ -1953,6 +1954,40 @@ class TckRunner:
                         accepted_through_sequence=int(accepted_through) if accepted_through is not None else None,
                         input_digest=str(operation.get("inputDigest", "")),
                     )
+                    update = gate.apply_decision(decision, occurred_at=str(operation.get("occurredAt", "")))
+                    actual_deliver = [(chunk.sequence, chunk.text) for chunk in update.deliverable]
+                elif op in {"redact", "replace"}:
+                    accepted_through = operation.get("acceptedThrough")
+                    accepted_sequence = int(accepted_through) if accepted_through is not None else None
+                    if op == "redact":
+                        redactions = []
+                        for redaction in operation.get("redactions", []):
+                            if isinstance(redaction, Mapping):
+                                redactions.append(
+                                    {
+                                        "path": str(redaction.get("path", "")),
+                                        "start": int(redaction.get("start", -1)),
+                                        "end": int(redaction.get("end", -1)),
+                                        "replacement": str(redaction.get("replacement", "")),
+                                    }
+                                )
+                        decision = OutputPolicyDecision.redact(
+                            str(operation.get("decisionId", "")),
+                            accepted_through_sequence=accepted_sequence,
+                            redactions=tuple(redactions),
+                            input_digest=str(operation.get("inputDigest", "")),
+                        )
+                    else:
+                        replacement_parts = []
+                        for chunk in operation.get("replacementChunks", []):
+                            if isinstance(chunk, Mapping):
+                                replacement_parts.append(ContentPart(kind="text", text=str(chunk.get("text", ""))))
+                        decision = OutputPolicyDecision.replace(
+                            str(operation.get("decisionId", "")),
+                            accepted_through_sequence=accepted_sequence,
+                            replacement_parts=tuple(replacement_parts),
+                            input_digest=str(operation.get("inputDigest", "")),
+                        )
                     update = gate.apply_decision(decision, occurred_at=str(operation.get("occurredAt", "")))
                     actual_deliver = [(chunk.sequence, chunk.text) for chunk in update.deliverable]
                 elif op == "abort_response":
