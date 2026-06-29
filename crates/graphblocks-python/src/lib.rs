@@ -1410,12 +1410,18 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
     if let Some(turn_id) = optional_alias_string(gate_object, "turnId", "turn_id", "gate")? {
         gate = gate.with_turn_id(turn_id);
     }
-    if let Some(delivery_policy) = gate_object.get("deliveryPolicy") {
+    if let Some(delivery_policy) = gate_object
+        .get("deliveryPolicy")
+        .or_else(|| gate_object.get("delivery_policy"))
+    {
         let delivery_policy = json_object(delivery_policy, "gate.deliveryPolicy")?;
-        let on_violation = match delivery_policy
-            .get("onViolation")
-            .and_then(Value::as_str)
-            .unwrap_or("abort_response")
+        let on_violation = match optional_alias_string(
+            delivery_policy,
+            "onViolation",
+            "on_violation",
+            "gate.deliveryPolicy",
+        )?
+        .unwrap_or("abort_response")
         {
             "abort_response" => ViolationAction::AbortResponse,
             "abort_turn" => ViolationAction::AbortTurn,
@@ -1427,10 +1433,13 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
                 )));
             }
         };
-        let delivered_draft_disposition = match delivery_policy
-            .get("deliveredDraftDisposition")
-            .and_then(Value::as_str)
-            .unwrap_or("retract")
+        let delivered_draft_disposition = match optional_alias_string(
+            delivery_policy,
+            "deliveredDraftDisposition",
+            "delivered_draft_disposition",
+            "gate.deliveryPolicy",
+        )?
+        .unwrap_or("retract")
         {
             "keep" => DraftDisposition::Keep,
             "mark_incomplete" => DraftDisposition::MarkIncomplete,
@@ -1455,31 +1464,34 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
                 )));
             }
         };
-        if let Some(value) = delivery_policy.get("holdbackMaxTokens") {
-            let Some(value) = value.as_u64() else {
-                return Err(PyValueError::new_err(
-                    "gate.deliveryPolicy.holdbackMaxTokens must be an unsigned integer",
-                ));
-            };
+        if let Some(value) = optional_alias_u64(
+            delivery_policy,
+            "holdbackMaxTokens",
+            "holdback_max_tokens",
+            "gate.deliveryPolicy",
+        )? {
             policy = policy.with_holdback_max_tokens(value);
         }
-        if let Some(value) = delivery_policy.get("holdbackMaxBytes") {
-            let Some(value) = value.as_u64() else {
-                return Err(PyValueError::new_err(
-                    "gate.deliveryPolicy.holdbackMaxBytes must be an unsigned integer",
-                ));
-            };
+        if let Some(value) = optional_alias_u64(
+            delivery_policy,
+            "holdbackMaxBytes",
+            "holdback_max_bytes",
+            "gate.deliveryPolicy",
+        )? {
             policy = policy.with_holdback_max_bytes(value);
         }
-        if let Some(value) = delivery_policy.get("holdbackMaxDurationMs") {
-            let Some(value) = value.as_u64() else {
-                return Err(PyValueError::new_err(
-                    "gate.deliveryPolicy.holdbackMaxDurationMs must be an unsigned integer",
-                ));
-            };
+        if let Some(value) = optional_alias_u64(
+            delivery_policy,
+            "holdbackMaxDurationMs",
+            "holdback_max_duration_ms",
+            "gate.deliveryPolicy",
+        )? {
             policy = policy.with_holdback_max_duration_ms(value);
         }
-        if let Some(boundaries) = delivery_policy.get("flushBoundaries") {
+        if let Some(boundaries) = delivery_policy
+            .get("flushBoundaries")
+            .or_else(|| delivery_policy.get("flush_boundaries"))
+        {
             let Some(boundaries) = boundaries.as_array() else {
                 return Err(PyValueError::new_err(
                     "gate.deliveryPolicy.flushBoundaries must be an array",
@@ -3115,6 +3127,60 @@ mod tests {
                 .and_then(|decision| decision.get("decisionId"))
                 .and_then(Value::as_str),
             Some("decision-allow")
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_output_gate_json_accepts_snake_case_delivery_policy() -> Result<(), String> {
+        pyo3::Python::initialize();
+        let gate = json!({
+            "streamId": "stream-1",
+            "responseId": "response-1",
+            "delivery_policy": {
+                "mode": "immediate_draft",
+                "on_violation": "abort_response",
+                "delivered_draft_disposition": "retract",
+                "flush_boundaries": ["sentence"]
+            }
+        });
+        let operations = json!([
+            {
+                "kind": "chunk",
+                "sequence": 1,
+                "text": "safe draft"
+            }
+        ]);
+        let gate_json = serde_json::to_string(&gate).map_err(|error| error.to_string())?;
+        let operations_json =
+            serde_json::to_string(&operations).map_err(|error| error.to_string())?;
+
+        let result_json = evaluate_output_gate_json(&gate_json, &operations_json)
+            .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            result
+                .get("deliveries")
+                .and_then(Value::as_array)
+                .and_then(|deliveries| deliveries.first())
+                .and_then(|delivery| delivery.get("draft"))
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            result
+                .get("deliveries")
+                .and_then(Value::as_array)
+                .and_then(|deliveries| deliveries.first())
+                .and_then(|delivery| delivery.get("chunks"))
+                .and_then(Value::as_array)
+                .and_then(|chunks| chunks.first())
+                .and_then(|chunk| chunk.get("text"))
+                .and_then(Value::as_str),
+            Some("safe draft")
         );
 
         Ok(())
