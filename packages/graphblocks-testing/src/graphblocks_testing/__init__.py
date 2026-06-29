@@ -2897,6 +2897,8 @@ class TckRunner:
                 "tool_result_delta",
                 "tool_result_artifact_ready",
                 "tool_result_completed",
+                "tool_result_failed",
+                "tool_result_denied",
                 "tool_result_cancelled",
                 "tool_result_policy_stopped",
                 "tool_result_incomplete",
@@ -2947,17 +2949,13 @@ class TckRunner:
                         ),
                     )
                 elif op in {
+                    "tool_result_failed",
+                    "tool_result_denied",
                     "tool_result_cancelled",
                     "tool_result_policy_stopped",
                     "tool_result_incomplete",
                 }:
-                    if op == "tool_result_cancelled":
-                        result = ToolResult.cancelled(
-                            tool_call_id,
-                            started_at=str(operation.get("startedAt", "2026-06-23T00:00:00Z")),
-                            completed_at=str(operation.get("completedAt", "2026-06-23T00:00:00Z")),
-                        )
-                    elif op == "tool_result_policy_stopped":
+                    if op in {"tool_result_failed", "tool_result_denied", "tool_result_policy_stopped"}:
                         raw_error = operation.get(
                             "error",
                             {"code": "policy.tool_output_denied", "message": "tool output was stopped by policy"},
@@ -2966,11 +2964,31 @@ class TckRunner:
                             diagnostics.append(
                                 {
                                     "code": "ApplicationEventToolResultErrorInvalid",
-                                    "message": "policy-stopped tool result error must be a mapping",
+                                    "message": "terminal tool result error must be a mapping",
                                     "path": f"$.operations[{sequence - 1}].error",
                                 }
                             )
                             continue
+                    if op == "tool_result_failed":
+                        result = ToolResult.failed(
+                            tool_call_id,
+                            error=dict(raw_error),
+                            started_at=str(operation.get("startedAt", "2026-06-23T00:00:00Z")),
+                            completed_at=str(operation.get("completedAt", "2026-06-23T00:00:00Z")),
+                        )
+                    elif op == "tool_result_denied":
+                        result = ToolResult.denied(
+                            tool_call_id,
+                            error=dict(raw_error),
+                            completed_at=str(operation.get("completedAt", "2026-06-23T00:00:00Z")),
+                        )
+                    elif op == "tool_result_cancelled":
+                        result = ToolResult.cancelled(
+                            tool_call_id,
+                            started_at=str(operation.get("startedAt", "2026-06-23T00:00:00Z")),
+                            completed_at=str(operation.get("completedAt", "2026-06-23T00:00:00Z")),
+                        )
+                    elif op == "tool_result_policy_stopped":
                         result = ToolResult.policy_stopped(
                             tool_call_id,
                             error=dict(raw_error),
@@ -2985,7 +3003,19 @@ class TckRunner:
                         )
                     if operation.get("effectOutcome") is not None:
                         result = result.with_effect_outcome(str(operation["effectOutcome"]))
-                    if op == "tool_result_cancelled":
+                    if op == "tool_result_failed":
+                        result_event = ToolResultEvent.failed(
+                            tool_call_id,
+                            tool_result_sequence,
+                            result,
+                        )
+                    elif op == "tool_result_denied":
+                        result_event = ToolResultEvent.denied(
+                            tool_call_id,
+                            tool_result_sequence,
+                            result,
+                        )
+                    elif op == "tool_result_cancelled":
                         result_event = ToolResultEvent.cancelled(
                             tool_call_id,
                             tool_result_sequence,

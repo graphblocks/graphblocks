@@ -1191,6 +1191,8 @@ def test_application_event_stream_state_matches_shared_tck_cases() -> None:
                 "tool_result_delta",
                 "tool_result_artifact_ready",
                 "tool_result_completed",
+                "tool_result_failed",
+                "tool_result_denied",
                 "tool_result_cancelled",
                 "tool_result_policy_stopped",
                 "tool_result_incomplete",
@@ -1216,11 +1218,36 @@ def test_application_event_stream_state_matches_shared_tck_cases() -> None:
                         ),
                     )
                 elif operation["op"] in {
+                    "tool_result_failed",
+                    "tool_result_denied",
                     "tool_result_cancelled",
                     "tool_result_policy_stopped",
                     "tool_result_incomplete",
                 }:
-                    if operation["op"] == "tool_result_cancelled":
+                    if operation["op"] == "tool_result_failed":
+                        result = ToolResult.failed(
+                            tool_call_id,
+                            error=dict(operation["error"]),
+                            started_at=operation["startedAt"],
+                            completed_at=operation["completedAt"],
+                        )
+                        result_event = ToolResultEvent.failed(
+                            tool_call_id,
+                            tool_result_sequence,
+                            result,
+                        )
+                    elif operation["op"] == "tool_result_denied":
+                        result = ToolResult.denied(
+                            tool_call_id,
+                            error=dict(operation["error"]),
+                            completed_at=operation["completedAt"],
+                        )
+                        result_event = ToolResultEvent.denied(
+                            tool_call_id,
+                            tool_result_sequence,
+                            result,
+                        )
+                    elif operation["op"] == "tool_result_cancelled":
                         result = ToolResult.cancelled(
                             tool_call_id,
                             started_at=operation["startedAt"],

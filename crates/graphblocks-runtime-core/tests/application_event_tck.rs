@@ -112,6 +112,8 @@ fn run_case(case: &Value) -> Result<(), String> {
             | "tool_result_delta"
             | "tool_result_artifact_ready"
             | "tool_result_completed"
+            | "tool_result_failed"
+            | "tool_result_denied"
             | "tool_result_cancelled"
             | "tool_result_policy_stopped"
             | "tool_result_incomplete" => {
@@ -147,6 +149,48 @@ fn run_case(case: &Value) -> Result<(), String> {
                             tool_result_sequence,
                             artifact,
                         )
+                    }
+                    "tool_result_failed" | "tool_result_denied" => {
+                        let raw_error = operation
+                            .get("error")
+                            .and_then(Value::as_object)
+                            .ok_or_else(|| {
+                                format!(
+                                    "application-events TCK case {case_name} terminal result error must be an object"
+                                )
+                            })?;
+                        let effect_outcome = tool_effect_outcome(
+                            optional_str(operation, "effectOutcome"),
+                            case_name,
+                        )?;
+                        if op == "tool_result_failed" {
+                            let result = ToolResult::failed(
+                                tool_call_id,
+                                BlockError::new(
+                                    required_str_object(raw_error, "code")?,
+                                    ErrorCategory::Permanent,
+                                    required_str_object(raw_error, "message")?,
+                                    false,
+                                ),
+                                required_u64(operation, "startedAtUnixMs")?,
+                                required_u64(operation, "completedAtUnixMs")?,
+                            )
+                            .with_effect_outcome(effect_outcome);
+                            ToolResultEvent::failed(tool_call_id, tool_result_sequence, result)
+                        } else {
+                            let result = ToolResult::denied(
+                                tool_call_id,
+                                BlockError::new(
+                                    required_str_object(raw_error, "code")?,
+                                    ErrorCategory::Policy,
+                                    required_str_object(raw_error, "message")?,
+                                    false,
+                                ),
+                                required_u64(operation, "completedAtUnixMs")?,
+                            )
+                            .with_effect_outcome(effect_outcome);
+                            ToolResultEvent::denied(tool_call_id, tool_result_sequence, result)
+                        }
                     }
                     "tool_result_cancelled"
                     | "tool_result_policy_stopped"

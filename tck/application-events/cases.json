@@ -246,5 +246,62 @@
       "ToolResultDelta",
       "ToolResultIncomplete"
     ]
+  },
+  {
+    "name": "failed_and_denied_tool_result_events_are_terminal",
+    "responseId": "response-tools-3",
+    "turnId": "turn-tools-3",
+    "operations": [
+      {
+        "op": "tool_result_started",
+        "toolCallId": "call-failed",
+        "toolResultSequence": 1,
+        "startedAt": "2026-06-23T00:04:00Z",
+        "startedAtUnixMs": 1700240
+      },
+      {
+        "op": "tool_result_delta",
+        "toolCallId": "call-failed",
+        "toolResultSequence": 2,
+        "output": [
+          {
+            "kind": "text",
+            "text": "partial before failure"
+          }
+        ]
+      },
+      {
+        "op": "tool_result_failed",
+        "toolCallId": "call-failed",
+        "toolResultSequence": 3,
+        "startedAt": "2026-06-23T00:04:00Z",
+        "completedAt": "2026-06-23T00:04:01Z",
+        "startedAtUnixMs": 1700240,
+        "completedAtUnixMs": 1700241,
+        "effectOutcome": "unknown",
+        "error": {
+          "code": "tool.execution_failed",
+          "message": "tool execution failed"
+        }
+      },
+      {
+        "op": "tool_result_denied",
+        "toolCallId": "call-denied",
+        "toolResultSequence": 4,
+        "completedAt": "2026-06-23T00:04:02Z",
+        "completedAtUnixMs": 1700242,
+        "effectOutcome": "not_committed",
+        "error": {
+          "code": "policy.tool_denied",
+          "message": "tool execution was denied by policy"
+        }
+      }
+    ],
+    "expectedAcceptedKinds": [
+      "ToolResultStarted",
+      "ToolResultDelta",
+      "ToolResultFailed",
+      "ToolResultDenied"
+    ]
   }
 ]
