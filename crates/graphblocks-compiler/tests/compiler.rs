@@ -628,6 +628,38 @@ fn compile_graph_rejects_boolean_output_holdback_bound() {
 }
 
 #[test]
+fn compile_graph_rejects_invalid_output_holdback_duration() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "invalid-duration-output-policy-bound"},
+        "spec": {
+            "outputPolicy": {
+                "delivery": {
+                    "mode": "bounded_holdback",
+                    "holdbackMaxDuration": "soon",
+                    "onViolation": "abort_response"
+                }
+            },
+            "nodes": {
+                "model": {"block": "model.generate@1"}
+            }
+        }
+    });
+
+    let plan = compile_graph(&graph);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["UnboundedPolicyHoldback", "OutputPolicyBypass"]
+    );
+}
+
+#[test]
 fn compile_graph_rejects_immediate_draft_without_retraction_support() {
     let graph = json!({
         "apiVersion": GRAPH_API_VERSION,

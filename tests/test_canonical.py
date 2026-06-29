@@ -204,9 +204,23 @@ def test_compile_rejects_unbounded_output_holdback_and_unsafe_immediate_draft() 
             },
         },
     }
+    invalid_duration_bound = {
+        **base,
+        "spec": {
+            **base["spec"],
+            "outputPolicy": {
+                "delivery": {
+                    "mode": "bounded_holdback",
+                    "holdbackMaxDuration": "soon",
+                    "onViolation": "abort_response",
+                }
+            },
+        },
+    }
 
     assert _error_codes(unbounded) == ["UnboundedPolicyHoldback", "OutputPolicyBypass"]
     assert _error_codes(boolean_bound) == ["UnboundedPolicyHoldback", "OutputPolicyBypass"]
+    assert _error_codes(invalid_duration_bound) == ["UnboundedPolicyHoldback", "OutputPolicyBypass"]
     assert _error_codes(immediate_draft) == [
         "ImmediateDraftWithoutRetractionSupport",
         "OutputPolicyBypass",

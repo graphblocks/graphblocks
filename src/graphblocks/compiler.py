@@ -260,14 +260,16 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                 )
                 has_token_bound = _is_positive_integer(holdback_max_tokens)
                 has_byte_bound = _is_positive_integer(holdback_max_bytes)
-                has_duration_bound = (
-                    _is_positive_integer(holdback_max_duration)
-                    or (
-                        isinstance(holdback_max_duration, str)
-                        and bool(holdback_max_duration.strip())
-                        and holdback_max_duration != "0ms"
-                    )
-                )
+                has_duration_bound = _is_positive_integer(holdback_max_duration)
+                if not has_duration_bound and isinstance(holdback_max_duration, str):
+                    duration_text = holdback_max_duration.strip()
+                    for suffix in ("ms", "s", "m", "h"):
+                        if duration_text.endswith(suffix):
+                            duration_amount = duration_text[: -len(suffix)]
+                            has_duration_bound = (
+                                duration_amount.isascii() and duration_amount.isdigit() and int(duration_amount) > 0
+                            )
+                            break
                 if not has_token_bound and not has_byte_bound and not has_duration_bound:
                     diagnostics.append(
                         Diagnostic(
