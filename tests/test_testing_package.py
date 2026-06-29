@@ -205,6 +205,26 @@ def test_testing_package_loads_shared_budget_race_tck_cases(monkeypatch) -> None
     assert "load_budget_race_tck_cases" in graphblocks_testing.__all__
 
 
+def test_testing_package_loads_shared_usage_tck_cases(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    cases = graphblocks_testing.load_usage_tck_cases(ROOT / "tck" / "usage" / "cases.json")
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
+
+    assert [case.kind for case in cases] == ["usage"] * 2
+    assert report.ok
+    assert {tuple(result.observed["recordIds"]) for result in report.results} == {
+        ("usage-provisional", "usage-reconciled"),
+        ("usage-provider-1",),
+    }
+    assert {tuple(result.observed["appendResults"]) for result in report.results} == {
+        ("usage-provisional", "usage-reconciled"),
+        ("usage-provider-1", "usage-provider-1"),
+    }
+    assert "load_usage_tck_cases" in graphblocks_testing.__all__
+
+
 def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -221,6 +241,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "runtime",
         "schema",
         "sequence",
+        "usage",
     )
     assert by_suite["budget-race"].case_ids == (
         "competing_reservations_serialize_against_available_budget",
@@ -253,7 +274,7 @@ def test_testing_package_cli_lists_tck_suite_manifests(monkeypatch, capsys) -> N
     assert graphblocks_testing.main(["list", str(ROOT / "tck"), "--json"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload["suiteCount"] == 8
+    assert payload["suiteCount"] == 9
     assert payload["suites"][0]["suite_id"] == "application-events"
     assert payload["suites"][0]["case_count"] == 3
     assert payload["contentDigest"].startswith("sha256:")
@@ -288,6 +309,7 @@ def test_testing_package_cli_checks_tck_suite_coverage(monkeypatch, capsys) -> N
         "runtime",
         "schema",
         "sequence",
+        "usage",
     ]
     assert payload["missing_suites"] == []
     assert payload["contentDigest"].startswith("sha256:")
@@ -374,6 +396,21 @@ def test_testing_package_cli_runs_budget_race_tck_suite(monkeypatch, capsys) -> 
     assert payload["contentDigest"].startswith("sha256:")
 
 
+def test_testing_package_cli_runs_usage_tck_suite(monkeypatch, capsys) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    exit_code = graphblocks_testing.main(
+        ["run", "usage", str(ROOT / "tck" / "usage" / "cases.json"), "--json"]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert {result["kind"] for result in payload["results"]} == {"usage"}
+    assert payload["contentDigest"].startswith("sha256:")
+
+
 def test_testing_package_cli_runs_all_supported_tck_suites(monkeypatch, capsys) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -392,6 +429,7 @@ def test_testing_package_cli_runs_all_supported_tck_suites(monkeypatch, capsys) 
         "runtime",
         "schema",
         "sequence",
+        "usage",
     )
     assert all(report["ok"] for report in payload["reports"].values())
     assert payload["contentDigest"].startswith("sha256:")

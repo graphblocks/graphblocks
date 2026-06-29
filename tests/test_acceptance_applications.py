@@ -137,6 +137,7 @@ def test_conformance_profile_tck_suites_have_shared_fixture_manifests(monkeypatc
         "runtime",
         "schema",
         "sequence",
+        "usage",
     )
     assert coverage.available_suites == (
         "application-events",
@@ -147,6 +148,7 @@ def test_conformance_profile_tck_suites_have_shared_fixture_manifests(monkeypatc
         "runtime",
         "schema",
         "sequence",
+        "usage",
     )
     assert coverage.missing_suites == ()
     assert coverage.issue_contracts() == []

@@ -58,6 +58,7 @@ spec:
     - approval-review-gate
     tck:
     - policy
+    - usage
     - budget-race
     - exhaustion
   - id: GB-C4-PRODUCTION

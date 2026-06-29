@@ -4,6 +4,7 @@ import argparse
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
+from decimal import Decimal
 import json
 import math
 from pathlib import Path
@@ -64,6 +65,7 @@ from graphblocks.runtime import (
     stdlib_registry,
 )
 from graphblocks.tools import ToolResult, ToolResultEvent
+from graphblocks.usage import InMemoryUsageLedger, UsageRecord
 
 
 TckCaseKind = Literal[
@@ -75,6 +77,7 @@ TckCaseKind = Literal[
     "sequence",
     "exhaustion",
     "budget-race",
+    "usage",
 ]
 TckResultStatus = Literal["passed", "failed"]
 PerformanceThresholdOperator = Literal["at_most", "at_least"]
@@ -137,6 +140,7 @@ class TckCase:
     expected_sequence_creation_error: str | None = None
     exhaustion_fixture: dict[str, object] = field(default_factory=dict)
     budget_race_fixture: dict[str, object] = field(default_factory=dict)
+    usage_fixture: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.case_id.strip():
@@ -150,6 +154,7 @@ class TckCase:
             "sequence",
             "exhaustion",
             "budget-race",
+            "usage",
         }:
             raise ValueError(f"invalid TCK case kind {self.kind}")
         object.__setattr__(self, "graph", dict(self.graph))
@@ -169,6 +174,7 @@ class TckCase:
         object.__setattr__(self, "sequence_operations", tuple(dict(operation) for operation in self.sequence_operations))
         object.__setattr__(self, "exhaustion_fixture", dict(self.exhaustion_fixture))
         object.__setattr__(self, "budget_race_fixture", dict(self.budget_race_fixture))
+        object.__setattr__(self, "usage_fixture", dict(self.usage_fixture))
         if self.kind == "policy":
             if not self.policy_stream_id.strip():
                 raise ValueError("policy TCK stream_id must not be empty")
@@ -185,6 +191,8 @@ class TckCase:
             raise ValueError("exhaustion TCK case requires fixture")
         if self.kind == "budget-race" and not self.budget_race_fixture:
             raise ValueError("budget-race TCK case requires fixture")
+        if self.kind == "usage" and not self.usage_fixture:
+            raise ValueError("usage TCK case requires fixture")
         if self.expected_outputs is not None:
             object.__setattr__(self, "expected_outputs", dict(self.expected_outputs))
         if self.expected_terminal_kind is not None and not self.expected_terminal_kind.strip():
@@ -324,6 +332,10 @@ class TckCase:
     @classmethod
     def budget_race(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
         return cls(case_id=case_id, kind="budget-race", budget_race_fixture=fixture)
+
+    @classmethod
+    def usage(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
+        return cls(case_id=case_id, kind="usage", usage_fixture=fixture)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1260,6 +1272,27 @@ def load_budget_race_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     return tuple(cases)
 
 
+def load_usage_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
+    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(raw_cases, list):
+        raise ValueError("usage TCK root must be a list")
+    cases: list[TckCase] = []
+    for index, raw_case in enumerate(raw_cases):
+        if not isinstance(raw_case, Mapping):
+            raise ValueError(f"usage TCK case {index} must be a mapping")
+        case_id = _first_mapping_value(raw_case, "name", "case_id", "caseId")
+        if not isinstance(case_id, str) or not case_id.strip():
+            raise ValueError(f"usage TCK case {index} requires name")
+        operations = raw_case.get("operations")
+        if not isinstance(operations, list) or not all(isinstance(operation, dict) for operation in operations):
+            raise ValueError(f"usage TCK case {case_id} operations must be a list of mappings")
+        expected = raw_case.get("expected")
+        if not isinstance(expected, Mapping):
+            raise ValueError(f"usage TCK case {case_id} requires expected result")
+        cases.append(TckCase.usage(case_id=case_id, fixture=dict(raw_case)))
+    return tuple(cases)
+
+
 def load_policy_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(raw_cases, list):
@@ -1438,6 +1471,8 @@ def load_tck_cases_for_suite(suite: str, path: str | Path) -> tuple[TckCase, ...
         return load_schema_tck_cases(path)
     if suite == "sequence":
         return load_sequence_tck_cases(path)
+    if suite == "usage":
+        return load_usage_tck_cases(path)
     raise ValueError(f"unsupported TCK suite {suite!r}")
 
 
@@ -1464,6 +1499,7 @@ def main(argv: list[str] | None = None) -> int:
             "sequence",
             "exhaustion",
             "budget-race",
+            "usage",
         ),
         help="TCK suite kind",
     )
@@ -2052,6 +2088,8 @@ class TckRunner:
                 results.append(self._run_exhaustion_case(case))
             elif case.kind == "budget-race":
                 results.append(self._run_budget_race_case(case))
+            elif case.kind == "usage":
+                results.append(self._run_usage_case(case))
             else:
                 results.append(self._run_schema_case(case))
         return TckReport(profile=self.profile, results=tuple(results))
@@ -2852,6 +2890,229 @@ class TckRunner:
             observed=observed,
         )
 
+    def _run_usage_case(self, case: TckCase) -> TckResult:
+        diagnostics: list[dict[str, str]] = []
+        fixture = case.usage_fixture
+        ledger = InMemoryUsageLedger()
+        append_results: list[str] = []
+        operations = fixture.get("operations", [])
+        if not isinstance(operations, list):
+            operations = []
+            diagnostics.append(
+                {
+                    "code": "UsageOperationsInvalid",
+                    "message": "usage TCK operations must be a list",
+                    "path": "$.operations",
+                }
+            )
+
+        for operation_index, operation in enumerate(operations):
+            if not isinstance(operation, Mapping):
+                diagnostics.append(
+                    {
+                        "code": "UsageOperationInvalid",
+                        "message": "usage TCK operation must be a mapping",
+                        "path": f"$.operations[{operation_index}]",
+                    }
+                )
+                continue
+            op = str(operation.get("op", ""))
+            if op == "append":
+                record_mapping = operation.get("record")
+                if not isinstance(record_mapping, Mapping):
+                    diagnostics.append(
+                        {
+                            "code": "UsageRecordMissing",
+                            "message": "append operation requires a usage record",
+                            "path": f"$.operations[{operation_index}].record",
+                        }
+                    )
+                    continue
+                raw_amounts = record_mapping.get("amounts", [])
+                if not isinstance(raw_amounts, list):
+                    diagnostics.append(
+                        {
+                            "code": "UsageAmountsInvalid",
+                            "message": "usage record amounts must be a list",
+                            "path": f"$.operations[{operation_index}].record.amounts",
+                        }
+                    )
+                    continue
+                amounts: list[UsageAmount] = []
+                for amount_index, amount in enumerate(raw_amounts):
+                    if not isinstance(amount, Mapping):
+                        diagnostics.append(
+                            {
+                                "code": "UsageAmountInvalid",
+                                "message": "usage amount must be a mapping",
+                                "path": f"$.operations[{operation_index}].record.amounts[{amount_index}]",
+                            }
+                        )
+                        continue
+                    dimensions = amount.get("dimensions", {})
+                    if not isinstance(dimensions, Mapping):
+                        diagnostics.append(
+                            {
+                                "code": "UsageAmountInvalid",
+                                "message": "usage amount dimensions must be a mapping",
+                                "path": f"$.operations[{operation_index}].record.amounts[{amount_index}].dimensions",
+                            }
+                        )
+                        continue
+                    amounts.append(
+                        UsageAmount(
+                            kind=str(amount.get("kind", "")),
+                            amount=Decimal(str(amount.get("amount", "0"))),
+                            unit=str(amount.get("unit", "")),
+                            dimensions={str(key): str(value) for key, value in dimensions.items()},
+                        )
+                    )
+                metadata = record_mapping.get("metadata", {})
+                if not isinstance(metadata, Mapping):
+                    diagnostics.append(
+                        {
+                            "code": "UsageMetadataInvalid",
+                            "message": "usage record metadata must be a mapping",
+                            "path": f"$.operations[{operation_index}].record.metadata",
+                        }
+                    )
+                    continue
+                optional_fields: dict[str, object] = {}
+                for field_name, keys in (
+                    ("run_id", ("runId", "run_id")),
+                    ("attempt_id", ("attemptId", "attempt_id")),
+                    ("provider_response_id", ("providerResponseId", "provider_response_id")),
+                    ("pricing_ref", ("pricingRef", "pricing_ref")),
+                    ("quota_window_id", ("quotaWindowId", "quota_window_id")),
+                    ("execution_scope", ("executionScope", "execution_scope")),
+                    ("reconciliation_of", ("reconciliationOf", "reconciliation_of")),
+                ):
+                    value = _first_mapping_value(record_mapping, *keys)
+                    if value is not None:
+                        optional_fields[field_name] = str(value)
+                record = UsageRecord(
+                    record_id=str(_first_mapping_value(record_mapping, "recordId", "record_id")),
+                    source=str(record_mapping.get("source", "")),
+                    confidence=str(record_mapping.get("confidence", "")),
+                    amounts=tuple(amounts),
+                    occurred_at=str(_first_mapping_value(record_mapping, "occurredAt", "occurred_at")),
+                    metadata={str(key): value for key, value in metadata.items()},
+                    **optional_fields,
+                )
+                append_results.append(ledger.append(record).record_id)
+            elif op == "reconcile":
+                raw_amounts = operation.get("amounts", [])
+                if not isinstance(raw_amounts, list):
+                    diagnostics.append(
+                        {
+                            "code": "UsageAmountsInvalid",
+                            "message": "usage reconcile amounts must be a list",
+                            "path": f"$.operations[{operation_index}].amounts",
+                        }
+                    )
+                    continue
+                amounts = []
+                for amount_index, amount in enumerate(raw_amounts):
+                    if not isinstance(amount, Mapping):
+                        diagnostics.append(
+                            {
+                                "code": "UsageAmountInvalid",
+                                "message": "usage amount must be a mapping",
+                                "path": f"$.operations[{operation_index}].amounts[{amount_index}]",
+                            }
+                        )
+                        continue
+                    dimensions = amount.get("dimensions", {})
+                    if not isinstance(dimensions, Mapping):
+                        diagnostics.append(
+                            {
+                                "code": "UsageAmountInvalid",
+                                "message": "usage amount dimensions must be a mapping",
+                                "path": f"$.operations[{operation_index}].amounts[{amount_index}].dimensions",
+                            }
+                        )
+                        continue
+                    amounts.append(
+                        UsageAmount(
+                            kind=str(amount.get("kind", "")),
+                            amount=Decimal(str(amount.get("amount", "0"))),
+                            unit=str(amount.get("unit", "")),
+                            dimensions={str(key): str(value) for key, value in dimensions.items()},
+                        )
+                    )
+                reconciled = ledger.reconcile(
+                    str(_first_mapping_value(operation, "sourceRecordId", "source_record_id")),
+                    amounts=amounts,
+                    occurred_at=str(_first_mapping_value(operation, "occurredAt", "occurred_at")),
+                    record_id=(
+                        str(_first_mapping_value(operation, "recordId", "record_id"))
+                        if _first_mapping_value(operation, "recordId", "record_id") is not None
+                        else None
+                    ),
+                )
+                append_results.append(reconciled.record_id)
+            else:
+                diagnostics.append(
+                    {
+                        "code": "UsageOperationUnknown",
+                        "message": f"usage TCK operation {op!r} is not supported",
+                        "path": f"$.operations[{operation_index}].op",
+                    }
+                )
+
+        expected = fixture.get("expected", {})
+        if not isinstance(expected, Mapping):
+            expected = {}
+            diagnostics.append(
+                {
+                    "code": "UsageExpectedInvalid",
+                    "message": "usage TCK expected result must be a mapping",
+                    "path": "$.expected",
+                }
+            )
+        run_id = str(expected.get("runId", expected.get("run_id", "")))
+        records = ledger.records_for_run(run_id) if run_id else []
+        totals = ledger.totals_for_run(run_id) if run_id else []
+        observed_totals = [
+            {
+                "kind": amount.kind,
+                "amount": (
+                    int(amount.amount)
+                    if amount.amount == amount.amount.to_integral_value()
+                    else str(amount.amount)
+                ),
+                "unit": amount.unit,
+                "dimensions": dict(amount.dimensions),
+            }
+            for amount in totals
+        ]
+        observed = {
+            "appendResults": append_results,
+            "recordIds": [record.record_id for record in records],
+            "totals": observed_totals,
+        }
+        for key, path in (
+            ("appendResults", "$.expected.appendResults"),
+            ("recordIds", "$.expected.recordIds"),
+            ("totals", "$.expected.totals"),
+        ):
+            expected_value = expected.get(key)
+            if expected_value is not None and observed[key] != expected_value:
+                diagnostics.append(
+                    {
+                        "code": "UsageExpectedMismatch",
+                        "message": f"usage observed {key} did not match expected value",
+                        "path": path,
+                    }
+                )
+        return TckResult(
+            case_id=case.case_id,
+            kind=case.kind,
+            status="passed" if not diagnostics else "failed",
+            diagnostics=tuple(diagnostics),
+            observed=observed,
+        )
+
     def _run_policy_case(self, case: TckCase) -> TckResult:
         diagnostics: list[dict[str, str]] = []
         delivery = case.policy_delivery
@@ -3312,6 +3573,7 @@ __all__ = [
     "load_sequence_tck_cases",
     "load_tck_cases_for_suite",
     "load_tck_suite_manifests",
+    "load_usage_tck_cases",
     "main",
     "migrate_document",
     "stdlib_registry",
