@@ -15,6 +15,7 @@ from graphblocks.worker import (
     WorkerAdmissionDecision,
     WorkerAdmissionPolicy,
     WorkerAdvertisement,
+    WorkerDrainDecision,
     WorkerDrainPlan,
     WorkerDrainPolicy,
     WorkerDrainTask,
@@ -531,6 +532,184 @@ def test_worker_drain_plan_closes_admission_and_preserves_inflight_affinity() ->
     assert plan.decisions[1].lease_epoch == 13
     assert plan.decisions[1].disposition == "checkpoint"
     assert WorkerDrainPlan.from_wire(plan.to_wire()) == plan
+
+
+def test_worker_drain_payloads_reject_invalid_wire_shapes() -> None:
+    request = WorkerInvokeRequest(
+        invocation_id="invoke-000001",
+        run_id="run-000001",
+        node_id="render",
+        node_attempt_id="render-attempt-1",
+        lease_epoch=7,
+        block="prompt.render@1",
+        context=WorkerInvocationContext("release-1", "rev-old"),
+        inputs={"message": {"text": "Hello"}},
+        config={},
+    )
+    decision = WorkerDrainDecision(
+        workload="online_request",
+        run_id=request.run_id,
+        invocation_id=request.invocation_id,
+        node_attempt_id=request.node_attempt_id,
+        lease_epoch=request.lease_epoch,
+        release_id=request.context.release_id,
+        deployment_revision_id=request.context.deployment_revision_id,
+        disposition="cancel",
+        deadline_unix_ms=30_000,
+        reason="deadline_reached",
+    )
+
+    invalid_policy_checks = (
+        (
+            lambda: WorkerDrainPolicy(online_request_timeout_ms=True),
+            "online_request_timeout_ms must be an integer",
+        ),
+        (
+            lambda: WorkerDrainPolicy.from_wire({"onDeadline": []}),
+            "worker drain policy onDeadline must be a mapping",
+        ),
+        (
+            lambda: WorkerDrainPolicy.from_wire({"onlineRequestTimeoutMs": "30"}),
+            "online_request_timeout_ms must be an integer",
+        ),
+    )
+    for build, message in invalid_policy_checks:
+        with pytest.raises(WorkerProtocolError, match=message):
+            build()
+
+    invalid_task_checks = (
+        (
+            lambda: WorkerDrainTask("online_request", object(), started_at_unix_ms=0),
+            "worker drain task request must be a WorkerInvokeRequest",
+        ),
+        (
+            lambda: WorkerDrainTask("online_request", request, started_at_unix_ms=True),
+            "worker drain task started_at_unix_ms must be an integer",
+        ),
+        (
+            lambda: WorkerDrainTask(
+                "online_request",
+                request,
+                started_at_unix_ms=0,
+                checkpointable="false",
+            ),
+            "worker drain task checkpointable must be a boolean",
+        ),
+    )
+    for build, message in invalid_task_checks:
+        with pytest.raises(WorkerProtocolError, match=message):
+            build()
+
+    task_wire = WorkerDrainTask("online_request", request, started_at_unix_ms=0).to_wire()
+    task_wire["checkpointable"] = "false"
+    with pytest.raises(
+        WorkerProtocolError,
+        match="worker drain task checkpointable must be a boolean",
+    ):
+        WorkerDrainTask.from_wire(task_wire)
+
+    invalid_decision_checks = (
+        (
+            lambda: WorkerDrainDecision(
+                workload="online_request",
+                run_id=object(),
+                invocation_id=request.invocation_id,
+                node_attempt_id=request.node_attempt_id,
+                lease_epoch=request.lease_epoch,
+                release_id=request.context.release_id,
+                deployment_revision_id=request.context.deployment_revision_id,
+                disposition="cancel",
+                deadline_unix_ms=30_000,
+                reason="deadline_reached",
+            ),
+            "worker drain decision run_id must be a string",
+        ),
+        (
+            lambda: WorkerDrainDecision(
+                workload="online_request",
+                run_id=request.run_id,
+                invocation_id=request.invocation_id,
+                node_attempt_id=request.node_attempt_id,
+                lease_epoch=False,
+                release_id=request.context.release_id,
+                deployment_revision_id=request.context.deployment_revision_id,
+                disposition="cancel",
+                deadline_unix_ms=30_000,
+                reason="deadline_reached",
+            ),
+            "worker drain decision lease_epoch must be an integer",
+        ),
+        (
+            lambda: WorkerDrainDecision(
+                workload="online_request",
+                run_id=request.run_id,
+                invocation_id=request.invocation_id,
+                node_attempt_id=request.node_attempt_id,
+                lease_epoch=request.lease_epoch,
+                release_id=request.context.release_id,
+                deployment_revision_id=request.context.deployment_revision_id,
+                disposition="delay",
+                deadline_unix_ms=30_000,
+                reason="deadline_reached",
+            ),
+            "worker drain decision disposition has invalid disposition",
+        ),
+    )
+    for build, message in invalid_decision_checks:
+        with pytest.raises(WorkerProtocolError, match=message):
+            build()
+
+    decision_wire = decision.to_wire()
+    decision_wire["runId"] = 7
+    with pytest.raises(
+        WorkerProtocolError,
+        match="worker drain decision run_id must be a string",
+    ):
+        WorkerDrainDecision.from_wire(decision_wire)
+
+    invalid_plan_checks = (
+        (
+            lambda: WorkerDrainPlan(" ", "target-1", 0, (decision,)),
+            "worker drain plan worker_id must not be empty",
+        ),
+        (
+            lambda: WorkerDrainPlan("worker-1", "target-1", True, (decision,)),
+            "worker drain plan drain_started_at_unix_ms must be an integer",
+        ),
+        (
+            lambda: WorkerDrainPlan("worker-1", "target-1", 0, (object(),)),
+            "worker drain plan decisions must be WorkerDrainDecision",
+        ),
+        (
+            lambda: WorkerDrainPlan(
+                "worker-1",
+                "target-1",
+                0,
+                (decision,),
+                admission_closed="true",
+            ),
+            "worker drain plan admission_closed must be a boolean",
+        ),
+    )
+    for build, message in invalid_plan_checks:
+        with pytest.raises(WorkerProtocolError, match=message):
+            build()
+
+    plan_wire = WorkerDrainPlan("worker-1", "target-1", 0, (decision,)).to_wire()
+    plan_wire["decisions"] = {}
+    with pytest.raises(
+        WorkerProtocolError,
+        match="worker drain plan decisions must be a list",
+    ):
+        WorkerDrainPlan.from_wire(plan_wire)
+
+    plan_wire = WorkerDrainPlan("worker-1", "target-1", 0, (decision,)).to_wire()
+    plan_wire["decisions"] = [object()]
+    with pytest.raises(
+        WorkerProtocolError,
+        match="worker drain plan decisions must be mappings",
+    ):
+        WorkerDrainPlan.from_wire(plan_wire)
 
 
 def test_remote_payload_validator_rejects_oversized_inline_payload() -> None:

@@ -252,6 +252,14 @@ def _validate_worker_string_attributes(owner: str, value: object) -> dict[str, s
     return attributes
 
 
+def _validate_worker_non_negative_integer(owner: str, field_name: str, value: object) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise WorkerProtocolError(f"{owner} {field_name} must be an integer")
+    if value < 0:
+        raise WorkerProtocolError(f"{owner} {field_name} must not be negative")
+    return value
+
+
 def admit_worker(advertisement: WorkerAdvertisement) -> None:
     admit_worker_with_policy(WorkerAdmissionPolicy.current(), advertisement)
 
@@ -743,6 +751,8 @@ class WorkerDrainPolicy:
             ("durable_task_timeout_ms", self.durable_task_timeout_ms),
             ("realtime_session_timeout_ms", self.realtime_session_timeout_ms),
         ):
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise WorkerProtocolError(f"{field_name} must be an integer")
             if value <= 0:
                 raise WorkerProtocolError(f"{field_name} must be positive")
         valid_dispositions = {"finish_in_place", "cancel", "checkpoint", "disconnect_with_resume_token"}
@@ -769,14 +779,15 @@ class WorkerDrainPolicy:
     @classmethod
     def from_wire(cls, payload: dict[str, object]) -> WorkerDrainPolicy:
         on_deadline = payload.get("onDeadline", {})
-        on_deadline = on_deadline if isinstance(on_deadline, dict) else {}
+        if not isinstance(on_deadline, Mapping):
+            raise WorkerProtocolError("worker drain policy onDeadline must be a mapping")
         return cls(
-            online_request_timeout_ms=int(payload.get("onlineRequestTimeoutMs", 30_000)),
-            durable_task_timeout_ms=int(payload.get("durableTaskTimeoutMs", 300_000)),
-            realtime_session_timeout_ms=int(payload.get("realtimeSessionTimeoutMs", 600_000)),
-            on_deadline_online_request=str(on_deadline.get("onlineRequest", "cancel")),
-            on_deadline_durable_task=str(on_deadline.get("durableTask", "checkpoint")),
-            on_deadline_realtime_session=str(
+            online_request_timeout_ms=payload.get("onlineRequestTimeoutMs", 30_000),
+            durable_task_timeout_ms=payload.get("durableTaskTimeoutMs", 300_000),
+            realtime_session_timeout_ms=payload.get("realtimeSessionTimeoutMs", 600_000),
+            on_deadline_online_request=on_deadline.get("onlineRequest", "cancel"),
+            on_deadline_durable_task=on_deadline.get("durableTask", "checkpoint"),
+            on_deadline_realtime_session=(
                 on_deadline.get("realtimeSession", "disconnect_with_resume_token")
             ),
         )
@@ -792,8 +803,19 @@ class WorkerDrainTask:
     def __post_init__(self) -> None:
         if self.workload not in {"online_request", "durable_task", "realtime_session"}:
             raise WorkerProtocolError(f"invalid drain workload {self.workload!r}")
-        if self.started_at_unix_ms < 0:
-            raise WorkerProtocolError("started_at_unix_ms must not be negative")
+        if not isinstance(self.request, WorkerInvokeRequest):
+            raise WorkerProtocolError("worker drain task request must be a WorkerInvokeRequest")
+        object.__setattr__(
+            self,
+            "started_at_unix_ms",
+            _validate_worker_non_negative_integer(
+                "worker drain task",
+                "started_at_unix_ms",
+                self.started_at_unix_ms,
+            ),
+        )
+        if not isinstance(self.checkpointable, bool):
+            raise WorkerProtocolError("worker drain task checkpointable must be a boolean")
 
     def to_wire(self) -> dict[str, object]:
         return {
@@ -809,10 +831,10 @@ class WorkerDrainTask:
         if not isinstance(request, dict):
             raise WorkerProtocolError("worker drain task request must be a mapping")
         return cls(
-            workload=str(payload["workload"]),
+            workload=payload["workload"],
             request=WorkerInvokeRequest.from_wire(request),
-            started_at_unix_ms=int(payload["startedAtUnixMs"]),
-            checkpointable=bool(payload.get("checkpointable", False)),
+            started_at_unix_ms=payload["startedAtUnixMs"],
+            checkpointable=payload.get("checkpointable", False),
         )
 
 
@@ -828,6 +850,50 @@ class WorkerDrainDecision:
     disposition: WorkerDrainDisposition
     deadline_unix_ms: int
     reason: str
+
+    def __post_init__(self) -> None:
+        if self.workload not in {"online_request", "durable_task", "realtime_session"}:
+            raise WorkerProtocolError(f"invalid drain workload {self.workload!r}")
+        valid_dispositions = {"finish_in_place", "cancel", "checkpoint", "disconnect_with_resume_token"}
+        if self.disposition not in valid_dispositions:
+            raise WorkerProtocolError(
+                f"worker drain decision disposition has invalid disposition {self.disposition!r}"
+            )
+        for field_name in (
+            "run_id",
+            "invocation_id",
+            "node_attempt_id",
+            "release_id",
+            "deployment_revision_id",
+            "reason",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_worker_non_empty_string(
+                    "worker drain decision",
+                    field_name,
+                    getattr(self, field_name),
+                ),
+            )
+        object.__setattr__(
+            self,
+            "lease_epoch",
+            _validate_worker_non_negative_integer(
+                "worker drain decision",
+                "lease_epoch",
+                self.lease_epoch,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "deadline_unix_ms",
+            _validate_worker_non_negative_integer(
+                "worker drain decision",
+                "deadline_unix_ms",
+                self.deadline_unix_ms,
+            ),
+        )
 
     def to_wire(self) -> dict[str, object]:
         return {
@@ -846,16 +912,16 @@ class WorkerDrainDecision:
     @classmethod
     def from_wire(cls, payload: dict[str, object]) -> WorkerDrainDecision:
         return cls(
-            workload=str(payload["workload"]),
-            run_id=str(payload["runId"]),
-            invocation_id=str(payload["invocationId"]),
-            node_attempt_id=str(payload["nodeAttemptId"]),
-            lease_epoch=int(payload["leaseEpoch"]),
-            release_id=str(payload["releaseId"]),
-            deployment_revision_id=str(payload["deploymentRevisionId"]),
-            disposition=str(payload["disposition"]),
-            deadline_unix_ms=int(payload["deadlineUnixMs"]),
-            reason=str(payload["reason"]),
+            workload=payload["workload"],
+            run_id=payload["runId"],
+            invocation_id=payload["invocationId"],
+            node_attempt_id=payload["nodeAttemptId"],
+            lease_epoch=payload["leaseEpoch"],
+            release_id=payload["releaseId"],
+            deployment_revision_id=payload["deploymentRevisionId"],
+            disposition=payload["disposition"],
+            deadline_unix_ms=payload["deadlineUnixMs"],
+            reason=payload["reason"],
         )
 
 
@@ -869,15 +935,36 @@ class WorkerDrainPlan:
     admission_closed: bool = True
 
     def __post_init__(self) -> None:
-        if not self.worker_id:
-            raise WorkerProtocolError("worker_id must not be empty")
-        if not self.target_id:
-            raise WorkerProtocolError("target_id must not be empty")
+        object.__setattr__(
+            self,
+            "worker_id",
+            _validate_worker_non_empty_string("worker drain plan", "worker_id", self.worker_id),
+        )
+        object.__setattr__(
+            self,
+            "target_id",
+            _validate_worker_non_empty_string("worker drain plan", "target_id", self.target_id),
+        )
         if self.worker_state != "draining":
             raise WorkerProtocolError("worker drain plan state must be draining")
-        if self.drain_started_at_unix_ms < 0:
-            raise WorkerProtocolError("drain_started_at_unix_ms must not be negative")
-        object.__setattr__(self, "decisions", tuple(self.decisions))
+        if not isinstance(self.admission_closed, bool):
+            raise WorkerProtocolError("worker drain plan admission_closed must be a boolean")
+        object.__setattr__(
+            self,
+            "drain_started_at_unix_ms",
+            _validate_worker_non_negative_integer(
+                "worker drain plan",
+                "drain_started_at_unix_ms",
+                self.drain_started_at_unix_ms,
+            ),
+        )
+        try:
+            decisions = tuple(self.decisions)
+        except TypeError as error:
+            raise WorkerProtocolError("worker drain plan decisions must be iterable") from error
+        if any(not isinstance(decision, WorkerDrainDecision) for decision in decisions):
+            raise WorkerProtocolError("worker drain plan decisions must be WorkerDrainDecision")
+        object.__setattr__(self, "decisions", decisions)
 
     @classmethod
     def for_worker(
@@ -947,17 +1034,19 @@ class WorkerDrainPlan:
     def from_wire(cls, payload: dict[str, object]) -> WorkerDrainPlan:
         decisions = payload.get("decisions", [])
         if not isinstance(decisions, list):
-            decisions = []
+            raise WorkerProtocolError("worker drain plan decisions must be a list")
+        for decision in decisions:
+            if not isinstance(decision, dict):
+                raise WorkerProtocolError("worker drain plan decisions must be mappings")
         return cls(
-            worker_id=str(payload["workerId"]),
-            target_id=str(payload["targetId"]),
-            worker_state=str(payload.get("workerState", "draining")),
-            admission_closed=bool(payload.get("admissionClosed", True)),
-            drain_started_at_unix_ms=int(payload["drainStartedAtUnixMs"]),
+            worker_id=payload["workerId"],
+            target_id=payload["targetId"],
+            worker_state=payload.get("workerState", "draining"),
+            admission_closed=payload.get("admissionClosed", True),
+            drain_started_at_unix_ms=payload["drainStartedAtUnixMs"],
             decisions=tuple(
                 WorkerDrainDecision.from_wire(decision)
                 for decision in decisions
-                if isinstance(decision, dict)
             ),
         )
 
