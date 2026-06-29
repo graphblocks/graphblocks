@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from graphblocks.output_policy import OutputCutoff
+    from graphblocks.tools import ToolResult
 
 
 DeliveryGuarantee = Literal["best_effort", "at_most_once", "at_least_once"]
@@ -480,6 +481,35 @@ class DurableToolTerminalRecord:
     idempotency_key: str | None = None
     effect_committed: bool = False
     durable_result_committed: bool = False
+
+    @classmethod
+    def from_tool_result(
+        cls,
+        result: ToolResult,
+        *,
+        run_id: str,
+        response_id: str,
+        revision: int,
+        arguments_digest: str,
+        completed_at_unix_ms: int,
+        idempotency_key: str | None = None,
+        durable_result_committed: bool = False,
+    ) -> DurableToolTerminalRecord:
+        if result.status not in VALID_DURABLE_TOOL_TERMINAL_STATES:
+            raise ToolTerminalStoreError(f"invalid tool result status {result.status!r}")
+        return cls(
+            run_id=run_id,
+            response_id=response_id,
+            tool_call_id=result.tool_call_id,
+            revision=revision,
+            terminal_state=result.status,
+            arguments_digest=arguments_digest,
+            completed_at_unix_ms=completed_at_unix_ms,
+            output_digest=result.output_digest,
+            idempotency_key=idempotency_key,
+            effect_committed=result.effect_was_committed(),
+            durable_result_committed=durable_result_committed,
+        )
 
     def __post_init__(self) -> None:
         if not self.run_id.strip():

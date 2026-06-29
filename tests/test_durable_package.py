@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from graphblocks import ContentPart, ToolResult
 from graphblocks.packages import load_package_catalog, package_rows
 
 
@@ -298,6 +299,75 @@ def test_durable_tool_terminal_store_replays_incomplete_terminal_record(monkeypa
     assert replayed.record == committed.record
     assert replayed.replayed is True
     assert store.tool_terminal_count() == 1
+
+
+def test_durable_tool_terminal_record_projects_completed_tool_result(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    result = ToolResult.completed(
+        "call-2",
+        (ContentPart(kind="text", text="created"),),
+        started_at="2026-06-23T00:00:00Z",
+        completed_at="2026-06-23T00:00:01Z",
+    ).with_effect_outcome("committed")
+
+    record = graphblocks_durable.DurableToolTerminalRecord.from_tool_result(
+        result,
+        run_id="run-000001",
+        response_id="response-1",
+        revision=1,
+        arguments_digest="sha256:arguments-2",
+        completed_at_unix_ms=1_820_000_000_100,
+        idempotency_key="ticket-create:call-2",
+        durable_result_committed=True,
+    )
+
+    assert record.tool_call_id == "call-2"
+    assert record.terminal_state == "completed"
+    assert record.output_digest == result.output_digest
+    assert record.idempotency_key == "ticket-create:call-2"
+    assert record.effect_committed is True
+    assert record.durable_result_committed is True
+
+    store = graphblocks_durable.InMemoryDurableToolTerminalStore()
+    committed = store.record_tool_terminal(record)
+    assert committed.sequence == 1
+    assert committed.record == record
+
+
+def test_durable_tool_terminal_record_projects_policy_stopped_effect(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+    result = ToolResult.policy_stopped(
+        "call-3",
+        error={"code": "policy.denied", "message": "tool output was stopped after commit"},
+        started_at="2026-06-23T00:00:00Z",
+        completed_at="2026-06-23T00:00:01Z",
+    ).with_effect_outcome("committed")
+
+    record = graphblocks_durable.DurableToolTerminalRecord.from_tool_result(
+        result,
+        run_id="run-000001",
+        response_id="response-2",
+        revision=1,
+        arguments_digest="sha256:arguments-3",
+        completed_at_unix_ms=1_820_000_000_200,
+    )
+
+    assert record.terminal_state == "policy_stopped"
+    assert record.output_digest is None
+    assert record.effect_committed is True
+    assert record.durable_result_committed is False
+
+    store = graphblocks_durable.InMemoryDurableToolTerminalStore()
+    store.record_response_policy_stopped(
+        "response-2",
+        "decision-abort",
+        last_policy_accepted_sequence=7,
+        occurred_at_unix_ms=1_820_000_000_300,
+    )
+    committed = store.record_tool_terminal(record)
+    assert committed.record.terminal_state == "policy_stopped"
+    assert committed.record.effect_committed is True
+    assert committed.record.durable_result_committed is False
 
 
 def test_durable_tool_terminal_store_rejects_terminal_replay_mutation(monkeypatch) -> None:
