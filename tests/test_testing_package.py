@@ -151,6 +151,23 @@ def test_testing_package_loads_shared_application_event_tck_cases(monkeypatch) -
     assert "load_application_event_tck_cases" in graphblocks_testing.__all__
 
 
+def test_testing_package_loads_shared_sequence_tck_cases(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    cases = graphblocks_testing.load_sequence_tck_cases(ROOT / "tck" / "sequence" / "cases.json")
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
+
+    assert [case.kind for case in cases] == ["sequence"] * 3
+    assert report.ok
+    assert {result.observed.get("state") for result in report.results if "state" in result.observed} == {
+        "completed",
+        "open",
+    }
+    assert any(result.observed.get("creation_error") == "invalid_capacity" for result in report.results)
+    assert "load_sequence_tck_cases" in graphblocks_testing.__all__
+
+
 def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -270,6 +287,21 @@ def test_testing_package_cli_runs_application_event_tck_suite(monkeypatch, capsy
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
     assert {result["kind"] for result in payload["results"]} == {"application-events"}
+    assert payload["contentDigest"].startswith("sha256:")
+
+
+def test_testing_package_cli_runs_sequence_tck_suite(monkeypatch, capsys) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    exit_code = graphblocks_testing.main(
+        ["run", "sequence", str(ROOT / "tck" / "sequence" / "cases.json"), "--json"]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert {result["kind"] for result in payload["results"]} == {"sequence"}
     assert payload["contentDigest"].startswith("sha256:")
 
 

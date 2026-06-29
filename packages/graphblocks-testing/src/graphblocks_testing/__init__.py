@@ -50,7 +50,7 @@ from graphblocks.runtime import (
 )
 
 
-TckCaseKind = Literal["compiler", "runtime", "schema", "policy", "application-events"]
+TckCaseKind = Literal["compiler", "runtime", "schema", "policy", "application-events", "sequence"]
 TckResultStatus = Literal["passed", "failed"]
 PerformanceThresholdOperator = Literal["at_most", "at_least"]
 MigrationDirection = Literal["upgrade", "downgrade"]
@@ -106,11 +106,15 @@ class TckCase:
     policy_response_id: str = "response-1"
     application_event_operations: tuple[dict[str, object], ...] = field(default_factory=tuple)
     expected_accepted_event_kinds: tuple[str, ...] = field(default_factory=tuple)
+    sequence_capacity: int | None = None
+    sequence_operations: tuple[dict[str, object], ...] = field(default_factory=tuple)
+    expected_sequence_state: str | None = None
+    expected_sequence_creation_error: str | None = None
 
     def __post_init__(self) -> None:
         if not self.case_id.strip():
             raise ValueError("TCK case_id must not be empty")
-        if self.kind not in {"compiler", "runtime", "schema", "policy", "application-events"}:
+        if self.kind not in {"compiler", "runtime", "schema", "policy", "application-events", "sequence"}:
             raise ValueError(f"invalid TCK case kind {self.kind}")
         object.__setattr__(self, "graph", dict(self.graph))
         object.__setattr__(self, "inputs", dict(self.inputs))
@@ -126,11 +130,19 @@ class TckCase:
             tuple(dict(operation) for operation in self.application_event_operations),
         )
         object.__setattr__(self, "expected_accepted_event_kinds", tuple(self.expected_accepted_event_kinds))
+        object.__setattr__(self, "sequence_operations", tuple(dict(operation) for operation in self.sequence_operations))
         if self.kind == "policy":
             if not self.policy_stream_id.strip():
                 raise ValueError("policy TCK stream_id must not be empty")
             if not self.policy_response_id.strip():
                 raise ValueError("policy TCK response_id must not be empty")
+        if self.kind == "sequence":
+            if self.sequence_capacity is None or isinstance(self.sequence_capacity, bool):
+                raise ValueError("sequence TCK case requires integer capacity")
+            if not isinstance(self.sequence_capacity, int):
+                raise ValueError("sequence TCK case requires integer capacity")
+            if self.expected_sequence_state is None and self.expected_sequence_creation_error is None:
+                raise ValueError("sequence TCK case requires expected state or creation error")
         if self.expected_outputs is not None:
             object.__setattr__(self, "expected_outputs", dict(self.expected_outputs))
         if self.expected_terminal_kind is not None and not self.expected_terminal_kind.strip():
@@ -242,6 +254,25 @@ class TckCase:
             kind="application-events",
             application_event_operations=operations,
             expected_accepted_event_kinds=expected_accepted_kinds,
+        )
+
+    @classmethod
+    def sequence(
+        cls,
+        *,
+        case_id: str,
+        capacity: int,
+        operations: tuple[dict[str, object], ...],
+        expected_state: str | None = None,
+        expected_creation_error: str | None = None,
+    ) -> TckCase:
+        return cls(
+            case_id=case_id,
+            kind="sequence",
+            sequence_capacity=capacity,
+            sequence_operations=operations,
+            expected_sequence_state=expected_state,
+            expected_sequence_creation_error=expected_creation_error,
         )
 
 
@@ -1176,6 +1207,46 @@ def load_policy_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     return tuple(cases)
 
 
+def load_sequence_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
+    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(raw_cases, list):
+        raise ValueError("sequence TCK root must be a list")
+    cases: list[TckCase] = []
+    for index, raw_case in enumerate(raw_cases):
+        if not isinstance(raw_case, Mapping):
+            raise ValueError(f"sequence TCK case {index} must be a mapping")
+        case_id = _first_mapping_value(raw_case, "name", "case_id", "caseId")
+        if not isinstance(case_id, str) or not case_id.strip():
+            raise ValueError(f"sequence TCK case {index} requires name")
+        capacity = raw_case.get("capacity")
+        if not isinstance(capacity, int) or isinstance(capacity, bool):
+            raise ValueError(f"sequence TCK case {case_id} requires integer capacity")
+        operations = raw_case.get("operations", [])
+        if not isinstance(operations, list) or not all(isinstance(operation, dict) for operation in operations):
+            raise ValueError(f"sequence TCK case {case_id} operations must be a list of mappings")
+        expected = raw_case.get("expected")
+        if not isinstance(expected, Mapping):
+            raise ValueError(f"sequence TCK case {case_id} requires expected result")
+        expected_state = expected.get("state")
+        if expected_state is not None and (not isinstance(expected_state, str) or not expected_state.strip()):
+            raise ValueError(f"sequence TCK case {case_id} expected state must be a string")
+        expected_creation_error = expected.get("creation_error")
+        if expected_creation_error is not None and (
+            not isinstance(expected_creation_error, str) or not expected_creation_error.strip()
+        ):
+            raise ValueError(f"sequence TCK case {case_id} expected creation_error must be a string")
+        cases.append(
+            TckCase.sequence(
+                case_id=case_id,
+                capacity=capacity,
+                operations=tuple(operations),
+                expected_state=expected_state,
+                expected_creation_error=expected_creation_error,
+            )
+        )
+    return tuple(cases)
+
+
 def load_schema_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(raw_cases, list):
@@ -1278,7 +1349,7 @@ def main(argv: list[str] | None = None) -> int:
     run_parser = subparsers.add_parser("run", help="run a shared TCK fixture")
     run_parser.add_argument(
         "suite",
-        choices=("application-events", "compiler", "runtime", "schema", "policy"),
+        choices=("application-events", "compiler", "runtime", "schema", "policy", "sequence"),
         help="TCK suite kind",
     )
     run_parser.add_argument("path", type=Path, help="cases.json fixture path")
@@ -1327,6 +1398,8 @@ def main(argv: list[str] | None = None) -> int:
             cases = load_runtime_tck_cases(args.path)
         elif args.suite == "schema":
             cases = load_schema_tck_cases(args.path)
+        elif args.suite == "sequence":
+            cases = load_sequence_tck_cases(args.path)
         else:
             cases = load_policy_tck_cases(args.path)
         report = TckRunner(stdlib_registry(), profile=args.profile).run_cases(cases)
@@ -1842,6 +1915,8 @@ class TckRunner:
                 results.append(self._run_policy_case(case))
             elif case.kind == "application-events":
                 results.append(self._run_application_event_case(case))
+            elif case.kind == "sequence":
+                results.append(self._run_sequence_case(case))
             else:
                 results.append(self._run_schema_case(case))
         return TckReport(profile=self.profile, results=tuple(results))
@@ -2275,6 +2350,129 @@ class TckRunner:
             observed=observed,
         )
 
+    def _run_sequence_case(self, case: TckCase) -> TckResult:
+        diagnostics: list[dict[str, str]] = []
+        observed: dict[str, object] = {}
+        capacity = case.sequence_capacity or 0
+        if capacity < 1:
+            observed["creation_error"] = "invalid_capacity"
+            if case.expected_sequence_creation_error != "invalid_capacity":
+                diagnostics.append(
+                    {
+                        "code": "SequenceCreationErrorMismatch",
+                        "message": "sequence creation error did not match expected result",
+                        "path": "$.expected.creation_error",
+                    }
+                )
+            return TckResult(
+                case_id=case.case_id,
+                kind=case.kind,
+                status="passed" if not diagnostics else "failed",
+                diagnostics=tuple(diagnostics),
+                observed=observed,
+            )
+        if case.expected_sequence_creation_error is not None:
+            diagnostics.append(
+                {
+                    "code": "SequenceCreationUnexpectedSuccess",
+                    "message": "sequence TCK case expected a creation error but sequence was created",
+                    "path": "$.expected.creation_error",
+                }
+            )
+
+        state = "open"
+        buffer: list[str] = []
+        for operation_index, operation in enumerate(case.sequence_operations):
+            op = operation.get("op")
+            if op == "send":
+                if "value" not in operation:
+                    diagnostics.append(
+                        {
+                            "code": "SequenceOperationInvalid",
+                            "message": "sequence send operation requires value",
+                            "path": f"$.operations[{operation_index}].value",
+                        }
+                    )
+                    actual = "invalid_operation"
+                elif state != "open":
+                    actual = f"closed_{state}"
+                elif len(buffer) >= capacity:
+                    actual = "full"
+                else:
+                    buffer.append(str(operation["value"]))
+                    actual = "ok"
+                expected = operation.get("expect")
+                if expected is not None and actual != expected:
+                    diagnostics.append(
+                        {
+                            "code": "SequenceSendResultMismatch",
+                            "message": "sequence send result did not match expected result",
+                            "path": f"$.operations[{operation_index}].expect",
+                        }
+                    )
+            elif op == "recv":
+                actual_value = buffer.pop(0) if buffer else None
+                expected_value = operation.get("value")
+                if actual_value != expected_value:
+                    diagnostics.append(
+                        {
+                            "code": "SequenceReceiveValueMismatch",
+                            "message": "sequence receive value did not match expected value",
+                            "path": f"$.operations[{operation_index}].value",
+                        }
+                    )
+            elif op == "complete":
+                if state == "open":
+                    state = "completed"
+                    actual = "ok"
+                else:
+                    actual = f"already_terminal_{state}"
+                expected = operation.get("expect")
+                if expected is not None and actual != expected:
+                    diagnostics.append(
+                        {
+                            "code": "SequenceCompleteResultMismatch",
+                            "message": "sequence complete result did not match expected result",
+                            "path": f"$.operations[{operation_index}].expect",
+                        }
+                    )
+            else:
+                diagnostics.append(
+                    {
+                        "code": "SequenceOperationUnknown",
+                        "message": f"sequence TCK operation {op!r} is not supported",
+                        "path": f"$.operations[{operation_index}].op",
+                    }
+                )
+                continue
+            expected_len = operation.get("len")
+            if expected_len is not None and len(buffer) != expected_len:
+                diagnostics.append(
+                    {
+                        "code": "SequenceLengthMismatch",
+                        "message": "sequence buffer length did not match expected length",
+                        "path": f"$.operations[{operation_index}].len",
+                    }
+                )
+
+        observed["state"] = state
+        observed["len"] = len(buffer)
+        if case.expected_sequence_state is not None and state != case.expected_sequence_state:
+            diagnostics.append(
+                {
+                    "code": "SequenceStateMismatch",
+                    "message": "sequence final state did not match expected state",
+                    "path": "$.expected.state",
+                }
+            )
+        return TckResult(
+            case_id=case.case_id,
+            kind=case.kind,
+            status="passed" if not diagnostics else "failed",
+            diagnostics=tuple(diagnostics),
+            observed=observed,
+        )
+
     def _run_runtime_case(self, case: TckCase) -> TckResult:
         try:
             result = InProcessRuntime(self.registry).run(case.graph, case.inputs)
@@ -2373,6 +2571,7 @@ __all__ = [
     "load_policy_tck_cases",
     "load_runtime_tck_cases",
     "load_schema_tck_cases",
+    "load_sequence_tck_cases",
     "load_tck_suite_manifests",
     "main",
     "migrate_document",
