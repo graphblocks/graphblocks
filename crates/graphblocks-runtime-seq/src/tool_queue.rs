@@ -11,6 +11,9 @@ pub enum SequentialToolQueueError {
         tool_call_id: String,
         status: ToolCallStatus,
     },
+    ToolCallMissingAdmissionTimestamp {
+        tool_call_id: String,
+    },
     RunningCallMismatch {
         expected: String,
         actual: String,
@@ -46,6 +49,13 @@ impl SequentialToolQueue {
                     tool_call_id: planned_call.call.tool_call_id.clone(),
                     status: planned_call.call.status,
                 });
+            }
+            if planned_call.call.admitted_at_unix_ms.is_none() {
+                return Err(
+                    SequentialToolQueueError::ToolCallMissingAdmissionTimestamp {
+                        tool_call_id: planned_call.call.tool_call_id.clone(),
+                    },
+                );
             }
         }
 

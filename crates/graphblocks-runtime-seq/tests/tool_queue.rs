@@ -12,6 +12,9 @@ fn tool_call(tool_call_id: &str, status: ToolCallStatus) -> ToolCall {
         .into_completed_tool_call("resolved-tool-1", 1_000)
         .expect("test arguments are valid JSON");
     call.status = status;
+    if status == ToolCallStatus::Admitted {
+        call.admitted_at_unix_ms = Some(1_100);
+    }
     call
 }
 
@@ -31,6 +34,21 @@ fn sequential_tool_queue_rejects_non_admitted_calls() {
             tool_call_id: "call-1".to_owned(),
             status: ToolCallStatus::Validated,
         }),
+    );
+}
+
+#[test]
+fn sequential_tool_queue_rejects_admitted_calls_without_admission_timestamp() {
+    let mut call = tool_call("call-1", ToolCallStatus::Admitted);
+    call.admitted_at_unix_ms = None;
+
+    assert_eq!(
+        SequentialToolQueue::new("plan-1", "response-1", [ToolPlanCall::new(call)]).map(|_| ()),
+        Err(
+            SequentialToolQueueError::ToolCallMissingAdmissionTimestamp {
+                tool_call_id: "call-1".to_owned(),
+            }
+        ),
     );
 }
 
