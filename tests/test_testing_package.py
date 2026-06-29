@@ -181,6 +181,30 @@ def test_testing_package_loads_shared_application_protocol_tck_cases(monkeypatch
     assert "load_application_protocol_tck_cases" in graphblocks_testing.__all__
 
 
+def test_testing_package_loads_shared_approval_review_tck_cases(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    cases = graphblocks_testing.load_approval_review_tck_cases(
+        ROOT / "tck" / "approval-review" / "cases.json"
+    )
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
+
+    assert [case.kind for case in cases] == ["approval-review"] * 5
+    assert report.ok
+    assert {case.case_id for case in cases} == {
+        "review_request_digest_is_scope_order_invariant",
+        "credentialed_review_completes_required_scope",
+        "changed_review_subject_is_rejected",
+        "invalidated_review_does_not_complete_scope",
+        "missing_reviewer_credential_is_rejected",
+    }
+    assert any(result.observed.get("complete") is True for result in report.results)
+    assert any(result.observed.get("error") == "review_subject_changed" for result in report.results)
+    assert any(result.observed.get("error") == "review_credential_missing" for result in report.results)
+    assert "load_approval_review_tck_cases" in graphblocks_testing.__all__
+
+
 def test_testing_package_loads_shared_sequence_tck_cases(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -399,6 +423,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
     assert tuple(by_suite) == (
         "application-events",
         "application-protocol",
+        "approval-review",
         "budget-race",
         "compiler",
         "conversation",
@@ -438,6 +463,13 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "command_envelope_preserves_metadata_and_payload",
         "event_envelope_accepts_output_cutoff_event",
         "capability_negotiation_intersects_commands_and_events",
+    )
+    assert by_suite["approval-review"].case_ids == (
+        "review_request_digest_is_scope_order_invariant",
+        "credentialed_review_completes_required_scope",
+        "changed_review_subject_is_rejected",
+        "invalidated_review_does_not_complete_scope",
+        "missing_reviewer_credential_is_rejected",
     )
     assert by_suite["conversation"].case_ids == (
         "turn_draft_commits_atomically",
@@ -486,7 +518,7 @@ def test_testing_package_cli_lists_tck_suite_manifests(monkeypatch, capsys) -> N
     assert graphblocks_testing.main(["list", str(ROOT / "tck"), "--json"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload["suiteCount"] == 16
+    assert payload["suiteCount"] == 17
     assert payload["suites"][0]["suite_id"] == "application-events"
     assert payload["suites"][0]["case_count"] == 3
     assert payload["contentDigest"].startswith("sha256:")
@@ -514,6 +546,7 @@ def test_testing_package_cli_checks_tck_suite_coverage(monkeypatch, capsys) -> N
     assert payload["ok"] is True
     assert payload["claim"]["tck_suites"] == [
         "application-events",
+        "approval-review",
         "budget-race",
         "compiler",
         "exhaustion",
@@ -583,6 +616,21 @@ def test_testing_package_cli_runs_application_protocol_tck_suite(monkeypatch, ca
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
     assert {result["kind"] for result in payload["results"]} == {"application-protocol"}
+    assert payload["contentDigest"].startswith("sha256:")
+
+
+def test_testing_package_cli_runs_approval_review_tck_suite(monkeypatch, capsys) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    exit_code = graphblocks_testing.main(
+        ["run", "approval-review", str(ROOT / "tck" / "approval-review" / "cases.json"), "--json"]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert {result["kind"] for result in payload["results"]} == {"approval-review"}
     assert payload["contentDigest"].startswith("sha256:")
 
 
@@ -748,6 +796,7 @@ def test_testing_package_cli_runs_all_supported_tck_suites(monkeypatch, capsys) 
     assert tuple(payload["reports"]) == (
         "application-events",
         "application-protocol",
+        "approval-review",
         "budget-race",
         "compiler",
         "conversation",

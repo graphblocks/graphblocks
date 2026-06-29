@@ -1,0 +1,202 @@
+[
+  {
+    "name": "review_request_digest_is_scope_order_invariant",
+    "kind": "review_digest",
+    "subject": {
+      "resourceId": "candidate-1",
+      "digest": "sha256:subject"
+    },
+    "changedSubject": {
+      "resourceId": "candidate-1",
+      "digest": "sha256:changed"
+    },
+    "requestedBy": {
+      "principalId": "author-1"
+    },
+    "requiredScopes": [
+      "safety",
+      "quality"
+    ],
+    "reorderedScopes": [
+      "quality",
+      "safety"
+    ],
+    "createdAt": "2026-06-24T00:00:00Z",
+    "expected": {
+      "sameDigest": true,
+      "changedDigestDifferent": true,
+      "requiredScopes": [
+        "quality",
+        "safety"
+      ]
+    }
+  },
+  {
+    "name": "credentialed_review_completes_required_scope",
+    "kind": "review_record",
+    "subject": {
+      "resourceId": "candidate-1",
+      "digest": "sha256:subject"
+    },
+    "requestedBy": {
+      "principalId": "author-1"
+    },
+    "requiredScopes": [
+      "quality"
+    ],
+    "createdAt": "2026-06-24T00:00:00Z",
+    "reviewer": {
+      "principalId": "reviewer-1",
+      "roles": [
+        "qa"
+      ]
+    },
+    "credentials": [
+      {
+        "credentialRef": "cred-qa-1",
+        "scopes": [
+          "quality",
+          "safety"
+        ],
+        "issuedAt": "2026-06-24T00:00:00Z"
+      }
+    ],
+    "review": {
+      "reviewId": "review-1",
+      "scope": "quality",
+      "decision": "accept",
+      "comments": [
+        "matches release criteria"
+      ],
+      "createdAt": "2026-06-24T00:05:00Z"
+    },
+    "expected": {
+      "credentialRefs": [
+        "cred-qa-1"
+      ],
+      "completedScopes": [
+        "quality"
+      ],
+      "complete": true,
+      "validForSubject": true
+    }
+  },
+  {
+    "name": "changed_review_subject_is_rejected",
+    "kind": "review_changed_subject",
+    "subject": {
+      "resourceId": "candidate-1",
+      "digest": "sha256:subject"
+    },
+    "changedSubject": {
+      "resourceId": "candidate-1",
+      "digest": "sha256:changed"
+    },
+    "requestedBy": {
+      "principalId": "author-1"
+    },
+    "requiredScopes": [
+      "quality"
+    ],
+    "createdAt": "2026-06-24T00:00:00Z",
+    "reviewer": {
+      "principalId": "reviewer-1"
+    },
+    "credentials": [
+      {
+        "credentialRef": "cred-quality",
+        "scopes": [
+          "quality"
+        ],
+        "issuedAt": "2026-06-24T00:00:00Z"
+      }
+    ],
+    "review": {
+      "reviewId": "review-1",
+      "scope": "quality",
+      "decision": "accept",
+      "createdAt": "2026-06-24T00:05:00Z"
+    },
+    "expected": {
+      "error": "review_subject_changed",
+      "expectedDigest": "sha256:subject",
+      "actualDigest": "sha256:changed"
+    }
+  },
+  {
+    "name": "invalidated_review_does_not_complete_scope",
+    "kind": "review_invalidated",
+    "subject": {
+      "resourceId": "candidate-1",
+      "digest": "sha256:subject"
+    },
+    "requestedBy": {
+      "principalId": "author-1"
+    },
+    "requiredScopes": [
+      "quality"
+    ],
+    "createdAt": "2026-06-24T00:00:00Z",
+    "reviewer": {
+      "principalId": "reviewer-1"
+    },
+    "credentials": [
+      {
+        "credentialRef": "cred-quality",
+        "scopes": [
+          "quality"
+        ],
+        "issuedAt": "2026-06-24T00:00:00Z"
+      }
+    ],
+    "review": {
+      "reviewId": "review-1",
+      "scope": "quality",
+      "decision": "accept",
+      "createdAt": "2026-06-24T00:05:00Z",
+      "invalidatedAt": "2026-06-24T00:07:00Z"
+    },
+    "expected": {
+      "completedScopes": [],
+      "complete": false
+    }
+  },
+  {
+    "name": "missing_reviewer_credential_is_rejected",
+    "kind": "review_missing_credential",
+    "subject": {
+      "resourceId": "candidate-1",
+      "digest": "sha256:subject"
+    },
+    "requestedBy": {
+      "principalId": "author-1"
+    },
+    "requiredScopes": [
+      "security"
+    ],
+    "createdAt": "2026-06-24T00:00:00Z",
+    "reviewer": {
+      "principalId": "reviewer-1"
+    },
+    "credentials": [
+      {
+        "credentialRef": "cred-quality",
+        "scopes": [
+          "quality"
+        ],
+        "issuedAt": "2026-06-24T00:00:00Z"
+      }
+    ],
+    "review": {
+      "reviewId": "review-1",
+      "scope": "security",
+      "decision": "accept",
+      "createdAt": "2026-06-24T00:05:00Z"
+    },
+    "expected": {
+      "error": "review_credential_missing",
+      "reviewerId": "reviewer-1",
+      "scope": "security"
+    }
+  }
+]

@@ -143,6 +143,7 @@ def test_conformance_profile_tck_suites_have_shared_fixture_manifests(monkeypatc
     assert coverage.ok
     assert coverage.claim.tck_suites == (
         "application-events",
+        "approval-review",
         "budget-race",
         "compiler",
         "exhaustion",
@@ -158,6 +159,7 @@ def test_conformance_profile_tck_suites_have_shared_fixture_manifests(monkeypatc
     assert coverage.available_suites == (
         "application-events",
         "application-protocol",
+        "approval-review",
         "budget-race",
         "compiler",
         "conversation",

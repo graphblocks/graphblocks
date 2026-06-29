@@ -65,6 +65,7 @@ spec:
     - exhaustion-policy
     - approval-review-gate
     tck:
+    - approval-review
     - policy
     - usage
     - budget-race

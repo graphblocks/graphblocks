@@ -34,6 +34,7 @@ from graphblocks.conversation import (
     TurnConflictError,
 )
 from graphblocks.documents import create_local_text_revision, chunk_document_by_lines, parse_plain_text_document
+from graphblocks.evaluation import ResourceSnapshotRef
 from graphblocks.budget import (
     BudgetCompletionReserveStateError,
     BudgetExceededError,
@@ -58,7 +59,7 @@ from graphblocks.output_policy import (
     OutputCutoff,
     OutputPolicyDecision,
 )
-from graphblocks.policy import PolicyDecision, ResourceRef as PolicyResourceRef
+from graphblocks.policy import PolicyDecision, PrincipalRef, ResourceRef as PolicyResourceRef
 from graphblocks.plugins import BlockCatalog
 from graphblocks.rag import (
     Answer,
@@ -67,6 +68,15 @@ from graphblocks.rag import (
     ContextPack,
     InMemoryChunkRetriever,
     validate_answer_grounding,
+)
+from graphblocks.review import (
+    InMemoryReviewerCredentialProvider,
+    ReviewCredentialMissingError,
+    ReviewRequest,
+    ReviewScopeNotRequestedError,
+    ReviewSubjectChangedError,
+    ReviewWorkflow,
+    ReviewerCredential,
 )
 from graphblocks.run_store import (
     InMemoryRunStore,
@@ -118,6 +128,7 @@ TckCaseKind = Literal[
     "runtime",
     "schema",
     "policy",
+    "approval-review",
     "application-events",
     "application-protocol",
     "sequence",
@@ -217,6 +228,7 @@ class TckCase:
     tool_lifecycle_fixture: dict[str, object] = field(default_factory=dict)
     tool_execution_fixture: dict[str, object] = field(default_factory=dict)
     usage_fixture: dict[str, object] = field(default_factory=dict)
+    approval_review_fixture: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.case_id.strip():
@@ -226,6 +238,7 @@ class TckCase:
             "runtime",
             "schema",
             "policy",
+            "approval-review",
             "application-events",
             "application-protocol",
             "sequence",
@@ -265,6 +278,7 @@ class TckCase:
         object.__setattr__(self, "tool_lifecycle_fixture", dict(self.tool_lifecycle_fixture))
         object.__setattr__(self, "tool_execution_fixture", dict(self.tool_execution_fixture))
         object.__setattr__(self, "usage_fixture", dict(self.usage_fixture))
+        object.__setattr__(self, "approval_review_fixture", dict(self.approval_review_fixture))
         if self.kind == "policy":
             if not self.policy_stream_id.strip():
                 raise ValueError("policy TCK stream_id must not be empty")
@@ -297,6 +311,8 @@ class TckCase:
             raise ValueError("tool-execution TCK case requires fixture")
         if self.kind == "usage" and not self.usage_fixture:
             raise ValueError("usage TCK case requires fixture")
+        if self.kind == "approval-review" and not self.approval_review_fixture:
+            raise ValueError("approval-review TCK case requires fixture")
         if self.expected_outputs is not None:
             object.__setattr__(self, "expected_outputs", dict(self.expected_outputs))
         if self.expected_terminal_kind is not None and not self.expected_terminal_kind.strip():
@@ -468,6 +484,10 @@ class TckCase:
     @classmethod
     def usage(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
         return cls(case_id=case_id, kind="usage", usage_fixture=fixture)
+
+    @classmethod
+    def approval_review(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
+        return cls(case_id=case_id, kind="approval-review", approval_review_fixture=fixture)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1389,6 +1409,33 @@ def load_application_protocol_tck_cases(path: str | Path) -> tuple[TckCase, ...]
     return tuple(cases)
 
 
+def load_approval_review_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
+    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(raw_cases, list):
+        raise ValueError("approval-review TCK root must be a list")
+    cases: list[TckCase] = []
+    for index, raw_case in enumerate(raw_cases):
+        if not isinstance(raw_case, Mapping):
+            raise ValueError(f"approval-review TCK case {index} must be a mapping")
+        case_id = _first_mapping_value(raw_case, "name", "case_id", "caseId")
+        if not isinstance(case_id, str) or not case_id.strip():
+            raise ValueError(f"approval-review TCK case {index} requires name")
+        case_kind = raw_case.get("kind")
+        if case_kind not in {
+            "review_digest",
+            "review_record",
+            "review_changed_subject",
+            "review_invalidated",
+            "review_missing_credential",
+        }:
+            raise ValueError(f"approval-review TCK case {case_id} has unsupported kind {case_kind!r}")
+        expected = raw_case.get("expected")
+        if not isinstance(expected, Mapping):
+            raise ValueError(f"approval-review TCK case {case_id} requires expected result")
+        cases.append(TckCase.approval_review(case_id=case_id, fixture=dict(raw_case)))
+    return tuple(cases)
+
+
 def load_exhaustion_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(raw_cases, list):
@@ -1772,6 +1819,8 @@ def load_tck_cases_for_suite(suite: str, path: str | Path) -> tuple[TckCase, ...
         return load_application_event_tck_cases(path)
     if suite == "application-protocol":
         return load_application_protocol_tck_cases(path)
+    if suite == "approval-review":
+        return load_approval_review_tck_cases(path)
     if suite == "budget-race":
         return load_budget_race_tck_cases(path)
     if suite == "compiler":
@@ -1820,6 +1869,7 @@ def main(argv: list[str] | None = None) -> int:
         choices=(
             "application-events",
             "application-protocol",
+            "approval-review",
             "compiler",
             "conversation",
             "documents",
@@ -2418,6 +2468,8 @@ class TckRunner:
                 results.append(self._run_application_event_case(case))
             elif case.kind == "application-protocol":
                 results.append(self._run_application_protocol_case(case))
+            elif case.kind == "approval-review":
+                results.append(self._run_approval_review_case(case))
             elif case.kind == "sequence":
                 results.append(self._run_sequence_case(case))
             elif case.kind == "exhaustion":
@@ -2932,6 +2984,304 @@ class TckRunner:
                     {
                         "code": "ApplicationProtocolExpectedMismatch",
                         "message": f"application-protocol observed {key} did not match expected value",
+                        "path": f"$.expected.{key}",
+                    }
+                )
+        return TckResult(
+            case_id=case.case_id,
+            kind=case.kind,
+            status="passed" if not diagnostics else "failed",
+            diagnostics=tuple(diagnostics),
+            observed=observed,
+        )
+
+    def _run_approval_review_case(self, case: TckCase) -> TckResult:
+        diagnostics: list[dict[str, str]] = []
+        fixture = case.approval_review_fixture
+        kind = str(fixture.get("kind", ""))
+        expected = fixture.get("expected", {})
+        if not isinstance(expected, Mapping):
+            expected = {}
+            diagnostics.append(
+                {
+                    "code": "ApprovalReviewExpectedInvalid",
+                    "message": "approval-review TCK expected result must be a mapping",
+                    "path": "$.expected",
+                }
+            )
+
+        observed: dict[str, object] = {}
+        try:
+            subject_mapping = fixture.get("subject")
+            if not isinstance(subject_mapping, Mapping):
+                raise ValueError("approval-review TCK case requires subject")
+            subject = ResourceSnapshotRef(
+                resource_id=str(_first_mapping_value(subject_mapping, "resourceId", "resource_id")),
+                digest=str(subject_mapping.get("digest", "")),
+                resource_kind=(
+                    str(_first_mapping_value(subject_mapping, "resourceKind", "resource_kind"))
+                    if _first_mapping_value(subject_mapping, "resourceKind", "resource_kind") is not None
+                    else None
+                ),
+                uri=str(subject_mapping["uri"]) if subject_mapping.get("uri") is not None else None,
+                metadata=dict(subject_mapping.get("metadata", {}))
+                if isinstance(subject_mapping.get("metadata", {}), Mapping)
+                else {},
+            )
+
+            requested_by_mapping = fixture.get("requestedBy", fixture.get("requested_by", {}))
+            if not isinstance(requested_by_mapping, Mapping):
+                raise ValueError("approval-review TCK case requires requestedBy")
+            requested_by = PrincipalRef(
+                principal_id=str(_first_mapping_value(requested_by_mapping, "principalId", "principal_id")),
+                tenant_id=(
+                    str(_first_mapping_value(requested_by_mapping, "tenantId", "tenant_id"))
+                    if _first_mapping_value(requested_by_mapping, "tenantId", "tenant_id") is not None
+                    else None
+                ),
+                groups=_string_tuple(requested_by_mapping.get("groups")),
+                roles=_string_tuple(requested_by_mapping.get("roles")),
+                attributes=dict(requested_by_mapping.get("attributes", {}))
+                if isinstance(requested_by_mapping.get("attributes", {}), Mapping)
+                else {},
+            )
+            required_scopes = _string_tuple(fixture.get("requiredScopes", fixture.get("required_scopes", ())))
+            request = ReviewRequest(
+                request_id=str(fixture.get("requestId", fixture.get("request_id", "request-1"))),
+                subject=subject,
+                requested_by=requested_by,
+                required_scopes=required_scopes,
+                created_at=str(fixture.get("createdAt", fixture.get("created_at", ""))),
+            )
+
+            if kind == "review_digest":
+                reordered = _string_tuple(fixture.get("reorderedScopes", fixture.get("reordered_scopes", ())))
+                reordered_request = ReviewRequest(
+                    request_id="request-reordered",
+                    subject=subject,
+                    requested_by=requested_by,
+                    required_scopes=reordered,
+                    created_at=str(fixture.get("createdAt", fixture.get("created_at", ""))),
+                )
+                changed_subject_mapping = fixture.get("changedSubject", fixture.get("changed_subject", {}))
+                if not isinstance(changed_subject_mapping, Mapping):
+                    raise ValueError("approval-review digest TCK case requires changedSubject")
+                changed_subject = ResourceSnapshotRef(
+                    resource_id=str(_first_mapping_value(changed_subject_mapping, "resourceId", "resource_id")),
+                    digest=str(changed_subject_mapping.get("digest", "")),
+                    resource_kind=(
+                        str(_first_mapping_value(changed_subject_mapping, "resourceKind", "resource_kind"))
+                        if _first_mapping_value(changed_subject_mapping, "resourceKind", "resource_kind") is not None
+                        else None
+                    ),
+                    uri=(
+                        str(changed_subject_mapping["uri"])
+                        if changed_subject_mapping.get("uri") is not None
+                        else None
+                    ),
+                    metadata=dict(changed_subject_mapping.get("metadata", {}))
+                    if isinstance(changed_subject_mapping.get("metadata", {}), Mapping)
+                    else {},
+                )
+                changed_request = ReviewRequest(
+                    request_id="request-changed",
+                    subject=changed_subject,
+                    requested_by=requested_by,
+                    required_scopes=reordered,
+                    created_at=str(fixture.get("createdAt", fixture.get("created_at", ""))),
+                )
+                observed = {
+                    "sameDigest": request.content_digest() == reordered_request.content_digest(),
+                    "changedDigestDifferent": request.content_digest() != changed_request.content_digest(),
+                    "requiredScopes": list(request.required_scopes),
+                }
+            else:
+                reviewer_mapping = fixture.get("reviewer", {})
+                if not isinstance(reviewer_mapping, Mapping):
+                    raise ValueError("approval-review TCK case requires reviewer")
+                reviewer = PrincipalRef(
+                    principal_id=str(_first_mapping_value(reviewer_mapping, "principalId", "principal_id")),
+                    tenant_id=(
+                        str(_first_mapping_value(reviewer_mapping, "tenantId", "tenant_id"))
+                        if _first_mapping_value(reviewer_mapping, "tenantId", "tenant_id") is not None
+                        else None
+                    ),
+                    groups=_string_tuple(reviewer_mapping.get("groups")),
+                    roles=_string_tuple(reviewer_mapping.get("roles")),
+                    attributes=dict(reviewer_mapping.get("attributes", {}))
+                    if isinstance(reviewer_mapping.get("attributes", {}), Mapping)
+                    else {},
+                )
+                credentials = []
+                raw_credentials = fixture.get("credentials", [])
+                if not isinstance(raw_credentials, list):
+                    raise ValueError("approval-review TCK credentials must be a list")
+                for credential_index, raw_credential in enumerate(raw_credentials):
+                    if not isinstance(raw_credential, Mapping):
+                        raise ValueError(f"approval-review credential {credential_index} must be a mapping")
+                    credential_reviewer_mapping = raw_credential.get("reviewer", reviewer_mapping)
+                    if not isinstance(credential_reviewer_mapping, Mapping):
+                        raise ValueError(f"approval-review credential {credential_index} reviewer must be a mapping")
+                    credential_reviewer = PrincipalRef(
+                        principal_id=str(
+                            _first_mapping_value(credential_reviewer_mapping, "principalId", "principal_id")
+                        ),
+                        tenant_id=(
+                            str(_first_mapping_value(credential_reviewer_mapping, "tenantId", "tenant_id"))
+                            if _first_mapping_value(credential_reviewer_mapping, "tenantId", "tenant_id")
+                            is not None
+                            else None
+                        ),
+                        groups=_string_tuple(credential_reviewer_mapping.get("groups")),
+                        roles=_string_tuple(credential_reviewer_mapping.get("roles")),
+                        attributes=dict(credential_reviewer_mapping.get("attributes", {}))
+                        if isinstance(credential_reviewer_mapping.get("attributes", {}), Mapping)
+                        else {},
+                    )
+                    credentials.append(
+                        ReviewerCredential(
+                            credential_ref=str(
+                                raw_credential.get(
+                                    "credentialRef",
+                                    raw_credential.get("credential_ref", f"credential-{credential_index + 1}"),
+                                )
+                            ),
+                            reviewer=credential_reviewer,
+                            scopes=_string_tuple(raw_credential.get("scopes")),
+                            issued_at=str(raw_credential.get("issuedAt", raw_credential.get("issued_at", ""))),
+                            expires_at=(
+                                str(raw_credential.get("expiresAt", raw_credential.get("expires_at")))
+                                if raw_credential.get("expiresAt", raw_credential.get("expires_at")) is not None
+                                else None
+                            ),
+                            metadata=dict(raw_credential.get("metadata", {}))
+                            if isinstance(raw_credential.get("metadata", {}), Mapping)
+                            else {},
+                        )
+                    )
+                review_mapping = fixture.get("review", {})
+                if not isinstance(review_mapping, Mapping):
+                    raise ValueError("approval-review TCK case requires review")
+                workflow = ReviewWorkflow(request, InMemoryReviewerCredentialProvider(credentials))
+                review_id = str(review_mapping.get("reviewId", review_mapping.get("review_id", "review-1")))
+                scope = str(review_mapping.get("scope", ""))
+                decision = str(review_mapping.get("decision", "accept"))
+                created_at = str(review_mapping.get("createdAt", review_mapping.get("created_at", "")))
+                comments = [str(comment) for comment in review_mapping.get("comments", []) or []]
+                if kind == "review_record":
+                    review = workflow.record_review(
+                        review_id=review_id,
+                        reviewer=reviewer,
+                        scope=scope,
+                        decision=decision,
+                        created_at=created_at,
+                        comments=comments,
+                    )
+                    observed = {
+                        "credentialRefs": list(review.credential_refs),
+                        "completedScopes": list(workflow.completed_scopes()),
+                        "complete": workflow.is_complete(),
+                        "validForSubject": review.is_valid_for(subject),
+                    }
+                elif kind == "review_changed_subject":
+                    changed_subject_mapping = fixture.get("changedSubject", fixture.get("changed_subject", {}))
+                    if not isinstance(changed_subject_mapping, Mapping):
+                        raise ValueError("approval-review changed-subject TCK case requires changedSubject")
+                    changed_subject = ResourceSnapshotRef(
+                        resource_id=str(
+                            _first_mapping_value(changed_subject_mapping, "resourceId", "resource_id")
+                        ),
+                        digest=str(changed_subject_mapping.get("digest", "")),
+                        resource_kind=(
+                            str(_first_mapping_value(changed_subject_mapping, "resourceKind", "resource_kind"))
+                            if _first_mapping_value(changed_subject_mapping, "resourceKind", "resource_kind")
+                            is not None
+                            else None
+                        ),
+                        uri=(
+                            str(changed_subject_mapping["uri"])
+                            if changed_subject_mapping.get("uri") is not None
+                            else None
+                        ),
+                        metadata=dict(changed_subject_mapping.get("metadata", {}))
+                        if isinstance(changed_subject_mapping.get("metadata", {}), Mapping)
+                        else {},
+                    )
+                    try:
+                        workflow.record_review(
+                            review_id=review_id,
+                            reviewer=reviewer,
+                            scope=scope,
+                            decision=decision,
+                            created_at=created_at,
+                            subject=changed_subject,
+                            comments=comments,
+                        )
+                        observed = {"error": None}
+                    except ReviewSubjectChangedError as error:
+                        observed = {
+                            "error": "review_subject_changed",
+                            "expectedDigest": error.expected_digest,
+                            "actualDigest": error.actual_digest,
+                        }
+                elif kind == "review_invalidated":
+                    review = workflow.record_review(
+                        review_id=review_id,
+                        reviewer=reviewer,
+                        scope=scope,
+                        decision=decision,
+                        created_at=created_at,
+                        comments=comments,
+                    )
+                    invalidated_at = review_mapping.get("invalidatedAt", review_mapping.get("invalidated_at"))
+                    if invalidated_at is not None:
+                        workflow = workflow.with_review(review.invalidate(str(invalidated_at)))
+                    observed = {
+                        "completedScopes": list(workflow.completed_scopes()),
+                        "complete": workflow.is_complete(),
+                    }
+                elif kind == "review_missing_credential":
+                    try:
+                        workflow.record_review(
+                            review_id=review_id,
+                            reviewer=reviewer,
+                            scope=scope,
+                            decision=decision,
+                            created_at=created_at,
+                            comments=comments,
+                        )
+                        observed = {"error": None}
+                    except ReviewCredentialMissingError as error:
+                        observed = {
+                            "error": "review_credential_missing",
+                            "reviewerId": error.reviewer.principal_id,
+                            "scope": error.scope,
+                        }
+                    except ReviewScopeNotRequestedError as error:
+                        observed = {"error": "review_scope_not_requested", "scope": error.scope}
+                else:
+                    diagnostics.append(
+                        {
+                            "code": "ApprovalReviewKindUnknown",
+                            "message": f"approval-review TCK kind {kind!r} is not supported",
+                            "path": "$.kind",
+                        }
+                    )
+        except Exception as error:
+            diagnostics.append(
+                {
+                    "code": "ApprovalReviewExecutionError",
+                    "message": str(error),
+                    "path": "$",
+                }
+            )
+
+        for key, expected_value in expected.items():
+            if observed.get(str(key)) != expected_value:
+                diagnostics.append(
+                    {
+                        "code": "ApprovalReviewExpectedMismatch",
+                        "message": f"approval-review observed {key} did not match expected value",
                         "path": f"$.expected.{key}",
                     }
                 )
@@ -5270,6 +5620,7 @@ __all__ = [
     "compile_graph",
     "load_application_event_tck_cases",
     "load_application_protocol_tck_cases",
+    "load_approval_review_tck_cases",
     "load_budget_race_tck_cases",
     "load_compiler_tck_cases",
     "load_conversation_tck_cases",
