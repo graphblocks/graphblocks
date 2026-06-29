@@ -226,6 +226,25 @@ def test_testing_package_loads_shared_conversation_tck_cases(monkeypatch) -> Non
     assert "load_conversation_tck_cases" in graphblocks_testing.__all__
 
 
+def test_testing_package_loads_shared_documents_tck_cases(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    cases = graphblocks_testing.load_documents_tck_cases(ROOT / "tck" / "documents" / "cases.json")
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
+
+    assert [case.kind for case in cases] == ["documents"] * 3
+    assert report.ok
+    assert {case.case_id for case in cases} == {
+        "plain_text_revision_parse_preserves_lineage",
+        "line_chunks_preserve_source_spans_and_acl",
+        "invalid_chunk_size_is_rejected",
+    }
+    assert any(result.observed.get("sourceRefDigestMatches") is True for result in report.results)
+    assert any(result.observed.get("error") == "invalid_max_elements" for result in report.results)
+    assert "load_documents_tck_cases" in graphblocks_testing.__all__
+
+
 def test_testing_package_loads_shared_rag_tck_cases(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -361,6 +380,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "budget-race",
         "compiler",
         "conversation",
+        "documents",
         "exhaustion",
         "policy",
         "rag",
@@ -398,6 +418,11 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "commit_conflict_marks_turn_failed",
         "branch_and_regenerate_preserve_lineage",
     )
+    assert by_suite["documents"].case_ids == (
+        "plain_text_revision_parse_preserves_lineage",
+        "line_chunks_preserve_source_spans_and_acl",
+        "invalid_chunk_size_is_rejected",
+    )
     assert by_suite["tool-lifecycle"].case_ids == (
         "incremental_arguments_do_not_finalize_call",
         "invalid_arguments_denied_before_policy_admission",
@@ -433,7 +458,7 @@ def test_testing_package_cli_lists_tck_suite_manifests(monkeypatch, capsys) -> N
     assert graphblocks_testing.main(["list", str(ROOT / "tck"), "--json"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload["suiteCount"] == 14
+    assert payload["suiteCount"] == 15
     assert payload["suites"][0]["suite_id"] == "application-events"
     assert payload["suites"][0]["case_count"] == 3
     assert payload["contentDigest"].startswith("sha256:")
@@ -618,6 +643,21 @@ def test_testing_package_cli_runs_conversation_tck_suite(monkeypatch, capsys) ->
     assert payload["contentDigest"].startswith("sha256:")
 
 
+def test_testing_package_cli_runs_documents_tck_suite(monkeypatch, capsys) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    exit_code = graphblocks_testing.main(
+        ["run", "documents", str(ROOT / "tck" / "documents" / "cases.json"), "--json"]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert {result["kind"] for result in payload["results"]} == {"documents"}
+    assert payload["contentDigest"].startswith("sha256:")
+
+
 def test_testing_package_cli_runs_tool_execution_tck_suite(monkeypatch, capsys) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -662,6 +702,7 @@ def test_testing_package_cli_runs_all_supported_tck_suites(monkeypatch, capsys) 
         "budget-race",
         "compiler",
         "conversation",
+        "documents",
         "exhaustion",
         "policy",
         "rag",

@@ -45,6 +45,7 @@ spec:
     - application-protocol
     tck:
     - conversation
+    - documents
     - rag
     acceptanceApplications:
     - direct-file-analysis

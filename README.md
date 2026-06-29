@@ -72,6 +72,7 @@ Shared TCK fixtures live under `tck/`:
 - `exhaustion`
 - `budget-race`
 - `conversation`
+- `documents`
 - `rag`
 - `retry`
 - `tool-execution`

@@ -116,6 +116,7 @@ TckCaseKind = Literal[
     "exhaustion",
     "budget-race",
     "conversation",
+    "documents",
     "rag",
     "retry",
     "tool-lifecycle",
@@ -201,6 +202,7 @@ class TckCase:
     exhaustion_fixture: dict[str, object] = field(default_factory=dict)
     budget_race_fixture: dict[str, object] = field(default_factory=dict)
     conversation_fixture: dict[str, object] = field(default_factory=dict)
+    documents_fixture: dict[str, object] = field(default_factory=dict)
     rag_fixture: dict[str, object] = field(default_factory=dict)
     retry_fixture: dict[str, object] = field(default_factory=dict)
     tool_lifecycle_fixture: dict[str, object] = field(default_factory=dict)
@@ -220,6 +222,7 @@ class TckCase:
             "exhaustion",
             "budget-race",
             "conversation",
+            "documents",
             "rag",
             "retry",
             "tool-lifecycle",
@@ -245,6 +248,7 @@ class TckCase:
         object.__setattr__(self, "exhaustion_fixture", dict(self.exhaustion_fixture))
         object.__setattr__(self, "budget_race_fixture", dict(self.budget_race_fixture))
         object.__setattr__(self, "conversation_fixture", dict(self.conversation_fixture))
+        object.__setattr__(self, "documents_fixture", dict(self.documents_fixture))
         object.__setattr__(self, "rag_fixture", dict(self.rag_fixture))
         object.__setattr__(self, "retry_fixture", dict(self.retry_fixture))
         object.__setattr__(self, "tool_lifecycle_fixture", dict(self.tool_lifecycle_fixture))
@@ -268,6 +272,8 @@ class TckCase:
             raise ValueError("budget-race TCK case requires fixture")
         if self.kind == "conversation" and not self.conversation_fixture:
             raise ValueError("conversation TCK case requires fixture")
+        if self.kind == "documents" and not self.documents_fixture:
+            raise ValueError("documents TCK case requires fixture")
         if self.kind == "rag" and not self.rag_fixture:
             raise ValueError("rag TCK case requires fixture")
         if self.kind == "retry" and not self.retry_fixture:
@@ -421,6 +427,10 @@ class TckCase:
     @classmethod
     def conversation(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
         return cls(case_id=case_id, kind="conversation", conversation_fixture=fixture)
+
+    @classmethod
+    def documents(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
+        return cls(case_id=case_id, kind="documents", documents_fixture=fixture)
 
     @classmethod
     def rag(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
@@ -1404,6 +1414,27 @@ def load_conversation_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     return tuple(cases)
 
 
+def load_documents_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
+    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(raw_cases, list):
+        raise ValueError("documents TCK root must be a list")
+    cases: list[TckCase] = []
+    for index, raw_case in enumerate(raw_cases):
+        if not isinstance(raw_case, Mapping):
+            raise ValueError(f"documents TCK case {index} must be a mapping")
+        case_id = _first_mapping_value(raw_case, "name", "case_id", "caseId")
+        if not isinstance(case_id, str) or not case_id.strip():
+            raise ValueError(f"documents TCK case {index} requires name")
+        case_kind = raw_case.get("kind")
+        if case_kind not in {"plain_text_parse", "line_chunks", "invalid_chunk_size"}:
+            raise ValueError(f"documents TCK case {case_id} has unsupported kind {case_kind!r}")
+        expected = raw_case.get("expected")
+        if not isinstance(expected, Mapping):
+            raise ValueError(f"documents TCK case {case_id} requires expected result")
+        cases.append(TckCase.documents(case_id=case_id, fixture=dict(raw_case)))
+    return tuple(cases)
+
+
 def load_rag_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(raw_cases, list):
@@ -1707,6 +1738,8 @@ def load_tck_cases_for_suite(suite: str, path: str | Path) -> tuple[TckCase, ...
         return load_compiler_tck_cases(path)
     if suite == "conversation":
         return load_conversation_tck_cases(path)
+    if suite == "documents":
+        return load_documents_tck_cases(path)
     if suite == "exhaustion":
         return load_exhaustion_tck_cases(path)
     if suite == "policy":
@@ -1748,6 +1781,7 @@ def main(argv: list[str] | None = None) -> int:
             "application-events",
             "compiler",
             "conversation",
+            "documents",
             "runtime",
             "schema",
             "policy",
@@ -2349,6 +2383,8 @@ class TckRunner:
                 results.append(self._run_budget_race_case(case))
             elif case.kind == "conversation":
                 results.append(self._run_conversation_case(case))
+            elif case.kind == "documents":
+                results.append(self._run_documents_case(case))
             elif case.kind == "rag":
                 results.append(self._run_rag_case(case))
             elif case.kind == "retry":
@@ -3414,6 +3450,130 @@ class TckRunner:
                     {
                         "code": "ConversationExpectedMismatch",
                         "message": f"conversation observed {key} did not match expected value",
+                        "path": f"$.expected.{key}",
+                    }
+                )
+        return TckResult(
+            case_id=case.case_id,
+            kind=case.kind,
+            status="passed" if not diagnostics else "failed",
+            diagnostics=tuple(diagnostics),
+            observed=observed,
+        )
+
+    def _run_documents_case(self, case: TckCase) -> TckResult:
+        diagnostics: list[dict[str, str]] = []
+        fixture = case.documents_fixture
+        kind = str(fixture.get("kind", ""))
+        expected = fixture.get("expected", {})
+        if not isinstance(expected, Mapping):
+            expected = {}
+            diagnostics.append(
+                {
+                    "code": "DocumentsExpectedInvalid",
+                    "message": "documents TCK expected result must be a mapping",
+                    "path": "$.expected",
+                }
+            )
+
+        source_uri = str(fixture.get("sourceUri", fixture.get("source_uri", "file:///tmp/document.txt")))
+        text = str(fixture.get("text", ""))
+        observed_at = str(fixture.get("observedAt", fixture.get("observed_at", "2026-06-22T00:00:00Z")))
+        raw_filename = fixture.get("filename")
+        filename = raw_filename if isinstance(raw_filename, str) else None
+        asset, revision = create_local_text_revision(source_uri, text, observed_at, filename=filename)
+        raw_acl = fixture.get("acl")
+        if isinstance(raw_acl, Mapping):
+            revision = replace(revision, acl=dict(raw_acl))
+        document = parse_plain_text_document(asset, revision, text)
+        observed: dict[str, object] = {}
+
+        try:
+            if kind == "plain_text_parse":
+                observed = {
+                    "contentHash": revision.content_hash,
+                    "assetId": asset.asset_id,
+                    "artifactMediaType": revision.artifact.media_type,
+                    "artifactSizeBytes": revision.artifact.size_bytes,
+                    "parserProcessorId": document.parser.get("processor_id"),
+                    "elementTexts": [element.content for element in document.elements],
+                    "elementSpans": [
+                        [element.location.char_start, element.location.char_end]
+                        for element in document.elements
+                    ],
+                    "documentLineageConsistent": (
+                        document.asset_id == asset.asset_id
+                        and document.revision_id == revision.revision_id
+                        and document.document_id == f"doc:{revision.revision_id}"
+                    ),
+                    "assetCurrentRevisionMatches": asset.current_revision_id == revision.revision_id,
+                }
+            elif kind == "line_chunks":
+                max_elements = fixture.get("maxElements", fixture.get("max_elements", 8))
+                if isinstance(max_elements, bool) or not isinstance(max_elements, int):
+                    raise ValueError("documents TCK maxElements must be an integer")
+                chunks = chunk_document_by_lines(document, revision, max_elements=max_elements)
+                observed = {
+                    "chunkTexts": [chunk.text for chunk in chunks],
+                    "chunkSpans": [
+                        [
+                            chunk.source_refs[0].locator.char_start if chunk.source_refs[0].locator else None,
+                            chunk.source_refs[0].locator.char_end if chunk.source_refs[0].locator else None,
+                        ]
+                        for chunk in chunks
+                    ],
+                    "chunkElementCounts": [len(chunk.element_ids) for chunk in chunks],
+                    "sourceRefKinds": [
+                        chunk.source_refs[0].source_kind if chunk.source_refs else None for chunk in chunks
+                    ],
+                    "sourceRefDigestMatches": all(
+                        chunk.source_refs and chunk.source_refs[0].digest == revision.content_hash
+                        for chunk in chunks
+                    ),
+                    "sourceRefLocatorConsistent": all(
+                        chunk.source_refs
+                        and chunk.source_refs[0].locator is not None
+                        and chunk.source_refs[0].locator.asset_id == chunk.asset_id
+                        and chunk.source_refs[0].locator.revision_id == chunk.revision_id
+                        and chunk.source_refs[0].locator.document_id == chunk.document_id
+                        and chunk.source_refs[0].locator.chunk_id == chunk.chunk_id
+                        for chunk in chunks
+                    ),
+                    "chunkAcls": [chunk.acl for chunk in chunks],
+                }
+            elif kind == "invalid_chunk_size":
+                max_elements = fixture.get("maxElements", fixture.get("max_elements", 0))
+                if isinstance(max_elements, bool) or not isinstance(max_elements, int):
+                    raise ValueError("documents TCK maxElements must be an integer")
+                error = None
+                try:
+                    chunk_document_by_lines(document, revision, max_elements=max_elements)
+                except ValueError:
+                    error = "invalid_max_elements"
+                observed = {"error": error}
+            else:
+                diagnostics.append(
+                    {
+                        "code": "DocumentsKindUnknown",
+                        "message": f"documents TCK kind {kind!r} is not supported",
+                        "path": "$.kind",
+                    }
+                )
+        except Exception as error:
+            diagnostics.append(
+                {
+                    "code": "DocumentsExecutionError",
+                    "message": str(error),
+                    "path": "$",
+                }
+            )
+
+        for key, expected_value in expected.items():
+            if observed.get(str(key)) != expected_value:
+                diagnostics.append(
+                    {
+                        "code": "DocumentsExpectedMismatch",
+                        "message": f"documents observed {key} did not match expected value",
                         "path": f"$.expected.{key}",
                     }
                 )
@@ -4898,6 +5058,7 @@ __all__ = [
     "load_budget_race_tck_cases",
     "load_compiler_tck_cases",
     "load_conversation_tck_cases",
+    "load_documents_tck_cases",
     "load_exhaustion_tck_cases",
     "load_policy_tck_cases",
     "load_rag_tck_cases",
