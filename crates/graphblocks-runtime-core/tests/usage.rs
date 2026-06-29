@@ -2,6 +2,7 @@ use graphblocks_runtime_core::usage::{
     InMemoryUsageLedger, SqliteUsageLedger, UsageAmount, UsageConfidence, UsageLedgerError,
     UsageRecord, UsageSource,
 };
+use rusqlite::params;
 use std::{
     fs,
     path::PathBuf,
@@ -349,6 +350,59 @@ fn sqlite_usage_ledger_replays_identical_records_without_double_counting()
     );
     assert_eq!(ledger.records_for_run("run-1")?, vec![record]);
     assert_eq!(ledger.totals_for_run("run-1")?, vec![tokens(12)]);
+    Ok(())
+}
+
+#[test]
+fn sqlite_usage_ledger_enforces_provider_dedupe_for_null_attempt_at_storage_boundary()
+-> Result<(), UsageLedgerError> {
+    let path = sqlite_usage_path("usage-provider-dedupe-index");
+    {
+        let mut ledger = SqliteUsageLedger::open(&path)?;
+        let first = UsageRecord::new(
+            "usage-1",
+            UsageSource::ProviderReported,
+            UsageConfidence::ProviderExact,
+            [tokens(20)],
+            1_000,
+        )
+        .with_run_id("run-1")
+        .with_provider_response_id("resp-1");
+
+        assert_eq!(ledger.append(first.clone())?, first);
+    }
+
+    let connection = rusqlite::Connection::open(&path).expect("usage ledger database opens");
+    let duplicate = connection.execute(
+        "
+        INSERT INTO usage_records (
+            sequence,
+            record_id,
+            source,
+            confidence,
+            amounts_json,
+            occurred_at_unix_ms,
+            run_id,
+            provider_response_id,
+            metadata_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ",
+        params![
+            2_i64,
+            "usage-duplicate",
+            "provider_reported",
+            "provider_exact",
+            r#"[{"amount":"20","dimensions":{},"kind":"model_output_tokens","unit":"tokens"}]"#,
+            1_010_i64,
+            "run-1",
+            "resp-1",
+            "{}",
+        ],
+    );
+
+    assert!(duplicate.is_err());
+    fs::remove_file(path).ok();
     Ok(())
 }
 

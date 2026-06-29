@@ -328,6 +328,16 @@ impl SqliteUsageLedger {
                 CREATE INDEX IF NOT EXISTS usage_records_provider_response
                     ON usage_records(provider_response_id, attempt_id, sequence)
                     WHERE provider_response_id IS NOT NULL AND reconciliation_of IS NULL;
+                CREATE UNIQUE INDEX IF NOT EXISTS usage_records_provider_dedupe_with_attempt
+                    ON usage_records(provider_response_id, attempt_id)
+                    WHERE provider_response_id IS NOT NULL
+                        AND attempt_id IS NOT NULL
+                        AND reconciliation_of IS NULL;
+                CREATE UNIQUE INDEX IF NOT EXISTS usage_records_provider_dedupe_without_attempt
+                    ON usage_records(provider_response_id)
+                    WHERE provider_response_id IS NOT NULL
+                        AND attempt_id IS NULL
+                        AND reconciliation_of IS NULL;
                 ",
             )
             .map_err(usage_storage_error)?;

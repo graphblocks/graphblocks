@@ -204,9 +204,20 @@ class SQLiteUsageLedger:
         )
         self._connection.execute(
             """
-            CREATE UNIQUE INDEX IF NOT EXISTS usage_records_provider_dedupe
+            CREATE UNIQUE INDEX IF NOT EXISTS usage_records_provider_dedupe_with_attempt
             ON usage_records(provider_response_id, attempt_id)
-            WHERE provider_response_id IS NOT NULL AND reconciliation_of IS NULL
+            WHERE provider_response_id IS NOT NULL
+              AND attempt_id IS NOT NULL
+              AND reconciliation_of IS NULL
+            """
+        )
+        self._connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS usage_records_provider_dedupe_without_attempt
+            ON usage_records(provider_response_id)
+            WHERE provider_response_id IS NOT NULL
+              AND attempt_id IS NULL
+              AND reconciliation_of IS NULL
             """
         )
         self._connection.commit()

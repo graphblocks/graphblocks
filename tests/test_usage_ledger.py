@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from decimal import Decimal
+import json
+import sqlite3
 
 import pytest
 
@@ -343,4 +345,57 @@ def test_sqlite_usage_ledger_deduplicates_and_reconciles_late_usage() -> None:
     assert reconciled.metadata == {"tool_call_id": "call-1", "tool_name": "ticket.create"}
     assert ledger.records_for_run("run-1") == [first, reconciled]
     assert ledger.totals_for_run("run-1") == [_tokens("21")]
+    ledger.close()
+
+
+def test_sqlite_usage_ledger_enforces_provider_dedupe_for_null_attempt_at_storage_boundary() -> None:
+    ledger = SQLiteUsageLedger.in_memory()
+    first = UsageRecord(
+        record_id="usage-1",
+        source="provider_reported",
+        confidence="provider_exact",
+        amounts=[_tokens("20")],
+        occurred_at="2026-06-22T00:00:00Z",
+        run_id="run-1",
+        provider_response_id="resp-1",
+    )
+
+    ledger.append(first)
+
+    with pytest.raises(sqlite3.IntegrityError):
+        ledger._connection.execute(
+            """
+            INSERT INTO usage_records (
+              record_id,
+              source,
+              confidence,
+              amounts_json,
+              occurred_at,
+              run_id,
+              provider_response_id,
+              metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "usage-duplicate",
+                "provider_reported",
+                "provider_exact",
+                json.dumps(
+                    [
+                        {
+                            "kind": "model_output_tokens",
+                            "amount": "20",
+                            "unit": "tokens",
+                            "dimensions": {},
+                        }
+                    ],
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                "2026-06-22T00:00:01Z",
+                "run-1",
+                "resp-1",
+                "{}",
+            ),
+        )
     ledger.close()
