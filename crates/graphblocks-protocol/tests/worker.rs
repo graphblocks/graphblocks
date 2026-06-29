@@ -2,10 +2,10 @@ use std::collections::BTreeMap;
 
 use graphblocks_protocol::{
     BlockCapability, RunOwnershipLease, WORKER_PROTOCOL_VERSION, WorkerAdmissionPolicy,
-    WorkerAdvertisement, WorkerInvocationContext, WorkerInvokeRequest, WorkerInvokeResult,
-    WorkerProtocolError, WorkerResultError, WorkerSelectionError, WorkerState, admit_worker,
-    admit_worker_with_policy, evaluate_worker_admission, select_worker_for_block,
-    validate_worker_result,
+    WorkerAdvertisement, WorkerInvocationContext, WorkerInvocationContextError,
+    WorkerInvokeRequest, WorkerInvokeResult, WorkerProtocolError, WorkerResultError,
+    WorkerSelectionError, WorkerState, admit_worker, admit_worker_with_policy,
+    evaluate_worker_admission, select_worker_for_block, validate_worker_result,
 };
 use serde_json::json;
 
@@ -274,7 +274,91 @@ fn worker_invocation_context_round_trips_release_policy_budget_and_trace()
         serde_json::from_value::<WorkerInvokeRequest>(encoded)?,
         request,
     );
+    assert_eq!(request.context.validate(), Ok(()));
     Ok(())
+}
+
+#[test]
+fn worker_invocation_context_validation_rejects_empty_required_fields() {
+    let mut context = WorkerInvocationContext::new("", "rev-1");
+    assert_eq!(
+        context.validate(),
+        Err(WorkerInvocationContextError::EmptyRequiredField {
+            field: "release_id".to_owned(),
+        }),
+    );
+
+    context.release_id = "release-1".to_owned();
+    context.deployment_revision_id.clear();
+    assert_eq!(
+        context.validate(),
+        Err(WorkerInvocationContextError::EmptyRequiredField {
+            field: "deployment_revision_id".to_owned(),
+        }),
+    );
+}
+
+#[test]
+fn worker_invocation_context_validation_rejects_empty_optional_fields() {
+    let mut context = WorkerInvocationContext::new("release-1", "rev-1");
+    context.trace_id = Some(String::new());
+    assert_eq!(
+        context.validate(),
+        Err(WorkerInvocationContextError::EmptyOptionalField {
+            field: "trace_id".to_owned(),
+        }),
+    );
+
+    context.trace_id = Some("trace-1".to_owned());
+    context.policy_snapshot_digest = Some(String::new());
+    assert_eq!(
+        context.validate(),
+        Err(WorkerInvocationContextError::EmptyOptionalField {
+            field: "policy_snapshot_digest".to_owned(),
+        }),
+    );
+}
+
+#[test]
+fn worker_invocation_context_validation_requires_bound_policy_and_budget_pairs() {
+    let mut context = WorkerInvocationContext::new("release-1", "rev-1");
+    context.policy_snapshot_id = Some("policy-snapshot-1".to_owned());
+    assert_eq!(
+        context.validate(),
+        Err(WorkerInvocationContextError::MissingPolicySnapshotDigest),
+    );
+
+    context.policy_snapshot_id = None;
+    context.policy_snapshot_digest = Some("sha256:policy".to_owned());
+    assert_eq!(
+        context.validate(),
+        Err(WorkerInvocationContextError::MissingPolicySnapshotId),
+    );
+
+    context.policy_snapshot_id = Some("policy-snapshot-1".to_owned());
+    context.budget_permit_id = Some("permit-1".to_owned());
+    assert_eq!(
+        context.validate(),
+        Err(WorkerInvocationContextError::MissingBudgetPermitDigest),
+    );
+
+    context.budget_permit_id = None;
+    context.budget_permit_digest = Some("sha256:budget".to_owned());
+    assert_eq!(
+        context.validate(),
+        Err(WorkerInvocationContextError::MissingBudgetPermitId),
+    );
+}
+
+#[test]
+fn worker_invocation_context_validation_rejects_empty_attribute_keys() {
+    let context =
+        WorkerInvocationContext::new("release-1", "rev-1").with_attribute("", "tenant-acme");
+
+    assert_eq!(
+        context.validate(),
+        Err(WorkerInvocationContextError::EmptyAttributeKey),
+    );
 }
 
 #[test]

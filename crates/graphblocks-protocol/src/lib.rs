@@ -360,6 +360,17 @@ pub struct WorkerInvocationContext {
     pub attributes: BTreeMap<String, String>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WorkerInvocationContextError {
+    EmptyRequiredField { field: String },
+    EmptyOptionalField { field: String },
+    MissingPolicySnapshotDigest,
+    MissingPolicySnapshotId,
+    MissingBudgetPermitDigest,
+    MissingBudgetPermitId,
+    EmptyAttributeKey,
+}
+
 impl WorkerInvocationContext {
     pub fn new(release_id: impl Into<String>, deployment_revision_id: impl Into<String>) -> Self {
         Self {
@@ -408,6 +419,77 @@ impl WorkerInvocationContext {
     pub fn with_attribute(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.attributes.insert(key.into(), value.into());
         self
+    }
+
+    pub fn validate(&self) -> Result<(), WorkerInvocationContextError> {
+        if self.release_id.is_empty() {
+            return Err(WorkerInvocationContextError::EmptyRequiredField {
+                field: "release_id".to_owned(),
+            });
+        }
+        if self.deployment_revision_id.is_empty() {
+            return Err(WorkerInvocationContextError::EmptyRequiredField {
+                field: "deployment_revision_id".to_owned(),
+            });
+        }
+        if let Some(trace_id) = &self.trace_id
+            && trace_id.is_empty()
+        {
+            return Err(WorkerInvocationContextError::EmptyOptionalField {
+                field: "trace_id".to_owned(),
+            });
+        }
+        if let Some(parent_span_id) = &self.parent_span_id
+            && parent_span_id.is_empty()
+        {
+            return Err(WorkerInvocationContextError::EmptyOptionalField {
+                field: "parent_span_id".to_owned(),
+            });
+        }
+        if let Some(policy_snapshot_id) = &self.policy_snapshot_id
+            && policy_snapshot_id.is_empty()
+        {
+            return Err(WorkerInvocationContextError::EmptyOptionalField {
+                field: "policy_snapshot_id".to_owned(),
+            });
+        }
+        if let Some(policy_snapshot_digest) = &self.policy_snapshot_digest
+            && policy_snapshot_digest.is_empty()
+        {
+            return Err(WorkerInvocationContextError::EmptyOptionalField {
+                field: "policy_snapshot_digest".to_owned(),
+            });
+        }
+        if let Some(budget_permit_id) = &self.budget_permit_id
+            && budget_permit_id.is_empty()
+        {
+            return Err(WorkerInvocationContextError::EmptyOptionalField {
+                field: "budget_permit_id".to_owned(),
+            });
+        }
+        if let Some(budget_permit_digest) = &self.budget_permit_digest
+            && budget_permit_digest.is_empty()
+        {
+            return Err(WorkerInvocationContextError::EmptyOptionalField {
+                field: "budget_permit_digest".to_owned(),
+            });
+        }
+        match (&self.policy_snapshot_id, &self.policy_snapshot_digest) {
+            (Some(_), Some(_)) | (None, None) => {}
+            (Some(_), None) => {
+                return Err(WorkerInvocationContextError::MissingPolicySnapshotDigest);
+            }
+            (None, Some(_)) => return Err(WorkerInvocationContextError::MissingPolicySnapshotId),
+        }
+        match (&self.budget_permit_id, &self.budget_permit_digest) {
+            (Some(_), Some(_)) | (None, None) => {}
+            (Some(_), None) => return Err(WorkerInvocationContextError::MissingBudgetPermitDigest),
+            (None, Some(_)) => return Err(WorkerInvocationContextError::MissingBudgetPermitId),
+        }
+        if self.attributes.keys().any(|key| key.is_empty()) {
+            return Err(WorkerInvocationContextError::EmptyAttributeKey);
+        }
+        Ok(())
     }
 }
 
