@@ -160,6 +160,27 @@ def test_testing_package_loads_shared_application_event_tck_cases(monkeypatch) -
     assert "load_application_event_tck_cases" in graphblocks_testing.__all__
 
 
+def test_testing_package_loads_shared_application_protocol_tck_cases(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    cases = graphblocks_testing.load_application_protocol_tck_cases(
+        ROOT / "tck" / "application-protocol" / "cases.json"
+    )
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
+
+    assert [case.kind for case in cases] == ["application-protocol"] * 4
+    assert report.ok
+    assert {case.case_id for case in cases} == {
+        "application_protocol_kind_sets_match_contract",
+        "command_envelope_preserves_metadata_and_payload",
+        "event_envelope_accepts_output_cutoff_event",
+        "capability_negotiation_intersects_commands_and_events",
+    }
+    assert any("OutputCutoff" in result.observed.get("events", []) for result in report.results)
+    assert "load_application_protocol_tck_cases" in graphblocks_testing.__all__
+
+
 def test_testing_package_loads_shared_sequence_tck_cases(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -377,6 +398,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
 
     assert tuple(by_suite) == (
         "application-events",
+        "application-protocol",
         "budget-race",
         "compiler",
         "conversation",
@@ -410,6 +432,12 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "output_cutoff_discards_late_commit_for_same_response",
         "output_cutoff_marks_draft_incomplete",
         "tool_result_delta_is_draft_until_completed",
+    )
+    assert by_suite["application-protocol"].case_ids == (
+        "application_protocol_kind_sets_match_contract",
+        "command_envelope_preserves_metadata_and_payload",
+        "event_envelope_accepts_output_cutoff_event",
+        "capability_negotiation_intersects_commands_and_events",
     )
     assert by_suite["conversation"].case_ids == (
         "turn_draft_commits_atomically",
@@ -458,7 +486,7 @@ def test_testing_package_cli_lists_tck_suite_manifests(monkeypatch, capsys) -> N
     assert graphblocks_testing.main(["list", str(ROOT / "tck"), "--json"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload["suiteCount"] == 15
+    assert payload["suiteCount"] == 16
     assert payload["suites"][0]["suite_id"] == "application-events"
     assert payload["suites"][0]["case_count"] == 3
     assert payload["contentDigest"].startswith("sha256:")
@@ -535,6 +563,26 @@ def test_testing_package_cli_runs_application_event_tck_suite(monkeypatch, capsy
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
     assert {result["kind"] for result in payload["results"]} == {"application-events"}
+    assert payload["contentDigest"].startswith("sha256:")
+
+
+def test_testing_package_cli_runs_application_protocol_tck_suite(monkeypatch, capsys) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    exit_code = graphblocks_testing.main(
+        [
+            "run",
+            "application-protocol",
+            str(ROOT / "tck" / "application-protocol" / "cases.json"),
+            "--json",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert {result["kind"] for result in payload["results"]} == {"application-protocol"}
     assert payload["contentDigest"].startswith("sha256:")
 
 
@@ -699,6 +747,7 @@ def test_testing_package_cli_runs_all_supported_tck_suites(monkeypatch, capsys) 
     assert payload["ok"] is True
     assert tuple(payload["reports"]) == (
         "application-events",
+        "application-protocol",
         "budget-race",
         "compiler",
         "conversation",

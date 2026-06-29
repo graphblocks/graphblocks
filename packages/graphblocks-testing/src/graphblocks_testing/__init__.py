@@ -11,9 +11,15 @@ from pathlib import Path
 from typing import Literal
 
 from graphblocks.application_event import (
+    APPLICATION_COMMAND_KINDS,
+    APPLICATION_PROTOCOL_EVENT_KINDS,
+    ApplicationCommand,
+    ApplicationCommandMetadata,
     ApplicationEvent,
     ApplicationEventMetadata,
     ApplicationEventStreamState,
+    ApplicationProtocolEvent,
+    ApplicationProtocolEventMetadata,
 )
 from graphblocks.canonical import canonical_hash
 from graphblocks.compiler import compile_graph
@@ -71,6 +77,7 @@ from graphblocks.run_store import (
     StateConflictError,
 )
 from graphblocks.schema import SchemaId, SchemaIdError
+from graphblocks.server import ApplicationProtocolCapabilities
 from graphblocks.runtime import (
     CancellationToken,
     ExecutionJournal,
@@ -112,6 +119,7 @@ TckCaseKind = Literal[
     "schema",
     "policy",
     "application-events",
+    "application-protocol",
     "sequence",
     "exhaustion",
     "budget-race",
@@ -195,6 +203,7 @@ class TckCase:
     policy_response_id: str = "response-1"
     application_event_operations: tuple[dict[str, object], ...] = field(default_factory=tuple)
     expected_accepted_event_kinds: tuple[str, ...] = field(default_factory=tuple)
+    application_protocol_fixture: dict[str, object] = field(default_factory=dict)
     sequence_capacity: int | None = None
     sequence_operations: tuple[dict[str, object], ...] = field(default_factory=tuple)
     expected_sequence_state: str | None = None
@@ -218,6 +227,7 @@ class TckCase:
             "schema",
             "policy",
             "application-events",
+            "application-protocol",
             "sequence",
             "exhaustion",
             "budget-race",
@@ -244,6 +254,7 @@ class TckCase:
             tuple(dict(operation) for operation in self.application_event_operations),
         )
         object.__setattr__(self, "expected_accepted_event_kinds", tuple(self.expected_accepted_event_kinds))
+        object.__setattr__(self, "application_protocol_fixture", dict(self.application_protocol_fixture))
         object.__setattr__(self, "sequence_operations", tuple(dict(operation) for operation in self.sequence_operations))
         object.__setattr__(self, "exhaustion_fixture", dict(self.exhaustion_fixture))
         object.__setattr__(self, "budget_race_fixture", dict(self.budget_race_fixture))
@@ -266,6 +277,8 @@ class TckCase:
                 raise ValueError("sequence TCK case requires integer capacity")
             if self.expected_sequence_state is None and self.expected_sequence_creation_error is None:
                 raise ValueError("sequence TCK case requires expected state or creation error")
+        if self.kind == "application-protocol" and not self.application_protocol_fixture:
+            raise ValueError("application-protocol TCK case requires fixture")
         if self.kind == "exhaustion" and not self.exhaustion_fixture:
             raise ValueError("exhaustion TCK case requires fixture")
         if self.kind == "budget-race" and not self.budget_race_fixture:
@@ -396,6 +409,10 @@ class TckCase:
             application_event_operations=operations,
             expected_accepted_event_kinds=expected_accepted_kinds,
         )
+
+    @classmethod
+    def application_protocol(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
+        return cls(case_id=case_id, kind="application-protocol", application_protocol_fixture=fixture)
 
     @classmethod
     def sequence(
@@ -1351,6 +1368,27 @@ def load_application_event_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     return tuple(cases)
 
 
+def load_application_protocol_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
+    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(raw_cases, list):
+        raise ValueError("application-protocol TCK root must be a list")
+    cases: list[TckCase] = []
+    for index, raw_case in enumerate(raw_cases):
+        if not isinstance(raw_case, Mapping):
+            raise ValueError(f"application-protocol TCK case {index} must be a mapping")
+        case_id = _first_mapping_value(raw_case, "name", "case_id", "caseId")
+        if not isinstance(case_id, str) or not case_id.strip():
+            raise ValueError(f"application-protocol TCK case {index} requires name")
+        case_kind = raw_case.get("kind")
+        if case_kind not in {"kind_sets", "command_envelope", "event_envelope", "capability_negotiation"}:
+            raise ValueError(f"application-protocol TCK case {case_id} has unsupported kind {case_kind!r}")
+        expected = raw_case.get("expected")
+        if not isinstance(expected, Mapping):
+            raise ValueError(f"application-protocol TCK case {case_id} requires expected result")
+        cases.append(TckCase.application_protocol(case_id=case_id, fixture=dict(raw_case)))
+    return tuple(cases)
+
+
 def load_exhaustion_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(raw_cases, list):
@@ -1732,6 +1770,8 @@ def load_tck_suite_manifests(root: str | Path) -> tuple[TckSuiteManifest, ...]:
 def load_tck_cases_for_suite(suite: str, path: str | Path) -> tuple[TckCase, ...]:
     if suite == "application-events":
         return load_application_event_tck_cases(path)
+    if suite == "application-protocol":
+        return load_application_protocol_tck_cases(path)
     if suite == "budget-race":
         return load_budget_race_tck_cases(path)
     if suite == "compiler":
@@ -1779,6 +1819,7 @@ def main(argv: list[str] | None = None) -> int:
         "suite",
         choices=(
             "application-events",
+            "application-protocol",
             "compiler",
             "conversation",
             "documents",
@@ -2375,6 +2416,8 @@ class TckRunner:
                 results.append(self._run_policy_case(case))
             elif case.kind == "application-events":
                 results.append(self._run_application_event_case(case))
+            elif case.kind == "application-protocol":
+                results.append(self._run_application_protocol_case(case))
             elif case.kind == "sequence":
                 results.append(self._run_sequence_case(case))
             elif case.kind == "exhaustion":
@@ -2727,6 +2770,177 @@ class TckRunner:
             status="passed" if not diagnostics else "failed",
             diagnostics=tuple(diagnostics),
             observed={"accepted_kinds": accepted_kinds},
+        )
+
+    def _run_application_protocol_case(self, case: TckCase) -> TckResult:
+        diagnostics: list[dict[str, str]] = []
+        fixture = case.application_protocol_fixture
+        kind = str(fixture.get("kind", ""))
+        expected = fixture.get("expected", {})
+        if not isinstance(expected, Mapping):
+            expected = {}
+            diagnostics.append(
+                {
+                    "code": "ApplicationProtocolExpectedInvalid",
+                    "message": "application-protocol TCK expected result must be a mapping",
+                    "path": "$.expected",
+                }
+            )
+
+        observed: dict[str, object] = {}
+        try:
+            if kind == "kind_sets":
+                observed = {
+                    "commands": list(APPLICATION_COMMAND_KINDS),
+                    "events": list(APPLICATION_PROTOCOL_EVENT_KINDS),
+                }
+            elif kind == "command_envelope":
+                raw_metadata = fixture.get("metadata", {})
+                if not isinstance(raw_metadata, Mapping):
+                    raise ValueError("application-protocol command metadata must be a mapping")
+                raw_payload = fixture.get("payload", {})
+                if not isinstance(raw_payload, Mapping):
+                    raise ValueError("application-protocol command payload must be a mapping")
+                command = ApplicationCommand.new(
+                    str(fixture.get("commandKind", fixture.get("command_kind", "InvokeGraph"))),
+                    ApplicationCommandMetadata(
+                        command_id=str(raw_metadata.get("commandId", raw_metadata.get("command_id", ""))),
+                        protocol_version=str(
+                            raw_metadata.get("protocolVersion", raw_metadata.get("protocol_version", ""))
+                        ),
+                        run_id=str(raw_metadata.get("runId", raw_metadata.get("run_id", ""))),
+                        turn_id=(
+                            str(raw_metadata["turnId"])
+                            if raw_metadata.get("turnId") is not None
+                            else (
+                                str(raw_metadata["turn_id"])
+                                if raw_metadata.get("turn_id") is not None
+                                else None
+                            )
+                        ),
+                        sequence=int(raw_metadata.get("sequence", 0)),
+                        idempotency_key=(
+                            str(raw_metadata["idempotencyKey"])
+                            if raw_metadata.get("idempotencyKey") is not None
+                            else (
+                                str(raw_metadata["idempotency_key"])
+                                if raw_metadata.get("idempotency_key") is not None
+                                else None
+                            )
+                        ),
+                        issued_at_unix_ms=int(
+                            raw_metadata.get("issuedAtUnixMs", raw_metadata.get("issued_at_unix_ms", 0))
+                        ),
+                    ),
+                    payload=dict(raw_payload),
+                )
+                observed = {
+                    "kind": command.kind,
+                    "commandId": command.metadata.command_id,
+                    "protocolVersion": command.metadata.protocol_version,
+                    "runId": command.metadata.run_id,
+                    "turnId": command.metadata.turn_id,
+                    "sequence": command.metadata.sequence,
+                    "idempotencyKey": command.metadata.idempotency_key,
+                    "payload": dict(command.payload),
+                }
+            elif kind == "event_envelope":
+                raw_metadata = fixture.get("metadata", {})
+                if not isinstance(raw_metadata, Mapping):
+                    raise ValueError("application-protocol event metadata must be a mapping")
+                raw_payload = fixture.get("payload", {})
+                if not isinstance(raw_payload, Mapping):
+                    raise ValueError("application-protocol event payload must be a mapping")
+                event = ApplicationProtocolEvent.new(
+                    str(fixture.get("eventKind", fixture.get("event_kind", "RunStarted"))),
+                    ApplicationProtocolEventMetadata(
+                        event_id=str(raw_metadata.get("eventId", raw_metadata.get("event_id", ""))),
+                        protocol_version=str(
+                            raw_metadata.get("protocolVersion", raw_metadata.get("protocol_version", ""))
+                        ),
+                        run_id=str(raw_metadata.get("runId", raw_metadata.get("run_id", ""))),
+                        turn_id=(
+                            str(raw_metadata["turnId"])
+                            if raw_metadata.get("turnId") is not None
+                            else (
+                                str(raw_metadata["turn_id"])
+                                if raw_metadata.get("turn_id") is not None
+                                else None
+                            )
+                        ),
+                        sequence=int(raw_metadata.get("sequence", 0)),
+                        cursor=(
+                            str(raw_metadata["cursor"]) if raw_metadata.get("cursor") is not None else None
+                        ),
+                        occurred_at_unix_ms=int(
+                            raw_metadata.get("occurredAtUnixMs", raw_metadata.get("occurred_at_unix_ms", 0))
+                        ),
+                    ),
+                    payload=dict(raw_payload),
+                )
+                observed = {
+                    "kind": event.kind,
+                    "eventId": event.metadata.event_id,
+                    "protocolVersion": event.metadata.protocol_version,
+                    "runId": event.metadata.run_id,
+                    "turnId": event.metadata.turn_id,
+                    "sequence": event.metadata.sequence,
+                    "cursor": event.metadata.cursor,
+                    "payload": dict(event.payload),
+                }
+            elif kind == "capability_negotiation":
+                raw_server = fixture.get("server", {})
+                raw_client = fixture.get("client", {})
+                if not isinstance(raw_server, Mapping) or not isinstance(raw_client, Mapping):
+                    raise ValueError("application-protocol capabilities must be mappings")
+                server = ApplicationProtocolCapabilities(
+                    protocol_version=str(raw_server.get("protocolVersion", raw_server.get("protocol_version", ""))),
+                    commands=_string_tuple(raw_server.get("commands")),
+                    events=_string_tuple(raw_server.get("events")),
+                )
+                client = ApplicationProtocolCapabilities(
+                    protocol_version=str(raw_client.get("protocolVersion", raw_client.get("protocol_version", ""))),
+                    commands=_string_tuple(raw_client.get("commands")),
+                    events=_string_tuple(raw_client.get("events")),
+                )
+                negotiated = server.negotiate(client)
+                observed = {
+                    "protocolVersion": negotiated.protocol_version,
+                    "commands": list(negotiated.commands),
+                    "events": list(negotiated.events),
+                }
+            else:
+                diagnostics.append(
+                    {
+                        "code": "ApplicationProtocolKindUnknown",
+                        "message": f"application-protocol TCK kind {kind!r} is not supported",
+                        "path": "$.kind",
+                    }
+                )
+        except Exception as error:
+            diagnostics.append(
+                {
+                    "code": "ApplicationProtocolExecutionError",
+                    "message": str(error),
+                    "path": "$",
+                }
+            )
+
+        for key, expected_value in expected.items():
+            if observed.get(str(key)) != expected_value:
+                diagnostics.append(
+                    {
+                        "code": "ApplicationProtocolExpectedMismatch",
+                        "message": f"application-protocol observed {key} did not match expected value",
+                        "path": f"$.expected.{key}",
+                    }
+                )
+        return TckResult(
+            case_id=case.case_id,
+            kind=case.kind,
+            status="passed" if not diagnostics else "failed",
+            diagnostics=tuple(diagnostics),
+            observed=observed,
         )
 
     def _run_exhaustion_case(self, case: TckCase) -> TckResult:
@@ -5055,6 +5269,7 @@ __all__ = [
     "check_tck_suite_coverage",
     "compile_graph",
     "load_application_event_tck_cases",
+    "load_application_protocol_tck_cases",
     "load_budget_race_tck_cases",
     "load_compiler_tck_cases",
     "load_conversation_tck_cases",

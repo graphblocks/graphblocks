@@ -1177,9 +1177,11 @@ fn application_protocol_event_names_and_envelope_match_client_protocol() {
         ApplicationProtocolEventKind::AssistantDraftStarted.as_str(),
         ApplicationProtocolEventKind::AssistantDraftDelta.as_str(),
         ApplicationProtocolEventKind::AssistantCommitted.as_str(),
+        ApplicationProtocolEventKind::AssistantIncomplete.as_str(),
         ApplicationProtocolEventKind::AssistantRetracted.as_str(),
         ApplicationProtocolEventKind::ToolStarted.as_str(),
         ApplicationProtocolEventKind::ToolCompleted.as_str(),
+        ApplicationProtocolEventKind::ToolCallApprovalRequested.as_str(),
         ApplicationProtocolEventKind::ApprovalRequested.as_str(),
         ApplicationProtocolEventKind::ReviewRequested.as_str(),
         ApplicationProtocolEventKind::BudgetConstrained.as_str(),
@@ -1188,6 +1190,7 @@ fn application_protocol_event_names_and_envelope_match_client_protocol() {
         ApplicationProtocolEventKind::BudgetExtensionGranted.as_str(),
         ApplicationProtocolEventKind::PolicyDecisionRequired.as_str(),
         ApplicationProtocolEventKind::ExecutionDegraded.as_str(),
+        ApplicationProtocolEventKind::OutputCutoff.as_str(),
         ApplicationProtocolEventKind::FilePatchPreview.as_str(),
         ApplicationProtocolEventKind::JobProgress.as_str(),
         ApplicationProtocolEventKind::ArtifactReady.as_str(),
@@ -1205,7 +1208,7 @@ fn application_protocol_event_names_and_envelope_match_client_protocol() {
     .expect("event is valid");
 
     assert_eq!(names[0], "RunStarted");
-    assert_eq!(names[23], "RunCancelled");
+    assert_eq!(names[26], "RunCancelled");
     assert_eq!(event.metadata.event_id, "event-1");
     assert_eq!(event.metadata.protocol_version, "graphblocks.app.v1");
     assert_eq!(event.metadata.cursor.as_deref(), Some("cursor-5"));

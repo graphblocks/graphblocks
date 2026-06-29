@@ -64,6 +64,7 @@ integration package explicitly declares an optional extra.
 Shared TCK fixtures live under `tck/`:
 
 - `application-events`
+- `application-protocol`
 - `compiler`
 - `schema`
 - `runtime`

@@ -44,6 +44,7 @@ spec:
     - conversation
     - application-protocol
     tck:
+    - application-protocol
     - conversation
     - documents
     - rag
