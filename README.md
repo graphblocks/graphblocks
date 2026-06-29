@@ -38,6 +38,8 @@ graphblocks schemas manifest schemas
 ```bash
 graphblocks-tck list tck
 graphblocks-tck check tck --profiles src/graphblocks/data/conformance-profiles.yaml --profile GB-C3-GOVERNED-RUNTIME
+graphblocks-tck run policy tck/policy/cases.json
+graphblocks-tck run-all tck
 ```
 
 ## Runtime
