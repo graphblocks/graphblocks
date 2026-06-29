@@ -139,6 +139,31 @@ fn output_gate_resumes_terminal_cutoff_state() -> Result<(), OutputGateError> {
 }
 
 #[test]
+fn output_gate_turn_id_update_keeps_restored_cutoff_in_sync() -> Result<(), OutputGateError> {
+    let cutoff = OutputCutoff {
+        stream_id: "stream-1".to_owned(),
+        response_id: "response-1".to_owned(),
+        turn_id: Some("turn-original".to_owned()),
+        last_generated_sequence: 2,
+        last_policy_accepted_sequence: 1,
+        last_client_delivered_sequence: 1,
+        terminal_reason: TerminalReason::PolicyDenied,
+        draft_disposition: DraftDisposition::Retract,
+        durable_result: DurableResult::None,
+        policy_decision_id: Some("decision-abort".to_owned()),
+        occurred_at_unix_ms: 1_100,
+    };
+
+    let gate = OutputDeliveryGate::from_cutoff(cutoff)?.with_turn_id("turn-updated");
+
+    assert_eq!(
+        gate.cutoff().and_then(|cutoff| cutoff.turn_id.as_deref()),
+        Some("turn-updated")
+    );
+    Ok(())
+}
+
+#[test]
 fn output_gate_rejects_non_contiguous_generation_sequence() {
     let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
 

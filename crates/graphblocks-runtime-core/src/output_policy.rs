@@ -1100,7 +1100,11 @@ impl OutputDeliveryGate {
     }
 
     pub fn with_turn_id(mut self, turn_id: impl Into<String>) -> Self {
-        self.turn_id = Some(turn_id.into());
+        let turn_id = turn_id.into();
+        self.turn_id = Some(turn_id.clone());
+        if let Some(cutoff) = self.stopped.as_mut() {
+            cutoff.turn_id = Some(turn_id);
+        }
         self
     }
 
