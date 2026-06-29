@@ -48,6 +48,13 @@ FaultKind = Literal[
 ReleaseCandidateGateStatus = Literal["passed", "failed"]
 
 
+def _first_mapping_value(mapping: Mapping[str, object], *keys: str, default: object = None) -> object:
+    for key in keys:
+        if key in mapping:
+            return mapping[key]
+    return default
+
+
 def _string_tuple(value: object) -> tuple[str, ...]:
     if value is None:
         return ()
@@ -867,25 +874,25 @@ def load_compiler_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     for index, raw_case in enumerate(raw_cases):
         if not isinstance(raw_case, Mapping):
             raise ValueError(f"compiler TCK case {index} must be a mapping")
-        case_id = raw_case.get("name")
+        case_id = _first_mapping_value(raw_case, "name", "case_id", "caseId")
         if not isinstance(case_id, str) or not case_id.strip():
             raise ValueError(f"compiler TCK case {index} requires name")
-        graph = raw_case.get("document")
+        graph = _first_mapping_value(raw_case, "document", "graph")
         if not isinstance(graph, dict):
             raise ValueError(f"compiler TCK case {case_id} requires document")
         expected = raw_case.get("expected")
         if not isinstance(expected, Mapping):
             raise ValueError(f"compiler TCK case {case_id} requires expected result")
-        expected_hash = expected.get("graph_hash")
+        expected_hash = _first_mapping_value(expected, "graph_hash", "graphHash")
         if not isinstance(expected_hash, str) or not expected_hash.strip():
             raise ValueError(f"compiler TCK case {case_id} requires expected graph_hash")
-        raw_error_codes = expected.get("error_codes")
+        raw_error_codes = _first_mapping_value(expected, "error_codes", "errorCodes")
         if not isinstance(raw_error_codes, list) or not all(isinstance(code, str) for code in raw_error_codes):
             raise ValueError(f"compiler TCK case {case_id} requires string error_codes")
-        raw_warning_codes = expected.get("warning_codes", [])
+        raw_warning_codes = _first_mapping_value(expected, "warning_codes", "warningCodes", default=[])
         if not isinstance(raw_warning_codes, list) or not all(isinstance(code, str) for code in raw_warning_codes):
             raise ValueError(f"compiler TCK case {case_id} requires string warning_codes")
-        raw_block_catalog = raw_case.get("block_catalog", [])
+        raw_block_catalog = _first_mapping_value(raw_case, "block_catalog", "blockCatalog", default=[])
         if not isinstance(raw_block_catalog, list) or not all(isinstance(block, dict) for block in raw_block_catalog):
             raise ValueError(f"compiler TCK case {case_id} block_catalog must be a list of mappings")
         cases.append(
@@ -910,10 +917,10 @@ def load_runtime_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     for index, raw_case in enumerate(raw_cases):
         if not isinstance(raw_case, Mapping):
             raise ValueError(f"runtime TCK case {index} must be a mapping")
-        case_id = raw_case.get("name")
+        case_id = _first_mapping_value(raw_case, "name", "case_id", "caseId")
         if not isinstance(case_id, str) or not case_id.strip():
             raise ValueError(f"runtime TCK case {index} requires name")
-        graph = raw_case.get("document")
+        graph = _first_mapping_value(raw_case, "document", "graph")
         if not isinstance(graph, dict):
             raise ValueError(f"runtime TCK case {case_id} requires document")
         inputs = raw_case.get("inputs", {})
@@ -922,13 +929,30 @@ def load_runtime_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
         expected = raw_case.get("expected")
         if not isinstance(expected, Mapping):
             raise ValueError(f"runtime TCK case {case_id} requires expected result")
-        expected_status = expected.get("status", "succeeded")
+        expected_status = _first_mapping_value(
+            expected,
+            "status",
+            "expected_status",
+            "expectedStatus",
+            default="succeeded",
+        )
         if not isinstance(expected_status, str) or not expected_status.strip():
             raise ValueError(f"runtime TCK case {case_id} requires expected status")
-        expected_outputs = expected.get("outputs")
+        expected_outputs = _first_mapping_value(
+            expected,
+            "outputs",
+            "expected_outputs",
+            "expectedOutputs",
+        )
         if expected_outputs is not None and not isinstance(expected_outputs, dict):
             raise ValueError(f"runtime TCK case {case_id} expected outputs must be a mapping")
-        expected_terminal_kind = expected.get("terminal_kind")
+        expected_terminal_kind = _first_mapping_value(
+            expected,
+            "terminal_kind",
+            "terminalKind",
+            "expected_terminal_kind",
+            "expectedTerminalKind",
+        )
         if expected_terminal_kind is not None and (
             not isinstance(expected_terminal_kind, str) or not expected_terminal_kind.strip()
         ):

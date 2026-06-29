@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 from pathlib import Path
 
 
@@ -101,6 +102,78 @@ def test_testing_package_loads_shared_runtime_tck_cases_with_terminal_expectatio
         "run_succeeded",
     }
     assert "load_runtime_tck_cases" in graphblocks_testing.__all__
+
+
+def test_testing_package_tck_loaders_accept_camel_case_aliases(monkeypatch, tmp_path) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    compiler_graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "compiler-alias"},
+        "spec": {"nodes": {"source": {"block": "prompt.render@1"}}},
+    }
+    compiler_cases = tmp_path / "compiler.json"
+    compiler_cases.write_text(
+        json.dumps(
+            [
+                {
+                    "caseId": "compiler/alias",
+                    "graph": compiler_graph,
+                    "expected": {
+                        "graphHash": graphblocks_testing.compile_graph(compiler_graph).graph_hash,
+                        "errorCodes": [],
+                        "warningCodes": [],
+                    },
+                    "blockCatalog": [],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    compiler_case = graphblocks_testing.load_compiler_tck_cases(compiler_cases)[0]
+
+    assert compiler_case.case_id == "compiler/alias"
+    assert compiler_case.expected_error_codes == ()
+
+    runtime_cases = tmp_path / "runtime.json"
+    runtime_cases.write_text(
+        json.dumps(
+            [
+                {
+                    "caseId": "runtime/alias",
+                    "graph": {
+                        "apiVersion": "graphblocks.ai/v1alpha3",
+                        "kind": "Graph",
+                        "metadata": {"name": "runtime-alias"},
+                        "spec": {
+                            "nodes": {
+                                "render": {
+                                    "block": "prompt.render@1",
+                                    "config": {"template": "Hi {message.text}"},
+                                    "inputs": {"message": "$input.message"},
+                                    "outputs": {"prompt": "$output.prompt"},
+                                }
+                            }
+                        },
+                    },
+                    "inputs": {"message": {"text": "Ada"}},
+                    "expected": {
+                        "expectedStatus": "succeeded",
+                        "expectedOutputs": {"prompt": "Hi Ada"},
+                        "expectedTerminalKind": "run_succeeded",
+                    },
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    runtime_case = graphblocks_testing.load_runtime_tck_cases(runtime_cases)[0]
+
+    assert runtime_case.case_id == "runtime/alias"
+    assert runtime_case.expected_outputs == {"prompt": "Hi Ada"}
+    assert runtime_case.expected_terminal_kind == "run_succeeded"
 
 
 def test_testing_package_runs_runtime_tck_case_and_reports_output_mismatch(monkeypatch) -> None:
