@@ -1069,6 +1069,53 @@
     }
   },
   {
+    "name": "tool_definition_forbidden_execution_details",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "tool-definition-leaks-execution-details"
+      },
+      "spec": {
+        "nodes": {
+          "model": {
+            "block": "model.generate@1"
+          }
+        },
+        "bindings": {
+          "tools": {
+            "search": {
+              "definition": {
+                "name": "knowledge.search",
+                "description": "Search documentation.",
+                "inputSchema": "schemas/Search@1",
+                "credentials": {
+                  "secretRef": "support-search-token"
+                },
+                "connection": "support-api",
+                "implementation": {
+                  "kind": "remote"
+                }
+              },
+              "implementation": {
+                "kind": "block",
+                "block": "blocks.search"
+              }
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:be644794dbcc686b10361aa08d34adc87510376a1e827cac08c6786b5ac23d19",
+      "error_codes": [
+        "InvalidToolDefinition",
+        "InvalidToolDefinition",
+        "InvalidToolDefinition"
+      ]
+    }
+  },
+  {
     "name": "nonidempotent_tool_retry",
     "document": {
       "apiVersion": "graphblocks.ai/v1alpha3",

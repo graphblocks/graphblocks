@@ -1373,6 +1373,52 @@ fn compile_graph_reports_malformed_tool_definition_identity_fields() {
 }
 
 #[test]
+fn compile_graph_rejects_forbidden_tool_definition_execution_details() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "tool-definition-leaks-execution-details"},
+        "spec": {
+            "bindings": {
+                "tools": {
+                    "search": {
+                        "definition": {
+                            "name": "knowledge.search",
+                            "description": "Search documentation.",
+                            "inputSchema": "schemas/Search@1",
+                            "credentials": {"secretRef": "support-search-token"},
+                            "connection": "support-api",
+                            "implementation": {"kind": "remote"}
+                        },
+                        "implementation": {
+                            "kind": "block",
+                            "block": "blocks.search"
+                        }
+                    }
+                }
+            },
+            "nodes": {
+                "model": {"block": "model.generate@1"}
+            }
+        }
+    });
+    let plan = compile_graph(&graph);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "InvalidToolDefinition",
+            "InvalidToolDefinition",
+            "InvalidToolDefinition"
+        ]
+    );
+}
+
+#[test]
 fn compile_graph_reports_tool_definition_with_invalid_input_schema() {
     let graph = json!({
         "apiVersion": GRAPH_API_VERSION,

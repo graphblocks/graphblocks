@@ -57,6 +57,18 @@ pub struct ResourceSlotDescriptor {
     pub optional: bool,
 }
 
+const FORBIDDEN_TOOL_DEFINITION_FIELDS: [&str; 9] = [
+    "credentials",
+    "credential",
+    "secret",
+    "secrets",
+    "connection",
+    "transport",
+    "providerSdk",
+    "provider_sdk",
+    "implementation",
+];
+
 impl BlockCatalog {
     pub fn from_blocks(blocks: &Value) -> Result<Self, String> {
         let blocks = blocks
@@ -1149,6 +1161,19 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                             "InvalidToolDefinition",
                             "tool definition tags must be a list of non-empty strings",
                             format!("$.spec.bindings.tools.{tool_key}.definition.tags"),
+                        ));
+                    }
+                }
+                for forbidden_field in FORBIDDEN_TOOL_DEFINITION_FIELDS {
+                    if definition.contains_key(forbidden_field) {
+                        diagnostics.push(Diagnostic::error(
+                            "InvalidToolDefinition",
+                            format!(
+                                "tool definition must not contain execution detail {forbidden_field}"
+                            ),
+                            format!(
+                                "$.spec.bindings.tools.{tool_key}.definition.{forbidden_field}"
+                            ),
                         ));
                     }
                 }

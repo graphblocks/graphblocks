@@ -668,6 +668,38 @@ def test_compile_reports_malformed_tool_definition_identity_fields() -> None:
     assert _error_codes(non_string_tag) == ["InvalidToolDefinition"]
 
 
+def test_compile_rejects_forbidden_tool_definition_execution_details() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "tool-definition-leaks-execution-details"},
+        "spec": {
+            "nodes": {"model": {"block": "model.generate@1"}},
+            "bindings": {
+                "tools": {
+                    "search": {
+                        "definition": {
+                            "name": "knowledge.search",
+                            "description": "Search documentation.",
+                            "inputSchema": "schemas/Search@1",
+                            "credentials": {"secretRef": "support-search-token"},
+                            "connection": "support-api",
+                            "implementation": {"kind": "remote"},
+                        },
+                        "implementation": {"kind": "block", "block": "blocks.search"},
+                    }
+                }
+            },
+        },
+    }
+
+    assert _error_codes(graph) == [
+        "InvalidToolDefinition",
+        "InvalidToolDefinition",
+        "InvalidToolDefinition",
+    ]
+
+
 def test_compile_reports_invalid_tool_effect_literals() -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",

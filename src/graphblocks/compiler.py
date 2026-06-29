@@ -53,6 +53,19 @@ VALID_POLICY_ENFORCEMENT_POINTS = frozenset(
         "on_resume",
     }
 )
+FORBIDDEN_TOOL_DEFINITION_FIELDS = frozenset(
+    {
+        "credentials",
+        "credential",
+        "secret",
+        "secrets",
+        "connection",
+        "transport",
+        "providerSdk",
+        "provider_sdk",
+        "implementation",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -676,6 +689,15 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                                 "InvalidToolDefinition",
                                 "tool definition tags must be a list of non-empty strings",
                                 f"$.spec.bindings.tools.{tool_key}.definition.tags",
+                            )
+                        )
+                for forbidden_field in FORBIDDEN_TOOL_DEFINITION_FIELDS:
+                    if forbidden_field in definition:
+                        diagnostics.append(
+                            Diagnostic(
+                                "InvalidToolDefinition",
+                                f"tool definition must not contain execution detail {forbidden_field}",
+                                f"$.spec.bindings.tools.{tool_key}.definition.{forbidden_field}",
                             )
                         )
                 input_schema = definition.get("inputSchema") or definition.get("input_schema")
