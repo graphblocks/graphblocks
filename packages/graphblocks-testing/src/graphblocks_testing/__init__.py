@@ -2817,11 +2817,22 @@ class TckRunner:
                         )
                     update = gate.apply_decision(decision, occurred_at=str(operation.get("occurredAt", "")))
                     actual_deliver = [(chunk.sequence, chunk.text) for chunk in update.deliverable]
-                elif op == "abort_response":
-                    decision = OutputPolicyDecision.abort_response(
-                        str(operation.get("decisionId", "")),
-                        input_digest=str(operation.get("inputDigest", "")),
-                    )
+                elif op in {"abort_response", "abort_turn", "deny_commit"}:
+                    if op == "abort_turn":
+                        decision = OutputPolicyDecision.abort_turn(
+                            str(operation.get("decisionId", "")),
+                            input_digest=str(operation.get("inputDigest", "")),
+                        )
+                    elif op == "deny_commit":
+                        decision = OutputPolicyDecision.deny_commit(
+                            str(operation.get("decisionId", "")),
+                            input_digest=str(operation.get("inputDigest", "")),
+                        )
+                    else:
+                        decision = OutputPolicyDecision.abort_response(
+                            str(operation.get("decisionId", "")),
+                            input_digest=str(operation.get("inputDigest", "")),
+                        )
                     accepted_through = operation.get("acceptedThrough")
                     if accepted_through is not None:
                         decision = decision.with_accepted_through_sequence(int(accepted_through))

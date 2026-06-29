@@ -106,6 +106,105 @@
     }
   },
   {
+    "name": "abort_turn_stops_delivery_and_marks_draft_incomplete",
+    "delivery": {
+      "mode": "immediate_draft"
+    },
+    "operations": [
+      {
+        "op": "chunk",
+        "sequence": 1,
+        "text": "draft before turn abort",
+        "deliver": [
+          {
+            "sequence": 1,
+            "text": "draft before turn abort"
+          }
+        ]
+      },
+      {
+        "op": "abort_turn",
+        "decisionId": "decision-abort-turn",
+        "inputDigest": "sha256:abort-turn",
+        "providerCancellation": "request",
+        "draftDisposition": "mark_incomplete",
+        "pendingToolCalls": "cancel_admitted",
+        "occurredAt": 1100,
+        "cutoff": {
+          "lastGeneratedSequence": 1,
+          "lastPolicyAcceptedSequence": 0,
+          "lastClientDeliveredSequence": 1,
+          "draftDisposition": "mark_incomplete",
+          "policyDecisionId": "decision-abort-turn"
+        }
+      },
+      {
+        "op": "chunk",
+        "sequence": 2,
+        "text": "late",
+        "expectError": "policy_stopped"
+      }
+    ],
+    "expected": {
+      "lastGeneratedSequence": 1,
+      "lastPolicyAcceptedSequence": 0,
+      "lastClientDeliveredSequence": 1,
+      "stopped": true
+    }
+  },
+  {
+    "name": "deny_commit_stops_buffered_candidate_without_delivery",
+    "delivery": {
+      "mode": "buffer_until_commit"
+    },
+    "operations": [
+      {
+        "op": "chunk",
+        "sequence": 1,
+        "text": "unsafe "
+      },
+      {
+        "op": "chunk",
+        "sequence": 2,
+        "text": "answer"
+      },
+      {
+        "op": "allow",
+        "decisionId": "decision-allow-buffer",
+        "acceptedThrough": 2,
+        "inputDigest": "sha256:allow-buffer",
+        "occurredAt": 1000
+      },
+      {
+        "op": "deny_commit",
+        "decisionId": "decision-deny-commit",
+        "inputDigest": "sha256:deny-commit",
+        "draftDisposition": "retract",
+        "pendingToolCalls": "deny",
+        "occurredAt": 1100,
+        "cutoff": {
+          "lastGeneratedSequence": 2,
+          "lastPolicyAcceptedSequence": 2,
+          "lastClientDeliveredSequence": 0,
+          "draftDisposition": "retract",
+          "policyDecisionId": "decision-deny-commit"
+        }
+      },
+      {
+        "op": "chunk",
+        "sequence": 3,
+        "text": "late",
+        "expectError": "policy_stopped"
+      }
+    ],
+    "expected": {
+      "lastGeneratedSequence": 2,
+      "lastPolicyAcceptedSequence": 2,
+      "lastClientDeliveredSequence": 0,
+      "stopped": true
+    }
+  },
+  {
     "name": "bounded_holdback_rejects_byte_overflow",
     "delivery": {
       "mode": "bounded_holdback",

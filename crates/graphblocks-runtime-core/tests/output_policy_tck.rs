@@ -105,11 +105,21 @@ fn run_case(case: &Value) -> Result<(), String> {
                     gate.apply_decision(decision, required_u64(operation, "occurredAt", name)?);
                 assert_update_result(name, operation, result)?;
             }
-            "abort_response" => {
-                let mut decision = OutputPolicyDecision::abort_response(
-                    required_str(operation, "decisionId", name)?,
-                    required_str(operation, "inputDigest", name)?,
-                );
+            "abort_response" | "abort_turn" | "deny_commit" => {
+                let mut decision = match op {
+                    "abort_turn" => OutputPolicyDecision::abort_turn(
+                        required_str(operation, "decisionId", name)?,
+                        required_str(operation, "inputDigest", name)?,
+                    ),
+                    "deny_commit" => OutputPolicyDecision::deny_commit(
+                        required_str(operation, "decisionId", name)?,
+                        required_str(operation, "inputDigest", name)?,
+                    ),
+                    _ => OutputPolicyDecision::abort_response(
+                        required_str(operation, "decisionId", name)?,
+                        required_str(operation, "inputDigest", name)?,
+                    ),
+                };
                 if let Some(accepted_through) = optional_u64(operation, "acceptedThrough") {
                     decision = decision.with_accepted_through_sequence(accepted_through);
                 }
