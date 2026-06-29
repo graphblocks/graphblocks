@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 _NATIVE_EXTENSION_MODULE = "graphblocks_runtime._native"
 _BINDING_CRATE = "graphblocks-python"
 
@@ -106,10 +108,52 @@ else:
         return None
 
 
+def _canonical_json(value: object) -> str:
+    return json.dumps(value, separators=(",", ":"), sort_keys=True)
+
+
+def _json_object_result(result_json: str, label: str) -> dict[str, object]:
+    payload = json.loads(result_json)
+    if not isinstance(payload, dict):
+        raise ValueError(f"{label} must decode to a JSON object")
+    return payload
+
+
+def compile_graph(document: dict[str, object], block_catalog: object | None = None) -> dict[str, object]:
+    block_catalog_json = None if block_catalog is None else _canonical_json(block_catalog)
+    return _json_object_result(
+        compile_graph_json(_canonical_json(document), block_catalog_json),
+        "native compiler result",
+    )
+
+
+def run_stdlib_graph(graph: dict[str, object], inputs: dict[str, object]) -> dict[str, object]:
+    return _json_object_result(
+        run_stdlib_graph_json(_canonical_json(graph), _canonical_json(inputs)),
+        "native stdlib runtime result",
+    )
+
+
+def run_test_graph(
+    graph: dict[str, object],
+    inputs: dict[str, object],
+    node_outputs: dict[str, object],
+) -> dict[str, object]:
+    return _json_object_result(
+        run_test_graph_json(
+            _canonical_json(graph),
+            _canonical_json(inputs),
+            _canonical_json(node_outputs),
+        ),
+        "native test runtime result",
+    )
+
+
 __all__ = [
     "__version__",
     "admit_exhaustion_work_json",
     "binding_version",
+    "compile_graph",
     "compile_graph_json",
     "decide_agent_step_json",
     "evaluate_declarative_output_policy_json",
@@ -118,7 +162,9 @@ __all__ = [
     "native_extension_available",
     "native_extension_status",
     "require_native_extension",
+    "run_stdlib_graph",
     "run_stdlib_graph_json",
+    "run_test_graph",
     "run_test_graph_json",
     "validate_remote_payload_json",
     "validate_worker_advertisement_json",
