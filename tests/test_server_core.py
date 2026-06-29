@@ -354,3 +354,89 @@ def test_server_app_reports_missing_run_events() -> None:
         "ok": False,
         "error": "run events not found for run 'missing-run'",
     }
+
+
+def test_server_app_requires_websocket_upgrade_for_application_stream() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+
+    response = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-stream-1/stream",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+        )
+    )
+
+    assert response.status_code == 426
+    assert response.headers["upgrade"] == "websocket"
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "application stream requires websocket upgrade",
+        "runId": "run-stream-1",
+        "requiredTransport": "websocket",
+    }
+
+
+def test_server_app_serves_application_stream_snapshot_for_existing_run() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "server-stream"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Stream {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "ok"}},
+                    "runId": "run-stream-1",
+                    "responseId": "response-stream-1",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-stream-1/stream",
+            headers={
+                "Authorization": "Bearer token-1",
+                "Connection": "Upgrade",
+                "Upgrade": "websocket",
+            },
+            query={},
+            cookies={},
+        )
+    )
+
+    payload = json.loads(response.body.decode("utf-8"))
+    assert response.status_code == 200
+    assert payload["ok"] is True
+    assert payload["runId"] == "run-stream-1"
+    assert payload["stream"] == {
+        "transport": "websocket",
+        "status": "accepted",
+        "cursor": "run-stream-1:2",
+        "eventCount": 2,
+    }
+    assert [event["kind"] for event in payload["events"]] == ["RunStarted", "RunSucceeded"]
+    assert payload["events"][1]["payload"]["outputs"] == {"prompt": "Stream ok"}

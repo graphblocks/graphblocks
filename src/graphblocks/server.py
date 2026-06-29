@@ -327,6 +327,55 @@ class GraphBlocksServerApp:
                     "events": [dict(event) for event in events],
                 },
             )
+        if route.operation == "application_stream":
+            run_id = route_match.path_params.get("run_id", "")
+            if request.headers.get("upgrade", "").lower() != "websocket" or (
+                "upgrade" not in request.headers.get("connection", "").lower()
+            ):
+                return ServerResponse(
+                    status_code=426,
+                    headers={"content-type": "application/json", "upgrade": "websocket"},
+                    body=json.dumps(
+                        {
+                            "ok": False,
+                            "error": "application stream requires websocket upgrade",
+                            "runId": run_id,
+                            "requiredTransport": "websocket",
+                        },
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ).encode("utf-8"),
+                )
+            events = self._events_by_run_id.get(run_id)
+            if events is None:
+                return ServerResponse.json(
+                    404,
+                    {
+                        "ok": False,
+                        "error": f"application stream not found for run {run_id!r}",
+                    },
+                )
+            last_sequence = 0
+            for event in events:
+                metadata = event.get("metadata")
+                if isinstance(metadata, dict):
+                    sequence = metadata.get("sequence", 0)
+                    if isinstance(sequence, int) and sequence > last_sequence:
+                        last_sequence = sequence
+            return ServerResponse.json(
+                200,
+                {
+                    "ok": True,
+                    "runId": run_id,
+                    "stream": {
+                        "transport": "websocket",
+                        "status": "accepted",
+                        "cursor": f"{run_id}:{last_sequence}",
+                        "eventCount": len(events),
+                    },
+                    "events": [dict(event) for event in events],
+                },
+            )
         if route.operation == "invoke_graph":
             try:
                 payload = json.loads(request.body.decode("utf-8") or "{}")
