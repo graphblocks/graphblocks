@@ -94,10 +94,11 @@ def test_testing_package_loads_shared_runtime_tck_cases_with_terminal_expectatio
     cases = graphblocks_testing.load_runtime_tck_cases(ROOT / "tck" / "runtime" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["runtime"] * 4
+    assert [case.kind for case in cases] == ["runtime"] * 5
     assert {case.case_id for case in cases} >= {
         "control_map_renders_each_item",
         "control_select_treats_null_as_present",
+        "tools_resolve_feeds_scripted_agent",
     }
     assert any(case.expected_terminal_kind == "run_failed" for case in cases)
     assert report.ok

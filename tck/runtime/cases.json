@@ -161,6 +161,93 @@
     }
   },
   {
+    "name": "tools_resolve_feeds_scripted_agent",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "runtime-tool-resolution-agent"
+      },
+      "spec": {
+        "interface": {
+          "inputs": {
+            "messages": "graphblocks.ai/Messages@1"
+          },
+          "outputs": {
+            "candidate": "graphblocks.ai/AssistantCandidate@1"
+          }
+        },
+        "nodes": {
+          "resolve": {
+            "block": "tools.resolve@1",
+            "config": {
+              "effectivePolicySnapshotId": "policy-snapshot-1",
+              "definitions": [
+                {
+                  "name": "knowledge.search",
+                  "description": "Search support documentation.",
+                  "inputSchema": "schemas/SearchRequest@1"
+                }
+              ],
+              "bindings": [
+                {
+                  "bindingId": "binding-search",
+                  "toolName": "knowledge.search",
+                  "implementation": {
+                    "kind": "block",
+                    "block": "knowledge.search@1"
+                  },
+                  "effects": [
+                    "external_read"
+                  ],
+                  "approval": "never",
+                  "idempotency": "not_applicable"
+                }
+              ],
+              "scope": {
+                "principalTools": [
+                  "knowledge.search"
+                ]
+              }
+            }
+          },
+          "agent": {
+            "block": "agent.run@1",
+            "config": {
+              "response": "Tool-aware response."
+            },
+            "inputs": {
+              "messages": "$input.messages",
+              "tools": "resolve.tools"
+            },
+            "outputs": {
+              "candidate": "$output.candidate"
+            }
+          }
+        }
+      }
+    },
+    "inputs": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "Search support docs"
+        }
+      ]
+    },
+    "expected": {
+      "status": "succeeded",
+      "terminal_kind": "run_succeeded",
+      "outputs": {
+        "candidate": {
+          "finishReason": "scripted",
+          "text": "Tool-aware response.",
+          "toolCount": 1
+        }
+      }
+    }
+  },
+  {
     "name": "policy_stopped_turn_rejects_commit",
     "document": {
       "apiVersion": "graphblocks.ai/v1alpha3",
