@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Mapping
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import json
 import math
 from pathlib import Path
@@ -13,6 +13,13 @@ from graphblocks.canonical import canonical_hash
 from graphblocks.compiler import compile_graph
 from graphblocks.loader import load_documents
 from graphblocks.migration import GRAPH_API_VERSION, migrate_document
+from graphblocks.output_policy import (
+    GenerationChunk,
+    OutputDeliveryGate,
+    OutputDeliveryPolicy,
+    OutputGateError,
+    OutputPolicyDecision,
+)
 from graphblocks.plugins import BlockCatalog
 from graphblocks.run_store import (
     InMemoryRunStore,
@@ -36,7 +43,7 @@ from graphblocks.runtime import (
 )
 
 
-TckCaseKind = Literal["compiler", "runtime", "schema"]
+TckCaseKind = Literal["compiler", "runtime", "schema", "policy"]
 TckResultStatus = Literal["passed", "failed"]
 PerformanceThresholdOperator = Literal["at_most", "at_least"]
 MigrationDirection = Literal["upgrade", "downgrade"]
@@ -85,17 +92,30 @@ class TckCase:
     expected_schema_name: str | None = None
     expected_major_version: int | None = None
     expected_error: str | None = None
+    policy_delivery: dict[str, object] = field(default_factory=dict)
+    policy_operations: tuple[dict[str, object], ...] = field(default_factory=tuple)
+    expected_gate_state: dict[str, object] = field(default_factory=dict)
+    policy_stream_id: str = "stream-1"
+    policy_response_id: str = "response-1"
 
     def __post_init__(self) -> None:
         if not self.case_id.strip():
             raise ValueError("TCK case_id must not be empty")
-        if self.kind not in {"compiler", "runtime", "schema"}:
+        if self.kind not in {"compiler", "runtime", "schema", "policy"}:
             raise ValueError(f"invalid TCK case kind {self.kind}")
         object.__setattr__(self, "graph", dict(self.graph))
         object.__setattr__(self, "inputs", dict(self.inputs))
         object.__setattr__(self, "expected_error_codes", tuple(self.expected_error_codes))
         object.__setattr__(self, "expected_warning_codes", tuple(self.expected_warning_codes))
         object.__setattr__(self, "block_catalog", tuple(dict(block) for block in self.block_catalog))
+        object.__setattr__(self, "policy_delivery", dict(self.policy_delivery))
+        object.__setattr__(self, "policy_operations", tuple(dict(operation) for operation in self.policy_operations))
+        object.__setattr__(self, "expected_gate_state", dict(self.expected_gate_state))
+        if self.kind == "policy":
+            if not self.policy_stream_id.strip():
+                raise ValueError("policy TCK stream_id must not be empty")
+            if not self.policy_response_id.strip():
+                raise ValueError("policy TCK response_id must not be empty")
         if self.expected_outputs is not None:
             object.__setattr__(self, "expected_outputs", dict(self.expected_outputs))
         if self.expected_terminal_kind is not None and not self.expected_terminal_kind.strip():
@@ -171,6 +191,27 @@ class TckCase:
             expected_schema_name=expected_schema_name,
             expected_major_version=expected_major_version,
             expected_error=expected_error,
+        )
+
+    @classmethod
+    def policy(
+        cls,
+        *,
+        case_id: str,
+        delivery: dict[str, object],
+        operations: tuple[dict[str, object], ...],
+        expected: dict[str, object],
+        stream_id: str = "stream-1",
+        response_id: str = "response-1",
+    ) -> TckCase:
+        return cls(
+            case_id=case_id,
+            kind="policy",
+            policy_delivery=delivery,
+            policy_operations=operations,
+            expected_gate_state=expected,
+            policy_stream_id=stream_id,
+            policy_response_id=response_id,
         )
 
 
@@ -1038,6 +1079,39 @@ def load_runtime_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     return tuple(cases)
 
 
+def load_policy_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
+    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(raw_cases, list):
+        raise ValueError("policy TCK root must be a list")
+    cases: list[TckCase] = []
+    for index, raw_case in enumerate(raw_cases):
+        if not isinstance(raw_case, Mapping):
+            raise ValueError(f"policy TCK case {index} must be a mapping")
+        case_id = _first_mapping_value(raw_case, "name", "case_id", "caseId")
+        if not isinstance(case_id, str) or not case_id.strip():
+            raise ValueError(f"policy TCK case {index} requires name")
+        delivery = raw_case.get("delivery", {})
+        if not isinstance(delivery, dict):
+            raise ValueError(f"policy TCK case {case_id} delivery must be a mapping")
+        operations = raw_case.get("operations")
+        if not isinstance(operations, list) or not all(isinstance(operation, dict) for operation in operations):
+            raise ValueError(f"policy TCK case {case_id} operations must be a list of mappings")
+        expected = raw_case.get("expected", {})
+        if not isinstance(expected, dict):
+            raise ValueError(f"policy TCK case {case_id} expected result must be a mapping")
+        cases.append(
+            TckCase.policy(
+                case_id=case_id,
+                delivery=delivery,
+                operations=tuple(operations),
+                expected=expected,
+                stream_id=str(raw_case.get("streamId", raw_case.get("stream_id", "stream-1"))),
+                response_id=str(raw_case.get("responseId", raw_case.get("response_id", "response-1"))),
+            )
+        )
+    return tuple(cases)
+
+
 def load_schema_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(raw_cases, list):
@@ -1669,6 +1743,8 @@ class TckRunner:
                 results.append(self._run_compiler_case(case))
             elif case.kind == "runtime":
                 results.append(self._run_runtime_case(case))
+            elif case.kind == "policy":
+                results.append(self._run_policy_case(case))
             else:
                 results.append(self._run_schema_case(case))
         return TckReport(profile=self.profile, results=tuple(results))
@@ -1798,6 +1874,195 @@ class TckRunner:
             observed=observed,
         )
 
+    def _run_policy_case(self, case: TckCase) -> TckResult:
+        diagnostics: list[dict[str, str]] = []
+        delivery = case.policy_delivery
+        mode = delivery.get("mode", "bounded_holdback")
+        if mode == "buffer_until_commit":
+            policy = OutputDeliveryPolicy.buffer_until_commit(on_violation="abort_response")
+        elif mode == "bounded_holdback":
+            policy = OutputDeliveryPolicy.bounded_holdback(on_violation="abort_response")
+        elif mode == "immediate_draft":
+            policy = OutputDeliveryPolicy.immediate_draft(
+                on_violation="abort_response",
+                delivered_draft_disposition="retract",
+            )
+        else:
+            policy = OutputDeliveryPolicy.bounded_holdback(on_violation="abort_response")
+            diagnostics.append(
+                {
+                    "code": "PolicyDeliveryModeUnknown",
+                    "message": f"policy TCK delivery mode {mode!r} is not supported",
+                    "path": "$.delivery.mode",
+                }
+            )
+        for source, target in (
+            ("holdbackMaxTokens", "holdback_max_tokens"),
+            ("holdbackMaxBytes", "holdback_max_bytes"),
+            ("holdbackMaxDurationMs", "holdback_max_duration_ms"),
+        ):
+            value = delivery.get(source)
+            if value is not None:
+                policy = replace(policy, **{target: value})
+        gate = OutputDeliveryGate(case.policy_stream_id, case.policy_response_id, delivery_policy=policy)
+
+        for operation_index, operation in enumerate(case.policy_operations):
+            op = operation.get("op")
+            expected_error = operation.get("expectError")
+            actual_error = None
+            try:
+                if op == "chunk":
+                    result = gate.record_chunk(
+                        GenerationChunk.text(
+                            case.policy_stream_id,
+                            case.policy_response_id,
+                            int(operation.get("sequence", -1)),
+                            str(operation.get("text", "")),
+                        )
+                    )
+                    actual_deliver = [(chunk.sequence, chunk.text) for chunk in result]
+                elif op == "allow":
+                    accepted_through = operation.get("acceptedThrough")
+                    decision = OutputPolicyDecision.allow(
+                        str(operation.get("decisionId", "")),
+                        accepted_through_sequence=int(accepted_through) if accepted_through is not None else None,
+                        input_digest=str(operation.get("inputDigest", "")),
+                    )
+                    update = gate.apply_decision(decision, occurred_at=str(operation.get("occurredAt", "")))
+                    actual_deliver = [(chunk.sequence, chunk.text) for chunk in update.deliverable]
+                elif op == "abort_response":
+                    decision = OutputPolicyDecision.abort_response(
+                        str(operation.get("decisionId", "")),
+                        input_digest=str(operation.get("inputDigest", "")),
+                    )
+                    accepted_through = operation.get("acceptedThrough")
+                    if accepted_through is not None:
+                        decision = decision.with_accepted_through_sequence(int(accepted_through))
+                    provider_cancellation = operation.get("providerCancellation")
+                    if isinstance(provider_cancellation, str):
+                        decision = decision.with_provider_cancellation(provider_cancellation)
+                    draft_disposition = operation.get("draftDisposition")
+                    if isinstance(draft_disposition, str):
+                        decision = decision.with_draft_disposition(draft_disposition)
+                    pending_tool_calls = operation.get("pendingToolCalls")
+                    if isinstance(pending_tool_calls, str):
+                        decision = decision.with_pending_tool_calls(pending_tool_calls)
+                    update = gate.apply_decision(decision, occurred_at=str(operation.get("occurredAt", "")))
+                    actual_deliver = [(chunk.sequence, chunk.text) for chunk in update.deliverable]
+                    expected_cutoff = operation.get("cutoff")
+                    if isinstance(expected_cutoff, Mapping):
+                        if update.cutoff is None:
+                            diagnostics.append(
+                                {
+                                    "code": "PolicyCutoffMissing",
+                                    "message": "policy TCK operation expected an output cutoff",
+                                    "path": f"$.operations[{operation_index}].cutoff",
+                                }
+                            )
+                        else:
+                            cutoff_fields = {
+                                "lastGeneratedSequence": update.cutoff.last_generated_sequence,
+                                "lastPolicyAcceptedSequence": update.cutoff.last_policy_accepted_sequence,
+                                "lastClientDeliveredSequence": update.cutoff.last_client_delivered_sequence,
+                                "draftDisposition": update.cutoff.draft_disposition,
+                                "policyDecisionId": update.cutoff.policy_decision_id,
+                            }
+                            for field_name, actual_value in cutoff_fields.items():
+                                if field_name in expected_cutoff and expected_cutoff[field_name] != actual_value:
+                                    diagnostics.append(
+                                        {
+                                            "code": "PolicyCutoffMismatch",
+                                            "message": "policy TCK cutoff field did not match expected value",
+                                            "path": f"$.operations[{operation_index}].cutoff.{field_name}",
+                                        }
+                                    )
+                elif op == "commit":
+                    result = gate.commit_accepted_output()
+                    actual_deliver = [(chunk.sequence, chunk.text) for chunk in result]
+                else:
+                    diagnostics.append(
+                        {
+                            "code": "PolicyOperationUnknown",
+                            "message": f"policy TCK operation {op!r} is not supported",
+                            "path": f"$.operations[{operation_index}].op",
+                        }
+                    )
+                    continue
+            except (OutputGateError, ValueError) as error:
+                message = str(error)
+                if message == "output gate is policy stopped":
+                    actual_error = "policy_stopped"
+                elif "exceeds" in message and "bytes" in message:
+                    actual_error = "bounded_holdback_bytes"
+                elif "exceeds" in message and "tokens" in message:
+                    actual_error = "bounded_holdback_tokens"
+                elif message.startswith("accepted sequence"):
+                    actual_error = "accepted_sequence_beyond_generated"
+                elif "must be next after" in message:
+                    actual_error = "non_contiguous_sequence"
+                elif "must be greater than" in message:
+                    actual_error = "non_monotonic_sequence"
+                else:
+                    actual_error = type(error).__name__
+                actual_deliver = []
+
+            if expected_error is not None:
+                if actual_error != expected_error:
+                    diagnostics.append(
+                        {
+                            "code": "PolicyExpectedErrorMismatch",
+                            "message": "policy TCK operation error did not match expected error",
+                            "path": f"$.operations[{operation_index}].expectError",
+                        }
+                    )
+                continue
+            if actual_error is not None:
+                diagnostics.append(
+                    {
+                        "code": "PolicyUnexpectedError",
+                        "message": f"policy TCK operation failed with {actual_error}",
+                        "path": f"$.operations[{operation_index}]",
+                    }
+                )
+                continue
+
+            expected_deliver = [
+                (int(chunk.get("sequence", -1)), str(chunk.get("text", "")))
+                for chunk in operation.get("deliver", [])
+                if isinstance(chunk, Mapping)
+            ]
+            if actual_deliver != expected_deliver:
+                diagnostics.append(
+                    {
+                        "code": "PolicyDeliverableMismatch",
+                        "message": "policy TCK delivered chunks did not match expected chunks",
+                        "path": f"$.operations[{operation_index}].deliver",
+                    }
+                )
+
+        observed = {
+            "lastGeneratedSequence": gate.last_generated_sequence,
+            "lastPolicyAcceptedSequence": gate.last_policy_accepted_sequence,
+            "lastClientDeliveredSequence": gate.last_client_delivered_sequence,
+            "stopped": gate.cutoff is not None,
+        }
+        for field_name, expected_value in case.expected_gate_state.items():
+            if observed.get(field_name) != expected_value:
+                diagnostics.append(
+                    {
+                        "code": "PolicyGateStateMismatch",
+                        "message": "policy TCK final gate state did not match expected value",
+                        "path": f"$.expected.{field_name}",
+                    }
+                )
+        return TckResult(
+            case_id=case.case_id,
+            kind=case.kind,
+            status="passed" if not diagnostics else "failed",
+            diagnostics=tuple(diagnostics),
+            observed=observed,
+        )
+
     def _run_runtime_case(self, case: TckCase) -> TckResult:
         try:
             result = InProcessRuntime(self.registry).run(case.graph, case.inputs)
@@ -1892,6 +2157,7 @@ __all__ = [
     "check_tck_suite_coverage",
     "compile_graph",
     "load_compiler_tck_cases",
+    "load_policy_tck_cases",
     "load_runtime_tck_cases",
     "load_schema_tck_cases",
     "load_tck_suite_manifests",

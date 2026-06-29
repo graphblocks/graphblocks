@@ -118,6 +118,20 @@ def test_testing_package_loads_shared_schema_tck_cases(monkeypatch) -> None:
     assert "load_schema_tck_cases" in graphblocks_testing.__all__
 
 
+def test_testing_package_loads_shared_policy_tck_cases(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    cases = graphblocks_testing.load_policy_tck_cases(ROOT / "tck" / "policy" / "cases.json")
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
+
+    assert [case.kind for case in cases] == ["policy"] * 4
+    assert report.ok
+    assert any(result.observed["stopped"] for result in report.results)
+    assert any(result.observed["lastClientDeliveredSequence"] == 2 for result in report.results)
+    assert "load_policy_tck_cases" in graphblocks_testing.__all__
+
+
 def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
