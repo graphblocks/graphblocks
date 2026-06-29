@@ -68,6 +68,13 @@ class RunStreamSnapshot:
         object.__setattr__(self, "events", tuple(self.events))
 
 
+class GraphBlocksHttpError(RuntimeError):
+    def __init__(self, status_code: int, payload: dict[str, object]) -> None:
+        self.status_code = status_code
+        self.payload = deepcopy(payload)
+        super().__init__(f"GraphBlocks HTTP request failed with status {status_code}")
+
+
 @dataclass(slots=True)
 class LocalGraphBlocksClient:
     registry: RuntimeRegistry = field(default_factory=stdlib_registry)
@@ -147,10 +154,7 @@ class HttpGraphBlocksClient:
             method="GET",
         )
         response = (self.transport or urlopen)(request, timeout=self.timeout)
-        payload = json.loads(response.read().decode("utf-8"))
-        if not isinstance(payload, dict):
-            raise ValueError("GraphBlocks health response must be a JSON object")
-        return payload
+        return _read_json_response(response, "GraphBlocks health response")
 
     def cancel_run(self, run_id: str) -> dict[str, object]:
         headers = {"Accept": "application/json"}
@@ -163,10 +167,7 @@ class HttpGraphBlocksClient:
             method="POST",
         )
         response = (self.transport or urlopen)(request, timeout=self.timeout)
-        payload = json.loads(response.read().decode("utf-8"))
-        if not isinstance(payload, dict):
-            raise ValueError("GraphBlocks cancel response must be a JSON object")
-        return payload
+        return _read_json_response(response, "GraphBlocks cancel response")
 
     def run_events(self, run_id: str) -> tuple[ApplicationEvent, ...]:
         headers = {"Accept": "application/json"}
@@ -178,9 +179,7 @@ class HttpGraphBlocksClient:
             method="GET",
         )
         response = (self.transport or urlopen)(request, timeout=self.timeout)
-        payload = json.loads(response.read().decode("utf-8"))
-        if not isinstance(payload, dict):
-            raise ValueError("GraphBlocks run events response must be a JSON object")
+        payload = _read_json_response(response, "GraphBlocks run events response")
         return _application_events_from_payloads(payload.get("events", ()) or ())
 
     def run_stream(self, run_id: str) -> RunStreamSnapshot:
@@ -197,9 +196,7 @@ class HttpGraphBlocksClient:
             method="GET",
         )
         response = (self.transport or urlopen)(request, timeout=self.timeout)
-        payload = json.loads(response.read().decode("utf-8"))
-        if not isinstance(payload, dict):
-            raise ValueError("GraphBlocks run stream response must be a JSON object")
+        payload = _read_json_response(response, "GraphBlocks run stream response")
         stream_payload = payload.get("stream", {}) or {}
         if not isinstance(stream_payload, dict):
             raise ValueError("GraphBlocks run stream metadata must be a JSON object")
@@ -242,9 +239,7 @@ class HttpGraphBlocksClient:
             method="POST",
         )
         response = (self.transport or urlopen)(request, timeout=self.timeout)
-        payload = json.loads(response.read().decode("utf-8"))
-        if not isinstance(payload, dict):
-            raise ValueError("GraphBlocks HTTP response must be a JSON object")
+        payload = _read_json_response(response, "GraphBlocks HTTP response")
 
         events = _application_events_from_payloads(payload.get("events", ()) or ())
 
@@ -258,6 +253,16 @@ class HttpGraphBlocksClient:
             events=tuple(events),
             event_stream=stream_state,
         )
+
+
+def _read_json_response(response: object, label: str) -> dict[str, object]:
+    payload = json.loads(response.read().decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"{label} must be a JSON object")
+    status_code = getattr(response, "status", getattr(response, "status_code", None))
+    if status_code is not None and int(status_code) >= 400:
+        raise GraphBlocksHttpError(int(status_code), payload)
+    return payload
 
 
 def _application_events_from_payloads(event_payloads: object) -> tuple[ApplicationEvent, ...]:
@@ -318,6 +323,7 @@ __all__ = [
     "ApplicationProtocolEvent",
     "ApplicationProtocolEventKind",
     "ApplicationProtocolEventMetadata",
+    "GraphBlocksHttpError",
     "HttpGraphBlocksClient",
     "LocalGraphBlocksClient",
     "RunGraphCommand",
