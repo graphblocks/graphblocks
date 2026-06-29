@@ -31,6 +31,7 @@ spec:
     - application-events
     - runtime
     - sequence
+    - tool-lifecycle
   - id: GB-C2-AI-APPLICATION
     status: normative-profile
     extends:

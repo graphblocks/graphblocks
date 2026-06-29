@@ -42,7 +42,7 @@ from graphblocks.output_policy import (
     OutputCutoff,
     OutputPolicyDecision,
 )
-from graphblocks.policy import ResourceRef as PolicyResourceRef
+from graphblocks.policy import PolicyDecision, ResourceRef as PolicyResourceRef
 from graphblocks.plugins import BlockCatalog
 from graphblocks.run_store import (
     InMemoryRunStore,
@@ -64,7 +64,23 @@ from graphblocks.runtime import (
     SQLiteExecutionJournal,
     stdlib_registry,
 )
-from graphblocks.tools import ToolResult, ToolResultEvent
+from graphblocks.tools import (
+    BlockToolImplementation,
+    JsonSchema,
+    JsonSchemaNode,
+    ToolApprovalRecord,
+    ToolApprovalRequest,
+    ToolBinding,
+    ToolCallDraft,
+    ToolCallError,
+    ToolCatalog,
+    ToolDefinition,
+    ToolResult,
+    ToolResultEvent,
+    ToolResolutionScope,
+    ToolSchemaRegistry,
+    admit_tool_call,
+)
 from graphblocks.usage import InMemoryUsageLedger, UsageRecord
 
 
@@ -77,6 +93,7 @@ TckCaseKind = Literal[
     "sequence",
     "exhaustion",
     "budget-race",
+    "tool-lifecycle",
     "usage",
 ]
 TckResultStatus = Literal["passed", "failed"]
@@ -140,6 +157,7 @@ class TckCase:
     expected_sequence_creation_error: str | None = None
     exhaustion_fixture: dict[str, object] = field(default_factory=dict)
     budget_race_fixture: dict[str, object] = field(default_factory=dict)
+    tool_lifecycle_fixture: dict[str, object] = field(default_factory=dict)
     usage_fixture: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -154,6 +172,7 @@ class TckCase:
             "sequence",
             "exhaustion",
             "budget-race",
+            "tool-lifecycle",
             "usage",
         }:
             raise ValueError(f"invalid TCK case kind {self.kind}")
@@ -174,6 +193,7 @@ class TckCase:
         object.__setattr__(self, "sequence_operations", tuple(dict(operation) for operation in self.sequence_operations))
         object.__setattr__(self, "exhaustion_fixture", dict(self.exhaustion_fixture))
         object.__setattr__(self, "budget_race_fixture", dict(self.budget_race_fixture))
+        object.__setattr__(self, "tool_lifecycle_fixture", dict(self.tool_lifecycle_fixture))
         object.__setattr__(self, "usage_fixture", dict(self.usage_fixture))
         if self.kind == "policy":
             if not self.policy_stream_id.strip():
@@ -191,6 +211,8 @@ class TckCase:
             raise ValueError("exhaustion TCK case requires fixture")
         if self.kind == "budget-race" and not self.budget_race_fixture:
             raise ValueError("budget-race TCK case requires fixture")
+        if self.kind == "tool-lifecycle" and not self.tool_lifecycle_fixture:
+            raise ValueError("tool-lifecycle TCK case requires fixture")
         if self.kind == "usage" and not self.usage_fixture:
             raise ValueError("usage TCK case requires fixture")
         if self.expected_outputs is not None:
@@ -332,6 +354,10 @@ class TckCase:
     @classmethod
     def budget_race(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
         return cls(case_id=case_id, kind="budget-race", budget_race_fixture=fixture)
+
+    @classmethod
+    def tool_lifecycle(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
+        return cls(case_id=case_id, kind="tool-lifecycle", tool_lifecycle_fixture=fixture)
 
     @classmethod
     def usage(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
@@ -1272,6 +1298,31 @@ def load_budget_race_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     return tuple(cases)
 
 
+def load_tool_lifecycle_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
+    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(raw_cases, list):
+        raise ValueError("tool-lifecycle TCK root must be a list")
+    cases: list[TckCase] = []
+    for index, raw_case in enumerate(raw_cases):
+        if not isinstance(raw_case, Mapping):
+            raise ValueError(f"tool-lifecycle TCK case {index} must be a mapping")
+        case_id = _first_mapping_value(raw_case, "name", "case_id", "caseId")
+        if not isinstance(case_id, str) or not case_id.strip():
+            raise ValueError(f"tool-lifecycle TCK case {index} requires name")
+        case_kind = raw_case.get("kind")
+        if case_kind not in {
+            "incremental_arguments",
+            "admission_invalid_arguments",
+            "approval_argument_mutation",
+        }:
+            raise ValueError(f"tool-lifecycle TCK case {case_id} has unsupported kind {case_kind!r}")
+        expected = raw_case.get("expected")
+        if not isinstance(expected, Mapping):
+            raise ValueError(f"tool-lifecycle TCK case {case_id} requires expected result")
+        cases.append(TckCase.tool_lifecycle(case_id=case_id, fixture=dict(raw_case)))
+    return tuple(cases)
+
+
 def load_usage_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(raw_cases, list):
@@ -1471,6 +1522,8 @@ def load_tck_cases_for_suite(suite: str, path: str | Path) -> tuple[TckCase, ...
         return load_schema_tck_cases(path)
     if suite == "sequence":
         return load_sequence_tck_cases(path)
+    if suite == "tool-lifecycle":
+        return load_tool_lifecycle_tck_cases(path)
     if suite == "usage":
         return load_usage_tck_cases(path)
     raise ValueError(f"unsupported TCK suite {suite!r}")
@@ -1499,6 +1552,7 @@ def main(argv: list[str] | None = None) -> int:
             "sequence",
             "exhaustion",
             "budget-race",
+            "tool-lifecycle",
             "usage",
         ),
         help="TCK suite kind",
@@ -2088,6 +2142,8 @@ class TckRunner:
                 results.append(self._run_exhaustion_case(case))
             elif case.kind == "budget-race":
                 results.append(self._run_budget_race_case(case))
+            elif case.kind == "tool-lifecycle":
+                results.append(self._run_tool_lifecycle_case(case))
             elif case.kind == "usage":
                 results.append(self._run_usage_case(case))
             else:
@@ -2890,6 +2946,277 @@ class TckRunner:
             observed=observed,
         )
 
+    def _run_tool_lifecycle_case(self, case: TckCase) -> TckResult:
+        diagnostics: list[dict[str, str]] = []
+        fixture = case.tool_lifecycle_fixture
+        kind = str(fixture.get("kind", ""))
+        expected = fixture.get("expected", {})
+        if not isinstance(expected, Mapping):
+            expected = {}
+            diagnostics.append(
+                {
+                    "code": "ToolLifecycleExpectedInvalid",
+                    "message": "tool-lifecycle TCK expected result must be a mapping",
+                    "path": "$.expected",
+                }
+            )
+        observed: dict[str, object] = {}
+
+        if kind == "incremental_arguments":
+            draft = ToolCallDraft.proposed(
+                str(fixture.get("responseId", "response-1")),
+                str(fixture.get("toolCallId", "call-1")),
+                str(fixture.get("toolName", "knowledge.search")),
+            )
+            statuses = [draft.status]
+            fragments = fixture.get("fragments", [])
+            if not isinstance(fragments, list):
+                fragments = []
+                diagnostics.append(
+                    {
+                        "code": "ToolLifecycleFragmentsInvalid",
+                        "message": "incremental argument case requires fragments",
+                        "path": "$.fragments",
+                    }
+                )
+            for fragment in fragments:
+                draft = draft.append_argument_fragment(str(fragment))
+                statuses.append(draft.status)
+            try:
+                draft.into_tool_call(
+                    str(fixture.get("resolvedToolId", "resolved-tool-1")),
+                    created_at=str(fixture.get("createdAt", "2026-06-23T00:00:00Z")),
+                )
+                finalized_before_complete = True
+            except ToolCallError:
+                finalized_before_complete = False
+            draft = draft.complete_arguments()
+            statuses.append(draft.status)
+            try:
+                call = draft.into_tool_call(
+                    str(fixture.get("resolvedToolId", "resolved-tool-1")),
+                    created_at=str(fixture.get("createdAt", "2026-06-23T00:00:00Z")),
+                )
+                finalized_after_complete = True
+                observed_arguments = call.arguments
+                observed_status = call.status
+            except ToolCallError as error:
+                finalized_after_complete = False
+                observed_arguments = None
+                observed_status = f"error:{type(error).__name__}"
+            observed = {
+                "statuses": statuses,
+                "finalizedBeforeComplete": finalized_before_complete,
+                "finalizedAfterComplete": finalized_after_complete,
+                "callStatus": observed_status,
+                "arguments": observed_arguments,
+            }
+        elif kind == "admission_invalid_arguments":
+            schema_id = str(fixture.get("schemaId", "schemas/ProcessRun@1"))
+            tool_name = str(fixture.get("toolName", "process.run"))
+            catalog = ToolCatalog(
+                definitions=(
+                    ToolDefinition(tool_name, "Run an approved process.", schema_id),
+                ),
+                bindings=(
+                    ToolBinding(
+                        "binding-process",
+                        tool_name,
+                        BlockToolImplementation("blocks.process"),
+                        effects=frozenset({"process"}),
+                        approval="always",
+                        idempotency="required",
+                    ),
+                ),
+            )
+            resolved_tool = catalog.resolve(
+                ToolResolutionScope(),
+                effective_policy_snapshot_id="policy-snapshot-1",
+            )[0]
+            schemas = ToolSchemaRegistry(
+                (
+                    JsonSchema(
+                        schema_id,
+                        JsonSchemaNode.object().required_property(
+                            "cmd",
+                            JsonSchemaNode.array(JsonSchemaNode.string()),
+                        ),
+                    ),
+                )
+            )
+            draft = ToolCallDraft.proposed("response-1", "call-1", tool_name)
+            draft = draft.append_argument_fragment(json.dumps(fixture.get("arguments", {}), sort_keys=True))
+            call = draft.complete_arguments().into_tool_call(
+                resolved_tool.resolved_tool_id,
+                created_at="2026-06-23T00:00:00Z",
+            )
+            policy_decision = PolicyDecision(
+                decision_id="decision-allow-tool",
+                effect="allow",
+                reason_codes=("allow-process",),
+                policy_refs=("allow-process",),
+                evaluated_at="2026-06-23T00:00:01Z",
+                input_digest="sha256:before-tool",
+            )
+            try:
+                admit_tool_call(
+                    call,
+                    resolved_tool,
+                    schemas,
+                    policy_decision=policy_decision,
+                    expected_policy_input_digest=policy_decision.input_digest,
+                    approval=None,
+                    principal_id="user-1",
+                    idempotency_key="idem-1",
+                    admitted_at="2026-06-23T00:00:02Z",
+                    now=1200,
+                )
+                observed = {
+                    "admitted": True,
+                    "error": None,
+                    "schemaRejectedBeforeApproval": False,
+                }
+            except Exception as error:
+                message = str(error)
+                observed = {
+                    "admitted": False,
+                    "error": message,
+                    "schemaRejectedBeforeApproval": (
+                        "arguments invalid" in message and "requires approval" not in message
+                    ),
+                }
+        elif kind == "approval_argument_mutation":
+            schema_id = str(fixture.get("schemaId", "schemas/ProcessRun@1"))
+            tool_name = str(fixture.get("toolName", "process.run"))
+            catalog = ToolCatalog(
+                definitions=(
+                    ToolDefinition(tool_name, "Run an approved process.", schema_id),
+                ),
+                bindings=(
+                    ToolBinding(
+                        "binding-process",
+                        tool_name,
+                        BlockToolImplementation("blocks.process"),
+                        effects=frozenset({"process"}),
+                        approval="always",
+                        idempotency="required",
+                    ),
+                ),
+            )
+            resolved_tool = catalog.resolve(
+                ToolResolutionScope(),
+                effective_policy_snapshot_id="policy-snapshot-1",
+            )[0]
+            schemas = ToolSchemaRegistry(
+                (
+                    JsonSchema(
+                        schema_id,
+                        JsonSchemaNode.object().required_property(
+                            "cmd",
+                            JsonSchemaNode.array(JsonSchemaNode.string()),
+                        ),
+                    ),
+                )
+            )
+            draft = ToolCallDraft.proposed("response-1", "call-1", tool_name)
+            draft = draft.append_argument_fragment(
+                json.dumps(fixture.get("initialArguments", {}), sort_keys=True)
+            )
+            call = draft.complete_arguments().into_tool_call(
+                resolved_tool.resolved_tool_id,
+                created_at="2026-06-23T00:00:00Z",
+            )
+            request = ToolApprovalRequest.for_call(
+                "approval-1",
+                resolved_tool,
+                call,
+                principal_id="user-1",
+                requested_at=1000,
+                expires_at=2000,
+            )
+            approval = ToolApprovalRecord.approve(request, approver_id="admin-1", decided_at=1100)
+            revised = call.revise_arguments(fixture.get("mutatedArguments", {}))
+            initial_valid = approval.is_valid_for(resolved_tool, call, principal_id="user-1", now=1500)
+            revised_valid = approval.is_valid_for(resolved_tool, revised, principal_id="user-1", now=1500)
+            policy_decision = PolicyDecision(
+                decision_id="decision-allow-tool",
+                effect="allow",
+                reason_codes=("allow-process",),
+                policy_refs=("allow-process",),
+                evaluated_at="2026-06-23T00:00:01Z",
+                input_digest="sha256:before-tool",
+            )
+            try:
+                admit_tool_call(
+                    revised,
+                    resolved_tool,
+                    schemas,
+                    policy_decision=policy_decision,
+                    expected_policy_input_digest=policy_decision.input_digest,
+                    approval=approval,
+                    principal_id="user-1",
+                    idempotency_key="idem-1",
+                    admitted_at="2026-06-23T00:00:02Z",
+                    now=1500,
+                )
+                admission_with_stale_approval = True
+                error_message = None
+            except Exception as error:
+                admission_with_stale_approval = False
+                error_message = str(error)
+            observed = {
+                "initialApprovalValid": initial_valid,
+                "mutatedApprovalValid": revised_valid,
+                "digestChanged": revised.arguments_digest != call.arguments_digest,
+                "revisedRevision": revised.revision,
+                "admissionWithStaleApproval": admission_with_stale_approval,
+                "error": error_message,
+            }
+        else:
+            diagnostics.append(
+                {
+                    "code": "ToolLifecycleKindUnknown",
+                    "message": f"tool-lifecycle TCK kind {kind!r} is not supported",
+                    "path": "$.kind",
+                }
+            )
+
+        error_contains = expected.get("errorContains")
+        for key, expected_value in expected.items():
+            if key == "errorContains":
+                if expected_value is not None and str(expected_value) not in str(observed.get("error")):
+                    diagnostics.append(
+                        {
+                            "code": "ToolLifecycleErrorMismatch",
+                            "message": "tool-lifecycle observed error did not contain expected text",
+                            "path": "$.expected.errorContains",
+                        }
+                    )
+                continue
+            if observed.get(key) != expected_value:
+                diagnostics.append(
+                    {
+                        "code": "ToolLifecycleExpectedMismatch",
+                        "message": f"tool-lifecycle observed {key} did not match expected value",
+                        "path": f"$.expected.{key}",
+                    }
+                )
+        if error_contains is None and observed.get("error") is not None:
+            diagnostics.append(
+                {
+                    "code": "ToolLifecycleUnexpectedError",
+                    "message": "tool-lifecycle case produced an unexpected error",
+                    "path": "$.observed.error",
+                }
+            )
+        return TckResult(
+            case_id=case.case_id,
+            kind=case.kind,
+            status="passed" if not diagnostics else "failed",
+            diagnostics=tuple(diagnostics),
+            observed=observed,
+        )
+
     def _run_usage_case(self, case: TckCase) -> TckResult:
         diagnostics: list[dict[str, str]] = []
         fixture = case.usage_fixture
@@ -3573,6 +3900,7 @@ __all__ = [
     "load_sequence_tck_cases",
     "load_tck_cases_for_suite",
     "load_tck_suite_manifests",
+    "load_tool_lifecycle_tck_cases",
     "load_usage_tck_cases",
     "main",
     "migrate_document",

@@ -1,0 +1,70 @@
+[
+  {
+    "name": "incremental_arguments_do_not_finalize_call",
+    "kind": "incremental_arguments",
+    "responseId": "response-1",
+    "toolCallId": "call-1",
+    "toolName": "knowledge.search",
+    "resolvedToolId": "resolved-tool-1",
+    "createdAtUnixMs": 1000,
+    "createdAt": "2026-06-23T00:00:00Z",
+    "fragments": [
+      "{\"query\":",
+      "\"runtime policy\"}"
+    ],
+    "expected": {
+      "statuses": [
+        "proposed",
+        "arguments_streaming",
+        "arguments_streaming",
+        "arguments_complete"
+      ],
+      "finalizedBeforeComplete": false,
+      "finalizedAfterComplete": true,
+      "callStatus": "validated",
+      "arguments": {
+        "query": "runtime policy"
+      }
+    }
+  },
+  {
+    "name": "invalid_arguments_denied_before_policy_admission",
+    "kind": "admission_invalid_arguments",
+    "toolName": "process.run",
+    "schemaId": "schemas/ProcessRun@1",
+    "arguments": {
+      "cmd": "echo hello"
+    },
+    "expected": {
+      "admitted": false,
+      "errorContains": "arguments invalid",
+      "schemaRejectedBeforeApproval": true
+    }
+  },
+  {
+    "name": "approval_invalid_after_argument_mutation",
+    "kind": "approval_argument_mutation",
+    "toolName": "process.run",
+    "schemaId": "schemas/ProcessRun@1",
+    "initialArguments": {
+      "cmd": [
+        "echo",
+        "hello"
+      ]
+    },
+    "mutatedArguments": {
+      "cmd": [
+        "echo",
+        "changed"
+      ]
+    },
+    "expected": {
+      "initialApprovalValid": true,
+      "mutatedApprovalValid": false,
+      "digestChanged": true,
+      "revisedRevision": 2,
+      "admissionWithStaleApproval": false,
+      "errorContains": "not valid"
+    }
+  }
+]
