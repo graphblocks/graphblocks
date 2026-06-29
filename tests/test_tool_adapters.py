@@ -131,11 +131,15 @@ def test_mcp_adapter_prepares_admitted_invocation_contract(monkeypatch) -> None:
     assert invocation.request_contract() == {
         "kind": "mcp",
         "binding_id": "binding-mcp-search",
+        "resolved_tool_id": "resolved-tool-1",
         "tool_call_id": "call-1",
         "server": "support-mcp",
         "remote_name": "search",
         "arguments": {"limit": 5, "query": "billing"},
         "arguments_digest": admitted.call.arguments_digest,
+        "definition_digest": resolved.definition_digest,
+        "binding_digest": resolved.binding_digest,
+        "effective_policy_snapshot_id": "policy-snapshot-1",
         "idempotency_key": "idem-1",
     }
 
@@ -377,11 +381,15 @@ def test_openapi_adapter_prepares_admitted_invocation_contract(monkeypatch) -> N
     assert invocation.request_contract() == {
         "kind": "openapi",
         "binding_id": "binding-ticket-create",
+        "resolved_tool_id": "resolved-tool-1",
         "tool_call_id": "call-1",
         "connection": "ticket-system",
         "operation_id": "createTicket",
         "arguments": {"priority": "normal", "title": "Need help"},
         "arguments_digest": admitted.call.arguments_digest,
+        "definition_digest": resolved.definition_digest,
+        "binding_digest": resolved.binding_digest,
+        "effective_policy_snapshot_id": "policy-snapshot-1",
         "idempotency_key": "idem-1",
     }
 

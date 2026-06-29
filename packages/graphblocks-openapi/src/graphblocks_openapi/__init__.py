@@ -28,22 +28,30 @@ class OpenApiToolAdapterError(RuntimeError):
 @dataclass(frozen=True, slots=True)
 class OpenApiOperationInvocation:
     binding_id: str
+    resolved_tool_id: str
     tool_call_id: str
     connection: str
     operation_id: str
     arguments_json: str
     arguments_digest: str
+    definition_digest: str
+    binding_digest: str
+    effective_policy_snapshot_id: str
     idempotency_key: str | None = None
 
     def request_contract(self) -> dict[str, object]:
         return {
             "kind": "openapi",
             "binding_id": self.binding_id,
+            "resolved_tool_id": self.resolved_tool_id,
             "tool_call_id": self.tool_call_id,
             "connection": self.connection,
             "operation_id": self.operation_id,
             "arguments": json.loads(self.arguments_json),
             "arguments_digest": self.arguments_digest,
+            "definition_digest": self.definition_digest,
+            "binding_digest": self.binding_digest,
+            "effective_policy_snapshot_id": self.effective_policy_snapshot_id,
             "idempotency_key": self.idempotency_key,
         }
 
@@ -126,11 +134,15 @@ def prepare_openapi_operation_invocation(
 
     return OpenApiOperationInvocation(
         binding_id=resolved_tool.binding.binding_id,
+        resolved_tool_id=resolved_tool.resolved_tool_id,
         tool_call_id=admitted.call.tool_call_id,
         connection=implementation.connection,
         operation_id=implementation.operation_id,
         arguments_json=arguments_json,
         arguments_digest=admitted.call.arguments_digest,
+        definition_digest=resolved_tool.definition_digest,
+        binding_digest=resolved_tool.binding_digest,
+        effective_policy_snapshot_id=resolved_tool.effective_policy_snapshot_id,
         idempotency_key=admitted.idempotency_key,
     )
 
