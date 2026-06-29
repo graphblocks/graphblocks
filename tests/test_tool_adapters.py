@@ -408,9 +408,17 @@ def test_mcp_adapter_builds_streaming_tool_result_events(monkeypatch) -> None:
     assert started.kind == "started"
     assert started.started_at == "2026-06-23T00:00:01Z"
     assert delta.kind == "delta"
-    assert delta.output[0] == ContentPart(kind="text", text="partial", metadata={"adapter": "mcp"})
+    assert delta.output[0] == ContentPart(
+        kind="text",
+        text="partial",
+        metadata={"adapter": "mcp", "trust_designation": "untrusted_external"},
+    )
     assert delta.output[1].data == {"count": 1}
-    assert delta.output[1].metadata == {"phase": "draft"}
+    assert delta.output[1].metadata == {
+        "phase": "draft",
+        "adapter": "mcp",
+        "trust_designation": "untrusted_external",
+    }
     assert delta.into_result() is None
     assert artifact.kind == "artifact_ready"
     assert artifact.artifact == ArtifactRef(
@@ -763,8 +771,16 @@ def test_openapi_adapter_builds_streaming_tool_result_events(monkeypatch) -> Non
 
     assert started.kind == "started"
     assert delta.kind == "delta"
-    assert delta.output[0] == ContentPart(kind="text", text="draft ticket")
-    assert delta.output[1].metadata == {"phase": "draft"}
+    assert delta.output[0] == ContentPart(
+        kind="text",
+        text="draft ticket",
+        metadata={"adapter": "openapi", "trust_designation": "untrusted_external"},
+    )
+    assert delta.output[1].metadata == {
+        "phase": "draft",
+        "adapter": "openapi",
+        "trust_designation": "untrusted_external",
+    }
     assert delta.into_result() is None
     assert artifact.kind == "artifact_ready"
     assert artifact.artifact == ArtifactRef("artifact-2", "blob://tool-results/2", checksum="sha256:artifact")

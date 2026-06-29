@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 
 from graphblocks import (
@@ -380,9 +380,18 @@ def _stream_content_parts(
     parts: list[ContentPart] = []
     for raw_part in raw_parts:
         if isinstance(raw_part, ContentPart):
-            parts.append(raw_part)
+            metadata = dict(raw_part.metadata)
+            metadata.setdefault("adapter", "openapi")
+            metadata.setdefault("trust_designation", "untrusted_external")
+            parts.append(replace(raw_part, metadata=metadata))
         elif isinstance(raw_part, str):
-            parts.append(ContentPart(kind="text", text=raw_part, metadata={"adapter": "openapi"}))
+            parts.append(
+                ContentPart(
+                    kind="text",
+                    text=raw_part,
+                    metadata={"adapter": "openapi", "trust_designation": "untrusted_external"},
+                )
+            )
         elif isinstance(raw_part, Mapping):
             parts.append(_content_part(raw_part, owner=owner))
         else:
@@ -395,18 +404,21 @@ def _content_part(raw_part: Mapping[str, object], *, owner: str) -> ContentPart:
     metadata = raw_part.get("metadata", {})
     if not isinstance(metadata, Mapping):
         raise OpenApiToolAdapterError(f"{owner} tool result delta metadata must be an object")
+    metadata = dict(metadata)
+    metadata.setdefault("adapter", owner.lower())
+    metadata.setdefault("trust_designation", "untrusted_external")
     if kind is None:
         kind = "text" if "text" in raw_part else "json" if "data" in raw_part else None
     if kind == "text":
         text = raw_part.get("text")
         if not isinstance(text, str):
             raise OpenApiToolAdapterError(f"{owner} text delta output requires string text")
-        return ContentPart(kind="text", text=text, metadata=dict(metadata))
+        return ContentPart(kind="text", text=text, metadata=metadata)
     if kind in {"json", "artifact_ref"}:
         data = raw_part.get("data")
         if not isinstance(data, Mapping):
             raise OpenApiToolAdapterError(f"{owner} {kind} delta output requires object data")
-        return ContentPart(kind=kind, data=dict(data), metadata=dict(metadata))  # type: ignore[arg-type]
+        return ContentPart(kind=kind, data=dict(data), metadata=metadata)  # type: ignore[arg-type]
     raise OpenApiToolAdapterError(f"{owner} tool result delta has unknown content kind {kind!r}")
 
 
