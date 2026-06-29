@@ -737,6 +737,9 @@ impl ApplicationEventStreamState {
             ) {
                 return None;
             }
+            if event.kind == ApplicationEventKind::RunSucceeded {
+                return None;
+            }
             if matches!(
                 event.kind,
                 ApplicationEventKind::ToolCallProposed

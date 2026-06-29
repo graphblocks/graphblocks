@@ -891,6 +891,11 @@ def test_application_event_stream_state_discards_late_output_after_cutoff() -> N
         tool_call_id="call-completed",
         payload={"status": "completed"},
     )
+    committed_run = ApplicationEvent.new(
+        "RunSucceeded",
+        _metadata(),
+        payload={"status": "succeeded", "outputs": {"answer": "should not commit"}},
+    )
     replacement_tool_draft = ApplicationEvent.tool_call_draft(
         ApplicationEventMetadata(
             event_id="event-replacement-tool",
@@ -937,6 +942,7 @@ def test_application_event_stream_state_discards_late_output_after_cutoff() -> N
     assert state.accept(admitted_tool) is None
     assert state.accept(started_tool) is None
     assert state.accept(completed_tool) is None
+    assert state.accept(committed_run) is None
     assert state.accept(replacement_response) == replacement_response
     assert state.accept(replacement_tool_draft) == replacement_tool_draft
     assert state.accept(denied_tool) == denied_tool

@@ -810,6 +810,12 @@ fn application_event_stream_state_discards_late_output_after_cutoff() {
         json!({"status": "completed"}),
     )
     .expect("tool event is valid");
+    let committed_run = ApplicationEvent::new(
+        ApplicationEventKind::RunSucceeded,
+        metadata(),
+        json!({"status": "succeeded", "outputs": {"answer": "should not commit"}}),
+    )
+    .expect("run success event is valid");
     let replacement_tool_draft = ApplicationEvent::tool_call_draft(
         ApplicationEventMetadata {
             event_id: "event-replacement-tool".to_owned(),
@@ -864,6 +870,7 @@ fn application_event_stream_state_discards_late_output_after_cutoff() {
     assert_eq!(state.accept(admitted_tool), None);
     assert_eq!(state.accept(started_tool), None);
     assert_eq!(state.accept(completed_tool), None);
+    assert_eq!(state.accept(committed_run), None);
     assert_eq!(
         state.accept(replacement_response.clone()),
         Some(replacement_response)

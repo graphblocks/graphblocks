@@ -796,6 +796,8 @@ class ApplicationEventStreamState:
                 return None
             if str(event.kind).startswith("OutputPolicy"):
                 return None
+            if event.kind == "RunSucceeded":
+                return None
             if event.kind in TOOL_APPLICATION_EVENT_KINDS and event.kind not in POST_CUTOFF_TOOL_APPLICATION_EVENT_KINDS:
                 return None
 
