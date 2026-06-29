@@ -1,5 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use graphblocks_runtime_core::output_policy::{
+    DraftDisposition, DurableResult, OutputCutoff, TerminalReason,
+};
 use serde_json::Value;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -656,6 +659,84 @@ impl DurableResponsePolicyStopRecord {
         self.durable_result = durable_result;
         self
     }
+
+    pub fn to_output_cutoff(&self) -> Result<OutputCutoff, ToolTerminalStoreError> {
+        validate_response_policy_stop_record(self)?;
+
+        let terminal_reason = match self.terminal_reason {
+            DurableOutputCutoffTerminalReason::PolicyDenied => TerminalReason::PolicyDenied,
+            DurableOutputCutoffTerminalReason::BudgetExhausted => TerminalReason::BudgetExhausted,
+            DurableOutputCutoffTerminalReason::Cancelled => TerminalReason::Cancelled,
+            DurableOutputCutoffTerminalReason::ClientDisconnected => {
+                TerminalReason::ClientDisconnected
+            }
+        };
+        let draft_disposition = match self.draft_disposition {
+            DurableOutputCutoffDraftDisposition::Keep => DraftDisposition::Keep,
+            DurableOutputCutoffDraftDisposition::MarkIncomplete => DraftDisposition::MarkIncomplete,
+            DurableOutputCutoffDraftDisposition::Retract => DraftDisposition::Retract,
+        };
+        let durable_result = match self.durable_result {
+            DurableOutputCutoffDurableResult::None => DurableResult::None,
+            DurableOutputCutoffDurableResult::Incomplete => DurableResult::Incomplete,
+            DurableOutputCutoffDurableResult::Partial => DurableResult::Partial,
+        };
+
+        Ok(OutputCutoff {
+            stream_id: self.stream_id.clone(),
+            response_id: self.response_id.clone(),
+            turn_id: self.turn_id.clone(),
+            last_generated_sequence: self.last_generated_sequence,
+            last_policy_accepted_sequence: self.last_policy_accepted_sequence,
+            last_client_delivered_sequence: self.last_client_delivered_sequence,
+            terminal_reason,
+            draft_disposition,
+            durable_result,
+            policy_decision_id: Some(self.policy_decision_id.clone()),
+            occurred_at_unix_ms: self.occurred_at_unix_ms,
+        })
+    }
+}
+
+fn validate_response_policy_stop_record(
+    record: &DurableResponsePolicyStopRecord,
+) -> Result<(), ToolTerminalStoreError> {
+    if record.response_id.trim().is_empty() {
+        return Err(ToolTerminalStoreError::MissingResponseId);
+    }
+    if record.stream_id.trim().is_empty() {
+        return Err(ToolTerminalStoreError::MissingStreamId);
+    }
+    if record
+        .turn_id
+        .as_deref()
+        .is_some_and(|turn_id| turn_id.trim().is_empty())
+    {
+        return Err(ToolTerminalStoreError::MissingTurnId);
+    }
+    if record.policy_decision_id.trim().is_empty() {
+        return Err(ToolTerminalStoreError::MissingPolicyDecisionId);
+    }
+    if record.last_policy_accepted_sequence > record.last_generated_sequence {
+        return Err(
+            ToolTerminalStoreError::PolicyAcceptedSequenceBeyondGenerated {
+                last_generated_sequence: record.last_generated_sequence,
+                last_policy_accepted_sequence: record.last_policy_accepted_sequence,
+            },
+        );
+    }
+    if record.last_client_delivered_sequence > record.last_generated_sequence {
+        return Err(
+            ToolTerminalStoreError::ClientDeliveredSequenceBeyondGenerated {
+                last_generated_sequence: record.last_generated_sequence,
+                last_client_delivered_sequence: record.last_client_delivered_sequence,
+            },
+        );
+    }
+    if record.occurred_at_unix_ms == 0 {
+        return Err(ToolTerminalStoreError::InvalidCompletedAt);
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -812,41 +893,7 @@ impl InMemoryDurableToolTerminalStore {
         &mut self,
         record: DurableResponsePolicyStopRecord,
     ) -> Result<DurableResponsePolicyStopCommit, ToolTerminalStoreError> {
-        if record.response_id.trim().is_empty() {
-            return Err(ToolTerminalStoreError::MissingResponseId);
-        }
-        if record.stream_id.trim().is_empty() {
-            return Err(ToolTerminalStoreError::MissingStreamId);
-        }
-        if record
-            .turn_id
-            .as_deref()
-            .is_some_and(|turn_id| turn_id.trim().is_empty())
-        {
-            return Err(ToolTerminalStoreError::MissingTurnId);
-        }
-        if record.policy_decision_id.trim().is_empty() {
-            return Err(ToolTerminalStoreError::MissingPolicyDecisionId);
-        }
-        if record.last_policy_accepted_sequence > record.last_generated_sequence {
-            return Err(
-                ToolTerminalStoreError::PolicyAcceptedSequenceBeyondGenerated {
-                    last_generated_sequence: record.last_generated_sequence,
-                    last_policy_accepted_sequence: record.last_policy_accepted_sequence,
-                },
-            );
-        }
-        if record.last_client_delivered_sequence > record.last_generated_sequence {
-            return Err(
-                ToolTerminalStoreError::ClientDeliveredSequenceBeyondGenerated {
-                    last_generated_sequence: record.last_generated_sequence,
-                    last_client_delivered_sequence: record.last_client_delivered_sequence,
-                },
-            );
-        }
-        if record.occurred_at_unix_ms == 0 {
-            return Err(ToolTerminalStoreError::InvalidCompletedAt);
-        }
+        validate_response_policy_stop_record(&record)?;
 
         if let Some(committed) = self.policy_stopped_responses.get(&record.response_id) {
             if committed.record != record {

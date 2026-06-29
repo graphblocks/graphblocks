@@ -1,3 +1,4 @@
+use graphblocks_runtime_core::output_policy::{DraftDisposition, DurableResult, TerminalReason};
 use graphblocks_runtime_durable::{
     DurableOutputCutoffDraftDisposition, DurableOutputCutoffDurableResult,
     DurableOutputCutoffTerminalReason, DurableResponsePolicyStopRecord, DurableToolTerminalRecord,
@@ -193,6 +194,35 @@ fn response_policy_stop_barrier_persists_full_output_cutoff_state() {
     );
     assert_eq!(duplicate.sequence, committed.sequence);
     assert!(duplicate.replayed);
+}
+
+#[test]
+fn response_policy_stop_record_converts_to_output_cutoff() {
+    let record =
+        DurableResponsePolicyStopRecord::new("response-1", "decision-1", 7, 1_820_000_000_000)
+            .with_stream_id("stream-1")
+            .with_turn_id("turn-1")
+            .with_last_generated_sequence(9)
+            .with_last_client_delivered_sequence(6)
+            .with_terminal_reason(DurableOutputCutoffTerminalReason::BudgetExhausted)
+            .with_draft_disposition(DurableOutputCutoffDraftDisposition::MarkIncomplete)
+            .with_durable_result(DurableOutputCutoffDurableResult::Incomplete);
+
+    let cutoff = record
+        .to_output_cutoff()
+        .expect("valid durable record should convert");
+
+    assert_eq!(cutoff.stream_id, "stream-1");
+    assert_eq!(cutoff.response_id, "response-1");
+    assert_eq!(cutoff.turn_id.as_deref(), Some("turn-1"));
+    assert_eq!(cutoff.last_generated_sequence, 9);
+    assert_eq!(cutoff.last_policy_accepted_sequence, 7);
+    assert_eq!(cutoff.last_client_delivered_sequence, 6);
+    assert_eq!(cutoff.terminal_reason, TerminalReason::BudgetExhausted);
+    assert_eq!(cutoff.draft_disposition, DraftDisposition::MarkIncomplete);
+    assert_eq!(cutoff.durable_result, DurableResult::Incomplete);
+    assert_eq!(cutoff.policy_decision_id.as_deref(), Some("decision-1"));
+    assert_eq!(cutoff.occurred_at_unix_ms, 1_820_000_000_000);
 }
 
 #[test]
