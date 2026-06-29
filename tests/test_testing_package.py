@@ -205,6 +205,29 @@ def test_testing_package_loads_shared_budget_race_tck_cases(monkeypatch) -> None
     assert "load_budget_race_tck_cases" in graphblocks_testing.__all__
 
 
+def test_testing_package_loads_shared_retry_tck_cases(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    cases = graphblocks_testing.load_retry_tck_cases(ROOT / "tck" / "retry" / "cases.json")
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
+
+    assert [case.kind for case in cases] == ["retry"] * 3
+    assert report.ok
+    assert {case.case_id for case in cases} == {
+        "effect_retry_preserves_idempotency_key",
+        "effect_retry_exhaustion_preserves_idempotency_key",
+        "cancelled_effect_attempt_does_not_retry",
+    }
+    assert {tuple(result.observed["retryIdempotencyKeys"]) for result in report.results} == {
+        ("ticket-create:request-1", "ticket-create:request-1"),
+        ("ticket-create:request-2",),
+        (),
+    }
+    assert any(result.observed["status"] == "cancelled" for result in report.results)
+    assert "load_retry_tck_cases" in graphblocks_testing.__all__
+
+
 def test_testing_package_loads_shared_tool_lifecycle_tck_cases(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -295,6 +318,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "compiler",
         "exhaustion",
         "policy",
+        "retry",
         "runtime",
         "schema",
         "sequence",
@@ -326,6 +350,11 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "invalid_arguments_denied_before_policy_admission",
         "approval_invalid_after_argument_mutation",
     )
+    assert by_suite["retry"].case_ids == (
+        "effect_retry_preserves_idempotency_key",
+        "effect_retry_exhaustion_preserves_idempotency_key",
+        "cancelled_effect_attempt_does_not_retry",
+    )
     assert by_suite["tool-execution"].case_ids == (
         "independent_read_tools_execute_concurrently",
         "conflicting_write_tools_are_serialized_by_effect_key",
@@ -346,7 +375,7 @@ def test_testing_package_cli_lists_tck_suite_manifests(monkeypatch, capsys) -> N
     assert graphblocks_testing.main(["list", str(ROOT / "tck"), "--json"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload["suiteCount"] == 11
+    assert payload["suiteCount"] == 12
     assert payload["suites"][0]["suite_id"] == "application-events"
     assert payload["suites"][0]["case_count"] == 3
     assert payload["contentDigest"].startswith("sha256:")
@@ -378,6 +407,7 @@ def test_testing_package_cli_checks_tck_suite_coverage(monkeypatch, capsys) -> N
         "compiler",
         "exhaustion",
         "policy",
+        "retry",
         "runtime",
         "schema",
         "sequence",
@@ -485,6 +515,21 @@ def test_testing_package_cli_runs_tool_lifecycle_tck_suite(monkeypatch, capsys) 
     assert payload["contentDigest"].startswith("sha256:")
 
 
+def test_testing_package_cli_runs_retry_tck_suite(monkeypatch, capsys) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    exit_code = graphblocks_testing.main(
+        ["run", "retry", str(ROOT / "tck" / "retry" / "cases.json"), "--json"]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert {result["kind"] for result in payload["results"]} == {"retry"}
+    assert payload["contentDigest"].startswith("sha256:")
+
+
 def test_testing_package_cli_runs_tool_execution_tck_suite(monkeypatch, capsys) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -530,6 +575,7 @@ def test_testing_package_cli_runs_all_supported_tck_suites(monkeypatch, capsys) 
         "compiler",
         "exhaustion",
         "policy",
+        "retry",
         "runtime",
         "schema",
         "sequence",

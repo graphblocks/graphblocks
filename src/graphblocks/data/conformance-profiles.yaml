@@ -29,6 +29,7 @@ spec:
     - python-binding
     tck:
     - application-events
+    - retry
     - runtime
     - sequence
     - tool-execution

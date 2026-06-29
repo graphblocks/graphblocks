@@ -418,6 +418,17 @@ class InProcessRuntime:
                         result = attempt_result
                         break
                     except Exception as exc:
+                        token = context["cancellation_token"]
+                        if isinstance(token, CancellationToken) and token.cancelled:
+                            journal.append_terminal(
+                                "run_cancelled",
+                                {"reason": token.reason, "node": node_name, "attempt": attempt},
+                            )
+                            if self.run_store is not None:
+                                self.run_store.set_status(run_id, "cancelled")
+                            if self.lease_pool is not None:
+                                self.lease_pool.release_all(run_id)
+                            return RunResult(run_id, "cancelled", output_values, journal)
                         if attempt < max_attempts:
                             retry_payload: dict[str, Any] = {
                                 "node": node_name,

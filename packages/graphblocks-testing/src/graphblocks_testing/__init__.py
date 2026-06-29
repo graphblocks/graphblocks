@@ -97,6 +97,7 @@ TckCaseKind = Literal[
     "sequence",
     "exhaustion",
     "budget-race",
+    "retry",
     "tool-lifecycle",
     "tool-execution",
     "usage",
@@ -179,6 +180,7 @@ class TckCase:
     expected_sequence_creation_error: str | None = None
     exhaustion_fixture: dict[str, object] = field(default_factory=dict)
     budget_race_fixture: dict[str, object] = field(default_factory=dict)
+    retry_fixture: dict[str, object] = field(default_factory=dict)
     tool_lifecycle_fixture: dict[str, object] = field(default_factory=dict)
     tool_execution_fixture: dict[str, object] = field(default_factory=dict)
     usage_fixture: dict[str, object] = field(default_factory=dict)
@@ -195,6 +197,7 @@ class TckCase:
             "sequence",
             "exhaustion",
             "budget-race",
+            "retry",
             "tool-lifecycle",
             "tool-execution",
             "usage",
@@ -217,6 +220,7 @@ class TckCase:
         object.__setattr__(self, "sequence_operations", tuple(dict(operation) for operation in self.sequence_operations))
         object.__setattr__(self, "exhaustion_fixture", dict(self.exhaustion_fixture))
         object.__setattr__(self, "budget_race_fixture", dict(self.budget_race_fixture))
+        object.__setattr__(self, "retry_fixture", dict(self.retry_fixture))
         object.__setattr__(self, "tool_lifecycle_fixture", dict(self.tool_lifecycle_fixture))
         object.__setattr__(self, "tool_execution_fixture", dict(self.tool_execution_fixture))
         object.__setattr__(self, "usage_fixture", dict(self.usage_fixture))
@@ -236,6 +240,8 @@ class TckCase:
             raise ValueError("exhaustion TCK case requires fixture")
         if self.kind == "budget-race" and not self.budget_race_fixture:
             raise ValueError("budget-race TCK case requires fixture")
+        if self.kind == "retry" and not self.retry_fixture:
+            raise ValueError("retry TCK case requires fixture")
         if self.kind == "tool-lifecycle" and not self.tool_lifecycle_fixture:
             raise ValueError("tool-lifecycle TCK case requires fixture")
         if self.kind == "tool-execution" and not self.tool_execution_fixture:
@@ -381,6 +387,10 @@ class TckCase:
     @classmethod
     def budget_race(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
         return cls(case_id=case_id, kind="budget-race", budget_race_fixture=fixture)
+
+    @classmethod
+    def retry(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
+        return cls(case_id=case_id, kind="retry", retry_fixture=fixture)
 
     @classmethod
     def tool_lifecycle(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
@@ -1329,6 +1339,40 @@ def load_budget_race_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     return tuple(cases)
 
 
+def load_retry_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
+    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(raw_cases, list):
+        raise ValueError("retry TCK root must be a list")
+    cases: list[TckCase] = []
+    for index, raw_case in enumerate(raw_cases):
+        if not isinstance(raw_case, Mapping):
+            raise ValueError(f"retry TCK case {index} must be a mapping")
+        case_id = _first_mapping_value(raw_case, "name", "case_id", "caseId")
+        if not isinstance(case_id, str) or not case_id.strip():
+            raise ValueError(f"retry TCK case {index} requires name")
+        case_kind = raw_case.get("kind")
+        if case_kind not in {"node_retry", "cancelled_before_retry"}:
+            raise ValueError(f"retry TCK case {case_id} has unsupported kind {case_kind!r}")
+        max_attempts = raw_case.get("maxAttempts", raw_case.get("max_attempts"))
+        if isinstance(max_attempts, bool) or not isinstance(max_attempts, int) or max_attempts <= 0:
+            raise ValueError(f"retry TCK case {case_id} requires positive integer maxAttempts")
+        failures_before_success = raw_case.get(
+            "failuresBeforeSuccess",
+            raw_case.get("failures_before_success"),
+        )
+        if (
+            isinstance(failures_before_success, bool)
+            or not isinstance(failures_before_success, int)
+            or failures_before_success < 0
+        ):
+            raise ValueError(f"retry TCK case {case_id} requires non-negative integer failuresBeforeSuccess")
+        expected = raw_case.get("expected")
+        if not isinstance(expected, Mapping):
+            raise ValueError(f"retry TCK case {case_id} requires expected result")
+        cases.append(TckCase.retry(case_id=case_id, fixture=dict(raw_case)))
+    return tuple(cases)
+
+
 def load_tool_lifecycle_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(raw_cases, list):
@@ -1574,6 +1618,8 @@ def load_tck_cases_for_suite(suite: str, path: str | Path) -> tuple[TckCase, ...
         return load_exhaustion_tck_cases(path)
     if suite == "policy":
         return load_policy_tck_cases(path)
+    if suite == "retry":
+        return load_retry_tck_cases(path)
     if suite == "runtime":
         return load_runtime_tck_cases(path)
     if suite == "schema":
@@ -1609,6 +1655,7 @@ def main(argv: list[str] | None = None) -> int:
             "runtime",
             "schema",
             "policy",
+            "retry",
             "sequence",
             "exhaustion",
             "budget-race",
@@ -2203,6 +2250,8 @@ class TckRunner:
                 results.append(self._run_exhaustion_case(case))
             elif case.kind == "budget-race":
                 results.append(self._run_budget_race_case(case))
+            elif case.kind == "retry":
+                results.append(self._run_retry_case(case))
             elif case.kind == "tool-execution":
                 results.append(self._run_tool_execution_case(case))
             elif case.kind == "tool-lifecycle":
@@ -3001,6 +3050,126 @@ class TckRunner:
                     "path": "$.expectedDeniedError",
                 }
             )
+        return TckResult(
+            case_id=case.case_id,
+            kind=case.kind,
+            status="passed" if not diagnostics else "failed",
+            diagnostics=tuple(diagnostics),
+            observed=observed,
+        )
+
+    def _run_retry_case(self, case: TckCase) -> TckResult:
+        diagnostics: list[dict[str, str]] = []
+        fixture = case.retry_fixture
+        kind = str(fixture.get("kind", ""))
+        expected = fixture.get("expected", {})
+        if not isinstance(expected, Mapping):
+            expected = {}
+            diagnostics.append(
+                {
+                    "code": "RetryExpectedInvalid",
+                    "message": "retry TCK expected result must be a mapping",
+                    "path": "$.expected",
+                }
+            )
+
+        attempts = {"count": 0}
+        seen_idempotency_keys: list[str | None] = []
+        registry = RuntimeRegistry()
+        block_id = str(fixture.get("block", "test.flaky_write@1"))
+        node_id = str(fixture.get("nodeId", fixture.get("node_id", "write")))
+        max_attempts = int(fixture.get("maxAttempts", fixture.get("max_attempts", 1)))
+        failures_before_success = int(
+            fixture.get("failuresBeforeSuccess", fixture.get("failures_before_success", 0))
+        )
+        cancel_on_attempt = fixture.get("cancelOnAttempt", fixture.get("cancel_on_attempt"))
+        cancel_reason = str(fixture.get("cancelReason", fixture.get("cancel_reason", "policy_stop")))
+        idempotency_key = fixture.get("idempotencyKey", fixture.get("idempotency_key"))
+
+        def retry_block(inputs: dict[str, object], config: dict[str, object], context: dict[str, object]) -> dict[str, object]:
+            attempts["count"] += 1
+            seen_idempotency_keys.append(
+                str(context.get("idempotency_key")) if context.get("idempotency_key") is not None else None
+            )
+            if isinstance(cancel_on_attempt, int) and attempts["count"] == cancel_on_attempt:
+                token = context.get("cancellation_token")
+                if isinstance(token, CancellationToken):
+                    token.cancel(cancel_reason)
+            if attempts["count"] <= failures_before_success:
+                raise RuntimeError(str(fixture.get("error", "temporary failure")))
+            return {"value": fixture.get("outputValue", fixture.get("output_value", "committed"))}
+
+        registry.register(block_id, retry_block)
+        retry_config: dict[str, object] = {"maxAttempts": max_attempts}
+        if idempotency_key is not None:
+            retry_config["idempotencyKey"] = str(idempotency_key)
+        raw_effects = fixture.get("effects", [])
+        if isinstance(raw_effects, str):
+            raw_effects = [raw_effects]
+        graph = {
+            "apiVersion": "graphblocks.ai/v1alpha3",
+            "kind": "Graph",
+            "metadata": {"name": f"retry-tck-{case.case_id}"},
+            "spec": {
+                "nodes": {
+                    node_id: {
+                        "block": block_id,
+                        "effects": list(raw_effects) if isinstance(raw_effects, list) else [],
+                        "flow": {"retry": retry_config},
+                        "outputs": {"value": "$output.value"},
+                    }
+                }
+            },
+        }
+
+        try:
+            result = InProcessRuntime(registry).run(graph, {})
+            retry_idempotency_keys = [
+                record.payload.get("idempotencyKey")
+                for record in result.journal.records
+                if record.kind == "node_retry"
+            ]
+            observed: dict[str, object] = {
+                "status": result.status,
+                "terminalKind": result.journal.terminal_kind,
+                "attempts": attempts["count"],
+                "retryCount": len(retry_idempotency_keys),
+                "retryIdempotencyKeys": retry_idempotency_keys,
+                "contextIdempotencyKeys": seen_idempotency_keys,
+                "outputs": result.outputs,
+                "journalKinds": [record.kind for record in result.journal.records],
+                "compileError": None,
+            }
+        except ValueError as error:
+            observed = {
+                "status": "compile_failed",
+                "terminalKind": "compile_error",
+                "attempts": attempts["count"],
+                "retryCount": 0,
+                "retryIdempotencyKeys": [],
+                "contextIdempotencyKeys": seen_idempotency_keys,
+                "outputs": {},
+                "journalKinds": [],
+                "compileError": str(error),
+            }
+
+        if kind not in {"node_retry", "cancelled_before_retry"}:
+            diagnostics.append(
+                {
+                    "code": "RetryKindUnknown",
+                    "message": f"retry TCK kind {kind!r} is not supported",
+                    "path": "$.kind",
+                }
+            )
+        for key, expected_value in expected.items():
+            if observed.get(str(key)) != expected_value:
+                diagnostics.append(
+                    {
+                        "code": "RetryExpectedMismatch",
+                        "message": f"retry observed {key} did not match expected value",
+                        "path": f"$.expected.{key}",
+                    }
+                )
         return TckResult(
             case_id=case.case_id,
             kind=case.kind,
@@ -4199,6 +4368,7 @@ __all__ = [
     "load_compiler_tck_cases",
     "load_exhaustion_tck_cases",
     "load_policy_tck_cases",
+    "load_retry_tck_cases",
     "load_runtime_tck_cases",
     "load_schema_tck_cases",
     "load_sequence_tck_cases",
