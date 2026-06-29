@@ -75,6 +75,25 @@ from graphblocks.output_policy import (
     OutputCutoff,
     OutputPolicyDecision,
 )
+from graphblocks.orchestration import (
+    ChildBudgetDelegation,
+    LeaseEpochMismatchError,
+    LeasePool,
+    LeasePoolExhaustedError,
+    LeaseRequest,
+    ModelPool,
+    ModelProfile,
+    ModelSelectionRequest,
+    ModelToolNotAllowedError,
+    TaskContextAccess,
+    TaskPlan,
+    TaskPlanContextAccessError,
+    TaskPlanCycleError,
+    TaskPlanDependencyError,
+    TaskPlanPatch,
+    TaskStep,
+    WorkerProfile,
+)
 from graphblocks.policy import PolicyDecision, PrincipalRef, ResourceRef as PolicyResourceRef
 from graphblocks.plugins import BlockCatalog
 from graphblocks.rag import (
@@ -153,6 +172,7 @@ TckCaseKind = Literal[
     "conversation",
     "documents",
     "deployment",
+    "orchestration",
     "rag",
     "retry",
     "tool-lifecycle",
@@ -241,6 +261,7 @@ class TckCase:
     conversation_fixture: dict[str, object] = field(default_factory=dict)
     documents_fixture: dict[str, object] = field(default_factory=dict)
     deployment_fixture: dict[str, object] = field(default_factory=dict)
+    orchestration_fixture: dict[str, object] = field(default_factory=dict)
     rag_fixture: dict[str, object] = field(default_factory=dict)
     retry_fixture: dict[str, object] = field(default_factory=dict)
     tool_lifecycle_fixture: dict[str, object] = field(default_factory=dict)
@@ -265,6 +286,7 @@ class TckCase:
             "conversation",
             "documents",
             "deployment",
+            "orchestration",
             "rag",
             "retry",
             "tool-lifecycle",
@@ -293,6 +315,7 @@ class TckCase:
         object.__setattr__(self, "conversation_fixture", dict(self.conversation_fixture))
         object.__setattr__(self, "documents_fixture", dict(self.documents_fixture))
         object.__setattr__(self, "deployment_fixture", dict(self.deployment_fixture))
+        object.__setattr__(self, "orchestration_fixture", dict(self.orchestration_fixture))
         object.__setattr__(self, "rag_fixture", dict(self.rag_fixture))
         object.__setattr__(self, "retry_fixture", dict(self.retry_fixture))
         object.__setattr__(self, "tool_lifecycle_fixture", dict(self.tool_lifecycle_fixture))
@@ -323,6 +346,8 @@ class TckCase:
             raise ValueError("documents TCK case requires fixture")
         if self.kind == "deployment" and not self.deployment_fixture:
             raise ValueError("deployment TCK case requires fixture")
+        if self.kind == "orchestration" and not self.orchestration_fixture:
+            raise ValueError("orchestration TCK case requires fixture")
         if self.kind == "rag" and not self.rag_fixture:
             raise ValueError("rag TCK case requires fixture")
         if self.kind == "retry" and not self.retry_fixture:
@@ -490,6 +515,10 @@ class TckCase:
     @classmethod
     def deployment(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
         return cls(case_id=case_id, kind="deployment", deployment_fixture=fixture)
+
+    @classmethod
+    def orchestration(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
+        return cls(case_id=case_id, kind="orchestration", orchestration_fixture=fixture)
 
     @classmethod
     def rag(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
@@ -1573,6 +1602,34 @@ def load_deployment_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     return tuple(cases)
 
 
+def load_orchestration_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
+    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(raw_cases, list):
+        raise ValueError("orchestration TCK root must be a list")
+    cases: list[TckCase] = []
+    for index, raw_case in enumerate(raw_cases):
+        if not isinstance(raw_case, Mapping):
+            raise ValueError(f"orchestration TCK case {index} must be a mapping")
+        case_id = _first_mapping_value(raw_case, "name", "case_id", "caseId")
+        if not isinstance(case_id, str) or not case_id.strip():
+            raise ValueError(f"orchestration TCK case {index} requires name")
+        case_kind = raw_case.get("kind")
+        if case_kind not in {
+            "task_plan_patch",
+            "task_plan_errors",
+            "context_access",
+            "model_pool",
+            "lease_pool",
+            "child_budget_delegation",
+        }:
+            raise ValueError(f"orchestration TCK case {case_id} has unsupported kind {case_kind!r}")
+        expected = raw_case.get("expected")
+        if not isinstance(expected, Mapping):
+            raise ValueError(f"orchestration TCK case {case_id} requires expected result")
+        cases.append(TckCase.orchestration(case_id=case_id, fixture=dict(raw_case)))
+    return tuple(cases)
+
+
 def load_rag_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(raw_cases, list):
@@ -1886,6 +1943,8 @@ def load_tck_cases_for_suite(suite: str, path: str | Path) -> tuple[TckCase, ...
         return load_documents_tck_cases(path)
     if suite == "exhaustion":
         return load_exhaustion_tck_cases(path)
+    if suite == "orchestration":
+        return load_orchestration_tck_cases(path)
     if suite == "policy":
         return load_policy_tck_cases(path)
     if suite == "rag":
@@ -1930,6 +1989,7 @@ def main(argv: list[str] | None = None) -> int:
             "deployment",
             "documents",
             "runtime",
+            "orchestration",
             "schema",
             "policy",
             "rag",
@@ -2538,6 +2598,8 @@ class TckRunner:
                 results.append(self._run_deployment_case(case))
             elif case.kind == "documents":
                 results.append(self._run_documents_case(case))
+            elif case.kind == "orchestration":
+                results.append(self._run_orchestration_case(case))
             elif case.kind == "rag":
                 results.append(self._run_rag_case(case))
             elif case.kind == "retry":
@@ -4568,6 +4630,400 @@ class TckRunner:
             observed=observed,
         )
 
+    def _run_orchestration_case(self, case: TckCase) -> TckResult:
+        diagnostics: list[dict[str, str]] = []
+        fixture = case.orchestration_fixture
+        kind = str(fixture.get("kind", ""))
+        expected = fixture.get("expected", {})
+        if not isinstance(expected, Mapping):
+            expected = {}
+            diagnostics.append(
+                {
+                    "code": "OrchestrationExpectedInvalid",
+                    "message": "orchestration TCK expected result must be a mapping",
+                    "path": "$.expected",
+                }
+            )
+
+        def step_from_mapping(mapping: Mapping[str, object]) -> TaskStep:
+            return TaskStep(
+                step_id=str(mapping.get("stepId", mapping.get("step_id", ""))),
+                description=str(mapping.get("description", "")),
+                depends_on=_string_tuple(mapping.get("dependsOn", mapping.get("depends_on", ()))),
+                metadata=dict(mapping.get("metadata", {})) if isinstance(mapping.get("metadata", {}), Mapping) else {},
+            )
+
+        def access_from_mapping(mapping: Mapping[str, object]) -> TaskContextAccess:
+            return TaskContextAccess(
+                step_id=str(mapping.get("stepId", mapping.get("step_id", ""))),
+                resource_id=str(mapping.get("resourceId", mapping.get("resource_id", ""))),
+                mode=str(mapping.get("mode", "")),
+                reason=str(mapping["reason"]) if mapping.get("reason") is not None else None,
+            )
+
+        def plan_from_mapping(mapping: Mapping[str, object]) -> TaskPlan:
+            raw_steps = mapping.get("steps", [])
+            if not isinstance(raw_steps, list):
+                raise ValueError("orchestration task plan steps must be a list")
+            raw_context_access = mapping.get("contextAccess", mapping.get("context_access", []))
+            if not isinstance(raw_context_access, list):
+                raise ValueError("orchestration task plan contextAccess must be a list")
+            return TaskPlan(
+                plan_id=str(mapping.get("planId", mapping.get("plan_id", ""))),
+                objective=str(mapping.get("objective", "")),
+                steps=tuple(step_from_mapping(step) for step in raw_steps if isinstance(step, Mapping)),
+                revision=int(mapping.get("revision", 1)),
+                metadata=dict(mapping.get("metadata", {})) if isinstance(mapping.get("metadata", {}), Mapping) else {},
+                context_resources=_string_tuple(mapping.get("contextResources", mapping.get("context_resources", ()))),
+                context_access=tuple(
+                    access_from_mapping(access) for access in raw_context_access if isinstance(access, Mapping)
+                ),
+            )
+
+        def patch_from_mapping(mapping: Mapping[str, object]) -> TaskPlanPatch:
+            raw_upserts = mapping.get("upsertSteps", mapping.get("upsert_steps", []))
+            if not isinstance(raw_upserts, list):
+                raise ValueError("orchestration task plan patch upsertSteps must be a list")
+            return TaskPlanPatch(
+                patch_id=str(mapping.get("patchId", mapping.get("patch_id", ""))),
+                base_plan_id=str(mapping.get("basePlanId", mapping.get("base_plan_id", ""))),
+                base_revision=int(mapping.get("baseRevision", mapping.get("base_revision", 0))),
+                upsert_steps=tuple(
+                    step_from_mapping(step) for step in raw_upserts if isinstance(step, Mapping)
+                ),
+                remove_step_ids=_string_tuple(mapping.get("removeStepIds", mapping.get("remove_step_ids", ()))),
+                created_at=str(mapping.get("createdAt", mapping.get("created_at", ""))),
+                metadata=dict(mapping.get("metadata", {})) if isinstance(mapping.get("metadata", {}), Mapping) else {},
+            )
+
+        def usage_amounts(raw_amounts: object) -> list[UsageAmount]:
+            amounts: list[UsageAmount] = []
+            if isinstance(raw_amounts, list):
+                for raw_amount in raw_amounts:
+                    if isinstance(raw_amount, Mapping):
+                        amounts.append(
+                            UsageAmount(
+                                kind=str(raw_amount.get("kind", "")),
+                                amount=Decimal(str(raw_amount.get("amount", "0"))),
+                                unit=str(raw_amount.get("unit", "")),
+                            )
+                        )
+            return amounts
+
+        def usage_contract(amounts: list[UsageAmount]) -> list[dict[str, str]]:
+            return [
+                {
+                    "kind": amount.kind,
+                    "amount": str(amount.amount),
+                    "unit": amount.unit,
+                }
+                for amount in amounts
+            ]
+
+        observed: dict[str, object] = {}
+        try:
+            if kind == "task_plan_patch":
+                raw_base = fixture.get("base", {})
+                raw_patch = fixture.get("patch", {})
+                if not isinstance(raw_base, Mapping) or not isinstance(raw_patch, Mapping):
+                    raise ValueError("orchestration task_plan_patch case requires base and patch")
+                updated = plan_from_mapping(raw_base).apply_patch(patch_from_mapping(raw_patch))
+                noop = updated.apply_patch(TaskPlanPatch("noop", updated.plan_id, updated.revision))
+                observed = {
+                    "revision": updated.revision,
+                    "stepIds": [step.step_id for step in updated.steps],
+                    "draftDescription": updated.step("draft").description,
+                    "noopDigestStable": updated.content_digest() == noop.content_digest(),
+                }
+            elif kind == "task_plan_errors":
+                missing_dependency_error = None
+                missing_dependency_step = None
+                missing_dependency_id = None
+                try:
+                    raw_plan = fixture.get("missingDependencyPlan", fixture.get("missing_dependency_plan", {}))
+                    if not isinstance(raw_plan, Mapping):
+                        raise ValueError("orchestration task_plan_errors case requires missingDependencyPlan")
+                    plan_from_mapping(raw_plan)
+                except TaskPlanDependencyError as error:
+                    missing_dependency_error = "task_dependency_missing"
+                    missing_dependency_step = error.step_id
+                    missing_dependency_id = error.dependency_id
+
+                cycle_error = None
+                cycle: list[str] = []
+                try:
+                    raw_base = fixture.get("cycleBase", fixture.get("cycle_base", {}))
+                    raw_patch = fixture.get("cyclePatch", fixture.get("cycle_patch", {}))
+                    if not isinstance(raw_base, Mapping) or not isinstance(raw_patch, Mapping):
+                        raise ValueError("orchestration task_plan_errors case requires cycleBase and cyclePatch")
+                    plan_from_mapping(raw_base).apply_patch(patch_from_mapping(raw_patch))
+                except TaskPlanCycleError as error:
+                    cycle_error = "task_cycle"
+                    cycle = list(error.cycle)
+
+                observed = {
+                    "missingDependencyError": missing_dependency_error,
+                    "missingDependencyStep": missing_dependency_step,
+                    "missingDependencyId": missing_dependency_id,
+                    "cycleError": cycle_error,
+                    "cycle": cycle,
+                }
+            elif kind == "context_access":
+                raw_left = fixture.get("left", {})
+                raw_right = fixture.get("right", {})
+                raw_invalid = fixture.get("invalid", {})
+                if not isinstance(raw_left, Mapping) or not isinstance(raw_right, Mapping) or not isinstance(raw_invalid, Mapping):
+                    raise ValueError("orchestration context_access case requires left, right, and invalid")
+                left = plan_from_mapping(raw_left)
+                right = plan_from_mapping(raw_right)
+                invalid_error = None
+                try:
+                    plan_from_mapping(raw_invalid)
+                except TaskPlanContextAccessError as error:
+                    invalid_error = f"context_access_{error.reason}"
+                observed = {
+                    "sameDigest": left.content_digest() == right.content_digest(),
+                    "orderedAccess": [
+                        f"{access.step_id}:{access.resource_id}:{access.mode}" for access in left.context_access
+                    ],
+                    "invalidError": invalid_error,
+                }
+            elif kind == "model_pool":
+                raw_pool = fixture.get("pool", {})
+                raw_worker = fixture.get("worker", {})
+                raw_request = fixture.get("request", {})
+                raw_invalid = fixture.get("invalidRequest", fixture.get("invalid_request", {}))
+                if not isinstance(raw_pool, Mapping) or not isinstance(raw_worker, Mapping):
+                    raise ValueError("orchestration model_pool case requires pool and worker")
+                raw_models = raw_pool.get("models", [])
+                if not isinstance(raw_models, list):
+                    raise ValueError("orchestration model_pool models must be a list")
+                models = []
+                for raw_model in raw_models:
+                    if not isinstance(raw_model, Mapping):
+                        continue
+                    model = ModelProfile(
+                        profile_id=str(raw_model.get("profileId", raw_model.get("profile_id", ""))),
+                        connection=str(raw_model.get("connection", "")),
+                    )
+                    model = model.with_capabilities(_string_tuple(raw_model.get("capabilities")))
+                    model = model.with_allowed_sensitivity(
+                        _string_tuple(raw_model.get("allowedSensitivity", raw_model.get("allowed_sensitivity", ())))
+                    )
+                    model = model.with_regions(_string_tuple(raw_model.get("regions")))
+                    if raw_model.get("qualityTier", raw_model.get("quality_tier")) is not None:
+                        model = model.with_quality_tier(str(raw_model.get("qualityTier", raw_model.get("quality_tier"))))
+                    if raw_model.get("costClass", raw_model.get("cost_class")) is not None:
+                        model = model.with_cost_class(str(raw_model.get("costClass", raw_model.get("cost_class"))))
+                    if raw_model.get("latencyClass", raw_model.get("latency_class")) is not None:
+                        model = model.with_latency_class(str(raw_model.get("latencyClass", raw_model.get("latency_class"))))
+                    model = model.with_usage_report(
+                        bool(raw_model.get("supportsUsageReport", raw_model.get("supports_usage_report", False)))
+                    )
+                    model = model.with_cancellation(
+                        bool(raw_model.get("supportsCancellation", raw_model.get("supports_cancellation", False)))
+                    )
+                    models.append(model)
+                pool = ModelPool(
+                    pool_id=str(raw_pool.get("poolId", raw_pool.get("pool_id", ""))),
+                    selection_policy_ref=str(raw_pool.get("selectionPolicyRef", raw_pool.get("selection_policy_ref", ""))),
+                ).with_models(models)
+                worker = WorkerProfile(
+                    profile_id=str(raw_worker.get("profileId", raw_worker.get("profile_id", ""))),
+                )
+                worker = worker.with_required_capabilities(
+                    _string_tuple(raw_worker.get("requiredCapabilities", raw_worker.get("required_capabilities", ())))
+                )
+                worker = worker.with_allowed_tools(
+                    _string_tuple(raw_worker.get("allowedTools", raw_worker.get("allowed_tools", ())))
+                )
+                if raw_worker.get("modelPoolRef", raw_worker.get("model_pool_ref")) is not None:
+                    worker = worker.with_model_pool_ref(str(raw_worker.get("modelPoolRef", raw_worker.get("model_pool_ref"))))
+                if raw_worker.get("sensitivityCeiling", raw_worker.get("sensitivity_ceiling")) is not None:
+                    worker = worker.with_sensitivity_ceiling(
+                        str(raw_worker.get("sensitivityCeiling", raw_worker.get("sensitivity_ceiling")))
+                    )
+                if raw_worker.get("defaultBudgetRef", raw_worker.get("default_budget_ref")) is not None:
+                    worker = worker.with_default_budget_ref(str(raw_worker.get("defaultBudgetRef", raw_worker.get("default_budget_ref"))))
+                if not isinstance(raw_request, Mapping):
+                    raw_request = {}
+                request = ModelSelectionRequest(worker)
+                request = request.with_required_tools(
+                    _string_tuple(raw_request.get("requiredTools", raw_request.get("required_tools", ())))
+                )
+                request = request.with_required_capabilities(
+                    _string_tuple(raw_request.get("requiredCapabilities", raw_request.get("required_capabilities", ())))
+                )
+                if raw_request.get("sensitivity") is not None:
+                    request = request.with_sensitivity(str(raw_request.get("sensitivity")))
+                if raw_request.get("region") is not None:
+                    request = request.with_region(str(raw_request.get("region")))
+                selected = pool.select_model(request)
+                invalid_error = None
+                invalid_tool = None
+                try:
+                    if not isinstance(raw_invalid, Mapping):
+                        raw_invalid = {}
+                    invalid_request = ModelSelectionRequest(worker).with_required_tools(
+                        _string_tuple(raw_invalid.get("requiredTools", raw_invalid.get("required_tools", ())))
+                    )
+                    pool.select_model(invalid_request)
+                except ModelToolNotAllowedError as error:
+                    invalid_error = "tool_not_allowed"
+                    invalid_tool = error.tool_name
+                observed = {
+                    "selectedModel": selected.profile_id,
+                    "selectedConnection": selected.connection,
+                    "supportsUsageReport": selected.supports_usage_report,
+                    "supportsCancellation": selected.supports_cancellation,
+                    "invalidError": invalid_error,
+                    "invalidTool": invalid_tool,
+                }
+            elif kind == "lease_pool":
+                raw_pool = fixture.get("pool", {})
+                if not isinstance(raw_pool, Mapping):
+                    raise ValueError("orchestration lease_pool case requires pool")
+                lease_pool = LeasePool(
+                    pool_id=str(raw_pool.get("poolId", raw_pool.get("pool_id", ""))),
+                    resource_kind=str(raw_pool.get("resourceKind", raw_pool.get("resource_kind", ""))),
+                    capacity_units=int(raw_pool.get("capacityUnits", raw_pool.get("capacity_units", 0))),
+                )
+                raw_requests = fixture.get("requests", [])
+                if not isinstance(raw_requests, list) or len(raw_requests) < 2:
+                    raise ValueError("orchestration lease_pool case requires at least two requests")
+                first_request = raw_requests[0] if isinstance(raw_requests[0], Mapping) else {}
+                second_request = raw_requests[1] if isinstance(raw_requests[1], Mapping) else {}
+                lease_pool, first_grant = lease_pool.acquire(
+                    LeaseRequest(
+                        request_id=str(first_request.get("requestId", first_request.get("request_id", ""))),
+                        holder=PolicyResourceRef(str(first_request.get("holder", ""))),
+                        resource_kind=str(first_request.get("resourceKind", first_request.get("resource_kind", ""))),
+                        units=int(first_request.get("units", 1)),
+                    ),
+                    lease_id=str(first_request.get("leaseId", first_request.get("lease_id", ""))),
+                    acquired_at=str(first_request.get("acquiredAt", first_request.get("acquired_at", ""))),
+                    expires_at=str(first_request.get("expiresAt", first_request.get("expires_at", ""))),
+                )
+                second_error = None
+                try:
+                    lease_pool.acquire(
+                        LeaseRequest(
+                            request_id=str(second_request.get("requestId", second_request.get("request_id", ""))),
+                            holder=PolicyResourceRef(str(second_request.get("holder", ""))),
+                            resource_kind=str(second_request.get("resourceKind", second_request.get("resource_kind", ""))),
+                            units=int(second_request.get("units", 1)),
+                        ),
+                        lease_id=str(second_request.get("leaseId", second_request.get("lease_id", ""))),
+                        acquired_at=str(second_request.get("acquiredAt", second_request.get("acquired_at", ""))),
+                        expires_at=str(second_request.get("expiresAt", second_request.get("expires_at", ""))),
+                    )
+                except LeasePoolExhaustedError:
+                    second_error = "lease_pool_exhausted"
+                raw_release = fixture.get("release", {})
+                if not isinstance(raw_release, Mapping):
+                    raw_release = {}
+                release_error = None
+                expected_epoch = None
+                actual_epoch = None
+                try:
+                    lease_pool.release(
+                        str(raw_release.get("leaseId", raw_release.get("lease_id", ""))),
+                        fencing_epoch=int(raw_release.get("fencingEpoch", raw_release.get("fencing_epoch", 0))),
+                    )
+                except LeaseEpochMismatchError as error:
+                    release_error = "lease_epoch_mismatch"
+                    expected_epoch = error.expected_epoch
+                    actual_epoch = error.actual_epoch
+                observed = {
+                    "firstLeaseEpoch": first_grant.fencing_epoch,
+                    "secondError": second_error,
+                    "availableAfterFirst": lease_pool.available_units,
+                    "releaseError": release_error,
+                    "expectedEpoch": expected_epoch,
+                    "actualEpoch": actual_epoch,
+                }
+            elif kind == "child_budget_delegation":
+                raw_parent = fixture.get("parentPermit", fixture.get("parent_permit", {}))
+                raw_delegation = fixture.get("delegation", {})
+                if not isinstance(raw_parent, Mapping) or not isinstance(raw_delegation, Mapping):
+                    raise ValueError("orchestration child_budget_delegation case requires parentPermit and delegation")
+                parent = BudgetPermit(
+                    permit_id=str(raw_parent.get("permitId", raw_parent.get("permit_id", ""))),
+                    reservation_refs=tuple(
+                        str(item) for item in raw_parent.get("reservationRefs", raw_parent.get("reservation_refs", []))
+                    ),
+                    owner=PolicyResourceRef(str(raw_parent.get("owner", ""))),
+                    atomic_unit=PolicyResourceRef(str(raw_parent.get("atomicUnit", raw_parent.get("atomic_unit", ""))),
+                    ),
+                    admission_epoch=int(raw_parent.get("admissionEpoch", raw_parent.get("admission_epoch", 0))),
+                    authorized_amounts=usage_amounts(raw_parent.get("authorizedAmounts", raw_parent.get("authorized_amounts", []))),
+                    continuation_profile=(
+                        str(raw_parent.get("continuationProfile", raw_parent.get("continuation_profile")))
+                        if raw_parent.get("continuationProfile", raw_parent.get("continuation_profile")) is not None
+                        else None
+                    ),
+                    policy_snapshot_digest=str(raw_parent.get("policySnapshotDigest", raw_parent.get("policy_snapshot_digest", ""))),
+                    expires_at=str(raw_parent.get("expiresAt", raw_parent.get("expires_at", ""))),
+                    fencing_tokens=dict(raw_parent.get("fencingTokens", raw_parent.get("fencing_tokens", {})))
+                    if isinstance(raw_parent.get("fencingTokens", raw_parent.get("fencing_tokens", {})), Mapping)
+                    else {},
+                )
+                delegation = ChildBudgetDelegation(
+                    delegation_id=str(raw_delegation.get("delegationId", raw_delegation.get("delegation_id", ""))),
+                    parent_permit=parent,
+                    child_owner=PolicyResourceRef(str(raw_delegation.get("childOwner", raw_delegation.get("child_owner", ""))),
+                    ),
+                    amounts=usage_amounts(raw_delegation.get("amounts", [])),
+                    expires_at=str(raw_delegation.get("expiresAt", raw_delegation.get("expires_at", ""))),
+                    continuation_profile=(
+                        str(raw_delegation.get("continuationProfile", raw_delegation.get("continuation_profile")))
+                        if raw_delegation.get("continuationProfile", raw_delegation.get("continuation_profile")) is not None
+                        else None
+                    ),
+                )
+                child = delegation.create_child_permit(str(fixture.get("childPermitId", fixture.get("child_permit_id", ""))))
+                observed = {
+                    "permitId": child.permit_id,
+                    "owner": child.owner.resource_id,
+                    "authorizedAmounts": usage_contract(child.authorized_amounts),
+                    "continuationProfile": child.continuation_profile,
+                    "reservationRefs": list(child.reservation_refs),
+                    "fencingTokens": dict(child.fencing_tokens),
+                }
+            else:
+                diagnostics.append(
+                    {
+                        "code": "OrchestrationKindUnknown",
+                        "message": f"orchestration TCK kind {kind!r} is not supported",
+                        "path": "$.kind",
+                    }
+                )
+        except Exception as error:
+            diagnostics.append(
+                {
+                    "code": "OrchestrationExecutionError",
+                    "message": str(error),
+                    "path": "$",
+                }
+            )
+
+        for key, expected_value in expected.items():
+            if observed.get(str(key)) != expected_value:
+                diagnostics.append(
+                    {
+                        "code": "OrchestrationExpectedMismatch",
+                        "message": f"orchestration observed {key} did not match expected value",
+                        "path": f"$.expected.{key}",
+                    }
+                )
+        return TckResult(
+            case_id=case.case_id,
+            kind=case.kind,
+            status="passed" if not diagnostics else "failed",
+            diagnostics=tuple(diagnostics),
+            observed=observed,
+        )
+
     def _run_rag_case(self, case: TckCase) -> TckResult:
         diagnostics: list[dict[str, str]] = []
         fixture = case.rag_fixture
@@ -6046,6 +6502,7 @@ __all__ = [
     "load_deployment_tck_cases",
     "load_documents_tck_cases",
     "load_exhaustion_tck_cases",
+    "load_orchestration_tck_cases",
     "load_policy_tck_cases",
     "load_rag_tck_cases",
     "load_retry_tck_cases",

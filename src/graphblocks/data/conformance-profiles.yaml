@@ -97,6 +97,8 @@ spec:
     - task-plan-patch
     - model-worker-pool
     - task-budget-delegation
+    tck:
+    - orchestration
   - id: GB-X2-VOICE
     status: experimental-extension
     extends:

@@ -315,6 +315,30 @@ def test_testing_package_loads_shared_deployment_tck_cases(monkeypatch) -> None:
     assert "load_deployment_tck_cases" in graphblocks_testing.__all__
 
 
+def test_testing_package_loads_shared_orchestration_tck_cases(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    cases = graphblocks_testing.load_orchestration_tck_cases(
+        ROOT / "tck" / "orchestration" / "cases.json"
+    )
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
+
+    assert [case.kind for case in cases] == ["orchestration"] * 6
+    assert report.ok
+    assert {case.case_id for case in cases} == {
+        "task_plan_patch_revises_steps_and_preserves_noop_digest",
+        "task_plan_dependency_and_cycle_errors_are_explicit",
+        "context_access_digest_is_order_stable_and_rejects_unknown_resource",
+        "model_pool_selects_eligible_model_and_rejects_disallowed_tool",
+        "lease_pool_enforces_capacity_and_fencing_epoch",
+        "child_budget_delegation_creates_scoped_permit",
+    }
+    assert any(result.observed.get("selectedModel") == "support-internal" for result in report.results)
+    assert any(result.observed.get("firstLeaseEpoch") == 1 for result in report.results)
+    assert "load_orchestration_tck_cases" in graphblocks_testing.__all__
+
+
 def test_testing_package_loads_shared_rag_tck_cases(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -455,6 +479,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "deployment",
         "documents",
         "exhaustion",
+        "orchestration",
         "policy",
         "rag",
         "retry",
@@ -516,6 +541,14 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "line_chunks_preserve_source_spans_and_acl",
         "invalid_chunk_size_is_rejected",
     )
+    assert by_suite["orchestration"].case_ids == (
+        "task_plan_patch_revises_steps_and_preserves_noop_digest",
+        "task_plan_dependency_and_cycle_errors_are_explicit",
+        "context_access_digest_is_order_stable_and_rejects_unknown_resource",
+        "model_pool_selects_eligible_model_and_rejects_disallowed_tool",
+        "lease_pool_enforces_capacity_and_fencing_epoch",
+        "child_budget_delegation_creates_scoped_permit",
+    )
     assert by_suite["tool-lifecycle"].case_ids == (
         "incremental_arguments_do_not_finalize_call",
         "invalid_arguments_denied_before_policy_admission",
@@ -551,7 +584,7 @@ def test_testing_package_cli_lists_tck_suite_manifests(monkeypatch, capsys) -> N
     assert graphblocks_testing.main(["list", str(ROOT / "tck"), "--json"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload["suiteCount"] == 18
+    assert payload["suiteCount"] == 19
     assert payload["suites"][0]["suite_id"] == "application-events"
     assert payload["suites"][0]["case_count"] == 3
     assert payload["contentDigest"].startswith("sha256:")
@@ -802,6 +835,21 @@ def test_testing_package_cli_runs_deployment_tck_suite(monkeypatch, capsys) -> N
     assert payload["contentDigest"].startswith("sha256:")
 
 
+def test_testing_package_cli_runs_orchestration_tck_suite(monkeypatch, capsys) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    exit_code = graphblocks_testing.main(
+        ["run", "orchestration", str(ROOT / "tck" / "orchestration" / "cases.json"), "--json"]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert {result["kind"] for result in payload["results"]} == {"orchestration"}
+    assert payload["contentDigest"].startswith("sha256:")
+
+
 def test_testing_package_cli_runs_tool_execution_tck_suite(monkeypatch, capsys) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -851,6 +899,7 @@ def test_testing_package_cli_runs_all_supported_tck_suites(monkeypatch, capsys) 
         "deployment",
         "documents",
         "exhaustion",
+        "orchestration",
         "policy",
         "rag",
         "retry",
