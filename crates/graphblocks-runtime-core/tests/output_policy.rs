@@ -103,6 +103,42 @@ fn output_gate_rejects_missing_pending_resume_chunk() {
 }
 
 #[test]
+fn output_gate_resumes_terminal_cutoff_state() -> Result<(), OutputGateError> {
+    let cutoff = OutputCutoff {
+        stream_id: "stream-1".to_owned(),
+        response_id: "response-1".to_owned(),
+        turn_id: Some("turn-1".to_owned()),
+        last_generated_sequence: 2,
+        last_policy_accepted_sequence: 1,
+        last_client_delivered_sequence: 1,
+        terminal_reason: TerminalReason::PolicyDenied,
+        draft_disposition: DraftDisposition::Retract,
+        durable_result: DurableResult::None,
+        policy_decision_id: Some("decision-abort".to_owned()),
+        occurred_at_unix_ms: 1_100,
+    };
+
+    let mut gate = OutputDeliveryGate::from_cutoff(cutoff.clone())?;
+
+    assert_eq!(gate.cutoff(), Some(&cutoff));
+    assert_eq!(gate.last_generated_sequence(), 2);
+    assert_eq!(gate.last_policy_accepted_sequence(), 1);
+    assert_eq!(gate.last_client_delivered_sequence(), 1);
+    assert_eq!(
+        gate.record_chunk(GenerationChunk::text("stream-1", "response-1", 3, "late")),
+        Err(OutputGateError::PolicyStopped),
+    );
+    assert_eq!(
+        gate.apply_decision(
+            OutputPolicyDecision::allow("decision-late", Some(2), "sha256:late"),
+            1_200,
+        ),
+        Err(OutputGateError::PolicyStopped),
+    );
+    Ok(())
+}
+
+#[test]
 fn output_gate_rejects_non_contiguous_generation_sequence() {
     let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
 

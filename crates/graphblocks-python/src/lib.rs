@@ -14,10 +14,10 @@ use graphblocks_runtime_core::exhaustion::{
 };
 use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory, Outcome};
 use graphblocks_runtime_core::output_policy::{
-    DeclarativeOutputPolicyEvaluator, DeclarativeOutputPolicyRule, DraftDisposition, FlushBoundary,
-    GenerationChunk, OutputDeliveryGate, OutputDeliveryPolicy, OutputDisposition,
-    OutputPolicyDecision, PendingToolCallsDisposition, ProviderCancellation, RedactionInstruction,
-    ViolationAction,
+    DeclarativeOutputPolicyEvaluator, DeclarativeOutputPolicyRule, DraftDisposition, DurableResult,
+    FlushBoundary, GenerationChunk, OutputCutoff, OutputDeliveryGate, OutputDeliveryPolicy,
+    OutputDisposition, OutputPolicyDecision, PendingToolCallsDisposition, ProviderCancellation,
+    RedactionInstruction, TerminalReason, ViolationAction,
 };
 use graphblocks_runtime_core::readiness::{InputDependency, PortRef, ResolvedInput};
 use graphblocks_runtime_core::scheduler::{ScheduledNode, StartedNode};
@@ -1280,14 +1280,95 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
             ));
         }
     }
-    let mut gate = OutputDeliveryGate::from_state(
-        stream_id,
-        response_id,
-        pending_chunks,
-        last_generated_sequence,
-        last_policy_accepted_sequence,
-        last_client_delivered_sequence,
-    )
+    let mut gate = if let Some(cutoff) = gate_object.get("cutoff") {
+        let cutoff = json_object(cutoff, "gate.cutoff")?;
+        let terminal_reason = match required_string(cutoff, "terminalReason", "gate.cutoff")? {
+            "policy_denied" => TerminalReason::PolicyDenied,
+            "budget_exhausted" => TerminalReason::BudgetExhausted,
+            "cancelled" => TerminalReason::Cancelled,
+            "client_disconnected" => TerminalReason::ClientDisconnected,
+            value => {
+                return Err(PyValueError::new_err(format!(
+                    "gate.cutoff.terminalReason has unknown reason {value:?}"
+                )));
+            }
+        };
+        let draft_disposition = match required_string(cutoff, "draftDisposition", "gate.cutoff")? {
+            "keep" => DraftDisposition::Keep,
+            "mark_incomplete" => DraftDisposition::MarkIncomplete,
+            "retract" => DraftDisposition::Retract,
+            value => {
+                return Err(PyValueError::new_err(format!(
+                    "gate.cutoff.draftDisposition has unknown disposition {value:?}"
+                )));
+            }
+        };
+        let durable_result = match required_string(cutoff, "durableResult", "gate.cutoff")? {
+            "none" => DurableResult::None,
+            "incomplete" => DurableResult::Incomplete,
+            "partial" => DurableResult::Partial,
+            value => {
+                return Err(PyValueError::new_err(format!(
+                    "gate.cutoff.durableResult has unknown result {value:?}"
+                )));
+            }
+        };
+        let turn_id = cutoff
+            .get("turnId")
+            .map(|value| {
+                value
+                    .as_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| PyValueError::new_err("gate.cutoff.turnId must be a string"))
+            })
+            .transpose()?;
+        let policy_decision_id = cutoff
+            .get("policyDecisionId")
+            .map(|value| {
+                value.as_str().map(str::to_owned).ok_or_else(|| {
+                    PyValueError::new_err("gate.cutoff.policyDecisionId must be a string")
+                })
+            })
+            .transpose()?;
+        OutputDeliveryGate::from_cutoff(OutputCutoff {
+            stream_id: cutoff
+                .get("streamId")
+                .and_then(Value::as_str)
+                .unwrap_or(stream_id)
+                .to_owned(),
+            response_id: cutoff
+                .get("responseId")
+                .and_then(Value::as_str)
+                .unwrap_or(response_id)
+                .to_owned(),
+            turn_id,
+            last_generated_sequence: required_u64(cutoff, "lastGeneratedSequence", "gate.cutoff")?,
+            last_policy_accepted_sequence: required_u64(
+                cutoff,
+                "lastPolicyAcceptedSequence",
+                "gate.cutoff",
+            )?,
+            last_client_delivered_sequence: required_u64(
+                cutoff,
+                "lastClientDeliveredSequence",
+                "gate.cutoff",
+            )?,
+            terminal_reason,
+            draft_disposition,
+            durable_result,
+            policy_decision_id,
+            occurred_at_unix_ms: required_u64(cutoff, "occurredAtUnixMs", "gate.cutoff")?,
+        })
+    } else {
+        OutputDeliveryGate::from_state(
+            stream_id,
+            response_id,
+            pending_chunks,
+            last_generated_sequence,
+            last_policy_accepted_sequence,
+            last_client_delivered_sequence,
+        )
+    }
     .map_err(|error| PyValueError::new_err(format!("invalid output gate state: {error:?}")))?;
     if let Some(turn_id) = gate_object.get("turnId") {
         let Some(turn_id) = turn_id.as_str() else {
@@ -2806,6 +2887,65 @@ mod tests {
                 .and_then(Value::as_str),
             Some(" next")
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_output_gate_json_resumes_terminal_cutoff_state() -> Result<(), String> {
+        pyo3::Python::initialize();
+        let gate = json!({
+            "streamId": "stream-1",
+            "responseId": "response-1",
+            "cutoff": {
+                "streamId": "stream-1",
+                "responseId": "response-1",
+                "turnId": "turn-1",
+                "lastGeneratedSequence": 2,
+                "lastPolicyAcceptedSequence": 1,
+                "lastClientDeliveredSequence": 1,
+                "terminalReason": "policy_denied",
+                "draftDisposition": "retract",
+                "durableResult": "none",
+                "policyDecisionId": "decision-abort",
+                "occurredAtUnixMs": 1_100
+            }
+        });
+        let gate_json = serde_json::to_string(&gate).map_err(|error| error.to_string())?;
+        let empty_operations =
+            serde_json::to_string(&json!([])).map_err(|error| error.to_string())?;
+
+        let result_json = evaluate_output_gate_json(&gate_json, &empty_operations)
+            .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            result
+                .get("cutoff")
+                .and_then(|cutoff| cutoff.get("policyDecisionId"))
+                .and_then(Value::as_str),
+            Some("decision-abort")
+        );
+        assert_eq!(
+            result
+                .get("cutoff")
+                .and_then(|cutoff| cutoff.get("lastClientDeliveredSequence"))
+                .and_then(Value::as_u64),
+            Some(1)
+        );
+
+        let late_operations = serde_json::to_string(&json!([
+            {
+                "kind": "chunk",
+                "sequence": 3,
+                "text": "late"
+            }
+        ]))
+        .map_err(|error| error.to_string())?;
+        let error = evaluate_output_gate_json(&gate_json, &late_operations)
+            .expect_err("late chunks must remain blocked after a resumed cutoff");
+        assert!(error.to_string().contains("PolicyStopped"));
 
         Ok(())
     }

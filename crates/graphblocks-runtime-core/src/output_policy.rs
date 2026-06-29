@@ -901,6 +901,9 @@ pub enum OutputGateError {
     InvalidGenerationChunk {
         source: GenerationChunkError,
     },
+    InvalidCutoff {
+        source: OutputCutoffError,
+    },
     InvalidDeliveryPolicy {
         source: OutputDeliveryPolicyError,
     },
@@ -1080,6 +1083,19 @@ impl OutputDeliveryGate {
         gate.last_generated_sequence = last_generated_sequence;
         gate.last_policy_accepted_sequence = last_policy_accepted_sequence;
         gate.last_client_delivered_sequence = last_client_delivered_sequence;
+        Ok(gate)
+    }
+
+    pub fn from_cutoff(cutoff: OutputCutoff) -> Result<Self, OutputGateError> {
+        cutoff
+            .validate()
+            .map_err(|source| OutputGateError::InvalidCutoff { source })?;
+        let mut gate = Self::new(cutoff.stream_id.clone(), cutoff.response_id.clone());
+        gate.turn_id = cutoff.turn_id.clone();
+        gate.last_generated_sequence = cutoff.last_generated_sequence;
+        gate.last_policy_accepted_sequence = cutoff.last_policy_accepted_sequence;
+        gate.last_client_delivered_sequence = cutoff.last_client_delivered_sequence;
+        gate.stopped = Some(cutoff);
         Ok(gate)
     }
 
