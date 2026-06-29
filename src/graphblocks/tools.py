@@ -1361,6 +1361,58 @@ class ToolExecutionPlan:
                     raise ToolExecutionPlanError(
                         f"tool execution plan has a dependency cycle involving {tool_call_id}"
                     )
+        if self.maximum_parallelism > 1:
+            for left_index, left_call in enumerate(self.calls):
+                if not (
+                    set(left_call.effects)
+                    & {"external_write", "filesystem_write", "process", "destructive"}
+                ):
+                    continue
+                for right_call in self.calls[left_index + 1 :]:
+                    if not (
+                        set(right_call.effects)
+                        & {"external_write", "filesystem_write", "process", "destructive"}
+                    ):
+                        continue
+
+                    left_id = left_call.call.tool_call_id
+                    right_id = right_call.call.tool_call_id
+                    left_depends_on_right = False
+                    pending_dependencies = list(left_call.call.depends_on)
+                    seen_dependencies: set[str] = set()
+                    while pending_dependencies and not left_depends_on_right:
+                        dependency = pending_dependencies.pop()
+                        if dependency in seen_dependencies:
+                            continue
+                        seen_dependencies.add(dependency)
+                        if dependency == right_id:
+                            left_depends_on_right = True
+                            break
+                        pending_dependencies.extend(self._calls_by_id[dependency].call.depends_on)
+
+                    right_depends_on_left = False
+                    pending_dependencies = list(right_call.call.depends_on)
+                    seen_dependencies = set()
+                    while pending_dependencies and not right_depends_on_left:
+                        dependency = pending_dependencies.pop()
+                        if dependency in seen_dependencies:
+                            continue
+                        seen_dependencies.add(dependency)
+                        if dependency == left_id:
+                            right_depends_on_left = True
+                            break
+                        pending_dependencies.extend(self._calls_by_id[dependency].call.depends_on)
+
+                    if left_depends_on_right or right_depends_on_left:
+                        continue
+                    if left_call.effect_key is None:
+                        raise ToolExecutionPlanError(
+                            f"parallel state-changing tool call {left_id} requires an effect key"
+                        )
+                    if right_call.effect_key is None:
+                        raise ToolExecutionPlanError(
+                            f"parallel state-changing tool call {right_id} requires an effect key"
+                        )
 
     def state(self, tool_call_id: str) -> ToolExecutionState | None:
         return self._states.get(tool_call_id)

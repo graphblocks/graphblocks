@@ -2786,6 +2786,46 @@ def test_tool_execution_plan_waits_for_dependencies_and_serializes_effect_keys()
     assert plan.ready_call_ids() == ["call-b", "call-c"]
 
 
+def test_tool_execution_plan_rejects_parallel_state_changing_calls_without_effect_keys() -> None:
+    with pytest.raises(ToolExecutionPlanError) as error:
+        ToolExecutionPlan(
+            plan_id="plan-1",
+            response_id="response-1",
+            calls=(
+                ToolPlanCall(
+                    _tool_call("call-a", '{"resource_id":"ticket-1"}'),
+                    effects=frozenset({"external_write"}),
+                ),
+                ToolPlanCall(
+                    _tool_call("call-b", '{"resource_id":"ticket-2"}'),
+                    effects=frozenset({"external_write"}),
+                ),
+            ),
+            maximum_parallelism=2,
+        )
+
+    assert str(error.value) == "parallel state-changing tool call call-a requires an effect key"
+
+
+def test_tool_execution_plan_allows_dependency_serialized_state_changing_calls_without_effect_keys() -> None:
+    dependent = replace(_tool_call("call-b", '{"resource_id":"ticket-2"}'), depends_on=("call-a",))
+
+    plan = ToolExecutionPlan(
+        plan_id="plan-1",
+        response_id="response-1",
+        calls=(
+            ToolPlanCall(
+                _tool_call("call-a", '{"resource_id":"ticket-1"}'),
+                effects=frozenset({"external_write"}),
+            ),
+            ToolPlanCall(dependent, effects=frozenset({"external_write"})),
+        ),
+        maximum_parallelism=2,
+    )
+
+    assert plan.ready_call_ids() == ["call-a"]
+
+
 def test_tool_execution_plan_rejects_empty_effect_key() -> None:
     with pytest.raises(ToolExecutionPlanError) as error:
         ToolExecutionPlan(
