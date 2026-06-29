@@ -752,6 +752,64 @@ def test_output_delivery_gate_rejects_negative_redaction_chunk_sequence() -> Non
     assert str(error.value) == "invalid redaction path '/chunks/-1/text'"
 
 
+def test_output_delivery_gate_rejects_already_delivered_redaction_target() -> None:
+    gate = OutputDeliveryGate("stream-1", "response-1")
+    gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "hello secret world"))
+    gate.apply_decision(
+        OutputPolicyDecision.allow(
+            "decision-allow",
+            accepted_through_sequence=1,
+            input_digest="sha256:allow",
+        ),
+        occurred_at="2026-06-23T00:00:00Z",
+    )
+
+    with pytest.raises(OutputGateError) as error:
+        gate.apply_decision(
+            OutputPolicyDecision.redact(
+                "decision-redact",
+                accepted_through_sequence=1,
+                redactions=(
+                    {
+                        "path": "/chunks/1/text",
+                        "start": 6,
+                        "end": 12,
+                        "replacement": "[redacted]",
+                    },
+                ),
+                input_digest="sha256:redact",
+            ),
+            occurred_at="2026-06-23T00:00:01Z",
+        )
+
+    assert str(error.value) == "redaction target 1 is already delivered through 1"
+
+
+def test_output_delivery_gate_rejects_future_redaction_target() -> None:
+    gate = OutputDeliveryGate("stream-1", "response-1")
+    gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "hello secret world"))
+
+    with pytest.raises(OutputGateError) as error:
+        gate.apply_decision(
+            OutputPolicyDecision.redact(
+                "decision-redact",
+                accepted_through_sequence=1,
+                redactions=(
+                    {
+                        "path": "/chunks/2/text",
+                        "start": 0,
+                        "end": 6,
+                        "replacement": "[redacted]",
+                    },
+                ),
+                input_digest="sha256:redact",
+            ),
+            occurred_at="2026-06-23T00:00:01Z",
+        )
+
+    assert str(error.value) == "redaction target 2 exceeds last generated sequence 1"
+
+
 def test_output_delivery_gate_redact_without_replacement_holds_original_pending_chunk() -> None:
     gate = OutputDeliveryGate("stream-1", "response-1")
     gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "secret value"))

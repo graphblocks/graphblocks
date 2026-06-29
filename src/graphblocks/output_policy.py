@@ -848,8 +848,18 @@ class OutputDeliveryGate:
                     redactions_by_sequence.setdefault(sequence, []).append(redaction)
 
                 for sequence, redactions in redactions_by_sequence.items():
-                    if sequence <= self.last_client_delivered_sequence or sequence not in self.pending:
-                        continue
+                    if sequence > self.last_generated_sequence:
+                        raise OutputGateError(
+                            f"redaction target {sequence} exceeds last generated sequence "
+                            f"{self.last_generated_sequence}"
+                        )
+                    if sequence <= self.last_client_delivered_sequence:
+                        raise OutputGateError(
+                            f"redaction target {sequence} is already delivered through "
+                            f"{self.last_client_delivered_sequence}"
+                        )
+                    if sequence not in self.pending:
+                        raise OutputGateError(f"missing pending chunk {sequence}")
                     text = self.pending[sequence].text
                     for redaction in sorted(redactions, key=lambda item: int(item.get("start", -1)), reverse=True):
                         start = redaction.get("start")

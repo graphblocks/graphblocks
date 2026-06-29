@@ -1379,6 +1379,78 @@ fn redact_decision_applies_typed_redaction_instruction_before_delivery()
 }
 
 #[test]
+fn redact_decision_rejects_already_delivered_redaction_target() -> Result<(), OutputGateError> {
+    let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
+    gate.record_chunk(GenerationChunk::text(
+        "stream-1",
+        "response-1",
+        1,
+        "hello secret world",
+    ))?;
+    gate.apply_decision(
+        OutputPolicyDecision::allow("decision-allow", Some(1), "sha256:allow"),
+        1_000,
+    )?;
+
+    assert_eq!(
+        gate.apply_decision(
+            OutputPolicyDecision::redact(
+                "decision-redact",
+                Some(1),
+                Vec::<GenerationChunk>::new(),
+                "sha256:redact",
+            )
+            .with_redactions([RedactionInstruction::text_range(
+                "/chunks/1/text",
+                6,
+                12,
+                "[redacted]",
+            )]),
+            1_010,
+        ),
+        Err(OutputGateError::PendingChunkAlreadyDelivered {
+            sequence: 1,
+            last_client_delivered_sequence: 1,
+        }),
+    );
+    Ok(())
+}
+
+#[test]
+fn redact_decision_rejects_future_redaction_target() -> Result<(), OutputGateError> {
+    let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
+    gate.record_chunk(GenerationChunk::text(
+        "stream-1",
+        "response-1",
+        1,
+        "hello secret world",
+    ))?;
+
+    assert_eq!(
+        gate.apply_decision(
+            OutputPolicyDecision::redact(
+                "decision-redact",
+                Some(1),
+                Vec::<GenerationChunk>::new(),
+                "sha256:redact",
+            )
+            .with_redactions([RedactionInstruction::text_range(
+                "/chunks/2/text",
+                0,
+                6,
+                "[redacted]",
+            )]),
+            1_000,
+        ),
+        Err(OutputGateError::PendingChunkBeyondGenerated {
+            sequence: 2,
+            last_generated_sequence: 1,
+        }),
+    );
+    Ok(())
+}
+
+#[test]
 fn redact_decision_without_replacement_holds_original_pending_chunk() -> Result<(), OutputGateError>
 {
     let mut gate = OutputDeliveryGate::new("stream-1", "response-1");

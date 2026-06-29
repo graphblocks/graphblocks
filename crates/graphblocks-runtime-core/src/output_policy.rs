@@ -1378,11 +1378,20 @@ impl OutputDeliveryGate {
                     }
 
                     for (sequence, mut redactions) in redactions_by_sequence {
+                        if sequence > self.last_generated_sequence {
+                            return Err(OutputGateError::PendingChunkBeyondGenerated {
+                                sequence,
+                                last_generated_sequence: self.last_generated_sequence,
+                            });
+                        }
                         if sequence <= self.last_client_delivered_sequence {
-                            continue;
+                            return Err(OutputGateError::PendingChunkAlreadyDelivered {
+                                sequence,
+                                last_client_delivered_sequence: self.last_client_delivered_sequence,
+                            });
                         }
                         let Some(chunk) = self.pending.get_mut(&sequence) else {
-                            continue;
+                            return Err(OutputGateError::MissingPendingChunk { sequence });
                         };
                         redactions.sort_by(|left, right| right.start.cmp(&left.start));
                         for redaction in redactions {
