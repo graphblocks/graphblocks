@@ -2323,7 +2323,7 @@ mod tests {
             "turnId": "turn-1",
             "deliveryPolicy": {
                 "mode": "bounded_holdback",
-                "holdbackMaxTokens": 1,
+                "holdbackMaxTokens": 2,
                 "onViolation": "abort_response",
                 "deliveredDraftDisposition": "retract"
             }
@@ -2650,6 +2650,136 @@ mod tests {
                 .and_then(Value::as_u64),
             Some(2)
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_output_gate_json_preserves_pending_prefix_on_replacement_parts()
+    -> Result<(), String> {
+        let gate = json!({
+            "streamId": "stream-1",
+            "responseId": "response-1",
+            "deliveryPolicy": {
+                "mode": "bounded_holdback",
+                "holdbackMaxTokens": 8,
+                "onViolation": "abort_response"
+            }
+        });
+        let operations = json!([
+            {
+                "kind": "chunk",
+                "sequence": 1,
+                "text": "safe "
+            },
+            {
+                "kind": "chunk",
+                "sequence": 2,
+                "text": "context "
+            },
+            {
+                "kind": "chunk",
+                "sequence": 3,
+                "text": "secret"
+            },
+            {
+                "kind": "decision",
+                "decisionId": "decision-replace",
+                "disposition": "replace",
+                "acceptedThroughSequence": 3,
+                "inputDigest": "sha256:replace",
+                "replacementParts": [
+                    {"kind": "text", "text": "[redacted]"}
+                ],
+                "occurredAtUnixMs": 1_000
+            }
+        ]);
+        let gate_json = serde_json::to_string(&gate).map_err(|error| error.to_string())?;
+        let operations_json =
+            serde_json::to_string(&operations).map_err(|error| error.to_string())?;
+
+        let result_json = evaluate_output_gate_json(&gate_json, &operations_json)
+            .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+        let chunks = result
+            .get("deliveries")
+            .and_then(Value::as_array)
+            .and_then(|deliveries| deliveries.first())
+            .and_then(|delivery| delivery.get("chunks"))
+            .and_then(Value::as_array)
+            .ok_or_else(|| "missing replacement delivery chunks".to_owned())?;
+
+        assert_eq!(
+            chunks
+                .iter()
+                .map(|chunk| (
+                    chunk.get("sequence").and_then(Value::as_u64),
+                    chunk.get("text").and_then(Value::as_str),
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                (Some(1), Some("safe ")),
+                (Some(2), Some("context ")),
+                (Some(3), Some("[redacted]")),
+            ],
+        );
+        assert_eq!(
+            result
+                .get("lastPolicyAcceptedSequence")
+                .and_then(Value::as_u64),
+            Some(3)
+        );
+        assert_eq!(
+            result
+                .get("lastClientDeliveredSequence")
+                .and_then(Value::as_u64),
+            Some(3)
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_output_gate_json_enforces_token_holdback_limit() -> Result<(), String> {
+        pyo3::Python::initialize();
+
+        let gate = json!({
+            "streamId": "stream-1",
+            "responseId": "response-1",
+            "deliveryPolicy": {
+                "mode": "bounded_holdback",
+                "holdbackMaxTokens": 3,
+                "onViolation": "abort_response"
+            }
+        });
+        let operations = json!([
+            {
+                "kind": "chunk",
+                "sequence": 1,
+                "text": "safe text"
+            },
+            {
+                "kind": "chunk",
+                "sequence": 2,
+                "text": "still"
+            },
+            {
+                "kind": "chunk",
+                "sequence": 3,
+                "text": "blocked"
+            }
+        ]);
+        let gate_json = serde_json::to_string(&gate).map_err(|error| error.to_string())?;
+        let operations_json =
+            serde_json::to_string(&operations).map_err(|error| error.to_string())?;
+
+        let error = evaluate_output_gate_json(&gate_json, &operations_json)
+            .expect_err("token holdback overflow should be rejected")
+            .to_string();
+
+        assert!(error.contains("BoundedHoldbackTokensExceeded"));
+        assert!(error.contains("max_tokens: 3"));
 
         Ok(())
     }
