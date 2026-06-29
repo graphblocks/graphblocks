@@ -1153,5 +1153,191 @@
       "graph_hash": "sha256:e0c38ac31de6e479bd32fd9fa90ef7ab288c73f15454564ab2cc75c38d72a55b",
       "error_codes": ["NonIdempotentRetry"]
     }
+  },
+  {
+    "name": "unbounded_output_policy_holdback",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "unbounded-output-policy-holdback"
+      },
+      "spec": {
+        "nodes": {
+          "model": {
+            "block": "model.generate@1"
+          }
+        },
+        "outputPolicy": {
+          "delivery": {
+            "mode": "bounded_holdback",
+            "onViolation": "abort_response"
+          },
+          "evaluation": {
+            "enforcementPoints": [
+              "on_generation_chunk",
+              "before_client_delivery",
+              "before_output_commit"
+            ]
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:a67c2c477d86afed8c6f810a4b71380efa10304a6c1a992858e7edffd4c29777",
+      "error_codes": ["UnboundedPolicyHoldback"]
+    }
+  },
+  {
+    "name": "immediate_draft_without_retraction_support",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "immediate-draft-without-retraction-support"
+      },
+      "spec": {
+        "nodes": {
+          "model": {
+            "block": "model.generate@1"
+          }
+        },
+        "outputPolicy": {
+          "delivery": {
+            "mode": "immediate_draft",
+            "onViolation": "abort_response",
+            "deliveredDraftDisposition": "keep"
+          },
+          "evaluation": {
+            "enforcementPoints": [
+              "on_generation_chunk",
+              "before_client_delivery",
+              "before_output_commit"
+            ]
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:a2272fe2613cb3b07a2f4c70cee3b449287efa36919afd60a7d56d0d36664d78",
+      "error_codes": ["ImmediateDraftWithoutRetractionSupport"]
+    }
+  },
+  {
+    "name": "output_policy_gate_after_delivery",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "output-policy-gate-after-delivery"
+      },
+      "spec": {
+        "nodes": {
+          "model": {
+            "block": "model.generate@1"
+          }
+        },
+        "outputPolicy": {
+          "delivery": {
+            "mode": "bounded_holdback",
+            "holdbackMaxTokens": 48,
+            "onViolation": "abort_response"
+          },
+          "evaluation": {
+            "enforcementPoints": [
+              "before_client_delivery",
+              "on_generation_chunk",
+              "before_output_commit"
+            ]
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:d5287fc410f586cb26533f5c22364b214fc85a1b880d1433f14d0d69d2cf62f9",
+      "error_codes": ["PolicyGateAfterDelivery"]
+    }
+  },
+  {
+    "name": "policy_abort_keeps_pending_tool_calls",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "policy-abort-keeps-pending-tool-calls"
+      },
+      "spec": {
+        "nodes": {
+          "model": {
+            "block": "model.generate@1"
+          }
+        },
+        "outputPolicy": {
+          "delivery": {
+            "mode": "bounded_holdback",
+            "holdbackMaxTokens": 48,
+            "onViolation": "abort_response"
+          },
+          "evaluation": {
+            "enforcementPoints": [
+              "on_generation_chunk",
+              "before_client_delivery",
+              "before_output_commit"
+            ]
+          },
+          "onViolation": {
+            "disposition": "abort_response",
+            "pendingToolCalls": {
+              "disposition": "keep"
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:aa6467bf6df2b524391adb725688ddf867f1512e5cb7c5213f934b79cb977d87",
+      "error_codes": ["PendingToolCallAfterAbort"]
+    }
+  },
+  {
+    "name": "policy_abort_commits_durable_result",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "policy-abort-commits-durable-result"
+      },
+      "spec": {
+        "nodes": {
+          "model": {
+            "block": "model.generate@1"
+          }
+        },
+        "outputPolicy": {
+          "delivery": {
+            "mode": "bounded_holdback",
+            "holdbackMaxTokens": 48,
+            "onViolation": "abort_response"
+          },
+          "evaluation": {
+            "enforcementPoints": [
+              "on_generation_chunk",
+              "before_client_delivery",
+              "before_output_commit"
+            ]
+          },
+          "onViolation": {
+            "disposition": "abort_response",
+            "durableResult": {
+              "disposition": "partial"
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:d80b1f5548898ee53378853edd79b9a971287c8a10d4cb2cf8322735cd9c9fca",
+      "error_codes": ["CommitAfterPolicyStop"]
+    }
   }
 ]
