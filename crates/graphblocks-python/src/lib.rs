@@ -1229,7 +1229,66 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
     let gate_object = json_object(&gate_value, "gate")?;
     let stream_id = required_string(gate_object, "streamId", "gate")?;
     let response_id = required_string(gate_object, "responseId", "gate")?;
-    let mut gate = OutputDeliveryGate::new(stream_id, response_id);
+    let last_generated_sequence = gate_object
+        .get("lastGeneratedSequence")
+        .map(|value| {
+            value.as_u64().ok_or_else(|| {
+                PyValueError::new_err("gate.lastGeneratedSequence must be an unsigned integer")
+            })
+        })
+        .transpose()?
+        .unwrap_or(0);
+    let last_policy_accepted_sequence = gate_object
+        .get("lastPolicyAcceptedSequence")
+        .map(|value| {
+            value.as_u64().ok_or_else(|| {
+                PyValueError::new_err("gate.lastPolicyAcceptedSequence must be an unsigned integer")
+            })
+        })
+        .transpose()?
+        .unwrap_or(0);
+    let last_client_delivered_sequence = gate_object
+        .get("lastClientDeliveredSequence")
+        .map(|value| {
+            value.as_u64().ok_or_else(|| {
+                PyValueError::new_err(
+                    "gate.lastClientDeliveredSequence must be an unsigned integer",
+                )
+            })
+        })
+        .transpose()?
+        .unwrap_or(0);
+    let mut pending_chunks = Vec::new();
+    if let Some(pending) = gate_object.get("pending") {
+        let Some(pending) = pending.as_array() else {
+            return Err(PyValueError::new_err("gate.pending must be an array"));
+        };
+        for (pending_index, pending_chunk) in pending.iter().enumerate() {
+            let pending_label = format!("gate.pending[{pending_index}]");
+            let pending_chunk = json_object(pending_chunk, &pending_label)?;
+            pending_chunks.push(GenerationChunk::text(
+                pending_chunk
+                    .get("streamId")
+                    .and_then(Value::as_str)
+                    .unwrap_or(stream_id),
+                pending_chunk
+                    .get("responseId")
+                    .and_then(Value::as_str)
+                    .unwrap_or(response_id),
+                required_u64(pending_chunk, "sequence", &pending_label)?,
+                required_string(pending_chunk, "text", &pending_label)?,
+            ));
+        }
+    }
+    let mut gate = OutputDeliveryGate::from_state(
+        stream_id,
+        response_id,
+        pending_chunks,
+        last_generated_sequence,
+        last_policy_accepted_sequence,
+        last_client_delivered_sequence,
+    )
+    .map_err(|error| PyValueError::new_err(format!("invalid output gate state: {error:?}")))?;
     if let Some(turn_id) = gate_object.get("turnId") {
         let Some(turn_id) = turn_id.as_str() else {
             return Err(PyValueError::new_err("gate.turnId must be a string"));
@@ -1772,6 +1831,14 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
         "deliveries": deliveries,
         "decisions": decisions,
         "cutoff": cutoff,
+        "pending": gate.pending_chunks()
+            .map(|chunk| json!({
+                "streamId": chunk.stream_id,
+                "responseId": chunk.response_id,
+                "sequence": chunk.sequence,
+                "text": chunk.text,
+            }))
+            .collect::<Vec<_>>(),
         "lastGeneratedSequence": gate.last_generated_sequence(),
         "lastPolicyAcceptedSequence": gate.last_policy_accepted_sequence(),
         "lastClientDeliveredSequence": gate.last_client_delivered_sequence(),
@@ -2647,6 +2714,97 @@ mod tests {
                 .get("lastClientDeliveredSequence")
                 .and_then(Value::as_u64),
             Some(1)
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_output_gate_json_resumes_pending_holdback_state() -> Result<(), String> {
+        pyo3::Python::initialize();
+        let gate = json!({
+            "streamId": "stream-1",
+            "responseId": "response-1",
+            "turnId": "turn-1",
+            "lastGeneratedSequence": 2,
+            "lastPolicyAcceptedSequence": 1,
+            "lastClientDeliveredSequence": 1,
+            "pending": [
+                {
+                    "sequence": 2,
+                    "text": "held"
+                }
+            ],
+            "deliveryPolicy": {
+                "mode": "bounded_holdback",
+                "holdbackMaxTokens": 4,
+                "onViolation": "abort_response",
+                "deliveredDraftDisposition": "retract"
+            }
+        });
+        let operations = json!([
+            {
+                "kind": "decision",
+                "decisionId": "decision-2",
+                "disposition": "allow",
+                "acceptedThroughSequence": 2,
+                "inputDigest": "sha256:second",
+                "occurredAtUnixMs": 1_010
+            },
+            {
+                "kind": "chunk",
+                "sequence": 3,
+                "text": " next"
+            }
+        ]);
+        let gate_json = serde_json::to_string(&gate).map_err(|error| error.to_string())?;
+        let operations_json =
+            serde_json::to_string(&operations).map_err(|error| error.to_string())?;
+
+        let result_json = evaluate_output_gate_json(&gate_json, &operations_json)
+            .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            result
+                .get("deliveries")
+                .and_then(Value::as_array)
+                .and_then(|deliveries| deliveries.first())
+                .and_then(|delivery| delivery.get("chunks"))
+                .and_then(Value::as_array)
+                .and_then(|chunks| chunks.first())
+                .and_then(|chunk| chunk.get("text"))
+                .and_then(Value::as_str),
+            Some("held")
+        );
+        assert_eq!(
+            result.get("lastGeneratedSequence").and_then(Value::as_u64),
+            Some(3)
+        );
+        assert_eq!(
+            result
+                .get("lastClientDeliveredSequence")
+                .and_then(Value::as_u64),
+            Some(2)
+        );
+        assert_eq!(
+            result
+                .get("pending")
+                .and_then(Value::as_array)
+                .and_then(|pending| pending.first())
+                .and_then(|chunk| chunk.get("sequence"))
+                .and_then(Value::as_u64),
+            Some(3)
+        );
+        assert_eq!(
+            result
+                .get("pending")
+                .and_then(Value::as_array)
+                .and_then(|pending| pending.first())
+                .and_then(|chunk| chunk.get("text"))
+                .and_then(Value::as_str),
+            Some(" next")
         );
 
         Ok(())

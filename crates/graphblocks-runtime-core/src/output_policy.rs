@@ -924,6 +924,24 @@ pub enum OutputGateError {
         last_generated_sequence: u64,
         accepted_through_sequence: u64,
     },
+    ClientDeliveredSequenceBeyondGenerated {
+        last_generated_sequence: u64,
+        last_client_delivered_sequence: u64,
+    },
+    PendingChunkAlreadyDelivered {
+        sequence: u64,
+        last_client_delivered_sequence: u64,
+    },
+    PendingChunkBeyondGenerated {
+        sequence: u64,
+        last_generated_sequence: u64,
+    },
+    DuplicatePendingChunk {
+        sequence: u64,
+    },
+    MissingPendingChunk {
+        sequence: u64,
+    },
     BoundedHoldbackExceeded {
         max_bytes: u64,
     },
@@ -989,6 +1007,82 @@ impl OutputDeliveryGate {
         }
     }
 
+    pub fn from_state<I>(
+        stream_id: impl Into<String>,
+        response_id: impl Into<String>,
+        pending: I,
+        last_generated_sequence: u64,
+        last_policy_accepted_sequence: u64,
+        last_client_delivered_sequence: u64,
+    ) -> Result<Self, OutputGateError>
+    where
+        I: IntoIterator<Item = GenerationChunk>,
+    {
+        let mut gate = Self::new(stream_id, response_id);
+        gate.validate_identity()?;
+        if last_policy_accepted_sequence > last_generated_sequence {
+            return Err(OutputGateError::AcceptedSequenceBeyondGenerated {
+                last_generated_sequence,
+                accepted_through_sequence: last_policy_accepted_sequence,
+            });
+        }
+        if last_client_delivered_sequence > last_generated_sequence {
+            return Err(OutputGateError::ClientDeliveredSequenceBeyondGenerated {
+                last_generated_sequence,
+                last_client_delivered_sequence,
+            });
+        }
+
+        let mut pending_chunks = BTreeMap::new();
+        for chunk in pending {
+            chunk
+                .validate()
+                .map_err(|source| OutputGateError::InvalidGenerationChunk { source })?;
+            if chunk.stream_id != gate.stream_id {
+                return Err(OutputGateError::StreamMismatch {
+                    expected_stream_id: gate.stream_id.clone(),
+                    actual_stream_id: chunk.stream_id,
+                });
+            }
+            if chunk.response_id != gate.response_id {
+                return Err(OutputGateError::ResponseMismatch {
+                    expected_response_id: gate.response_id.clone(),
+                    actual_response_id: chunk.response_id,
+                });
+            }
+            if chunk.sequence <= last_client_delivered_sequence {
+                return Err(OutputGateError::PendingChunkAlreadyDelivered {
+                    sequence: chunk.sequence,
+                    last_client_delivered_sequence,
+                });
+            }
+            if chunk.sequence > last_generated_sequence {
+                return Err(OutputGateError::PendingChunkBeyondGenerated {
+                    sequence: chunk.sequence,
+                    last_generated_sequence,
+                });
+            }
+            let sequence = chunk.sequence;
+            if pending_chunks.insert(sequence, chunk).is_some() {
+                return Err(OutputGateError::DuplicatePendingChunk { sequence });
+            }
+        }
+
+        if last_client_delivered_sequence < last_generated_sequence {
+            for sequence in (last_client_delivered_sequence + 1)..=last_generated_sequence {
+                if !pending_chunks.contains_key(&sequence) {
+                    return Err(OutputGateError::MissingPendingChunk { sequence });
+                }
+            }
+        }
+
+        gate.pending = pending_chunks;
+        gate.last_generated_sequence = last_generated_sequence;
+        gate.last_policy_accepted_sequence = last_policy_accepted_sequence;
+        gate.last_client_delivered_sequence = last_client_delivered_sequence;
+        Ok(gate)
+    }
+
     pub fn with_turn_id(mut self, turn_id: impl Into<String>) -> Self {
         self.turn_id = Some(turn_id.into());
         self
@@ -1020,6 +1114,10 @@ impl OutputDeliveryGate {
 
     pub fn cutoff(&self) -> Option<&OutputCutoff> {
         self.stopped.as_ref()
+    }
+
+    pub fn pending_chunks(&self) -> impl Iterator<Item = &GenerationChunk> {
+        self.pending.values()
     }
 
     pub fn commit_accepted_output(&mut self) -> Vec<GenerationChunk> {

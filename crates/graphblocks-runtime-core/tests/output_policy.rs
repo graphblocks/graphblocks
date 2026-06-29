@@ -49,6 +49,60 @@ fn bounded_holdback_releases_only_policy_accepted_chunks() -> Result<(), OutputG
 }
 
 #[test]
+fn output_gate_resumes_pending_holdback_state() -> Result<(), OutputGateError> {
+    let mut gate = OutputDeliveryGate::from_state(
+        "stream-1",
+        "response-1",
+        [GenerationChunk::text("stream-1", "response-1", 2, "held")],
+        2,
+        1,
+        1,
+    )?;
+
+    let update = gate.apply_decision(
+        OutputPolicyDecision::allow("decision-2", Some(2), "sha256:second"),
+        1_010,
+    )?;
+
+    assert_eq!(
+        update
+            .deliverable
+            .iter()
+            .map(|chunk| (chunk.sequence, chunk.text.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(2, "held")]
+    );
+    assert_eq!(gate.last_generated_sequence(), 2);
+    assert_eq!(gate.last_policy_accepted_sequence(), 2);
+    assert_eq!(gate.last_client_delivered_sequence(), 2);
+
+    gate.record_chunk(GenerationChunk::text("stream-1", "response-1", 3, "next"))?;
+    assert_eq!(gate.last_generated_sequence(), 3);
+    assert_eq!(
+        gate.pending_chunks()
+            .map(|chunk| (chunk.sequence, chunk.text.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(3, "next")]
+    );
+    Ok(())
+}
+
+#[test]
+fn output_gate_rejects_missing_pending_resume_chunk() {
+    assert_eq!(
+        OutputDeliveryGate::from_state(
+            "stream-1",
+            "response-1",
+            Vec::<GenerationChunk>::new(),
+            2,
+            1,
+            1,
+        ),
+        Err(OutputGateError::MissingPendingChunk { sequence: 2 }),
+    );
+}
+
+#[test]
 fn output_gate_rejects_non_contiguous_generation_sequence() {
     let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
 
