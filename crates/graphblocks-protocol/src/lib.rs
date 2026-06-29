@@ -561,7 +561,34 @@ pub struct WorkerInvokeResult {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WorkerInvokeResultError {
+    EmptyField { field: String },
+    EmptyOutputKey,
+}
+
+impl WorkerInvokeResult {
+    pub fn validate(&self) -> Result<(), WorkerInvokeResultError> {
+        if self.invocation_id.trim().is_empty() {
+            return Err(WorkerInvokeResultError::EmptyField {
+                field: "invocation_id".to_owned(),
+            });
+        }
+        if self.node_attempt_id.trim().is_empty() {
+            return Err(WorkerInvokeResultError::EmptyField {
+                field: "node_attempt_id".to_owned(),
+            });
+        }
+        if self.outputs.keys().any(|key| key.trim().is_empty()) {
+            return Err(WorkerInvokeResultError::EmptyOutputKey);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum WorkerResultError {
+    InvalidRequest { source: WorkerInvokeRequestError },
+    InvalidResult { source: WorkerInvokeResultError },
     MismatchedInvocationId { expected: String, actual: String },
     MismatchedNodeAttempt { expected: String, actual: String },
     StaleLeaseEpoch { expected: u64, actual: u64 },
@@ -571,6 +598,12 @@ pub fn validate_worker_result(
     request: &WorkerInvokeRequest,
     result: &WorkerInvokeResult,
 ) -> Result<(), WorkerResultError> {
+    request
+        .validate()
+        .map_err(|source| WorkerResultError::InvalidRequest { source })?;
+    result
+        .validate()
+        .map_err(|source| WorkerResultError::InvalidResult { source })?;
     if request.invocation_id != result.invocation_id {
         return Err(WorkerResultError::MismatchedInvocationId {
             expected: request.invocation_id.clone(),

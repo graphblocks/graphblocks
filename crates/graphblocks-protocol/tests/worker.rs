@@ -3,9 +3,10 @@ use std::collections::BTreeMap;
 use graphblocks_protocol::{
     BlockCapability, RunOwnershipLease, WORKER_PROTOCOL_VERSION, WorkerAdmissionPolicy,
     WorkerAdvertisement, WorkerInvocationContext, WorkerInvocationContextError,
-    WorkerInvokeRequest, WorkerInvokeRequestError, WorkerInvokeResult, WorkerProtocolError,
-    WorkerResultError, WorkerSelectionError, WorkerState, admit_worker, admit_worker_with_policy,
-    evaluate_worker_admission, select_worker_for_block, validate_worker_result,
+    WorkerInvokeRequest, WorkerInvokeRequestError, WorkerInvokeResult, WorkerInvokeResultError,
+    WorkerProtocolError, WorkerResultError, WorkerSelectionError, WorkerState, admit_worker,
+    admit_worker_with_policy, evaluate_worker_admission, select_worker_for_block,
+    validate_worker_result,
 };
 use serde_json::json;
 
@@ -236,6 +237,7 @@ fn worker_invocation_envelopes_preserve_json_payloads() -> Result<(), serde_json
         serde_json::from_str::<WorkerInvokeResult>(&serde_json::to_string(&result)?)?,
         result,
     );
+    assert_eq!(result.validate(), Ok(()));
     assert_eq!(validate_worker_result(&request, &result), Ok(()));
     Ok(())
 }
@@ -440,6 +442,84 @@ fn worker_invoke_request_validation_rejects_invalid_context() {
             source: WorkerInvocationContextError::EmptyRequiredField {
                 field: "deployment_revision_id".to_owned(),
             },
+        }),
+    );
+}
+
+#[test]
+fn worker_invoke_result_validation_rejects_blank_envelope_fields_and_outputs() {
+    let mut outputs = BTreeMap::new();
+    outputs.insert("prompt".to_owned(), json!("Echo Hello"));
+    let mut result = WorkerInvokeResult {
+        invocation_id: " ".to_owned(),
+        node_attempt_id: "render-attempt-1".to_owned(),
+        lease_epoch: 7,
+        outputs,
+    };
+
+    assert_eq!(
+        result.validate(),
+        Err(WorkerInvokeResultError::EmptyField {
+            field: "invocation_id".to_owned(),
+        }),
+    );
+
+    result.invocation_id = "invoke-000001".to_owned();
+    result.node_attempt_id.clear();
+    assert_eq!(
+        result.validate(),
+        Err(WorkerInvokeResultError::EmptyField {
+            field: "node_attempt_id".to_owned(),
+        }),
+    );
+
+    result.node_attempt_id = "render-attempt-1".to_owned();
+    result.outputs.clear();
+    result.outputs.insert(" ".to_owned(), json!("Echo Hello"));
+    assert_eq!(
+        result.validate(),
+        Err(WorkerInvokeResultError::EmptyOutputKey)
+    );
+}
+
+#[test]
+fn worker_result_validation_rejects_invalid_request_or_result_envelopes() {
+    let mut request = WorkerInvokeRequest {
+        invocation_id: "invoke-000001".to_owned(),
+        run_id: " ".to_owned(),
+        node_id: "render".to_owned(),
+        node_attempt_id: "render-attempt-1".to_owned(),
+        lease_epoch: 7,
+        block: "prompt.render@1".to_owned(),
+        context: WorkerInvocationContext::new("release-1", "rev-1"),
+        inputs: json!({"message": {"text": "Hello"}}),
+        config: json!({"template": "Echo {message.text}"}),
+    };
+    let mut outputs = BTreeMap::new();
+    outputs.insert("prompt".to_owned(), json!("Echo Hello"));
+    let mut result = WorkerInvokeResult {
+        invocation_id: "invoke-000001".to_owned(),
+        node_attempt_id: "render-attempt-1".to_owned(),
+        lease_epoch: 7,
+        outputs,
+    };
+
+    assert_eq!(
+        validate_worker_result(&request, &result),
+        Err(WorkerResultError::InvalidRequest {
+            source: WorkerInvokeRequestError::EmptyField {
+                field: "run_id".to_owned(),
+            },
+        }),
+    );
+
+    request.run_id = "run-000001".to_owned();
+    result.outputs.clear();
+    result.outputs.insert(" ".to_owned(), json!("Echo Hello"));
+    assert_eq!(
+        validate_worker_result(&request, &result),
+        Err(WorkerResultError::InvalidResult {
+            source: WorkerInvokeResultError::EmptyOutputKey,
         }),
     );
 }

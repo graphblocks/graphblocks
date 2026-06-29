@@ -419,6 +419,65 @@ def test_worker_invoke_request_rejects_invalid_envelope_fields() -> None:
         WorkerInvokeRequest.from_wire(encoded)
 
 
+def test_worker_invoke_result_rejects_invalid_envelope_fields() -> None:
+    base_result = {
+        "invocation_id": "invoke-000001",
+        "node_attempt_id": "render-attempt-1",
+        "lease_epoch": 7,
+        "outputs": {"prompt": "Echo Hello"},
+    }
+    invalid_results = (
+        (
+            {**base_result, "invocation_id": " "},
+            "worker invoke result invocation_id must not be empty",
+        ),
+        (
+            {**base_result, "node_attempt_id": object()},
+            "worker invoke result node_attempt_id must be a string",
+        ),
+        (
+            {**base_result, "lease_epoch": False},
+            "worker invoke result lease_epoch must be an integer",
+        ),
+        (
+            {**base_result, "lease_epoch": -1},
+            "worker invoke result lease_epoch must not be negative",
+        ),
+        (
+            {**base_result, "outputs": []},
+            "worker invoke result outputs must be a mapping",
+        ),
+        (
+            {**base_result, "outputs": {object(): "Echo Hello"}},
+            "worker invoke result output keys must be strings",
+        ),
+        (
+            {**base_result, "outputs": {" ": "Echo Hello"}},
+            "worker invoke result output keys must not be empty",
+        ),
+    )
+
+    for kwargs, message in invalid_results:
+        with pytest.raises(WorkerProtocolError, match=message):
+            WorkerInvokeResult(**kwargs)
+
+    encoded = WorkerInvokeResult(**base_result).to_wire()
+    encoded["invocationId"] = 7
+    with pytest.raises(
+        WorkerProtocolError,
+        match="worker invoke result invocation_id must be a string",
+    ):
+        WorkerInvokeResult.from_wire(encoded)
+
+    encoded = WorkerInvokeResult(**base_result).to_wire()
+    encoded["outputs"] = []
+    with pytest.raises(
+        WorkerProtocolError,
+        match="worker invoke result outputs must be a mapping",
+    ):
+        WorkerInvokeResult.from_wire(encoded)
+
+
 def test_worker_drain_plan_closes_admission_and_preserves_inflight_affinity() -> None:
     worker = WorkerAdvertisement.new(
         "worker-a",

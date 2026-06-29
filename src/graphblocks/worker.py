@@ -970,7 +970,37 @@ class WorkerInvokeResult:
     outputs: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "outputs", dict(self.outputs))
+        object.__setattr__(
+            self,
+            "invocation_id",
+            _validate_worker_non_empty_string(
+                "worker invoke result",
+                "invocation_id",
+                self.invocation_id,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "node_attempt_id",
+            _validate_worker_non_empty_string(
+                "worker invoke result",
+                "node_attempt_id",
+                self.node_attempt_id,
+            ),
+        )
+        if not isinstance(self.lease_epoch, int) or isinstance(self.lease_epoch, bool):
+            raise WorkerProtocolError("worker invoke result lease_epoch must be an integer")
+        if self.lease_epoch < 0:
+            raise WorkerProtocolError("worker invoke result lease_epoch must not be negative")
+        if not isinstance(self.outputs, Mapping):
+            raise WorkerProtocolError("worker invoke result outputs must be a mapping")
+        outputs = dict(self.outputs)
+        for key in outputs:
+            if not isinstance(key, str):
+                raise WorkerProtocolError("worker invoke result output keys must be strings")
+            if not key.strip():
+                raise WorkerProtocolError("worker invoke result output keys must not be empty")
+        object.__setattr__(self, "outputs", outputs)
 
     def to_wire(self) -> dict[str, object]:
         return {
@@ -983,11 +1013,12 @@ class WorkerInvokeResult:
     @classmethod
     def from_wire(cls, payload: dict[str, object]) -> WorkerInvokeResult:
         outputs = payload.get("outputs", {})
-        outputs = outputs if isinstance(outputs, dict) else {}
+        if not isinstance(outputs, Mapping):
+            raise WorkerProtocolError("worker invoke result outputs must be a mapping")
         return cls(
-            invocation_id=str(payload["invocationId"]),
-            node_attempt_id=str(payload["nodeAttemptId"]),
-            lease_epoch=int(payload["leaseEpoch"]),
+            invocation_id=payload["invocationId"],
+            node_attempt_id=payload["nodeAttemptId"],
+            lease_epoch=payload["leaseEpoch"],
             outputs=dict(outputs),
         )
 
