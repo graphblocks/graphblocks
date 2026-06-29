@@ -643,6 +643,96 @@ class OutputDeliveryGate:
             raise ValueError("last_client_delivered_sequence cannot exceed last_generated_sequence")
         self.delivery_policy.validate()
 
+    @classmethod
+    def from_state(
+        cls,
+        stream_id: str,
+        response_id: str,
+        *,
+        pending: tuple[GenerationChunk, ...] = (),
+        last_generated_sequence: int = 0,
+        last_policy_accepted_sequence: int = 0,
+        last_client_delivered_sequence: int = 0,
+        turn_id: str | None = None,
+        delivery_policy: OutputDeliveryPolicy | None = None,
+    ) -> OutputDeliveryGate:
+        gate = cls(
+            stream_id,
+            response_id,
+            turn_id=turn_id,
+            delivery_policy=delivery_policy
+            or OutputDeliveryPolicy.bounded_holdback(
+                on_violation="abort_response",
+                holdback_max_tokens=48,
+            ),
+            last_generated_sequence=last_generated_sequence,
+            last_policy_accepted_sequence=last_policy_accepted_sequence,
+            last_client_delivered_sequence=last_client_delivered_sequence,
+        )
+        pending_by_sequence: dict[int, GenerationChunk] = {}
+        for chunk in pending:
+            if not isinstance(chunk, GenerationChunk):
+                raise TypeError("OutputDeliveryGate.from_state pending entries must be GenerationChunk")
+            if chunk.stream_id != gate.stream_id:
+                raise OutputGateError(f"pending chunk stream_id {chunk.stream_id!r} does not match {gate.stream_id!r}")
+            if chunk.response_id != gate.response_id:
+                raise OutputGateError(
+                    f"pending chunk response_id {chunk.response_id!r} does not match {gate.response_id!r}"
+                )
+            if chunk.sequence <= gate.last_client_delivered_sequence:
+                raise OutputGateError(
+                    f"pending chunk {chunk.sequence} is already delivered through "
+                    f"{gate.last_client_delivered_sequence}"
+                )
+            if chunk.sequence > gate.last_generated_sequence:
+                raise OutputGateError(
+                    f"pending chunk {chunk.sequence} exceeds last generated sequence {gate.last_generated_sequence}"
+                )
+            if chunk.sequence in pending_by_sequence:
+                raise OutputGateError(f"duplicate pending chunk {chunk.sequence}")
+            pending_by_sequence[chunk.sequence] = chunk
+
+        for sequence in range(gate.last_client_delivered_sequence + 1, gate.last_generated_sequence + 1):
+            if sequence not in pending_by_sequence:
+                raise OutputGateError(f"missing pending chunk {sequence}")
+
+        gate.pending = pending_by_sequence
+        return gate
+
+    @classmethod
+    def from_cutoff(
+        cls,
+        cutoff: OutputCutoff,
+        *,
+        delivery_policy: OutputDeliveryPolicy | None = None,
+    ) -> OutputDeliveryGate:
+        if not isinstance(cutoff, OutputCutoff):
+            raise TypeError("OutputDeliveryGate.from_cutoff requires an OutputCutoff")
+        return cls(
+            cutoff.stream_id,
+            cutoff.response_id,
+            turn_id=cutoff.turn_id,
+            delivery_policy=delivery_policy
+            or OutputDeliveryPolicy.bounded_holdback(
+                on_violation="abort_response",
+                holdback_max_tokens=48,
+            ),
+            last_generated_sequence=cutoff.last_generated_sequence,
+            last_policy_accepted_sequence=cutoff.last_policy_accepted_sequence,
+            last_client_delivered_sequence=cutoff.last_client_delivered_sequence,
+            cutoff=cutoff,
+        )
+
+    def pending_chunks(self) -> tuple[GenerationChunk, ...]:
+        return tuple(self.pending[sequence] for sequence in sorted(self.pending))
+
+    def with_turn_id(self, turn_id: str) -> OutputDeliveryGate:
+        _validate_non_empty_string("output gate", "turn_id", turn_id)
+        self.turn_id = turn_id
+        if self.cutoff is not None:
+            self.cutoff = replace(self.cutoff, turn_id=turn_id)
+        return self
+
     def record_chunk(self, chunk: GenerationChunk) -> list[GenerationChunk]:
         if not isinstance(chunk, GenerationChunk):
             raise TypeError("OutputDeliveryGate.record_chunk requires a GenerationChunk")

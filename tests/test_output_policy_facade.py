@@ -540,6 +540,106 @@ def test_output_delivery_gate_releases_only_policy_accepted_chunks() -> None:
     assert gate.last_client_delivered_sequence == 2
 
 
+def test_output_delivery_gate_resumes_pending_holdback_state() -> None:
+    gate = OutputDeliveryGate.from_state(
+        "stream-1",
+        "response-1",
+        pending=(GenerationChunk.text("stream-1", "response-1", 2, "held"),),
+        last_generated_sequence=2,
+        last_policy_accepted_sequence=1,
+        last_client_delivered_sequence=1,
+    )
+
+    update = gate.apply_decision(
+        OutputPolicyDecision.allow(
+            "decision-2",
+            accepted_through_sequence=2,
+            input_digest="sha256:second",
+        ),
+        occurred_at="2026-06-23T00:00:02Z",
+    )
+
+    assert [(chunk.sequence, chunk.text) for chunk in update.deliverable] == [(2, "held")]
+    assert gate.last_generated_sequence == 2
+    assert gate.last_policy_accepted_sequence == 2
+    assert gate.last_client_delivered_sequence == 2
+
+    gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 3, "next"))
+    assert [(chunk.sequence, chunk.text) for chunk in gate.pending_chunks()] == [(3, "next")]
+
+
+def test_output_delivery_gate_rejects_missing_pending_resume_chunk() -> None:
+    with pytest.raises(OutputGateError) as error:
+        OutputDeliveryGate.from_state(
+            "stream-1",
+            "response-1",
+            pending=(),
+            last_generated_sequence=2,
+            last_policy_accepted_sequence=1,
+            last_client_delivered_sequence=1,
+        )
+
+    assert str(error.value) == "missing pending chunk 2"
+
+
+def test_output_delivery_gate_resumes_terminal_cutoff_state() -> None:
+    cutoff = OutputCutoff(
+        stream_id="stream-1",
+        response_id="response-1",
+        turn_id="turn-1",
+        last_generated_sequence=2,
+        last_policy_accepted_sequence=1,
+        last_client_delivered_sequence=1,
+        terminal_reason="policy_denied",
+        draft_disposition="retract",
+        durable_result="none",
+        policy_decision_id="decision-abort",
+        occurred_at="2026-06-23T00:00:02Z",
+    )
+    gate = OutputDeliveryGate.from_cutoff(cutoff)
+
+    assert gate.cutoff == cutoff
+    assert gate.last_generated_sequence == 2
+    assert gate.last_policy_accepted_sequence == 1
+    assert gate.last_client_delivered_sequence == 1
+
+    with pytest.raises(OutputGateError) as chunk_error:
+        gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 3, "late"))
+    with pytest.raises(OutputGateError) as decision_error:
+        gate.apply_decision(
+            OutputPolicyDecision.allow(
+                "decision-late",
+                accepted_through_sequence=2,
+                input_digest="sha256:late",
+            ),
+            occurred_at="2026-06-23T00:00:03Z",
+        )
+
+    assert str(chunk_error.value) == "output gate is policy stopped"
+    assert str(decision_error.value) == "output gate is policy stopped"
+
+
+def test_output_delivery_gate_turn_id_update_keeps_restored_cutoff_in_sync() -> None:
+    gate = OutputDeliveryGate.from_cutoff(
+        OutputCutoff(
+            stream_id="stream-1",
+            response_id="response-1",
+            turn_id="turn-original",
+            last_generated_sequence=2,
+            last_policy_accepted_sequence=1,
+            last_client_delivered_sequence=1,
+            terminal_reason="policy_denied",
+            draft_disposition="retract",
+            durable_result="none",
+            policy_decision_id="decision-abort",
+            occurred_at="2026-06-23T00:00:02Z",
+        )
+    ).with_turn_id("turn-updated")
+
+    assert gate.cutoff is not None
+    assert gate.cutoff.turn_id == "turn-updated"
+
+
 def test_output_delivery_gate_rejects_non_contiguous_generation_sequence() -> None:
     gate = OutputDeliveryGate("stream-1", "response-1")
 
