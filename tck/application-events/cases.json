@@ -105,13 +105,23 @@
               "trust_designation": "untrusted_external"
             }
           }
-        ],
-        "expectAccepted": false
+        ]
+      },
+      {
+        "op": "tool_result_artifact_ready",
+        "toolCallId": "call-tool-1",
+        "toolResultSequence": 3,
+        "artifact": {
+          "artifactId": "artifact-1",
+          "uri": "file:///tmp/result.json",
+          "checksum": "sha256:artifact",
+          "mediaType": "application/json"
+        }
       },
       {
         "op": "tool_result_completed",
         "toolCallId": "call-tool-1",
-        "toolResultSequence": 3,
+        "toolResultSequence": 4,
         "output": [
           {
             "kind": "text",
@@ -126,8 +136,10 @@
       }
     ],
     "expectedAcceptedKinds": [
-      "ToolCallStarted",
-      "ToolCallCompleted"
+      "ToolResultStarted",
+      "ToolResultDelta",
+      "ToolResultArtifactReady",
+      "ToolResultCompleted"
     ]
   }
 ]

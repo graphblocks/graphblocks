@@ -50,7 +50,12 @@ from graphblocks.deployment import (
     SupplyChainLock,
     UpgradePolicy,
 )
-from graphblocks.documents import create_local_text_revision, chunk_document_by_lines, parse_plain_text_document
+from graphblocks.documents import (
+    ArtifactRef,
+    chunk_document_by_lines,
+    create_local_text_revision,
+    parse_plain_text_document,
+)
 from graphblocks.evaluation import ResourceSnapshotRef, SloReport
 from graphblocks.budget import (
     BudgetCompletionReserveStateError,
@@ -2883,6 +2888,7 @@ class TckRunner:
             elif operation.get("op") in {
                 "tool_result_started",
                 "tool_result_delta",
+                "tool_result_artifact_ready",
                 "tool_result_completed",
             }:
                 tool_call_id = str(operation.get("toolCallId", operation.get("tool_call_id", "")))
@@ -2895,6 +2901,40 @@ class TckRunner:
                         tool_call_id,
                         tool_result_sequence,
                         started_at=str(operation.get("startedAt", "2026-06-23T00:00:00Z")),
+                    )
+                elif op == "tool_result_artifact_ready":
+                    artifact = operation.get("artifact", {})
+                    if not isinstance(artifact, Mapping):
+                        diagnostics.append(
+                            {
+                                "code": "ApplicationEventToolResultArtifactInvalid",
+                                "message": "tool result artifact must be a mapping",
+                                "path": f"$.operations[{sequence - 1}].artifact",
+                            }
+                        )
+                        continue
+                    artifact_id = artifact.get("artifactId")
+                    uri = artifact.get("uri")
+                    if not isinstance(artifact_id, str) or not isinstance(uri, str):
+                        diagnostics.append(
+                            {
+                                "code": "ApplicationEventToolResultArtifactInvalid",
+                                "message": "tool result artifact requires artifactId and uri strings",
+                                "path": f"$.operations[{sequence - 1}].artifact",
+                            }
+                        )
+                        continue
+                    checksum = artifact.get("checksum")
+                    media_type = artifact.get("mediaType")
+                    result_event = ToolResultEvent.artifact_ready(
+                        tool_call_id,
+                        tool_result_sequence,
+                        ArtifactRef(
+                            artifact_id=artifact_id,
+                            uri=uri,
+                            checksum=checksum if isinstance(checksum, str) else None,
+                            media_type=media_type if isinstance(media_type, str) else None,
+                        ),
                     )
                 else:
                     raw_output = operation.get("output", [])

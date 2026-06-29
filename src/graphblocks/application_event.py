@@ -6,7 +6,14 @@ from typing import Literal, Mapping
 
 from .output_policy import GenerationChunk, OutputCutoff, OutputPolicyDecision
 from .policy import PolicyDecision
-from .tools import ToolApprovalRequest, ToolCall, ToolCallDraft, ToolResult, ToolResultEvent
+from .tools import (
+    ContentPart,
+    ToolApprovalRequest,
+    ToolCall,
+    ToolCallDraft,
+    ToolResult,
+    ToolResultEvent,
+)
 
 
 ApplicationEventKind = Literal[
@@ -28,6 +35,15 @@ ApplicationEventKind = Literal[
     "ToolCallCancelled",
     "ToolCallPolicyStopped",
     "ToolCallIncomplete",
+    "ToolResultStarted",
+    "ToolResultDelta",
+    "ToolResultArtifactReady",
+    "ToolResultCompleted",
+    "ToolResultFailed",
+    "ToolResultDenied",
+    "ToolResultCancelled",
+    "ToolResultPolicyStopped",
+    "ToolResultIncomplete",
     "OutputPolicyEvaluationStarted",
     "OutputPolicyAllowed",
     "OutputPolicyHeld",
@@ -59,6 +75,15 @@ STANDARD_APPLICATION_EVENT_KINDS: tuple[ApplicationEventKind, ...] = (
     "ToolCallCancelled",
     "ToolCallPolicyStopped",
     "ToolCallIncomplete",
+    "ToolResultStarted",
+    "ToolResultDelta",
+    "ToolResultArtifactReady",
+    "ToolResultCompleted",
+    "ToolResultFailed",
+    "ToolResultDenied",
+    "ToolResultCancelled",
+    "ToolResultPolicyStopped",
+    "ToolResultIncomplete",
     "OutputPolicyEvaluationStarted",
     "OutputPolicyAllowed",
     "OutputPolicyHeld",
@@ -86,6 +111,15 @@ TOOL_APPLICATION_EVENT_KINDS: frozenset[ApplicationEventKind] = frozenset(
         "ToolCallCancelled",
         "ToolCallPolicyStopped",
         "ToolCallIncomplete",
+        "ToolResultStarted",
+        "ToolResultDelta",
+        "ToolResultArtifactReady",
+        "ToolResultCompleted",
+        "ToolResultFailed",
+        "ToolResultDenied",
+        "ToolResultCancelled",
+        "ToolResultPolicyStopped",
+        "ToolResultIncomplete",
     )
 )
 
@@ -103,6 +137,10 @@ POST_CUTOFF_TOOL_APPLICATION_EVENT_KINDS: frozenset[ApplicationEventKind] = froz
         "ToolCallCancelled",
         "ToolCallPolicyStopped",
         "ToolCallIncomplete",
+        "ToolResultDenied",
+        "ToolResultCancelled",
+        "ToolResultPolicyStopped",
+        "ToolResultIncomplete",
     )
 )
 
@@ -517,7 +555,7 @@ class ApplicationEvent:
     ) -> ApplicationEvent | None:
         if event.kind == "started":
             return cls.tool(
-                "ToolCallStarted",
+                "ToolResultStarted",
                 metadata,
                 tool_call_id=event.tool_call_id,
                 payload={
@@ -526,49 +564,85 @@ class ApplicationEvent:
                     "started_at": event.started_at,
                 },
             )
+        if event.kind == "delta":
+            return cls.tool(
+                "ToolResultDelta",
+                metadata,
+                tool_call_id=event.tool_call_id,
+                payload={
+                    "status": "incremental",
+                    "tool_result_sequence": event.sequence,
+                    "output": [cls._content_part_payload(part) for part in event.output],
+                },
+            )
+        if event.kind == "artifact_ready" and event.artifact is not None:
+            return cls.tool(
+                "ToolResultArtifactReady",
+                metadata,
+                tool_call_id=event.tool_call_id,
+                payload={
+                    "status": "artifact_ready",
+                    "tool_result_sequence": event.sequence,
+                    "artifact": {
+                        "artifact_id": event.artifact.artifact_id,
+                        "uri": event.artifact.uri,
+                        "checksum": event.artifact.checksum,
+                        "media_type": event.artifact.media_type,
+                    },
+                },
+            )
         if event.kind == "completed" and event.result is not None:
             return cls.tool(
-                "ToolCallCompleted",
+                "ToolResultCompleted",
                 metadata,
                 tool_call_id=event.tool_call_id,
                 payload=cls._tool_result_payload(event.sequence, event.result),
             )
         if event.kind == "failed" and event.result is not None:
             return cls.tool(
-                "ToolCallFailed",
+                "ToolResultFailed",
                 metadata,
                 tool_call_id=event.tool_call_id,
                 payload=cls._tool_result_payload(event.sequence, event.result),
             )
         if event.kind == "denied" and event.result is not None:
             return cls.tool(
-                "ToolCallDenied",
+                "ToolResultDenied",
                 metadata,
                 tool_call_id=event.tool_call_id,
                 payload=cls._tool_result_payload(event.sequence, event.result),
             )
         if event.kind == "cancelled" and event.result is not None:
             return cls.tool(
-                "ToolCallCancelled",
+                "ToolResultCancelled",
                 metadata,
                 tool_call_id=event.tool_call_id,
                 payload=cls._tool_result_payload(event.sequence, event.result),
             )
         if event.kind == "policy_stopped" and event.result is not None:
             return cls.tool(
-                "ToolCallPolicyStopped",
+                "ToolResultPolicyStopped",
                 metadata,
                 tool_call_id=event.tool_call_id,
                 payload=cls._tool_result_payload(event.sequence, event.result),
             )
         if event.kind == "incomplete" and event.result is not None:
             return cls.tool(
-                "ToolCallIncomplete",
+                "ToolResultIncomplete",
                 metadata,
                 tool_call_id=event.tool_call_id,
                 payload=cls._tool_result_payload(event.sequence, event.result),
             )
         return None
+
+    @staticmethod
+    def _content_part_payload(part: ContentPart) -> dict[str, object]:
+        return {
+            "kind": part.kind,
+            "text": part.text,
+            "data": part.data,
+            "metadata": dict(part.metadata),
+        }
 
     @staticmethod
     def _tool_result_payload(sequence: int, result: ToolResult) -> dict[str, object]:

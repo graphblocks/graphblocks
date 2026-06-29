@@ -155,7 +155,7 @@ def test_testing_package_loads_shared_application_event_tck_cases(monkeypatch) -
     assert {tuple(result.observed["accepted_kinds"]) for result in report.results} == {
         ("OutputCutoff", "AssistantRetracted", "RunSucceeded"),
         ("OutputCutoff", "AssistantIncomplete", "RunSucceeded"),
-        ("ToolCallStarted", "ToolCallCompleted"),
+        ("ToolResultStarted", "ToolResultDelta", "ToolResultArtifactReady", "ToolResultCompleted"),
     }
     assert "load_application_event_tck_cases" in graphblocks_testing.__all__
 

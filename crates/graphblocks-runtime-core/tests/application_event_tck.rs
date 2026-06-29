@@ -5,7 +5,7 @@ use graphblocks_runtime_core::output_policy::{
     DraftDisposition, DurableResult, OutputCutoff, TerminalReason,
 };
 use graphblocks_runtime_core::tool_result::{
-    ContentPart, ToolEffectOutcome, ToolResult, ToolResultEvent,
+    ArtifactRef, ContentPart, ToolEffectOutcome, ToolResult, ToolResultEvent,
 };
 use serde_json::{Value, json};
 
@@ -107,7 +107,10 @@ fn run_case(case: &Value) -> Result<(), String> {
                     "{case_name}",
                 );
             }
-            "tool_result_started" | "tool_result_delta" | "tool_result_completed" => {
+            "tool_result_started"
+            | "tool_result_delta"
+            | "tool_result_artifact_ready"
+            | "tool_result_completed" => {
                 let tool_call_id = required_str(operation, "toolCallId")?;
                 let tool_result_sequence = required_u64(operation, "toolResultSequence")?;
                 let result_event = match op {
@@ -116,6 +119,31 @@ fn run_case(case: &Value) -> Result<(), String> {
                         tool_result_sequence,
                         required_u64(operation, "startedAtUnixMs")?,
                     ),
+                    "tool_result_artifact_ready" => {
+                        let raw_artifact = operation
+                            .get("artifact")
+                            .and_then(Value::as_object)
+                            .ok_or_else(|| {
+                                format!(
+                                    "application-events TCK case {case_name} tool result artifact must be an object"
+                                )
+                            })?;
+                        let mut artifact = ArtifactRef::new(
+                            required_str_object(raw_artifact, "artifactId")?,
+                            required_str_object(raw_artifact, "uri")?,
+                        );
+                        if let Some(checksum) = optional_str_object(raw_artifact, "checksum") {
+                            artifact = artifact.with_checksum(checksum);
+                        }
+                        if let Some(media_type) = optional_str_object(raw_artifact, "mediaType") {
+                            artifact = artifact.with_media_type(media_type);
+                        }
+                        ToolResultEvent::artifact_ready(
+                            tool_call_id,
+                            tool_result_sequence,
+                            artifact,
+                        )
+                    }
                     "tool_result_delta" | "tool_result_completed" => {
                         let raw_output = operation
                             .get("output")
@@ -235,6 +263,23 @@ fn required_str<'a>(value: &'a Value, key: &str) -> Result<&'a str, String> {
 }
 
 fn optional_str<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
+    value.get(key).and_then(Value::as_str)
+}
+
+fn required_str_object<'a>(
+    value: &'a serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<&'a str, String> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("missing required string field {key}"))
+}
+
+fn optional_str_object<'a>(
+    value: &'a serde_json::Map<String, Value>,
+    key: &str,
+) -> Option<&'a str> {
     value.get(key).and_then(Value::as_str)
 }
 

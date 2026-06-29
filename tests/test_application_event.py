@@ -109,6 +109,15 @@ def test_standard_application_event_names_match_tool_and_output_policy_contract(
         "ToolCallCancelled",
         "ToolCallPolicyStopped",
         "ToolCallIncomplete",
+        "ToolResultStarted",
+        "ToolResultDelta",
+        "ToolResultArtifactReady",
+        "ToolResultCompleted",
+        "ToolResultFailed",
+        "ToolResultDenied",
+        "ToolResultCancelled",
+        "ToolResultPolicyStopped",
+        "ToolResultIncomplete",
         "OutputPolicyEvaluationStarted",
         "OutputPolicyAllowed",
         "OutputPolicyHeld",
@@ -120,6 +129,7 @@ def test_standard_application_event_names_match_tool_and_output_policy_contract(
         "AssistantRetracted",
     )
     assert "ToolCallCompleted" in TOOL_APPLICATION_EVENT_KINDS
+    assert "ToolResultDelta" in TOOL_APPLICATION_EVENT_KINDS
     assert "OutputCutoff" not in TOOL_APPLICATION_EVENT_KINDS
 
 
@@ -897,6 +907,18 @@ def test_application_event_stream_state_discards_late_output_after_cutoff() -> N
         tool_call_id="call-completed",
         payload={"status": "completed"},
     )
+    result_delta = ApplicationEvent.tool(
+        "ToolResultDelta",
+        _metadata(),
+        tool_call_id="call-result-delta",
+        payload={"status": "incremental"},
+    )
+    result_completed = ApplicationEvent.tool(
+        "ToolResultCompleted",
+        _metadata(),
+        tool_call_id="call-result-completed",
+        payload={"status": "completed"},
+    )
     committed_run = ApplicationEvent.new(
         "RunSucceeded",
         _metadata(),
@@ -939,6 +961,30 @@ def test_application_event_stream_state_discards_late_output_after_cutoff() -> N
         tool_call_id="call-4",
         payload={"status": "incomplete"},
     )
+    denied_result = ApplicationEvent.tool(
+        "ToolResultDenied",
+        _metadata(),
+        tool_call_id="call-result-1",
+        payload={"status": "denied"},
+    )
+    cancelled_result = ApplicationEvent.tool(
+        "ToolResultCancelled",
+        _metadata(),
+        tool_call_id="call-result-2",
+        payload={"status": "cancelled"},
+    )
+    policy_stopped_result = ApplicationEvent.tool(
+        "ToolResultPolicyStopped",
+        _metadata(),
+        tool_call_id="call-result-3",
+        payload={"status": "policy_stopped"},
+    )
+    incomplete_result = ApplicationEvent.tool(
+        "ToolResultIncomplete",
+        _metadata(),
+        tool_call_id="call-result-4",
+        payload={"status": "incomplete"},
+    )
 
     assert state.accept(cutoff_event) == cutoff_event
     assert state.accept(retraction_event) == retraction_event
@@ -948,6 +994,8 @@ def test_application_event_stream_state_discards_late_output_after_cutoff() -> N
     assert state.accept(admitted_tool) is None
     assert state.accept(started_tool) is None
     assert state.accept(completed_tool) is None
+    assert state.accept(result_delta) is None
+    assert state.accept(result_completed) is None
     assert state.accept(committed_run) is None
     assert state.accept(replacement_response) == replacement_response
     assert state.accept(replacement_tool_draft) == replacement_tool_draft
@@ -955,6 +1003,10 @@ def test_application_event_stream_state_discards_late_output_after_cutoff() -> N
     assert state.accept(cancelled_tool) == cancelled_tool
     assert state.accept(policy_stopped_tool) == policy_stopped_tool
     assert state.accept(incomplete_tool) == incomplete_tool
+    assert state.accept(denied_result) == denied_result
+    assert state.accept(cancelled_result) == cancelled_result
+    assert state.accept(policy_stopped_result) == policy_stopped_result
+    assert state.accept(incomplete_result) == incomplete_result
     assert [event.kind for event in state.accepted_events] == [
         "OutputCutoff",
         "AssistantRetracted",
@@ -964,6 +1016,10 @@ def test_application_event_stream_state_discards_late_output_after_cutoff() -> N
         "ToolCallCancelled",
         "ToolCallPolicyStopped",
         "ToolCallIncomplete",
+        "ToolResultDenied",
+        "ToolResultCancelled",
+        "ToolResultPolicyStopped",
+        "ToolResultIncomplete",
     ]
 
 
@@ -1014,6 +1070,7 @@ def test_application_event_stream_state_matches_shared_tck_cases() -> None:
             elif operation["op"] in {
                 "tool_result_started",
                 "tool_result_delta",
+                "tool_result_artifact_ready",
                 "tool_result_completed",
             }:
                 tool_call_id = operation["toolCallId"]
@@ -1023,6 +1080,18 @@ def test_application_event_stream_state_matches_shared_tck_cases() -> None:
                         tool_call_id,
                         tool_result_sequence,
                         started_at=operation["startedAt"],
+                    )
+                elif operation["op"] == "tool_result_artifact_ready":
+                    artifact = operation["artifact"]
+                    result_event = ToolResultEvent.artifact_ready(
+                        tool_call_id,
+                        tool_result_sequence,
+                        ArtifactRef(
+                            artifact_id=artifact["artifactId"],
+                            uri=artifact["uri"],
+                            checksum=artifact.get("checksum"),
+                            media_type=artifact.get("mediaType"),
+                        ),
                     )
                 else:
                     output = tuple(
@@ -1132,34 +1201,64 @@ def test_tool_result_events_map_to_standard_tool_application_events() -> None:
 
     events = [
         ToolResultEvent.started("call-0", 1, started_at="2026-06-23T00:00:00Z"),
-        ToolResultEvent.completed("call-1", 2, completed),
-        ToolResultEvent.failed("call-2", 3, failed),
-        ToolResultEvent.denied("call-3", 4, denied),
-        ToolResultEvent.cancelled("call-4", 5, cancelled),
-        ToolResultEvent.policy_stopped("call-5", 6, policy_stopped),
-        ToolResultEvent.incomplete("call-6", 7, incomplete),
+        ToolResultEvent.delta("call-0", 2, (ContentPart(kind="text", text="draft"),)),
+        ToolResultEvent.artifact_ready(
+            "call-0",
+            3,
+            ArtifactRef(
+                "artifact-1",
+                "file:///tmp/result.json",
+                checksum="sha256:artifact",
+                media_type="application/json",
+            ),
+        ),
+        ToolResultEvent.completed("call-1", 4, completed),
+        ToolResultEvent.failed("call-2", 5, failed),
+        ToolResultEvent.denied("call-3", 6, denied),
+        ToolResultEvent.cancelled("call-4", 7, cancelled),
+        ToolResultEvent.policy_stopped("call-5", 8, policy_stopped),
+        ToolResultEvent.incomplete("call-6", 9, incomplete),
     ]
     converted = [ApplicationEvent.tool_result_event(_metadata(), event) for event in events]
 
     assert [event.kind for event in converted] == [
-        "ToolCallStarted",
-        "ToolCallCompleted",
-        "ToolCallFailed",
-        "ToolCallDenied",
-        "ToolCallCancelled",
-        "ToolCallPolicyStopped",
-        "ToolCallIncomplete",
+        "ToolResultStarted",
+        "ToolResultDelta",
+        "ToolResultArtifactReady",
+        "ToolResultCompleted",
+        "ToolResultFailed",
+        "ToolResultDenied",
+        "ToolResultCancelled",
+        "ToolResultPolicyStopped",
+        "ToolResultIncomplete",
     ]
     assert converted[0].tool_call_id == "call-0"
-    assert converted[1].payload["status"] == "completed"
-    assert converted[2].payload["status"] == "failed"
-    assert converted[3].payload["status"] == "denied"
-    assert converted[4].payload["status"] == "cancelled"
-    assert converted[5].payload["status"] == "policy_stopped"
-    assert converted[6].payload["status"] == "incomplete"
+    assert converted[1].payload["output"] == [
+        {"kind": "text", "text": "draft", "data": None, "metadata": {}}
+    ]
+    assert converted[2].payload["artifact"] == {
+        "artifact_id": "artifact-1",
+        "uri": "file:///tmp/result.json",
+        "checksum": "sha256:artifact",
+        "media_type": "application/json",
+    }
+    assert converted[3].payload["status"] == "completed"
+    assert converted[4].payload["status"] == "failed"
+    assert converted[5].payload["status"] == "denied"
+    assert converted[6].payload["status"] == "cancelled"
+    assert converted[7].payload["status"] == "policy_stopped"
+    assert converted[8].payload["status"] == "incomplete"
 
 
-def test_tool_result_delta_does_not_become_application_event() -> None:
+def test_tool_result_delta_becomes_draft_projection_application_event() -> None:
     delta = ToolResultEvent.delta("call-1", 7, (ContentPart(kind="text", text="draft"),))
+    event = ApplicationEvent.tool_result_event(_metadata(), delta)
 
-    assert ApplicationEvent.tool_result_event(_metadata(), delta) is None
+    assert event is not None
+    assert event.kind == "ToolResultDelta"
+    assert event.tool_call_id == "call-1"
+    assert event.payload == {
+        "status": "incremental",
+        "tool_result_sequence": 7,
+        "output": [{"kind": "text", "text": "draft", "data": None, "metadata": {}}],
+    }

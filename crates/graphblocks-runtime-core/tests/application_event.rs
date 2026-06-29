@@ -56,6 +56,15 @@ fn standard_event_names_match_the_tool_and_output_policy_contract() {
         ApplicationEventKind::ToolCallCancelled.as_str(),
         ApplicationEventKind::ToolCallPolicyStopped.as_str(),
         ApplicationEventKind::ToolCallIncomplete.as_str(),
+        ApplicationEventKind::ToolResultStarted.as_str(),
+        ApplicationEventKind::ToolResultDelta.as_str(),
+        ApplicationEventKind::ToolResultArtifactReady.as_str(),
+        ApplicationEventKind::ToolResultCompleted.as_str(),
+        ApplicationEventKind::ToolResultFailed.as_str(),
+        ApplicationEventKind::ToolResultDenied.as_str(),
+        ApplicationEventKind::ToolResultCancelled.as_str(),
+        ApplicationEventKind::ToolResultPolicyStopped.as_str(),
+        ApplicationEventKind::ToolResultIncomplete.as_str(),
         ApplicationEventKind::OutputPolicyEvaluationStarted.as_str(),
         ApplicationEventKind::OutputPolicyAllowed.as_str(),
         ApplicationEventKind::OutputPolicyHeld.as_str(),
@@ -88,6 +97,15 @@ fn standard_event_names_match_the_tool_and_output_policy_contract() {
             "ToolCallCancelled",
             "ToolCallPolicyStopped",
             "ToolCallIncomplete",
+            "ToolResultStarted",
+            "ToolResultDelta",
+            "ToolResultArtifactReady",
+            "ToolResultCompleted",
+            "ToolResultFailed",
+            "ToolResultDenied",
+            "ToolResultCancelled",
+            "ToolResultPolicyStopped",
+            "ToolResultIncomplete",
             "OutputPolicyEvaluationStarted",
             "OutputPolicyAllowed",
             "OutputPolicyHeld",
@@ -810,6 +828,20 @@ fn application_event_stream_state_discards_late_output_after_cutoff() {
         json!({"status": "completed"}),
     )
     .expect("tool event is valid");
+    let result_delta = ApplicationEvent::tool(
+        ApplicationEventKind::ToolResultDelta,
+        metadata(),
+        "call-result-delta",
+        json!({"status": "incremental"}),
+    )
+    .expect("tool result event is valid");
+    let result_completed = ApplicationEvent::tool(
+        ApplicationEventKind::ToolResultCompleted,
+        metadata(),
+        "call-result-completed",
+        json!({"status": "completed"}),
+    )
+    .expect("tool result event is valid");
     let committed_run = ApplicationEvent::new(
         ApplicationEventKind::RunSucceeded,
         metadata(),
@@ -854,6 +886,34 @@ fn application_event_stream_state_discards_late_output_after_cutoff() {
         json!({"status": "incomplete"}),
     )
     .expect("tool event is valid");
+    let denied_result = ApplicationEvent::tool(
+        ApplicationEventKind::ToolResultDenied,
+        metadata(),
+        "call-result-1",
+        json!({"status": "denied"}),
+    )
+    .expect("tool result event is valid");
+    let cancelled_result = ApplicationEvent::tool(
+        ApplicationEventKind::ToolResultCancelled,
+        metadata(),
+        "call-result-2",
+        json!({"status": "cancelled"}),
+    )
+    .expect("tool result event is valid");
+    let policy_stopped_result = ApplicationEvent::tool(
+        ApplicationEventKind::ToolResultPolicyStopped,
+        metadata(),
+        "call-result-3",
+        json!({"status": "policy_stopped"}),
+    )
+    .expect("tool result event is valid");
+    let incomplete_result = ApplicationEvent::tool(
+        ApplicationEventKind::ToolResultIncomplete,
+        metadata(),
+        "call-result-4",
+        json!({"status": "incomplete"}),
+    )
+    .expect("tool result event is valid");
 
     assert_eq!(
         state.accept(cutoff_events[0].clone()),
@@ -870,6 +930,8 @@ fn application_event_stream_state_discards_late_output_after_cutoff() {
     assert_eq!(state.accept(admitted_tool), None);
     assert_eq!(state.accept(started_tool), None);
     assert_eq!(state.accept(completed_tool), None);
+    assert_eq!(state.accept(result_delta), None);
+    assert_eq!(state.accept(result_completed), None);
     assert_eq!(state.accept(committed_run), None);
     assert_eq!(
         state.accept(replacement_response.clone()),
@@ -886,6 +948,19 @@ fn application_event_stream_state_discards_late_output_after_cutoff() {
         Some(policy_stopped_tool)
     );
     assert_eq!(state.accept(incomplete_tool.clone()), Some(incomplete_tool));
+    assert_eq!(state.accept(denied_result.clone()), Some(denied_result));
+    assert_eq!(
+        state.accept(cancelled_result.clone()),
+        Some(cancelled_result)
+    );
+    assert_eq!(
+        state.accept(policy_stopped_result.clone()),
+        Some(policy_stopped_result)
+    );
+    assert_eq!(
+        state.accept(incomplete_result.clone()),
+        Some(incomplete_result)
+    );
     assert_eq!(
         state
             .accepted_events()
@@ -901,6 +976,10 @@ fn application_event_stream_state_discards_late_output_after_cutoff() {
             ApplicationEventKind::ToolCallCancelled,
             ApplicationEventKind::ToolCallPolicyStopped,
             ApplicationEventKind::ToolCallIncomplete,
+            ApplicationEventKind::ToolResultDenied,
+            ApplicationEventKind::ToolResultCancelled,
+            ApplicationEventKind::ToolResultPolicyStopped,
+            ApplicationEventKind::ToolResultIncomplete,
         ]
     );
 }
@@ -945,12 +1024,20 @@ fn tool_result_events_map_to_standard_tool_application_events() {
 
     let events = [
         ToolResultEvent::started("call-0", 1, 990),
-        ToolResultEvent::completed("call-1", 2, completed),
-        ToolResultEvent::failed("call-2", 3, failed),
-        ToolResultEvent::denied("call-3", 4, denied),
-        ToolResultEvent::cancelled("call-4", 5, cancelled),
-        ToolResultEvent::policy_stopped("call-5", 6, policy_stopped),
-        ToolResultEvent::incomplete("call-6", 7, incomplete),
+        ToolResultEvent::delta("call-0", 2, [ContentPart::text("draft")]),
+        ToolResultEvent::artifact_ready(
+            "call-0",
+            3,
+            ArtifactRef::new("artifact-1", "file:///tmp/result.json")
+                .with_checksum("sha256:artifact")
+                .with_media_type("application/json"),
+        ),
+        ToolResultEvent::completed("call-1", 4, completed),
+        ToolResultEvent::failed("call-2", 5, failed),
+        ToolResultEvent::denied("call-3", 6, denied),
+        ToolResultEvent::cancelled("call-4", 7, cancelled),
+        ToolResultEvent::policy_stopped("call-5", 8, policy_stopped),
+        ToolResultEvent::incomplete("call-6", 9, incomplete),
     ]
     .into_iter()
     .map(|event| {
@@ -963,25 +1050,45 @@ fn tool_result_events_map_to_standard_tool_application_events() {
     assert_eq!(
         events.iter().map(|event| event.kind).collect::<Vec<_>>(),
         vec![
-            ApplicationEventKind::ToolCallStarted,
-            ApplicationEventKind::ToolCallCompleted,
-            ApplicationEventKind::ToolCallFailed,
-            ApplicationEventKind::ToolCallDenied,
-            ApplicationEventKind::ToolCallCancelled,
-            ApplicationEventKind::ToolCallPolicyStopped,
-            ApplicationEventKind::ToolCallIncomplete,
+            ApplicationEventKind::ToolResultStarted,
+            ApplicationEventKind::ToolResultDelta,
+            ApplicationEventKind::ToolResultArtifactReady,
+            ApplicationEventKind::ToolResultCompleted,
+            ApplicationEventKind::ToolResultFailed,
+            ApplicationEventKind::ToolResultDenied,
+            ApplicationEventKind::ToolResultCancelled,
+            ApplicationEventKind::ToolResultPolicyStopped,
+            ApplicationEventKind::ToolResultIncomplete,
         ]
     );
     assert_eq!(events[0].tool_call_id.as_deref(), Some("call-0"));
-    assert_eq!(events[1].payload.get("status"), Some(&json!("completed")));
-    assert_eq!(events[2].payload.get("status"), Some(&json!("failed")));
-    assert_eq!(events[3].payload.get("status"), Some(&json!("denied")));
-    assert_eq!(events[4].payload.get("status"), Some(&json!("cancelled")));
     assert_eq!(
-        events[5].payload.get("status"),
+        events[1].payload.get("output"),
+        Some(&json!([{
+            "kind": "text",
+            "text": "draft",
+            "data": null,
+            "metadata": {},
+        }]))
+    );
+    assert_eq!(
+        events[2].payload.get("artifact"),
+        Some(&json!({
+            "artifact_id": "artifact-1",
+            "uri": "file:///tmp/result.json",
+            "checksum": "sha256:artifact",
+            "media_type": "application/json",
+        }))
+    );
+    assert_eq!(events[3].payload.get("status"), Some(&json!("completed")));
+    assert_eq!(events[4].payload.get("status"), Some(&json!("failed")));
+    assert_eq!(events[5].payload.get("status"), Some(&json!("denied")));
+    assert_eq!(events[6].payload.get("status"), Some(&json!("cancelled")));
+    assert_eq!(
+        events[7].payload.get("status"),
         Some(&json!("policy_stopped"))
     );
-    assert_eq!(events[6].payload.get("status"), Some(&json!("incomplete")));
+    assert_eq!(events[8].payload.get("status"), Some(&json!("incomplete")));
 }
 
 #[test]
@@ -1012,12 +1119,27 @@ fn tool_result_application_event_rejects_invalid_final_result_event() {
 }
 
 #[test]
-fn tool_result_delta_does_not_become_application_event() {
+fn tool_result_delta_becomes_draft_projection_application_event() {
     let delta = ToolResultEvent::delta("call-1", 7, [ContentPart::text("draft")]);
 
+    let event = ApplicationEvent::tool_result_event(metadata(), &delta)
+        .expect("delta conversion is valid")
+        .expect("delta maps to application event");
+
+    assert_eq!(event.kind, ApplicationEventKind::ToolResultDelta);
+    assert_eq!(event.tool_call_id.as_deref(), Some("call-1"));
     assert_eq!(
-        ApplicationEvent::tool_result_event(metadata(), &delta).expect("delta conversion is valid"),
-        None
+        event.payload,
+        json!({
+            "status": "incremental",
+            "tool_result_sequence": 7,
+            "output": [{
+                "kind": "text",
+                "text": "draft",
+                "data": null,
+                "metadata": {},
+            }],
+        })
     );
 }
 

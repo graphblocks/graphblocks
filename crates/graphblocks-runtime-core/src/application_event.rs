@@ -13,8 +13,8 @@ use crate::tool_call::{
     ToolCall, ToolCallDraft, ToolCallDraftStatus, ToolCallError, ToolCallStatus,
 };
 use crate::tool_result::{
-    ContentPartKind, ToolEffectOutcome, ToolResult, ToolResultEvent, ToolResultEventError,
-    ToolResultStatus,
+    ContentPart, ContentPartKind, ToolEffectOutcome, ToolResult, ToolResultEvent,
+    ToolResultEventError, ToolResultStatus,
 };
 use serde_json::{Value, json};
 
@@ -38,6 +38,15 @@ pub enum ApplicationEventKind {
     ToolCallCancelled,
     ToolCallPolicyStopped,
     ToolCallIncomplete,
+    ToolResultStarted,
+    ToolResultDelta,
+    ToolResultArtifactReady,
+    ToolResultCompleted,
+    ToolResultFailed,
+    ToolResultDenied,
+    ToolResultCancelled,
+    ToolResultPolicyStopped,
+    ToolResultIncomplete,
     OutputPolicyEvaluationStarted,
     OutputPolicyAllowed,
     OutputPolicyHeld,
@@ -70,6 +79,15 @@ impl ApplicationEventKind {
             Self::ToolCallCancelled => "ToolCallCancelled",
             Self::ToolCallPolicyStopped => "ToolCallPolicyStopped",
             Self::ToolCallIncomplete => "ToolCallIncomplete",
+            Self::ToolResultStarted => "ToolResultStarted",
+            Self::ToolResultDelta => "ToolResultDelta",
+            Self::ToolResultArtifactReady => "ToolResultArtifactReady",
+            Self::ToolResultCompleted => "ToolResultCompleted",
+            Self::ToolResultFailed => "ToolResultFailed",
+            Self::ToolResultDenied => "ToolResultDenied",
+            Self::ToolResultCancelled => "ToolResultCancelled",
+            Self::ToolResultPolicyStopped => "ToolResultPolicyStopped",
+            Self::ToolResultIncomplete => "ToolResultIncomplete",
             Self::OutputPolicyEvaluationStarted => "OutputPolicyEvaluationStarted",
             Self::OutputPolicyAllowed => "OutputPolicyAllowed",
             Self::OutputPolicyHeld => "OutputPolicyHeld",
@@ -99,6 +117,15 @@ impl ApplicationEventKind {
                 | Self::ToolCallCancelled
                 | Self::ToolCallPolicyStopped
                 | Self::ToolCallIncomplete
+                | Self::ToolResultStarted
+                | Self::ToolResultDelta
+                | Self::ToolResultArtifactReady
+                | Self::ToolResultCompleted
+                | Self::ToolResultFailed
+                | Self::ToolResultDenied
+                | Self::ToolResultCancelled
+                | Self::ToolResultPolicyStopped
+                | Self::ToolResultIncomplete
         )
     }
 
@@ -109,6 +136,10 @@ impl ApplicationEventKind {
                 | Self::ToolCallCancelled
                 | Self::ToolCallPolicyStopped
                 | Self::ToolCallIncomplete
+                | Self::ToolResultDenied
+                | Self::ToolResultCancelled
+                | Self::ToolResultPolicyStopped
+                | Self::ToolResultIncomplete
         )
     }
 }
@@ -308,7 +339,7 @@ impl ApplicationEvent {
                 sequence,
                 started_at_unix_ms,
             } => Self::tool(
-                ApplicationEventKind::ToolCallStarted,
+                ApplicationEventKind::ToolResultStarted,
                 metadata,
                 tool_call_id,
                 json!({
@@ -318,12 +349,50 @@ impl ApplicationEvent {
                 }),
             )
             .map(Some),
+            ToolResultEvent::Delta {
+                tool_call_id,
+                sequence,
+                output,
+            } => Self::tool(
+                ApplicationEventKind::ToolResultDelta,
+                metadata,
+                tool_call_id,
+                json!({
+                    "status": "incremental",
+                    "tool_result_sequence": sequence,
+                    "output": output
+                        .iter()
+                        .map(Self::content_part_payload)
+                        .collect::<Vec<_>>(),
+                }),
+            )
+            .map(Some),
+            ToolResultEvent::ArtifactReady {
+                tool_call_id,
+                sequence,
+                artifact,
+            } => Self::tool(
+                ApplicationEventKind::ToolResultArtifactReady,
+                metadata,
+                tool_call_id,
+                json!({
+                    "status": "artifact_ready",
+                    "tool_result_sequence": sequence,
+                    "artifact": {
+                        "artifact_id": &artifact.artifact_id,
+                        "uri": &artifact.uri,
+                        "checksum": &artifact.checksum,
+                        "media_type": &artifact.media_type,
+                    },
+                }),
+            )
+            .map(Some),
             ToolResultEvent::Completed {
                 tool_call_id,
                 sequence,
                 result,
             } => Self::tool(
-                ApplicationEventKind::ToolCallCompleted,
+                ApplicationEventKind::ToolResultCompleted,
                 metadata,
                 tool_call_id,
                 Self::tool_result_payload(*sequence, result),
@@ -334,7 +403,7 @@ impl ApplicationEvent {
                 sequence,
                 result,
             } => Self::tool(
-                ApplicationEventKind::ToolCallFailed,
+                ApplicationEventKind::ToolResultFailed,
                 metadata,
                 tool_call_id,
                 Self::tool_result_payload(*sequence, result),
@@ -345,7 +414,7 @@ impl ApplicationEvent {
                 sequence,
                 result,
             } => Self::tool(
-                ApplicationEventKind::ToolCallDenied,
+                ApplicationEventKind::ToolResultDenied,
                 metadata,
                 tool_call_id,
                 Self::tool_result_payload(*sequence, result),
@@ -356,7 +425,7 @@ impl ApplicationEvent {
                 sequence,
                 result,
             } => Self::tool(
-                ApplicationEventKind::ToolCallCancelled,
+                ApplicationEventKind::ToolResultCancelled,
                 metadata,
                 tool_call_id,
                 Self::tool_result_payload(*sequence, result),
@@ -367,7 +436,7 @@ impl ApplicationEvent {
                 sequence,
                 result,
             } => Self::tool(
-                ApplicationEventKind::ToolCallPolicyStopped,
+                ApplicationEventKind::ToolResultPolicyStopped,
                 metadata,
                 tool_call_id,
                 Self::tool_result_payload(*sequence, result),
@@ -378,14 +447,27 @@ impl ApplicationEvent {
                 sequence,
                 result,
             } => Self::tool(
-                ApplicationEventKind::ToolCallIncomplete,
+                ApplicationEventKind::ToolResultIncomplete,
                 metadata,
                 tool_call_id,
                 Self::tool_result_payload(*sequence, result),
             )
             .map(Some),
-            ToolResultEvent::Delta { .. } | ToolResultEvent::ArtifactReady { .. } => Ok(None),
         }
+    }
+
+    fn content_part_payload(part: &ContentPart) -> Value {
+        let kind = match part.kind {
+            ContentPartKind::Text => "text",
+            ContentPartKind::Json => "json",
+            ContentPartKind::ArtifactRef => "artifact_ref",
+        };
+        json!({
+            "kind": kind,
+            "text": &part.text,
+            "data": &part.data,
+            "metadata": &part.metadata,
+        })
     }
 
     fn tool_result_payload(sequence: u64, result: &ToolResult) -> Value {
