@@ -39,5 +39,46 @@
       "AssistantRetracted",
       "RunSucceeded"
     ]
+  },
+  {
+    "name": "output_cutoff_marks_draft_incomplete",
+    "streamId": "stream-2",
+    "responseId": "response-3",
+    "turnId": "turn-2",
+    "operations": [
+      {
+        "op": "output_cutoff",
+        "lastGeneratedSequence": 4,
+        "lastPolicyAcceptedSequence": 2,
+        "lastClientDeliveredSequence": 2,
+        "terminalReason": "budget_exhausted",
+        "draftDisposition": "mark_incomplete",
+        "durableResult": "incomplete",
+        "policyDecisionId": "decision-incomplete",
+        "occurredAt": "2026-06-23T00:00:02Z",
+        "occurredAtUnixMs": 1700002
+      },
+      {
+        "op": "run_succeeded",
+        "responseId": "response-3",
+        "outputs": {
+          "answer": "should not commit"
+        },
+        "expectAccepted": false
+      },
+      {
+        "op": "run_succeeded",
+        "responseId": "response-4",
+        "outputs": {
+          "answer": "replacement after incomplete"
+        },
+        "expectAccepted": true
+      }
+    ],
+    "expectedAcceptedKinds": [
+      "OutputCutoff",
+      "AssistantIncomplete",
+      "RunSucceeded"
+    ]
   }
 ]
