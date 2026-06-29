@@ -652,12 +652,46 @@ fn execute_resolve_tools(inputs: &Value, config: &Value) -> Result<Value, BlockE
                     )
                 })?;
             let implementation = match kind {
-                "block" => ToolImplementation::Block(BlockToolImplementation::new(
-                    required_object_str(implementation, "block", "tools.resolve.invalid_binding")?,
-                )),
-                "graph" => ToolImplementation::Graph(GraphToolImplementation::new(
-                    required_object_str(implementation, "graph", "tools.resolve.invalid_binding")?,
-                )),
+                "block" => {
+                    let mut block = BlockToolImplementation::new(required_object_str(
+                        implementation,
+                        "block",
+                        "tools.resolve.invalid_binding",
+                    )?);
+                    block.input_mapping = parse_string_map(
+                        implementation
+                            .get("inputMapping")
+                            .or_else(|| implementation.get("input_mapping")),
+                        "implementation.inputMapping",
+                    )?;
+                    block.output_mapping = parse_string_map(
+                        implementation
+                            .get("outputMapping")
+                            .or_else(|| implementation.get("output_mapping")),
+                        "implementation.outputMapping",
+                    )?;
+                    ToolImplementation::Block(block)
+                }
+                "graph" => {
+                    let mut graph = GraphToolImplementation::new(required_object_str(
+                        implementation,
+                        "graph",
+                        "tools.resolve.invalid_binding",
+                    )?);
+                    graph.input_mapping = parse_string_map(
+                        implementation
+                            .get("inputMapping")
+                            .or_else(|| implementation.get("input_mapping")),
+                        "implementation.inputMapping",
+                    )?;
+                    graph.output_mapping = parse_string_map(
+                        implementation
+                            .get("outputMapping")
+                            .or_else(|| implementation.get("output_mapping")),
+                        "implementation.outputMapping",
+                    )?;
+                    ToolImplementation::Graph(graph)
+                }
                 "remote" => ToolImplementation::Remote(RemoteToolImplementation::new(
                     required_object_str(
                         implementation,
@@ -1213,6 +1247,36 @@ fn optional_alias_string<'a>(
             })
         })
         .transpose()
+}
+
+fn parse_string_map(
+    value: Option<&Value>,
+    label: &str,
+) -> Result<BTreeMap<String, String>, BlockError> {
+    let Some(value) = value.filter(|value| !value.is_null()) else {
+        return Ok(BTreeMap::new());
+    };
+    let Some(value) = value.as_object() else {
+        return Err(BlockError::new(
+            "tools.resolve.invalid_binding",
+            ErrorCategory::Configuration,
+            format!("tools.resolve@1 {label} must be an object"),
+            false,
+        ));
+    };
+    let mut parsed = BTreeMap::new();
+    for (entry_key, entry_value) in value {
+        let Some(entry_value) = entry_value.as_str() else {
+            return Err(BlockError::new(
+                "tools.resolve.invalid_binding",
+                ErrorCategory::Configuration,
+                format!("tools.resolve@1 {label}.{entry_key} must be a string"),
+                false,
+            ));
+        };
+        parsed.insert(entry_key.clone(), entry_value.to_owned());
+    }
+    Ok(parsed)
 }
 
 fn parse_tool_effects(value: &Value) -> Result<BTreeSet<ToolEffect>, BlockError> {

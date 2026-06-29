@@ -30,6 +30,95 @@ fn rust_stdlib_runtime_executes_prompt_render_graph() -> Result<(), String> {
 }
 
 #[test]
+fn rust_stdlib_runtime_preserves_tool_implementation_mappings() -> Result<(), String> {
+    let graph = json!({
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "runtime-tool-mappings"},
+        "spec": {
+            "interface": {
+                "outputs": {"tools": "graphblocks.ai/ResolvedTools@1"}
+            },
+            "nodes": {
+                "resolve": {
+                    "block": "tools.resolve@1",
+                    "config": {
+                        "effectivePolicySnapshotId": "policy-snapshot-1",
+                        "definitions": [
+                            {
+                                "name": "block.search",
+                                "description": "Search through a block implementation.",
+                                "inputSchema": "schemas/SearchRequest@1"
+                            },
+                            {
+                                "name": "graph.search",
+                                "description": "Search through a graph implementation.",
+                                "inputSchema": "schemas/SearchRequest@1"
+                            }
+                        ],
+                        "bindings": [
+                            {
+                                "bindingId": "binding-block-search",
+                                "toolName": "block.search",
+                                "implementation": {
+                                    "kind": "block",
+                                    "block": "knowledge.search@1",
+                                    "inputMapping": {"query": "$args.query"},
+                                    "outputMapping": {"items": "$result.items"}
+                                },
+                                "effects": ["external_read"],
+                                "approval": "never"
+                            },
+                            {
+                                "bindingId": "binding-graph-search",
+                                "toolName": "graph.search",
+                                "implementation": {
+                                    "kind": "graph",
+                                    "graph": "graphs/knowledge-search",
+                                    "input_mapping": {"query": "$args.query"},
+                                    "output_mapping": {"items": "$result.items"}
+                                },
+                                "effects": ["external_read"],
+                                "approval": "never"
+                            }
+                        ],
+                        "scope": {
+                            "principalTools": ["block.search", "graph.search"]
+                        }
+                    },
+                    "outputs": {"tools": "$output.tools"}
+                }
+            }
+        }
+    });
+    let result = run_graph(&graph, &json!({}))?;
+    let tools = result["outputs"]["tools"]
+        .as_array()
+        .ok_or_else(|| "resolved tools output must be an array".to_owned())?;
+
+    let block = resolved_tool_by_name(tools, "block.search")?;
+    assert_eq!(
+        block.pointer("/binding/implementation/input_mapping"),
+        Some(&json!({"query": "$args.query"})),
+    );
+    assert_eq!(
+        block.pointer("/binding/implementation/output_mapping"),
+        Some(&json!({"items": "$result.items"})),
+    );
+
+    let graph = resolved_tool_by_name(tools, "graph.search")?;
+    assert_eq!(
+        graph.pointer("/binding/implementation/input_mapping"),
+        Some(&json!({"query": "$args.query"})),
+    );
+    assert_eq!(
+        graph.pointer("/binding/implementation/output_mapping"),
+        Some(&json!({"items": "$result.items"})),
+    );
+    Ok(())
+}
+
+#[test]
 fn rust_stdlib_runtime_matches_shared_runtime_tck_cases() -> Result<(), String> {
     let cases = serde_json::from_str::<Value>(include_str!("../../../tck/runtime/cases.json"))
         .map_err(|error| error.to_string())?;
@@ -89,4 +178,11 @@ fn run_graph(graph: &Value, inputs: &Value) -> Result<Value, String> {
     let result_json =
         run_stdlib_graph_json(&graph_json, &inputs_json).map_err(|error| error.to_string())?;
     serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())
+}
+
+fn resolved_tool_by_name<'a>(tools: &'a [Value], name: &str) -> Result<&'a Value, String> {
+    tools
+        .iter()
+        .find(|tool| tool.pointer("/definition/name").and_then(Value::as_str) == Some(name))
+        .ok_or_else(|| format!("resolved tool {name:?} was not emitted"))
 }
