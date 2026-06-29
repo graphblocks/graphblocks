@@ -328,6 +328,7 @@ impl NodeExecutor for StdlibExecutor {
             "conversation.begin_turn@1" => execute_begin_turn(&inputs, &config),
             "prompt.render@1" => execute_prompt_render(&inputs, &config),
             "model.generate@1" => execute_scripted_generate(&inputs, &config),
+            "agent.run@1" => execute_scripted_agent_run(&inputs, &config),
             "conversation.commit_turn@1" => execute_commit_turn(&inputs),
             "conversation.policy_stop_turn@1" => execute_policy_stop_turn(&inputs, &config),
             _ => Err(BlockError::new(
@@ -993,6 +994,46 @@ fn execute_scripted_generate(inputs: &Value, config: &Value) -> Result<Value, Bl
         .unwrap_or(prompt);
 
     Ok(json!({ "response": response }))
+}
+
+fn execute_scripted_agent_run(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
+    let Some(tools) = inputs.get("tools").and_then(Value::as_array) else {
+        return Err(BlockError::new(
+            "agent.run.invalid_tools",
+            ErrorCategory::Configuration,
+            "agent.run@1 input 'tools' must be a list",
+            false,
+        ));
+    };
+    let Some(messages) = inputs.get("messages").and_then(Value::as_array) else {
+        return Err(BlockError::new(
+            "agent.run.invalid_messages",
+            ErrorCategory::Configuration,
+            "agent.run@1 input 'messages' must be a list",
+            false,
+        ));
+    };
+
+    let (text, finish_reason) = if let Some(response) = config.get("response") {
+        (json_display(response), "scripted")
+    } else if let Some(message) = messages.last() {
+        let text = message
+            .as_object()
+            .and_then(|message| message.get("content").or_else(|| message.get("text")))
+            .map(json_display)
+            .unwrap_or_else(|| json_display(message));
+        (text, "echo")
+    } else {
+        (String::new(), "empty")
+    };
+
+    Ok(json!({
+        "candidate": {
+            "text": text,
+            "finishReason": finish_reason,
+            "toolCount": tools.len(),
+        }
+    }))
 }
 
 fn execute_commit_turn(inputs: &Value) -> Result<Value, BlockError> {
@@ -3969,6 +4010,62 @@ mod tests {
         assert_eq!(
             completed_nodes,
             vec!["begin", "render", "generate", "commit"]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn run_stdlib_graph_json_executes_scripted_agent_run() -> Result<(), String> {
+        let graph = json!({
+            "apiVersion": "graphblocks.ai/v1alpha3",
+            "kind": "Graph",
+            "metadata": {"name": "native-scripted-agent"},
+            "spec": {
+                "interface": {
+                    "inputs": {
+                        "messages": "graphblocks.ai/Messages@1",
+                        "tools": "graphblocks.ai/ResolvedTools@1"
+                    },
+                    "outputs": {"candidate": "graphblocks.ai/AssistantCandidate@1"}
+                },
+                "nodes": {
+                    "agent": {
+                        "block": "agent.run@1",
+                        "config": {"response": "native scripted response"},
+                        "inputs": {
+                            "messages": "$input.messages",
+                            "tools": "$input.tools"
+                        },
+                        "outputs": {"candidate": "$output.candidate"}
+                    }
+                }
+            }
+        });
+        let inputs = json!({
+            "messages": [{"role": "user", "content": "Hello"}],
+            "tools": [{"definition": {"name": "knowledge.search"}}]
+        });
+        let graph_json = serde_json::to_string(&graph).map_err(|error| error.to_string())?;
+        let inputs_json = serde_json::to_string(&inputs).map_err(|error| error.to_string())?;
+        let result_json =
+            run_stdlib_graph_json(&graph_json, &inputs_json).map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            result.get("status").and_then(Value::as_str),
+            Some("succeeded")
+        );
+        assert_eq!(
+            result
+                .get("outputs")
+                .and_then(|outputs| outputs.get("candidate")),
+            Some(&json!({
+                "finishReason": "scripted",
+                "text": "native scripted response",
+                "toolCount": 1
+            }))
         );
 
         Ok(())
