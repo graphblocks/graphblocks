@@ -1714,10 +1714,30 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
                         }
                     }
                     "abort_response" => {
-                        OutputPolicyDecision::abort_response(decision_id, input_digest)
+                        let decision =
+                            OutputPolicyDecision::abort_response(decision_id, input_digest);
+                        if let Some(sequence) = accepted_through_sequence {
+                            decision.with_accepted_through_sequence(sequence)
+                        } else {
+                            decision
+                        }
                     }
-                    "abort_turn" => OutputPolicyDecision::abort_turn(decision_id, input_digest),
-                    "deny_commit" => OutputPolicyDecision::deny_commit(decision_id, input_digest),
+                    "abort_turn" => {
+                        let decision = OutputPolicyDecision::abort_turn(decision_id, input_digest);
+                        if let Some(sequence) = accepted_through_sequence {
+                            decision.with_accepted_through_sequence(sequence)
+                        } else {
+                            decision
+                        }
+                    }
+                    "deny_commit" => {
+                        let decision = OutputPolicyDecision::deny_commit(decision_id, input_digest);
+                        if let Some(sequence) = accepted_through_sequence {
+                            decision.with_accepted_through_sequence(sequence)
+                        } else {
+                            decision
+                        }
+                    }
                     value => {
                         return Err(PyValueError::new_err(format!(
                             "{label}.disposition has unknown disposition {value:?}"
@@ -2869,6 +2889,64 @@ mod tests {
                 .get("lastClientDeliveredSequence")
                 .and_then(Value::as_u64),
             Some(1)
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_output_gate_json_records_terminal_accepted_prefix() -> Result<(), String> {
+        let gate = json!({
+            "streamId": "stream-1",
+            "responseId": "response-1",
+            "deliveryPolicy": {
+                "mode": "bounded_holdback",
+                "holdbackMaxTokens": 2,
+                "onViolation": "abort_response"
+            }
+        });
+        let operations = json!([
+            {
+                "kind": "chunk",
+                "sequence": 1,
+                "text": "safe "
+            },
+            {
+                "kind": "chunk",
+                "sequence": 2,
+                "text": "blocked"
+            },
+            {
+                "kind": "decision",
+                "decisionId": "decision-abort",
+                "disposition": "abort_response",
+                "acceptedThroughSequence": 1,
+                "inputDigest": "sha256:abort",
+                "occurredAtUnixMs": 1_010
+            }
+        ]);
+        let gate_json = serde_json::to_string(&gate).map_err(|error| error.to_string())?;
+        let operations_json =
+            serde_json::to_string(&operations).map_err(|error| error.to_string())?;
+
+        let result_json = evaluate_output_gate_json(&gate_json, &operations_json)
+            .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            result
+                .get("cutoff")
+                .and_then(|cutoff| cutoff.get("lastPolicyAcceptedSequence"))
+                .and_then(Value::as_u64),
+            Some(1)
+        );
+        assert_eq!(
+            result
+                .get("cutoff")
+                .and_then(|cutoff| cutoff.get("lastClientDeliveredSequence"))
+                .and_then(Value::as_u64),
+            Some(0)
         );
 
         Ok(())
