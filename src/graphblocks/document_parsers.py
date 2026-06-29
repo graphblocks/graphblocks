@@ -51,17 +51,39 @@ class DocumentParserRegistry:
     _descriptors: dict[tuple[str, str], ParserDescriptor] = field(default_factory=dict)
 
     def register(self, descriptor: ParserDescriptor) -> None:
-        key = (descriptor.processor_id, descriptor.version)
-        media_types = tuple(media_type.lower() for media_type in descriptor.media_types)
-        extensions = tuple(
-            extension.lower() if extension.startswith(".") else f".{extension.lower()}"
-            for extension in descriptor.extensions
-        )
+        processor_id = descriptor.processor_id.strip()
+        if not processor_id:
+            raise DocumentParserError("parser processor_id must not be empty")
+        version = descriptor.version.strip()
+        if not version:
+            raise DocumentParserError("parser version must not be empty")
+
+        media_types: list[str] = []
+        for media_type in descriptor.media_types:
+            normalized_media_type = media_type.strip().lower()
+            if not normalized_media_type:
+                raise DocumentParserError("parser media_types must not contain empty values")
+            if normalized_media_type not in media_types:
+                media_types.append(normalized_media_type)
+
+        extensions: list[str] = []
+        for extension in descriptor.extensions:
+            normalized_extension = extension.strip().lower()
+            if not normalized_extension:
+                raise DocumentParserError("parser extensions must not contain empty values")
+            if not normalized_extension.startswith("."):
+                normalized_extension = f".{normalized_extension}"
+            if normalized_extension == ".":
+                raise DocumentParserError("parser extensions must not contain empty values")
+            if normalized_extension not in extensions:
+                extensions.append(normalized_extension)
+
+        key = (processor_id, version)
         self._descriptors[key] = ParserDescriptor(
-            processor_id=descriptor.processor_id,
-            version=descriptor.version,
-            media_types=media_types,
-            extensions=extensions,
+            processor_id=processor_id,
+            version=version,
+            media_types=tuple(media_types),
+            extensions=tuple(extensions),
             priority=descriptor.priority,
             supports_ocr=descriptor.supports_ocr,
             parse=descriptor.parse,
@@ -69,8 +91,12 @@ class DocumentParserRegistry:
         )
 
     def select(self, artifact: ArtifactRef, *, allow_ocr_fallback: bool = False) -> ParserSelectionLock:
-        media_type = artifact.media_type.lower() if artifact.media_type else None
-        filename = artifact.filename or PurePosixPath(artifact.uri).name or None
+        media_type = artifact.media_type.strip().lower() if artifact.media_type else None
+        filename = (
+            artifact.filename.strip()
+            if artifact.filename
+            else PurePosixPath(artifact.uri).name.strip()
+        ) or None
         extension = PurePosixPath(filename).suffix.lower() if filename else None
         candidates: list[tuple[str, ParserDescriptor]] = []
         for descriptor in self._descriptors.values():

@@ -52,6 +52,60 @@ def test_parser_registry_selects_by_media_type_and_records_lock_inputs() -> None
         resolved.metadata["profile"] = "changed"
 
 
+def test_parser_registry_normalizes_registered_fields_and_selection_inputs() -> None:
+    registry = DocumentParserRegistry()
+    registry.register(
+        ParserDescriptor(
+            " plain-text ",
+            " 1 ",
+            media_types=(" Text/Plain ",),
+            extensions=(" TXT ",),
+        )
+    )
+
+    media_lock = registry.select(
+        ArtifactRef(
+            "artifact-1",
+            "file:///tmp/POLICY.TXT",
+            media_type=" TEXT/PLAIN ",
+            filename=" POLICY.TXT ",
+        )
+    )
+    extension_lock = registry.select(
+        ArtifactRef("artifact-2", "file:///tmp/POLICY.TXT", filename=" POLICY.TXT ")
+    )
+
+    assert media_lock.processor_id == "plain-text"
+    assert media_lock.processor_version == "1"
+    assert media_lock.reason == "media_type"
+    assert media_lock.media_type == "text/plain"
+    assert media_lock.filename == "POLICY.TXT"
+    assert extension_lock.processor_id == "plain-text"
+    assert extension_lock.reason == "extension"
+    assert extension_lock.filename == "POLICY.TXT"
+    assert registry.resolve_locked(media_lock).processor_id == "plain-text"
+
+
+@pytest.mark.parametrize(
+    ("descriptor", "match"),
+    [
+        (ParserDescriptor("", "1"), "processor_id"),
+        (ParserDescriptor("plain-text", ""), "version"),
+        (ParserDescriptor("plain-text", "1", media_types=(" ",)), "media_types"),
+        (ParserDescriptor("plain-text", "1", extensions=(" ",)), "extensions"),
+        (ParserDescriptor("plain-text", "1", extensions=(".",)), "extensions"),
+    ],
+)
+def test_parser_registry_rejects_invalid_registered_descriptor_fields(
+    descriptor: ParserDescriptor,
+    match: str,
+) -> None:
+    registry = DocumentParserRegistry()
+
+    with pytest.raises(DocumentParserError, match=match):
+        registry.register(descriptor)
+
+
 def test_parser_registry_uses_extension_when_media_type_is_missing() -> None:
     registry = DocumentParserRegistry()
     registry.register(plain_text_parser_descriptor())
