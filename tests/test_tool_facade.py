@@ -1634,6 +1634,23 @@ def test_tool_admission_returns_admitted_call_with_idempotency_key() -> None:
     assert admitted.idempotency_key == "idem-1"
 
 
+def test_admitted_tool_call_requires_admitted_call_with_timestamp() -> None:
+    resolved = _resolved_process_tool()
+    call = _process_call(resolved)
+    admitted = call.with_status("admitted", admitted_at="2026-06-23T00:00:01Z")
+
+    with pytest.raises(ValueError, match="admitted tool call requires a ToolCall"):
+        AdmittedToolCall(call=object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="tool call call-1 is validated, not admitted"):
+        AdmittedToolCall(call=call)
+    with pytest.raises(ValueError, match="tool call call-1 admitted_at must be set"):
+        AdmittedToolCall(call=call.with_status("admitted"))
+    with pytest.raises(ValueError, match="tool call call-1 idempotency_key must be a string"):
+        AdmittedToolCall(call=admitted, idempotency_key=object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="tool call call-1 requires a non-empty idempotency key"):
+        AdmittedToolCall(call=admitted, idempotency_key=" ")
+
+
 def test_tool_call_draft_requires_complete_json_arguments_before_final_call() -> None:
     draft = ToolCallDraft.proposed("response-1", "call-1", "knowledge.search")
     draft = draft.append_argument_fragment('{"query":')

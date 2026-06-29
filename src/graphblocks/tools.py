@@ -1099,6 +1099,19 @@ class AdmittedToolCall:
     call: ToolCall
     idempotency_key: str | None = None
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.call, ToolCall):
+            raise ValueError("admitted tool call requires a ToolCall")
+        if self.call.status != "admitted":
+            raise ValueError(f"tool call {self.call.tool_call_id} is {self.call.status}, not admitted")
+        if self.call.admitted_at is None:
+            raise ValueError(f"tool call {self.call.tool_call_id} admitted_at must be set")
+        if self.idempotency_key is not None:
+            if not isinstance(self.idempotency_key, str):
+                raise ValueError(f"tool call {self.call.tool_call_id} idempotency_key must be a string")
+            if not self.idempotency_key.strip():
+                raise ValueError(f"tool call {self.call.tool_call_id} requires a non-empty idempotency key")
+
 
 def admit_tool_call(
     call: ToolCall,
