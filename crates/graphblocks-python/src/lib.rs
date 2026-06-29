@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use graphblocks_compiler::compiler::{BlockCatalog, compile_graph, compile_graph_with_catalog};
 use graphblocks_compiler::diagnostics::Severity;
@@ -22,6 +22,12 @@ use graphblocks_runtime_core::output_policy::{
 use graphblocks_runtime_core::readiness::{InputDependency, PortRef, ResolvedInput};
 use graphblocks_runtime_core::scheduler::{ScheduledNode, StartedNode};
 use graphblocks_runtime_core::test_runtime::{InProcessTestRuntime, NodeExecutor, TestRunStatus};
+use graphblocks_runtime_core::tool::{
+    BlockToolImplementation, GraphToolImplementation, McpToolImplementation,
+    OpenApiToolImplementation, RemoteToolImplementation, ResolvedTool, ToolApproval, ToolBinding,
+    ToolCancellation, ToolCatalog, ToolDefinition, ToolEffect, ToolIdempotency, ToolImplementation,
+    ToolResolutionScope, ToolResultMode,
+};
 use graphblocks_runtime_core::tool_call::{ToolCallDraft, ToolCallDraftStatus, ToolCallStatus};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -328,6 +334,7 @@ impl NodeExecutor for StdlibExecutor {
             "conversation.begin_turn@1" => execute_begin_turn(&inputs, &config),
             "prompt.render@1" => execute_prompt_render(&inputs, &config),
             "model.generate@1" => execute_scripted_generate(&inputs, &config),
+            "tools.resolve@1" => execute_resolve_tools(&inputs, &config),
             "agent.run@1" => execute_scripted_agent_run(&inputs, &config),
             "conversation.commit_turn@1" => execute_commit_turn(&inputs),
             "conversation.policy_stop_turn@1" => execute_policy_stop_turn(&inputs, &config),
@@ -994,6 +1001,809 @@ fn execute_scripted_generate(inputs: &Value, config: &Value) -> Result<Value, Bl
         .unwrap_or(prompt);
 
     Ok(json!({ "response": response }))
+}
+
+fn execute_resolve_tools(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
+    let Some(config) = config.as_object() else {
+        return Err(BlockError::new(
+            "tools.resolve.invalid_config",
+            ErrorCategory::Configuration,
+            "tools.resolve@1 config must be an object",
+            false,
+        ));
+    };
+    let parse_string_map =
+        |value: Option<&Value>, field: &str| -> Result<BTreeMap<String, String>, BlockError> {
+            let Some(value) = value else {
+                return Ok(BTreeMap::new());
+            };
+            let Some(object) = value.as_object() else {
+                return Err(BlockError::new(
+                    format!("tools.resolve.invalid_{field}"),
+                    ErrorCategory::Configuration,
+                    format!("tools.resolve@1 {field} must be an object"),
+                    false,
+                ));
+            };
+            let mut parsed = BTreeMap::new();
+            for (key, value) in object {
+                let Some(value) = value.as_str() else {
+                    return Err(BlockError::new(
+                        format!("tools.resolve.invalid_{field}"),
+                        ErrorCategory::Configuration,
+                        format!("tools.resolve@1 {field} values must be strings"),
+                        false,
+                    ));
+                };
+                parsed.insert(key.clone(), value.to_owned());
+            }
+            Ok(parsed)
+        };
+
+    let mut definitions = Vec::new();
+    if let Some(raw_definitions) = config.get("definitions") {
+        let Some(raw_definitions) = raw_definitions.as_array() else {
+            return Err(BlockError::new(
+                "tools.resolve.invalid_definitions",
+                ErrorCategory::Configuration,
+                "tools.resolve@1 config.definitions must be an array",
+                false,
+            ));
+        };
+        for (index, definition) in raw_definitions.iter().enumerate() {
+            let Some(definition) = definition.as_object() else {
+                return Err(BlockError::new(
+                    "tools.resolve.invalid_definition",
+                    ErrorCategory::Configuration,
+                    format!("tools.resolve@1 config.definitions[{index}] must be an object"),
+                    false,
+                ));
+            };
+            let name = definition
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    BlockError::new(
+                        "tools.resolve.invalid_definition",
+                        ErrorCategory::Configuration,
+                        format!(
+                            "tools.resolve@1 config.definitions[{index}].name must be a string"
+                        ),
+                        false,
+                    )
+                })?;
+            let description = definition
+                .get("description")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let input_schema = definition
+                .get("inputSchema")
+                .or_else(|| definition.get("input_schema"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    BlockError::new(
+                        "tools.resolve.invalid_definition",
+                        ErrorCategory::Configuration,
+                        format!(
+                            "tools.resolve@1 config.definitions[{index}].inputSchema must be a string"
+                        ),
+                        false,
+                    )
+                })?;
+            let mut parsed = ToolDefinition::new(name, description, input_schema);
+            if let Some(output_schema) = definition
+                .get("outputSchema")
+                .or_else(|| definition.get("output_schema"))
+                .filter(|value| !value.is_null())
+            {
+                let Some(output_schema) = output_schema.as_str() else {
+                    return Err(BlockError::new(
+                        "tools.resolve.invalid_definition",
+                        ErrorCategory::Configuration,
+                        format!(
+                            "tools.resolve@1 config.definitions[{index}].outputSchema must be a string"
+                        ),
+                        false,
+                    ));
+                };
+                parsed = parsed.with_output_schema(output_schema);
+            }
+            if let Some(tags) = definition.get("tags") {
+                let Some(tags) = tags.as_array() else {
+                    return Err(BlockError::new(
+                        "tools.resolve.invalid_definition",
+                        ErrorCategory::Configuration,
+                        format!(
+                            "tools.resolve@1 config.definitions[{index}].tags must be an array"
+                        ),
+                        false,
+                    ));
+                };
+                let mut parsed_tags = Vec::new();
+                for (tag_index, tag) in tags.iter().enumerate() {
+                    let Some(tag) = tag.as_str() else {
+                        return Err(BlockError::new(
+                            "tools.resolve.invalid_definition",
+                            ErrorCategory::Configuration,
+                            format!(
+                                "tools.resolve@1 config.definitions[{index}].tags[{tag_index}] must be a string"
+                            ),
+                            false,
+                        ));
+                    };
+                    parsed_tags.push(tag.to_owned());
+                }
+                parsed = parsed.with_tags(parsed_tags);
+            }
+            if let Some(version) = definition.get("version").filter(|value| !value.is_null()) {
+                let Some(version) = version.as_str() else {
+                    return Err(BlockError::new(
+                        "tools.resolve.invalid_definition",
+                        ErrorCategory::Configuration,
+                        format!(
+                            "tools.resolve@1 config.definitions[{index}].version must be a string"
+                        ),
+                        false,
+                    ));
+                };
+                parsed = parsed.with_version(version);
+            }
+            definitions.push(parsed);
+        }
+    }
+
+    let mut bindings = Vec::new();
+    if let Some(raw_bindings) = config.get("bindings") {
+        let Some(raw_bindings) = raw_bindings.as_array() else {
+            return Err(BlockError::new(
+                "tools.resolve.invalid_bindings",
+                ErrorCategory::Configuration,
+                "tools.resolve@1 config.bindings must be an array",
+                false,
+            ));
+        };
+        for (index, binding) in raw_bindings.iter().enumerate() {
+            let Some(binding) = binding.as_object() else {
+                return Err(BlockError::new(
+                    "tools.resolve.invalid_binding",
+                    ErrorCategory::Configuration,
+                    format!("tools.resolve@1 config.bindings[{index}] must be an object"),
+                    false,
+                ));
+            };
+            let binding_id = binding
+                .get("bindingId")
+                .or_else(|| binding.get("binding_id"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    BlockError::new(
+                        "tools.resolve.invalid_binding",
+                        ErrorCategory::Configuration,
+                        format!(
+                            "tools.resolve@1 config.bindings[{index}].bindingId must be a string"
+                        ),
+                        false,
+                    )
+                })?;
+            let tool_name = binding
+                .get("toolName")
+                .or_else(|| binding.get("tool_name"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    BlockError::new(
+                        "tools.resolve.invalid_binding",
+                        ErrorCategory::Configuration,
+                        format!(
+                            "tools.resolve@1 config.bindings[{index}].toolName must be a string"
+                        ),
+                        false,
+                    )
+                })?;
+            let implementation = binding
+                .get("implementation")
+                .and_then(Value::as_object)
+                .ok_or_else(|| {
+                    BlockError::new(
+                        "tools.resolve.invalid_binding",
+                        ErrorCategory::Configuration,
+                        format!(
+                            "tools.resolve@1 config.bindings[{index}].implementation must be an object"
+                        ),
+                        false,
+                    )
+                })?;
+            let kind = implementation
+                .get("kind")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    BlockError::new(
+                        "tools.resolve.invalid_binding",
+                        ErrorCategory::Configuration,
+                        format!(
+                            "tools.resolve@1 config.bindings[{index}].implementation.kind must be a string"
+                        ),
+                        false,
+                    )
+                })?;
+            let implementation = match kind {
+                "block" => {
+                    let block = implementation
+                        .get("block")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| {
+                            BlockError::new(
+                                "tools.resolve.invalid_binding",
+                                ErrorCategory::Configuration,
+                                format!(
+                                    "tools.resolve@1 config.bindings[{index}].implementation.block must be a string"
+                                ),
+                                false,
+                            )
+                        })?;
+                    let mut implementation = BlockToolImplementation::new(block);
+                    implementation.input_mapping = parse_string_map(
+                        binding
+                            .get("implementation")
+                            .and_then(|value| value.get("inputMapping").or_else(|| value.get("input_mapping"))),
+                        "implementation.inputMapping",
+                    )?;
+                    implementation.output_mapping = parse_string_map(
+                        binding
+                            .get("implementation")
+                            .and_then(|value| value.get("outputMapping").or_else(|| value.get("output_mapping"))),
+                        "implementation.outputMapping",
+                    )?;
+                    ToolImplementation::Block(implementation)
+                }
+                "graph" => {
+                    let graph = implementation
+                        .get("graph")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| {
+                            BlockError::new(
+                                "tools.resolve.invalid_binding",
+                                ErrorCategory::Configuration,
+                                format!(
+                                    "tools.resolve@1 config.bindings[{index}].implementation.graph must be a string"
+                                ),
+                                false,
+                            )
+                        })?;
+                    let mut implementation = GraphToolImplementation::new(graph);
+                    implementation.input_mapping = parse_string_map(
+                        binding
+                            .get("implementation")
+                            .and_then(|value| value.get("inputMapping").or_else(|| value.get("input_mapping"))),
+                        "implementation.inputMapping",
+                    )?;
+                    implementation.output_mapping = parse_string_map(
+                        binding
+                            .get("implementation")
+                            .and_then(|value| value.get("outputMapping").or_else(|| value.get("output_mapping"))),
+                        "implementation.outputMapping",
+                    )?;
+                    ToolImplementation::Graph(implementation)
+                }
+                "remote" => ToolImplementation::Remote(RemoteToolImplementation::new(
+                    implementation
+                        .get("connection")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| {
+                            BlockError::new(
+                                "tools.resolve.invalid_binding",
+                                ErrorCategory::Configuration,
+                                format!(
+                                    "tools.resolve@1 config.bindings[{index}].implementation.connection must be a string"
+                                ),
+                                false,
+                            )
+                        })?,
+                    implementation
+                        .get("operation")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| {
+                            BlockError::new(
+                                "tools.resolve.invalid_binding",
+                                ErrorCategory::Configuration,
+                                format!(
+                                    "tools.resolve@1 config.bindings[{index}].implementation.operation must be a string"
+                                ),
+                                false,
+                            )
+                        })?,
+                )),
+                "mcp" => ToolImplementation::Mcp(McpToolImplementation::new(
+                    implementation
+                        .get("server")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| {
+                            BlockError::new(
+                                "tools.resolve.invalid_binding",
+                                ErrorCategory::Configuration,
+                                format!(
+                                    "tools.resolve@1 config.bindings[{index}].implementation.server must be a string"
+                                ),
+                                false,
+                            )
+                        })?,
+                    implementation
+                        .get("remoteName")
+                        .or_else(|| implementation.get("remote_name"))
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| {
+                            BlockError::new(
+                                "tools.resolve.invalid_binding",
+                                ErrorCategory::Configuration,
+                                format!(
+                                    "tools.resolve@1 config.bindings[{index}].implementation.remoteName must be a string"
+                                ),
+                                false,
+                            )
+                        })?,
+                )),
+                "openapi" => ToolImplementation::OpenApi(OpenApiToolImplementation::new(
+                    implementation
+                        .get("connection")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| {
+                            BlockError::new(
+                                "tools.resolve.invalid_binding",
+                                ErrorCategory::Configuration,
+                                format!(
+                                    "tools.resolve@1 config.bindings[{index}].implementation.connection must be a string"
+                                ),
+                                false,
+                            )
+                        })?,
+                    implementation
+                        .get("operationId")
+                        .or_else(|| implementation.get("operation_id"))
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| {
+                            BlockError::new(
+                                "tools.resolve.invalid_binding",
+                                ErrorCategory::Configuration,
+                                format!(
+                                    "tools.resolve@1 config.bindings[{index}].implementation.operationId must be a string"
+                                ),
+                                false,
+                            )
+                        })?,
+                )),
+                _ => {
+                    return Err(BlockError::new(
+                        "tools.resolve.invalid_binding",
+                        ErrorCategory::Configuration,
+                        format!("tools.resolve@1 unsupported implementation kind {kind:?}"),
+                        false,
+                    ));
+                }
+            };
+            let mut parsed = ToolBinding::new(binding_id, tool_name, implementation);
+            if let Some(effects) = binding.get("effects") {
+                let Some(effects) = effects.as_array() else {
+                    return Err(BlockError::new(
+                        "tools.resolve.invalid_binding",
+                        ErrorCategory::Configuration,
+                        format!(
+                            "tools.resolve@1 config.bindings[{index}].effects must be an array"
+                        ),
+                        false,
+                    ));
+                };
+                let mut parsed_effects = BTreeSet::new();
+                for (effect_index, effect) in effects.iter().enumerate() {
+                    let Some(effect) = effect.as_str() else {
+                        return Err(BlockError::new(
+                            "tools.resolve.invalid_binding",
+                            ErrorCategory::Configuration,
+                            format!(
+                                "tools.resolve@1 config.bindings[{index}].effects[{effect_index}] must be a string"
+                            ),
+                            false,
+                        ));
+                    };
+                    parsed_effects.insert(match effect {
+                        "none" => ToolEffect::None,
+                        "external_read" => ToolEffect::ExternalRead,
+                        "external_write" => ToolEffect::ExternalWrite,
+                        "filesystem_read" => ToolEffect::FilesystemRead,
+                        "filesystem_write" => ToolEffect::FilesystemWrite,
+                        "process" => ToolEffect::Process,
+                        "network" => ToolEffect::Network,
+                        "destructive" => ToolEffect::Destructive,
+                        _ => {
+                            return Err(BlockError::new(
+                                "tools.resolve.invalid_binding",
+                                ErrorCategory::Configuration,
+                                format!("tools.resolve@1 invalid tool effect {effect:?}"),
+                                false,
+                            ));
+                        }
+                    });
+                }
+                parsed = parsed.with_effects(parsed_effects);
+            }
+            if let Some(approval) = binding.get("approval").filter(|value| !value.is_null()) {
+                let Some(approval) = approval.as_str() else {
+                    return Err(BlockError::new(
+                        "tools.resolve.invalid_binding",
+                        ErrorCategory::Configuration,
+                        format!(
+                            "tools.resolve@1 config.bindings[{index}].approval must be a string"
+                        ),
+                        false,
+                    ));
+                };
+                parsed = parsed.with_approval(match approval {
+                    "never" => ToolApproval::Never,
+                    "policy" => ToolApproval::Policy,
+                    "always" => ToolApproval::Always,
+                    _ => {
+                        return Err(BlockError::new(
+                            "tools.resolve.invalid_binding",
+                            ErrorCategory::Configuration,
+                            format!("tools.resolve@1 invalid tool approval {approval:?}"),
+                            false,
+                        ));
+                    }
+                });
+            }
+            if let Some(idempotency) = binding.get("idempotency").filter(|value| !value.is_null()) {
+                let Some(idempotency) = idempotency.as_str() else {
+                    return Err(BlockError::new(
+                        "tools.resolve.invalid_binding",
+                        ErrorCategory::Configuration,
+                        format!(
+                            "tools.resolve@1 config.bindings[{index}].idempotency must be a string"
+                        ),
+                        false,
+                    ));
+                };
+                parsed = parsed.with_idempotency(match idempotency {
+                    "not_applicable" => ToolIdempotency::NotApplicable,
+                    "optional" => ToolIdempotency::Optional,
+                    "required" => ToolIdempotency::Required,
+                    _ => {
+                        return Err(BlockError::new(
+                            "tools.resolve.invalid_binding",
+                            ErrorCategory::Configuration,
+                            format!("tools.resolve@1 invalid tool idempotency {idempotency:?}"),
+                            false,
+                        ));
+                    }
+                });
+            }
+            if let Some(cancellation) = binding.get("cancellation").filter(|value| !value.is_null())
+            {
+                let Some(cancellation) = cancellation.as_str() else {
+                    return Err(BlockError::new(
+                        "tools.resolve.invalid_binding",
+                        ErrorCategory::Configuration,
+                        format!(
+                            "tools.resolve@1 config.bindings[{index}].cancellation must be a string"
+                        ),
+                        false,
+                    ));
+                };
+                parsed = parsed.with_cancellation(match cancellation {
+                    "unsupported" => ToolCancellation::Unsupported,
+                    "cooperative" => ToolCancellation::Cooperative,
+                    "force_terminable" => ToolCancellation::ForceTerminable,
+                    _ => {
+                        return Err(BlockError::new(
+                            "tools.resolve.invalid_binding",
+                            ErrorCategory::Configuration,
+                            format!("tools.resolve@1 invalid tool cancellation {cancellation:?}"),
+                            false,
+                        ));
+                    }
+                });
+            }
+            if let Some(result_mode) = binding
+                .get("resultMode")
+                .or_else(|| binding.get("result_mode"))
+                .filter(|value| !value.is_null())
+            {
+                let Some(result_mode) = result_mode.as_str() else {
+                    return Err(BlockError::new(
+                        "tools.resolve.invalid_binding",
+                        ErrorCategory::Configuration,
+                        format!(
+                            "tools.resolve@1 config.bindings[{index}].resultMode must be a string"
+                        ),
+                        false,
+                    ));
+                };
+                parsed = parsed.with_result_mode(match result_mode {
+                    "value" => ToolResultMode::Value,
+                    "incremental" => ToolResultMode::Incremental,
+                    "bounded_sequence" => ToolResultMode::BoundedSequence,
+                    "artifact_reference" => ToolResultMode::ArtifactReference,
+                    _ => {
+                        return Err(BlockError::new(
+                            "tools.resolve.invalid_binding",
+                            ErrorCategory::Configuration,
+                            format!("tools.resolve@1 invalid tool result mode {result_mode:?}"),
+                            false,
+                        ));
+                    }
+                });
+            }
+            if let Some(timeout_ms) = binding
+                .get("timeoutMs")
+                .or_else(|| binding.get("timeout_ms"))
+                .filter(|value| !value.is_null())
+            {
+                let Some(timeout_ms) = timeout_ms.as_u64() else {
+                    return Err(BlockError::new(
+                        "tools.resolve.invalid_binding",
+                        ErrorCategory::Configuration,
+                        format!(
+                            "tools.resolve@1 config.bindings[{index}].timeoutMs must be an unsigned integer"
+                        ),
+                        false,
+                    ));
+                };
+                parsed = parsed.with_timeout_ms(timeout_ms);
+            }
+            if let Some(retry_policy_ref) = binding
+                .get("retryPolicyRef")
+                .or_else(|| binding.get("retry_policy_ref"))
+                .filter(|value| !value.is_null())
+            {
+                parsed.retry_policy_ref = Some(
+                    retry_policy_ref
+                        .as_str()
+                        .ok_or_else(|| {
+                            BlockError::new(
+                                "tools.resolve.invalid_binding",
+                                ErrorCategory::Configuration,
+                                format!(
+                                    "tools.resolve@1 config.bindings[{index}].retryPolicyRef must be a string"
+                                ),
+                                false,
+                            )
+                        })?
+                        .to_owned(),
+                );
+            }
+            if let Some(policy_profile_ref) = binding
+                .get("policyProfileRef")
+                .or_else(|| binding.get("policy_profile_ref"))
+                .filter(|value| !value.is_null())
+            {
+                parsed.policy_profile_ref = Some(
+                    policy_profile_ref
+                        .as_str()
+                        .ok_or_else(|| {
+                            BlockError::new(
+                                "tools.resolve.invalid_binding",
+                                ErrorCategory::Configuration,
+                                format!(
+                                    "tools.resolve@1 config.bindings[{index}].policyProfileRef must be a string"
+                                ),
+                                false,
+                            )
+                        })?
+                        .to_owned(),
+                );
+            }
+            if let Some(execution_class) = binding
+                .get("executionClass")
+                .or_else(|| binding.get("execution_class"))
+                .filter(|value| !value.is_null())
+            {
+                parsed.execution_class = Some(
+                    execution_class
+                        .as_str()
+                        .ok_or_else(|| {
+                            BlockError::new(
+                                "tools.resolve.invalid_binding",
+                                ErrorCategory::Configuration,
+                                format!(
+                                    "tools.resolve@1 config.bindings[{index}].executionClass must be a string"
+                                ),
+                                false,
+                            )
+                        })?
+                        .to_owned(),
+                );
+            }
+            bindings.push(parsed);
+        }
+    }
+
+    let mut scope = ToolResolutionScope::new();
+    if let Some(raw_scope) = config.get("scope") {
+        let Some(raw_scope) = raw_scope.as_object() else {
+            return Err(BlockError::new(
+                "tools.resolve.invalid_scope",
+                ErrorCategory::Configuration,
+                "tools.resolve@1 config.scope must be an object",
+                false,
+            ));
+        };
+        let parse_tool_names =
+            |camel_key: &str, snake_key: &str| -> Result<Option<Vec<String>>, BlockError> {
+                let Some(value) = raw_scope
+                    .get(camel_key)
+                    .or_else(|| raw_scope.get(snake_key))
+                else {
+                    return Ok(None);
+                };
+                let Some(value) = value.as_array() else {
+                    return Err(BlockError::new(
+                        "tools.resolve.invalid_scope",
+                        ErrorCategory::Configuration,
+                        format!("tools.resolve@1 config.scope.{camel_key} must be an array"),
+                        false,
+                    ));
+                };
+                let mut names = Vec::new();
+                for (index, item) in value.iter().enumerate() {
+                    let Some(item) = item.as_str() else {
+                        return Err(BlockError::new(
+                            "tools.resolve.invalid_scope",
+                            ErrorCategory::Configuration,
+                            format!(
+                                "tools.resolve@1 config.scope.{camel_key}[{index}] must be a string"
+                            ),
+                            false,
+                        ));
+                    };
+                    names.push(item.to_owned());
+                }
+                Ok(Some(names))
+            };
+        if let Some(tools) = parse_tool_names("applicationTools", "application_tools")? {
+            scope = scope.with_application_tools(tools);
+        }
+        if let Some(tools) = parse_tool_names("graphTools", "graph_tools")? {
+            scope = scope.with_graph_tools(tools);
+        }
+        if let Some(tools) = parse_tool_names("principalTools", "principal_tools")? {
+            scope = scope.with_principal_tools(tools);
+        }
+        if let Some(tools) = parse_tool_names("tenantPolicyTools", "tenant_policy_tools")? {
+            scope = scope.with_tenant_policy_tools(tools);
+        }
+        if let Some(tools) =
+            parse_tool_names("conversationPolicyTools", "conversation_policy_tools")?
+        {
+            scope = scope.with_conversation_policy_tools(tools);
+        }
+        if let Some(tools) =
+            parse_tool_names("dataClassificationTools", "data_classification_tools")?
+        {
+            scope = scope.with_data_classification_tools(tools);
+        }
+        if let Some(tools) = parse_tool_names("deploymentTools", "deployment_tools")? {
+            scope = scope.with_deployment_tools(tools);
+        }
+        if let Some(tools) = parse_tool_names("budgetTools", "budget_tools")? {
+            scope = scope.with_budget_tools(tools);
+        }
+    }
+
+    let mut effective_policy_snapshot_id = config
+        .get("effectivePolicySnapshotId")
+        .or_else(|| config.get("effective_policy_snapshot_id"))
+        .and_then(Value::as_str)
+        .unwrap_or("policy-snapshot-local")
+        .to_owned();
+    if let Some(policy_snapshot) = inputs.get("policySnapshot").and_then(Value::as_object)
+        && let Some(snapshot_id) = policy_snapshot
+            .get("snapshotId")
+            .or_else(|| policy_snapshot.get("snapshot_id"))
+            .and_then(Value::as_str)
+    {
+        effective_policy_snapshot_id = snapshot_id.to_owned();
+    }
+
+    let catalog = ToolCatalog::new(definitions, bindings).map_err(|error| {
+        BlockError::new(
+            "tools.resolve.catalog_error",
+            ErrorCategory::Configuration,
+            format!("tools.resolve@1 catalog error: {error:?}"),
+            false,
+        )
+    })?;
+    let resolved = catalog
+        .resolve(scope, effective_policy_snapshot_id)
+        .map_err(|error| {
+            BlockError::new(
+                "tools.resolve.resolution_error",
+                ErrorCategory::Policy,
+                format!("tools.resolve@1 resolution error: {error:?}"),
+                false,
+            )
+        })?;
+    let resolved_tool_json = |tool: &ResolvedTool| {
+        let implementation = match &tool.binding.implementation {
+            ToolImplementation::Block(implementation) => json!({
+                "kind": "block",
+                "block": implementation.block,
+                "input_mapping": implementation.input_mapping,
+                "output_mapping": implementation.output_mapping,
+            }),
+            ToolImplementation::Graph(implementation) => json!({
+                "kind": "graph",
+                "graph": implementation.graph,
+                "input_mapping": implementation.input_mapping,
+                "output_mapping": implementation.output_mapping,
+            }),
+            ToolImplementation::Remote(implementation) => json!({
+                "kind": "remote",
+                "connection": implementation.connection,
+                "operation": implementation.operation,
+            }),
+            ToolImplementation::Mcp(implementation) => json!({
+                "kind": "mcp",
+                "server": implementation.server,
+                "remote_name": implementation.remote_name,
+            }),
+            ToolImplementation::OpenApi(implementation) => json!({
+                "kind": "openapi",
+                "connection": implementation.connection,
+                "operation_id": implementation.operation_id,
+            }),
+        };
+        let approval = match tool.binding.approval {
+            ToolApproval::Never => "never",
+            ToolApproval::Policy => "policy",
+            ToolApproval::Always => "always",
+        };
+        let idempotency = match tool.binding.idempotency {
+            ToolIdempotency::NotApplicable => "not_applicable",
+            ToolIdempotency::Optional => "optional",
+            ToolIdempotency::Required => "required",
+        };
+        let cancellation = match tool.binding.cancellation {
+            ToolCancellation::Unsupported => "unsupported",
+            ToolCancellation::Cooperative => "cooperative",
+            ToolCancellation::ForceTerminable => "force_terminable",
+        };
+        let result_mode = match tool.binding.result_mode {
+            ToolResultMode::Value => "value",
+            ToolResultMode::Incremental => "incremental",
+            ToolResultMode::BoundedSequence => "bounded_sequence",
+            ToolResultMode::ArtifactReference => "artifact_reference",
+        };
+
+        json!({
+            "resolved_tool_id": tool.resolved_tool_id,
+            "definition": {
+                "name": tool.definition.name,
+                "description": tool.definition.description,
+                "input_schema": tool.definition.input_schema,
+                "output_schema": tool.definition.output_schema,
+                "tags": tool.definition.tags.iter().collect::<Vec<_>>(),
+                "version": tool.definition.version,
+            },
+            "binding": {
+                "binding_id": tool.binding.binding_id,
+                "tool_name": tool.binding.tool_name,
+                "implementation": implementation,
+                "effects": tool.binding.effects.iter().map(|effect| effect.as_str()).collect::<Vec<_>>(),
+                "approval": approval,
+                "idempotency": idempotency,
+                "cancellation": cancellation,
+                "result_mode": result_mode,
+                "timeout_ms": tool.binding.timeout_ms,
+                "retry_policy_ref": tool.binding.retry_policy_ref,
+                "policy_profile_ref": tool.binding.policy_profile_ref,
+                "execution_class": tool.binding.execution_class,
+            },
+            "definition_digest": tool.definition_digest,
+            "binding_digest": tool.binding_digest,
+            "effective_policy_snapshot_id": tool.effective_policy_snapshot_id,
+            "allowed_for_principal": tool.allowed_for_principal,
+            "valid_until": tool.valid_until_unix_ms,
+        })
+    };
+    let tools = resolved.iter().map(resolved_tool_json).collect::<Vec<_>>();
+    Ok(json!({ "tools": tools }))
 }
 
 fn execute_scripted_agent_run(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
@@ -4066,6 +4876,110 @@ mod tests {
                 "text": "native scripted response",
                 "toolCount": 1
             }))
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn run_stdlib_graph_json_resolves_tools_for_scripted_agent() -> Result<(), String> {
+        let graph = json!({
+            "apiVersion": "graphblocks.ai/v1alpha3",
+            "kind": "Graph",
+            "metadata": {"name": "native-agent-tools"},
+            "spec": {
+                "interface": {
+                    "inputs": {"messages": "graphblocks.ai/Messages@1"},
+                    "outputs": {
+                        "candidate": "graphblocks.ai/AssistantCandidate@1",
+                        "tools": "graphblocks.ai/ResolvedTools@1"
+                    }
+                },
+                "nodes": {
+                    "resolve": {
+                        "block": "tools.resolve@1",
+                        "config": {
+                            "effectivePolicySnapshotId": "policy-snapshot-1",
+                            "definitions": [
+                                {
+                                    "name": "knowledge.search",
+                                    "description": "Search support documentation.",
+                                    "inputSchema": "schemas/SearchRequest@1"
+                                }
+                            ],
+                            "bindings": [
+                                {
+                                    "bindingId": "binding-search",
+                                    "toolName": "knowledge.search",
+                                    "implementation": {"kind": "block", "block": "knowledge.search@1"},
+                                    "effects": ["external_read"],
+                                    "approval": "never",
+                                    "timeoutMs": 250
+                                }
+                            ],
+                            "scope": {"principalTools": ["knowledge.search"]}
+                        },
+                        "outputs": {"tools": "$output.tools"}
+                    },
+                    "agent": {
+                        "block": "agent.run@1",
+                        "config": {"response": "Hello from native agent."},
+                        "inputs": {
+                            "messages": "$input.messages",
+                            "tools": "resolve.tools"
+                        },
+                        "outputs": {"candidate": "$output.candidate"}
+                    }
+                }
+            }
+        });
+        let inputs = json!({"messages": [{"role": "user", "content": "Hello"}]});
+        let graph_json = serde_json::to_string(&graph).map_err(|error| error.to_string())?;
+        let inputs_json = serde_json::to_string(&inputs).map_err(|error| error.to_string())?;
+        let result_json =
+            run_stdlib_graph_json(&graph_json, &inputs_json).map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            result.get("status").and_then(Value::as_str),
+            Some("succeeded")
+        );
+        assert_eq!(
+            result
+                .get("outputs")
+                .and_then(|outputs| outputs.get("candidate")),
+            Some(&json!({
+                "finishReason": "scripted",
+                "text": "Hello from native agent.",
+                "toolCount": 1
+            }))
+        );
+        let resolved_tool = result
+            .get("outputs")
+            .and_then(|outputs| outputs.get("tools"))
+            .and_then(Value::as_array)
+            .and_then(|tools| tools.first())
+            .ok_or_else(|| "resolved tools output missing first tool".to_owned())?;
+        assert_eq!(
+            resolved_tool
+                .get("definition")
+                .and_then(|definition| definition.get("name"))
+                .and_then(Value::as_str),
+            Some("knowledge.search")
+        );
+        assert_eq!(
+            resolved_tool
+                .get("allowed_for_principal")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            resolved_tool
+                .get("binding")
+                .and_then(|binding| binding.get("timeout_ms"))
+                .and_then(Value::as_u64),
+            Some(250)
         );
 
         Ok(())
