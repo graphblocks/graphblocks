@@ -330,21 +330,7 @@ impl NodeExecutor for StdlibExecutor {
             .get("config")
             .cloned()
             .unwrap_or_else(|| json!({}));
-        let outputs = match block_id {
-            "conversation.begin_turn@1" => execute_begin_turn(&inputs, &config),
-            "prompt.render@1" => execute_prompt_render(&inputs, &config),
-            "model.generate@1" => execute_scripted_generate(&inputs, &config),
-            "tools.resolve@1" => execute_resolve_tools(&inputs, &config),
-            "agent.run@1" => execute_scripted_agent_run(&inputs, &config),
-            "conversation.commit_turn@1" => execute_commit_turn(&inputs),
-            "conversation.policy_stop_turn@1" => execute_policy_stop_turn(&inputs, &config),
-            _ => Err(BlockError::new(
-                format!("{block_id}.unsupported"),
-                ErrorCategory::Configuration,
-                "unsupported stdlib block",
-                false,
-            )),
-        }?;
+        let outputs = execute_stdlib_block(block_id, &inputs, &config)?;
         let Some(outputs_object) = outputs.as_object() else {
             return Err(BlockError::new(
                 format!("{block_id}.invalid_outputs"),
@@ -930,6 +916,30 @@ fn json_display(value: &Value) -> String {
         .as_str()
         .map(str::to_owned)
         .unwrap_or_else(|| value.to_string())
+}
+
+fn execute_stdlib_block(
+    block_id: &str,
+    inputs: &Value,
+    config: &Value,
+) -> Result<Value, BlockError> {
+    match block_id {
+        "conversation.begin_turn@1" => execute_begin_turn(inputs, config),
+        "prompt.render@1" => execute_prompt_render(inputs, config),
+        "model.generate@1" => execute_scripted_generate(inputs, config),
+        "tools.resolve@1" => execute_resolve_tools(inputs, config),
+        "agent.run@1" => execute_scripted_agent_run(inputs, config),
+        "conversation.commit_turn@1" => execute_commit_turn(inputs),
+        "conversation.policy_stop_turn@1" => execute_policy_stop_turn(inputs, config),
+        "control.map@2" => execute_control_map(inputs, config),
+        "control.select@1" => execute_control_select(inputs, config),
+        _ => Err(BlockError::new(
+            format!("{block_id}.unsupported"),
+            ErrorCategory::Configuration,
+            "unsupported stdlib block",
+            false,
+        )),
+    }
 }
 
 fn execute_begin_turn(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
@@ -1844,6 +1854,134 @@ fn execute_scripted_agent_run(inputs: &Value, config: &Value) -> Result<Value, B
             "toolCount": tools.len(),
         }
     }))
+}
+
+fn execute_control_map(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
+    let Some(items) = inputs.get("items").and_then(Value::as_array) else {
+        return Err(BlockError::new(
+            "control.map.invalid_items",
+            ErrorCategory::Configuration,
+            "control.map@2 input 'items' must be a list",
+            false,
+        ));
+    };
+    let Some(block_id) = config.get("block").and_then(Value::as_str) else {
+        return Err(BlockError::new(
+            "control.map.missing_block",
+            ErrorCategory::Configuration,
+            "control.map@2 config.block must be a string",
+            false,
+        ));
+    };
+    let input_name = config
+        .get("inputName")
+        .map(json_display)
+        .unwrap_or_else(|| "item".to_owned());
+    let output_name = config.get("outputName").map(json_display);
+    let block_config = config.get("config").cloned().unwrap_or_else(|| json!({}));
+    if !block_config.is_object() {
+        return Err(BlockError::new(
+            "control.map.invalid_config",
+            ErrorCategory::Configuration,
+            "control.map@2 config.config must be a mapping",
+            false,
+        ));
+    }
+    let collect_errors = config.get("onError").and_then(Value::as_str) == Some("collect");
+    let mut values = Vec::new();
+    let mut outcomes = Vec::new();
+
+    for (index, item) in items.iter().enumerate() {
+        let item_result = (|| {
+            let mut mapped_inputs = serde_json::Map::new();
+            mapped_inputs.insert(input_name.clone(), item.clone());
+            let result =
+                execute_stdlib_block(block_id, &Value::Object(mapped_inputs), &block_config)?;
+            let Some(result_object) = result.as_object() else {
+                return Err(BlockError::new(
+                    "control.map.invalid_mapped_outputs",
+                    ErrorCategory::Internal,
+                    "mapped block returned non-mapping output",
+                    false,
+                ));
+            };
+            let value = if let Some(output_name) = &output_name {
+                result_object.get(output_name).cloned().ok_or_else(|| {
+                    BlockError::new(
+                        format!("control.map.missing_output.{output_name}"),
+                        ErrorCategory::Configuration,
+                        "mapped block output is missing",
+                        false,
+                    )
+                })?
+            } else {
+                result
+            };
+            Ok(value)
+        })();
+
+        match item_result {
+            Ok(value) => {
+                values.push(value.clone());
+                outcomes.push(json!({"status": "succeeded", "value": value}));
+            }
+            Err(error) => {
+                if !collect_errors {
+                    return Err(error);
+                }
+                outcomes.push(json!({
+                    "status": "failed",
+                    "error": format!("map item {index} failed: {error:?}"),
+                }));
+            }
+        }
+    }
+
+    if collect_errors {
+        Ok(json!({"outcomes": outcomes, "values": values}))
+    } else {
+        Ok(json!({"values": values}))
+    }
+}
+
+fn execute_control_select(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
+    let Some(cases) = inputs.get("cases").and_then(Value::as_object) else {
+        return Err(BlockError::new(
+            "control.select.invalid_cases",
+            ErrorCategory::Configuration,
+            "control.select@1 input 'cases' must be a mapping",
+            false,
+        ));
+    };
+    let order = if let Some(order) = config.get("order") {
+        let Some(order) = order.as_array() else {
+            return Err(BlockError::new(
+                "control.select.invalid_order",
+                ErrorCategory::Configuration,
+                "control.select@1 config.order must be a list",
+                false,
+            ));
+        };
+        order.iter().map(json_display).collect::<Vec<_>>()
+    } else {
+        cases.keys().cloned().collect::<Vec<_>>()
+    };
+
+    for key in order {
+        if let Some(value) = cases.get(&key) {
+            return Ok(json!({"value": value, "selected": key}));
+        }
+    }
+    if let Some(default) = config.get("default") {
+        return Ok(json!({"value": default, "selected": "default"}));
+    }
+
+    Err(BlockError::new(
+        "control.select.missing_case",
+        ErrorCategory::Configuration,
+        "control.select@1 found no present case",
+        false,
+    ))
 }
 
 fn execute_commit_turn(inputs: &Value) -> Result<Value, BlockError> {
@@ -4980,6 +5118,165 @@ mod tests {
                 .and_then(|binding| binding.get("timeout_ms"))
                 .and_then(Value::as_u64),
             Some(250)
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn run_stdlib_graph_json_maps_items_with_native_block() -> Result<(), String> {
+        let graph = json!({
+            "apiVersion": "graphblocks.ai/v1alpha3",
+            "kind": "Graph",
+            "metadata": {"name": "native-map-prompts"},
+            "spec": {
+                "interface": {
+                    "inputs": {"items": "graphblocks.ai/Items@1"},
+                    "outputs": {"values": "graphblocks.ai/Values@1"}
+                },
+                "nodes": {
+                    "map": {
+                        "block": "control.map@2",
+                        "inputs": {"items": "$input.items"},
+                        "outputs": {"values": "$output.values"},
+                        "config": {
+                            "block": "prompt.render@1",
+                            "inputName": "message",
+                            "outputName": "prompt",
+                            "config": {"template": "Item {message.index}: {message.text}"}
+                        }
+                    }
+                }
+            }
+        });
+        let inputs = json!({
+            "items": [
+                {"index": 1, "text": "alpha"},
+                {"index": 2, "text": "beta"}
+            ]
+        });
+        let graph_json = serde_json::to_string(&graph).map_err(|error| error.to_string())?;
+        let inputs_json = serde_json::to_string(&inputs).map_err(|error| error.to_string())?;
+        let result_json =
+            run_stdlib_graph_json(&graph_json, &inputs_json).map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            result.get("status").and_then(Value::as_str),
+            Some("succeeded")
+        );
+        assert_eq!(
+            result
+                .get("outputs")
+                .and_then(|outputs| outputs.get("values")),
+            Some(&json!(["Item 1: alpha", "Item 2: beta"]))
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn run_stdlib_graph_json_collects_native_map_errors() -> Result<(), String> {
+        let graph = json!({
+            "apiVersion": "graphblocks.ai/v1alpha3",
+            "kind": "Graph",
+            "metadata": {"name": "native-map-collect-errors"},
+            "spec": {
+                "interface": {
+                    "inputs": {"items": "graphblocks.ai/Items@1"},
+                    "outputs": {"outcomes": "graphblocks.ai/MapOutcomes@1"}
+                },
+                "nodes": {
+                    "map": {
+                        "block": "control.map@2",
+                        "inputs": {"items": "$input.items"},
+                        "outputs": {"outcomes": "$output.outcomes"},
+                        "config": {
+                            "block": "prompt.render@1",
+                            "inputName": "message",
+                            "outputName": "prompt",
+                            "onError": "collect",
+                            "config": {"template": "Value {message.text}"}
+                        }
+                    }
+                }
+            }
+        });
+        let inputs = json!({"items": [{"text": "ok"}, {}]});
+        let graph_json = serde_json::to_string(&graph).map_err(|error| error.to_string())?;
+        let inputs_json = serde_json::to_string(&inputs).map_err(|error| error.to_string())?;
+        let result_json =
+            run_stdlib_graph_json(&graph_json, &inputs_json).map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+        let outcomes = result
+            .get("outputs")
+            .and_then(|outputs| outputs.get("outcomes"))
+            .and_then(Value::as_array)
+            .ok_or_else(|| "native map result is missing outcomes".to_owned())?;
+
+        assert_eq!(
+            result.get("status").and_then(Value::as_str),
+            Some("succeeded")
+        );
+        assert_eq!(
+            outcomes.first(),
+            Some(&json!({"status": "succeeded", "value": "Value ok"}))
+        );
+        assert_eq!(
+            outcomes
+                .get(1)
+                .and_then(|outcome| outcome.get("status"))
+                .and_then(Value::as_str),
+            Some("failed")
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn run_stdlib_graph_json_selects_native_cases() -> Result<(), String> {
+        let graph = json!({
+            "apiVersion": "graphblocks.ai/v1alpha3",
+            "kind": "Graph",
+            "metadata": {"name": "native-select-first"},
+            "spec": {
+                "interface": {
+                    "inputs": {"cases": "graphblocks.ai/Cases@1"},
+                    "outputs": {
+                        "value": "graphblocks.ai/SelectedValue@1",
+                        "selected": "graphblocks.ai/SelectedKey@1"
+                    }
+                },
+                "nodes": {
+                    "select": {
+                        "block": "control.select@1",
+                        "inputs": {"cases": "$input.cases"},
+                        "outputs": {
+                            "value": "$output.value",
+                            "selected": "$output.selected"
+                        },
+                        "config": {"order": ["preferred", "fallback"], "default": "unused"}
+                    }
+                }
+            }
+        });
+        let inputs = json!({"cases": {"preferred": null, "fallback": "fallback-value"}});
+        let graph_json = serde_json::to_string(&graph).map_err(|error| error.to_string())?;
+        let inputs_json = serde_json::to_string(&inputs).map_err(|error| error.to_string())?;
+        let result_json =
+            run_stdlib_graph_json(&graph_json, &inputs_json).map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            result.get("status").and_then(Value::as_str),
+            Some("succeeded")
+        );
+        assert_eq!(
+            result.get("outputs"),
+            Some(&json!({"selected": "preferred", "value": null}))
         );
 
         Ok(())
