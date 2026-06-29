@@ -29,6 +29,7 @@ class McpToolAdapterError(RuntimeError):
 class McpToolInvocation:
     binding_id: str
     resolved_tool_id: str
+    tool_name: str
     tool_call_id: str
     server: str
     remote_name: str
@@ -44,6 +45,7 @@ class McpToolInvocation:
             "kind": "mcp",
             "binding_id": self.binding_id,
             "resolved_tool_id": self.resolved_tool_id,
+            "tool_name": self.tool_name,
             "tool_call_id": self.tool_call_id,
             "server": self.server,
             "remote_name": self.remote_name,
@@ -135,6 +137,7 @@ def prepare_mcp_tool_invocation(
     return McpToolInvocation(
         binding_id=resolved_tool.binding.binding_id,
         resolved_tool_id=resolved_tool.resolved_tool_id,
+        tool_name=resolved_tool.definition.name,
         tool_call_id=admitted.call.tool_call_id,
         server=implementation.server,
         remote_name=implementation.remote_name,

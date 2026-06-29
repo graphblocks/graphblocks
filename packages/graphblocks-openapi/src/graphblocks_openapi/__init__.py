@@ -29,6 +29,7 @@ class OpenApiToolAdapterError(RuntimeError):
 class OpenApiOperationInvocation:
     binding_id: str
     resolved_tool_id: str
+    tool_name: str
     tool_call_id: str
     connection: str
     operation_id: str
@@ -44,6 +45,7 @@ class OpenApiOperationInvocation:
             "kind": "openapi",
             "binding_id": self.binding_id,
             "resolved_tool_id": self.resolved_tool_id,
+            "tool_name": self.tool_name,
             "tool_call_id": self.tool_call_id,
             "connection": self.connection,
             "operation_id": self.operation_id,
@@ -135,6 +137,7 @@ def prepare_openapi_operation_invocation(
     return OpenApiOperationInvocation(
         binding_id=resolved_tool.binding.binding_id,
         resolved_tool_id=resolved_tool.resolved_tool_id,
+        tool_name=resolved_tool.definition.name,
         tool_call_id=admitted.call.tool_call_id,
         connection=implementation.connection,
         operation_id=implementation.operation_id,
