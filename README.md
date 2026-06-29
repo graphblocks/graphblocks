@@ -51,6 +51,7 @@ wheel delegates native behavior to `crates/graphblocks-python`.
 
 ```bash
 graphblocks run graph.yaml --input-json '{"message":{"text":"Hello"}}'
+graphblocks run graph.yaml --runtime native --input-json '{"message":{"text":"Hello"}}'
 ```
 
 Optional provider, parser, database, cloud, server, TUI, Kubernetes,
