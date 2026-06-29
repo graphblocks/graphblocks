@@ -9,6 +9,11 @@ import math
 from pathlib import Path
 from typing import Literal
 
+from graphblocks.application_event import (
+    ApplicationEvent,
+    ApplicationEventMetadata,
+    ApplicationEventStreamState,
+)
 from graphblocks.canonical import canonical_hash
 from graphblocks.compiler import compile_graph
 from graphblocks.conversation import ContentPart
@@ -19,6 +24,7 @@ from graphblocks.output_policy import (
     OutputDeliveryGate,
     OutputDeliveryPolicy,
     OutputGateError,
+    OutputCutoff,
     OutputPolicyDecision,
 )
 from graphblocks.plugins import BlockCatalog
@@ -44,7 +50,7 @@ from graphblocks.runtime import (
 )
 
 
-TckCaseKind = Literal["compiler", "runtime", "schema", "policy"]
+TckCaseKind = Literal["compiler", "runtime", "schema", "policy", "application-events"]
 TckResultStatus = Literal["passed", "failed"]
 PerformanceThresholdOperator = Literal["at_most", "at_least"]
 MigrationDirection = Literal["upgrade", "downgrade"]
@@ -98,11 +104,13 @@ class TckCase:
     expected_gate_state: dict[str, object] = field(default_factory=dict)
     policy_stream_id: str = "stream-1"
     policy_response_id: str = "response-1"
+    application_event_operations: tuple[dict[str, object], ...] = field(default_factory=tuple)
+    expected_accepted_event_kinds: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         if not self.case_id.strip():
             raise ValueError("TCK case_id must not be empty")
-        if self.kind not in {"compiler", "runtime", "schema", "policy"}:
+        if self.kind not in {"compiler", "runtime", "schema", "policy", "application-events"}:
             raise ValueError(f"invalid TCK case kind {self.kind}")
         object.__setattr__(self, "graph", dict(self.graph))
         object.__setattr__(self, "inputs", dict(self.inputs))
@@ -112,6 +120,12 @@ class TckCase:
         object.__setattr__(self, "policy_delivery", dict(self.policy_delivery))
         object.__setattr__(self, "policy_operations", tuple(dict(operation) for operation in self.policy_operations))
         object.__setattr__(self, "expected_gate_state", dict(self.expected_gate_state))
+        object.__setattr__(
+            self,
+            "application_event_operations",
+            tuple(dict(operation) for operation in self.application_event_operations),
+        )
+        object.__setattr__(self, "expected_accepted_event_kinds", tuple(self.expected_accepted_event_kinds))
         if self.kind == "policy":
             if not self.policy_stream_id.strip():
                 raise ValueError("policy TCK stream_id must not be empty")
@@ -213,6 +227,21 @@ class TckCase:
             expected_gate_state=expected,
             policy_stream_id=stream_id,
             policy_response_id=response_id,
+        )
+
+    @classmethod
+    def application_events(
+        cls,
+        *,
+        case_id: str,
+        operations: tuple[dict[str, object], ...],
+        expected_accepted_kinds: tuple[str, ...],
+    ) -> TckCase:
+        return cls(
+            case_id=case_id,
+            kind="application-events",
+            application_event_operations=operations,
+            expected_accepted_event_kinds=expected_accepted_kinds,
         )
 
 
@@ -1080,6 +1109,40 @@ def load_runtime_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     return tuple(cases)
 
 
+def load_application_event_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
+    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(raw_cases, list):
+        raise ValueError("application-events TCK root must be a list")
+    cases: list[TckCase] = []
+    for index, raw_case in enumerate(raw_cases):
+        if not isinstance(raw_case, Mapping):
+            raise ValueError(f"application-events TCK case {index} must be a mapping")
+        case_id = _first_mapping_value(raw_case, "name", "case_id", "caseId")
+        if not isinstance(case_id, str) or not case_id.strip():
+            raise ValueError(f"application-events TCK case {index} requires name")
+        operations = raw_case.get("operations")
+        if not isinstance(operations, list) or not all(isinstance(operation, dict) for operation in operations):
+            raise ValueError(f"application-events TCK case {case_id} operations must be a list of mappings")
+        expected = raw_case.get("expectedAcceptedKinds")
+        if not isinstance(expected, list) or not all(isinstance(kind, str) for kind in expected):
+            raise ValueError(f"application-events TCK case {case_id} expectedAcceptedKinds must be strings")
+        operations_with_defaults = []
+        for operation in operations:
+            operation_with_defaults = dict(operation)
+            for key in ("runId", "responseId", "turnId", "releaseId", "policySnapshotId", "streamId"):
+                if key in raw_case and key not in operation_with_defaults:
+                    operation_with_defaults[key] = raw_case[key]
+            operations_with_defaults.append(operation_with_defaults)
+        cases.append(
+            TckCase.application_events(
+                case_id=case_id,
+                operations=tuple(operations_with_defaults),
+                expected_accepted_kinds=tuple(expected),
+            )
+        )
+    return tuple(cases)
+
+
 def load_policy_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(raw_cases, list):
@@ -1213,7 +1276,11 @@ def main(argv: list[str] | None = None) -> int:
     check_parser.add_argument("--profile", dest="profile_ids", action="append", required=True, help="claimed profile id")
     check_parser.add_argument("--json", action="store_true", help="emit JSON")
     run_parser = subparsers.add_parser("run", help="run a shared TCK fixture")
-    run_parser.add_argument("suite", choices=("compiler", "runtime", "schema", "policy"), help="TCK suite kind")
+    run_parser.add_argument(
+        "suite",
+        choices=("application-events", "compiler", "runtime", "schema", "policy"),
+        help="TCK suite kind",
+    )
     run_parser.add_argument("path", type=Path, help="cases.json fixture path")
     run_parser.add_argument("--profile", default="local", help="profile label for the generated report")
     run_parser.add_argument("--json", action="store_true", help="emit JSON")
@@ -1252,7 +1319,9 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{issue.code} {issue.suite}: {issue.message}")
         return 0 if coverage.ok else 1
     if args.command == "run":
-        if args.suite == "compiler":
+        if args.suite == "application-events":
+            cases = load_application_event_tck_cases(args.path)
+        elif args.suite == "compiler":
             cases = load_compiler_tck_cases(args.path)
         elif args.suite == "runtime":
             cases = load_runtime_tck_cases(args.path)
@@ -1771,6 +1840,8 @@ class TckRunner:
                 results.append(self._run_runtime_case(case))
             elif case.kind == "policy":
                 results.append(self._run_policy_case(case))
+            elif case.kind == "application-events":
+                results.append(self._run_application_event_case(case))
             else:
                 results.append(self._run_schema_case(case))
         return TckReport(profile=self.profile, results=tuple(results))
@@ -1898,6 +1969,87 @@ class TckRunner:
             status="passed" if not diagnostics else "failed",
             diagnostics=tuple(diagnostics),
             observed=observed,
+        )
+
+    def _run_application_event_case(self, case: TckCase) -> TckResult:
+        state = ApplicationEventStreamState()
+        diagnostics: list[dict[str, str]] = []
+        for sequence, operation in enumerate(case.application_event_operations, start=1):
+            response_id = str(operation.get("responseId", "response-1"))
+            metadata = ApplicationEventMetadata(
+                event_id=f"{case.case_id}:{sequence}",
+                run_id=str(operation.get("runId", "run-1")),
+                response_id=response_id,
+                turn_id=str(operation["turnId"]) if operation.get("turnId") is not None else None,
+                sequence=sequence,
+                release_id=str(operation.get("releaseId", "release-1")),
+                policy_snapshot_id=str(operation.get("policySnapshotId", "policy-1")),
+                occurred_at=str(operation.get("occurredAt", "2026-06-23T00:00:00Z")),
+            )
+            if operation.get("op") == "output_cutoff":
+                cutoff = OutputCutoff(
+                    stream_id=str(operation.get("streamId", "stream-1")),
+                    response_id=response_id,
+                    turn_id=str(operation["turnId"]) if operation.get("turnId") is not None else None,
+                    last_generated_sequence=int(operation.get("lastGeneratedSequence", 0)),
+                    last_policy_accepted_sequence=int(operation.get("lastPolicyAcceptedSequence", 0)),
+                    last_client_delivered_sequence=int(operation.get("lastClientDeliveredSequence", 0)),
+                    terminal_reason=str(operation.get("terminalReason", "policy_denied")),
+                    draft_disposition=str(operation.get("draftDisposition", "retract")),
+                    durable_result=str(operation.get("durableResult", "none")),
+                    policy_decision_id=(
+                        str(operation["policyDecisionId"]) if operation.get("policyDecisionId") is not None else None
+                    ),
+                    occurred_at=str(operation.get("occurredAt", "2026-06-23T00:00:00Z")),
+                )
+                for event in ApplicationEvent.output_cutoff(metadata, cutoff):
+                    if state.accept(event) is None:
+                        diagnostics.append(
+                            {
+                                "code": "ApplicationEventUnexpectedRejection",
+                                "message": "application event TCK output cutoff event was rejected",
+                                "path": f"$.operations[{sequence - 1}]",
+                            }
+                        )
+            elif operation.get("op") == "run_succeeded":
+                event = ApplicationEvent.new(
+                    "RunSucceeded",
+                    metadata,
+                    payload={"status": "succeeded", "outputs": operation.get("outputs", {})},
+                )
+                accepted = state.accept(event)
+                if (accepted is not None) is not bool(operation.get("expectAccepted", True)):
+                    diagnostics.append(
+                        {
+                            "code": "ApplicationEventAcceptanceMismatch",
+                            "message": "application event acceptance did not match expected result",
+                            "path": f"$.operations[{sequence - 1}].expectAccepted",
+                        }
+                    )
+            else:
+                diagnostics.append(
+                    {
+                        "code": "ApplicationEventOperationUnknown",
+                        "message": f"application event TCK operation {operation.get('op')!r} is not supported",
+                        "path": f"$.operations[{sequence - 1}].op",
+                    }
+                )
+
+        accepted_kinds = [event.kind for event in state.accepted_events]
+        if accepted_kinds != list(case.expected_accepted_event_kinds):
+            diagnostics.append(
+                {
+                    "code": "ApplicationEventAcceptedKindsMismatch",
+                    "message": "accepted application event kinds did not match expected kinds",
+                    "path": "$.expectedAcceptedKinds",
+                }
+            )
+        return TckResult(
+            case_id=case.case_id,
+            kind=case.kind,
+            status="passed" if not diagnostics else "failed",
+            diagnostics=tuple(diagnostics),
+            observed={"accepted_kinds": accepted_kinds},
         )
 
     def _run_policy_case(self, case: TckCase) -> TckResult:
@@ -2216,6 +2368,7 @@ __all__ = [
     "canonical_hash",
     "check_tck_suite_coverage",
     "compile_graph",
+    "load_application_event_tck_cases",
     "load_compiler_tck_cases",
     "load_policy_tck_cases",
     "load_runtime_tck_cases",
