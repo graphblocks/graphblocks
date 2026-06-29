@@ -105,19 +105,38 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             }
         )
 
+    def decide_agent_step_json(spec_json: str, request_json: str) -> str:
+        calls.append(("agent_step", (spec_json, request_json)))
+        return json.dumps({"decision": "continue", "spec": json.loads(spec_json), "request": json.loads(request_json)})
+
+    def admit_exhaustion_work_json(policy_json: str, request_json: str) -> str:
+        calls.append(("exhaustion", (policy_json, request_json)))
+        return json.dumps({"allowed": True, "policy": json.loads(policy_json), "request": json.loads(request_json)})
+
+    def validate_worker_advertisement_json(
+        advertisement_json: str,
+        expected_package_lock_hash: str | None = None,
+    ) -> str:
+        calls.append(("worker_advertisement", (advertisement_json, expected_package_lock_hash)))
+        return json.dumps({"ok": True, "advertisement": json.loads(advertisement_json)})
+
+    def validate_remote_payload_json(payload_json: str, max_inline_bytes: int) -> str:
+        calls.append(("remote_payload", (payload_json, max_inline_bytes)))
+        return json.dumps({"ok": True, "payload": json.loads(payload_json)})
+
     fake_native = SimpleNamespace(
         __version__="0.1.0",
-        admit_exhaustion_work_json=lambda policy_json, request_json: "{}",
+        admit_exhaustion_work_json=admit_exhaustion_work_json,
         binding_version=lambda: "0.1.0",
         compile_graph_json=compile_graph_json,
-        decide_agent_step_json=lambda spec_json, request_json: "{}",
+        decide_agent_step_json=decide_agent_step_json,
         evaluate_declarative_output_policy_json=evaluate_declarative_output_policy_json,
         evaluate_output_gate_json=evaluate_output_gate_json,
         finalize_tool_call_json=finalize_tool_call_json,
         run_stdlib_graph_json=run_stdlib_graph_json,
         run_test_graph_json=run_test_graph_json,
-        validate_remote_payload_json=lambda payload_json, max_inline_bytes: "{}",
-        validate_worker_advertisement_json=lambda advertisement_json, expected_package_lock_hash=None: "{}",
+        validate_remote_payload_json=validate_remote_payload_json,
+        validate_worker_advertisement_json=validate_worker_advertisement_json,
     )
     runtime = load_runtime_wrapper(fake_native)
 
@@ -145,6 +164,22 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         {"streamId": "stream-1", "sequence": 1},
         evaluated_at_unix_ms=1_010,
     )
+    agent_decision = runtime.decide_agent_step(
+        {"maxSteps": 4},
+        {"step": 2, "pendingToolCalls": 0},
+    )
+    exhaustion = runtime.admit_exhaustion_work(
+        {"preset": "finish_current_turn"},
+        {"workKind": "read_only_tool"},
+    )
+    worker = runtime.validate_worker_advertisement(
+        {"workerId": "worker-1"},
+        expected_package_lock_hash="sha256:lock",
+    )
+    remote_payload = runtime.validate_remote_payload(
+        {"kind": "inline_json", "value": {"ok": True}},
+        max_inline_bytes=128,
+    )
 
     assert runtime.native_extension_available() is True
     assert compiled["ok"] is True
@@ -165,6 +200,18 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         "chunk": {"streamId": "stream-1", "sequence": 1},
         "evaluatedAtUnixMs": 1_010,
     }
+    assert agent_decision == {
+        "decision": "continue",
+        "spec": {"maxSteps": 4},
+        "request": {"step": 2, "pendingToolCalls": 0},
+    }
+    assert exhaustion == {
+        "allowed": True,
+        "policy": {"preset": "finish_current_turn"},
+        "request": {"workKind": "read_only_tool"},
+    }
+    assert worker == {"ok": True, "advertisement": {"workerId": "worker-1"}}
+    assert remote_payload == {"ok": True, "payload": {"kind": "inline_json", "value": {"ok": True}}}
     assert calls == [
         (
             "compile",
@@ -192,10 +239,30 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             "output_policy",
             ('[{"ruleId":"allow"}]', '{"sequence":1,"streamId":"stream-1"}', 1_010),
         ),
+        (
+            "agent_step",
+            ('{"maxSteps":4}', '{"pendingToolCalls":0,"step":2}'),
+        ),
+        (
+            "exhaustion",
+            ('{"preset":"finish_current_turn"}', '{"workKind":"read_only_tool"}'),
+        ),
+        (
+            "worker_advertisement",
+            ('{"workerId":"worker-1"}', "sha256:lock"),
+        ),
+        (
+            "remote_payload",
+            ('{"kind":"inline_json","value":{"ok":true}}', 128),
+        ),
     ]
+    assert "admit_exhaustion_work" in runtime.__all__
     assert "compile_graph" in runtime.__all__
+    assert "decide_agent_step" in runtime.__all__
     assert "run_stdlib_graph" in runtime.__all__
     assert "run_test_graph" in runtime.__all__
     assert "finalize_tool_call" in runtime.__all__
     assert "evaluate_output_gate" in runtime.__all__
     assert "evaluate_declarative_output_policy" in runtime.__all__
+    assert "validate_worker_advertisement" in runtime.__all__
+    assert "validate_remote_payload" in runtime.__all__

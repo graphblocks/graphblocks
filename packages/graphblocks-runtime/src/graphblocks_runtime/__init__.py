@@ -161,6 +161,20 @@ def finalize_tool_call(
     )
 
 
+def decide_agent_step(spec: dict[str, object], request: dict[str, object]) -> dict[str, object]:
+    return _json_object_result(
+        decide_agent_step_json(_canonical_json(spec), _canonical_json(request)),
+        "native agent step decision",
+    )
+
+
+def admit_exhaustion_work(policy: dict[str, object], request: dict[str, object]) -> dict[str, object]:
+    return _json_object_result(
+        admit_exhaustion_work_json(_canonical_json(policy), _canonical_json(request)),
+        "native exhaustion admission result",
+    )
+
+
 def evaluate_output_gate(
     gate: dict[str, object],
     operations: object,
@@ -187,12 +201,32 @@ def evaluate_declarative_output_policy(
     )
 
 
+def validate_worker_advertisement(
+    advertisement: dict[str, object],
+    *,
+    expected_package_lock_hash: str | None = None,
+) -> dict[str, object]:
+    return _json_object_result(
+        validate_worker_advertisement_json(_canonical_json(advertisement), expected_package_lock_hash),
+        "native worker advertisement validation result",
+    )
+
+
+def validate_remote_payload(payload: dict[str, object], *, max_inline_bytes: int) -> dict[str, object]:
+    return _json_object_result(
+        validate_remote_payload_json(_canonical_json(payload), max_inline_bytes),
+        "native remote payload validation result",
+    )
+
+
 __all__ = [
     "__version__",
+    "admit_exhaustion_work",
     "admit_exhaustion_work_json",
     "binding_version",
     "compile_graph",
     "compile_graph_json",
+    "decide_agent_step",
     "decide_agent_step_json",
     "evaluate_declarative_output_policy",
     "evaluate_declarative_output_policy_json",
@@ -207,6 +241,8 @@ __all__ = [
     "run_stdlib_graph_json",
     "run_test_graph",
     "run_test_graph_json",
+    "validate_remote_payload",
     "validate_remote_payload_json",
+    "validate_worker_advertisement",
     "validate_worker_advertisement_json",
 ]
