@@ -156,6 +156,21 @@ class HttpGraphBlocksClient:
             raise ValueError("GraphBlocks cancel response must be a JSON object")
         return payload
 
+    def run_events(self, run_id: str) -> tuple[ApplicationEvent, ...]:
+        headers = {"Accept": "application/json"}
+        if self.bearer_token is not None:
+            headers["Authorization"] = f"Bearer {self.bearer_token}"
+        request = Request(
+            f"{self.base_url.rstrip('/')}/runs/{run_id}/events",
+            headers=headers,
+            method="GET",
+        )
+        response = (self.transport or urlopen)(request, timeout=self.timeout)
+        payload = json.loads(response.read().decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("GraphBlocks run events response must be a JSON object")
+        return _application_events_from_payloads(payload.get("events", ()) or ())
+
     def run_graph(self, command: RunGraphCommand) -> RunGraphResponse:
         body = json.dumps(
             {
@@ -188,43 +203,7 @@ class HttpGraphBlocksClient:
         if not isinstance(payload, dict):
             raise ValueError("GraphBlocks HTTP response must be a JSON object")
 
-        events: list[ApplicationEvent] = []
-        for event_payload in payload.get("events", ()) or ():
-            if not isinstance(event_payload, dict):
-                raise ValueError("GraphBlocks HTTP event must be a JSON object")
-            metadata_payload = event_payload.get("metadata")
-            if not isinstance(metadata_payload, dict):
-                raise ValueError("GraphBlocks HTTP event metadata must be a JSON object")
-            metadata = ApplicationEventMetadata(
-                event_id=str(metadata_payload.get("eventId", metadata_payload.get("event_id"))),
-                run_id=str(metadata_payload.get("runId", metadata_payload.get("run_id"))),
-                response_id=str(metadata_payload.get("responseId", metadata_payload.get("response_id"))),
-                turn_id=(
-                    str(metadata_payload.get("turnId", metadata_payload.get("turn_id")))
-                    if metadata_payload.get("turnId", metadata_payload.get("turn_id")) is not None
-                    else None
-                ),
-                sequence=int(metadata_payload.get("sequence", 0)),
-                release_id=str(metadata_payload.get("releaseId", metadata_payload.get("release_id"))),
-                policy_snapshot_id=str(
-                    metadata_payload.get("policySnapshotId", metadata_payload.get("policy_snapshot_id"))
-                ),
-                occurred_at=str(metadata_payload.get("occurredAt", metadata_payload.get("occurred_at"))),
-            )
-            kind = str(event_payload.get("kind"))
-            event_body = dict(event_payload.get("payload", {}) or {})
-            tool_call_id = event_payload.get("toolCallId", event_payload.get("tool_call_id"))
-            if tool_call_id is not None:
-                events.append(
-                    ApplicationEvent.tool(
-                        kind,
-                        metadata,
-                        tool_call_id=str(tool_call_id),
-                        payload=event_body,
-                    )
-                )
-            else:
-                events.append(ApplicationEvent.new(kind, metadata, payload=event_body))
+        events = _application_events_from_payloads(payload.get("events", ()) or ())
 
         stream_state = ApplicationEventStreamState()
         for event in events:
@@ -236,6 +215,47 @@ class HttpGraphBlocksClient:
             events=tuple(events),
             event_stream=stream_state,
         )
+
+
+def _application_events_from_payloads(event_payloads: object) -> tuple[ApplicationEvent, ...]:
+    events: list[ApplicationEvent] = []
+    for event_payload in event_payloads:
+        if not isinstance(event_payload, dict):
+            raise ValueError("GraphBlocks HTTP event must be a JSON object")
+        metadata_payload = event_payload.get("metadata")
+        if not isinstance(metadata_payload, dict):
+            raise ValueError("GraphBlocks HTTP event metadata must be a JSON object")
+        metadata = ApplicationEventMetadata(
+            event_id=str(metadata_payload.get("eventId", metadata_payload.get("event_id"))),
+            run_id=str(metadata_payload.get("runId", metadata_payload.get("run_id"))),
+            response_id=str(metadata_payload.get("responseId", metadata_payload.get("response_id"))),
+            turn_id=(
+                str(metadata_payload.get("turnId", metadata_payload.get("turn_id")))
+                if metadata_payload.get("turnId", metadata_payload.get("turn_id")) is not None
+                else None
+            ),
+            sequence=int(metadata_payload.get("sequence", 0)),
+            release_id=str(metadata_payload.get("releaseId", metadata_payload.get("release_id"))),
+            policy_snapshot_id=str(
+                metadata_payload.get("policySnapshotId", metadata_payload.get("policy_snapshot_id"))
+            ),
+            occurred_at=str(metadata_payload.get("occurredAt", metadata_payload.get("occurred_at"))),
+        )
+        kind = str(event_payload.get("kind"))
+        event_body = dict(event_payload.get("payload", {}) or {})
+        tool_call_id = event_payload.get("toolCallId", event_payload.get("tool_call_id"))
+        if tool_call_id is not None:
+            events.append(
+                ApplicationEvent.tool(
+                    kind,
+                    metadata,
+                    tool_call_id=str(tool_call_id),
+                    payload=event_body,
+                )
+            )
+        else:
+            events.append(ApplicationEvent.new(kind, metadata, payload=event_body))
+    return tuple(events)
 
 
 __all__ = [
