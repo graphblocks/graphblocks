@@ -359,6 +359,8 @@
       ],
       "startedAt": "2026-06-23T00:00:00Z",
       "completedAt": "2026-06-23T00:00:01Z",
+      "startedAtUnixMs": 1820000000000,
+      "completedAtUnixMs": 1820000000100,
       "effectOutcome": "committed"
     },
     "record": {

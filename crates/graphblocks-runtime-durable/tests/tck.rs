@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 
+use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory};
+use graphblocks_runtime_core::tool_result::{ContentPart, ToolEffectOutcome, ToolResult};
 use graphblocks_runtime_durable::{
     AccumulationMode, CheckpointBarrier, CheckpointBarrierError, DeliveryGuarantee, DurableError,
     DurableToolTerminalRecord, DurableToolTerminalState, InMemoryCheckpointStore,
@@ -242,6 +244,148 @@ fn run_case(case: &Value) -> Result<(), String> {
                 "latestCheckpointId": latest.as_ref().map(|checkpoint| checkpoint.checkpoint_id.clone()),
                 "latestStateRevision": latest.as_ref().map(|checkpoint| checkpoint.state_revision),
                 "missingCompatible": missing.is_none(),
+            })
+        }
+        "tool_terminal_from_tool_result" => {
+            let mut store = InMemoryDurableToolTerminalStore::new();
+            let raw_result = required_object(case, "toolResult", name)?;
+            let raw_record = required_object(case, "record", name)?;
+            let status = required_str_map(raw_result, "status", name)?;
+            let tool_call_id = required_str_map(raw_result, "toolCallId", name)?;
+            let started_at_unix_ms = required_u64_map(raw_result, "startedAtUnixMs", name)?;
+            let completed_at_unix_ms = required_u64_map(raw_result, "completedAtUnixMs", name)?;
+            let record_completed_at_unix_ms =
+                required_u64_map(raw_record, "completedAtUnixMs", name)?;
+            let raw_output = raw_result
+                .get("output")
+                .and_then(Value::as_array)
+                .ok_or_else(|| format!("{name} toolResult output must be an array"))?;
+            let mut output = Vec::new();
+            for (part_index, raw_part) in raw_output.iter().enumerate() {
+                let raw_part = raw_part
+                    .as_object()
+                    .ok_or_else(|| format!("{name} output part {part_index} must be an object"))?;
+                let metadata = raw_part
+                    .get("metadata")
+                    .and_then(Value::as_object)
+                    .map(|metadata| {
+                        metadata
+                            .iter()
+                            .map(|(key, value)| (key.clone(), value.clone()))
+                            .collect::<BTreeMap<_, _>>()
+                    })
+                    .unwrap_or_default();
+                let mut part = match required_str_map(raw_part, "kind", name)? {
+                    "text" => ContentPart::text(required_str_map(raw_part, "text", name)?),
+                    "json" => ContentPart::json(
+                        raw_part
+                            .get("data")
+                            .cloned()
+                            .ok_or_else(|| format!("{name} json output part requires data"))?,
+                    ),
+                    other => {
+                        return Err(format!(
+                            "{name} output part {part_index} has unsupported kind {other:?}"
+                        ));
+                    }
+                };
+                part.metadata = metadata;
+                output.push(part);
+            }
+            let error = raw_result.get("error").and_then(Value::as_object);
+            let error_code = error
+                .and_then(|error| error.get("code"))
+                .and_then(Value::as_str)
+                .unwrap_or(status);
+            let error_message = error
+                .and_then(|error| error.get("message"))
+                .and_then(Value::as_str)
+                .unwrap_or(status);
+            let mut tool_result = match status {
+                "completed" => ToolResult::completed(
+                    tool_call_id,
+                    output,
+                    started_at_unix_ms,
+                    completed_at_unix_ms,
+                ),
+                "failed" => ToolResult::failed(
+                    tool_call_id,
+                    BlockError::new(error_code, ErrorCategory::Permanent, error_message, false),
+                    started_at_unix_ms,
+                    completed_at_unix_ms,
+                ),
+                "denied" => ToolResult::denied(
+                    tool_call_id,
+                    BlockError::new(
+                        error_code,
+                        ErrorCategory::Authorization,
+                        error_message,
+                        false,
+                    ),
+                    completed_at_unix_ms,
+                ),
+                "cancelled" => {
+                    ToolResult::cancelled(tool_call_id, started_at_unix_ms, completed_at_unix_ms)
+                }
+                "policy_stopped" => ToolResult::policy_stopped(
+                    tool_call_id,
+                    BlockError::new(error_code, ErrorCategory::Policy, error_message, false),
+                    started_at_unix_ms,
+                    completed_at_unix_ms,
+                ),
+                "incomplete" => {
+                    ToolResult::incomplete(tool_call_id, started_at_unix_ms, completed_at_unix_ms)
+                }
+                other => {
+                    return Err(format!(
+                        "{name} has unsupported tool result status {other:?}"
+                    ));
+                }
+            };
+            if let Some(effect_outcome) = raw_result.get("effectOutcome").and_then(Value::as_str) {
+                let effect_outcome = match effect_outcome {
+                    "no_external_effect" => ToolEffectOutcome::NoExternalEffect,
+                    "committed" => ToolEffectOutcome::Committed,
+                    "not_committed" => ToolEffectOutcome::NotCommitted,
+                    "unknown" => ToolEffectOutcome::Unknown,
+                    other => {
+                        return Err(format!("{name} has unsupported effect outcome {other:?}"));
+                    }
+                };
+                tool_result = tool_result.with_effect_outcome(effect_outcome);
+            }
+            let mut record = DurableToolTerminalRecord::from_tool_result(
+                required_str_map(raw_record, "runId", name)?,
+                required_str_map(raw_record, "responseId", name)?,
+                required_u64_map(raw_record, "revision", name)? as u32,
+                required_str_map(raw_record, "argumentsDigest", name)?,
+                &tool_result,
+                record_completed_at_unix_ms,
+            );
+            if let Some(idempotency_key) = raw_record.get("idempotencyKey").and_then(Value::as_str)
+            {
+                record = record.with_idempotency_key(idempotency_key);
+            }
+            if raw_record
+                .get("durableResultCommitted")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                record = record.with_durable_result_committed();
+            }
+            let committed = store
+                .record_tool_terminal(record)
+                .map_err(|error| format!("{name} projected terminal failed: {error:?}"))?;
+            json!({
+                "commitSequence": committed.sequence,
+                "toolCallId": committed.record.tool_call_id,
+                "terminalState": terminal_state_name(&committed.record.terminal_state),
+                "outputDigestMatchesResult": committed.record.output_digest == tool_result.output_digest,
+                "outputDigestPrefix": committed.record.output_digest.as_ref().map(|digest| digest.chars().take(7).collect::<String>()),
+                "idempotencyKey": committed.record.idempotency_key,
+                "effectCommitted": committed.record.effect_committed,
+                "durableResultCommitted": committed.record.durable_result_committed,
+                "toolTerminalCount": store.tool_terminal_count(),
             })
         }
         "tool_terminal_policy_stop" => {
