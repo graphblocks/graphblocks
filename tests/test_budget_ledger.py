@@ -35,6 +35,14 @@ def test_usage_amount_rejects_negative_amounts_and_freezes_dimensions() -> None:
         amount.dimensions["model"] = "direct"
     with pytest.raises(ValueError, match="usage amount must be non-negative"):
         UsageAmount("model_total_tokens", Decimal("-1"), "tokens")
+    with pytest.raises(ValueError, match="usage amount kind must not be empty"):
+        UsageAmount("", Decimal("1"), "tokens")
+    with pytest.raises(ValueError, match="usage amount unit must not be empty"):
+        UsageAmount("model_total_tokens", Decimal("1"), " ")
+    with pytest.raises(ValueError, match="usage amount kind must be a string"):
+        UsageAmount(1, Decimal("1"), "tokens")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="usage amount unit must be a string"):
+        UsageAmount("model_total_tokens", Decimal("1"), object())  # type: ignore[arg-type]
 
 
 def test_budget_models_reject_unknown_typed_values() -> None:

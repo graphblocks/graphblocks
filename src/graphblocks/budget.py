@@ -109,6 +109,14 @@ class UsageAmount:
     dimensions: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.kind, str):
+            raise ValueError("usage amount kind must be a string")
+        if not self.kind.strip():
+            raise ValueError("usage amount kind must not be empty")
+        if not isinstance(self.unit, str):
+            raise ValueError("usage amount unit must be a string")
+        if not self.unit.strip():
+            raise ValueError("usage amount unit must not be empty")
         amount = self.amount
         if not isinstance(self.amount, Decimal):
             amount = Decimal(str(self.amount))
