@@ -72,6 +72,22 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             }
         )
 
+    def evaluate_connector_capabilities_json(
+        connection_json: str,
+        required_capabilities_json: str,
+    ) -> str:
+        calls.append(("connector_capabilities", (connection_json, required_capabilities_json)))
+        return json.dumps(
+            {
+                "ok": True,
+                "connection": json.loads(connection_json),
+                "requiredCapabilities": json.loads(required_capabilities_json),
+                "supportedCapabilities": ["http_json", "oauth2"],
+                "missingCapabilities": [],
+                "error": None,
+            }
+        )
+
     def run_stdlib_graph_json(graph_json: str, inputs_json: str) -> str:
         calls.append(("run_stdlib", (graph_json, inputs_json)))
         return json.dumps(
@@ -328,6 +344,7 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         evaluate_application_event_stream_json=evaluate_application_event_stream_json,
         evaluate_application_protocol_log_json=evaluate_application_protocol_log_json,
         evaluate_application_protocol_stream_json=evaluate_application_protocol_stream_json,
+        evaluate_connector_capabilities_json=evaluate_connector_capabilities_json,
         evaluate_declarative_output_policy_json=evaluate_declarative_output_policy_json,
         evaluate_durable_tool_terminal_store_json=evaluate_durable_tool_terminal_store_json,
         evaluate_output_gate_json=evaluate_output_gate_json,
@@ -357,6 +374,15 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             "text": "safe prefix secret suffix",
             "redactions": [{"pattern": "secret", "replacement": "[redacted]"}],
         },
+    )
+    connector_capabilities = runtime.evaluate_connector_capabilities(
+        {
+            "connectionId": "ticket-system",
+            "kind": "openapi",
+            "provider": "zendesk",
+            "supportedCapabilities": ["http_json", "oauth2"],
+        },
+        ["http_json"],
     )
     compiled = runtime.compile_graph({"kind": "Graph"}, block_catalog=[{"typeId": "prompt.render"}])
     stdlib = runtime.run_stdlib_graph({"kind": "Graph"}, {"message": {"text": "hi"}})
@@ -507,6 +533,19 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         },
         "contentDigest": "sha256:content",
     }
+    assert connector_capabilities == {
+        "ok": True,
+        "connection": {
+            "connectionId": "ticket-system",
+            "kind": "openapi",
+            "provider": "zendesk",
+            "supportedCapabilities": ["http_json", "oauth2"],
+        },
+        "requiredCapabilities": ["http_json"],
+        "supportedCapabilities": ["http_json", "oauth2"],
+        "missingCapabilities": [],
+        "error": None,
+    }
     assert compiled["ok"] is True
     assert stdlib["outputs"] == {"answer": "ok"}
     assert test_run["outputs"] == {"fixture": True}
@@ -646,6 +685,16 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
                     '[{"pattern":"secret","replacement":"[redacted]"}],'
                     '"text":"safe prefix secret suffix"}'
                 ),
+            ),
+        ),
+        (
+            "connector_capabilities",
+            (
+                (
+                    '{"connectionId":"ticket-system","kind":"openapi","provider":"zendesk",'
+                    '"supportedCapabilities":["http_json","oauth2"]}'
+                ),
+                '["http_json"]',
             ),
         ),
         (
@@ -827,6 +876,8 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     assert "evaluate_application_protocol_log_json" in runtime.__all__
     assert "evaluate_application_protocol_stream" in runtime.__all__
     assert "evaluate_application_protocol_stream_json" in runtime.__all__
+    assert "evaluate_connector_capabilities" in runtime.__all__
+    assert "evaluate_connector_capabilities_json" in runtime.__all__
     assert "evaluate_durable_tool_terminal_store" in runtime.__all__
     assert "evaluate_durable_tool_terminal_store_json" in runtime.__all__
     assert "evaluate_tool_execution_plan" in runtime.__all__

@@ -17,6 +17,7 @@ try:
         evaluate_application_event_stream_json,
         evaluate_application_protocol_log_json,
         evaluate_application_protocol_stream_json,
+        evaluate_connector_capabilities_json,
         evaluate_declarative_output_policy_json,
         evaluate_durable_tool_terminal_store_json,
         evaluate_output_gate_json,
@@ -149,6 +150,12 @@ except ImportError as error:
         require_native_extension()
 
     def evaluate_application_protocol_stream_json(state_json: str, operations_json: str) -> str:
+        require_native_extension()
+
+    def evaluate_connector_capabilities_json(
+        connection_json: str,
+        required_capabilities_json: str,
+    ) -> str:
         require_native_extension()
 
     def evaluate_durable_tool_terminal_store_json(operations_json: str) -> str:
@@ -425,6 +432,19 @@ def evaluate_application_protocol_stream(
     )
 
 
+def evaluate_connector_capabilities(
+    connection: dict[str, object],
+    required_capabilities: object,
+) -> dict[str, object]:
+    return _json_object_result(
+        evaluate_connector_capabilities_json(
+            _canonical_json(connection),
+            _canonical_json(required_capabilities),
+        ),
+        "native connector capability evaluation result",
+    )
+
+
 def negotiate_application_protocol_capabilities(
     server: dict[str, object],
     client: dict[str, object],
@@ -528,6 +548,8 @@ __all__ = [
     "evaluate_application_protocol_log_json",
     "evaluate_application_protocol_stream",
     "evaluate_application_protocol_stream_json",
+    "evaluate_connector_capabilities",
+    "evaluate_connector_capabilities_json",
     "evaluate_durable_tool_terminal_store",
     "evaluate_durable_tool_terminal_store_json",
     "evaluate_output_gate",

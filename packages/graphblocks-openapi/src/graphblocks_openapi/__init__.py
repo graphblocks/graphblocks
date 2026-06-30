@@ -27,6 +27,15 @@ class OpenApiToolAdapterError(RuntimeError):
     pass
 
 
+def evaluate_native_connector_capabilities(
+    connection: Mapping[str, object],
+    required_capabilities: object,
+) -> dict[str, object]:
+    from graphblocks_runtime import evaluate_connector_capabilities
+
+    return evaluate_connector_capabilities(dict(connection), required_capabilities)
+
+
 @dataclass(frozen=True, slots=True)
 class OpenApiOperationInvocation:
     binding_id: str
@@ -699,6 +708,7 @@ __all__ = [
     "bind_openapi_operation",
     "define_openapi_tool",
     "define_openapi_tools_from_spec",
+    "evaluate_native_connector_capabilities",
     "openapi_tool_result_artifact_ready",
     "openapi_tool_result_cancelled",
     "openapi_tool_result_denied",

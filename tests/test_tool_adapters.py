@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib
 from pathlib import Path
+import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -24,6 +26,54 @@ from graphblocks import (
 
 
 ROOT = Path(__file__).parents[1]
+
+
+def test_mcp_and_openapi_adapters_expose_native_connector_capability_helper(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
+    calls: list[tuple[dict[str, object], object]] = []
+
+    def evaluate_connector_capabilities(
+        connection: dict[str, object],
+        required_capabilities: object,
+    ) -> dict[str, object]:
+        calls.append((connection, required_capabilities))
+        return {
+            "ok": True,
+            "connection": connection,
+            "requiredCapabilities": required_capabilities,
+            "supportedCapabilities": ["http_json", "oauth2"],
+            "missingCapabilities": [],
+        }
+
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(evaluate_connector_capabilities=evaluate_connector_capabilities),
+    )
+    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+
+    mcp_result = graphblocks_mcp.evaluate_native_connector_capabilities(
+        {"connectionId": "support-mcp", "kind": "mcp", "provider": "stdio"},
+        ["stdio"],
+    )
+    openapi_result = graphblocks_openapi.evaluate_native_connector_capabilities(
+        {"connectionId": "ticket-system", "kind": "openapi", "provider": "zendesk"},
+        {"required": ["http_json"]},
+    )
+
+    assert mcp_result["ok"] is True
+    assert openapi_result["ok"] is True
+    assert calls == [
+        ({"connectionId": "support-mcp", "kind": "mcp", "provider": "stdio"}, ["stdio"]),
+        (
+            {"connectionId": "ticket-system", "kind": "openapi", "provider": "zendesk"},
+            {"required": ["http_json"]},
+        ),
+    ]
+    assert "evaluate_native_connector_capabilities" in graphblocks_mcp.__all__
+    assert "evaluate_native_connector_capabilities" in graphblocks_openapi.__all__
 
 
 def _admitted_call_for(

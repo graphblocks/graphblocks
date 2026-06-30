@@ -18,6 +18,7 @@ use graphblocks_runtime_core::audit::{
     AuditEvent, ToolEffectAuditContext, ToolEffectPrecondition, ToolEffectPreconditionContext,
 };
 use graphblocks_runtime_core::budget::{BudgetPermit, UsageAmount};
+use graphblocks_runtime_core::connectors::{ConnectionSpec, SecretRef, ensure_capabilities};
 use graphblocks_runtime_core::exhaustion::{
     ContinuationEnvelope, ExhaustionController, ExhaustionPolicy, ExhaustionPreset, ExhaustionUnit,
     WorkKind,
@@ -401,6 +402,57 @@ fn validate_remote_payload_json(payload_json: &str, max_inline_bytes: usize) -> 
     serde_json::to_string(&result_payload).map_err(|error| {
         PyRuntimeError::new_err(format!(
             "failed to serialize remote payload result: {error}"
+        ))
+    })
+}
+
+#[pyfunction]
+fn evaluate_connector_capabilities_json(
+    connection_json: &str,
+    required_capabilities_json: &str,
+) -> PyResult<String> {
+    let connection_value = parse_json_argument(connection_json, "connection")?;
+    let required_value = parse_json_argument(required_capabilities_json, "required capabilities")?;
+    let connection_object = json_object(&connection_value, "connection")?;
+    let connection = parse_connection_spec(&connection_value, "connection")?;
+    let supported = parse_connector_supported_capabilities(connection_object)?;
+    let required = parse_required_capabilities(&required_value)?;
+    let safe_connection = connection.safe_config_value();
+    let result = match ensure_capabilities(
+        &connection.connection_id,
+        supported.clone(),
+        required.clone(),
+    ) {
+        Ok(()) => json!({
+            "ok": true,
+            "connection": safe_connection,
+            "requiredCapabilities": required,
+            "supportedCapabilities": supported,
+            "missingCapabilities": [],
+            "error": Value::Null,
+        }),
+        Err(error) => {
+            let connection_id = error.connection_id;
+            let missing = error.missing;
+            let supported = error.supported;
+            json!({
+                "ok": false,
+                "connection": safe_connection,
+                "requiredCapabilities": required,
+                "supportedCapabilities": supported.clone(),
+                "missingCapabilities": missing.clone(),
+                "error": {
+                    "code": "ConnectorCapabilityMissing",
+                    "connectionId": connection_id,
+                    "missingCapabilities": missing,
+                    "supportedCapabilities": supported,
+                },
+            })
+        }
+    };
+    serde_json::to_string(&result).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize connector capability evaluation: {error}"
         ))
     })
 }
@@ -1402,6 +1454,79 @@ fn parse_string_vec(value: Option<&Value>, label: &str) -> PyResult<Vec<String>>
                 .ok_or_else(|| PyValueError::new_err(format!("{label}[{index}] must be a string")))
         })
         .collect()
+}
+
+fn parse_capability_list(value: Option<&Value>, label: &str) -> PyResult<Vec<String>> {
+    Ok(parse_string_set(value, label)?.into_iter().collect())
+}
+
+fn parse_secret_ref(value: &Value, label: &str) -> PyResult<SecretRef> {
+    if let Some(uri) = value.as_str() {
+        return Ok(SecretRef::new(uri));
+    }
+    let object = json_object(value, label)?;
+    let mut reference = SecretRef::new(required_string(object, "uri", label)?);
+    if let Some(version) = optional_nullable_alias_string(object, "version", "version", label)? {
+        reference = reference.with_version(version);
+    }
+    Ok(reference)
+}
+
+fn parse_connection_spec(value: &Value, label: &str) -> PyResult<ConnectionSpec> {
+    let object = json_object(value, label)?;
+    let mut connection = ConnectionSpec::new(
+        required_alias_string(object, "connectionId", "connection_id", label)?,
+        required_string(object, "kind", label)?,
+        required_string(object, "provider", label)?,
+    );
+    for (key, value) in parse_json_value_map(
+        alias_value(object, "config", "config"),
+        &format!("{label}.config"),
+    )? {
+        connection = connection.with_config(key, value);
+    }
+    if let Some(credentials) =
+        alias_value(object, "credentials", "credentials").filter(|value| !value.is_null())
+    {
+        connection = connection.with_credentials(parse_secret_ref(
+            credentials,
+            &format!("{label}.credentials"),
+        )?);
+    }
+    Ok(connection)
+}
+
+fn parse_required_capabilities(value: &Value) -> PyResult<Vec<String>> {
+    if value.is_array() {
+        return parse_capability_list(Some(value), "required capabilities");
+    }
+    let object = json_object(value, "required capabilities")?;
+    let required = object
+        .get("requiredCapabilities")
+        .or_else(|| object.get("required_capabilities"))
+        .or_else(|| object.get("required"));
+    parse_capability_list(required, "required capabilities.requiredCapabilities")
+}
+
+fn parse_connector_supported_capabilities(
+    object: &serde_json::Map<String, Value>,
+) -> PyResult<Vec<String>> {
+    let supported = object
+        .get("supportedCapabilities")
+        .or_else(|| object.get("supported_capabilities"))
+        .or_else(|| object.get("capabilities"))
+        .or_else(|| {
+            object
+                .get("config")
+                .and_then(Value::as_object)
+                .and_then(|config| {
+                    config
+                        .get("supportedCapabilities")
+                        .or_else(|| config.get("supported_capabilities"))
+                        .or_else(|| config.get("capabilities"))
+                })
+        });
+    parse_capability_list(supported, "connection.supportedCapabilities")
 }
 
 fn parse_principal_ref(value: &Value, label: &str) -> PyResult<PrincipalRef> {
@@ -5814,6 +5939,10 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(admit_worker_message_json, module)?)?;
     module.add_function(wrap_pyfunction!(validate_remote_payload_json, module)?)?;
     module.add_function(wrap_pyfunction!(
+        evaluate_connector_capabilities_json,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
         prepare_tool_result_for_model_json,
         module
     )?)?;
@@ -5874,10 +6003,10 @@ mod tests {
         admit_exhaustion_work_json, admit_worker_message_json, capture_telemetry_content_json,
         compile_graph_json, decide_agent_step_json, evaluate_application_event_stream_json,
         evaluate_application_protocol_log_json, evaluate_application_protocol_stream_json,
-        evaluate_declarative_output_policy_json, evaluate_durable_tool_terminal_store_json,
-        evaluate_output_gate_json, evaluate_sequential_tool_queue_json,
-        evaluate_tool_execution_plan_json, evaluate_tool_result_stream_json,
-        evaluate_usage_ledger_json, finalize_tool_call_json,
+        evaluate_connector_capabilities_json, evaluate_declarative_output_policy_json,
+        evaluate_durable_tool_terminal_store_json, evaluate_output_gate_json,
+        evaluate_sequential_tool_queue_json, evaluate_tool_execution_plan_json,
+        evaluate_tool_result_stream_json, evaluate_usage_ledger_json, finalize_tool_call_json,
         negotiate_application_protocol_capabilities_json, prepare_tool_result_for_model_json,
         record_tool_effect_audit_event_json, record_tool_effect_precondition_json,
         run_stdlib_graph_json, run_test_graph_json, validate_remote_payload_json,
@@ -6368,6 +6497,68 @@ mod tests {
             Some("artifact://doc-1")
         );
         assert_eq!(referenced.get("preview"), Some(&Value::Null));
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_connector_capabilities_json_returns_safe_connection_and_missing_capabilities()
+    -> Result<(), String> {
+        let accepted_json = evaluate_connector_capabilities_json(
+            &serde_json::to_string(&json!({
+                "connectionId": "ticket-system",
+                "kind": "openapi",
+                "provider": "zendesk",
+                "config": {
+                    "baseUrl": "https://tickets.example.invalid",
+                    "capabilities": ["http_json", "oauth2"]
+                },
+                "credentials": {
+                    "uri": "secret://env/TICKET_TOKEN",
+                    "version": "2026-06"
+                }
+            }))
+            .map_err(|error| error.to_string())?,
+            &serde_json::to_string(&json!(["http_json"])).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let accepted =
+            serde_json::from_str::<Value>(&accepted_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(accepted.get("ok"), Some(&json!(true)));
+        assert_eq!(
+            accepted
+                .pointer("/connection/credentials/uri")
+                .and_then(Value::as_str),
+            Some("secret://env/TICKET_TOKEN")
+        );
+        assert!(accepted.pointer("/connection/credentials/value").is_none());
+
+        let rejected_json = evaluate_connector_capabilities_json(
+            &serde_json::to_string(&json!({
+                "connection_id": "ticket-system",
+                "kind": "openapi",
+                "provider": "zendesk",
+                "supported_capabilities": ["http_json"]
+            }))
+            .map_err(|error| error.to_string())?,
+            &serde_json::to_string(&json!({"required": ["atomic_alias_swap", "http_json"]}))
+                .map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let rejected =
+            serde_json::from_str::<Value>(&rejected_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(rejected.get("ok"), Some(&json!(false)));
+        assert_eq!(
+            rejected
+                .get("missingCapabilities")
+                .and_then(Value::as_array),
+            Some(&vec![json!("atomic_alias_swap")])
+        );
+        assert_eq!(
+            rejected.pointer("/error/code").and_then(Value::as_str),
+            Some("ConnectorCapabilityMissing")
+        );
         Ok(())
     }
 

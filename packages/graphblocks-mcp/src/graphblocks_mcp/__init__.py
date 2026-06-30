@@ -27,6 +27,15 @@ class McpToolAdapterError(RuntimeError):
     pass
 
 
+def evaluate_native_connector_capabilities(
+    connection: Mapping[str, object],
+    required_capabilities: object,
+) -> dict[str, object]:
+    from graphblocks_runtime import evaluate_connector_capabilities
+
+    return evaluate_connector_capabilities(dict(connection), required_capabilities)
+
+
 @dataclass(frozen=True, slots=True)
 class McpToolInvocation:
     binding_id: str
@@ -590,6 +599,7 @@ __all__ = [
     "bind_mcp_tool",
     "define_mcp_tool",
     "discover_mcp_tool_definitions",
+    "evaluate_native_connector_capabilities",
     "mcp_tool_result_artifact_ready",
     "mcp_tool_result_cancelled",
     "mcp_tool_result_denied",
