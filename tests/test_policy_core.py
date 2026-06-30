@@ -595,3 +595,28 @@ def test_policy_test_dsl_reports_expectation_failures() -> None:
         "deny-case: expected reason code deny-model",
         "deny-case: expected enforcement status blocked but got enforced",
     )
+
+
+def test_policy_test_case_rejects_invalid_case_id() -> None:
+    request = PolicyRequest(
+        request_id="req-case",
+        enforcement_point="before_provider_call",
+        action="model.generate",
+        resource=ResourceRef("model:support", resource_kind="model"),
+        occurred_at="2026-06-23T00:00:00Z",
+    )
+
+    with pytest.raises(ValueError, match="policy test case_id must be a string"):
+        PolicyTestCase(
+            object(),  # type: ignore[arg-type]
+            request,
+            PolicyTestExpectation(effect="allow"),
+            evaluated_at="2026-06-23T00:00:01Z",
+        )
+    with pytest.raises(ValueError, match="policy test case_id must not be empty"):
+        PolicyTestCase(
+            " ",
+            request,
+            PolicyTestExpectation(effect="allow"),
+            evaluated_at="2026-06-23T00:00:01Z",
+        )

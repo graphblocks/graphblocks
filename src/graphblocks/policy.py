@@ -695,6 +695,8 @@ class PolicyTestCase:
     enforced_obligation_ids: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.case_id, str):
+            raise ValueError("policy test case_id must be a string")
         if not self.case_id.strip():
             raise ValueError("policy test case_id must not be empty")
         if self.enforced_obligation_ids is not None:
