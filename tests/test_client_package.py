@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib
 import json
 from pathlib import Path
+import sys
+from types import SimpleNamespace
 from urllib.parse import urlparse
 
 import pytest
@@ -208,6 +210,90 @@ def test_client_package_exposes_application_protocol_envelopes(monkeypatch) -> N
     assert "ApplicationProtocolEvent" in graphblocks_client.__all__
     assert "ApplicationProtocolLog" in graphblocks_client.__all__
     assert "ApplicationProtocolStreamState" in graphblocks_client.__all__
+
+
+def test_client_package_lazy_native_application_stream_helpers_delegate_to_runtime(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    calls: list[tuple[str, object, object]] = []
+
+    def evaluate_application_event_stream(state: dict[str, object], operations: object) -> dict[str, object]:
+        calls.append(("event_stream", state, operations))
+        return {"kind": "event_stream", "state": state, "operations": operations}
+
+    def evaluate_application_protocol_log(state: dict[str, object], operations: object) -> dict[str, object]:
+        calls.append(("protocol_log", state, operations))
+        return {"kind": "protocol_log", "state": state, "operations": operations}
+
+    def evaluate_application_protocol_stream(state: dict[str, object], operations: object) -> dict[str, object]:
+        calls.append(("protocol_stream", state, operations))
+        return {"kind": "protocol_stream", "state": state, "operations": operations}
+
+    def negotiate_application_protocol_capabilities(
+        server: dict[str, object],
+        client: dict[str, object],
+    ) -> dict[str, object]:
+        calls.append(("capabilities", server, client))
+        return {"kind": "capabilities", "server": server, "client": client}
+
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(
+            evaluate_application_event_stream=evaluate_application_event_stream,
+            evaluate_application_protocol_log=evaluate_application_protocol_log,
+            evaluate_application_protocol_stream=evaluate_application_protocol_stream,
+            negotiate_application_protocol_capabilities=negotiate_application_protocol_capabilities,
+        ),
+    )
+    graphblocks_client = importlib.import_module("graphblocks_client")
+
+    event_stream = graphblocks_client.evaluate_native_application_event_stream(
+        {"acceptedThrough": 1},
+        [{"op": "event", "sequence": 2}],
+    )
+    protocol_log = graphblocks_client.evaluate_native_application_protocol_log(
+        {"lastSequence": 2},
+        [{"op": "append", "sequence": 3}],
+    )
+    protocol_stream = graphblocks_client.evaluate_native_application_protocol_stream(
+        {"lastClientDeliveredSequence": 3},
+        [{"op": "event", "sequence": 4}],
+    )
+    capabilities = graphblocks_client.negotiate_native_application_protocol_capabilities(
+        {"commands": ["InvokeGraph", "CancelRun"]},
+        {"commands": ["CancelRun"]},
+    )
+
+    assert event_stream == {
+        "kind": "event_stream",
+        "state": {"acceptedThrough": 1},
+        "operations": [{"op": "event", "sequence": 2}],
+    }
+    assert protocol_log == {
+        "kind": "protocol_log",
+        "state": {"lastSequence": 2},
+        "operations": [{"op": "append", "sequence": 3}],
+    }
+    assert protocol_stream == {
+        "kind": "protocol_stream",
+        "state": {"lastClientDeliveredSequence": 3},
+        "operations": [{"op": "event", "sequence": 4}],
+    }
+    assert capabilities == {
+        "kind": "capabilities",
+        "server": {"commands": ["InvokeGraph", "CancelRun"]},
+        "client": {"commands": ["CancelRun"]},
+    }
+    assert calls == [
+        ("event_stream", {"acceptedThrough": 1}, [{"op": "event", "sequence": 2}]),
+        ("protocol_log", {"lastSequence": 2}, [{"op": "append", "sequence": 3}]),
+        ("protocol_stream", {"lastClientDeliveredSequence": 3}, [{"op": "event", "sequence": 4}]),
+        ("capabilities", {"commands": ["InvokeGraph", "CancelRun"]}, {"commands": ["CancelRun"]}),
+    ]
+    assert "evaluate_native_application_event_stream" in graphblocks_client.__all__
+    assert "evaluate_native_application_protocol_log" in graphblocks_client.__all__
+    assert "evaluate_native_application_protocol_stream" in graphblocks_client.__all__
+    assert "negotiate_native_application_protocol_capabilities" in graphblocks_client.__all__
 
 
 def test_client_package_builds_remote_tool_definition_binding_and_invocation(monkeypatch) -> None:

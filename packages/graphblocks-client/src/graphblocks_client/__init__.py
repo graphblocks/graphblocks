@@ -101,6 +101,42 @@ class RemoteToolAdapterError(RuntimeError):
     pass
 
 
+def evaluate_native_application_event_stream(
+    state: dict[str, object],
+    operations: object,
+) -> dict[str, object]:
+    from graphblocks_runtime import evaluate_application_event_stream
+
+    return evaluate_application_event_stream(state, operations)
+
+
+def evaluate_native_application_protocol_log(
+    state: dict[str, object],
+    operations: object,
+) -> dict[str, object]:
+    from graphblocks_runtime import evaluate_application_protocol_log
+
+    return evaluate_application_protocol_log(state, operations)
+
+
+def evaluate_native_application_protocol_stream(
+    state: dict[str, object],
+    operations: object,
+) -> dict[str, object]:
+    from graphblocks_runtime import evaluate_application_protocol_stream
+
+    return evaluate_application_protocol_stream(state, operations)
+
+
+def negotiate_native_application_protocol_capabilities(
+    server: dict[str, object],
+    client: dict[str, object],
+) -> dict[str, object]:
+    from graphblocks_runtime import negotiate_application_protocol_capabilities
+
+    return negotiate_application_protocol_capabilities(server, client)
+
+
 @dataclass(frozen=True, slots=True)
 class RemoteToolInvocation:
     binding_id: str
@@ -804,6 +840,10 @@ __all__ = [
     "ToolResultStreamState",
     "bind_remote_tool",
     "define_remote_tool",
+    "evaluate_native_application_event_stream",
+    "evaluate_native_application_protocol_log",
+    "evaluate_native_application_protocol_stream",
+    "negotiate_native_application_protocol_capabilities",
     "prepare_remote_tool_invocation",
     "prepare_remote_tool_result_for_model",
     "remote_tool_result_artifact_ready",
