@@ -777,6 +777,34 @@ def test_output_delivery_gate_revalidates_redaction_range_types_at_delivery_boun
     assert str(error.value) == "invalid redaction range for '/chunks/1/text'"
 
 
+def test_output_delivery_gate_rejects_invalid_redaction_without_mutating_state() -> None:
+    gate = OutputDeliveryGate("stream-1", "response-1")
+    gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "hello secret world"))
+    gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 2, "short"))
+
+    with pytest.raises(OutputGateError) as error:
+        gate.apply_decision(
+            OutputPolicyDecision.redact(
+                "decision-redact",
+                accepted_through_sequence=2,
+                redactions=(
+                    {"path": "/chunks/1/text", "start": 6, "end": 12, "replacement": "[redacted]"},
+                    {"path": "/chunks/2/text", "start": 0, "end": 99, "replacement": "[redacted]"},
+                ),
+                input_digest="sha256:redact",
+            ),
+            occurred_at="2026-06-23T00:00:01Z",
+        )
+
+    assert str(error.value) == "invalid redaction range for '/chunks/2/text'"
+    assert [(chunk.sequence, chunk.text) for chunk in gate.pending_chunks()] == [
+        (1, "hello secret world"),
+        (2, "short"),
+    ]
+    assert gate.last_policy_accepted_sequence == 0
+    assert gate.last_client_delivered_sequence == 0
+
+
 def test_output_delivery_gate_rejects_negative_redaction_chunk_sequence() -> None:
     gate = OutputDeliveryGate("stream-1", "response-1")
     gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "hello secret world"))
@@ -958,6 +986,31 @@ def test_output_delivery_gate_rejects_non_text_replacement_parts() -> None:
         )
 
     assert str(error.value) == "replacement part 0 must be text"
+
+
+def test_output_delivery_gate_rejects_later_invalid_replacement_without_mutating_state() -> None:
+    gate = OutputDeliveryGate("stream-1", "response-1")
+    gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "blocked draft"))
+
+    with pytest.raises(OutputGateError) as error:
+        gate.apply_decision(
+            OutputPolicyDecision.replace(
+                "decision-replace",
+                accepted_through_sequence=1,
+                replacement_parts=(
+                    ContentPart(kind="text", text="approved"),
+                    ContentPart(kind="json", data={"message": "invalid"}),
+                ),
+                input_digest="sha256:replace",
+            ),
+            occurred_at="2026-06-23T00:00:01Z",
+        )
+
+    assert str(error.value) == "replacement part 1 must be text"
+    assert [(chunk.sequence, chunk.text) for chunk in gate.pending_chunks()] == [(1, "blocked draft")]
+    assert gate.last_generated_sequence == 1
+    assert gate.last_policy_accepted_sequence == 0
+    assert gate.last_client_delivered_sequence == 0
 
 
 def test_output_delivery_gate_rejects_zero_sequence_replacement_part() -> None:

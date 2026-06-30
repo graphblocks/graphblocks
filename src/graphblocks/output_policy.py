@@ -862,6 +862,7 @@ class OutputDeliveryGate:
         if decision.disposition in {"redact", "replace"}:
             if decision.disposition == "redact" and not decision.replacement_parts and not decision.redactions:
                 return OutputGateUpdate(deliverable=[])
+            accepted_through_sequence = decision.accepted_through_sequence
             if decision.accepted_through_sequence is not None:
                 if decision.accepted_through_sequence > self.last_generated_sequence:
                     raise OutputGateError(
@@ -869,10 +870,7 @@ class OutputDeliveryGate:
                         f"{decision.accepted_through_sequence} exceeds last generated sequence "
                         f"{self.last_generated_sequence}"
                     )
-                self.last_policy_accepted_sequence = max(
-                    self.last_policy_accepted_sequence,
-                    decision.accepted_through_sequence,
-                )
+            redacted_text_by_sequence: dict[int, str] = {}
             if decision.disposition == "redact":
                 redactions_by_sequence: dict[int, list[dict[str, object]]] = {}
                 for redaction in decision.redactions:
@@ -928,34 +926,49 @@ class OutputDeliveryGate:
                         end = redaction.get("end")
                         replacement = redaction.get("replacement")
                         text = text[:start] + replacement + text[end:]
-                    self.pending[sequence] = GenerationChunk.text(
-                        self.stream_id,
-                        self.response_id,
-                        sequence,
-                        text,
-                    )
-            if decision.disposition == "replace" and decision.accepted_through_sequence is not None:
-                if self.last_client_delivered_sequence < decision.accepted_through_sequence:
-                    self.pending.pop(decision.accepted_through_sequence, None)
+                    redacted_text_by_sequence[sequence] = text
             replacement_end_sequence = None
             replacement_base_sequence = (
                 decision.accepted_through_sequence
                 if decision.accepted_through_sequence is not None
                 else self.last_generated_sequence
             )
+            replacement_chunks: list[tuple[int, GenerationChunk]] = []
             for index, part in enumerate(decision.replacement_parts):
                 if part.kind != "text" or part.text is None:
                     raise OutputGateError(f"replacement part {index} must be text")
                 sequence = replacement_base_sequence + index
                 if sequence <= 0:
                     raise OutputGateError(f"replacement sequence {sequence} must be positive")
+                replacement_chunks.append(
+                    (
+                        sequence,
+                        GenerationChunk.text(
+                            self.stream_id,
+                            self.response_id,
+                            sequence,
+                            part.text,
+                        ),
+                    )
+                )
+                replacement_end_sequence = sequence
+            if accepted_through_sequence is not None:
+                self.last_policy_accepted_sequence = max(
+                    self.last_policy_accepted_sequence,
+                    accepted_through_sequence,
+                )
+            for sequence, text in redacted_text_by_sequence.items():
                 self.pending[sequence] = GenerationChunk.text(
                     self.stream_id,
                     self.response_id,
                     sequence,
-                    part.text,
+                    text,
                 )
-                replacement_end_sequence = sequence
+            if decision.disposition == "replace" and accepted_through_sequence is not None:
+                if self.last_client_delivered_sequence < accepted_through_sequence:
+                    self.pending.pop(accepted_through_sequence, None)
+            for sequence, chunk in replacement_chunks:
+                self.pending[sequence] = chunk
             if replacement_end_sequence is not None:
                 self.last_policy_accepted_sequence = max(
                     self.last_policy_accepted_sequence,

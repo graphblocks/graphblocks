@@ -1598,6 +1598,47 @@ fn redact_decision_applies_typed_redaction_instruction_before_delivery()
 }
 
 #[test]
+fn redact_decision_rejects_invalid_range_without_mutating_pending() -> Result<(), OutputGateError> {
+    let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
+
+    gate.record_chunk(GenerationChunk::text(
+        "stream-1",
+        "response-1",
+        1,
+        "hello secret world",
+    ))?;
+    gate.record_chunk(GenerationChunk::text("stream-1", "response-1", 2, "short"))?;
+
+    assert_eq!(
+        gate.apply_decision(
+            OutputPolicyDecision::redact(
+                "decision-redact",
+                Some(2),
+                Vec::<GenerationChunk>::new(),
+                "sha256:redact",
+            )
+            .with_redactions([
+                RedactionInstruction::text_range("/chunks/1/text", 6, 12, "[redacted]"),
+                RedactionInstruction::text_range("/chunks/2/text", 0, 99, "[redacted]"),
+            ]),
+            1_000,
+        ),
+        Err(OutputGateError::InvalidRedactionInstruction {
+            path: "/chunks/2/text".to_owned(),
+        }),
+    );
+    assert_eq!(
+        gate.pending_chunks()
+            .map(|chunk| (chunk.sequence, chunk.text.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(1, "hello secret world"), (2, "short")]
+    );
+    assert_eq!(gate.last_policy_accepted_sequence(), 0);
+    assert_eq!(gate.last_client_delivered_sequence(), 0);
+    Ok(())
+}
+
+#[test]
 fn redact_decision_rejects_noncanonical_redaction_target_sequence() -> Result<(), OutputGateError> {
     for path in ["/chunks/+1/text", "/chunks/01/text"] {
         let mut gate = OutputDeliveryGate::new("stream-1", "response-1");

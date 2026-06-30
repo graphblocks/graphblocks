@@ -1570,6 +1570,7 @@ impl OutputDeliveryGate {
                             .push(redaction);
                     }
 
+                    let mut redacted_text_by_sequence = Vec::new();
                     for (sequence, mut redactions) in redactions_by_sequence {
                         if sequence > self.last_generated_sequence {
                             return Err(OutputGateError::PendingChunkBeyondGenerated {
@@ -1583,9 +1584,10 @@ impl OutputDeliveryGate {
                                 last_client_delivered_sequence: self.last_client_delivered_sequence,
                             });
                         }
-                        let Some(chunk) = self.pending.get_mut(&sequence) else {
+                        let Some(chunk) = self.pending.get(&sequence) else {
                             return Err(OutputGateError::MissingPendingChunk { sequence });
                         };
+                        let mut text = chunk.text.clone();
                         redactions.sort_by(|left, right| right.start.cmp(&left.start));
                         for redaction in redactions {
                             let Ok(start) = usize::try_from(redaction.start) else {
@@ -1598,35 +1600,36 @@ impl OutputDeliveryGate {
                                     path: redaction.path,
                                 });
                             };
-                            let char_count = chunk.text.chars().count();
+                            let char_count = text.chars().count();
                             if start > end || end > char_count {
                                 return Err(OutputGateError::InvalidRedactionInstruction {
                                     path: redaction.path,
                                 });
                             }
                             let start_byte = if start == char_count {
-                                chunk.text.len()
+                                text.len()
                             } else {
-                                chunk
-                                    .text
-                                    .char_indices()
+                                text.char_indices()
                                     .nth(start)
                                     .map(|(index, _)| index)
-                                    .unwrap_or(chunk.text.len())
+                                    .unwrap_or(text.len())
                             };
                             let end_byte = if end == char_count {
-                                chunk.text.len()
+                                text.len()
                             } else {
-                                chunk
-                                    .text
-                                    .char_indices()
+                                text.char_indices()
                                     .nth(end)
                                     .map(|(index, _)| index)
-                                    .unwrap_or(chunk.text.len())
+                                    .unwrap_or(text.len())
                             };
-                            chunk
-                                .text
-                                .replace_range(start_byte..end_byte, &redaction.replacement);
+                            text.replace_range(start_byte..end_byte, &redaction.replacement);
+                        }
+                        redacted_text_by_sequence.push((sequence, text));
+                    }
+
+                    for (sequence, text) in redacted_text_by_sequence {
+                        if let Some(chunk) = self.pending.get_mut(&sequence) {
+                            chunk.text = text;
                         }
                     }
                 }
