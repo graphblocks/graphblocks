@@ -207,6 +207,47 @@ def test_agents_package_exposes_policy_obligated_tool_admission(monkeypatch) -> 
     assert admitted.call.status == "admitted"
 
 
+def test_agents_package_exposes_streaming_tool_result_state(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-agents" / "src"))
+    graphblocks_agents = importlib.import_module("graphblocks_agents")
+
+    stream = graphblocks_agents.ToolResultStreamState()
+    started = graphblocks_agents.ToolResultEvent.started(
+        "call-1",
+        1,
+        started_at="2026-06-23T00:00:00Z",
+    )
+    delta = graphblocks_agents.ToolResultEvent.delta(
+        "call-1",
+        2,
+        (graphblocks_agents.ContentPart(kind="text", text="draft"),),
+    )
+    stopped = graphblocks_agents.ToolResult.policy_stopped(
+        "call-1",
+        error={"code": "policy.denied", "message": "blocked"},
+        started_at="2026-06-23T00:00:00Z",
+        completed_at="2026-06-23T00:00:01Z",
+    )
+    stopped_event = graphblocks_agents.ToolResultEvent.policy_stopped("call-1", 3, stopped)
+
+    assert stream.accept(started) == started
+    assert stream.accept(delta).into_result() is None
+    assert stream.accept(stopped_event).into_result() == stopped
+    with pytest.raises(graphblocks_agents.ToolResultStreamError) as error:
+        stream.accept(
+            graphblocks_agents.ToolResultEvent.delta(
+                "call-1",
+                4,
+                (graphblocks_agents.ContentPart(kind="text", text="late"),),
+            )
+        )
+
+    assert error.value.final_status == "policy_stopped"
+    assert stream.final_result_for("call-1") == stopped
+    assert "ToolResultStreamState" in graphblocks_agents.__all__
+    assert "ToolResultStreamError" in graphblocks_agents.__all__
+
+
 def test_agents_package_exposes_agent_loop_contracts(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-agents" / "src"))
     graphblocks_agents = importlib.import_module("graphblocks_agents")

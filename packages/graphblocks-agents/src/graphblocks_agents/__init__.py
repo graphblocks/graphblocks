@@ -13,6 +13,7 @@ from graphblocks.agent import (
     AgentStateSchema,
     ToolFailurePolicy,
 )
+from graphblocks.conversation import ContentPart
 from graphblocks.policy import (
     PolicyDecision,
     PolicyEffect,
@@ -65,6 +66,8 @@ from graphblocks.tools import (
     ToolResultEventKind,
     ToolResultMode,
     ToolResultStatus,
+    ToolResultStreamError,
+    ToolResultStreamState,
     ToolResultValidationError,
     ToolSchemaRegistry,
     ToolSchemaRegistryError,
@@ -106,6 +109,7 @@ __all__ = [
     "AgentStatePatchOpKind",
     "AgentStateSchema",
     "BlockToolImplementation",
+    "ContentPart",
     "GraphRef",
     "GraphToolImplementation",
     "JsonSchema",
@@ -154,6 +158,8 @@ __all__ = [
     "ToolResultEventKind",
     "ToolResultMode",
     "ToolResultStatus",
+    "ToolResultStreamError",
+    "ToolResultStreamState",
     "ToolResultValidationError",
     "ToolSchemaRegistry",
     "ToolSchemaRegistryError",
