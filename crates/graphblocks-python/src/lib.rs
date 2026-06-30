@@ -35,6 +35,9 @@ use graphblocks_runtime_core::output_policy::{
 };
 use graphblocks_runtime_core::policy::{PrincipalRef, ResourceRef};
 use graphblocks_runtime_core::readiness::{InputDependency, PortRef};
+use graphblocks_runtime_core::retry::{
+    Backoff, EffectKind, PartialOutputPolicy, RetryDecision, RetryPolicy, RetryRequest,
+};
 use graphblocks_runtime_core::scheduler::{ScheduledNode, StartedNode};
 use graphblocks_runtime_core::test_runtime::{InProcessTestRuntime, NodeExecutor, TestRunStatus};
 use graphblocks_runtime_core::tool::{
@@ -550,6 +553,32 @@ fn evaluate_tool_approval_json(
         PyRuntimeError::new_err(format!(
             "failed to serialize tool approval evaluation: {error}"
         ))
+    })
+}
+
+#[pyfunction]
+fn evaluate_retry_policy_json(policy_json: &str, request_json: &str) -> PyResult<String> {
+    let policy_value = parse_json_argument(policy_json, "retry policy")?;
+    let request_value = parse_json_argument(request_json, "retry request")?;
+    let policy = parse_retry_policy(&policy_value, "retry policy")?;
+    let request = parse_retry_request(&request_value, "retry request")?;
+    let decision = policy.decide(&request);
+    let payload = match decision {
+        RetryDecision::Retry { delay_ms } => json!({
+            "ok": true,
+            "decision": "retry",
+            "delayMs": delay_ms,
+            "reason": Value::Null,
+        }),
+        RetryDecision::Stop { reason } => json!({
+            "ok": true,
+            "decision": "stop",
+            "delayMs": Value::Null,
+            "reason": reason,
+        }),
+    };
+    serde_json::to_string(&payload).map_err(|error| {
+        PyRuntimeError::new_err(format!("failed to serialize retry decision: {error}"))
     })
 }
 
@@ -2373,6 +2402,164 @@ fn parse_block_error(value: &Value, label: &str) -> PyResult<BlockError> {
             .collect::<PyResult<Vec<_>>>()?;
     }
     Ok(error)
+}
+
+fn parse_retry_backoff(value: Option<&Value>, label: &str) -> PyResult<Backoff> {
+    let Some(value) = value.filter(|value| !value.is_null()) else {
+        return Ok(Backoff::None);
+    };
+    if let Some(value) = value.as_str() {
+        return match value {
+            "none" => Ok(Backoff::None),
+            value => Err(PyValueError::new_err(format!(
+                "{label} has unknown backoff {value:?}"
+            ))),
+        };
+    }
+    let object = json_object(value, label)?;
+    let kind = optional_nullable_alias_string(object, "kind", "mode", label)?.unwrap_or("fixed");
+    match kind {
+        "none" => Ok(Backoff::None),
+        "fixed" => Ok(Backoff::Fixed {
+            delay_ms: optional_nullable_alias_u64(object, "delayMs", "delay_ms", label)?
+                .or(optional_nullable_alias_u64(
+                    object,
+                    "fixedDelayMs",
+                    "fixed_delay_ms",
+                    label,
+                )?)
+                .ok_or_else(|| {
+                    PyValueError::new_err(format!("{label}.delayMs must be an unsigned integer"))
+                })?,
+        }),
+        value => Err(PyValueError::new_err(format!(
+            "{label}.kind has unknown backoff {value:?}"
+        ))),
+    }
+}
+
+fn parse_partial_output_policy(
+    value: Option<&Value>,
+    label: &str,
+) -> PyResult<PartialOutputPolicy> {
+    let Some(value) = value.filter(|value| !value.is_null()) else {
+        return Ok(PartialOutputPolicy::Fail);
+    };
+    let Some(value) = value.as_str() else {
+        return Err(PyValueError::new_err(format!("{label} must be a string")));
+    };
+    match value {
+        "fail" => Ok(PartialOutputPolicy::Fail),
+        "resume_with_cursor" => Ok(PartialOutputPolicy::ResumeWithCursor),
+        value => Err(PyValueError::new_err(format!(
+            "{label} has unknown partial output policy {value:?}"
+        ))),
+    }
+}
+
+fn parse_retry_policy(value: &Value, label: &str) -> PyResult<RetryPolicy> {
+    let object = json_object(value, label)?;
+    if optional_nullable_alias_string(object, "preset", "preset", label)?
+        == Some("default_model_read")
+    {
+        return Ok(RetryPolicy::default_model_read());
+    }
+    let max_attempts = u64_to_u32(
+        required_alias_u64(object, "maxAttempts", "max_attempts", label)?,
+        &format!("{label}.maxAttempts"),
+    )?;
+    let retry_on = object
+        .get("retryOn")
+        .or_else(|| object.get("retry_on"))
+        .map(|value| {
+            let Some(values) = value.as_array() else {
+                return Err(PyValueError::new_err(format!(
+                    "{label}.retryOn must be an array"
+                )));
+            };
+            values
+                .iter()
+                .enumerate()
+                .map(|(index, value)| {
+                    value
+                        .as_str()
+                        .ok_or_else(|| {
+                            PyValueError::new_err(format!(
+                                "{label}.retryOn[{index}] must be a string"
+                            ))
+                        })
+                        .and_then(|value| {
+                            parse_error_category(value, &format!("{label}.retryOn[{index}]"))
+                        })
+                })
+                .collect::<PyResult<Vec<_>>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let mut policy = RetryPolicy::new(max_attempts)
+        .retry_on(retry_on)
+        .with_backoff(parse_retry_backoff(
+            object.get("backoff"),
+            &format!("{label}.backoff"),
+        )?);
+    policy = policy.with_partial_output_policy(parse_partial_output_policy(
+        object
+            .get("partialOutputPolicy")
+            .or_else(|| object.get("partial_output_policy")),
+        &format!("{label}.partialOutputPolicy"),
+    )?);
+    Ok(policy)
+}
+
+fn parse_effect_kind(value: &str, label: &str) -> PyResult<EffectKind> {
+    match value {
+        "external_write" => Ok(EffectKind::ExternalWrite),
+        "filesystem_write" => Ok(EffectKind::FilesystemWrite),
+        "destructive" => Ok(EffectKind::Destructive),
+        "process" => Ok(EffectKind::Process),
+        value => Err(PyValueError::new_err(format!(
+            "{label} has unknown effect kind {value:?}"
+        ))),
+    }
+}
+
+fn parse_retry_request(value: &Value, label: &str) -> PyResult<RetryRequest> {
+    let object = json_object(value, label)?;
+    let attempt = u64_to_u32(
+        required_alias_u64(object, "attempt", "attempt", label)?,
+        &format!("{label}.attempt"),
+    )?;
+    let error_value = object
+        .get("error")
+        .ok_or_else(|| PyValueError::new_err(format!("{label}.error is required")))?;
+    let mut request = RetryRequest::new(
+        attempt,
+        parse_block_error(error_value, &format!("{label}.error"))?,
+    );
+    if optional_nullable_alias_bool(object, "hasPartialOutput", "has_partial_output", label)?
+        .unwrap_or(false)
+    {
+        request = request.with_partial_output();
+    }
+    if let Some(cursor) =
+        optional_nullable_alias_string(object, "resumeCursor", "resume_cursor", label)?
+    {
+        request = request.with_resume_cursor(cursor);
+    }
+    if let Some(effect) = optional_nullable_alias_string(object, "effect", "effect", label)? {
+        request = request.with_effect(parse_effect_kind(effect, &format!("{label}.effect"))?);
+    }
+    if let Some(idempotency_key) =
+        optional_nullable_alias_string(object, "idempotencyKey", "idempotency_key", label)?
+    {
+        request = request.with_idempotency_key(idempotency_key);
+    }
+    if let Some(retry_after_ms) =
+        optional_nullable_alias_u64(object, "retryAfterMs", "retry_after_ms", label)?
+    {
+        request = request.with_retry_after_ms(retry_after_ms);
+    }
+    Ok(request)
 }
 
 fn parse_tool_result_status(value: &str, label: &str) -> PyResult<ToolResultStatus> {
@@ -6158,6 +6345,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
         module
     )?)?;
     module.add_function(wrap_pyfunction!(evaluate_tool_approval_json, module)?)?;
+    module.add_function(wrap_pyfunction!(evaluate_retry_policy_json, module)?)?;
     module.add_function(wrap_pyfunction!(
         record_tool_effect_precondition_json,
         module
@@ -6218,9 +6406,9 @@ mod tests {
         evaluate_application_protocol_log_json, evaluate_application_protocol_stream_json,
         evaluate_connector_capabilities_json, evaluate_declarative_output_policy_json,
         evaluate_durable_tool_terminal_store_json, evaluate_output_gate_json,
-        evaluate_sequential_tool_queue_json, evaluate_tool_approval_json,
-        evaluate_tool_execution_plan_json, evaluate_tool_result_stream_json,
-        evaluate_usage_ledger_json, finalize_tool_call_json,
+        evaluate_retry_policy_json, evaluate_sequential_tool_queue_json,
+        evaluate_tool_approval_json, evaluate_tool_execution_plan_json,
+        evaluate_tool_result_stream_json, evaluate_usage_ledger_json, finalize_tool_call_json,
         negotiate_application_protocol_capabilities_json, parse_resolved_tool, parse_tool_call,
         prepare_tool_result_for_model_json, record_tool_effect_audit_event_json,
         record_tool_effect_precondition_json, run_stdlib_graph_json, run_test_graph_json,
@@ -6892,6 +7080,62 @@ mod tests {
                 .and_then(Value::as_str),
             Some("ApprovalIdMismatch")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_retry_policy_json_enforces_idempotency_and_retry_after() -> Result<(), String> {
+        let policy = json!({
+            "maxAttempts": 3,
+            "retryOn": ["transient", "timeout"],
+            "backoff": {
+                "kind": "fixed",
+                "delayMs": 250
+            },
+        });
+        let missing_idempotency = json!({
+            "attempt": 1,
+            "error": {
+                "code": "provider.transient",
+                "category": "transient",
+                "message": "transient provider error",
+                "retryable": true
+            },
+            "effect": "external_write"
+        });
+        let stopped_json = evaluate_retry_policy_json(
+            &serde_json::to_string(&policy).map_err(|error| error.to_string())?,
+            &serde_json::to_string(&missing_idempotency).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let stopped =
+            serde_json::from_str::<Value>(&stopped_json).map_err(|error| error.to_string())?;
+        assert_eq!(stopped.get("decision"), Some(&json!("stop")));
+        assert_eq!(
+            stopped.get("reason").and_then(Value::as_str),
+            Some("missing_idempotency_key")
+        );
+
+        let retry_after = json!({
+            "attempt": 1,
+            "error": {
+                "code": "provider.timeout",
+                "category": "timeout",
+                "message": "provider timed out",
+                "retryable": true
+            },
+            "retryAfterMs": 1_500
+        });
+        let retry_json = evaluate_retry_policy_json(
+            &serde_json::to_string(&policy).map_err(|error| error.to_string())?,
+            &serde_json::to_string(&retry_after).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let retry =
+            serde_json::from_str::<Value>(&retry_json).map_err(|error| error.to_string())?;
+        assert_eq!(retry.get("decision"), Some(&json!("retry")));
+        assert_eq!(retry.get("delayMs").and_then(Value::as_u64), Some(1_500));
+        assert_eq!(retry.get("reason"), Some(&Value::Null));
         Ok(())
     }
 

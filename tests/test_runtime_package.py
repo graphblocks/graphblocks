@@ -255,6 +255,19 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         calls.append(("output_gate", (gate_json, operations_json)))
         return json.dumps({"gate": json.loads(gate_json), "updates": json.loads(operations_json)})
 
+    def evaluate_retry_policy_json(policy_json: str, request_json: str) -> str:
+        calls.append(("retry_policy", (policy_json, request_json)))
+        return json.dumps(
+            {
+                "ok": True,
+                "decision": "retry",
+                "delayMs": 1_500,
+                "reason": None,
+                "policy": json.loads(policy_json),
+                "request": json.loads(request_json),
+            }
+        )
+
     def evaluate_declarative_output_policy_json(
         rules_json: str,
         chunk_json: str,
@@ -369,6 +382,7 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         evaluate_declarative_output_policy_json=evaluate_declarative_output_policy_json,
         evaluate_durable_tool_terminal_store_json=evaluate_durable_tool_terminal_store_json,
         evaluate_output_gate_json=evaluate_output_gate_json,
+        evaluate_retry_policy_json=evaluate_retry_policy_json,
         evaluate_sequential_tool_queue_json=evaluate_sequential_tool_queue_json,
         evaluate_tool_approval_json=evaluate_tool_approval_json,
         evaluate_tool_execution_plan_json=evaluate_tool_execution_plan_json,
@@ -466,6 +480,23 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     gate_result = runtime.evaluate_output_gate(
         {"streamId": "stream-1"},
         [{"op": "chunk", "chunk": {"sequence": 1}}],
+    )
+    retry_decision = runtime.evaluate_retry_policy(
+        {
+            "maxAttempts": 3,
+            "retryOn": ["timeout"],
+            "backoff": {"kind": "fixed", "delayMs": 250},
+        },
+        {
+            "attempt": 1,
+            "error": {
+                "code": "provider.timeout",
+                "category": "timeout",
+                "message": "timed out",
+                "retryable": True,
+            },
+            "retryAfterMs": 1_500,
+        },
     )
     policy_decision = runtime.evaluate_declarative_output_policy(
         [{"ruleId": "allow"}],
@@ -639,6 +670,27 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     assert gate_result == {
         "gate": {"streamId": "stream-1"},
         "updates": [{"op": "chunk", "chunk": {"sequence": 1}}],
+    }
+    assert retry_decision == {
+        "ok": True,
+        "decision": "retry",
+        "delayMs": 1_500,
+        "reason": None,
+        "policy": {
+            "backoff": {"delayMs": 250, "kind": "fixed"},
+            "maxAttempts": 3,
+            "retryOn": ["timeout"],
+        },
+        "request": {
+            "attempt": 1,
+            "error": {
+                "category": "timeout",
+                "code": "provider.timeout",
+                "message": "timed out",
+                "retryable": True,
+            },
+            "retryAfterMs": 1_500,
+        },
     }
     assert policy_decision == {
         "disposition": "allow",
@@ -823,6 +875,16 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             ('{"streamId":"stream-1"}', '[{"chunk":{"sequence":1},"op":"chunk"}]'),
         ),
         (
+            "retry_policy",
+            (
+                '{"backoff":{"delayMs":250,"kind":"fixed"},"maxAttempts":3,"retryOn":["timeout"]}',
+                (
+                    '{"attempt":1,"error":{"category":"timeout","code":"provider.timeout",'
+                    '"message":"timed out","retryable":true},"retryAfterMs":1500}'
+                ),
+            ),
+        ),
+        (
             "output_policy",
             ('[{"ruleId":"allow"}]', '{"sequence":1,"streamId":"stream-1"}', 1_010),
         ),
@@ -935,6 +997,8 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     assert "prepare_tool_result_for_model" in runtime.__all__
     assert "prepare_tool_result_for_model_json" in runtime.__all__
     assert "evaluate_output_gate" in runtime.__all__
+    assert "evaluate_retry_policy" in runtime.__all__
+    assert "evaluate_retry_policy_json" in runtime.__all__
     assert "evaluate_declarative_output_policy" in runtime.__all__
     assert "evaluate_application_event_stream" in runtime.__all__
     assert "evaluate_application_event_stream_json" in runtime.__all__
