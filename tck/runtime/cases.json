@@ -328,5 +328,120 @@
       "terminal_kind": "run_failed",
       "outputs": {}
     }
+  },
+  {
+    "name": "tools_resolve_rejects_non_string_definition_tag",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "runtime-invalid-tool-tag"
+      },
+      "spec": {
+        "nodes": {
+          "resolve": {
+            "block": "tools.resolve@1",
+            "config": {
+              "effectivePolicySnapshotId": "policy-snapshot-1",
+              "definitions": [
+                {
+                  "name": "knowledge.search",
+                  "description": "Search support documentation.",
+                  "inputSchema": "schemas/SearchRequest@1",
+                  "tags": [
+                    "search",
+                    1
+                  ]
+                }
+              ],
+              "bindings": [
+                {
+                  "bindingId": "binding-search",
+                  "toolName": "knowledge.search",
+                  "implementation": {
+                    "kind": "block",
+                    "block": "knowledge.search@1"
+                  },
+                  "effects": [
+                    "external_read"
+                  ],
+                  "approval": "never"
+                }
+              ],
+              "scope": {
+                "principalTools": [
+                  "knowledge.search"
+                ]
+              }
+            },
+            "outputs": {
+              "tools": "$output.tools"
+            }
+          }
+        }
+      }
+    },
+    "inputs": {},
+    "expected": {
+      "status": "failed",
+      "terminal_kind": "run_failed",
+      "outputs": {}
+    }
+  },
+  {
+    "name": "tools_resolve_rejects_blank_scope_tool_name",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "runtime-invalid-tool-scope"
+      },
+      "spec": {
+        "nodes": {
+          "resolve": {
+            "block": "tools.resolve@1",
+            "config": {
+              "effectivePolicySnapshotId": "policy-snapshot-1",
+              "definitions": [
+                {
+                  "name": "knowledge.search",
+                  "description": "Search support documentation.",
+                  "inputSchema": "schemas/SearchRequest@1"
+                }
+              ],
+              "bindings": [
+                {
+                  "bindingId": "binding-search",
+                  "toolName": "knowledge.search",
+                  "implementation": {
+                    "kind": "block",
+                    "block": "knowledge.search@1"
+                  },
+                  "effects": [
+                    "external_read"
+                  ],
+                  "approval": "never"
+                }
+              ],
+              "scope": {
+                "principalTools": [
+                  "knowledge.search",
+                  " "
+                ]
+              }
+            },
+            "outputs": {
+              "tools": "$output.tools"
+            }
+          }
+        }
+      }
+    },
+    "inputs": {},
+    "expected": {
+      "status": "failed",
+      "terminal_kind": "run_failed",
+      "outputs": {}
+    }
   }
 ]
