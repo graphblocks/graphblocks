@@ -56,6 +56,89 @@ def test_telemetry_observation_contract_detaches_mutable_inputs(monkeypatch) -> 
     }
 
 
+def test_telemetry_policy_and_tool_records_apply_capture_policy(monkeypatch) -> None:
+    _add_observability_package_paths(monkeypatch)
+    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
+    output_record = graphblocks_telemetry.OutputPolicyTelemetryRecord(
+        record_id="policy-1",
+        run_id="run-1",
+        stream_id="stream-1",
+        response_id="response-1",
+        enforcement_point="before_client_delivery",
+        disposition="abort_response",
+        release_id="release-1",
+        policy_snapshot_id="policy-snapshot-1",
+        terminal_reason="policy_denied",
+        draft_disposition="retract",
+        pending_tool_calls="deny",
+        durable_result="none",
+        accepted_through_sequence=7,
+        last_client_delivered_sequence=5,
+        attributes={"tenant": "tenant-1", "prompt": "secret prompt", "debug": "drop me"},
+    )
+    tool_record = graphblocks_telemetry.ToolExecutionTelemetryRecord(
+        record_id="tool-1",
+        run_id="run-1",
+        tool_call_id="call-1",
+        tool_name="ticket.create",
+        status="completed",
+        release_id="release-1",
+        result_mode="value",
+        effect_outcome="committed",
+        effects=("network", "external_write"),
+        duration_ms=128,
+        attributes={"tenant": "tenant-1", "tool_result": "secret result", "debug": "drop me"},
+    )
+    policy = graphblocks_telemetry.TelemetryCapturePolicy(
+        redacted_attribute_keys=("prompt", "tool_result"),
+        dropped_attribute_keys=("debug",),
+    )
+
+    redacted_output = policy.apply_output_policy(output_record)
+    redacted_tool = policy.apply_tool_execution(tool_record)
+
+    assert output_record.observation_contract() == {
+        "record_id": "policy-1",
+        "run_id": "run-1",
+        "stream_id": "stream-1",
+        "response_id": "response-1",
+        "enforcement_point": "before_client_delivery",
+        "disposition": "abort_response",
+        "release_id": "release-1",
+        "policy_snapshot_id": "policy-snapshot-1",
+        "terminal_reason": "policy_denied",
+        "draft_disposition": "retract",
+        "pending_tool_calls": "deny",
+        "durable_result": "none",
+        "accepted_through_sequence": 7,
+        "last_client_delivered_sequence": 5,
+        "attributes": {"debug": "drop me", "prompt": "secret prompt", "tenant": "tenant-1"},
+    }
+    assert tool_record.observation_contract() == {
+        "record_id": "tool-1",
+        "run_id": "run-1",
+        "tool_call_id": "call-1",
+        "tool_name": "ticket.create",
+        "status": "completed",
+        "release_id": "release-1",
+        "result_mode": "value",
+        "effect_outcome": "committed",
+        "effects": ["external_write", "network"],
+        "duration_ms": 128,
+        "attributes": {"debug": "drop me", "tenant": "tenant-1", "tool_result": "secret result"},
+    }
+    assert redacted_output.observation_contract()["attributes"] == {
+        "prompt": "[redacted]",
+        "tenant": "tenant-1",
+    }
+    assert redacted_tool.observation_contract()["attributes"] == {
+        "tenant": "tenant-1",
+        "tool_result": "[redacted]",
+    }
+    assert "OutputPolicyTelemetryRecord" in graphblocks_telemetry.__all__
+    assert "ToolExecutionTelemetryRecord" in graphblocks_telemetry.__all__
+
+
 def test_telemetry_capture_policy_redacts_sensitive_observation_fields(monkeypatch) -> None:
     _add_observability_package_paths(monkeypatch)
     graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")

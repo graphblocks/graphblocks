@@ -6,7 +6,13 @@ from dataclasses import dataclass, field
 import hashlib
 import json
 
-from graphblocks_telemetry import GenerationTelemetryRecord, MetricCardinalityLinter, MetricCardinalityLintResult
+from graphblocks_telemetry import (
+    GenerationTelemetryRecord,
+    MetricCardinalityLinter,
+    MetricCardinalityLintResult,
+    OutputPolicyTelemetryRecord,
+    ToolExecutionTelemetryRecord,
+)
 
 
 class PrometheusProjectionError(ValueError):
@@ -158,6 +164,85 @@ def prometheus_samples_from_generation(record: GenerationTelemetryRecord) -> tup
     return tuple(samples)
 
 
+def prometheus_samples_from_output_policy(record: OutputPolicyTelemetryRecord) -> tuple[PrometheusSample, ...]:
+    base_labels = {
+        "disposition": record.disposition,
+        "enforcement_point": record.enforcement_point,
+        "release_id": record.release_id or "",
+    }
+    samples = [
+        PrometheusSample(
+            "graphblocks_output_policy_decisions_total",
+            base_labels,
+            1.0,
+        )
+    ]
+    if record.terminal_reason is not None:
+        samples.append(
+            PrometheusSample(
+                "graphblocks_output_policy_cutoffs_total",
+                {
+                    **base_labels,
+                    "draft_disposition": record.draft_disposition or "",
+                    "durable_result": record.durable_result or "",
+                    "terminal_reason": record.terminal_reason,
+                },
+                1.0,
+            )
+        )
+    if record.accepted_through_sequence is not None:
+        samples.append(
+            PrometheusSample(
+                "graphblocks_output_policy_accepted_sequence",
+                base_labels,
+                float(record.accepted_through_sequence),
+            )
+        )
+    if record.last_client_delivered_sequence is not None:
+        samples.append(
+            PrometheusSample(
+                "graphblocks_output_policy_client_delivered_sequence",
+                base_labels,
+                float(record.last_client_delivered_sequence),
+            )
+        )
+    return tuple(samples)
+
+
+def prometheus_samples_from_tool_execution(record: ToolExecutionTelemetryRecord) -> tuple[PrometheusSample, ...]:
+    base_labels = {
+        "effect_outcome": record.effect_outcome or "",
+        "release_id": record.release_id or "",
+        "result_mode": record.result_mode or "",
+        "status": record.status,
+        "tool_name": record.tool_name,
+    }
+    samples = [
+        PrometheusSample(
+            "graphblocks_tool_executions_total",
+            base_labels,
+            1.0,
+        )
+    ]
+    for effect in record.effects:
+        samples.append(
+            PrometheusSample(
+                "graphblocks_tool_effects_total",
+                {**base_labels, "effect": effect},
+                1.0,
+            )
+        )
+    if record.duration_ms is not None:
+        samples.append(
+            PrometheusSample(
+                "graphblocks_tool_execution_duration_milliseconds",
+                base_labels,
+                float(record.duration_ms),
+            )
+        )
+    return tuple(samples)
+
+
 def lint_prometheus_samples(
     samples: Iterable[PrometheusSample],
     *,
@@ -174,4 +259,6 @@ __all__ = [
     "PrometheusSample",
     "lint_prometheus_samples",
     "prometheus_samples_from_generation",
+    "prometheus_samples_from_output_policy",
+    "prometheus_samples_from_tool_execution",
 ]

@@ -78,6 +78,144 @@ def test_prometheus_projection_builds_generation_samples(monkeypatch) -> None:
     ]
 
 
+def test_prometheus_projection_builds_policy_and_tool_samples_without_runtime_ids(monkeypatch) -> None:
+    graphblocks_prometheus = _import_prometheus(monkeypatch)
+    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
+    output_record = graphblocks_telemetry.OutputPolicyTelemetryRecord(
+        record_id="policy-1",
+        run_id="run-1",
+        stream_id="stream-1",
+        response_id="response-1",
+        enforcement_point="before_client_delivery",
+        disposition="abort_response",
+        release_id="release-1",
+        policy_snapshot_id="policy-snapshot-1",
+        terminal_reason="policy_denied",
+        draft_disposition="retract",
+        pending_tool_calls="deny",
+        durable_result="none",
+        accepted_through_sequence=7,
+        last_client_delivered_sequence=5,
+    )
+    tool_record = graphblocks_telemetry.ToolExecutionTelemetryRecord(
+        record_id="tool-1",
+        run_id="run-1",
+        tool_call_id="call-1",
+        tool_name="ticket.create",
+        status="completed",
+        release_id="release-1",
+        result_mode="value",
+        effect_outcome="committed",
+        effects=("network", "external_write"),
+        duration_ms=128,
+    )
+
+    output_samples = graphblocks_prometheus.prometheus_samples_from_output_policy(output_record)
+    tool_samples = graphblocks_prometheus.prometheus_samples_from_tool_execution(tool_record)
+
+    assert [sample.sample_contract() for sample in output_samples] == [
+        {
+            "name": "graphblocks_output_policy_decisions_total",
+            "labels": {
+                "disposition": "abort_response",
+                "enforcement_point": "before_client_delivery",
+                "release_id": "release-1",
+            },
+            "value": 1.0,
+        },
+        {
+            "name": "graphblocks_output_policy_cutoffs_total",
+            "labels": {
+                "disposition": "abort_response",
+                "draft_disposition": "retract",
+                "durable_result": "none",
+                "enforcement_point": "before_client_delivery",
+                "release_id": "release-1",
+                "terminal_reason": "policy_denied",
+            },
+            "value": 1.0,
+        },
+        {
+            "name": "graphblocks_output_policy_accepted_sequence",
+            "labels": {
+                "disposition": "abort_response",
+                "enforcement_point": "before_client_delivery",
+                "release_id": "release-1",
+            },
+            "value": 7.0,
+        },
+        {
+            "name": "graphblocks_output_policy_client_delivered_sequence",
+            "labels": {
+                "disposition": "abort_response",
+                "enforcement_point": "before_client_delivery",
+                "release_id": "release-1",
+            },
+            "value": 5.0,
+        },
+    ]
+    assert [sample.sample_contract() for sample in tool_samples] == [
+        {
+            "name": "graphblocks_tool_executions_total",
+            "labels": {
+                "effect_outcome": "committed",
+                "release_id": "release-1",
+                "result_mode": "value",
+                "status": "completed",
+                "tool_name": "ticket.create",
+            },
+            "value": 1.0,
+        },
+        {
+            "name": "graphblocks_tool_effects_total",
+            "labels": {
+                "effect": "external_write",
+                "effect_outcome": "committed",
+                "release_id": "release-1",
+                "result_mode": "value",
+                "status": "completed",
+                "tool_name": "ticket.create",
+            },
+            "value": 1.0,
+        },
+        {
+            "name": "graphblocks_tool_effects_total",
+            "labels": {
+                "effect": "network",
+                "effect_outcome": "committed",
+                "release_id": "release-1",
+                "result_mode": "value",
+                "status": "completed",
+                "tool_name": "ticket.create",
+            },
+            "value": 1.0,
+        },
+        {
+            "name": "graphblocks_tool_execution_duration_milliseconds",
+            "labels": {
+                "effect_outcome": "committed",
+                "release_id": "release-1",
+                "result_mode": "value",
+                "status": "completed",
+                "tool_name": "ticket.create",
+            },
+            "value": 128.0,
+        },
+    ]
+    high_cardinality_labels = {
+        "policy_snapshot_id",
+        "record_id",
+        "response_id",
+        "run_id",
+        "stream_id",
+        "tool_call_id",
+    }
+    all_samples = (*output_samples, *tool_samples)
+    assert all(not high_cardinality_labels & set(sample.sample_contract()["labels"]) for sample in all_samples)
+    assert "prometheus_samples_from_output_policy" in graphblocks_prometheus.__all__
+    assert "prometheus_samples_from_tool_execution" in graphblocks_prometheus.__all__
+
+
 def test_prometheus_package_lints_sample_cardinality(monkeypatch) -> None:
     graphblocks_prometheus = _import_prometheus(monkeypatch)
     graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")

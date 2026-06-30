@@ -76,6 +76,81 @@ class GenerationTelemetryRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class OutputPolicyTelemetryRecord:
+    record_id: str
+    run_id: str
+    stream_id: str
+    response_id: str
+    enforcement_point: str
+    disposition: str
+    release_id: str | None = None
+    policy_snapshot_id: str | None = None
+    terminal_reason: str | None = None
+    draft_disposition: str | None = None
+    pending_tool_calls: str | None = None
+    durable_result: str | None = None
+    accepted_through_sequence: int | None = None
+    last_client_delivered_sequence: int | None = None
+    attributes: Mapping[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "attributes", MappingProxyType(dict(self.attributes)))
+
+    def observation_contract(self) -> dict[str, object]:
+        return {
+            "record_id": self.record_id,
+            "run_id": self.run_id,
+            "stream_id": self.stream_id,
+            "response_id": self.response_id,
+            "enforcement_point": self.enforcement_point,
+            "disposition": self.disposition,
+            "release_id": self.release_id,
+            "policy_snapshot_id": self.policy_snapshot_id,
+            "terminal_reason": self.terminal_reason,
+            "draft_disposition": self.draft_disposition,
+            "pending_tool_calls": self.pending_tool_calls,
+            "durable_result": self.durable_result,
+            "accepted_through_sequence": self.accepted_through_sequence,
+            "last_client_delivered_sequence": self.last_client_delivered_sequence,
+            "attributes": dict(sorted(self.attributes.items())),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ToolExecutionTelemetryRecord:
+    record_id: str
+    run_id: str
+    tool_call_id: str
+    tool_name: str
+    status: str
+    release_id: str | None = None
+    result_mode: str | None = None
+    effect_outcome: str | None = None
+    effects: tuple[str, ...] = field(default_factory=tuple)
+    duration_ms: int | None = None
+    attributes: Mapping[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "effects", tuple(sorted(str(effect) for effect in self.effects)))
+        object.__setattr__(self, "attributes", MappingProxyType(dict(self.attributes)))
+
+    def observation_contract(self) -> dict[str, object]:
+        return {
+            "record_id": self.record_id,
+            "run_id": self.run_id,
+            "tool_call_id": self.tool_call_id,
+            "tool_name": self.tool_name,
+            "status": self.status,
+            "release_id": self.release_id,
+            "result_mode": self.result_mode,
+            "effect_outcome": self.effect_outcome,
+            "effects": list(self.effects),
+            "duration_ms": self.duration_ms,
+            "attributes": dict(sorted(self.attributes.items())),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class TelemetryCapturePolicy:
     redacted_attribute_keys: tuple[str, ...] = field(default_factory=tuple)
     dropped_attribute_keys: tuple[str, ...] = field(default_factory=tuple)
@@ -88,19 +163,27 @@ class TelemetryCapturePolicy:
         object.__setattr__(self, "dropped_attribute_keys", tuple(sorted(set(self.dropped_attribute_keys))))
 
     def apply_generation(self, record: GenerationTelemetryRecord) -> GenerationTelemetryRecord:
-        dropped = set(self.dropped_attribute_keys)
-        redacted = set(self.redacted_attribute_keys)
-        attributes = {
-            key: self.replacement if key in redacted else value
-            for key, value in record.attributes.items()
-            if key not in dropped
-        }
         return replace(
             record,
             input_digest=record.input_digest if self.capture_input_digest else None,
             output_digest=record.output_digest if self.capture_output_digest else None,
-            attributes=attributes,
+            attributes=self._protected_attributes(record.attributes),
         )
+
+    def apply_output_policy(self, record: OutputPolicyTelemetryRecord) -> OutputPolicyTelemetryRecord:
+        return replace(record, attributes=self._protected_attributes(record.attributes))
+
+    def apply_tool_execution(self, record: ToolExecutionTelemetryRecord) -> ToolExecutionTelemetryRecord:
+        return replace(record, attributes=self._protected_attributes(record.attributes))
+
+    def _protected_attributes(self, attributes: Mapping[str, object]) -> dict[str, object]:
+        dropped = set(self.dropped_attribute_keys)
+        redacted = set(self.redacted_attribute_keys)
+        return {
+            key: self.replacement if key in redacted else value
+            for key, value in attributes.items()
+            if key not in dropped
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -321,10 +404,12 @@ __all__ = [
     "MetricCardinalityIssue",
     "MetricCardinalityLintResult",
     "MetricCardinalityLinter",
+    "OutputPolicyTelemetryRecord",
     "TelemetryCapturePolicy",
     "TelemetryCapturePolicyIssue",
     "TelemetryCapturePolicyLintResult",
     "TelemetryCapturePolicyLinter",
     "TelemetryExportResult",
     "TelemetryProjectionError",
+    "ToolExecutionTelemetryRecord",
 ]
