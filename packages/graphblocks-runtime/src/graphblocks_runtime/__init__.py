@@ -25,6 +25,7 @@ try:
         evaluate_provider_limit_policy_json,
         evaluate_retry_policy_json,
         evaluate_sequential_tool_queue_json,
+        evaluate_task_group_json,
         evaluate_tool_approval_json,
         evaluate_tool_execution_plan_json,
         evaluate_tool_result_stream_json,
@@ -147,6 +148,9 @@ except ImportError as error:
         require_native_extension()
 
     def evaluate_cancellation_scope_json(root_json: str, operations_json: str) -> str:
+        require_native_extension()
+
+    def evaluate_task_group_json(group_json: str, operations_json: str) -> str:
         require_native_extension()
 
     def evaluate_declarative_output_policy_json(
@@ -432,6 +436,13 @@ def evaluate_cancellation_scope(root: dict[str, object], operations: object) -> 
     )
 
 
+def evaluate_task_group(group: dict[str, object], operations: object) -> dict[str, object]:
+    return _json_object_result(
+        evaluate_task_group_json(_canonical_json(group), _canonical_json(operations)),
+        "native task group evaluation result",
+    )
+
+
 def evaluate_declarative_output_policy(
     rules: object,
     chunk: dict[str, object],
@@ -628,6 +639,8 @@ __all__ = [
     "evaluate_retry_policy_json",
     "evaluate_sequential_tool_queue",
     "evaluate_sequential_tool_queue_json",
+    "evaluate_task_group",
+    "evaluate_task_group_json",
     "evaluate_tool_approval",
     "evaluate_tool_approval_json",
     "evaluate_tool_execution_plan",

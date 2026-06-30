@@ -45,6 +45,10 @@ use graphblocks_runtime_core::retry::{
     ProviderLimitKind, ProviderLimitPolicy, RetryDecision, RetryPolicy, RetryRequest,
 };
 use graphblocks_runtime_core::scheduler::{ScheduledNode, StartedNode};
+use graphblocks_runtime_core::task_group::{
+    ChildTaskState, SiblingCancellationPolicy, TaskGroupDecision, TaskGroupFailure,
+    TaskGroupFailurePolicy, TaskGroupPolicy, TaskGroupState,
+};
 use graphblocks_runtime_core::test_runtime::{InProcessTestRuntime, NodeExecutor, TestRunStatus};
 use graphblocks_runtime_core::tool::{
     BlockToolImplementation, GraphToolImplementation, McpToolImplementation,
@@ -852,6 +856,209 @@ fn evaluate_cancellation_scope_json(root_json: &str, operations_json: &str) -> P
     serde_json::to_string(&payload).map_err(|error| {
         PyRuntimeError::new_err(format!(
             "failed to serialize cancellation scope evaluation: {error}"
+        ))
+    })
+}
+
+#[pyfunction]
+fn evaluate_task_group_json(group_json: &str, operations_json: &str) -> PyResult<String> {
+    let parse_failure_policy = |value: &str, label: &str| -> PyResult<TaskGroupFailurePolicy> {
+        match value {
+            "collect" => Ok(TaskGroupFailurePolicy::Collect),
+            "fail_fast" | "failFast" => Ok(TaskGroupFailurePolicy::FailFast),
+            value => Err(PyValueError::new_err(format!(
+                "{label} has unknown task group failure policy {value:?}"
+            ))),
+        }
+    };
+    let parse_cancellation_policy =
+        |value: &str, label: &str| -> PyResult<SiblingCancellationPolicy> {
+            match value {
+                "keep_running" | "keepRunning" => Ok(SiblingCancellationPolicy::KeepRunning),
+                "cancel_siblings_on_fatal" | "cancelSiblingsOnFatal" => {
+                    Ok(SiblingCancellationPolicy::CancelSiblingsOnFatal)
+                }
+                value => Err(PyValueError::new_err(format!(
+                    "{label} has unknown sibling cancellation policy {value:?}"
+                ))),
+            }
+        };
+    let decision_json = |decision: &TaskGroupDecision| -> Value {
+        match decision {
+            TaskGroupDecision::Pending => json!({"status": "pending"}),
+            TaskGroupDecision::Succeeded {
+                successes,
+                failures,
+            } => json!({
+                "status": "succeeded",
+                "successes": successes,
+                "failures": failures,
+            }),
+            TaskGroupDecision::Failed {
+                failure,
+                cancel_siblings,
+            } => {
+                let failure = match failure {
+                    TaskGroupFailure::ChildFailed { child_id, error } => json!({
+                        "kind": "child_failed",
+                        "childId": child_id,
+                        "error": serialize_block_error(error),
+                    }),
+                    TaskGroupFailure::InsufficientSuccesses {
+                        successes,
+                        required,
+                    } => json!({
+                        "kind": "insufficient_successes",
+                        "successes": successes,
+                        "required": required,
+                    }),
+                    TaskGroupFailure::DeadlineExceeded {
+                        deadline_ms,
+                        now_ms,
+                    } => json!({
+                        "kind": "deadline_exceeded",
+                        "deadlineMs": deadline_ms,
+                        "nowMs": now_ms,
+                    }),
+                };
+                json!({
+                    "status": "failed",
+                    "failure": failure,
+                    "cancelSiblings": cancel_siblings,
+                })
+            }
+        }
+    };
+
+    let group_value = parse_json_argument(group_json, "task group")?;
+    let operations_value = parse_json_argument(operations_json, "task group operations")?;
+    let group_object = json_object(&group_value, "task group")?;
+    let operations = operations_value
+        .as_array()
+        .ok_or_else(|| PyValueError::new_err("task group operations must be an array"))?;
+    let children_value = alias_value(group_object, "children", "children")
+        .ok_or_else(|| PyValueError::new_err("task group.children is required"))?;
+    let children = children_value
+        .as_array()
+        .ok_or_else(|| PyValueError::new_err("task group.children must be an array"))?
+        .iter()
+        .enumerate()
+        .map(|(index, child)| {
+            child.as_str().map(str::to_owned).ok_or_else(|| {
+                PyValueError::new_err(format!("task group.children[{index}] must be a string"))
+            })
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    let policy_object = alias_value(group_object, "policy", "policy")
+        .map(|value| json_object(value, "task group.policy"))
+        .transpose()?;
+    let policy_source = policy_object.unwrap_or(group_object);
+    let minimum_successes = required_alias_u64(
+        policy_source,
+        "minimumSuccesses",
+        "minimum_successes",
+        "task group.policy",
+    )?
+    .try_into()
+    .map_err(|_| PyValueError::new_err("task group.policy.minimumSuccesses is too large"))?;
+    let mut policy = TaskGroupPolicy::new(minimum_successes);
+    if let Some(failure) =
+        optional_nullable_alias_string(policy_source, "failure", "failure", "task group.policy")?
+    {
+        policy = policy.with_failure(parse_failure_policy(failure, "task group.policy.failure")?);
+    }
+    if let Some(cancellation) = optional_nullable_alias_string(
+        policy_source,
+        "cancellation",
+        "cancellation",
+        "task group.policy",
+    )? {
+        policy = policy.with_cancellation(parse_cancellation_policy(
+            cancellation,
+            "task group.policy.cancellation",
+        )?);
+    }
+    if let Some(deadline_ms) = optional_nullable_alias_u64(
+        policy_source,
+        "deadlineMs",
+        "deadline_ms",
+        "task group.policy",
+    )? {
+        policy = policy.with_deadline_ms(deadline_ms);
+    }
+    let mut group = TaskGroupState::new(children.iter().map(String::as_str), policy)
+        .map_err(|error| PyValueError::new_err(format!("invalid task group: {error:?}")))?;
+    let mut operation_results = Vec::new();
+    let mut final_decision = TaskGroupDecision::Pending;
+
+    for (operation_index, operation) in operations.iter().enumerate() {
+        let label = format!("task group operations[{operation_index}]");
+        let operation = json_object(operation, &label)?;
+        let decision = match required_alias_string(operation, "op", "kind", &label)? {
+            "start" | "started" => {
+                let child_id = required_alias_string(operation, "childId", "child_id", &label)?;
+                group.record_started(child_id)
+            }
+            "succeed" | "success" | "succeeded" => {
+                let child_id = required_alias_string(operation, "childId", "child_id", &label)?;
+                group.record_success(child_id)
+            }
+            "fail" | "failure" | "failed" => {
+                let child_id = required_alias_string(operation, "childId", "child_id", &label)?;
+                let error_value = alias_value(operation, "error", "error")
+                    .ok_or_else(|| PyValueError::new_err(format!("{label}.error is required")))?;
+                let error = parse_block_error(error_value, &format!("{label}.error"))?;
+                group.record_failure(child_id, error)
+            }
+            "deadline" | "check_deadline" | "checkDeadline" => {
+                let now_ms = required_alias_u64(operation, "nowMs", "now_ms", &label)?;
+                group.check_deadline(now_ms)
+            }
+            value => {
+                return Err(PyValueError::new_err(format!(
+                    "{label}.op has unknown operation {value:?}"
+                )));
+            }
+        }
+        .map_err(|error| PyValueError::new_err(format!("{label} failed: {error:?}")))?;
+        final_decision = decision.clone();
+        operation_results.push(json!({
+            "op": required_alias_string(operation, "op", "kind", &label)?,
+            "decision": decision_json(&decision),
+        }));
+    }
+
+    let children_state = children
+        .iter()
+        .map(|child_id| {
+            let state = group.child_state(child_id).ok_or_else(|| {
+                PyRuntimeError::new_err(format!("task group lost child state {child_id:?}"))
+            })?;
+            let state_json = match state {
+                ChildTaskState::Pending => json!({"status": "pending"}),
+                ChildTaskState::Running => json!({"status": "running"}),
+                ChildTaskState::Succeeded => json!({"status": "succeeded"}),
+                ChildTaskState::Failed(error) => json!({
+                    "status": "failed",
+                    "error": serialize_block_error(error),
+                }),
+                ChildTaskState::Cancelled(reason) => json!({
+                    "status": "cancelled",
+                    "reason": format!("{:?}", reason.code),
+                }),
+            };
+            Ok((child_id.clone(), state_json))
+        })
+        .collect::<PyResult<serde_json::Map<_, _>>>()?;
+    let payload = json!({
+        "ok": true,
+        "decision": decision_json(&final_decision),
+        "operations": operation_results,
+        "children": children_state,
+    });
+    serde_json::to_string(&payload).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize task group evaluation: {error}"
         ))
     })
 }
@@ -6738,6 +6945,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
         module
     )?)?;
     module.add_function(wrap_pyfunction!(evaluate_cancellation_scope_json, module)?)?;
+    module.add_function(wrap_pyfunction!(evaluate_task_group_json, module)?)?;
     module.add_function(wrap_pyfunction!(
         record_tool_effect_precondition_json,
         module
@@ -6799,7 +7007,7 @@ mod tests {
         evaluate_cancellation_scope_json, evaluate_connector_capabilities_json,
         evaluate_declarative_output_policy_json, evaluate_durable_tool_terminal_store_json,
         evaluate_output_gate_json, evaluate_provider_limit_policy_json, evaluate_retry_policy_json,
-        evaluate_sequential_tool_queue_json, evaluate_tool_approval_json,
+        evaluate_sequential_tool_queue_json, evaluate_task_group_json, evaluate_tool_approval_json,
         evaluate_tool_execution_plan_json, evaluate_tool_result_stream_json,
         evaluate_usage_ledger_json, finalize_tool_call_json,
         negotiate_application_protocol_capabilities_json, parse_resolved_tool, parse_tool_call,
@@ -7663,6 +7871,81 @@ mod tests {
                 .pointer("/stateByTokenId/run/reason/code")
                 .and_then(Value::as_str),
             Some("policy_denied")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_task_group_json_returns_fail_fast_sibling_cancellations() -> Result<(), String> {
+        let group = json!({
+            "children": ["dense", "keyword", "tickets"],
+            "policy": {
+                "minimumSuccesses": 2,
+                "failure": "fail_fast",
+                "cancellation": "cancel_siblings_on_fatal"
+            }
+        });
+        let operations = json!([
+            {"op": "start", "childId": "dense"},
+            {"op": "start", "childId": "keyword"},
+            {
+                "op": "fail",
+                "childId": "dense",
+                "error": {
+                    "code": "provider.timeout",
+                    "category": "timeout",
+                    "message": "provider timed out",
+                    "retryable": true
+                }
+            }
+        ]);
+        let result_json = evaluate_task_group_json(
+            &serde_json::to_string(&group).map_err(|error| error.to_string())?,
+            &serde_json::to_string(&operations).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            result.pointer("/decision/status").and_then(Value::as_str),
+            Some("failed")
+        );
+        assert_eq!(
+            result
+                .pointer("/decision/failure/kind")
+                .and_then(Value::as_str),
+            Some("child_failed")
+        );
+        assert_eq!(
+            result
+                .pointer("/decision/failure/error/category")
+                .and_then(Value::as_str),
+            Some("timeout")
+        );
+        assert_eq!(
+            result
+                .pointer("/decision/cancelSiblings")
+                .and_then(Value::as_array),
+            Some(&vec![json!("keyword"), json!("tickets")])
+        );
+        assert_eq!(
+            result
+                .pointer("/children/dense/status")
+                .and_then(Value::as_str),
+            Some("failed")
+        );
+        assert_eq!(
+            result
+                .pointer("/children/keyword/status")
+                .and_then(Value::as_str),
+            Some("running")
+        );
+        assert_eq!(
+            result
+                .pointer("/children/tickets/status")
+                .and_then(Value::as_str),
+            Some("pending")
         );
         Ok(())
     }

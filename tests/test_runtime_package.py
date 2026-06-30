@@ -293,6 +293,16 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             }
         )
 
+    def evaluate_task_group_json(group_json: str, operations_json: str) -> str:
+        calls.append(("task_group", (group_json, operations_json)))
+        return json.dumps(
+            {
+                "ok": True,
+                "group": json.loads(group_json),
+                "operations": json.loads(operations_json),
+            }
+        )
+
     def evaluate_declarative_output_policy_json(
         rules_json: str,
         chunk_json: str,
@@ -411,6 +421,7 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         evaluate_provider_limit_policy_json=evaluate_provider_limit_policy_json,
         evaluate_retry_policy_json=evaluate_retry_policy_json,
         evaluate_sequential_tool_queue_json=evaluate_sequential_tool_queue_json,
+        evaluate_task_group_json=evaluate_task_group_json,
         evaluate_tool_approval_json=evaluate_tool_approval_json,
         evaluate_tool_execution_plan_json=evaluate_tool_execution_plan_json,
         evaluate_tool_result_stream_json=evaluate_tool_result_stream_json,
@@ -543,6 +554,29 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
                 "guarantee": "best_effort_remote",
             },
             {"op": "cancel", "tokenId": "run", "reason": {"code": "policy_denied"}},
+        ],
+    )
+    task_group = runtime.evaluate_task_group(
+        {
+            "children": ["dense", "keyword"],
+            "policy": {
+                "minimumSuccesses": 2,
+                "failure": "fail_fast",
+                "cancellation": "cancel_siblings_on_fatal",
+            },
+        },
+        [
+            {"op": "start", "childId": "dense"},
+            {
+                "op": "fail",
+                "childId": "dense",
+                "error": {
+                    "code": "provider.timeout",
+                    "category": "timeout",
+                    "message": "provider timed out",
+                    "retryable": True,
+                },
+            },
         ],
     )
     policy_decision = runtime.evaluate_declarative_output_policy(
@@ -766,6 +800,30 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             {"op": "cancel", "reason": {"code": "policy_denied"}, "tokenId": "run"},
         ],
     }
+    assert task_group == {
+        "ok": True,
+        "group": {
+            "children": ["dense", "keyword"],
+            "policy": {
+                "cancellation": "cancel_siblings_on_fatal",
+                "failure": "fail_fast",
+                "minimumSuccesses": 2,
+            },
+        },
+        "operations": [
+            {"childId": "dense", "op": "start"},
+            {
+                "childId": "dense",
+                "error": {
+                    "category": "timeout",
+                    "code": "provider.timeout",
+                    "message": "provider timed out",
+                    "retryable": True,
+                },
+                "op": "fail",
+            },
+        ],
+    }
     assert policy_decision == {
         "disposition": "allow",
         "rules": [{"ruleId": "allow"}],
@@ -980,6 +1038,20 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             ),
         ),
         (
+            "task_group",
+            (
+                (
+                    '{"children":["dense","keyword"],"policy":{"cancellation":'
+                    '"cancel_siblings_on_fatal","failure":"fail_fast","minimumSuccesses":2}}'
+                ),
+                (
+                    '[{"childId":"dense","op":"start"},{"childId":"dense","error":'
+                    '{"category":"timeout","code":"provider.timeout",'
+                    '"message":"provider timed out","retryable":true},"op":"fail"}]'
+                ),
+            ),
+        ),
+        (
             "output_policy",
             ('[{"ruleId":"allow"}]', '{"sequence":1,"streamId":"stream-1"}', 1_010),
         ),
@@ -1098,6 +1170,8 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     assert "evaluate_provider_limit_policy_json" in runtime.__all__
     assert "evaluate_cancellation_scope" in runtime.__all__
     assert "evaluate_cancellation_scope_json" in runtime.__all__
+    assert "evaluate_task_group" in runtime.__all__
+    assert "evaluate_task_group_json" in runtime.__all__
     assert "evaluate_declarative_output_policy" in runtime.__all__
     assert "evaluate_application_event_stream" in runtime.__all__
     assert "evaluate_application_event_stream_json" in runtime.__all__
