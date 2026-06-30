@@ -6,6 +6,7 @@ import pytest
 
 from graphblocks.budget import (
     BudgetExceededError,
+    BudgetPermit,
     BudgetPermitExpiredError,
     BudgetPermitScopeError,
     BudgetReservationStateError,
@@ -45,6 +46,29 @@ def test_budget_ledger_issues_bounded_permit_from_reservations() -> None:
     assert permit.atomic_unit.resource_id == "turn:1"
     assert permit.allows([_tokens("25")]) is True
     assert permit.allows([_tokens("41")]) is False
+
+
+def test_budget_permit_rejects_invalid_fencing_tokens() -> None:
+    base = {
+        "permit_id": "permit-1",
+        "reservation_refs": ("reservation-1",),
+        "owner": ResourceRef("worker:1", resource_kind="worker"),
+        "atomic_unit": ResourceRef("turn:1", resource_kind="turn"),
+        "admission_epoch": 3,
+        "authorized_amounts": [_tokens("40")],
+        "continuation_profile": "finish_current_turn",
+        "policy_snapshot_digest": "sha256:policy",
+        "expires_at": "2026-06-22T01:00:00Z",
+    }
+
+    with pytest.raises(ValueError, match="budget permit fencing_tokens must be a mapping"):
+        BudgetPermit(**base, fencing_tokens=object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="budget permit fencing token references must be non-empty strings"):
+        BudgetPermit(**base, fencing_tokens={" ": 1})
+    with pytest.raises(ValueError, match="budget permit fencing token values must be non-negative integers"):
+        BudgetPermit(**base, fencing_tokens={"budget-1": True})  # type: ignore[dict-item]
+    with pytest.raises(ValueError, match="budget permit fencing token values must be non-negative integers"):
+        BudgetPermit(**base, fencing_tokens={"budget-1": -1})
 
 
 def test_budget_permit_requires_matching_usage_dimensions() -> None:

@@ -212,7 +212,15 @@ class BudgetPermit:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "reservation_refs", tuple(self.reservation_refs))
-        object.__setattr__(self, "fencing_tokens", MappingProxyType(dict(self.fencing_tokens)))
+        if not isinstance(self.fencing_tokens, Mapping):
+            raise ValueError("budget permit fencing_tokens must be a mapping")
+        fencing_tokens = dict(self.fencing_tokens)
+        for reference, token in fencing_tokens.items():
+            if not isinstance(reference, str) or not reference.strip():
+                raise ValueError("budget permit fencing token references must be non-empty strings")
+            if not isinstance(token, int) or isinstance(token, bool) or token < 0:
+                raise ValueError("budget permit fencing token values must be non-negative integers")
+        object.__setattr__(self, "fencing_tokens", MappingProxyType(fencing_tokens))
 
     def allows(self, amounts: list[UsageAmount]) -> bool:
         authorized = _amounts_to_dict(self.authorized_amounts)
