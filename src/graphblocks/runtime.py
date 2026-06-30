@@ -548,7 +548,7 @@ def stdlib_registry() -> RuntimeRegistry:
             )
 
         bindings = []
-        for item in config.get("bindings", []):
+        for index, item in enumerate(config.get("bindings", [])):
             if not isinstance(item, dict):
                 raise TypeError("tools.resolve@1 config.bindings entries must be mappings")
             implementation_config = item.get("implementation")
@@ -604,6 +604,13 @@ def stdlib_registry() -> RuntimeRegistry:
                 )
             else:
                 raise TypeError(f"tools.resolve@1 unsupported implementation kind {kind!r}")
+            timeout_ms = item.get("timeoutMs", item.get("timeout_ms"))
+            if timeout_ms is not None and (
+                not isinstance(timeout_ms, int) or isinstance(timeout_ms, bool) or timeout_ms < 0
+            ):
+                raise TypeError(
+                    f"tools.resolve@1 config.bindings[{index}].timeoutMs must be a non-negative integer"
+                )
             bindings.append(
                 ToolBinding(
                     binding_id=str(item.get("bindingId", item.get("binding_id"))),
@@ -614,7 +621,7 @@ def stdlib_registry() -> RuntimeRegistry:
                     idempotency=str(item.get("idempotency", "optional")),
                     cancellation=str(item.get("cancellation", "cooperative")),
                     result_mode=str(item.get("resultMode", item.get("result_mode", "value"))),
-                    timeout_ms=item.get("timeoutMs", item.get("timeout_ms")),
+                    timeout_ms=timeout_ms,
                     retry_policy_ref=(
                         str(item.get("retryPolicyRef", item.get("retry_policy_ref")))
                         if item.get("retryPolicyRef", item.get("retry_policy_ref")) is not None
@@ -827,7 +834,11 @@ def stdlib_registry() -> RuntimeRegistry:
             return None
         if not isinstance(value, list | tuple | set | frozenset):
             raise TypeError(f"tools.resolve@1 scope {camel_key} must be a sequence")
-        return frozenset(str(item) for item in value)
+        if any(not isinstance(item, str) for item in value):
+            raise TypeError(f"tools.resolve@1 scope {camel_key} entries must be strings")
+        if any(not item.strip() for item in value):
+            raise TypeError(f"tools.resolve@1 scope {camel_key} entries must not be empty")
+        return frozenset(value)
 
     registry.register("conversation.begin_turn@1", begin_turn)
     registry.register("prompt.render@1", prompt_render)

@@ -210,7 +210,7 @@ def test_stdlib_runtime_executes_tool_resolution_and_agent_run() -> None:
     assert result.outputs["tools"][0]["binding"]["timeout_ms"] == 250
 
 
-@pytest.mark.parametrize("timeout_ms", [True, "250"])
+@pytest.mark.parametrize("timeout_ms", [True, "250", -1])
 def test_stdlib_tool_resolution_rejects_non_integer_timeout_ms(timeout_ms: object) -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
@@ -253,7 +253,61 @@ def test_stdlib_tool_resolution_rejects_non_integer_timeout_ms(timeout_ms: objec
     assert result.outputs == {}
     failed = [record for record in result.journal.records if record.kind == "node_failed"]
     assert failed[0].payload["node"] == "resolve"
-    assert "tool timeout_ms must be non-negative" in failed[0].payload["error"]
+    assert "tools.resolve@1 config.bindings[0].timeoutMs must be a non-negative integer" in failed[0].payload["error"]
+
+
+@pytest.mark.parametrize(
+    "principal_tools,error",
+    [
+        (["knowledge.search", 1], "tools.resolve@1 scope principalTools entries must be strings"),
+        (["knowledge.search", " "], "tools.resolve@1 scope principalTools entries must not be empty"),
+    ],
+)
+def test_stdlib_tool_resolution_rejects_invalid_scope_entries(
+    principal_tools: list[object],
+    error: str,
+) -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "tool-scope-entry-validation"},
+        "spec": {
+            "nodes": {
+                "resolve": {
+                    "block": "tools.resolve@1",
+                    "config": {
+                        "effectivePolicySnapshotId": "policy-snapshot-1",
+                        "definitions": [
+                            {
+                                "name": "knowledge.search",
+                                "description": "Search support documentation.",
+                                "inputSchema": "schemas/SearchRequest@1",
+                            }
+                        ],
+                        "bindings": [
+                            {
+                                "bindingId": "binding-search",
+                                "toolName": "knowledge.search",
+                                "implementation": {"kind": "block", "block": "knowledge.search@1"},
+                                "effects": ["external_read"],
+                                "approval": "never",
+                            }
+                        ],
+                        "scope": {"principalTools": principal_tools},
+                    },
+                    "outputs": {"tools": "$output.tools"},
+                }
+            }
+        },
+    }
+
+    result = InProcessRuntime(stdlib_registry()).run(graph, {})
+
+    assert result.status == "failed"
+    assert result.outputs == {}
+    failed = [record for record in result.journal.records if record.kind == "node_failed"]
+    assert failed[0].payload["node"] == "resolve"
+    assert error in failed[0].payload["error"]
 
 
 def test_journal_rejects_second_terminal_record() -> None:
