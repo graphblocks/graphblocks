@@ -62,8 +62,8 @@ use graphblocks_runtime_core::timeout::{Deadline, TimeoutDecision, TimeoutPolicy
 use graphblocks_runtime_core::tool::{
     BlockToolImplementation, GraphToolImplementation, McpToolImplementation,
     OpenApiToolImplementation, RemoteToolImplementation, ResolvedTool, ToolApproval, ToolBinding,
-    ToolCancellation, ToolDefinition, ToolEffect, ToolIdempotency, ToolImplementation,
-    ToolResultMode,
+    ToolCancellation, ToolCatalog, ToolDefinition, ToolEffect, ToolIdempotency, ToolImplementation,
+    ToolResolutionError, ToolResolutionScope, ToolResultMode,
 };
 use graphblocks_runtime_core::tool_admission::{
     ToolAdmission, ToolAdmissionError, ToolAdmissionRequest, ToolPolicyRequestContext,
@@ -692,6 +692,67 @@ fn evaluate_tool_admission_json(request_json: &str) -> PyResult<String> {
     serde_json::to_string(&payload).map_err(|error| {
         PyRuntimeError::new_err(format!(
             "failed to serialize tool admission evaluation: {error}"
+        ))
+    })
+}
+
+#[pyfunction]
+fn evaluate_tool_resolution_json(
+    catalog_json: &str,
+    scope_json: &str,
+    effective_policy_snapshot_id: &str,
+) -> PyResult<String> {
+    let catalog_value = parse_json_argument(catalog_json, "tool catalog")?;
+    let scope_value = parse_json_argument(scope_json, "tool resolution scope")?;
+    let catalog_object = json_object(&catalog_value, "tool catalog")?;
+    let definitions_value = alias_value(catalog_object, "definitions", "definitions")
+        .ok_or_else(|| PyValueError::new_err("tool catalog.definitions is required"))?;
+    let bindings_value = alias_value(catalog_object, "bindings", "bindings")
+        .ok_or_else(|| PyValueError::new_err("tool catalog.bindings is required"))?;
+    let definitions = definitions_value
+        .as_array()
+        .ok_or_else(|| PyValueError::new_err("tool catalog.definitions must be an array"))?
+        .iter()
+        .enumerate()
+        .map(|(index, definition)| {
+            parse_tool_definition(definition, &format!("tool catalog.definitions[{index}]"))
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    let bindings = bindings_value
+        .as_array()
+        .ok_or_else(|| PyValueError::new_err("tool catalog.bindings must be an array"))?
+        .iter()
+        .enumerate()
+        .map(|(index, binding)| {
+            parse_tool_binding(binding, &format!("tool catalog.bindings[{index}]"))
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    let scope = parse_tool_resolution_scope(&scope_value, "tool resolution scope")?;
+    let payload = match ToolCatalog::new(definitions, bindings) {
+        Ok(catalog) => match catalog.resolve(scope, effective_policy_snapshot_id) {
+            Ok(resolved_tools) => json!({
+                "ok": true,
+                "resolvedTools": resolved_tools
+                    .iter()
+                    .map(serialize_resolved_tool)
+                    .collect::<Vec<_>>(),
+                "error": Value::Null,
+            }),
+            Err(error) => json!({
+                "ok": false,
+                "resolvedTools": [],
+                "error": serialize_tool_resolution_error(&error),
+            }),
+        },
+        Err(error) => json!({
+            "ok": false,
+            "resolvedTools": [],
+            "error": serialize_tool_resolution_error(&error),
+        }),
+    };
+    serde_json::to_string(&payload).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize tool resolution evaluation: {error}"
         ))
     })
 }
@@ -3301,6 +3362,65 @@ fn parse_resolved_tool(value: &Value, label: &str) -> PyResult<ResolvedTool> {
     Ok(resolved_tool)
 }
 
+fn parse_scope_tool_list(
+    object: &serde_json::Map<String, Value>,
+    primary: &str,
+    alternate: &str,
+    label: &str,
+) -> PyResult<Option<Vec<String>>> {
+    alias_value(object, primary, alternate)
+        .filter(|value| !value.is_null())
+        .map(|value| parse_string_vec(Some(value), &format!("{label}.{primary}")))
+        .transpose()
+}
+
+fn parse_tool_resolution_scope(value: &Value, label: &str) -> PyResult<ToolResolutionScope> {
+    let object = json_object(value, label)?;
+    let mut scope = ToolResolutionScope::new();
+    if let Some(tools) =
+        parse_scope_tool_list(object, "applicationTools", "application_tools", label)?
+    {
+        scope = scope.with_application_tools(tools);
+    }
+    if let Some(tools) = parse_scope_tool_list(object, "graphTools", "graph_tools", label)? {
+        scope = scope.with_graph_tools(tools);
+    }
+    if let Some(tools) = parse_scope_tool_list(object, "principalTools", "principal_tools", label)?
+    {
+        scope = scope.with_principal_tools(tools);
+    }
+    if let Some(tools) =
+        parse_scope_tool_list(object, "tenantPolicyTools", "tenant_policy_tools", label)?
+    {
+        scope = scope.with_tenant_policy_tools(tools);
+    }
+    if let Some(tools) = parse_scope_tool_list(
+        object,
+        "conversationPolicyTools",
+        "conversation_policy_tools",
+        label,
+    )? {
+        scope = scope.with_conversation_policy_tools(tools);
+    }
+    if let Some(tools) = parse_scope_tool_list(
+        object,
+        "dataClassificationTools",
+        "data_classification_tools",
+        label,
+    )? {
+        scope = scope.with_data_classification_tools(tools);
+    }
+    if let Some(tools) =
+        parse_scope_tool_list(object, "deploymentTools", "deployment_tools", label)?
+    {
+        scope = scope.with_deployment_tools(tools);
+    }
+    if let Some(tools) = parse_scope_tool_list(object, "budgetTools", "budget_tools", label)? {
+        scope = scope.with_budget_tools(tools);
+    }
+    Ok(scope)
+}
+
 fn parse_tool_approval_status(value: &str, label: &str) -> PyResult<ToolApprovalStatus> {
     match value {
         "requested" => Ok(ToolApprovalStatus::Requested),
@@ -4709,6 +4829,192 @@ fn serialize_tool_admission_error(error: &ToolAdmissionError) -> Value {
         ToolAdmissionError::ResponsePolicyStopped { response_id } => json!({
             "code": "response_policy_stopped",
             "responseId": response_id,
+        }),
+    }
+}
+
+fn serialize_tool_definition(definition: &ToolDefinition) -> Value {
+    json!({
+        "name": definition.name.as_str(),
+        "description": definition.description.as_str(),
+        "inputSchema": definition.input_schema.as_str(),
+        "outputSchema": definition.output_schema.as_deref(),
+        "tags": definition.tags.iter().collect::<Vec<_>>(),
+        "version": definition.version.as_deref(),
+    })
+}
+
+fn serialize_tool_implementation(implementation: &ToolImplementation) -> Value {
+    match implementation {
+        ToolImplementation::Block(implementation) => json!({
+            "kind": "block",
+            "block": implementation.block.as_str(),
+            "inputMapping": &implementation.input_mapping,
+            "outputMapping": &implementation.output_mapping,
+        }),
+        ToolImplementation::Graph(implementation) => json!({
+            "kind": "graph",
+            "graph": implementation.graph.as_str(),
+            "inputMapping": &implementation.input_mapping,
+            "outputMapping": &implementation.output_mapping,
+        }),
+        ToolImplementation::Remote(implementation) => json!({
+            "kind": "remote",
+            "connection": implementation.connection.as_str(),
+            "operation": implementation.operation.as_str(),
+        }),
+        ToolImplementation::Mcp(implementation) => json!({
+            "kind": "mcp",
+            "server": implementation.server.as_str(),
+            "remoteName": implementation.remote_name.as_str(),
+        }),
+        ToolImplementation::OpenApi(implementation) => json!({
+            "kind": "openapi",
+            "connection": implementation.connection.as_str(),
+            "operationId": implementation.operation_id.as_str(),
+        }),
+    }
+}
+
+fn serialize_tool_approval(value: ToolApproval) -> &'static str {
+    match value {
+        ToolApproval::Never => "never",
+        ToolApproval::Policy => "policy",
+        ToolApproval::Always => "always",
+    }
+}
+
+fn serialize_tool_idempotency(value: ToolIdempotency) -> &'static str {
+    match value {
+        ToolIdempotency::NotApplicable => "not_applicable",
+        ToolIdempotency::Optional => "optional",
+        ToolIdempotency::Required => "required",
+    }
+}
+
+fn serialize_tool_cancellation(value: ToolCancellation) -> &'static str {
+    match value {
+        ToolCancellation::Unsupported => "unsupported",
+        ToolCancellation::Cooperative => "cooperative",
+        ToolCancellation::ForceTerminable => "force_terminable",
+    }
+}
+
+fn serialize_tool_result_mode(value: ToolResultMode) -> &'static str {
+    match value {
+        ToolResultMode::Value => "value",
+        ToolResultMode::Incremental => "incremental",
+        ToolResultMode::BoundedSequence => "bounded_sequence",
+        ToolResultMode::ArtifactReference => "artifact_reference",
+    }
+}
+
+fn serialize_tool_binding(binding: &ToolBinding) -> Value {
+    json!({
+        "bindingId": binding.binding_id.as_str(),
+        "toolName": binding.tool_name.as_str(),
+        "implementation": serialize_tool_implementation(&binding.implementation),
+        "effects": binding.effects.iter().map(|effect| effect.as_str()).collect::<Vec<_>>(),
+        "approval": serialize_tool_approval(binding.approval),
+        "idempotency": serialize_tool_idempotency(binding.idempotency),
+        "cancellation": serialize_tool_cancellation(binding.cancellation),
+        "resultMode": serialize_tool_result_mode(binding.result_mode),
+        "timeoutMs": binding.timeout_ms,
+        "retryPolicyRef": binding.retry_policy_ref.as_deref(),
+        "policyProfileRef": binding.policy_profile_ref.as_deref(),
+        "executionClass": binding.execution_class.as_deref(),
+    })
+}
+
+fn serialize_resolved_tool(tool: &ResolvedTool) -> Value {
+    json!({
+        "resolvedToolId": tool.resolved_tool_id.as_str(),
+        "definition": serialize_tool_definition(&tool.definition),
+        "binding": serialize_tool_binding(&tool.binding),
+        "definitionDigest": tool.definition_digest.as_str(),
+        "bindingDigest": tool.binding_digest.as_str(),
+        "effectivePolicySnapshotId": tool.effective_policy_snapshot_id.as_str(),
+        "allowedForPrincipal": tool.allowed_for_principal,
+        "validUntilUnixMs": tool.valid_until_unix_ms,
+    })
+}
+
+fn serialize_tool_resolution_error(error: &ToolResolutionError) -> Value {
+    match error {
+        ToolResolutionError::EmptyToolDefinitionField { field } => json!({
+            "code": "empty_tool_definition_field",
+            "field": field,
+        }),
+        ToolResolutionError::EmptyToolBindingField { field } => json!({
+            "code": "empty_tool_binding_field",
+            "field": field,
+        }),
+        ToolResolutionError::EmptyToolImplementationField { kind, field } => json!({
+            "code": "empty_tool_implementation_field",
+            "kind": kind,
+            "field": field,
+        }),
+        ToolResolutionError::ConflictingToolEffects { binding_id } => json!({
+            "code": "conflicting_tool_effects",
+            "bindingId": binding_id,
+        }),
+        ToolResolutionError::EmptyResolvedToolField { field } => json!({
+            "code": "empty_resolved_tool_field",
+            "field": field,
+        }),
+        ToolResolutionError::ResolvedToolDigestMismatch {
+            field,
+            expected,
+            actual,
+        } => json!({
+            "code": "resolved_tool_digest_mismatch",
+            "field": field,
+            "expected": expected,
+            "actual": actual,
+        }),
+        ToolResolutionError::DuplicateToolDefinition { tool_name } => json!({
+            "code": "duplicate_tool_definition",
+            "toolName": tool_name,
+        }),
+        ToolResolutionError::DuplicateToolBinding { binding_id } => json!({
+            "code": "duplicate_tool_binding",
+            "bindingId": binding_id,
+        }),
+        ToolResolutionError::MultipleBindingsForTool { tool_name } => json!({
+            "code": "multiple_bindings_for_tool",
+            "toolName": tool_name,
+        }),
+        ToolResolutionError::BindingWithoutDefinition {
+            binding_id,
+            tool_name,
+        } => json!({
+            "code": "binding_without_definition",
+            "bindingId": binding_id,
+            "toolName": tool_name,
+        }),
+        ToolResolutionError::BindingToolNameMismatch {
+            binding_id,
+            definition_name,
+            binding_tool_name,
+        } => json!({
+            "code": "binding_tool_name_mismatch",
+            "bindingId": binding_id,
+            "definitionName": definition_name,
+            "bindingToolName": binding_tool_name,
+        }),
+        ToolResolutionError::InvalidToolSchemaId {
+            tool_name,
+            schema_id,
+            error,
+        } => json!({
+            "code": "invalid_tool_schema_id",
+            "toolName": tool_name,
+            "schemaId": schema_id,
+            "schemaError": format!("{error:?}"),
+        }),
+        ToolResolutionError::ToolBindingMissing { tool_name } => json!({
+            "code": "tool_binding_missing",
+            "toolName": tool_name,
         }),
     }
 }
@@ -8028,6 +8334,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     )?)?;
     module.add_function(wrap_pyfunction!(evaluate_tool_approval_json, module)?)?;
     module.add_function(wrap_pyfunction!(evaluate_tool_admission_json, module)?)?;
+    module.add_function(wrap_pyfunction!(evaluate_tool_resolution_json, module)?)?;
     module.add_function(wrap_pyfunction!(evaluate_retry_policy_json, module)?)?;
     module.add_function(wrap_pyfunction!(
         evaluate_provider_limit_policy_json,
@@ -8103,8 +8410,8 @@ mod tests {
         evaluate_provider_limit_policy_json, evaluate_readiness_json, evaluate_retry_policy_json,
         evaluate_scheduler_json, evaluate_sequential_tool_queue_json, evaluate_task_group_json,
         evaluate_timeout_deadline_json, evaluate_tool_admission_json, evaluate_tool_approval_json,
-        evaluate_tool_execution_plan_json, evaluate_tool_result_stream_json,
-        evaluate_usage_ledger_json, finalize_tool_call_json,
+        evaluate_tool_execution_plan_json, evaluate_tool_resolution_json,
+        evaluate_tool_result_stream_json, evaluate_usage_ledger_json, finalize_tool_call_json,
         negotiate_application_protocol_capabilities_json, parse_resolved_tool, parse_tool_call,
         prepare_tool_result_for_model_json, record_tool_effect_audit_event_json,
         record_tool_effect_precondition_json, run_stdlib_graph_json, run_test_graph_json,
@@ -8914,6 +9221,149 @@ mod tests {
             Some("response_policy_stopped")
         );
         assert!(stopped.get("admitted").is_some_and(Value::is_null));
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_tool_resolution_json_intersects_scope_and_reports_missing_binding()
+    -> Result<(), String> {
+        let catalog = json!({
+            "definitions": [
+                {
+                    "name": "knowledge.search",
+                    "description": "Search internal documentation.",
+                    "inputSchema": "schemas/KnowledgeSearchRequest@1",
+                    "outputSchema": "schemas/KnowledgeSearchResult@1",
+                    "tags": ["knowledge", "read"],
+                    "version": "1.0.0"
+                },
+                {
+                    "name": "ticket.create",
+                    "description": "Create a support ticket.",
+                    "inputSchema": "schemas/TicketCreateRequest@1",
+                    "outputSchema": "schemas/Ticket@1",
+                    "tags": ["ticket", "write"],
+                    "version": "1.0.0"
+                }
+            ],
+            "bindings": [
+                {
+                    "bindingId": "binding-search",
+                    "toolName": "knowledge.search",
+                    "implementation": {"kind": "block", "block": "blocks.search"},
+                    "effects": ["external_read"],
+                    "approval": "never",
+                    "idempotency": "not_applicable"
+                },
+                {
+                    "bindingId": "binding-ticket",
+                    "toolName": "ticket.create",
+                    "implementation": {
+                        "kind": "openapi",
+                        "connection": "ticket-system",
+                        "operationId": "createTicket"
+                    },
+                    "effects": ["external_write", "network"],
+                    "approval": "policy",
+                    "idempotency": "required"
+                }
+            ]
+        });
+        let scope = json!({
+            "applicationTools": ["knowledge.search", "ticket.create"],
+            "graphTools": ["knowledge.search", "ticket.create"],
+            "principalTools": ["knowledge.search"],
+            "tenantPolicyTools": ["knowledge.search", "ticket.create"],
+            "deploymentTools": ["knowledge.search", "ticket.create"]
+        });
+        let resolved_json = evaluate_tool_resolution_json(
+            &serde_json::to_string(&catalog).map_err(|error| error.to_string())?,
+            &serde_json::to_string(&scope).map_err(|error| error.to_string())?,
+            "policy-snapshot-1",
+        )
+        .map_err(|error| error.to_string())?;
+        let resolved =
+            serde_json::from_str::<Value>(&resolved_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(resolved.get("ok").and_then(Value::as_bool), Some(true));
+        assert_eq!(
+            resolved
+                .pointer("/resolvedTools/0/definition/name")
+                .and_then(Value::as_str),
+            Some("knowledge.search")
+        );
+        assert_eq!(
+            resolved
+                .pointer("/resolvedTools/0/binding/effects/0")
+                .and_then(Value::as_str),
+            Some("external_read")
+        );
+        assert_eq!(
+            resolved
+                .pointer("/resolvedTools/0/binding/approval")
+                .and_then(Value::as_str),
+            Some("never")
+        );
+        assert_eq!(
+            resolved
+                .pointer("/resolvedTools/0/effectivePolicySnapshotId")
+                .and_then(Value::as_str),
+            Some("policy-snapshot-1")
+        );
+        assert_eq!(
+            resolved
+                .pointer("/resolvedTools/0/allowedForPrincipal")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert!(
+            resolved
+                .pointer("/resolvedTools/0/definitionDigest")
+                .and_then(Value::as_str)
+                .is_some_and(|digest| digest.starts_with("sha256:"))
+        );
+        let resolved_tools = resolved
+            .get("resolvedTools")
+            .and_then(Value::as_array)
+            .ok_or("resolvedTools must be an array")?;
+        assert_eq!(resolved_tools.len(), 1);
+
+        let missing_binding_catalog = json!({
+            "definitions": [
+                {
+                    "name": "knowledge.search",
+                    "description": "Search internal documentation.",
+                    "inputSchema": "schemas/KnowledgeSearchRequest@1"
+                }
+            ],
+            "bindings": []
+        });
+        let missing_binding_json = evaluate_tool_resolution_json(
+            &serde_json::to_string(&missing_binding_catalog).map_err(|error| error.to_string())?,
+            &serde_json::to_string(&json!({"applicationTools": ["knowledge.search"]}))
+                .map_err(|error| error.to_string())?,
+            "policy-snapshot-1",
+        )
+        .map_err(|error| error.to_string())?;
+        let missing_binding = serde_json::from_str::<Value>(&missing_binding_json)
+            .map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            missing_binding.get("ok").and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            missing_binding
+                .pointer("/error/code")
+                .and_then(Value::as_str),
+            Some("tool_binding_missing")
+        );
+        assert_eq!(
+            missing_binding
+                .pointer("/error/toolName")
+                .and_then(Value::as_str),
+            Some("knowledge.search")
+        );
         Ok(())
     }
 

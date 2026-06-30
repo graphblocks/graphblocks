@@ -120,6 +120,23 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             }
         )
 
+    def evaluate_tool_resolution_json(
+        catalog_json: str,
+        scope_json: str,
+        effective_policy_snapshot_id: str,
+    ) -> str:
+        calls.append(("tool_resolution", (catalog_json, scope_json, effective_policy_snapshot_id)))
+        return json.dumps(
+            {
+                "ok": True,
+                "catalog": json.loads(catalog_json),
+                "scope": json.loads(scope_json),
+                "effectivePolicySnapshotId": effective_policy_snapshot_id,
+                "resolvedTools": [{"definition": {"name": "knowledge.search"}}],
+                "error": None,
+            }
+        )
+
     def run_stdlib_graph_json(graph_json: str, inputs_json: str) -> str:
         calls.append(("run_stdlib", (graph_json, inputs_json)))
         return json.dumps(
@@ -480,6 +497,7 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         evaluate_tool_admission_json=evaluate_tool_admission_json,
         evaluate_tool_approval_json=evaluate_tool_approval_json,
         evaluate_tool_execution_plan_json=evaluate_tool_execution_plan_json,
+        evaluate_tool_resolution_json=evaluate_tool_resolution_json,
         evaluate_tool_result_stream_json=evaluate_tool_result_stream_json,
         evaluate_usage_ledger_json=evaluate_usage_ledger_json,
         finalize_tool_call_json=finalize_tool_call_json,
@@ -559,6 +577,14 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             "principalId": "user-1",
             "admittedAtUnixMs": 1_200,
         }
+    )
+    tool_resolution = runtime.evaluate_tool_resolution(
+        {
+            "definitions": [{"name": "knowledge.search"}],
+            "bindings": [{"bindingId": "binding-search"}],
+        },
+        {"applicationTools": ["knowledge.search"]},
+        effective_policy_snapshot_id="policy-snapshot-1",
     )
     tool_effect_precondition = runtime.record_tool_effect_precondition(
         {"resolvedToolId": "resolved-tool-1"},
@@ -830,6 +856,17 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             "schemaRegistry": [],
         },
         "admitted": {"call": {"status": "admitted"}, "idempotencyKey": "idem-1"},
+        "error": None,
+    }
+    assert tool_resolution == {
+        "ok": True,
+        "catalog": {
+            "bindings": [{"bindingId": "binding-search"}],
+            "definitions": [{"name": "knowledge.search"}],
+        },
+        "scope": {"applicationTools": ["knowledge.search"]},
+        "effectivePolicySnapshotId": "policy-snapshot-1",
+        "resolvedTools": [{"definition": {"name": "knowledge.search"}}],
         "error": None,
     }
     assert tool_effect_precondition == {
@@ -1121,6 +1158,17 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             ),
         ),
         (
+            "tool_resolution",
+            (
+                (
+                    '{"bindings":[{"bindingId":"binding-search"}],'
+                    '"definitions":[{"name":"knowledge.search"}]}'
+                ),
+                '{"applicationTools":["knowledge.search"]}',
+                "policy-snapshot-1",
+            ),
+        ),
+        (
             "tool_effect_precondition",
             (
                 '{"resolvedToolId":"resolved-tool-1"}',
@@ -1371,6 +1419,8 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     assert "evaluate_tool_execution_plan_json" in runtime.__all__
     assert "evaluate_tool_admission" in runtime.__all__
     assert "evaluate_tool_admission_json" in runtime.__all__
+    assert "evaluate_tool_resolution" in runtime.__all__
+    assert "evaluate_tool_resolution_json" in runtime.__all__
     assert "evaluate_tool_approval" in runtime.__all__
     assert "evaluate_tool_approval_json" in runtime.__all__
     assert "evaluate_tool_result_stream" in runtime.__all__

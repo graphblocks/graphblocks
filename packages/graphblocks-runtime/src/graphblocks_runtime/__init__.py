@@ -33,6 +33,7 @@ try:
         evaluate_tool_admission_json,
         evaluate_tool_approval_json,
         evaluate_tool_execution_plan_json,
+        evaluate_tool_resolution_json,
         evaluate_tool_result_stream_json,
         evaluate_usage_ledger_json,
         finalize_tool_call_json,
@@ -214,6 +215,13 @@ except ImportError as error:
         require_native_extension()
 
     def evaluate_tool_admission_json(request_json: str) -> str:
+        require_native_extension()
+
+    def evaluate_tool_resolution_json(
+        catalog_json: str,
+        scope_json: str,
+        effective_policy_snapshot_id: str,
+    ) -> str:
         require_native_extension()
 
     def evaluate_usage_ledger_json(operations_json: str, run_id: str | None = None) -> str:
@@ -617,6 +625,22 @@ def evaluate_tool_admission(request: dict[str, object]) -> dict[str, object]:
     )
 
 
+def evaluate_tool_resolution(
+    catalog: dict[str, object],
+    scope: dict[str, object],
+    *,
+    effective_policy_snapshot_id: str,
+) -> dict[str, object]:
+    return _json_object_result(
+        evaluate_tool_resolution_json(
+            _canonical_json(catalog),
+            _canonical_json(scope),
+            effective_policy_snapshot_id,
+        ),
+        "native tool resolution evaluation result",
+    )
+
+
 def evaluate_sequential_tool_queue(
     queue: dict[str, object],
     operations: object,
@@ -710,6 +734,8 @@ __all__ = [
     "evaluate_tool_approval_json",
     "evaluate_tool_execution_plan",
     "evaluate_tool_execution_plan_json",
+    "evaluate_tool_resolution",
+    "evaluate_tool_resolution_json",
     "evaluate_tool_result_stream",
     "evaluate_tool_result_stream_json",
     "evaluate_usage_ledger",
