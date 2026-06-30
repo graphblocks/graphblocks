@@ -656,6 +656,57 @@ def test_client_package_posts_run_graph_command_over_http(monkeypatch) -> None:
     assert "HttpGraphBlocksClient" in graphblocks_client.__all__
 
 
+@pytest.mark.parametrize(
+    ("metadata_override", "message"),
+    (
+        ({"sequence": True}, "GraphBlocks HTTP event metadata sequence must be an integer"),
+        ({"eventId": None}, "GraphBlocks HTTP event metadata event_id must be a non-empty string"),
+        ({"occurredAt": None}, "GraphBlocks HTTP event metadata occurred_at must be a string"),
+    ),
+)
+def test_client_package_rejects_malformed_http_event_metadata(
+    monkeypatch,
+    metadata_override: dict[str, object],
+    message: str,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+
+    class FakeResponse:
+        def read(self) -> bytes:
+            metadata = {
+                "eventId": "event-1",
+                "runId": "run-http-1",
+                "responseId": "response-http-1",
+                "turnId": None,
+                "sequence": 1,
+                "releaseId": "release-1",
+                "policySnapshotId": "policy-1",
+                "occurredAt": "2026-06-24T00:00:00Z",
+            }
+            metadata.update(metadata_override)
+            return json.dumps(
+                {
+                    "runId": "run-http-1",
+                    "status": "succeeded",
+                    "outputs": {},
+                    "events": [{"kind": "RunStarted", "metadata": metadata, "payload": {"status": "running"}}],
+                }
+            ).encode("utf-8")
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        transport=lambda request, *, timeout: FakeResponse(),
+    )
+
+    with pytest.raises(ValueError, match=message):
+        client.run_graph(
+            graphblocks_client.RunGraphCommand(
+                graph={"kind": "Graph", "metadata": {"name": "remote-run"}},
+            )
+        )
+
+
 def test_client_package_reads_server_health_over_http_transport(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
     graphblocks_client = importlib.import_module("graphblocks_client")

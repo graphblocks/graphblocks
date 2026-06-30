@@ -839,21 +839,41 @@ def _application_events_from_payloads(event_payloads: object) -> tuple[Applicati
         metadata_payload = event_payload.get("metadata")
         if not isinstance(metadata_payload, dict):
             raise ValueError("GraphBlocks HTTP event metadata must be a JSON object")
+        event_id = metadata_payload.get("eventId", metadata_payload.get("event_id"))
+        run_id = metadata_payload.get("runId", metadata_payload.get("run_id"))
+        response_id = metadata_payload.get("responseId", metadata_payload.get("response_id"))
+        release_id = metadata_payload.get("releaseId", metadata_payload.get("release_id"))
+        policy_snapshot_id = metadata_payload.get(
+            "policySnapshotId",
+            metadata_payload.get("policy_snapshot_id"),
+        )
+        occurred_at = metadata_payload.get("occurredAt", metadata_payload.get("occurred_at"))
+        for field_name, value in (
+            ("event_id", event_id),
+            ("run_id", run_id),
+            ("response_id", response_id),
+            ("release_id", release_id),
+            ("policy_snapshot_id", policy_snapshot_id),
+        ):
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"GraphBlocks HTTP event metadata {field_name} must be a non-empty string")
+        if not isinstance(occurred_at, str):
+            raise ValueError("GraphBlocks HTTP event metadata occurred_at must be a string")
+        turn_id = metadata_payload.get("turnId", metadata_payload.get("turn_id"))
+        if turn_id is not None and (not isinstance(turn_id, str) or not turn_id.strip()):
+            raise ValueError("GraphBlocks HTTP event metadata turn_id must be a non-empty string")
+        sequence = metadata_payload.get("sequence", 0)
+        if isinstance(sequence, bool) or not isinstance(sequence, int):
+            raise ValueError("GraphBlocks HTTP event metadata sequence must be an integer")
         metadata = ApplicationEventMetadata(
-            event_id=str(metadata_payload.get("eventId", metadata_payload.get("event_id"))),
-            run_id=str(metadata_payload.get("runId", metadata_payload.get("run_id"))),
-            response_id=str(metadata_payload.get("responseId", metadata_payload.get("response_id"))),
-            turn_id=(
-                str(metadata_payload.get("turnId", metadata_payload.get("turn_id")))
-                if metadata_payload.get("turnId", metadata_payload.get("turn_id")) is not None
-                else None
-            ),
-            sequence=int(metadata_payload.get("sequence", 0)),
-            release_id=str(metadata_payload.get("releaseId", metadata_payload.get("release_id"))),
-            policy_snapshot_id=str(
-                metadata_payload.get("policySnapshotId", metadata_payload.get("policy_snapshot_id"))
-            ),
-            occurred_at=str(metadata_payload.get("occurredAt", metadata_payload.get("occurred_at"))),
+            event_id=event_id,
+            run_id=run_id,
+            response_id=response_id,
+            turn_id=turn_id,
+            sequence=sequence,
+            release_id=release_id,
+            policy_snapshot_id=policy_snapshot_id,
+            occurred_at=occurred_at,
         )
         kind = str(event_payload.get("kind"))
         event_body = dict(event_payload.get("payload", {}) or {})
