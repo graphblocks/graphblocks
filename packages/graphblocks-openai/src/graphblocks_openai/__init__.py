@@ -381,9 +381,9 @@ def openai_generation_chunk_from_delta(
     if (
         isinstance(generation_sequence, bool)
         or not isinstance(generation_sequence, int)
-        or generation_sequence < 0
+        or generation_sequence <= 0
     ):
-        raise OpenAICompatibleAdapterError("generation sequence must be non-negative")
+        raise OpenAICompatibleAdapterError("generation sequence must be positive")
     return GenerationChunk.text(
         generation_stream_id,
         delta.response_id,

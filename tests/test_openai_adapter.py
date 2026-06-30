@@ -394,6 +394,8 @@ def test_openai_generation_chunk_helper_rejects_invalid_inputs(monkeypatch) -> N
         graphblocks_openai.openai_generation_chunk_from_delta(delta, sequence=True)
     with pytest.raises(graphblocks_openai.OpenAICompatibleAdapterError, match="generation sequence"):
         graphblocks_openai.openai_generation_chunk_from_delta(delta, sequence=-1)
+    with pytest.raises(graphblocks_openai.OpenAICompatibleAdapterError, match="generation sequence must be positive"):
+        graphblocks_openai.openai_generation_chunk_from_delta(delta, sequence=0)
 
 
 def test_openai_stream_chunk_normalizes_usage_only_final_chunk(monkeypatch) -> None:
