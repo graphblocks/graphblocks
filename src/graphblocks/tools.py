@@ -611,6 +611,7 @@ class ResolvedTool:
             "effective_policy_snapshot_id",
         ):
             _validate_non_empty_string("resolved tool", field_name, getattr(self, field_name))
+        _validate_optional_non_empty_string("resolved tool", "valid_until", self.valid_until)
         if self.binding.tool_name != self.definition.name:
             raise ToolResolutionError(
                 f"tool binding {self.binding.binding_id} references "

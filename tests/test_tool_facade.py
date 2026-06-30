@@ -459,6 +459,15 @@ def test_resolved_tool_rejects_empty_identity_fields() -> None:
             effective_policy_snapshot_id="",
             allowed_for_principal=True,
         )
+    with pytest.raises(ValueError, match="resolved tool valid_until must not be empty"):
+        ResolvedTool.from_definition_and_binding(
+            resolved_tool_id="resolved-1",
+            definition=definition,
+            binding=binding,
+            effective_policy_snapshot_id="policy-snapshot-1",
+            allowed_for_principal=True,
+            valid_until=" ",
+        )
 
     resolved = ResolvedTool.from_definition_and_binding(
         resolved_tool_id="resolved-1",
