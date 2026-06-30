@@ -17,7 +17,11 @@ use graphblocks_runtime_core::application_event::{
 use graphblocks_runtime_core::audit::{
     AuditEvent, ToolEffectAuditContext, ToolEffectPrecondition, ToolEffectPreconditionContext,
 };
-use graphblocks_runtime_core::budget::{BudgetPermit, UsageAmount};
+use graphblocks_runtime_core::budget::{
+    BudgetAccount, BudgetBalance, BudgetError, BudgetPermit, BudgetReservation, BudgetSettlement,
+    BudgetStatus, CompletionReserve, CompletionReservePurpose, CompletionReserveStatus,
+    InMemoryBudgetLedger, ReservationPurpose, ReservationStatus, UsageAmount,
+};
 use graphblocks_runtime_core::cancellation::{
     CancellationGuarantee, CancellationScope, CancellationToken,
 };
@@ -5019,6 +5023,247 @@ fn serialize_tool_resolution_error(error: &ToolResolutionError) -> Value {
     }
 }
 
+fn serialize_usage_amount(amount: &UsageAmount) -> Value {
+    json!({
+        "kind": amount.kind.as_str(),
+        "amount": amount.amount,
+        "unit": amount.unit.as_str(),
+        "dimensions": &amount.dimensions,
+    })
+}
+
+fn serialize_usage_amounts(amounts: &[UsageAmount]) -> Value {
+    Value::Array(amounts.iter().map(serialize_usage_amount).collect())
+}
+
+fn serialize_budget_status(status: BudgetStatus) -> &'static str {
+    match status {
+        BudgetStatus::Active => "active",
+        BudgetStatus::Exhausted => "exhausted",
+        BudgetStatus::Paused => "paused",
+        BudgetStatus::Closed => "closed",
+    }
+}
+
+fn serialize_reservation_purpose(purpose: ReservationPurpose) -> &'static str {
+    match purpose {
+        ReservationPurpose::ProviderCall => "provider_call",
+        ReservationPurpose::Task => "task",
+        ReservationPurpose::Trial => "trial",
+        ReservationPurpose::Tool => "tool",
+        ReservationPurpose::Finalization => "finalization",
+        ReservationPurpose::Cleanup => "cleanup",
+    }
+}
+
+fn serialize_reservation_status(status: ReservationStatus) -> &'static str {
+    match status {
+        ReservationStatus::Reserved => "reserved",
+        ReservationStatus::Committed => "committed",
+        ReservationStatus::Released => "released",
+        ReservationStatus::Expired => "expired",
+    }
+}
+
+fn serialize_completion_reserve_purpose(purpose: CompletionReservePurpose) -> &'static str {
+    match purpose {
+        CompletionReservePurpose::Finalization => "finalization",
+        CompletionReservePurpose::Checkpoint => "checkpoint",
+        CompletionReservePurpose::Cleanup => "cleanup",
+        CompletionReservePurpose::Compensation => "compensation",
+    }
+}
+
+fn serialize_completion_reserve_status(status: CompletionReserveStatus) -> &'static str {
+    match status {
+        CompletionReserveStatus::Available => "available",
+        CompletionReserveStatus::Spent => "spent",
+        CompletionReserveStatus::Released => "released",
+        CompletionReserveStatus::Expired => "expired",
+    }
+}
+
+fn serialize_budget_account(account: &BudgetAccount) -> Value {
+    json!({
+        "budgetId": account.budget_id.as_str(),
+        "scope": account.scope.as_str(),
+        "allocated": serialize_usage_amounts(&account.allocated),
+        "parentBudgetId": account.parent_budget_id.as_deref(),
+        "status": serialize_budget_status(account.status),
+        "policyRef": account.policy_ref.as_str(),
+        "revision": account.revision,
+    })
+}
+
+fn serialize_budget_reservation(reservation: &BudgetReservation) -> Value {
+    json!({
+        "reservationId": reservation.reservation_id.as_str(),
+        "budgetId": reservation.budget_id.as_str(),
+        "owner": reservation.owner.as_str(),
+        "amounts": serialize_usage_amounts(&reservation.amounts),
+        "purpose": serialize_reservation_purpose(reservation.purpose),
+        "expiresAt": reservation.expires_at.as_str(),
+        "fencingToken": reservation.fencing_token,
+        "status": serialize_reservation_status(reservation.status),
+    })
+}
+
+fn serialize_budget_settlement(settlement: &BudgetSettlement) -> Value {
+    json!({
+        "reservationId": settlement.reservation_id.as_str(),
+        "budgetId": settlement.budget_id.as_str(),
+        "committed": serialize_usage_amounts(&settlement.committed),
+        "released": serialize_usage_amounts(&settlement.released),
+        "overdraft": serialize_usage_amounts(&settlement.overdraft),
+        "status": serialize_reservation_status(settlement.status),
+        "revision": settlement.revision,
+    })
+}
+
+fn serialize_budget_balance(balance: &BudgetBalance) -> Value {
+    json!({
+        "budgetId": balance.budget_id.as_str(),
+        "allocated": serialize_usage_amounts(&balance.allocated),
+        "reserved": serialize_usage_amounts(&balance.reserved),
+        "committed": serialize_usage_amounts(&balance.committed),
+        "available": serialize_usage_amounts(&balance.available),
+        "overdraft": serialize_usage_amounts(&balance.overdraft),
+        "revision": balance.revision,
+    })
+}
+
+fn serialize_budget_permit(permit: &BudgetPermit) -> Value {
+    json!({
+        "permitId": permit.permit_id.as_str(),
+        "reservationRefs": &permit.reservation_refs,
+        "owner": permit.owner.as_str(),
+        "atomicUnit": permit.atomic_unit.as_str(),
+        "admissionEpoch": permit.admission_epoch,
+        "authorizedAmounts": serialize_usage_amounts(&permit.authorized_amounts),
+        "continuationProfile": permit.continuation_profile.as_str(),
+        "policySnapshotDigest": permit.policy_snapshot_digest.as_str(),
+        "expiresAt": permit.expires_at.as_str(),
+        "lowWatermark": serialize_usage_amounts(&permit.low_watermark),
+        "fencingTokens": &permit.fencing_tokens,
+    })
+}
+
+fn serialize_completion_reserve(reserve: &CompletionReserve) -> Value {
+    json!({
+        "reserveId": reserve.reserve_id.as_str(),
+        "budgetId": reserve.budget_id.as_str(),
+        "purpose": serialize_completion_reserve_purpose(reserve.purpose),
+        "amounts": serialize_usage_amounts(&reserve.amounts),
+        "spendableBy": reserve.spendable_by.iter().collect::<Vec<_>>(),
+        "expiresAt": reserve.expires_at.as_deref(),
+        "status": serialize_completion_reserve_status(reserve.status),
+        "reservationId": reserve.reservation_id.as_deref(),
+        "fencingToken": reserve.fencing_token,
+    })
+}
+
+fn serialize_budget_error(error: &BudgetError) -> Value {
+    match error {
+        BudgetError::BudgetNotFound { budget_id } => json!({
+            "code": "budget_not_found",
+            "budgetId": budget_id,
+        }),
+        BudgetError::BudgetConflict { budget_id } => json!({
+            "code": "budget_conflict",
+            "budgetId": budget_id,
+        }),
+        BudgetError::ReservationNotFound { reservation_id } => json!({
+            "code": "reservation_not_found",
+            "reservationId": reservation_id,
+        }),
+        BudgetError::ReservationConflict { reservation_id } => json!({
+            "code": "reservation_conflict",
+            "reservationId": reservation_id,
+        }),
+        BudgetError::PermitNotFound { permit_id } => json!({
+            "code": "permit_not_found",
+            "permitId": permit_id,
+        }),
+        BudgetError::PermitConflict { permit_id } => json!({
+            "code": "permit_conflict",
+            "permitId": permit_id,
+        }),
+        BudgetError::PermitScope {
+            permit_id,
+            reservation_id,
+        } => json!({
+            "code": "permit_scope",
+            "permitId": permit_id,
+            "reservationId": reservation_id,
+        }),
+        BudgetError::PermitFencing {
+            permit_id,
+            budget_id,
+            required_token,
+            actual_token,
+        } => json!({
+            "code": "permit_fencing",
+            "permitId": permit_id,
+            "budgetId": budget_id,
+            "requiredToken": required_token,
+            "actualToken": actual_token,
+        }),
+        BudgetError::PermitExpired {
+            permit_id,
+            expires_at,
+            now,
+        } => json!({
+            "code": "permit_expired",
+            "permitId": permit_id,
+            "expiresAt": expires_at,
+            "now": now,
+        }),
+        BudgetError::CompletionReserveNotFound { reserve_id } => json!({
+            "code": "completion_reserve_not_found",
+            "reserveId": reserve_id,
+        }),
+        BudgetError::CompletionReserveConflict { reserve_id } => json!({
+            "code": "completion_reserve_conflict",
+            "reserveId": reserve_id,
+        }),
+        BudgetError::CompletionReserveUnauthorized {
+            reserve_id,
+            spender,
+        } => json!({
+            "code": "completion_reserve_unauthorized",
+            "reserveId": reserve_id,
+            "spender": spender,
+        }),
+        BudgetError::CompletionReserveState { reserve_id, status } => json!({
+            "code": "completion_reserve_state",
+            "reserveId": reserve_id,
+            "status": serialize_completion_reserve_status(*status),
+        }),
+        BudgetError::ReservationState {
+            reservation_id,
+            status,
+        } => json!({
+            "code": "reservation_state",
+            "reservationId": reservation_id,
+            "status": serialize_reservation_status(*status),
+        }),
+        BudgetError::BudgetExceeded {
+            budget_id,
+            kind,
+            unit,
+        } => json!({
+            "code": "budget_exceeded",
+            "budgetId": budget_id,
+            "kind": kind,
+            "unit": unit,
+        }),
+        BudgetError::Storage { message } => json!({
+            "code": "storage",
+            "message": message,
+        }),
+    }
+}
+
 fn serialize_audit_event(event: &AuditEvent) -> Value {
     json!({
         "eventId": event.event_id.as_str(),
@@ -5618,6 +5863,70 @@ fn parse_usage_amounts(
         .enumerate()
         .map(|(index, value)| parse_usage_amount(value, &format!("{label}.{field}[{index}]")))
         .collect()
+}
+
+fn parse_usage_amount_list(value: &Value, label: &str) -> PyResult<Vec<UsageAmount>> {
+    let Some(values) = value.as_array() else {
+        return Err(PyValueError::new_err(format!("{label} must be an array")));
+    };
+    values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| parse_usage_amount(value, &format!("{label}[{index}]")))
+        .collect()
+}
+
+fn parse_required_usage_amounts(
+    object: &serde_json::Map<String, Value>,
+    primary: &str,
+    alternate: &str,
+    label: &str,
+) -> PyResult<Vec<UsageAmount>> {
+    let value = alias_value(object, primary, alternate)
+        .ok_or_else(|| PyValueError::new_err(format!("{label}.{primary} is required")))?;
+    parse_usage_amount_list(value, &format!("{label}.{primary}"))
+}
+
+fn parse_optional_usage_amounts(
+    object: &serde_json::Map<String, Value>,
+    primary: &str,
+    alternate: &str,
+    label: &str,
+) -> PyResult<Vec<UsageAmount>> {
+    alias_value(object, primary, alternate)
+        .filter(|value| !value.is_null())
+        .map(|value| parse_usage_amount_list(value, &format!("{label}.{primary}")))
+        .transpose()
+        .map(Option::unwrap_or_default)
+}
+
+fn parse_reservation_purpose(value: &str, label: &str) -> PyResult<ReservationPurpose> {
+    match value {
+        "provider_call" | "providerCall" => Ok(ReservationPurpose::ProviderCall),
+        "task" => Ok(ReservationPurpose::Task),
+        "trial" => Ok(ReservationPurpose::Trial),
+        "tool" => Ok(ReservationPurpose::Tool),
+        "finalization" => Ok(ReservationPurpose::Finalization),
+        "cleanup" => Ok(ReservationPurpose::Cleanup),
+        value => Err(PyValueError::new_err(format!(
+            "{label} has unknown reservation purpose {value:?}"
+        ))),
+    }
+}
+
+fn parse_completion_reserve_purpose(
+    value: &str,
+    label: &str,
+) -> PyResult<CompletionReservePurpose> {
+    match value {
+        "finalization" => Ok(CompletionReservePurpose::Finalization),
+        "checkpoint" => Ok(CompletionReservePurpose::Checkpoint),
+        "cleanup" => Ok(CompletionReservePurpose::Cleanup),
+        "compensation" => Ok(CompletionReservePurpose::Compensation),
+        value => Err(PyValueError::new_err(format!(
+            "{label} has unknown completion reserve purpose {value:?}"
+        ))),
+    }
 }
 
 fn parse_budget_permit(value: &Value, label: &str) -> PyResult<BudgetPermit> {
@@ -7897,6 +8206,318 @@ fn evaluate_usage_ledger_json(operations_json: &str, run_id: Option<&str>) -> Py
 }
 
 #[pyfunction]
+fn evaluate_budget_ledger_json(operations_json: &str) -> PyResult<String> {
+    let operations_value = parse_json_argument(operations_json, "budget ledger operations")?;
+    let operations = operations_value
+        .as_array()
+        .ok_or_else(|| PyValueError::new_err("budget ledger operations must be an array"))?;
+    let mut ledger = InMemoryBudgetLedger::new();
+    let mut operation_results = Vec::new();
+
+    for (index, operation) in operations.iter().enumerate() {
+        let label = format!("operations[{index}]");
+        let operation = json_object(operation, &label)?;
+        let op = required_string(operation, "op", &label)?;
+        let outcome = match op {
+            "allocate" => ledger
+                .allocate(
+                    required_alias_string(operation, "budgetId", "budget_id", &label)?,
+                    required_alias_string(operation, "scope", "scope", &label)?,
+                    parse_required_usage_amounts(operation, "amounts", "amounts", &label)?,
+                    required_alias_string(operation, "policyRef", "policy_ref", &label)?,
+                    optional_nullable_alias_string(
+                        operation,
+                        "parentBudgetId",
+                        "parent_budget_id",
+                        &label,
+                    )?
+                    .map(str::to_owned),
+                )
+                .map(|account| serialize_budget_account(&account)),
+            "reserve" => ledger
+                .reserve(
+                    required_alias_string(operation, "budgetId", "budget_id", &label)?,
+                    required_alias_string(operation, "owner", "owner", &label)?,
+                    parse_required_usage_amounts(operation, "amounts", "amounts", &label)?,
+                    parse_reservation_purpose(
+                        required_alias_string(operation, "purpose", "purpose", &label)?,
+                        &format!("{label}.purpose"),
+                    )?,
+                    required_alias_string(operation, "expiresAt", "expires_at", &label)?,
+                    optional_nullable_alias_string(
+                        operation,
+                        "reservationId",
+                        "reservation_id",
+                        &label,
+                    )?
+                    .map(str::to_owned),
+                )
+                .map(|reservation| serialize_budget_reservation(&reservation)),
+            "commit" => {
+                let actual_amounts = parse_required_usage_amounts(
+                    operation,
+                    "actualAmounts",
+                    "actual_amounts",
+                    &label,
+                )?;
+                if alias_value(operation, "maxOverdraft", "max_overdraft")
+                    .filter(|value| !value.is_null())
+                    .is_some()
+                {
+                    ledger
+                        .commit_with_overdraft_limit(
+                            required_alias_string(
+                                operation,
+                                "reservationId",
+                                "reservation_id",
+                                &label,
+                            )?,
+                            actual_amounts,
+                            parse_optional_usage_amounts(
+                                operation,
+                                "maxOverdraft",
+                                "max_overdraft",
+                                &label,
+                            )?,
+                        )
+                        .map(|settlement| serialize_budget_settlement(&settlement))
+                } else {
+                    ledger
+                        .commit(
+                            required_alias_string(
+                                operation,
+                                "reservationId",
+                                "reservation_id",
+                                &label,
+                            )?,
+                            actual_amounts,
+                        )
+                        .map(|settlement| serialize_budget_settlement(&settlement))
+                }
+            }
+            "release" => ledger
+                .release(required_alias_string(
+                    operation,
+                    "reservationId",
+                    "reservation_id",
+                    &label,
+                )?)
+                .map(|settlement| serialize_budget_settlement(&settlement)),
+            "expire" => ledger
+                .expire(required_alias_string(
+                    operation,
+                    "reservationId",
+                    "reservation_id",
+                    &label,
+                )?)
+                .map(|settlement| serialize_budget_settlement(&settlement)),
+            "balance" => ledger
+                .balance(required_alias_string(
+                    operation,
+                    "budgetId",
+                    "budget_id",
+                    &label,
+                )?)
+                .map(|balance| serialize_budget_balance(&balance)),
+            "issue_permit" | "issuePermit" => {
+                let reservation_refs =
+                    alias_value(operation, "reservationRefs", "reservation_refs").ok_or_else(
+                        || PyValueError::new_err(format!("{label}.reservationRefs is required")),
+                    )?;
+                ledger
+                    .issue_permit(
+                        required_alias_string(operation, "permitId", "permit_id", &label)?,
+                        parse_string_vec(
+                            Some(reservation_refs),
+                            &format!("{label}.reservationRefs"),
+                        )?,
+                        required_alias_string(operation, "owner", "owner", &label)?,
+                        required_alias_string(operation, "atomicUnit", "atomic_unit", &label)?,
+                        required_alias_u64(operation, "admissionEpoch", "admission_epoch", &label)?,
+                        required_alias_string(
+                            operation,
+                            "continuationProfile",
+                            "continuation_profile",
+                            &label,
+                        )?,
+                        required_alias_string(
+                            operation,
+                            "policySnapshotDigest",
+                            "policy_snapshot_digest",
+                            &label,
+                        )?,
+                        required_alias_string(operation, "expiresAt", "expires_at", &label)?,
+                        parse_optional_usage_amounts(
+                            operation,
+                            "lowWatermark",
+                            "low_watermark",
+                            &label,
+                        )?,
+                    )
+                    .map(|permit| serialize_budget_permit(&permit))
+            }
+            "commit_with_permit" | "commitWithPermit" => {
+                let actual_amounts = parse_required_usage_amounts(
+                    operation,
+                    "actualAmounts",
+                    "actual_amounts",
+                    &label,
+                )?;
+                if let Some(now) = optional_nullable_alias_string(operation, "now", "now", &label)?
+                {
+                    ledger
+                        .commit_with_permit_at(
+                            required_alias_string(operation, "permitId", "permit_id", &label)?,
+                            required_alias_string(
+                                operation,
+                                "reservationId",
+                                "reservation_id",
+                                &label,
+                            )?,
+                            actual_amounts,
+                            now,
+                        )
+                        .map(|settlement| serialize_budget_settlement(&settlement))
+                } else {
+                    ledger
+                        .commit_with_permit(
+                            required_alias_string(operation, "permitId", "permit_id", &label)?,
+                            required_alias_string(
+                                operation,
+                                "reservationId",
+                                "reservation_id",
+                                &label,
+                            )?,
+                            actual_amounts,
+                        )
+                        .map(|settlement| serialize_budget_settlement(&settlement))
+                }
+            }
+            "release_with_permit" | "releaseWithPermit" => {
+                if let Some(now) = optional_nullable_alias_string(operation, "now", "now", &label)?
+                {
+                    ledger
+                        .release_with_permit_at(
+                            required_alias_string(operation, "permitId", "permit_id", &label)?,
+                            required_alias_string(
+                                operation,
+                                "reservationId",
+                                "reservation_id",
+                                &label,
+                            )?,
+                            now,
+                        )
+                        .map(|settlement| serialize_budget_settlement(&settlement))
+                } else {
+                    ledger
+                        .release_with_permit(
+                            required_alias_string(operation, "permitId", "permit_id", &label)?,
+                            required_alias_string(
+                                operation,
+                                "reservationId",
+                                "reservation_id",
+                                &label,
+                            )?,
+                        )
+                        .map(|settlement| serialize_budget_settlement(&settlement))
+                }
+            }
+            "create_completion_reserve" | "createCompletionReserve" => {
+                let spendable_by = alias_value(operation, "spendableBy", "spendable_by")
+                    .ok_or_else(|| {
+                        PyValueError::new_err(format!("{label}.spendableBy is required"))
+                    })?;
+                ledger
+                    .create_completion_reserve(
+                        required_alias_string(operation, "reserveId", "reserve_id", &label)?,
+                        required_alias_string(operation, "budgetId", "budget_id", &label)?,
+                        parse_completion_reserve_purpose(
+                            required_alias_string(operation, "purpose", "purpose", &label)?,
+                            &format!("{label}.purpose"),
+                        )?,
+                        parse_required_usage_amounts(operation, "amounts", "amounts", &label)?,
+                        parse_string_vec(Some(spendable_by), &format!("{label}.spendableBy"))?,
+                        optional_nullable_alias_string(
+                            operation,
+                            "expiresAt",
+                            "expires_at",
+                            &label,
+                        )?
+                        .map(str::to_owned),
+                    )
+                    .map(|reserve| serialize_completion_reserve(&reserve))
+            }
+            "completion_reserve" | "completionReserve" => ledger
+                .completion_reserve(required_alias_string(
+                    operation,
+                    "reserveId",
+                    "reserve_id",
+                    &label,
+                )?)
+                .map(|reserve| serialize_completion_reserve(&reserve)),
+            "spend_completion_reserve" | "spendCompletionReserve" => ledger
+                .spend_completion_reserve(
+                    required_alias_string(operation, "reserveId", "reserve_id", &label)?,
+                    required_alias_string(operation, "spender", "spender", &label)?,
+                    required_alias_string(operation, "expiresAt", "expires_at", &label)?,
+                )
+                .map(|reservation| serialize_budget_reservation(&reservation)),
+            "release_completion_reserve" | "releaseCompletionReserve" => ledger
+                .release_completion_reserve(required_alias_string(
+                    operation,
+                    "reserveId",
+                    "reserve_id",
+                    &label,
+                )?)
+                .map(|reserve| serialize_completion_reserve(&reserve)),
+            "expire_completion_reserve" | "expireCompletionReserve" => ledger
+                .expire_completion_reserve(required_alias_string(
+                    operation,
+                    "reserveId",
+                    "reserve_id",
+                    &label,
+                )?)
+                .map(|reserve| serialize_completion_reserve(&reserve)),
+            value => {
+                return Err(PyValueError::new_err(format!(
+                    "{label}.op has unknown budget ledger operation {value:?}"
+                )));
+            }
+        };
+        let result = match outcome {
+            Ok(result) => json!({
+                "index": index,
+                "op": op,
+                "ok": true,
+                "result": result,
+                "error": Value::Null,
+            }),
+            Err(error) => json!({
+                "index": index,
+                "op": op,
+                "ok": false,
+                "result": Value::Null,
+                "error": serialize_budget_error(&error),
+            }),
+        };
+        operation_results.push(result);
+    }
+
+    let ok = operation_results
+        .iter()
+        .all(|result| result.get("ok").and_then(Value::as_bool) == Some(true));
+    serde_json::to_string(&json!({
+        "ok": ok,
+        "operations": operation_results,
+    }))
+    .map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize budget ledger evaluation: {error}"
+        ))
+    })
+}
+
+#[pyfunction]
 fn evaluate_durable_tool_terminal_store_json(operations_json: &str) -> PyResult<String> {
     let terminal_state_name = |state: DurableToolTerminalState| -> &'static str {
         match state {
@@ -8387,6 +9008,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
         module
     )?)?;
     module.add_function(wrap_pyfunction!(evaluate_usage_ledger_json, module)?)?;
+    module.add_function(wrap_pyfunction!(evaluate_budget_ledger_json, module)?)?;
     module.add_function(wrap_pyfunction!(
         evaluate_durable_tool_terminal_store_json,
         module
@@ -8404,14 +9026,15 @@ mod tests {
         admit_exhaustion_work_json, admit_worker_message_json, capture_telemetry_content_json,
         compile_graph_json, decide_agent_step_json, evaluate_application_event_stream_json,
         evaluate_application_protocol_log_json, evaluate_application_protocol_stream_json,
-        evaluate_cancellation_scope_json, evaluate_connector_capabilities_json,
-        evaluate_declarative_output_policy_json, evaluate_durable_tool_terminal_store_json,
-        evaluate_node_lifecycle_json, evaluate_output_gate_json,
-        evaluate_provider_limit_policy_json, evaluate_readiness_json, evaluate_retry_policy_json,
-        evaluate_scheduler_json, evaluate_sequential_tool_queue_json, evaluate_task_group_json,
-        evaluate_timeout_deadline_json, evaluate_tool_admission_json, evaluate_tool_approval_json,
-        evaluate_tool_execution_plan_json, evaluate_tool_resolution_json,
-        evaluate_tool_result_stream_json, evaluate_usage_ledger_json, finalize_tool_call_json,
+        evaluate_budget_ledger_json, evaluate_cancellation_scope_json,
+        evaluate_connector_capabilities_json, evaluate_declarative_output_policy_json,
+        evaluate_durable_tool_terminal_store_json, evaluate_node_lifecycle_json,
+        evaluate_output_gate_json, evaluate_provider_limit_policy_json, evaluate_readiness_json,
+        evaluate_retry_policy_json, evaluate_scheduler_json, evaluate_sequential_tool_queue_json,
+        evaluate_task_group_json, evaluate_timeout_deadline_json, evaluate_tool_admission_json,
+        evaluate_tool_approval_json, evaluate_tool_execution_plan_json,
+        evaluate_tool_resolution_json, evaluate_tool_result_stream_json,
+        evaluate_usage_ledger_json, finalize_tool_call_json,
         negotiate_application_protocol_capabilities_json, parse_resolved_tool, parse_tool_call,
         prepare_tool_result_for_model_json, record_tool_effect_audit_event_json,
         record_tool_effect_precondition_json, run_stdlib_graph_json, run_test_graph_json,
@@ -12298,6 +12921,211 @@ mod tests {
         assert_eq!(
             payload["operations"][2]["errorMessage"],
             json!("usage amount must be non-negative")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_budget_ledger_json_replays_reservations_permits_and_completion_reserves()
+    -> Result<(), String> {
+        let operations_json = json!([
+            {
+                "op": "allocate",
+                "budgetId": "budget-1",
+                "scope": "tenant:acme",
+                "amounts": [
+                    {
+                        "kind": "model_total_tokens",
+                        "amount": 100,
+                        "unit": "tokens"
+                    }
+                ],
+                "policyRef": "policy-1"
+            },
+            {
+                "op": "reserve",
+                "budgetId": "budget-1",
+                "owner": "run:1",
+                "amounts": [
+                    {
+                        "kind": "model_total_tokens",
+                        "amount": 40,
+                        "unit": "tokens"
+                    }
+                ],
+                "purpose": "provider_call",
+                "expiresAt": "2026-06-22T00:10:00Z",
+                "reservationId": "reservation-1"
+            },
+            {
+                "op": "issue_permit",
+                "permitId": "permit-1",
+                "reservationRefs": ["reservation-1"],
+                "owner": "worker:1",
+                "atomicUnit": "turn:1",
+                "admissionEpoch": 1,
+                "continuationProfile": "finish_current_turn",
+                "policySnapshotDigest": "sha256:policy",
+                "expiresAt": "2026-06-22T00:20:00Z",
+                "lowWatermark": [
+                    {
+                        "kind": "model_total_tokens",
+                        "amount": 10,
+                        "unit": "tokens"
+                    }
+                ]
+            },
+            {
+                "op": "commit_with_permit",
+                "permitId": "permit-1",
+                "reservationId": "reservation-1",
+                "actualAmounts": [
+                    {
+                        "kind": "model_total_tokens",
+                        "amount": 25,
+                        "unit": "tokens"
+                    }
+                ]
+            },
+            {
+                "op": "balance",
+                "budgetId": "budget-1"
+            },
+            {
+                "op": "reserve",
+                "budgetId": "budget-1",
+                "owner": "run:2",
+                "amounts": [
+                    {
+                        "kind": "model_total_tokens",
+                        "amount": 90,
+                        "unit": "tokens"
+                    }
+                ],
+                "purpose": "provider_call",
+                "expiresAt": "2026-06-22T00:30:00Z"
+            },
+            {
+                "op": "create_completion_reserve",
+                "reserveId": "finalization-reserve",
+                "budgetId": "budget-1",
+                "purpose": "finalization",
+                "amounts": [
+                    {
+                        "kind": "model_total_tokens",
+                        "amount": 20,
+                        "unit": "tokens"
+                    }
+                ],
+                "spendableBy": ["agent.finalize"]
+            },
+            {
+                "op": "completion_reserve",
+                "reserveId": "finalization-reserve"
+            },
+            {
+                "op": "spend_completion_reserve",
+                "reserveId": "finalization-reserve",
+                "spender": "agent.finalize",
+                "expiresAt": "2026-06-22T00:40:00Z"
+            },
+            {
+                "op": "commit",
+                "reservationId": "reservation-000002",
+                "actualAmounts": [
+                    {
+                        "kind": "model_total_tokens",
+                        "amount": 18,
+                        "unit": "tokens"
+                    }
+                ]
+            },
+            {
+                "op": "balance",
+                "budgetId": "budget-1"
+            }
+        ])
+        .to_string();
+
+        let payload =
+            evaluate_budget_ledger_json(&operations_json).map_err(|error| error.to_string())?;
+        let payload = serde_json::from_str::<Value>(&payload).map_err(|error| error.to_string())?;
+
+        assert_eq!(payload["ok"], json!(false));
+        assert_eq!(payload["operations"][0]["ok"], json!(true));
+        assert_eq!(
+            payload["operations"][0]["result"]["status"],
+            json!("active")
+        );
+        assert_eq!(
+            payload["operations"][1]["result"]["status"],
+            json!("reserved")
+        );
+        assert_eq!(payload["operations"][1]["result"]["fencingToken"], json!(1));
+        assert_eq!(
+            payload["operations"][2]["result"]["authorizedAmounts"][0]["amount"],
+            json!(40)
+        );
+        assert_eq!(
+            payload["operations"][2]["result"]["lowWatermark"][0]["amount"],
+            json!(10)
+        );
+        assert_eq!(
+            payload["operations"][3]["result"]["status"],
+            json!("committed")
+        );
+        assert_eq!(
+            payload["operations"][3]["result"]["committed"][0]["amount"],
+            json!(25)
+        );
+        assert_eq!(
+            payload["operations"][3]["result"]["released"][0]["amount"],
+            json!(15)
+        );
+        assert_eq!(
+            payload["operations"][4]["result"]["available"][0]["amount"],
+            json!(75)
+        );
+        assert_eq!(
+            payload["operations"][4]["result"]["committed"][0]["amount"],
+            json!(25)
+        );
+        assert_eq!(payload["operations"][5]["ok"], json!(false));
+        assert_eq!(
+            payload["operations"][5]["error"]["code"],
+            json!("budget_exceeded")
+        );
+        assert_eq!(
+            payload["operations"][6]["result"]["status"],
+            json!("available")
+        );
+        assert_eq!(
+            payload["operations"][7]["result"]["reservationId"],
+            Value::Null
+        );
+        assert_eq!(
+            payload["operations"][8]["result"]["reservationId"],
+            json!("reservation-000002")
+        );
+        assert_eq!(
+            payload["operations"][8]["result"]["purpose"],
+            json!("finalization")
+        );
+        assert_eq!(
+            payload["operations"][9]["result"]["committed"][0]["amount"],
+            json!(18)
+        );
+        assert_eq!(
+            payload["operations"][9]["result"]["released"][0]["amount"],
+            json!(2)
+        );
+        assert_eq!(
+            payload["operations"][10]["result"]["available"][0]["amount"],
+            json!(57)
+        );
+        assert_eq!(
+            payload["operations"][10]["result"]["committed"][0]["amount"],
+            json!(43)
         );
         Ok(())
     }

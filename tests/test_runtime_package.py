@@ -424,6 +424,10 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             }
         )
 
+    def evaluate_budget_ledger_json(operations_json: str) -> str:
+        calls.append(("budget_ledger", (operations_json,)))
+        return json.dumps({"ok": True, "operations": json.loads(operations_json)})
+
     def decide_agent_step_json(spec_json: str, request_json: str) -> str:
         calls.append(("agent_step", (spec_json, request_json)))
         return json.dumps({"decision": "continue", "spec": json.loads(spec_json), "request": json.loads(request_json)})
@@ -481,6 +485,7 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         evaluate_application_event_stream_json=evaluate_application_event_stream_json,
         evaluate_application_protocol_log_json=evaluate_application_protocol_log_json,
         evaluate_application_protocol_stream_json=evaluate_application_protocol_stream_json,
+        evaluate_budget_ledger_json=evaluate_budget_ledger_json,
         evaluate_cancellation_scope_json=evaluate_cancellation_scope_json,
         evaluate_connector_capabilities_json=evaluate_connector_capabilities_json,
         evaluate_declarative_output_policy_json=evaluate_declarative_output_policy_json,
@@ -759,6 +764,9 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     usage_ledger = runtime.evaluate_usage_ledger(
         [{"op": "append", "record": {"recordId": "usage-1"}}],
         run_id="run-1",
+    )
+    budget_ledger = runtime.evaluate_budget_ledger(
+        [{"op": "allocate", "budgetId": "budget-1"}],
     )
     agent_decision = runtime.decide_agent_step(
         {"maxSteps": 4},
@@ -1060,6 +1068,10 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         "recordIds": ["usage-1"],
         "runId": "run-1",
     }
+    assert budget_ledger == {
+        "ok": True,
+        "operations": [{"op": "allocate", "budgetId": "budget-1"}],
+    }
     assert agent_decision == {
         "decision": "continue",
         "spec": {"maxSteps": 4},
@@ -1346,6 +1358,10 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             ('[{"op":"append","record":{"recordId":"usage-1"}}]', "run-1"),
         ),
         (
+            "budget_ledger",
+            ('[{"budgetId":"budget-1","op":"allocate"}]',),
+        ),
+        (
             "agent_step",
             ('{"maxSteps":4}', '{"pendingToolCalls":0,"step":2}'),
         ),
@@ -1429,6 +1445,8 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     assert "evaluate_sequential_tool_queue_json" in runtime.__all__
     assert "evaluate_usage_ledger" in runtime.__all__
     assert "evaluate_usage_ledger_json" in runtime.__all__
+    assert "evaluate_budget_ledger" in runtime.__all__
+    assert "evaluate_budget_ledger_json" in runtime.__all__
     assert "validate_worker_advertisement" in runtime.__all__
     assert "validate_worker_protocol_message" in runtime.__all__
     assert "validate_remote_payload" in runtime.__all__

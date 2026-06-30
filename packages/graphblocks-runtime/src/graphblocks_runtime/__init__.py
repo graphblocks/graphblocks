@@ -17,6 +17,7 @@ try:
         evaluate_application_event_stream_json,
         evaluate_application_protocol_log_json,
         evaluate_application_protocol_stream_json,
+        evaluate_budget_ledger_json,
         evaluate_cancellation_scope_json,
         evaluate_connector_capabilities_json,
         evaluate_declarative_output_policy_json,
@@ -225,6 +226,9 @@ except ImportError as error:
         require_native_extension()
 
     def evaluate_usage_ledger_json(operations_json: str, run_id: str | None = None) -> str:
+        require_native_extension()
+
+    def evaluate_budget_ledger_json(operations_json: str) -> str:
         require_native_extension()
 
     def validate_worker_advertisement_json(
@@ -658,6 +662,13 @@ def evaluate_usage_ledger(operations: object, *, run_id: str | None = None) -> d
     )
 
 
+def evaluate_budget_ledger(operations: object) -> dict[str, object]:
+    return _json_object_result(
+        evaluate_budget_ledger_json(_canonical_json(operations)),
+        "native budget ledger result",
+    )
+
+
 def validate_worker_advertisement(
     advertisement: dict[str, object],
     *,
@@ -704,6 +715,8 @@ __all__ = [
     "evaluate_application_protocol_log_json",
     "evaluate_application_protocol_stream",
     "evaluate_application_protocol_stream_json",
+    "evaluate_budget_ledger",
+    "evaluate_budget_ledger_json",
     "evaluate_cancellation_scope",
     "evaluate_cancellation_scope_json",
     "evaluate_connector_capabilities",
