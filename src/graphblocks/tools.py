@@ -2013,7 +2013,9 @@ def validate_tool_result_for_model(
                 replacement = redaction.get("replacement")
                 if (
                     not isinstance(start, int)
+                    or isinstance(start, bool)
                     or not isinstance(end, int)
+                    or isinstance(end, bool)
                     or not isinstance(replacement, str)
                     or start < 0
                     or end < start
