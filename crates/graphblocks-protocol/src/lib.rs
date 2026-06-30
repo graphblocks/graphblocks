@@ -310,6 +310,30 @@ pub struct RunOwnershipLease {
     pub last_checkpoint: Option<String>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RunOwnershipLeaseError {
+    EmptyRunId,
+    EmptyOwnerInstanceId,
+    EmptyLastCheckpoint,
+}
+
+impl RunOwnershipLease {
+    pub fn validate(&self) -> Result<(), RunOwnershipLeaseError> {
+        if self.run_id.trim().is_empty() {
+            return Err(RunOwnershipLeaseError::EmptyRunId);
+        }
+        if self.owner_instance_id.trim().is_empty() {
+            return Err(RunOwnershipLeaseError::EmptyOwnerInstanceId);
+        }
+        if let Some(last_checkpoint) = &self.last_checkpoint
+            && last_checkpoint.trim().is_empty()
+        {
+            return Err(RunOwnershipLeaseError::EmptyLastCheckpoint);
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum RemotePayload {

@@ -1,12 +1,12 @@
 use std::collections::BTreeMap;
 
 use graphblocks_protocol::{
-    BlockCapability, RunOwnershipLease, WORKER_PROTOCOL_VERSION, WorkerAdmissionPolicy,
-    WorkerAdvertisement, WorkerInvocationContext, WorkerInvocationContextError,
-    WorkerInvokeRequest, WorkerInvokeRequestError, WorkerInvokeResult, WorkerInvokeResultError,
-    WorkerProtocolError, WorkerResultError, WorkerSelectionError, WorkerState, admit_worker,
-    admit_worker_with_policy, evaluate_worker_admission, select_worker_for_block,
-    validate_worker_result,
+    BlockCapability, RunOwnershipLease, RunOwnershipLeaseError, WORKER_PROTOCOL_VERSION,
+    WorkerAdmissionPolicy, WorkerAdvertisement, WorkerInvocationContext,
+    WorkerInvocationContextError, WorkerInvokeRequest, WorkerInvokeRequestError,
+    WorkerInvokeResult, WorkerInvokeResultError, WorkerProtocolError, WorkerResultError,
+    WorkerSelectionError, WorkerState, admit_worker, admit_worker_with_policy,
+    evaluate_worker_admission, select_worker_for_block, validate_worker_result,
 };
 use serde_json::json;
 
@@ -641,7 +641,44 @@ fn run_ownership_lease_round_trips_with_fencing_epoch() -> Result<(), serde_json
     assert_eq!(encoded["expiresAtUnixMs"], json!(1_820_000_000_000u64));
 
     assert_eq!(serde_json::from_value::<RunOwnershipLease>(encoded)?, lease);
+    assert_eq!(lease.validate(), Ok(()));
     Ok(())
+}
+
+#[test]
+fn run_ownership_lease_validation_rejects_blank_identity_fields() {
+    let mut lease = RunOwnershipLease {
+        run_id: " ".to_owned(),
+        owner_instance_id: "control-plane-a".to_owned(),
+        lease_epoch: 42,
+        expires_at_unix_ms: 1_820_000_000_000,
+        last_checkpoint: Some("checkpoint-000004".to_owned()),
+    };
+
+    assert_eq!(lease.validate(), Err(RunOwnershipLeaseError::EmptyRunId));
+
+    lease.run_id = "run-000001".to_owned();
+    lease.owner_instance_id = " ".to_owned();
+    assert_eq!(
+        lease.validate(),
+        Err(RunOwnershipLeaseError::EmptyOwnerInstanceId),
+    );
+}
+
+#[test]
+fn run_ownership_lease_validation_rejects_blank_checkpoint() {
+    let lease = RunOwnershipLease {
+        run_id: "run-000001".to_owned(),
+        owner_instance_id: "control-plane-a".to_owned(),
+        lease_epoch: 42,
+        expires_at_unix_ms: 1_820_000_000_000,
+        last_checkpoint: Some(" ".to_owned()),
+    };
+
+    assert_eq!(
+        lease.validate(),
+        Err(RunOwnershipLeaseError::EmptyLastCheckpoint),
+    );
 }
 
 #[test]
