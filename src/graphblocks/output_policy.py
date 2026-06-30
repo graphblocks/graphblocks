@@ -926,6 +926,7 @@ class OutputDeliveryGate:
                     self.last_policy_accepted_sequence,
                     decision.accepted_through_sequence,
                 )
+            pending_tool_calls = "deny" if decision.pending_tool_calls == "keep" else decision.pending_tool_calls
             cutoff = OutputCutoff(
                 stream_id=self.stream_id,
                 response_id=self.response_id,
@@ -945,7 +946,7 @@ class OutputDeliveryGate:
                 deliverable=[],
                 cutoff=cutoff,
                 provider_cancellation=decision.provider_cancellation,
-                pending_tool_calls=decision.pending_tool_calls,
+                pending_tool_calls=pending_tool_calls,
             )
 
         raise OutputGateError(f"unknown output policy disposition {decision.disposition}")
