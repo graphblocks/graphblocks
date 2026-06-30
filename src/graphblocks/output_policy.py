@@ -782,17 +782,56 @@ class OutputDeliveryGate:
         return [delivered]
 
     def commit_accepted_output(self) -> list[GenerationChunk]:
+        return self._commit_accepted_output(explicit_commit=True)
+
+    def _commit_accepted_output(self, *, explicit_commit: bool) -> list[GenerationChunk]:
         if self.cutoff is not None:
             return []
         deliverable: list[GenerationChunk] = []
         next_sequence = self.last_client_delivered_sequence + 1
-        while next_sequence <= self.last_policy_accepted_sequence and next_sequence in self.pending:
+        accepted_through = self._flushable_accepted_sequence(explicit_commit=explicit_commit)
+        while next_sequence <= accepted_through and next_sequence in self.pending:
             deliverable.append(self.pending[next_sequence])
             next_sequence += 1
         for chunk in deliverable:
             self.pending.pop(chunk.sequence, None)
             self.last_client_delivered_sequence = chunk.sequence
         return deliverable
+
+    def _flushable_accepted_sequence(self, *, explicit_commit: bool) -> int:
+        if explicit_commit or not self.delivery_policy.flush_boundaries:
+            return self.last_policy_accepted_sequence
+
+        flushable_sequence = self.last_client_delivered_sequence
+        accumulated_text = ""
+        for sequence in range(self.last_client_delivered_sequence + 1, self.last_policy_accepted_sequence + 1):
+            chunk = self.pending.get(sequence)
+            if chunk is None:
+                break
+            accumulated_text += chunk.text
+            if self._satisfies_flush_boundary(chunk, accumulated_text, explicit_commit=explicit_commit):
+                flushable_sequence = sequence
+        return flushable_sequence
+
+    def _satisfies_flush_boundary(
+        self,
+        chunk: GenerationChunk,
+        accumulated_text: str,
+        *,
+        explicit_commit: bool,
+    ) -> bool:
+        for boundary in self.delivery_policy.flush_boundaries:
+            if boundary == "token" and chunk.text:
+                return True
+            if boundary == "sentence" and _ends_at_sentence_boundary(accumulated_text):
+                return True
+            if boundary == "paragraph" and _ends_at_paragraph_boundary(accumulated_text):
+                return True
+            if boundary in {"content_part", "tool_call"}:
+                return True
+            if boundary == "response" and explicit_commit:
+                return True
+        return False
 
     def apply_decision(self, decision: OutputPolicyDecision, *, occurred_at: str) -> OutputGateUpdate:
         if self.cutoff is not None:
@@ -813,7 +852,7 @@ class OutputDeliveryGate:
                 )
             if self.delivery_policy.mode == "buffer_until_commit":
                 return OutputGateUpdate(deliverable=[])
-            return OutputGateUpdate(deliverable=self.commit_accepted_output())
+            return OutputGateUpdate(deliverable=self._commit_accepted_output(explicit_commit=False))
 
         if decision.disposition == "hold":
             return OutputGateUpdate(deliverable=[])
@@ -912,7 +951,7 @@ class OutputDeliveryGate:
                 )
             if self.delivery_policy.mode == "buffer_until_commit":
                 return OutputGateUpdate(deliverable=[])
-            return OutputGateUpdate(deliverable=self.commit_accepted_output())
+            return OutputGateUpdate(deliverable=self._commit_accepted_output(explicit_commit=False))
 
         if decision.disposition in {"abort_response", "abort_turn", "deny_commit"}:
             if decision.accepted_through_sequence is not None:
@@ -960,3 +999,12 @@ class OutputDeliveryGate:
         if extra_chunk is not None:
             total += len(extra_chunk.text.encode("utf-8"))
         return total
+
+
+def _ends_at_sentence_boundary(text: str) -> bool:
+    return text.rstrip(" \t\r\n").endswith((".", "!", "?"))
+
+
+def _ends_at_paragraph_boundary(text: str) -> bool:
+    text = text.rstrip(" \t")
+    return text.endswith("\n\n") or text.endswith("\r\n\r\n")

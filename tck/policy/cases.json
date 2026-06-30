@@ -38,6 +38,65 @@
     }
   },
   {
+    "name": "bounded_holdback_flushes_only_at_sentence_boundary",
+    "delivery": {
+      "mode": "bounded_holdback",
+      "holdbackMaxTokens": 16,
+      "flushBoundaries": [
+        "sentence"
+      ]
+    },
+    "operations": [
+      {
+        "op": "chunk",
+        "sequence": 1,
+        "text": "Hello "
+      },
+      {
+        "op": "chunk",
+        "sequence": 2,
+        "text": "world. "
+      },
+      {
+        "op": "chunk",
+        "sequence": 3,
+        "text": "Next"
+      },
+      {
+        "op": "allow",
+        "decisionId": "decision-sentence",
+        "acceptedThrough": 3,
+        "inputDigest": "sha256:sentence",
+        "occurredAt": 1000,
+        "deliver": [
+          {
+            "sequence": 1,
+            "text": "Hello "
+          },
+          {
+            "sequence": 2,
+            "text": "world. "
+          }
+        ]
+      },
+      {
+        "op": "commit",
+        "deliver": [
+          {
+            "sequence": 3,
+            "text": "Next"
+          }
+        ]
+      }
+    ],
+    "expected": {
+      "lastGeneratedSequence": 3,
+      "lastPolicyAcceptedSequence": 3,
+      "lastClientDeliveredSequence": 3,
+      "stopped": false
+    }
+  },
+  {
     "name": "policy_abort_cuts_off_delivery",
     "delivery": {
       "mode": "bounded_holdback",

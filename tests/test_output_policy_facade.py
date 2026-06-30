@@ -1046,3 +1046,51 @@ def test_output_delivery_gate_buffer_until_commit_holds_accepted_chunks() -> Non
     assert gate.last_policy_accepted_sequence == 2
     assert gate.last_client_delivered_sequence == 0
     assert [(chunk.sequence, chunk.text) for chunk in gate.commit_accepted_output()] == [(1, "hello "), (2, "world")]
+
+
+def test_output_delivery_gate_sentence_flush_boundary_holds_incomplete_suffix() -> None:
+    gate = OutputDeliveryGate(
+        "stream-1",
+        "response-1",
+        delivery_policy=OutputDeliveryPolicy.bounded_holdback(
+            on_violation="abort_response",
+            holdback_max_tokens=16,
+            flush_boundaries=frozenset({"sentence"}),
+        ),
+    )
+    gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "Hello "))
+    gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 2, "world. "))
+    gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 3, "Next"))
+
+    update = gate.apply_decision(
+        OutputPolicyDecision.allow("decision-1", accepted_through_sequence=3, input_digest="sha256:accepted"),
+        occurred_at="2026-06-23T00:00:01Z",
+    )
+
+    assert [(chunk.sequence, chunk.text) for chunk in update.deliverable] == [(1, "Hello "), (2, "world. ")]
+    assert gate.last_policy_accepted_sequence == 3
+    assert gate.last_client_delivered_sequence == 2
+    assert [(chunk.sequence, chunk.text) for chunk in gate.commit_accepted_output()] == [(3, "Next")]
+
+
+def test_output_delivery_gate_paragraph_flush_boundary_waits_for_blank_line() -> None:
+    gate = OutputDeliveryGate(
+        "stream-1",
+        "response-1",
+        delivery_policy=OutputDeliveryPolicy.bounded_holdback(
+            on_violation="abort_response",
+            holdback_max_tokens=16,
+            flush_boundaries=frozenset({"paragraph"}),
+        ),
+    )
+    gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "First"))
+    gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 2, "\n\n"))
+    gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 3, "Second"))
+
+    update = gate.apply_decision(
+        OutputPolicyDecision.allow("decision-1", accepted_through_sequence=3, input_digest="sha256:accepted"),
+        occurred_at="2026-06-23T00:00:01Z",
+    )
+
+    assert [(chunk.sequence, chunk.text) for chunk in update.deliverable] == [(1, "First"), (2, "\n\n")]
+    assert gate.last_client_delivered_sequence == 2

@@ -130,8 +130,9 @@ def test_testing_package_loads_shared_policy_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_policy_tck_cases(ROOT / "tck" / "policy" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["policy"] * 9
+    assert [case.kind for case in cases] == ["policy"] * 10
     assert {case.case_id for case in cases} >= {
+        "bounded_holdback_flushes_only_at_sentence_boundary",
         "abort_turn_stops_delivery_and_marks_draft_incomplete",
         "deny_commit_stops_buffered_candidate_without_delivery",
     }

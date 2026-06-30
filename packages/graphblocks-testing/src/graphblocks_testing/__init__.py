@@ -7657,6 +7657,20 @@ class TckRunner:
             value = delivery.get(source)
             if value is not None:
                 policy = replace(policy, **{target: value})
+        flush_boundaries = delivery.get("flushBoundaries", delivery.get("flush_boundaries"))
+        if flush_boundaries is not None:
+            if isinstance(flush_boundaries, list) and all(
+                isinstance(boundary, str) for boundary in flush_boundaries
+            ):
+                policy = replace(policy, flush_boundaries=frozenset(flush_boundaries))
+            else:
+                diagnostics.append(
+                    {
+                        "code": "PolicyFlushBoundariesInvalid",
+                        "message": "policy TCK flush boundaries must be a list of strings",
+                        "path": "$.delivery.flushBoundaries",
+                    }
+                )
         gate = OutputDeliveryGate(case.policy_stream_id, case.policy_response_id, delivery_policy=policy)
 
         for operation_index, operation in enumerate(case.policy_operations):

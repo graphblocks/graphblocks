@@ -1003,6 +1003,12 @@ pub struct OutputDeliveryGate {
     stopped: Option<OutputCutoff>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FlushContext {
+    PolicyDecision,
+    ExplicitCommit,
+}
+
 impl OutputDeliveryGate {
     pub fn new(stream_id: impl Into<String>, response_id: impl Into<String>) -> Self {
         Self {
@@ -1153,12 +1159,16 @@ impl OutputDeliveryGate {
     }
 
     pub fn commit_accepted_output(&mut self) -> Vec<GenerationChunk> {
+        self.release_accepted_output(FlushContext::ExplicitCommit)
+    }
+
+    fn release_accepted_output(&mut self, flush_context: FlushContext) -> Vec<GenerationChunk> {
         if self.stopped.is_some() {
             return Vec::new();
         }
 
         let delivered_after = self.last_client_delivered_sequence + 1;
-        let accepted_through = self.last_policy_accepted_sequence;
+        let accepted_through = self.flushable_accepted_sequence(flush_context);
         if delivered_after > accepted_through {
             return Vec::new();
         }
@@ -1177,6 +1187,47 @@ impl OutputDeliveryGate {
             }
         }
         deliverable
+    }
+
+    fn flushable_accepted_sequence(&self, flush_context: FlushContext) -> u64 {
+        if flush_context == FlushContext::ExplicitCommit
+            || self.delivery_policy.flush_boundaries.is_empty()
+        {
+            return self.last_policy_accepted_sequence;
+        }
+
+        let mut flushable_sequence = self.last_client_delivered_sequence;
+        let mut accumulated_text = String::new();
+        for sequence in
+            (self.last_client_delivered_sequence + 1)..=self.last_policy_accepted_sequence
+        {
+            let Some(chunk) = self.pending.get(&sequence) else {
+                break;
+            };
+            accumulated_text.push_str(&chunk.text);
+            if self.chunk_satisfies_flush_boundary(chunk, &accumulated_text, flush_context) {
+                flushable_sequence = sequence;
+            }
+        }
+        flushable_sequence
+    }
+
+    fn chunk_satisfies_flush_boundary(
+        &self,
+        chunk: &GenerationChunk,
+        accumulated_text: &str,
+        flush_context: FlushContext,
+    ) -> bool {
+        self.delivery_policy
+            .flush_boundaries
+            .iter()
+            .any(|boundary| match boundary {
+                FlushBoundary::Token => !chunk.text.is_empty(),
+                FlushBoundary::Sentence => ends_at_sentence_boundary(accumulated_text),
+                FlushBoundary::Paragraph => ends_at_paragraph_boundary(accumulated_text),
+                FlushBoundary::ContentPart | FlushBoundary::ToolCall => true,
+                FlushBoundary::Response => flush_context == FlushContext::ExplicitCommit,
+            })
     }
 
     pub fn record_chunk(
@@ -1312,7 +1363,7 @@ impl OutputDeliveryGate {
                 let deliverable = match self.delivery_policy.mode {
                     DeliveryMode::BufferUntilCommit => Vec::new(),
                     DeliveryMode::BoundedHoldback | DeliveryMode::ImmediateDraft => {
-                        self.commit_accepted_output()
+                        self.release_accepted_output(FlushContext::PolicyDecision)
                     }
                 };
 
@@ -1483,7 +1534,7 @@ impl OutputDeliveryGate {
                 let deliverable = match self.delivery_policy.mode {
                     DeliveryMode::BufferUntilCommit => Vec::new(),
                     DeliveryMode::BoundedHoldback | DeliveryMode::ImmediateDraft => {
-                        self.commit_accepted_output()
+                        self.release_accepted_output(FlushContext::PolicyDecision)
                     }
                 };
 
@@ -1559,4 +1610,16 @@ impl OutputDeliveryGate {
         }
         Ok(())
     }
+}
+
+fn ends_at_sentence_boundary(text: &str) -> bool {
+    text.trim_end_matches([' ', '\t', '\r', '\n'])
+        .chars()
+        .last()
+        .is_some_and(|character| matches!(character, '.' | '!' | '?'))
+}
+
+fn ends_at_paragraph_boundary(text: &str) -> bool {
+    let text = text.trim_end_matches([' ', '\t']);
+    text.ends_with("\n\n") || text.ends_with("\r\n\r\n")
 }

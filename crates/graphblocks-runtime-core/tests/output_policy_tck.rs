@@ -1,7 +1,7 @@
 use graphblocks_runtime_core::output_policy::{
-    DraftDisposition, GenerationChunk, OutputDeliveryGate, OutputDeliveryPolicy, OutputGateError,
-    OutputGateUpdate, OutputPolicyDecision, PendingToolCallsDisposition, ProviderCancellation,
-    RedactionInstruction, ViolationAction,
+    DraftDisposition, FlushBoundary, GenerationChunk, OutputDeliveryGate, OutputDeliveryPolicy,
+    OutputGateError, OutputGateUpdate, OutputPolicyDecision, PendingToolCallsDisposition,
+    ProviderCancellation, RedactionInstruction, ViolationAction,
 };
 use serde_json::Value;
 
@@ -190,7 +190,33 @@ fn delivery_policy(value: &Value, name: &str) -> Result<OutputDeliveryPolicy, St
     if let Some(duration_ms) = optional_u64(value, "holdbackMaxDurationMs") {
         policy = policy.with_holdback_max_duration_ms(duration_ms);
     }
+    if let Some(boundaries) = value.get("flushBoundaries").and_then(Value::as_array) {
+        let mut parsed = Vec::new();
+        for boundary in boundaries {
+            parsed.push(flush_boundary(
+                boundary.as_str().ok_or_else(|| {
+                    format!("policy TCK case {name} has non-string flush boundary")
+                })?,
+                name,
+            )?);
+        }
+        policy = policy.flush_on(parsed);
+    }
     Ok(policy)
+}
+
+fn flush_boundary(raw: &str, name: &str) -> Result<FlushBoundary, String> {
+    match raw {
+        "token" => Ok(FlushBoundary::Token),
+        "sentence" => Ok(FlushBoundary::Sentence),
+        "paragraph" => Ok(FlushBoundary::Paragraph),
+        "content_part" => Ok(FlushBoundary::ContentPart),
+        "tool_call" => Ok(FlushBoundary::ToolCall),
+        "response" => Ok(FlushBoundary::Response),
+        other => Err(format!(
+            "policy TCK case {name} has unknown flush boundary {other}"
+        )),
+    }
 }
 
 fn assert_chunk_result(

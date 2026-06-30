@@ -1,7 +1,7 @@
 use graphblocks_runtime_core::output_policy::{
     DeclarativeOutputPolicyEvaluator, DeclarativeOutputPolicyRule,
-    DeclarativeOutputPolicyRuleError, DraftDisposition, DurableResult, GenerationChunk,
-    GenerationChunkError, OutputCutoff, OutputCutoffError, OutputDeliveryGate,
+    DeclarativeOutputPolicyRuleError, DraftDisposition, DurableResult, FlushBoundary,
+    GenerationChunk, GenerationChunkError, OutputCutoff, OutputCutoffError, OutputDeliveryGate,
     OutputDeliveryPolicy, OutputDeliveryPolicyError, OutputDisposition, OutputGateError,
     OutputPolicyDecision, OutputPolicyDecisionError, PendingToolCallsDisposition,
     ProviderCancellation, RedactionInstruction, TerminalReason, ViolationAction,
@@ -84,6 +84,83 @@ fn output_gate_resumes_pending_holdback_state() -> Result<(), OutputGateError> {
             .collect::<Vec<_>>(),
         vec![(3, "next")]
     );
+    Ok(())
+}
+
+#[test]
+fn sentence_flush_boundary_holds_incomplete_accepted_suffix() -> Result<(), OutputGateError> {
+    let mut gate = OutputDeliveryGate::new("stream-1", "response-1").with_delivery_policy(
+        OutputDeliveryPolicy::bounded_holdback(
+            ViolationAction::AbortResponse,
+            DraftDisposition::Retract,
+        )
+        .with_holdback_max_tokens(16)
+        .flush_on([FlushBoundary::Sentence]),
+    )?;
+
+    gate.record_chunk(GenerationChunk::text("stream-1", "response-1", 1, "Hello "))?;
+    gate.record_chunk(GenerationChunk::text(
+        "stream-1",
+        "response-1",
+        2,
+        "world. ",
+    ))?;
+    gate.record_chunk(GenerationChunk::text("stream-1", "response-1", 3, "Next"))?;
+
+    let update = gate.apply_decision(
+        OutputPolicyDecision::allow("decision-1", Some(3), "sha256:accepted"),
+        1_000,
+    )?;
+
+    assert_eq!(
+        update
+            .deliverable
+            .iter()
+            .map(|chunk| (chunk.sequence, chunk.text.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(1, "Hello "), (2, "world. ")]
+    );
+    assert_eq!(gate.last_policy_accepted_sequence(), 3);
+    assert_eq!(gate.last_client_delivered_sequence(), 2);
+    assert_eq!(
+        gate.commit_accepted_output()
+            .iter()
+            .map(|chunk| (chunk.sequence, chunk.text.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(3, "Next")]
+    );
+    Ok(())
+}
+
+#[test]
+fn paragraph_flush_boundary_waits_for_blank_line() -> Result<(), OutputGateError> {
+    let mut gate = OutputDeliveryGate::new("stream-1", "response-1").with_delivery_policy(
+        OutputDeliveryPolicy::bounded_holdback(
+            ViolationAction::AbortResponse,
+            DraftDisposition::Retract,
+        )
+        .with_holdback_max_tokens(16)
+        .flush_on([FlushBoundary::Paragraph]),
+    )?;
+
+    gate.record_chunk(GenerationChunk::text("stream-1", "response-1", 1, "First"))?;
+    gate.record_chunk(GenerationChunk::text("stream-1", "response-1", 2, "\n\n"))?;
+    gate.record_chunk(GenerationChunk::text("stream-1", "response-1", 3, "Second"))?;
+
+    let update = gate.apply_decision(
+        OutputPolicyDecision::allow("decision-1", Some(3), "sha256:accepted"),
+        1_000,
+    )?;
+
+    assert_eq!(
+        update
+            .deliverable
+            .iter()
+            .map(|chunk| (chunk.sequence, chunk.text.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(1, "First"), (2, "\n\n")]
+    );
+    assert_eq!(gate.last_client_delivered_sequence(), 2);
     Ok(())
 }
 
