@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import importlib
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -60,6 +62,57 @@ def test_agents_package_exposes_tool_resolution_and_execution_plan_contracts(mon
     plan.record_started("call-a")
     plan.record_completed("call-a")
     assert plan.ready_call_ids() == ["call-b"]
+    assert "evaluate_native_tool_execution_plan" in graphblocks_agents.__all__
+    assert "evaluate_native_sequential_tool_queue" in graphblocks_agents.__all__
+
+
+def test_agents_package_lazy_native_helpers_delegate_to_runtime(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-agents" / "src"))
+    calls: list[tuple[str, tuple[object, ...]]] = []
+
+    def evaluate_tool_execution_plan(plan: dict[str, object], operations: object) -> dict[str, object]:
+        calls.append(("plan", (plan, operations)))
+        return {"kind": "plan", "plan": plan, "operations": operations}
+
+    def evaluate_sequential_tool_queue(queue: dict[str, object], operations: object) -> dict[str, object]:
+        calls.append(("queue", (queue, operations)))
+        return {"kind": "queue", "queue": queue, "operations": operations}
+
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(
+            evaluate_sequential_tool_queue=evaluate_sequential_tool_queue,
+            evaluate_tool_execution_plan=evaluate_tool_execution_plan,
+        ),
+    )
+    graphblocks_agents = importlib.import_module("graphblocks_agents")
+
+    plan = graphblocks_agents.evaluate_native_tool_execution_plan(
+        {"planId": "plan-1"},
+        [{"op": "ready"}],
+    )
+    queue = graphblocks_agents.evaluate_native_sequential_tool_queue(
+        {"planId": "plan-1", "responseId": "response-1", "calls": []},
+        [{"op": "start_next_ready"}],
+    )
+
+    assert plan == {"kind": "plan", "plan": {"planId": "plan-1"}, "operations": [{"op": "ready"}]}
+    assert queue == {
+        "kind": "queue",
+        "queue": {"planId": "plan-1", "responseId": "response-1", "calls": []},
+        "operations": [{"op": "start_next_ready"}],
+    }
+    assert calls == [
+        ("plan", ({"planId": "plan-1"}, [{"op": "ready"}])),
+        (
+            "queue",
+            (
+                {"planId": "plan-1", "responseId": "response-1", "calls": []},
+                [{"op": "start_next_ready"}],
+            ),
+        ),
+    ]
 
 
 def test_agents_package_exposes_policy_obligated_tool_admission(monkeypatch) -> None:

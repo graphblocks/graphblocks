@@ -75,6 +75,24 @@ from graphblocks.tools import (
 )
 
 
+def evaluate_native_tool_execution_plan(
+    plan: dict[str, object],
+    operations: object,
+) -> dict[str, object]:
+    from graphblocks_runtime import evaluate_tool_execution_plan
+
+    return evaluate_tool_execution_plan(plan, operations)
+
+
+def evaluate_native_sequential_tool_queue(
+    queue: dict[str, object],
+    operations: object,
+) -> dict[str, object]:
+    from graphblocks_runtime import evaluate_sequential_tool_queue
+
+    return evaluate_sequential_tool_queue(queue, operations)
+
+
 __all__ = [
     "AdmittedToolCall",
     "AgentLoopController",
@@ -142,5 +160,7 @@ __all__ = [
     "ToolSchemaValidationError",
     "admit_tool_call",
     "build_before_tool_or_effect_policy_request",
+    "evaluate_native_sequential_tool_queue",
+    "evaluate_native_tool_execution_plan",
     "validate_tool_result_for_model",
 ]
