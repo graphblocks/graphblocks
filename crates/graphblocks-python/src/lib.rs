@@ -241,6 +241,9 @@ fn validate_remote_payload_json(payload_json: &str, max_inline_bytes: usize) -> 
         Ok(()) => json!({"ok": true}),
         Err(error) => {
             let error_payload = match error {
+                RemotePayloadError::InvalidSchema => {
+                    json!({"code": "remote_payload.invalid_schema"})
+                }
                 RemotePayloadError::OversizedInlinePayload {
                     max_inline_bytes,
                     actual_inline_bytes,
@@ -2203,6 +2206,27 @@ mod tests {
                 .pointer("/error/maxInlineBytes")
                 .and_then(Value::as_u64),
             Some(8),
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn validate_remote_payload_json_rejects_blank_schema() -> Result<(), String> {
+        let payload = json!({
+            "mode": "inline",
+            "schema": " ",
+            "value": {"body": "hello"}
+        });
+        let payload_json = serde_json::to_string(&payload).map_err(|error| error.to_string())?;
+        let result_json =
+            validate_remote_payload_json(&payload_json, 128).map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(result.get("ok"), Some(&json!(false)));
+        assert_eq!(
+            result.pointer("/error/code").and_then(Value::as_str),
+            Some("remote_payload.invalid_schema"),
         );
         Ok(())
     }

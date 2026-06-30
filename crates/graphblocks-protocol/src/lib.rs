@@ -330,6 +330,7 @@ pub struct RemotePayloadLimits {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RemotePayloadError {
+    InvalidSchema,
     OversizedInlinePayload {
         max_inline_bytes: usize,
         actual_inline_bytes: usize,
@@ -345,7 +346,10 @@ pub fn validate_remote_payload(
     limits: &RemotePayloadLimits,
 ) -> Result<(), RemotePayloadError> {
     match payload {
-        RemotePayload::Inline { value, .. } => {
+        RemotePayload::Inline { schema, value } => {
+            if schema.trim().is_empty() {
+                return Err(RemotePayloadError::InvalidSchema);
+            }
             let actual_inline_bytes = serde_json::to_vec(value)
                 .map_err(|_| RemotePayloadError::InlineJsonEncoding)?
                 .len();
@@ -357,13 +361,16 @@ pub fn validate_remote_payload(
             }
             Ok(())
         }
-        RemotePayload::ArtifactRef { artifact, .. } => {
-            if artifact.artifact_id.is_empty() {
+        RemotePayload::ArtifactRef { schema, artifact } => {
+            if schema.trim().is_empty() {
+                return Err(RemotePayloadError::InvalidSchema);
+            }
+            if artifact.artifact_id.trim().is_empty() {
                 return Err(RemotePayloadError::InvalidArtifactRef {
                     field: "artifact_id".to_owned(),
                 });
             }
-            if artifact.uri.is_empty() {
+            if artifact.uri.trim().is_empty() {
                 return Err(RemotePayloadError::InvalidArtifactRef {
                     field: "uri".to_owned(),
                 });

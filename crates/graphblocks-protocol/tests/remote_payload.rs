@@ -54,6 +54,24 @@ fn remote_payload_rejects_oversized_inline_json() {
 }
 
 #[test]
+fn remote_payload_rejects_blank_schema() {
+    let payload = RemotePayload::Inline {
+        schema: " ".to_owned(),
+        value: json!({"body": "hello"}),
+    };
+
+    assert_eq!(
+        validate_remote_payload(
+            &payload,
+            &RemotePayloadLimits {
+                max_inline_bytes: 128
+            }
+        ),
+        Err(RemotePayloadError::InvalidSchema),
+    );
+}
+
+#[test]
 fn remote_payload_allows_large_artifact_by_reference() -> Result<(), serde_json::Error> {
     let payload = RemotePayload::ArtifactRef {
         schema: "graphblocks.ai/ArtifactRef@1".to_owned(),
@@ -84,4 +102,51 @@ fn remote_payload_allows_large_artifact_by_reference() -> Result<(), serde_json:
         Ok(()),
     );
     Ok(())
+}
+
+#[test]
+fn remote_payload_rejects_blank_artifact_reference_fields() {
+    let mut payload = RemotePayload::ArtifactRef {
+        schema: "graphblocks.ai/ArtifactRef@1".to_owned(),
+        artifact: ArtifactRef {
+            artifact_id: " ".to_owned(),
+            uri: "s3://graphblocks/documents/source.pdf".to_owned(),
+            media_type: None,
+            size_bytes: None,
+            checksum: None,
+            etag: None,
+            version: None,
+            filename: None,
+            metadata: BTreeMap::new(),
+        },
+    };
+
+    assert_eq!(
+        validate_remote_payload(
+            &payload,
+            &RemotePayloadLimits {
+                max_inline_bytes: 8
+            }
+        ),
+        Err(RemotePayloadError::InvalidArtifactRef {
+            field: "artifact_id".to_owned(),
+        }),
+    );
+
+    if let RemotePayload::ArtifactRef { artifact, .. } = &mut payload {
+        artifact.artifact_id = "artifact-000001".to_owned();
+        artifact.uri = " ".to_owned();
+    }
+
+    assert_eq!(
+        validate_remote_payload(
+            &payload,
+            &RemotePayloadLimits {
+                max_inline_bytes: 8
+            }
+        ),
+        Err(RemotePayloadError::InvalidArtifactRef {
+            field: "uri".to_owned(),
+        }),
+    );
 }
