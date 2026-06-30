@@ -68,6 +68,15 @@ def _validate_string_tuple(owner: str, field_name: str, values: object) -> tuple
     return normalized
 
 
+def _freeze_mapping(owner: str, field_name: str, value: object) -> MappingProxyType[str, object]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{owner} {field_name} must be a mapping")
+    mapping = dict(value)
+    if any(not isinstance(key, str) or not key.strip() for key in mapping):
+        raise ValueError(f"{owner} {field_name} keys must be non-empty strings")
+    return MappingProxyType(mapping)
+
+
 @dataclass(frozen=True, slots=True)
 class PrincipalRef:
     principal_id: str
@@ -89,7 +98,7 @@ class PrincipalRef:
         )
         object.__setattr__(self, "groups", _validate_string_tuple("principal", "groups", self.groups))
         object.__setattr__(self, "roles", _validate_string_tuple("principal", "roles", self.roles))
-        object.__setattr__(self, "attributes", MappingProxyType(dict(self.attributes)))
+        object.__setattr__(self, "attributes", _freeze_mapping("principal", "attributes", self.attributes))
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,7 +124,7 @@ class ResourceRef:
             "tenant_id",
             _validate_optional_non_empty_string("resource", "tenant_id", self.tenant_id),
         )
-        object.__setattr__(self, "attributes", MappingProxyType(dict(self.attributes)))
+        object.__setattr__(self, "attributes", _freeze_mapping("resource", "attributes", self.attributes))
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,7 +144,7 @@ class PolicyObligation:
             "obligation_type",
             _validate_non_empty_string("policy obligation", "obligation_type", self.obligation_type),
         )
-        object.__setattr__(self, "parameters", MappingProxyType(dict(self.parameters)))
+        object.__setattr__(self, "parameters", _freeze_mapping("policy obligation", "parameters", self.parameters))
 
 
 @dataclass(frozen=True, slots=True)
@@ -322,7 +331,7 @@ class PolicyRequest:
             "requested_usage",
             tuple(MappingProxyType(dict(usage)) for usage in self.requested_usage),
         )
-        object.__setattr__(self, "attributes", MappingProxyType(dict(self.attributes)))
+        object.__setattr__(self, "attributes", _freeze_mapping("policy request", "attributes", self.attributes))
 
     def with_input_digest(self) -> PolicyRequest:
         principal = None
@@ -435,7 +444,7 @@ class PolicyEnforcementRecord:
         if self.status not in VALID_ENFORCEMENT_STATUSES:
             raise ValueError(f"unknown policy enforcement status {self.status!r}")
         object.__setattr__(self, "enforced_obligation_ids", tuple(self.enforced_obligation_ids))
-        object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
+        object.__setattr__(self, "metadata", _freeze_mapping("policy enforcement", "metadata", self.metadata))
 
     @classmethod
     def from_decision(

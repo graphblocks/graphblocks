@@ -88,6 +88,32 @@ def test_policy_request_mappings_are_copied_and_read_only() -> None:
         request.attributes["output_policy_state"] = "direct-mutation"
     assert request.with_input_digest().input_digest.startswith("sha256:")
 
+    with pytest.raises(ValueError, match="principal attributes must be a mapping"):
+        PrincipalRef("user-1", attributes=object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="principal attributes keys must be non-empty strings"):
+        PrincipalRef("user-1", attributes={" ": "enterprise"})
+    with pytest.raises(ValueError, match="resource attributes must be a mapping"):
+        ResourceRef("tool:search", attributes=object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="policy obligation parameters must be a mapping"):
+        PolicyObligation("obl-1", "capture_audit", parameters=object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="policy request attributes must be a mapping"):
+        PolicyRequest(
+            request_id="req-invalid",
+            enforcement_point="before_tool_or_effect",
+            action="tool.run",
+            resource=ResourceRef("tool:search", resource_kind="tool"),
+            attributes=object(),  # type: ignore[arg-type]
+            occurred_at="2026-06-23T00:00:00Z",
+        )
+    with pytest.raises(ValueError, match="policy enforcement metadata must be a mapping"):
+        PolicyEnforcementRecord(
+            record_id="enforce-invalid",
+            decision_id="decision-1",
+            enforcement_point="before_provider_call",
+            status="enforced",
+            metadata=object(),  # type: ignore[arg-type]
+        )
+
 
 def test_policy_models_reject_unknown_typed_values() -> None:
     with pytest.raises(ValueError, match="unknown enforcement point"):
