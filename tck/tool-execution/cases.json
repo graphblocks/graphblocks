@@ -195,6 +195,36 @@
     "expectedCreationError": "unsafe_parallel_effects"
   },
   {
+    "name": "parallel_process_and_destructive_tools_require_effect_keys",
+    "kind": "execution_plan",
+    "planId": "plan-3c",
+    "responseId": "response-1",
+    "maximumParallelism": 2,
+    "calls": [
+      {
+        "toolCallId": "call-a",
+        "toolName": "process.run",
+        "arguments": {
+          "resource_id": "job-1"
+        },
+        "effects": [
+          "process"
+        ]
+      },
+      {
+        "toolCallId": "call-b",
+        "toolName": "workspace.delete",
+        "arguments": {
+          "resource_id": "workspace/tmp"
+        },
+        "effects": [
+          "destructive"
+        ]
+      }
+    ],
+    "expectedCreationError": "unsafe_parallel_effects"
+  },
+  {
     "name": "policy_abort_denies_pending_tool_calls",
     "kind": "execution_plan",
     "planId": "plan-4",
