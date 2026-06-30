@@ -5,6 +5,9 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 
+import graphblocks
+from graphblocks.approval import VALID_APPROVAL_STATUSES
+
 
 ROOT = Path(__file__).parents[1]
 
@@ -46,6 +49,10 @@ def test_audit_package_exposes_append_only_event_and_enforcement_records(monkeyp
     assert enforcement.decision_id == "decision-1"
     assert enforcement.enforcement_point == "before_client_delivery"
     assert enforcement.status == "enforced"
+    assert graphblocks_audit.VALID_APPROVAL_STATUSES is VALID_APPROVAL_STATUSES
+    assert "VALID_APPROVAL_STATUSES" in graphblocks_audit.__all__
+    assert graphblocks.VALID_APPROVAL_STATUSES is VALID_APPROVAL_STATUSES
+    assert "VALID_APPROVAL_STATUSES" in graphblocks.__all__
 
 
 def test_audit_package_exposes_native_audit_helpers(monkeypatch) -> None:

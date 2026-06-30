@@ -12,6 +12,7 @@ from graphblocks.agent import (
     AgentStatePatchOpKind,
     AgentStateSchema,
     ToolFailurePolicy,
+    VALID_TOOL_FAILURE_POLICIES,
 )
 from graphblocks.conversation import ContentPart
 from graphblocks.policy import (
@@ -251,6 +252,7 @@ __all__ = [
     "ToolExecutionPlan",
     "ToolExecutionPlanError",
     "ToolFailurePolicy",
+    "VALID_TOOL_FAILURE_POLICIES",
     "ToolExecutionState",
     "ToolIdempotency",
     "ToolImplementation",

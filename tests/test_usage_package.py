@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 
+import graphblocks
 from graphblocks.usage import VALID_USAGE_CONFIDENCES, VALID_USAGE_SOURCES
 
 
@@ -63,6 +64,10 @@ def test_usage_package_exposes_canonical_literal_sets(monkeypatch) -> None:
     assert "reconciled" in graphblocks_usage.VALID_USAGE_SOURCES
     assert "provider_exact" in graphblocks_usage.VALID_USAGE_CONFIDENCES
     assert "VALID_USAGE_SOURCES" in graphblocks_usage.__all__
+    assert graphblocks.VALID_USAGE_SOURCES is VALID_USAGE_SOURCES
+    assert graphblocks.VALID_USAGE_CONFIDENCES is VALID_USAGE_CONFIDENCES
+    assert "VALID_USAGE_SOURCES" in graphblocks.__all__
+    assert "VALID_USAGE_CONFIDENCES" in graphblocks.__all__
 
 
 def test_usage_package_lazy_native_helper_delegates_to_runtime(monkeypatch) -> None:

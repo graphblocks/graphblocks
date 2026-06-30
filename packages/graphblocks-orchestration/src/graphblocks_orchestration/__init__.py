@@ -3,6 +3,7 @@ from __future__ import annotations
 from graphblocks.orchestration import (
     ChildBudgetDelegation,
     ChildBudgetDelegationError,
+    ContextAccessMode,
     LeaseAlreadyExistsError,
     LeaseEpochMismatchError,
     LeaseGrant,
@@ -35,6 +36,7 @@ from graphblocks.orchestration import (
     TaskPlanPatchMismatchError,
     TaskStep,
     TaskStepNotFoundError,
+    VALID_CONTEXT_ACCESS_MODES,
     WorkerPool,
     WorkerProfile,
 )
@@ -67,6 +69,7 @@ def evaluate_native_node_lifecycle(state: dict[str, object], operations: object)
 __all__ = [
     "ChildBudgetDelegation",
     "ChildBudgetDelegationError",
+    "ContextAccessMode",
     "LeaseAlreadyExistsError",
     "LeaseEpochMismatchError",
     "LeaseGrant",
@@ -99,6 +102,7 @@ __all__ = [
     "TaskPlanPatchMismatchError",
     "TaskStep",
     "TaskStepNotFoundError",
+    "VALID_CONTEXT_ACCESS_MODES",
     "WorkerPool",
     "WorkerProfile",
     "evaluate_native_cancellation_scope",

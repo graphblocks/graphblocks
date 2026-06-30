@@ -5,6 +5,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import graphblocks
+from graphblocks.orchestration import VALID_CONTEXT_ACCESS_MODES
 from graphblocks.policy import ResourceRef
 
 
@@ -43,6 +45,10 @@ def test_orchestration_package_reexports_task_and_pool_contracts(monkeypatch) ->
     assert grant.fencing_epoch == 1
     assert leased.available_units == 0
     assert "TaskPlanIdentityError" in graphblocks_orchestration.__all__
+    assert graphblocks_orchestration.VALID_CONTEXT_ACCESS_MODES is VALID_CONTEXT_ACCESS_MODES
+    assert "VALID_CONTEXT_ACCESS_MODES" in graphblocks_orchestration.__all__
+    assert graphblocks.VALID_CONTEXT_ACCESS_MODES is VALID_CONTEXT_ACCESS_MODES
+    assert "VALID_CONTEXT_ACCESS_MODES" in graphblocks.__all__
 
 
 def test_orchestration_package_lazy_native_helpers_delegate_to_runtime(monkeypatch) -> None:

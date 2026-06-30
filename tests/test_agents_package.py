@@ -5,8 +5,10 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import graphblocks
 import pytest
 
+from graphblocks.agent import VALID_TOOL_FAILURE_POLICIES
 from graphblocks.tools import (
     FINAL_TOOL_RESULT_EVENT_STATUSES,
     VALID_TOOL_APPROVALS,
@@ -88,6 +90,7 @@ def test_agents_package_exposes_tool_literal_sets(monkeypatch) -> None:
     graphblocks_agents = importlib.import_module("graphblocks_agents")
     expected_constants = {
         "FINAL_TOOL_RESULT_EVENT_STATUSES": FINAL_TOOL_RESULT_EVENT_STATUSES,
+        "VALID_TOOL_FAILURE_POLICIES": VALID_TOOL_FAILURE_POLICIES,
         "VALID_TOOL_APPROVALS": VALID_TOOL_APPROVALS,
         "VALID_TOOL_APPROVAL_STATUSES": VALID_TOOL_APPROVAL_STATUSES,
         "VALID_TOOL_CALL_DRAFT_STATUSES": VALID_TOOL_CALL_DRAFT_STATUSES,
@@ -106,6 +109,8 @@ def test_agents_package_exposes_tool_literal_sets(monkeypatch) -> None:
     assert sorted(name for name in expected_constants if name not in graphblocks_agents.__all__) == []
     for name, value in expected_constants.items():
         assert getattr(graphblocks_agents, name) is value
+    assert graphblocks.VALID_TOOL_FAILURE_POLICIES is VALID_TOOL_FAILURE_POLICIES
+    assert "VALID_TOOL_FAILURE_POLICIES" in graphblocks.__all__
 
 
 def test_agents_package_lazy_native_helpers_delegate_to_runtime(monkeypatch) -> None:

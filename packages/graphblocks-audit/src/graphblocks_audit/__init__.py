@@ -16,7 +16,7 @@ from graphblocks.application_event import (
     ApplicationEventKind,
     ApplicationEventMetadata,
 )
-from graphblocks.approval import ApprovalRecord, ApprovalRequest, ApprovalStatus
+from graphblocks.approval import ApprovalRecord, ApprovalRequest, ApprovalStatus, VALID_APPROVAL_STATUSES
 from graphblocks.canonical import canonical_hash
 from graphblocks.policy import PolicyDecision, PolicyEnforcementRecord, PrincipalRef, ResourceRef
 from graphblocks.tools import (
@@ -421,6 +421,7 @@ __all__ = [
     "ApprovalRecord",
     "ApprovalRequest",
     "ApprovalStatus",
+    "VALID_APPROVAL_STATUSES",
     "PolicyDecision",
     "PolicyEnforcementRecord",
     "PrincipalRef",
