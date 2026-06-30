@@ -236,8 +236,19 @@ impl InProcessTestRuntime {
                 let metadata = JournalMetadata::new()
                     .with_node_id(node_id.clone())
                     .with_attempt_id(format!("attempt-{attempt}"));
-                self.journal
-                    .append_with_metadata("node_started", metadata.clone(), None)?;
+                let started_payload = self.retry_boundaries.get(&node_id).and_then(|boundary| {
+                    boundary.idempotency_key.as_ref().map(|idempotency_key| {
+                        json!({
+                            "attempt": attempt,
+                            "idempotencyKey": idempotency_key,
+                        })
+                    })
+                });
+                self.journal.append_with_metadata(
+                    "node_started",
+                    metadata.clone(),
+                    started_payload,
+                )?;
 
                 let started_at_ms = self.virtual_now_ms;
                 let execution_result = executor.execute(started.clone());

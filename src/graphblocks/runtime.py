@@ -391,7 +391,10 @@ class InProcessRuntime:
                     max_attempts = _configured_retry_attempts(retry)
                 result: dict[str, Any] | None = None
                 for attempt in range(1, max_attempts + 1):
-                    journal.append("node_started", {"node": node_name, "block": block_id, "attempt": attempt})
+                    started_payload: dict[str, Any] = {"node": node_name, "block": block_id, "attempt": attempt}
+                    if idempotency_key is not None:
+                        started_payload["idempotencyKey"] = str(idempotency_key)
+                    journal.append("node_started", started_payload)
                     try:
                         block = self.registry.resolve(block_id)
                         merged_inputs = {**node_inputs[node_name], **resolved_inputs}

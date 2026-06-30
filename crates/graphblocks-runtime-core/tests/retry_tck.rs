@@ -151,6 +151,19 @@ fn rust_retry_matches_shared_tck_cases() {
                     .cloned()
             })
             .collect::<Vec<_>>();
+        let context_idempotency_keys = result
+            .journal
+            .records()
+            .iter()
+            .filter(|record| record.kind == "node_started")
+            .filter_map(|record| {
+                record
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("idempotencyKey"))
+                    .cloned()
+            })
+            .collect::<Vec<_>>();
         let expected = case
             .get("expected")
             .and_then(Value::as_object)
@@ -163,6 +176,7 @@ fn rust_retry_matches_shared_tck_cases() {
                 "attempts" => json!(executor.attempts),
                 "retryCount" => json!(retry_idempotency_keys.len()),
                 "retryIdempotencyKeys" => Value::Array(retry_idempotency_keys.clone()),
+                "contextIdempotencyKeys" => Value::Array(context_idempotency_keys.clone()),
                 unsupported => panic!("{case_name}: unsupported retry expectation {unsupported}"),
             };
             assert_eq!(

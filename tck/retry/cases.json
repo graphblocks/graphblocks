@@ -16,6 +16,11 @@
       "terminalKind": "run_succeeded",
       "attempts": 3,
       "retryCount": 2,
+      "contextIdempotencyKeys": [
+        "ticket-create:request-1",
+        "ticket-create:request-1",
+        "ticket-create:request-1"
+      ],
       "retryIdempotencyKeys": [
         "ticket-create:request-1",
         "ticket-create:request-1"
@@ -38,6 +43,10 @@
       "terminalKind": "run_failed",
       "attempts": 2,
       "retryCount": 1,
+      "contextIdempotencyKeys": [
+        "ticket-create:request-2",
+        "ticket-create:request-2"
+      ],
       "retryIdempotencyKeys": [
         "ticket-create:request-2"
       ]
@@ -60,6 +69,11 @@
       "terminalKind": "run_succeeded",
       "attempts": 3,
       "retryCount": 2,
+      "contextIdempotencyKeys": [
+        "file-write:request-1",
+        "file-write:request-1",
+        "file-write:request-1"
+      ],
       "retryIdempotencyKeys": [
         "file-write:request-1",
         "file-write:request-1"
@@ -84,6 +98,9 @@
       "terminalKind": "run_cancelled",
       "attempts": 1,
       "retryCount": 0,
+      "contextIdempotencyKeys": [
+        "ticket-create:request-3"
+      ],
       "retryIdempotencyKeys": []
     }
   }

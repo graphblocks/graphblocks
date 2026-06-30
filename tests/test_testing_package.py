@@ -542,6 +542,12 @@ def test_testing_package_loads_shared_retry_tck_cases(monkeypatch) -> None:
         ("file-write:request-1", "file-write:request-1"),
         (),
     }
+    assert {tuple(result.observed["contextIdempotencyKeys"]) for result in report.results} == {
+        ("ticket-create:request-1", "ticket-create:request-1", "ticket-create:request-1"),
+        ("ticket-create:request-2", "ticket-create:request-2"),
+        ("file-write:request-1", "file-write:request-1", "file-write:request-1"),
+        ("ticket-create:request-3",),
+    }
     assert any(result.observed["status"] == "cancelled" for result in report.results)
     assert "load_retry_tck_cases" in graphblocks_testing.__all__
 
