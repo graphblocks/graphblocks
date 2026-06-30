@@ -174,6 +174,13 @@ pub enum IngestionError {
         from: IngestionStatus,
         to: IngestionStatus,
     },
+    InvalidIndexRecordLineage {
+        manifest_id: String,
+        record_id: String,
+        field: String,
+        expected: String,
+        actual: String,
+    },
 }
 
 impl fmt::Display for IngestionError {
@@ -198,6 +205,16 @@ impl fmt::Display for IngestionError {
             } => write!(
                 formatter,
                 "ingestion manifest {manifest_id:?} cannot transition from {from:?} to {to:?}"
+            ),
+            Self::InvalidIndexRecordLineage {
+                manifest_id,
+                record_id,
+                field,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "index record {record_id:?} {field} {actual:?} does not match ingestion manifest {manifest_id:?} {field} {expected:?}"
             ),
         }
     }
@@ -259,6 +276,26 @@ impl InMemoryIngestionManifestStore {
                         manifest_id: manifest_id.to_owned(),
                         from: manifest.status.clone(),
                         to: IngestionStatus::Ready,
+                    });
+                }
+            }
+            for record in &index_records {
+                if record.asset_id != manifest.asset_id {
+                    return Err(IngestionError::InvalidIndexRecordLineage {
+                        manifest_id: manifest_id.to_owned(),
+                        record_id: record.record_id.clone(),
+                        field: "asset_id".to_owned(),
+                        expected: manifest.asset_id.clone(),
+                        actual: record.asset_id.clone(),
+                    });
+                }
+                if record.revision_id != manifest.revision_id {
+                    return Err(IngestionError::InvalidIndexRecordLineage {
+                        manifest_id: manifest_id.to_owned(),
+                        record_id: record.record_id.clone(),
+                        field: "revision_id".to_owned(),
+                        expected: manifest.revision_id.clone(),
+                        actual: record.revision_id.clone(),
                     });
                 }
             }

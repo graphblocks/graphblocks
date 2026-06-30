@@ -123,6 +123,48 @@ fn manifest_store_commit_is_idempotent_for_ready_manifest() -> Result<(), Box<dy
 }
 
 #[test]
+fn manifest_store_rejects_index_records_for_different_asset_or_revision()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut store = InMemoryIngestionManifestStore::new();
+    store.create_processing(manifest("manifest-1", "rev-1"), "2026-06-22T00:01:00Z")?;
+
+    let mut wrong_asset = index_record("rev-1");
+    wrong_asset.asset_id = "asset-2".to_owned();
+    let asset_error = store
+        .commit(
+            "manifest-1",
+            None,
+            None,
+            vec![wrong_asset],
+            "2026-06-22T00:02:00Z",
+        )
+        .expect_err("index record from another asset must be rejected");
+    assert!(matches!(
+        asset_error,
+        IngestionError::InvalidIndexRecordLineage { field, .. } if field == "asset_id"
+    ));
+
+    let revision_error = store
+        .commit(
+            "manifest-1",
+            None,
+            None,
+            vec![index_record("rev-2")],
+            "2026-06-22T00:03:00Z",
+        )
+        .expect_err("index record from another revision must be rejected");
+    assert!(matches!(
+        revision_error,
+        IngestionError::InvalidIndexRecordLineage { field, .. } if field == "revision_id"
+    ));
+    assert_eq!(
+        store.get("manifest-1").map(|manifest| &manifest.status),
+        Some(&IngestionStatus::Processing)
+    );
+    Ok(())
+}
+
+#[test]
 fn manifest_store_tombstone_marks_deleted_and_clears_current()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut store = InMemoryIngestionManifestStore::new();
