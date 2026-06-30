@@ -97,25 +97,26 @@ def test_compile_reports_unknown_edge_endpoint() -> None:
 
 
 def test_compile_rejects_effect_retry_without_idempotency_key() -> None:
-    graph = {
-        "apiVersion": "graphblocks.ai/v1alpha3",
-        "kind": "Graph",
-        "metadata": {"name": "unsafe-retry"},
-        "spec": {
-            "nodes": {
-                "write": {
-                    "block": "storage.write@1",
-                    "effects": ["external_write"],
-                    "flow": {"retry": {"maxAttempts": 2}},
+    for effect in ("external_write", "filesystem_write"):
+        graph = {
+            "apiVersion": "graphblocks.ai/v1alpha3",
+            "kind": "Graph",
+            "metadata": {"name": f"unsafe-retry-{effect}"},
+            "spec": {
+                "nodes": {
+                    "write": {
+                        "block": "storage.write@1",
+                        "effects": [effect],
+                        "flow": {"retry": {"maxAttempts": 2}},
+                    }
                 }
-            }
-        },
-    }
+            },
+        }
 
-    plan = compile_graph(graph)
+        plan = compile_graph(graph)
 
-    assert not plan.ok
-    assert [item.code for item in plan.diagnostics.diagnostics if item.severity == "error"] == ["GB1011"]
+        assert not plan.ok
+        assert [item.code for item in plan.diagnostics.diagnostics if item.severity == "error"] == ["GB1011"]
 
 
 def test_compile_does_not_coerce_non_numeric_effect_retry_attempts() -> None:

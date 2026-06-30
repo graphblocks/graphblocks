@@ -484,31 +484,33 @@ fn compile_graph_allows_optional_resource_slot_to_be_unbound() -> Result<(), Str
 
 #[test]
 fn compile_graph_rejects_effect_retry_without_idempotency_key() {
-    let graph = json!({
-        "apiVersion": GRAPH_API_VERSION,
-        "kind": "Graph",
-        "metadata": {"name": "unsafe-retry"},
-        "spec": {
-            "nodes": {
-                "write": {
-                    "block": "storage.write@1",
-                    "effects": ["external_write"],
-                    "flow": {"retry": {"maxAttempts": 2}}
+    for effect in ["external_write", "filesystem_write"] {
+        let graph = json!({
+            "apiVersion": GRAPH_API_VERSION,
+            "kind": "Graph",
+            "metadata": {"name": format!("unsafe-retry-{effect}")},
+            "spec": {
+                "nodes": {
+                    "write": {
+                        "block": "storage.write@1",
+                        "effects": [effect],
+                        "flow": {"retry": {"maxAttempts": 2}}
+                    }
                 }
             }
-        }
-    });
+        });
 
-    let plan = compile_graph(&graph);
+        let plan = compile_graph(&graph);
 
-    assert_eq!(
-        plan.diagnostics
-            .iter()
-            .filter(|diagnostic| diagnostic.severity == Severity::Error)
-            .map(|diagnostic| diagnostic.code.as_str())
-            .collect::<Vec<_>>(),
-        vec!["GB1011"]
-    );
+        assert_eq!(
+            plan.diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.severity == Severity::Error)
+                .map(|diagnostic| diagnostic.code.as_str())
+                .collect::<Vec<_>>(),
+            vec!["GB1011"]
+        );
+    }
 }
 
 #[test]

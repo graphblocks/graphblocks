@@ -184,7 +184,7 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
             idempotency_key = retry.get("idempotencyKey") or retry.get("idempotency_key")
         elif isinstance(retry, int) and not isinstance(retry, bool):
             max_attempts = retry
-        effect_retry_requires_key = bool(effect_set & {"external_write", "destructive", "process"})
+        effect_retry_requires_key = bool(effect_set & STATE_CHANGING_TOOL_EFFECTS)
         if effect_retry_requires_key and max_attempts > 1 and not idempotency_key:
             diagnostics.append(
                 Diagnostic(

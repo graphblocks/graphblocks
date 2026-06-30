@@ -421,12 +421,15 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                 Some(Value::String(effect)) => {
                     matches!(
                         effect.as_str(),
-                        "external_write" | "destructive" | "process"
+                        "external_write" | "filesystem_write" | "destructive" | "process"
                     )
                 }
                 Some(Value::Array(effects)) => effects.iter().any(|effect| {
                     effect.as_str().is_some_and(|effect| {
-                        matches!(effect, "external_write" | "destructive" | "process")
+                        matches!(
+                            effect,
+                            "external_write" | "filesystem_write" | "destructive" | "process"
+                        )
                     })
                 }),
                 _ => false,

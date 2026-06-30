@@ -525,6 +525,33 @@
     }
   },
   {
+    "name": "unsafe_filesystem_retry",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "unsafe-filesystem-retry"
+      },
+      "spec": {
+        "nodes": {
+          "write": {
+            "block": "storage.write@1",
+            "effects": ["filesystem_write"],
+            "flow": {
+              "retry": {
+                "maxAttempts": 2
+              }
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:c4748babce58c05e324b2d5d0560da7d66172be24bf428df1c4e53c8a497b12f",
+      "error_codes": ["GB1011"]
+    }
+  },
+  {
     "name": "safe_retry",
     "document": {
       "apiVersion": "graphblocks.ai/v1alpha3",
