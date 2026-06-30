@@ -435,6 +435,31 @@ fn output_policy_decision_rejects_zero_accepted_sequence() -> Result<(), OutputG
 }
 
 #[test]
+fn output_policy_decision_rejects_zero_evaluated_at_unix_ms() -> Result<(), OutputGateError> {
+    let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
+    let decision =
+        OutputPolicyDecision::allow("decision-1", Some(1), "sha256:input").evaluated_at_unix_ms(0);
+
+    gate.record_chunk(GenerationChunk::text("stream-1", "response-1", 1, "hello"))?;
+
+    assert_eq!(
+        decision.validate(),
+        Err(OutputPolicyDecisionError::InvalidEvaluatedAtUnixMs {
+            evaluated_at_unix_ms: 0,
+        })
+    );
+    assert_eq!(
+        gate.apply_decision(decision, 1_000),
+        Err(OutputGateError::InvalidEvaluatedAtUnixMs {
+            evaluated_at_unix_ms: 0,
+        })
+    );
+    assert_eq!(gate.last_policy_accepted_sequence(), 0);
+    assert_eq!(gate.last_client_delivered_sequence(), 0);
+    Ok(())
+}
+
+#[test]
 fn output_cutoff_rejects_sequences_beyond_generated() {
     let policy_accepted_after_generated = OutputCutoff {
         stream_id: "stream-1".to_owned(),
@@ -649,6 +674,15 @@ fn output_policy_decision_rejects_invalid_metadata_values() {
         blank_policy_ref.validate(),
         Err(OutputPolicyDecisionError::InvalidPolicyRef {
             policy_ref: "".to_owned(),
+        }),
+    );
+
+    let zero_evaluated_at =
+        OutputPolicyDecision::hold("decision-hold", "sha256:hold").evaluated_at_unix_ms(0);
+    assert_eq!(
+        zero_evaluated_at.validate(),
+        Err(OutputPolicyDecisionError::InvalidEvaluatedAtUnixMs {
+            evaluated_at_unix_ms: 0,
         }),
     );
 }

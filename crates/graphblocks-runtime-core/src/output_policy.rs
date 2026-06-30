@@ -345,6 +345,7 @@ pub enum OutputPolicyDecisionError {
     MissingDecisionId,
     MissingInputDigest { decision_id: String },
     InvalidAcceptedThroughSequence { accepted_through_sequence: u64 },
+    InvalidEvaluatedAtUnixMs { evaluated_at_unix_ms: u64 },
     ReplacementContentMissing { decision_id: String },
     InvalidReplacementChunk { source: GenerationChunkError },
     InvalidRedactionInstruction { path: String },
@@ -365,6 +366,11 @@ impl OutputPolicyDecision {
         if let Some(0) = self.accepted_through_sequence {
             return Err(OutputPolicyDecisionError::InvalidAcceptedThroughSequence {
                 accepted_through_sequence: 0,
+            });
+        }
+        if let Some(0) = self.evaluated_at_unix_ms {
+            return Err(OutputPolicyDecisionError::InvalidEvaluatedAtUnixMs {
+                evaluated_at_unix_ms: 0,
             });
         }
         if self.disposition == OutputDisposition::Replace && self.replacement_chunks.is_empty() {
@@ -1044,6 +1050,9 @@ pub enum OutputGateError {
     InvalidAcceptedThroughSequence {
         accepted_through_sequence: u64,
     },
+    InvalidEvaluatedAtUnixMs {
+        evaluated_at_unix_ms: u64,
+    },
     ClientDeliveredSequenceBeyondGenerated {
         last_generated_sequence: u64,
         last_client_delivered_sequence: u64,
@@ -1438,6 +1447,11 @@ impl OutputDeliveryGate {
                     accepted_through_sequence,
                 } => Err(OutputGateError::InvalidAcceptedThroughSequence {
                     accepted_through_sequence,
+                }),
+                OutputPolicyDecisionError::InvalidEvaluatedAtUnixMs {
+                    evaluated_at_unix_ms,
+                } => Err(OutputGateError::InvalidEvaluatedAtUnixMs {
+                    evaluated_at_unix_ms,
                 }),
                 OutputPolicyDecisionError::ReplacementContentMissing { decision_id } => {
                     Err(OutputGateError::ReplacementContentMissing { decision_id })

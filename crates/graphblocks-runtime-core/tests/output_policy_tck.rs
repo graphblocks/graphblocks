@@ -462,6 +462,7 @@ fn gate_error_name(error: &OutputGateError) -> &'static str {
         OutputGateError::InvalidAcceptedThroughSequence { .. } => {
             "invalid_accepted_through_sequence"
         }
+        OutputGateError::InvalidEvaluatedAtUnixMs { .. } => "invalid_evaluated_at_unix_ms",
         OutputGateError::NonContiguousSequence { .. } => "non_contiguous_sequence",
         OutputGateError::NonMonotonicSequence { .. } => "non_monotonic_sequence",
         OutputGateError::StreamMismatch { .. } => "stream_mismatch",

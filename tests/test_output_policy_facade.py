@@ -278,6 +278,13 @@ def test_output_policy_contract_rejects_unknown_literals() -> None:
             input_digest="sha256:input",
         )
 
+    with pytest.raises(ValueError, match="output policy evaluated_at must not be empty"):
+        OutputPolicyDecision.allow(
+            "decision-1",
+            accepted_through_sequence=1,
+            input_digest="sha256:input",
+        ).evaluated_at_time(" ")
+
     with pytest.raises(ValueError, match="last_generated_sequence must be non-negative"):
         OutputCutoff(stream_id="stream-1", response_id="response-1", last_generated_sequence=-1)
 
@@ -318,6 +325,13 @@ def test_output_policy_contract_rejects_non_string_identifiers() -> None:
             accepted_through_sequence=1,
             input_digest=object(),  # type: ignore[arg-type]
         )
+
+    with pytest.raises(ValueError, match="output policy evaluated_at must be a string"):
+        OutputPolicyDecision.allow(
+            "decision-1",
+            accepted_through_sequence=1,
+            input_digest="sha256:input",
+        ).evaluated_at_time(object())  # type: ignore[arg-type]
 
     with pytest.raises(ValueError, match="output policy replacement parts must be ContentPart"):
         OutputPolicyDecision.replace(
