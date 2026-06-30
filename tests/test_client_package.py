@@ -350,6 +350,29 @@ def test_client_package_builds_remote_tool_definition_binding_and_invocation(mon
         "effective_policy_snapshot_id": "policy-snapshot-1",
         "idempotency_key": "idem-1",
     }
+    direct_kwargs = {
+        "binding_id": invocation.binding_id,
+        "resolved_tool_id": invocation.resolved_tool_id,
+        "tool_name": invocation.tool_name,
+        "tool_call_id": invocation.tool_call_id,
+        "connection": invocation.connection,
+        "operation": invocation.operation,
+        "arguments_json": '{"query":"billing","limit":5}',
+        "arguments_digest": invocation.arguments_digest,
+        "definition_digest": invocation.definition_digest,
+        "binding_digest": invocation.binding_digest,
+        "effective_policy_snapshot_id": invocation.effective_policy_snapshot_id,
+        "idempotency_key": invocation.idempotency_key,
+    }
+    direct = graphblocks_client.RemoteToolInvocation(**direct_kwargs)
+
+    assert direct.arguments_json == '{"limit":5,"query":"billing"}'
+    with pytest.raises(graphblocks_client.RemoteToolAdapterError, match="connection must not be empty"):
+        graphblocks_client.RemoteToolInvocation(**{**direct_kwargs, "connection": " "})
+    with pytest.raises(graphblocks_client.RemoteToolAdapterError, match="must decode to an object"):
+        graphblocks_client.RemoteToolInvocation(**{**direct_kwargs, "arguments_json": "[]"})
+    with pytest.raises(graphblocks_client.RemoteToolAdapterError, match="digest does not match"):
+        graphblocks_client.RemoteToolInvocation(**{**direct_kwargs, "arguments_json": '{"query":"changed"}'})
     assert "prepare_remote_tool_invocation" in graphblocks_client.__all__
 
 

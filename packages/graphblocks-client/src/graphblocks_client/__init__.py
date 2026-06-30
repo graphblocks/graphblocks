@@ -152,6 +152,44 @@ class RemoteToolInvocation:
     effective_policy_snapshot_id: str
     idempotency_key: str | None = None
 
+    def __post_init__(self) -> None:
+        for field_name in (
+            "binding_id",
+            "resolved_tool_id",
+            "tool_name",
+            "tool_call_id",
+            "connection",
+            "operation",
+            "arguments_digest",
+            "definition_digest",
+            "binding_digest",
+            "effective_policy_snapshot_id",
+        ):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value.strip():
+                raise RemoteToolAdapterError(f"remote invocation {field_name} must not be empty")
+            object.__setattr__(self, field_name, value.strip())
+        if self.idempotency_key is not None:
+            if not isinstance(self.idempotency_key, str) or not self.idempotency_key.strip():
+                raise RemoteToolAdapterError("remote invocation idempotency_key must not be empty")
+            object.__setattr__(self, "idempotency_key", self.idempotency_key.strip())
+        if not isinstance(self.arguments_json, str) or not self.arguments_json.strip():
+            raise RemoteToolAdapterError("remote invocation arguments_json must not be empty")
+        try:
+            arguments = json.loads(self.arguments_json)
+        except json.JSONDecodeError as error:
+            raise RemoteToolAdapterError("remote invocation arguments_json must be valid JSON") from error
+        if not isinstance(arguments, Mapping):
+            raise RemoteToolAdapterError("remote invocation arguments_json must decode to an object")
+        try:
+            actual_digest = canonical_hash(arguments)
+            canonical_arguments = canonical_dumps(arguments)
+        except (TypeError, ValueError) as error:
+            raise RemoteToolAdapterError("remote invocation arguments_json must be canonical JSON") from error
+        if actual_digest != self.arguments_digest:
+            raise RemoteToolAdapterError("remote invocation arguments digest does not match arguments_json")
+        object.__setattr__(self, "arguments_json", canonical_arguments)
+
     def request_contract(self) -> dict[str, object]:
         return {
             "kind": "remote",
