@@ -48,7 +48,9 @@ use graphblocks_runtime_core::retry::{
     Backoff, EffectKind, PartialOutputPolicy, ProviderLimitDecision, ProviderLimitIncident,
     ProviderLimitKind, ProviderLimitPolicy, RetryDecision, RetryPolicy, RetryRequest,
 };
-use graphblocks_runtime_core::scheduler::{ScheduledNode, StartedNode};
+use graphblocks_runtime_core::scheduler::{
+    LocalScheduler, NodeExecutionState, ScheduledNode, SchedulerError, StartedNode,
+};
 use graphblocks_runtime_core::task_group::{
     ChildTaskState, SiblingCancellationPolicy, TaskGroupDecision, TaskGroupFailure,
     TaskGroupFailurePolicy, TaskGroupPolicy, TaskGroupState,
@@ -672,123 +674,6 @@ fn evaluate_timeout_deadline_json(policy_json: &str, request_json: &str) -> PyRe
 
 #[pyfunction]
 fn evaluate_readiness_json(signals_json: &str, dependencies_json: &str) -> PyResult<String> {
-    let parse_port_ref = |value: &Value, label: &str| -> PyResult<PortRef> {
-        let object = json_object(value, label)?;
-        Ok(PortRef::new(
-            required_alias_string(object, "node", "node", label)?,
-            required_alias_string(object, "port", "port", label)?,
-        ))
-    };
-    let serialize_port_ref = |port: &PortRef| {
-        json!({
-            "node": port.node.as_str(),
-            "port": port.port.as_str(),
-        })
-    };
-    let parse_outcome = |value: &Value, label: &str| -> PyResult<Outcome<Value>> {
-        let object = json_object(value, label)?;
-        match required_alias_string(object, "status", "kind", label)? {
-            "value" => Ok(Outcome::Value(
-                alias_value(object, "value", "value")
-                    .cloned()
-                    .unwrap_or(Value::Null),
-            )),
-            "absent" => Ok(Outcome::Absent),
-            "skipped" => {
-                let reason_value = alias_value(object, "reason", "reason").unwrap_or(value);
-                let reason_object = json_object(reason_value, &format!("{label}.reason"))?;
-                let mut reason = SkipReason::new(required_alias_string(
-                    reason_object,
-                    "code",
-                    "code",
-                    &format!("{label}.reason"),
-                )?);
-                reason.message = optional_nullable_alias_string(
-                    reason_object,
-                    "message",
-                    "message",
-                    &format!("{label}.reason"),
-                )?
-                .map(ToOwned::to_owned);
-                Ok(Outcome::Skipped(reason))
-            }
-            "denied" => Ok(Outcome::Denied(PolicyDecisionRef::new(
-                required_alias_string(object, "decisionId", "decision_id", label)?,
-            ))),
-            "budget_exhausted" | "budgetExhausted" => {
-                let mut reason =
-                    BudgetExhaustion::new(required_alias_string(object, "code", "code", label)?);
-                reason.message =
-                    optional_nullable_alias_string(object, "message", "message", label)?
-                        .map(ToOwned::to_owned);
-                Ok(Outcome::BudgetExhausted(reason))
-            }
-            "paused" => {
-                let mut reason =
-                    PauseReason::new(required_alias_string(object, "code", "code", label)?);
-                reason.message =
-                    optional_nullable_alias_string(object, "message", "message", label)?
-                        .map(ToOwned::to_owned);
-                Ok(Outcome::Paused(reason))
-            }
-            "failed" => {
-                let error_value = alias_value(object, "error", "error")
-                    .ok_or_else(|| PyValueError::new_err(format!("{label}.error is required")))?;
-                Ok(Outcome::Failed(parse_block_error(
-                    error_value,
-                    &format!("{label}.error"),
-                )?))
-            }
-            "cancelled" => {
-                let reason_value = alias_value(object, "reason", "reason")
-                    .ok_or_else(|| PyValueError::new_err(format!("{label}.reason is required")))?;
-                Ok(Outcome::Cancelled(parse_cancel_reason(
-                    reason_value,
-                    &format!("{label}.reason"),
-                )?))
-            }
-            value => Err(PyValueError::new_err(format!(
-                "{label}.status has unknown outcome status {value:?}"
-            ))),
-        }
-    };
-    let serialize_outcome = |outcome: &Outcome<Value>| match outcome {
-        Outcome::Value(value) => json!({
-            "status": "value",
-            "value": value,
-        }),
-        Outcome::Absent => json!({"status": "absent"}),
-        Outcome::Skipped(reason) => json!({
-            "status": "skipped",
-            "reason": {
-                "code": reason.code.as_str(),
-                "message": reason.message.as_deref(),
-            },
-        }),
-        Outcome::Denied(decision) => json!({
-            "status": "denied",
-            "decisionId": decision.decision_id.as_str(),
-        }),
-        Outcome::BudgetExhausted(reason) => json!({
-            "status": "budget_exhausted",
-            "code": reason.code.as_str(),
-            "message": reason.message.as_deref(),
-        }),
-        Outcome::Paused(reason) => json!({
-            "status": "paused",
-            "code": reason.code.as_str(),
-            "message": reason.message.as_deref(),
-        }),
-        Outcome::Failed(error) => json!({
-            "status": "failed",
-            "error": serialize_block_error(error),
-        }),
-        Outcome::Cancelled(reason) => json!({
-            "status": "cancelled",
-            "reason": serialize_cancel_reason(reason),
-        }),
-    };
-
     let signals_value = parse_json_argument(signals_json, "readiness signals")?;
     let dependencies_value = parse_json_argument(dependencies_json, "readiness dependencies")?;
     let signals = signals_value
@@ -821,47 +706,18 @@ fn evaluate_readiness_json(signals_json: &str, dependencies_json: &str) -> PyRes
         .iter()
         .enumerate()
         .map(|(dependency_index, dependency)| {
-            let label = format!("readiness dependencies[{dependency_index}]");
-            let object = json_object(dependency, &label)?;
-            let input = required_alias_string(object, "input", "input", &label)?;
-            let source = parse_port_ref(
-                alias_value(object, "source", "source")
-                    .ok_or_else(|| PyValueError::new_err(format!("{label}.source is required")))?,
-                &format!("{label}.source"),
-            )?;
-            let mode =
-                optional_nullable_alias_string(object, "mode", "mode", &label)?.unwrap_or("value");
-            match mode {
-                "value" => Ok(InputDependency::value(input, source)),
-                "outcome" => Ok(InputDependency::outcome(input, source)),
-                value => Err(PyValueError::new_err(format!(
-                    "{label}.mode has unknown input mode {value:?}"
-                ))),
-            }
+            parse_input_dependency(
+                dependency,
+                &format!("readiness dependencies[{dependency_index}]"),
+            )
         })
         .collect::<PyResult<Vec<_>>>()?;
     let readiness = tracker.readiness(dependencies);
     let readiness = match readiness {
         Readiness::Ready(inputs) => {
-            let inputs = inputs
-                .iter()
-                .map(|(input, value)| {
-                    let value = match value {
-                        ResolvedInput::Value(value) => json!({
-                            "mode": "value",
-                            "value": value,
-                        }),
-                        ResolvedInput::Outcome(outcome) => json!({
-                            "mode": "outcome",
-                            "outcome": serialize_outcome(outcome),
-                        }),
-                    };
-                    (input.clone(), value)
-                })
-                .collect::<serde_json::Map<_, _>>();
             json!({
                 "status": "ready",
-                "inputs": inputs,
+                "inputs": serialize_resolved_inputs(&inputs),
             })
         }
         Readiness::Waiting { missing } => json!({
@@ -886,6 +742,219 @@ fn evaluate_readiness_json(signals_json: &str, dependencies_json: &str) -> PyRes
     });
     serde_json::to_string(&payload).map_err(|error| {
         PyRuntimeError::new_err(format!("failed to serialize readiness evaluation: {error}"))
+    })
+}
+
+#[pyfunction]
+fn evaluate_scheduler_json(nodes_json: &str, operations_json: &str) -> PyResult<String> {
+    let nodes_value = parse_json_argument(nodes_json, "scheduler nodes")?;
+    let operations_value = parse_json_argument(operations_json, "scheduler operations")?;
+    let nodes = nodes_value
+        .as_array()
+        .ok_or_else(|| PyValueError::new_err("scheduler nodes must be an array"))?;
+    let operations = operations_value
+        .as_array()
+        .ok_or_else(|| PyValueError::new_err("scheduler operations must be an array"))?;
+    let mut scheduled_nodes = Vec::new();
+    let mut node_payloads = Vec::new();
+
+    for (node_index, node) in nodes.iter().enumerate() {
+        let label = format!("scheduler nodes[{node_index}]");
+        let object = json_object(node, &label)?;
+        let node_id = required_alias_string(object, "nodeId", "node_id", &label)?;
+        let dependency_values = alias_value(object, "dependencies", "dependencies")
+            .map(|value| {
+                value.as_array().ok_or_else(|| {
+                    PyValueError::new_err(format!("{label}.dependencies must be an array"))
+                })
+            })
+            .transpose()?;
+        let mut dependencies = Vec::new();
+        let mut dependency_payloads = Vec::new();
+        if let Some(dependency_values) = dependency_values {
+            for (dependency_index, dependency) in dependency_values.iter().enumerate() {
+                let dependency = parse_input_dependency(
+                    dependency,
+                    &format!("{label}.dependencies[{dependency_index}]"),
+                )?;
+                dependency_payloads.push(json!({
+                    "input": dependency.input.as_str(),
+                    "source": serialize_port_ref(&dependency.source),
+                    "mode": match dependency.mode {
+                        graphblocks_runtime_core::readiness::InputMode::Value => "value",
+                        graphblocks_runtime_core::readiness::InputMode::Outcome => "outcome",
+                    },
+                }));
+                dependencies.push(dependency);
+            }
+        }
+        scheduled_nodes.push(ScheduledNode::new(node_id, dependencies));
+        node_payloads.push(json!({
+            "nodeId": node_id,
+            "dependencies": dependency_payloads,
+        }));
+    }
+
+    let mut scheduler = LocalScheduler::new(scheduled_nodes)
+        .map_err(|error| scheduler_error(error, "failed to create scheduler"))?;
+    let mut operation_payloads = Vec::new();
+
+    for (operation_index, operation) in operations.iter().enumerate() {
+        let label = format!("scheduler operations[{operation_index}]");
+        let object = json_object(operation, &label)?;
+        let op = required_alias_string(object, "op", "kind", &label)?;
+        match op {
+            "admit_run" | "admitRun" | "admit" => {
+                let newly_ready = scheduler
+                    .admit_run()
+                    .map_err(|error| scheduler_error(error, &label))?;
+                operation_payloads.push(json!({
+                    "op": "admit_run",
+                    "newlyReady": newly_ready,
+                    "readyNodes": scheduler.ready_nodes(),
+                }));
+            }
+            "publish_signal" | "publishSignal" | "publish" => {
+                let port_value = alias_value(object, "portRef", "port_ref").unwrap_or(operation);
+                let port = parse_port_ref(port_value, &format!("{label}.portRef"))?;
+                let outcome_value = alias_value(object, "outcome", "outcome")
+                    .ok_or_else(|| PyValueError::new_err(format!("{label}.outcome is required")))?;
+                let outcome = parse_outcome(outcome_value, &format!("{label}.outcome"))?;
+                let newly_ready = scheduler.publish_signal(port.clone(), outcome.clone());
+                operation_payloads.push(json!({
+                    "op": "publish_signal",
+                    "portRef": serialize_port_ref(&port),
+                    "outcome": serialize_outcome(&outcome),
+                    "newlyReady": newly_ready,
+                    "readyNodes": scheduler.ready_nodes(),
+                }));
+            }
+            "start_node" | "startNode" | "start" => {
+                let node_id = required_alias_string(object, "nodeId", "node_id", &label)?;
+                let started = scheduler
+                    .start_node(node_id)
+                    .map_err(|error| scheduler_error(error, &label))?;
+                operation_payloads.push(json!({
+                    "op": "start_node",
+                    "nodeId": started.node_id,
+                    "inputs": serialize_resolved_inputs(&started.inputs),
+                    "readyNodes": scheduler.ready_nodes(),
+                }));
+            }
+            "complete_node" | "completeNode" | "complete" => {
+                let node_id = required_alias_string(object, "nodeId", "node_id", &label)?;
+                let outputs_value = alias_value(object, "outputs", "outputs")
+                    .ok_or_else(|| PyValueError::new_err(format!("{label}.outputs is required")))?;
+                let outputs_array = outputs_value.as_array().ok_or_else(|| {
+                    PyValueError::new_err(format!("{label}.outputs must be an array"))
+                })?;
+                let mut outputs = Vec::new();
+                let mut output_payloads = Vec::new();
+                for (output_index, output) in outputs_array.iter().enumerate() {
+                    let output_label = format!("{label}.outputs[{output_index}]");
+                    let output_object = json_object(output, &output_label)?;
+                    let port = if let Some(port_value) =
+                        alias_value(output_object, "portRef", "port_ref")
+                    {
+                        parse_port_ref(port_value, &format!("{output_label}.portRef"))?
+                    } else {
+                        PortRef::new(
+                            node_id,
+                            required_alias_string(output_object, "port", "port", &output_label)?,
+                        )
+                    };
+                    let outcome = if let Some(outcome_value) =
+                        alias_value(output_object, "outcome", "outcome")
+                    {
+                        parse_outcome(outcome_value, &format!("{output_label}.outcome"))?
+                    } else {
+                        Outcome::Value(
+                            alias_value(output_object, "value", "value")
+                                .cloned()
+                                .ok_or_else(|| {
+                                    PyValueError::new_err(format!(
+                                        "{output_label}.outcome is required when value is absent"
+                                    ))
+                                })?,
+                        )
+                    };
+                    output_payloads.push(json!({
+                        "portRef": serialize_port_ref(&port),
+                        "outcome": serialize_outcome(&outcome),
+                    }));
+                    outputs.push((port, outcome));
+                }
+                let newly_ready = scheduler
+                    .complete_node(node_id, outputs)
+                    .map_err(|error| scheduler_error(error, &label))?;
+                operation_payloads.push(json!({
+                    "op": "complete_node",
+                    "nodeId": node_id,
+                    "outputs": output_payloads,
+                    "newlyReady": newly_ready,
+                    "readyNodes": scheduler.ready_nodes(),
+                }));
+            }
+            "cancel_node" | "cancelNode" | "cancel" => {
+                let node_id = required_alias_string(object, "nodeId", "node_id", &label)?;
+                let reason_value = alias_value(object, "reason", "reason")
+                    .ok_or_else(|| PyValueError::new_err(format!("{label}.reason is required")))?;
+                let reason = parse_cancel_reason(reason_value, &format!("{label}.reason"))?;
+                let ports_value =
+                    alias_value(object, "outputPorts", "output_ports").ok_or_else(|| {
+                        PyValueError::new_err(format!("{label}.outputPorts is required"))
+                    })?;
+                let ports_array = ports_value.as_array().ok_or_else(|| {
+                    PyValueError::new_err(format!("{label}.outputPorts must be an array"))
+                })?;
+                let mut output_ports = Vec::new();
+                for (port_index, port) in ports_array.iter().enumerate() {
+                    let output_port = if let Some(port_name) = port.as_str() {
+                        PortRef::new(node_id, port_name)
+                    } else {
+                        parse_port_ref(port, &format!("{label}.outputPorts[{port_index}]"))?
+                    };
+                    output_ports.push(output_port);
+                }
+                let newly_ready = scheduler
+                    .cancel_node(node_id, output_ports.clone(), reason.clone())
+                    .map_err(|error| scheduler_error(error, &label))?;
+                operation_payloads.push(json!({
+                    "op": "cancel_node",
+                    "nodeId": node_id,
+                    "outputPorts": output_ports.iter().map(serialize_port_ref).collect::<Vec<_>>(),
+                    "reason": serialize_cancel_reason(&reason),
+                    "newlyReady": newly_ready,
+                    "readyNodes": scheduler.ready_nodes(),
+                }));
+            }
+            value => {
+                return Err(PyValueError::new_err(format!(
+                    "{label}.op has unknown scheduler operation {value:?}"
+                )));
+            }
+        }
+    }
+
+    let states = scheduler
+        .node_states()
+        .into_iter()
+        .map(|(node_id, state)| {
+            json!({
+                "nodeId": node_id,
+                "state": serialize_node_execution_state(state),
+            })
+        })
+        .collect::<Vec<_>>();
+    let payload = json!({
+        "ok": true,
+        "nodes": node_payloads,
+        "operations": operation_payloads,
+        "readyNodes": scheduler.ready_nodes(),
+        "states": states,
+    });
+    serde_json::to_string(&payload).map_err(|error| {
+        PyRuntimeError::new_err(format!("failed to serialize scheduler evaluation: {error}"))
     })
 }
 
@@ -2240,6 +2309,181 @@ fn u64_to_usize(value: u64, label: &str) -> PyResult<usize> {
 
 fn u64_to_u32(value: u64, label: &str) -> PyResult<u32> {
     u32::try_from(value).map_err(|_| PyValueError::new_err(format!("{label} exceeds u32")))
+}
+
+fn parse_port_ref(value: &Value, label: &str) -> PyResult<PortRef> {
+    let object = json_object(value, label)?;
+    Ok(PortRef::new(
+        required_alias_string(object, "node", "node", label)?,
+        required_alias_string(object, "port", "port", label)?,
+    ))
+}
+
+fn serialize_port_ref(port: &PortRef) -> Value {
+    json!({
+        "node": port.node.as_str(),
+        "port": port.port.as_str(),
+    })
+}
+
+fn parse_outcome(value: &Value, label: &str) -> PyResult<Outcome<Value>> {
+    let object = json_object(value, label)?;
+    match required_alias_string(object, "status", "kind", label)? {
+        "value" => Ok(Outcome::Value(
+            alias_value(object, "value", "value")
+                .cloned()
+                .unwrap_or(Value::Null),
+        )),
+        "absent" => Ok(Outcome::Absent),
+        "skipped" => {
+            let reason_value = alias_value(object, "reason", "reason").unwrap_or(value);
+            let reason_object = json_object(reason_value, &format!("{label}.reason"))?;
+            let mut reason = SkipReason::new(required_alias_string(
+                reason_object,
+                "code",
+                "code",
+                &format!("{label}.reason"),
+            )?);
+            reason.message = optional_nullable_alias_string(
+                reason_object,
+                "message",
+                "message",
+                &format!("{label}.reason"),
+            )?
+            .map(ToOwned::to_owned);
+            Ok(Outcome::Skipped(reason))
+        }
+        "denied" => Ok(Outcome::Denied(PolicyDecisionRef::new(
+            required_alias_string(object, "decisionId", "decision_id", label)?,
+        ))),
+        "budget_exhausted" | "budgetExhausted" => {
+            let mut reason =
+                BudgetExhaustion::new(required_alias_string(object, "code", "code", label)?);
+            reason.message = optional_nullable_alias_string(object, "message", "message", label)?
+                .map(ToOwned::to_owned);
+            Ok(Outcome::BudgetExhausted(reason))
+        }
+        "paused" => {
+            let mut reason =
+                PauseReason::new(required_alias_string(object, "code", "code", label)?);
+            reason.message = optional_nullable_alias_string(object, "message", "message", label)?
+                .map(ToOwned::to_owned);
+            Ok(Outcome::Paused(reason))
+        }
+        "failed" => {
+            let error_value = alias_value(object, "error", "error")
+                .ok_or_else(|| PyValueError::new_err(format!("{label}.error is required")))?;
+            Ok(Outcome::Failed(parse_block_error(
+                error_value,
+                &format!("{label}.error"),
+            )?))
+        }
+        "cancelled" => {
+            let reason_value = alias_value(object, "reason", "reason")
+                .ok_or_else(|| PyValueError::new_err(format!("{label}.reason is required")))?;
+            Ok(Outcome::Cancelled(parse_cancel_reason(
+                reason_value,
+                &format!("{label}.reason"),
+            )?))
+        }
+        value => Err(PyValueError::new_err(format!(
+            "{label}.status has unknown outcome status {value:?}"
+        ))),
+    }
+}
+
+fn serialize_outcome(outcome: &Outcome<Value>) -> Value {
+    match outcome {
+        Outcome::Value(value) => json!({
+            "status": "value",
+            "value": value,
+        }),
+        Outcome::Absent => json!({"status": "absent"}),
+        Outcome::Skipped(reason) => json!({
+            "status": "skipped",
+            "reason": {
+                "code": reason.code.as_str(),
+                "message": reason.message.as_deref(),
+            },
+        }),
+        Outcome::Denied(decision) => json!({
+            "status": "denied",
+            "decisionId": decision.decision_id.as_str(),
+        }),
+        Outcome::BudgetExhausted(reason) => json!({
+            "status": "budget_exhausted",
+            "code": reason.code.as_str(),
+            "message": reason.message.as_deref(),
+        }),
+        Outcome::Paused(reason) => json!({
+            "status": "paused",
+            "code": reason.code.as_str(),
+            "message": reason.message.as_deref(),
+        }),
+        Outcome::Failed(error) => json!({
+            "status": "failed",
+            "error": serialize_block_error(error),
+        }),
+        Outcome::Cancelled(reason) => json!({
+            "status": "cancelled",
+            "reason": serialize_cancel_reason(reason),
+        }),
+    }
+}
+
+fn parse_input_dependency(value: &Value, label: &str) -> PyResult<InputDependency> {
+    let object = json_object(value, label)?;
+    let input = required_alias_string(object, "input", "input", label)?;
+    let source = parse_port_ref(
+        alias_value(object, "source", "source")
+            .ok_or_else(|| PyValueError::new_err(format!("{label}.source is required")))?,
+        &format!("{label}.source"),
+    )?;
+    let mode = optional_nullable_alias_string(object, "mode", "mode", label)?.unwrap_or("value");
+    match mode {
+        "value" => Ok(InputDependency::value(input, source)),
+        "outcome" => Ok(InputDependency::outcome(input, source)),
+        value => Err(PyValueError::new_err(format!(
+            "{label}.mode has unknown input mode {value:?}"
+        ))),
+    }
+}
+
+fn serialize_resolved_input(input: &ResolvedInput) -> Value {
+    match input {
+        ResolvedInput::Value(value) => json!({
+            "mode": "value",
+            "value": value,
+        }),
+        ResolvedInput::Outcome(outcome) => json!({
+            "mode": "outcome",
+            "outcome": serialize_outcome(outcome),
+        }),
+    }
+}
+
+fn serialize_resolved_inputs(inputs: &BTreeMap<String, ResolvedInput>) -> Value {
+    Value::Object(
+        inputs
+            .iter()
+            .map(|(input, value)| (input.clone(), serialize_resolved_input(value)))
+            .collect(),
+    )
+}
+
+fn serialize_node_execution_state(state: NodeExecutionState) -> &'static str {
+    match state {
+        NodeExecutionState::Pending => "pending",
+        NodeExecutionState::Ready => "ready",
+        NodeExecutionState::Running => "running",
+        NodeExecutionState::Completed => "completed",
+        NodeExecutionState::Blocked => "blocked",
+        NodeExecutionState::Cancelled => "cancelled",
+    }
+}
+
+fn scheduler_error(error: SchedulerError, label: &str) -> PyErr {
+    PyValueError::new_err(format!("{label}: {error:?}"))
 }
 
 fn parse_daemon_config(value: Option<&Value>) -> PyResult<DaemonConfig> {
@@ -7401,6 +7645,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     )?)?;
     module.add_function(wrap_pyfunction!(evaluate_timeout_deadline_json, module)?)?;
     module.add_function(wrap_pyfunction!(evaluate_readiness_json, module)?)?;
+    module.add_function(wrap_pyfunction!(evaluate_scheduler_json, module)?)?;
     module.add_function(wrap_pyfunction!(evaluate_cancellation_scope_json, module)?)?;
     module.add_function(wrap_pyfunction!(evaluate_task_group_json, module)?)?;
     module.add_function(wrap_pyfunction!(evaluate_node_lifecycle_json, module)?)?;
@@ -7466,7 +7711,7 @@ mod tests {
         evaluate_declarative_output_policy_json, evaluate_durable_tool_terminal_store_json,
         evaluate_node_lifecycle_json, evaluate_output_gate_json,
         evaluate_provider_limit_policy_json, evaluate_readiness_json, evaluate_retry_policy_json,
-        evaluate_sequential_tool_queue_json, evaluate_task_group_json,
+        evaluate_scheduler_json, evaluate_sequential_tool_queue_json, evaluate_task_group_json,
         evaluate_timeout_deadline_json, evaluate_tool_approval_json,
         evaluate_tool_execution_plan_json, evaluate_tool_result_stream_json,
         evaluate_usage_ledger_json, finalize_tool_call_json,
@@ -8386,6 +8631,108 @@ mod tests {
                 .and_then(Value::as_str),
             Some("skipped")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_scheduler_json_replays_admission_completion_and_blocking() -> Result<(), String> {
+        let nodes = json!([
+            {"nodeId": "render"},
+            {
+                "nodeId": "model",
+                "dependencies": [
+                    {
+                        "input": "prompt",
+                        "source": {"node": "render", "port": "prompt"}
+                    }
+                ]
+            },
+            {
+                "nodeId": "answer",
+                "dependencies": [
+                    {
+                        "input": "response",
+                        "source": {"node": "model", "port": "response"}
+                    }
+                ]
+            }
+        ]);
+        let operations = json!([
+            {"op": "admit_run"},
+            {"op": "start_node", "nodeId": "render"},
+            {
+                "op": "complete_node",
+                "nodeId": "render",
+                "outputs": [
+                    {
+                        "port": "prompt",
+                        "outcome": {"status": "value", "value": "hello"}
+                    }
+                ]
+            },
+            {"op": "start_node", "nodeId": "model"},
+            {
+                "op": "complete_node",
+                "nodeId": "model",
+                "outputs": [
+                    {
+                        "port": "response",
+                        "outcome": {
+                            "status": "failed",
+                            "error": {
+                                "code": "provider.timeout",
+                                "category": "timeout",
+                                "message": "provider timed out",
+                                "retryable": true
+                            }
+                        }
+                    }
+                ]
+            }
+        ]);
+        let result_json = evaluate_scheduler_json(
+            &serde_json::to_string(&nodes).map_err(|error| error.to_string())?,
+            &serde_json::to_string(&operations).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            result
+                .pointer("/operations/0/newlyReady/0")
+                .and_then(Value::as_str),
+            Some("render")
+        );
+        assert_eq!(
+            result
+                .pointer("/operations/2/newlyReady/0")
+                .and_then(Value::as_str),
+            Some("model")
+        );
+        assert_eq!(
+            result
+                .pointer("/operations/3/inputs/prompt/value")
+                .and_then(Value::as_str),
+            Some("hello")
+        );
+        assert_eq!(
+            result.pointer("/states/0/state").and_then(Value::as_str),
+            Some("blocked")
+        );
+        assert_eq!(
+            result.pointer("/states/1/state").and_then(Value::as_str),
+            Some("completed")
+        );
+        assert_eq!(
+            result.pointer("/states/2/state").and_then(Value::as_str),
+            Some("completed")
+        );
+        let ready_nodes = result
+            .pointer("/readyNodes")
+            .and_then(Value::as_array)
+            .ok_or("readyNodes must be an array")?;
+        assert!(ready_nodes.is_empty());
         Ok(())
     }
 

@@ -303,6 +303,16 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             }
         )
 
+    def evaluate_scheduler_json(nodes_json: str, operations_json: str) -> str:
+        calls.append(("scheduler", (nodes_json, operations_json)))
+        return json.dumps(
+            {
+                "ok": True,
+                "nodes": json.loads(nodes_json),
+                "operations": json.loads(operations_json),
+            }
+        )
+
     def evaluate_cancellation_scope_json(root_json: str, operations_json: str) -> str:
         calls.append(("cancellation_scope", (root_json, operations_json)))
         return json.dumps(
@@ -452,6 +462,7 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         evaluate_provider_limit_policy_json=evaluate_provider_limit_policy_json,
         evaluate_readiness_json=evaluate_readiness_json,
         evaluate_retry_policy_json=evaluate_retry_policy_json,
+        evaluate_scheduler_json=evaluate_scheduler_json,
         evaluate_sequential_tool_queue_json=evaluate_sequential_tool_queue_json,
         evaluate_task_group_json=evaluate_task_group_json,
         evaluate_timeout_deadline_json=evaluate_timeout_deadline_json,
@@ -589,6 +600,10 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             }
         ],
         [{"input": "prompt", "source": {"node": "render", "port": "prompt"}}],
+    )
+    scheduler = runtime.evaluate_scheduler(
+        [{"nodeId": "render"}],
+        [{"op": "admit_run"}],
     )
     cancellation_scope = runtime.evaluate_cancellation_scope(
         {"tokenId": "run", "scope": "run", "guarantee": "cooperative"},
@@ -857,6 +872,11 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         ],
         "dependencies": [{"input": "prompt", "source": {"node": "render", "port": "prompt"}}],
     }
+    assert scheduler == {
+        "ok": True,
+        "nodes": [{"nodeId": "render"}],
+        "operations": [{"op": "admit_run"}],
+    }
     assert cancellation_scope == {
         "ok": True,
         "root": {"guarantee": "cooperative", "scope": "run", "tokenId": "run"},
@@ -1121,6 +1141,13 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             ),
         ),
         (
+            "scheduler",
+            (
+                '[{"nodeId":"render"}]',
+                '[{"op":"admit_run"}]',
+            ),
+        ),
+        (
             "cancellation_scope",
             (
                 '{"guarantee":"cooperative","scope":"run","tokenId":"run"}',
@@ -1276,6 +1303,8 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     assert "evaluate_timeout_deadline_json" in runtime.__all__
     assert "evaluate_readiness" in runtime.__all__
     assert "evaluate_readiness_json" in runtime.__all__
+    assert "evaluate_scheduler" in runtime.__all__
+    assert "evaluate_scheduler_json" in runtime.__all__
     assert "evaluate_cancellation_scope" in runtime.__all__
     assert "evaluate_cancellation_scope_json" in runtime.__all__
     assert "evaluate_task_group" in runtime.__all__
