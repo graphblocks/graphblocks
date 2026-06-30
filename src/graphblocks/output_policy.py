@@ -73,6 +73,8 @@ class DeclarativeOutputPolicyRule:
     priority: int = 0
 
     def __post_init__(self) -> None:
+        if not isinstance(self.rule_id, str):
+            raise ValueError("output policy rule_id must be a string")
         if not self.rule_id.strip():
             raise ValueError("output policy rule_id must not be empty")
         if not isinstance(self.literal, str):

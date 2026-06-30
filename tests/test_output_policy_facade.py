@@ -130,6 +130,13 @@ def test_declarative_output_policy_rule_rejects_invalid_metadata_values() -> Non
 
 
 def test_declarative_output_policy_rule_rejects_invalid_field_types() -> None:
+    with pytest.raises(ValueError, match="output policy rule_id must be a string"):
+        DeclarativeOutputPolicyRule(
+            rule_id=1,  # type: ignore[arg-type]
+            literal="secret",
+            disposition="abort_response",
+        )
+
     with pytest.raises(ValueError, match="output policy rule literal must be a string"):
         DeclarativeOutputPolicyRule(
             rule_id="blocked-secret",
