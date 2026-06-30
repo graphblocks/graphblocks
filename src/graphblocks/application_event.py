@@ -269,6 +269,15 @@ def _validate_non_negative_integer(error_type: type[RuntimeError], label: str, v
         raise error_type(f"{label} must be non-negative")
 
 
+def _freeze_payload(error_type: type[RuntimeError], label: str, payload: object) -> MappingProxyType[str, object]:
+    if not isinstance(payload, Mapping):
+        raise error_type(f"{label} must be a mapping")
+    normalized = dict(payload)
+    if any(not isinstance(key, str) or not key.strip() for key in normalized):
+        raise error_type(f"{label} keys must be non-empty strings")
+    return MappingProxyType(normalized)
+
+
 @dataclass(frozen=True, slots=True)
 class ApplicationCommandMetadata:
     command_id: str
@@ -316,9 +325,11 @@ class ApplicationCommand:
             raise ApplicationProtocolError("application command metadata must be ApplicationCommandMetadata")
         if self.kind not in APPLICATION_COMMAND_KINDS:
             raise ApplicationProtocolError(f"unknown application command kind {self.kind}")
-        if not isinstance(self.payload, Mapping):
-            raise ApplicationProtocolError("application command payload must be a mapping")
-        object.__setattr__(self, "payload", MappingProxyType(dict(self.payload)))
+        object.__setattr__(
+            self,
+            "payload",
+            _freeze_payload(ApplicationProtocolError, "application command payload", self.payload),
+        )
 
     @classmethod
     def new(
@@ -380,9 +391,11 @@ class ApplicationProtocolEvent:
             )
         if self.kind not in APPLICATION_PROTOCOL_EVENT_KINDS:
             raise ApplicationProtocolError(f"unknown application protocol event kind {self.kind}")
-        if not isinstance(self.payload, Mapping):
-            raise ApplicationProtocolError("application protocol event payload must be a mapping")
-        object.__setattr__(self, "payload", MappingProxyType(dict(self.payload)))
+        object.__setattr__(
+            self,
+            "payload",
+            _freeze_payload(ApplicationProtocolError, "application protocol event payload", self.payload),
+        )
 
     @classmethod
     def new(
@@ -581,9 +594,11 @@ class ApplicationEvent:
             _validate_non_empty_string(ApplicationEventError, "tool_call_id", self.tool_call_id)
         elif self.tool_call_id is not None:
             _validate_non_empty_string(ApplicationEventError, "tool_call_id", self.tool_call_id)
-        if not isinstance(self.payload, Mapping):
-            raise ApplicationEventError("application event payload must be a mapping")
-        object.__setattr__(self, "payload", MappingProxyType(dict(self.payload)))
+        object.__setattr__(
+            self,
+            "payload",
+            _freeze_payload(ApplicationEventError, "application event payload", self.payload),
+        )
 
     @classmethod
     def tool_call_draft(
