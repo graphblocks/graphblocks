@@ -86,6 +86,36 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             }
         )
 
+    def prepare_tool_result_for_model_json(
+        call_json: str,
+        result_json: str,
+        resolved_tool_json: str,
+        schema_registry_json: str,
+        content_policy_json: str | None = None,
+    ) -> str:
+        calls.append(
+            (
+                "tool_result",
+                (
+                    call_json,
+                    result_json,
+                    resolved_tool_json,
+                    schema_registry_json,
+                    content_policy_json,
+                ),
+            )
+        )
+        return json.dumps(
+            {
+                "ok": True,
+                "call": json.loads(call_json),
+                "result": json.loads(result_json),
+                "resolvedTool": json.loads(resolved_tool_json),
+                "schemaRegistry": json.loads(schema_registry_json),
+                "contentPolicy": None if content_policy_json is None else json.loads(content_policy_json),
+            }
+        )
+
     def evaluate_output_gate_json(gate_json: str, operations_json: str) -> str:
         calls.append(("output_gate", (gate_json, operations_json)))
         return json.dumps({"gate": json.loads(gate_json), "updates": json.loads(operations_json)})
@@ -133,6 +163,7 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         evaluate_declarative_output_policy_json=evaluate_declarative_output_policy_json,
         evaluate_output_gate_json=evaluate_output_gate_json,
         finalize_tool_call_json=finalize_tool_call_json,
+        prepare_tool_result_for_model_json=prepare_tool_result_for_model_json,
         run_stdlib_graph_json=run_stdlib_graph_json,
         run_test_graph_json=run_test_graph_json,
         validate_remote_payload_json=validate_remote_payload_json,
@@ -154,6 +185,13 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         },
         resolved_tool_id="resolved-tool-1",
         created_at_unix_ms=1_000,
+    )
+    prepared_tool_result = runtime.prepare_tool_result_for_model(
+        {"toolCallId": "call-1", "resolvedToolId": "resolved-tool-1"},
+        {"toolCallId": "call-1", "status": "completed", "output": []},
+        {"resolvedToolId": "resolved-tool-1"},
+        [{"schemaId": "schemas/SearchResult@1"}],
+        content_policy={"maxOutputBytes": 128},
     )
     gate_result = runtime.evaluate_output_gate(
         {"streamId": "stream-1"},
@@ -189,6 +227,14 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         "toolCallId": "call-1",
         "resolvedToolId": "resolved-tool-1",
         "createdAtUnixMs": 1_000,
+    }
+    assert prepared_tool_result == {
+        "ok": True,
+        "call": {"toolCallId": "call-1", "resolvedToolId": "resolved-tool-1"},
+        "result": {"toolCallId": "call-1", "status": "completed", "output": []},
+        "resolvedTool": {"resolvedToolId": "resolved-tool-1"},
+        "schemaRegistry": [{"schemaId": "schemas/SearchResult@1"}],
+        "contentPolicy": {"maxOutputBytes": 128},
     }
     assert gate_result == {
         "gate": {"streamId": "stream-1"},
@@ -232,6 +278,16 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             ),
         ),
         (
+            "tool_result",
+            (
+                '{"resolvedToolId":"resolved-tool-1","toolCallId":"call-1"}',
+                '{"output":[],"status":"completed","toolCallId":"call-1"}',
+                '{"resolvedToolId":"resolved-tool-1"}',
+                '[{"schemaId":"schemas/SearchResult@1"}]',
+                '{"maxOutputBytes":128}',
+            ),
+        ),
+        (
             "output_gate",
             ('{"streamId":"stream-1"}', '[{"chunk":{"sequence":1},"op":"chunk"}]'),
         ),
@@ -262,6 +318,8 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     assert "run_stdlib_graph" in runtime.__all__
     assert "run_test_graph" in runtime.__all__
     assert "finalize_tool_call" in runtime.__all__
+    assert "prepare_tool_result_for_model" in runtime.__all__
+    assert "prepare_tool_result_for_model_json" in runtime.__all__
     assert "evaluate_output_gate" in runtime.__all__
     assert "evaluate_declarative_output_policy" in runtime.__all__
     assert "validate_worker_advertisement" in runtime.__all__

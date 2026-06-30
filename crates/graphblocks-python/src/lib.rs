@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use graphblocks_compiler::compiler::{BlockCatalog, compile_graph, compile_graph_with_catalog};
 use graphblocks_compiler::diagnostics::Severity;
@@ -12,6 +12,7 @@ use graphblocks_runtime_core::exhaustion::{
     ContinuationEnvelope, ExhaustionController, ExhaustionPolicy, ExhaustionPreset, ExhaustionUnit,
     WorkKind,
 };
+use graphblocks_runtime_core::observability::CaptureDecision;
 use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory, Outcome};
 use graphblocks_runtime_core::output_policy::{
     DeclarativeOutputPolicyEvaluator, DeclarativeOutputPolicyRule, DraftDisposition, DurableResult,
@@ -22,7 +23,21 @@ use graphblocks_runtime_core::output_policy::{
 use graphblocks_runtime_core::readiness::{InputDependency, PortRef};
 use graphblocks_runtime_core::scheduler::{ScheduledNode, StartedNode};
 use graphblocks_runtime_core::test_runtime::{InProcessTestRuntime, NodeExecutor, TestRunStatus};
-use graphblocks_runtime_core::tool_call::{ToolCallDraft, ToolCallDraftStatus, ToolCallStatus};
+use graphblocks_runtime_core::tool::{
+    BlockToolImplementation, GraphToolImplementation, McpToolImplementation,
+    OpenApiToolImplementation, RemoteToolImplementation, ResolvedTool, ToolApproval, ToolBinding,
+    ToolCancellation, ToolDefinition, ToolEffect, ToolIdempotency, ToolImplementation,
+    ToolResultMode,
+};
+use graphblocks_runtime_core::tool_call::{
+    ToolCall, ToolCallDraft, ToolCallDraftStatus, ToolCallStatus,
+};
+use graphblocks_runtime_core::tool_result::{
+    ArtifactRef, ContentPart, ContentPartKind, Diagnostic, DiagnosticSeverity, ToolEffectOutcome,
+    ToolResult, ToolResultContentPolicy, ToolResultStatus, ToolResultValidation,
+    ToolResultValidationRequest,
+};
+use graphblocks_runtime_core::tool_schema::{JsonSchema, JsonSchemaNode, ToolSchemaRegistry};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use serde_json::{Value, json};
@@ -271,6 +286,57 @@ fn validate_remote_payload_json(payload_json: &str, max_inline_bytes: usize) -> 
     })
 }
 
+#[pyfunction]
+#[pyo3(signature = (
+    call_json,
+    result_json,
+    resolved_tool_json,
+    schema_registry_json,
+    content_policy_json=None
+))]
+fn prepare_tool_result_for_model_json(
+    call_json: &str,
+    result_json: &str,
+    resolved_tool_json: &str,
+    schema_registry_json: &str,
+    content_policy_json: Option<&str>,
+) -> PyResult<String> {
+    let call_value = parse_json_argument(call_json, "tool call")?;
+    let result_value = parse_json_argument(result_json, "tool result")?;
+    let resolved_tool_value = parse_json_argument(resolved_tool_json, "resolved tool")?;
+    let schema_registry_value = parse_json_argument(schema_registry_json, "schema registry")?;
+    let content_policy_value = content_policy_json
+        .map(|text| parse_json_argument(text, "tool result content policy"))
+        .transpose()?;
+
+    let call = parse_tool_call(&call_value, "tool call")?;
+    let result = parse_tool_result(&result_value, "tool result")?;
+    let resolved_tool = parse_resolved_tool(&resolved_tool_value, "resolved tool")?;
+    let schema_registry = parse_tool_schema_registry(&schema_registry_value, "schema registry")?;
+    let content_policy =
+        parse_tool_result_content_policy(content_policy_value.as_ref(), "content policy")?;
+
+    let output = ToolResultValidation::prepare_for_model_with_content_policy(
+        ToolResultValidationRequest {
+            call: &call,
+            result: &result,
+            resolved_tool: &resolved_tool,
+            schema_registry: &schema_registry,
+        },
+        &content_policy,
+    )
+    .map_err(|error| PyValueError::new_err(format!("tool result validation failed: {error:?}")))?;
+    let payload = json!({
+        "ok": true,
+        "output": output.iter().map(serialize_content_part).collect::<Vec<_>>(),
+    });
+    serde_json::to_string(&payload).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize prepared tool result output: {error}"
+        ))
+    })
+}
+
 struct JsonNodeExecutor {
     outputs_by_node: BTreeMap<String, Value>,
 }
@@ -400,6 +466,966 @@ fn optional_alias_u64(
             })
         })
         .transpose()
+}
+
+fn alias_value<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    primary: &str,
+    alternate: &str,
+) -> Option<&'a Value> {
+    object.get(primary).or_else(|| object.get(alternate))
+}
+
+fn optional_nullable_alias_string<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    primary: &str,
+    alternate: &str,
+    label: &str,
+) -> PyResult<Option<&'a str>> {
+    alias_value(object, primary, alternate)
+        .filter(|value| !value.is_null())
+        .map(|value| {
+            value
+                .as_str()
+                .ok_or_else(|| PyValueError::new_err(format!("{label}.{primary} must be a string")))
+        })
+        .transpose()
+}
+
+fn optional_nullable_alias_u64(
+    object: &serde_json::Map<String, Value>,
+    primary: &str,
+    alternate: &str,
+    label: &str,
+) -> PyResult<Option<u64>> {
+    alias_value(object, primary, alternate)
+        .filter(|value| !value.is_null())
+        .map(|value| {
+            value.as_u64().ok_or_else(|| {
+                PyValueError::new_err(format!("{label}.{primary} must be an unsigned integer"))
+            })
+        })
+        .transpose()
+}
+
+fn optional_nullable_alias_bool(
+    object: &serde_json::Map<String, Value>,
+    primary: &str,
+    alternate: &str,
+    label: &str,
+) -> PyResult<Option<bool>> {
+    alias_value(object, primary, alternate)
+        .filter(|value| !value.is_null())
+        .map(|value| {
+            value.as_bool().ok_or_else(|| {
+                PyValueError::new_err(format!("{label}.{primary} must be a boolean"))
+            })
+        })
+        .transpose()
+}
+
+fn u64_to_usize(value: u64, label: &str) -> PyResult<usize> {
+    usize::try_from(value).map_err(|_| PyValueError::new_err(format!("{label} exceeds usize")))
+}
+
+fn u64_to_u32(value: u64, label: &str) -> PyResult<u32> {
+    u32::try_from(value).map_err(|_| PyValueError::new_err(format!("{label} exceeds u32")))
+}
+
+fn parse_json_value_map(value: Option<&Value>, label: &str) -> PyResult<BTreeMap<String, Value>> {
+    let Some(value) = value else {
+        return Ok(BTreeMap::new());
+    };
+    let object = json_object(value, label)?;
+    Ok(object
+        .iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect())
+}
+
+fn parse_string_map(value: Option<&Value>, label: &str) -> PyResult<BTreeMap<String, String>> {
+    let Some(value) = value else {
+        return Ok(BTreeMap::new());
+    };
+    let object = json_object(value, label)?;
+    let mut output = BTreeMap::new();
+    for (key, value) in object {
+        let Some(value) = value.as_str() else {
+            return Err(PyValueError::new_err(format!(
+                "{label}.{key} must be a string"
+            )));
+        };
+        output.insert(key.clone(), value.to_owned());
+    }
+    Ok(output)
+}
+
+fn parse_string_set(value: Option<&Value>, label: &str) -> PyResult<BTreeSet<String>> {
+    let Some(value) = value else {
+        return Ok(BTreeSet::new());
+    };
+    let Some(values) = value.as_array() else {
+        return Err(PyValueError::new_err(format!("{label} must be an array")));
+    };
+    values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| {
+            value
+                .as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| PyValueError::new_err(format!("{label}[{index}] must be a string")))
+        })
+        .collect()
+}
+
+fn parse_tool_effect(value: &Value, label: &str) -> PyResult<ToolEffect> {
+    let Some(value) = value.as_str() else {
+        return Err(PyValueError::new_err(format!("{label} must be a string")));
+    };
+    match value {
+        "none" => Ok(ToolEffect::None),
+        "external_read" => Ok(ToolEffect::ExternalRead),
+        "external_write" => Ok(ToolEffect::ExternalWrite),
+        "filesystem_read" => Ok(ToolEffect::FilesystemRead),
+        "filesystem_write" => Ok(ToolEffect::FilesystemWrite),
+        "process" => Ok(ToolEffect::Process),
+        "network" => Ok(ToolEffect::Network),
+        "destructive" => Ok(ToolEffect::Destructive),
+        value => Err(PyValueError::new_err(format!(
+            "{label} has unknown tool effect {value:?}"
+        ))),
+    }
+}
+
+fn parse_tool_effects(value: Option<&Value>, label: &str) -> PyResult<BTreeSet<ToolEffect>> {
+    let Some(value) = value else {
+        return Ok(BTreeSet::new());
+    };
+    let Some(values) = value.as_array() else {
+        return Err(PyValueError::new_err(format!("{label} must be an array")));
+    };
+    values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| parse_tool_effect(value, &format!("{label}[{index}]")))
+        .collect()
+}
+
+fn parse_tool_status(value: &str, label: &str) -> PyResult<ToolCallStatus> {
+    match value {
+        "validated" => Ok(ToolCallStatus::Validated),
+        "policy_pending" => Ok(ToolCallStatus::PolicyPending),
+        "approval_pending" => Ok(ToolCallStatus::ApprovalPending),
+        "admitted" => Ok(ToolCallStatus::Admitted),
+        "running" => Ok(ToolCallStatus::Running),
+        "completed" => Ok(ToolCallStatus::Completed),
+        "failed" => Ok(ToolCallStatus::Failed),
+        "denied" => Ok(ToolCallStatus::Denied),
+        "cancelled" => Ok(ToolCallStatus::Cancelled),
+        "policy_stopped" => Ok(ToolCallStatus::PolicyStopped),
+        "expired" => Ok(ToolCallStatus::Expired),
+        value => Err(PyValueError::new_err(format!(
+            "{label} has unknown tool call status {value:?}"
+        ))),
+    }
+}
+
+fn parse_tool_call(value: &Value, label: &str) -> PyResult<ToolCall> {
+    let object = json_object(value, label)?;
+    let arguments = object
+        .get("arguments")
+        .cloned()
+        .ok_or_else(|| PyValueError::new_err(format!("{label}.arguments is required")))?;
+    let depends_on = alias_value(object, "dependsOn", "depends_on")
+        .map(|value| {
+            let Some(values) = value.as_array() else {
+                return Err(PyValueError::new_err(format!(
+                    "{label}.dependsOn must be an array"
+                )));
+            };
+            values
+                .iter()
+                .enumerate()
+                .map(|(index, value)| {
+                    value.as_str().map(str::to_owned).ok_or_else(|| {
+                        PyValueError::new_err(format!(
+                            "{label}.dependsOn[{index}] must be a string"
+                        ))
+                    })
+                })
+                .collect::<PyResult<Vec<_>>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let revision = u64_to_u32(
+        alias_value(object, "revision", "revision")
+            .and_then(Value::as_u64)
+            .unwrap_or(1),
+        &format!("{label}.revision"),
+    )?;
+    let call = ToolCall {
+        tool_call_id: required_alias_string(object, "toolCallId", "tool_call_id", label)?
+            .to_owned(),
+        response_id: required_alias_string(object, "responseId", "response_id", label)?.to_owned(),
+        resolved_tool_id: required_alias_string(
+            object,
+            "resolvedToolId",
+            "resolved_tool_id",
+            label,
+        )?
+        .to_owned(),
+        name: required_string(object, "name", label)?.to_owned(),
+        arguments,
+        arguments_digest: required_alias_string(
+            object,
+            "argumentsDigest",
+            "arguments_digest",
+            label,
+        )?
+        .to_owned(),
+        revision,
+        status: parse_tool_status(required_string(object, "status", label)?, label)?,
+        depends_on,
+        created_at_unix_ms: required_alias_u64(
+            object,
+            "createdAtUnixMs",
+            "created_at_unix_ms",
+            label,
+        )?,
+        admitted_at_unix_ms: optional_nullable_alias_u64(
+            object,
+            "admittedAtUnixMs",
+            "admitted_at_unix_ms",
+            label,
+        )?,
+        completed_at_unix_ms: optional_nullable_alias_u64(
+            object,
+            "completedAtUnixMs",
+            "completed_at_unix_ms",
+            label,
+        )?,
+    };
+    call.validate()
+        .map_err(|error| PyValueError::new_err(format!("invalid {label}: {error:?}")))?;
+    Ok(call)
+}
+
+fn parse_tool_definition(value: &Value, label: &str) -> PyResult<ToolDefinition> {
+    let object = json_object(value, label)?;
+    let mut definition = ToolDefinition::new(
+        required_string(object, "name", label)?,
+        required_string(object, "description", label)?,
+        required_alias_string(object, "inputSchema", "input_schema", label)?,
+    );
+    if let Some(output_schema) =
+        optional_nullable_alias_string(object, "outputSchema", "output_schema", label)?
+    {
+        definition = definition.with_output_schema(output_schema);
+    }
+    definition = definition.with_tags(parse_string_set(
+        alias_value(object, "tags", "tags"),
+        &format!("{label}.tags"),
+    )?);
+    if let Some(version) = optional_nullable_alias_string(object, "version", "version", label)? {
+        definition = definition.with_version(version);
+    }
+    Ok(definition)
+}
+
+fn parse_tool_implementation(value: &Value, label: &str) -> PyResult<ToolImplementation> {
+    let object = json_object(value, label)?;
+    let kind = required_string(object, "kind", label)?;
+    match kind {
+        "block" => {
+            let mut implementation =
+                BlockToolImplementation::new(required_string(object, "block", label)?);
+            implementation.input_mapping = parse_string_map(
+                alias_value(object, "inputMapping", "input_mapping"),
+                &format!("{label}.inputMapping"),
+            )?;
+            implementation.output_mapping = parse_string_map(
+                alias_value(object, "outputMapping", "output_mapping"),
+                &format!("{label}.outputMapping"),
+            )?;
+            Ok(ToolImplementation::Block(implementation))
+        }
+        "graph" => {
+            let mut implementation =
+                GraphToolImplementation::new(required_string(object, "graph", label)?);
+            implementation.input_mapping = parse_string_map(
+                alias_value(object, "inputMapping", "input_mapping"),
+                &format!("{label}.inputMapping"),
+            )?;
+            implementation.output_mapping = parse_string_map(
+                alias_value(object, "outputMapping", "output_mapping"),
+                &format!("{label}.outputMapping"),
+            )?;
+            Ok(ToolImplementation::Graph(implementation))
+        }
+        "remote" => Ok(ToolImplementation::Remote(RemoteToolImplementation::new(
+            required_string(object, "connection", label)?,
+            required_string(object, "operation", label)?,
+        ))),
+        "mcp" => Ok(ToolImplementation::Mcp(McpToolImplementation::new(
+            required_string(object, "server", label)?,
+            required_alias_string(object, "remoteName", "remote_name", label)?,
+        ))),
+        "openapi" => Ok(ToolImplementation::OpenApi(OpenApiToolImplementation::new(
+            required_string(object, "connection", label)?,
+            required_alias_string(object, "operationId", "operation_id", label)?,
+        ))),
+        value => Err(PyValueError::new_err(format!(
+            "{label}.kind has unknown tool implementation kind {value:?}"
+        ))),
+    }
+}
+
+fn parse_tool_binding(value: &Value, label: &str) -> PyResult<ToolBinding> {
+    let object = json_object(value, label)?;
+    let implementation = object
+        .get("implementation")
+        .ok_or_else(|| PyValueError::new_err(format!("{label}.implementation is required")))?;
+    let mut binding = ToolBinding::new(
+        required_alias_string(object, "bindingId", "binding_id", label)?,
+        required_alias_string(object, "toolName", "tool_name", label)?,
+        parse_tool_implementation(implementation, &format!("{label}.implementation"))?,
+    )
+    .with_effects(parse_tool_effects(
+        alias_value(object, "effects", "effects"),
+        &format!("{label}.effects"),
+    )?);
+
+    if let Some(approval) = optional_nullable_alias_string(object, "approval", "approval", label)? {
+        binding = binding.with_approval(match approval {
+            "never" => ToolApproval::Never,
+            "policy" => ToolApproval::Policy,
+            "always" => ToolApproval::Always,
+            value => {
+                return Err(PyValueError::new_err(format!(
+                    "{label}.approval has unknown approval {value:?}"
+                )));
+            }
+        });
+    }
+    if let Some(idempotency) =
+        optional_nullable_alias_string(object, "idempotency", "idempotency", label)?
+    {
+        binding = binding.with_idempotency(match idempotency {
+            "not_applicable" => ToolIdempotency::NotApplicable,
+            "optional" => ToolIdempotency::Optional,
+            "required" => ToolIdempotency::Required,
+            value => {
+                return Err(PyValueError::new_err(format!(
+                    "{label}.idempotency has unknown idempotency {value:?}"
+                )));
+            }
+        });
+    }
+    if let Some(cancellation) =
+        optional_nullable_alias_string(object, "cancellation", "cancellation", label)?
+    {
+        binding = binding.with_cancellation(match cancellation {
+            "unsupported" => ToolCancellation::Unsupported,
+            "cooperative" => ToolCancellation::Cooperative,
+            "force_terminable" => ToolCancellation::ForceTerminable,
+            value => {
+                return Err(PyValueError::new_err(format!(
+                    "{label}.cancellation has unknown cancellation {value:?}"
+                )));
+            }
+        });
+    }
+    if let Some(result_mode) =
+        optional_nullable_alias_string(object, "resultMode", "result_mode", label)?
+    {
+        binding = binding.with_result_mode(match result_mode {
+            "value" => ToolResultMode::Value,
+            "incremental" => ToolResultMode::Incremental,
+            "bounded_sequence" => ToolResultMode::BoundedSequence,
+            "artifact_reference" => ToolResultMode::ArtifactReference,
+            value => {
+                return Err(PyValueError::new_err(format!(
+                    "{label}.resultMode has unknown result mode {value:?}"
+                )));
+            }
+        });
+    }
+    if let Some(timeout_ms) = optional_nullable_alias_u64(object, "timeoutMs", "timeout_ms", label)?
+    {
+        binding = binding.with_timeout_ms(timeout_ms);
+    }
+    binding.retry_policy_ref =
+        optional_nullable_alias_string(object, "retryPolicyRef", "retry_policy_ref", label)?
+            .map(str::to_owned);
+    binding.policy_profile_ref =
+        optional_nullable_alias_string(object, "policyProfileRef", "policy_profile_ref", label)?
+            .map(str::to_owned);
+    binding.execution_class =
+        optional_nullable_alias_string(object, "executionClass", "execution_class", label)?
+            .map(str::to_owned);
+    Ok(binding)
+}
+
+fn parse_resolved_tool(value: &Value, label: &str) -> PyResult<ResolvedTool> {
+    let object = json_object(value, label)?;
+    let definition_value = object
+        .get("definition")
+        .ok_or_else(|| PyValueError::new_err(format!("{label}.definition is required")))?;
+    let binding_value = object
+        .get("binding")
+        .ok_or_else(|| PyValueError::new_err(format!("{label}.binding is required")))?;
+    let valid_until_unix_ms =
+        optional_nullable_alias_u64(object, "validUntil", "valid_until", label)?;
+    let resolved_tool = ResolvedTool::from_definition_and_binding(
+        required_alias_string(object, "resolvedToolId", "resolved_tool_id", label)?,
+        parse_tool_definition(definition_value, &format!("{label}.definition"))?,
+        parse_tool_binding(binding_value, &format!("{label}.binding"))?,
+        required_alias_string(
+            object,
+            "effectivePolicySnapshotId",
+            "effective_policy_snapshot_id",
+            label,
+        )?,
+        optional_nullable_alias_bool(
+            object,
+            "allowedForPrincipal",
+            "allowed_for_principal",
+            label,
+        )?
+        .unwrap_or(true),
+        valid_until_unix_ms,
+    )
+    .map_err(|error| PyValueError::new_err(format!("invalid {label}: {error:?}")))?;
+
+    if let Some(definition_digest) =
+        optional_nullable_alias_string(object, "definitionDigest", "definition_digest", label)?
+        && definition_digest != resolved_tool.definition_digest
+    {
+        return Err(PyValueError::new_err(format!(
+            "{label}.definitionDigest does not match definition"
+        )));
+    }
+    if let Some(binding_digest) =
+        optional_nullable_alias_string(object, "bindingDigest", "binding_digest", label)?
+        && binding_digest != resolved_tool.binding_digest
+    {
+        return Err(PyValueError::new_err(format!(
+            "{label}.bindingDigest does not match binding"
+        )));
+    }
+
+    Ok(resolved_tool)
+}
+
+fn parse_json_schema_node(value: &Value, label: &str) -> PyResult<JsonSchemaNode> {
+    let object = json_object(value, label)?;
+    let expected_type = alias_value(object, "expectedType", "expected_type")
+        .or_else(|| object.get("type"))
+        .filter(|value| !value.is_null())
+        .map(|value| {
+            value.as_str().ok_or_else(|| {
+                PyValueError::new_err(format!("{label}.expectedType must be a string"))
+            })
+        })
+        .transpose()?;
+    let required = parse_string_set(object.get("required"), &format!("{label}.required"))?;
+    let mut node = match expected_type {
+        None => JsonSchemaNode::any(),
+        Some("null") => JsonSchemaNode::any(),
+        Some("boolean") => JsonSchemaNode::boolean(),
+        Some("integer") => JsonSchemaNode::integer(),
+        Some("number") => JsonSchemaNode::number(),
+        Some("string") => JsonSchemaNode::string(),
+        Some("object") => JsonSchemaNode::object(),
+        Some("array") => {
+            let items = object
+                .get("items")
+                .map(|value| parse_json_schema_node(value, &format!("{label}.items")))
+                .transpose()?
+                .unwrap_or_else(JsonSchemaNode::any);
+            JsonSchemaNode::array(items)
+        }
+        Some(value) => {
+            return Err(PyValueError::new_err(format!(
+                "{label}.expectedType has unknown JSON schema type {value:?}"
+            )));
+        }
+    };
+    if let Some(properties) = object.get("properties") {
+        let properties = json_object(properties, &format!("{label}.properties"))?;
+        for (property, schema_value) in properties {
+            let property_schema =
+                parse_json_schema_node(schema_value, &format!("{label}.properties.{property}"))?;
+            if required.contains(property) {
+                node = node.required_property(property.clone(), property_schema);
+            } else {
+                node = node.property(property.clone(), property_schema);
+            }
+        }
+    }
+    Ok(node)
+}
+
+fn parse_tool_schema_registry(value: &Value, label: &str) -> PyResult<ToolSchemaRegistry> {
+    if value.is_null() {
+        return ToolSchemaRegistry::new(Vec::<JsonSchema>::new())
+            .map_err(|error| PyValueError::new_err(format!("invalid {label}: {error:?}")));
+    }
+
+    let mut schemas = Vec::new();
+    let mut parse_schema = |schema_id_override: Option<&str>,
+                            schema_value: &Value,
+                            schema_label: &str|
+     -> PyResult<()> {
+        let schema_object = json_object(schema_value, schema_label)?;
+        let schema_id = if let Some(schema_id) = schema_id_override {
+            schema_id.to_owned()
+        } else {
+            optional_nullable_alias_string(schema_object, "schemaId", "schema_id", schema_label)?
+                .ok_or_else(|| {
+                    PyValueError::new_err(format!("{schema_label}.schemaId is required"))
+                })?
+                .to_owned()
+        };
+        let root_value = schema_object
+            .get("root")
+            .or_else(|| schema_object.get("schema"))
+            .unwrap_or(schema_value);
+        schemas.push(JsonSchema::new(
+            schema_id,
+            parse_json_schema_node(root_value, &format!("{schema_label}.root"))?,
+        ));
+        Ok(())
+    };
+
+    if let Some(array) = value.as_array() {
+        for (index, schema_value) in array.iter().enumerate() {
+            parse_schema(None, schema_value, &format!("{label}[{index}]"))?;
+        }
+    } else {
+        let object = json_object(value, label)?;
+        if object.contains_key("schemaId") || object.contains_key("schema_id") {
+            parse_schema(None, value, label)?;
+        } else if let Some(schema_values) = object.get("schemas") {
+            let Some(schema_values) = schema_values.as_array() else {
+                return Err(PyValueError::new_err(format!(
+                    "{label}.schemas must be an array"
+                )));
+            };
+            for (index, schema_value) in schema_values.iter().enumerate() {
+                parse_schema(None, schema_value, &format!("{label}.schemas[{index}]"))?;
+            }
+        } else {
+            for (schema_id, schema_value) in object {
+                parse_schema(
+                    Some(schema_id),
+                    schema_value,
+                    &format!("{label}.{schema_id}"),
+                )?;
+            }
+        }
+    }
+
+    ToolSchemaRegistry::new(schemas)
+        .map_err(|error| PyValueError::new_err(format!("invalid {label}: {error:?}")))
+}
+
+fn parse_content_part(value: &Value, label: &str) -> PyResult<ContentPart> {
+    let object = json_object(value, label)?;
+    let kind = required_string(object, "kind", label)?;
+    let metadata = parse_json_value_map(object.get("metadata"), &format!("{label}.metadata"))?;
+    let mut part = match kind {
+        "text" => ContentPart {
+            kind: ContentPartKind::Text,
+            text: object
+                .get("text")
+                .filter(|value| !value.is_null())
+                .map(|value| {
+                    value.as_str().map(str::to_owned).ok_or_else(|| {
+                        PyValueError::new_err(format!("{label}.text must be a string"))
+                    })
+                })
+                .transpose()?,
+            data: object.get("data").filter(|value| !value.is_null()).cloned(),
+            metadata,
+        },
+        "json" => ContentPart {
+            kind: ContentPartKind::Json,
+            text: object
+                .get("text")
+                .filter(|value| !value.is_null())
+                .map(|value| {
+                    value.as_str().map(str::to_owned).ok_or_else(|| {
+                        PyValueError::new_err(format!("{label}.text must be a string"))
+                    })
+                })
+                .transpose()?,
+            data: object.get("data").filter(|value| !value.is_null()).cloned(),
+            metadata,
+        },
+        "artifact_ref" => ContentPart {
+            kind: ContentPartKind::ArtifactRef,
+            text: object
+                .get("text")
+                .filter(|value| !value.is_null())
+                .map(|value| {
+                    value.as_str().map(str::to_owned).ok_or_else(|| {
+                        PyValueError::new_err(format!("{label}.text must be a string"))
+                    })
+                })
+                .transpose()?,
+            data: object.get("data").filter(|value| !value.is_null()).cloned(),
+            metadata,
+        },
+        value => {
+            return Err(PyValueError::new_err(format!(
+                "{label}.kind has unknown content part kind {value:?}"
+            )));
+        }
+    };
+    if kind == "artifact_ref" && part.data.is_none() {
+        let artifact = parse_artifact_ref(value, label)?;
+        part = ContentPart::artifact_ref(artifact);
+    }
+    part.validate()
+        .map_err(|error| PyValueError::new_err(format!("invalid {label}: {error:?}")))?;
+    Ok(part)
+}
+
+fn parse_artifact_ref(value: &Value, label: &str) -> PyResult<ArtifactRef> {
+    let object = json_object(value, label)?;
+    let mut artifact = ArtifactRef::new(
+        required_alias_string(object, "artifactId", "artifact_id", label)?,
+        required_string(object, "uri", label)?,
+    );
+    if let Some(checksum) = optional_nullable_alias_string(object, "checksum", "checksum", label)? {
+        artifact = artifact.with_checksum(checksum);
+    }
+    if let Some(media_type) =
+        optional_nullable_alias_string(object, "mediaType", "media_type", label)?
+    {
+        artifact = artifact.with_media_type(media_type);
+    }
+    Ok(artifact)
+}
+
+fn parse_diagnostic_severity(value: &str, label: &str) -> PyResult<DiagnosticSeverity> {
+    match value {
+        "info" => Ok(DiagnosticSeverity::Info),
+        "warning" => Ok(DiagnosticSeverity::Warning),
+        "error" => Ok(DiagnosticSeverity::Error),
+        value => Err(PyValueError::new_err(format!(
+            "{label} has unknown diagnostic severity {value:?}"
+        ))),
+    }
+}
+
+fn parse_diagnostic(value: &Value, label: &str) -> PyResult<Diagnostic> {
+    let object = json_object(value, label)?;
+    Ok(Diagnostic {
+        code: required_string(object, "code", label)?.to_owned(),
+        message: required_string(object, "message", label)?.to_owned(),
+        severity: parse_diagnostic_severity(required_string(object, "severity", label)?, label)?,
+        path: optional_nullable_alias_string(object, "path", "path", label)?.map(str::to_owned),
+    })
+}
+
+fn parse_error_category(value: &str, label: &str) -> PyResult<ErrorCategory> {
+    match value {
+        "validation" => Ok(ErrorCategory::Validation),
+        "configuration" => Ok(ErrorCategory::Configuration),
+        "authentication" => Ok(ErrorCategory::Authentication),
+        "authorization" => Ok(ErrorCategory::Authorization),
+        "not_found" => Ok(ErrorCategory::NotFound),
+        "rate_limit" => Ok(ErrorCategory::RateLimit),
+        "quota" => Ok(ErrorCategory::Quota),
+        "budget" => Ok(ErrorCategory::Budget),
+        "capacity" => Ok(ErrorCategory::Capacity),
+        "timeout" => Ok(ErrorCategory::Timeout),
+        "transient" => Ok(ErrorCategory::Transient),
+        "permanent" => Ok(ErrorCategory::Permanent),
+        "provider" => Ok(ErrorCategory::Provider),
+        "policy" => Ok(ErrorCategory::Policy),
+        "cancelled" => Ok(ErrorCategory::Cancelled),
+        "conflict" => Ok(ErrorCategory::Conflict),
+        "internal" => Ok(ErrorCategory::Internal),
+        value => Err(PyValueError::new_err(format!(
+            "{label} has unknown error category {value:?}"
+        ))),
+    }
+}
+
+fn parse_block_error(value: &Value, label: &str) -> PyResult<BlockError> {
+    let object = json_object(value, label)?;
+    let mut error = BlockError::new(
+        required_string(object, "code", label)?,
+        parse_error_category(required_string(object, "category", label)?, label)?,
+        required_string(object, "message", label)?,
+        optional_nullable_alias_bool(object, "retryable", "retryable", label)?.unwrap_or(false),
+    );
+    error.details = parse_json_value_map(object.get("details"), &format!("{label}.details"))?;
+    if let Some(cause_chain) = object
+        .get("causeChain")
+        .or_else(|| object.get("cause_chain"))
+    {
+        let Some(cause_chain) = cause_chain.as_array() else {
+            return Err(PyValueError::new_err(format!(
+                "{label}.causeChain must be an array"
+            )));
+        };
+        error.cause_chain = cause_chain
+            .iter()
+            .enumerate()
+            .map(|(index, value)| {
+                value.as_str().map(str::to_owned).ok_or_else(|| {
+                    PyValueError::new_err(format!("{label}.causeChain[{index}] must be a string"))
+                })
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+    }
+    Ok(error)
+}
+
+fn parse_tool_result_status(value: &str, label: &str) -> PyResult<ToolResultStatus> {
+    match value {
+        "completed" => Ok(ToolResultStatus::Completed),
+        "failed" => Ok(ToolResultStatus::Failed),
+        "denied" => Ok(ToolResultStatus::Denied),
+        "cancelled" => Ok(ToolResultStatus::Cancelled),
+        "policy_stopped" => Ok(ToolResultStatus::PolicyStopped),
+        "incomplete" => Ok(ToolResultStatus::Incomplete),
+        value => Err(PyValueError::new_err(format!(
+            "{label} has unknown tool result status {value:?}"
+        ))),
+    }
+}
+
+fn parse_tool_effect_outcome(value: Option<&Value>, label: &str) -> PyResult<ToolEffectOutcome> {
+    let Some(value) = value.filter(|value| !value.is_null()) else {
+        return Ok(ToolEffectOutcome::Unknown);
+    };
+    let Some(value) = value.as_str() else {
+        return Err(PyValueError::new_err(format!("{label} must be a string")));
+    };
+    match value {
+        "no_external_effect" => Ok(ToolEffectOutcome::NoExternalEffect),
+        "committed" => Ok(ToolEffectOutcome::Committed),
+        "not_committed" => Ok(ToolEffectOutcome::NotCommitted),
+        "unknown" => Ok(ToolEffectOutcome::Unknown),
+        value => Err(PyValueError::new_err(format!(
+            "{label} has unknown tool effect outcome {value:?}"
+        ))),
+    }
+}
+
+fn parse_tool_result(value: &Value, label: &str) -> PyResult<ToolResult> {
+    let object = json_object(value, label)?;
+    let output = alias_value(object, "output", "output")
+        .map(|value| {
+            let Some(values) = value.as_array() else {
+                return Err(PyValueError::new_err(format!(
+                    "{label}.output must be an array"
+                )));
+            };
+            values
+                .iter()
+                .enumerate()
+                .map(|(index, value)| {
+                    parse_content_part(value, &format!("{label}.output[{index}]"))
+                })
+                .collect::<PyResult<Vec<_>>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let artifacts = object
+        .get("artifacts")
+        .map(|value| {
+            let Some(values) = value.as_array() else {
+                return Err(PyValueError::new_err(format!(
+                    "{label}.artifacts must be an array"
+                )));
+            };
+            values
+                .iter()
+                .enumerate()
+                .map(|(index, value)| {
+                    parse_artifact_ref(value, &format!("{label}.artifacts[{index}]"))
+                })
+                .collect::<PyResult<Vec<_>>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let diagnostics = object
+        .get("diagnostics")
+        .map(|value| {
+            let Some(values) = value.as_array() else {
+                return Err(PyValueError::new_err(format!(
+                    "{label}.diagnostics must be an array"
+                )));
+            };
+            values
+                .iter()
+                .enumerate()
+                .map(|(index, value)| {
+                    parse_diagnostic(value, &format!("{label}.diagnostics[{index}]"))
+                })
+                .collect::<PyResult<Vec<_>>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let result = ToolResult {
+        tool_call_id: required_alias_string(object, "toolCallId", "tool_call_id", label)?
+            .to_owned(),
+        status: parse_tool_result_status(required_string(object, "status", label)?, label)?,
+        output,
+        output_digest: optional_nullable_alias_string(
+            object,
+            "outputDigest",
+            "output_digest",
+            label,
+        )?
+        .map(str::to_owned),
+        artifacts,
+        diagnostics,
+        error: object
+            .get("error")
+            .filter(|value| !value.is_null())
+            .map(|value| parse_block_error(value, &format!("{label}.error")))
+            .transpose()?,
+        started_at_unix_ms: optional_nullable_alias_u64(
+            object,
+            "startedAtUnixMs",
+            "started_at_unix_ms",
+            label,
+        )?,
+        completed_at_unix_ms: optional_nullable_alias_u64(
+            object,
+            "completedAtUnixMs",
+            "completed_at_unix_ms",
+            label,
+        )?,
+        effect_outcome: parse_tool_effect_outcome(
+            alias_value(object, "effectOutcome", "effect_outcome"),
+            &format!("{label}.effectOutcome"),
+        )?,
+    };
+    result
+        .validate()
+        .map_err(|error| PyValueError::new_err(format!("invalid {label}: {error:?}")))?;
+    Ok(result)
+}
+
+fn parse_capture_decision(value: &Value, label: &str) -> PyResult<CaptureDecision> {
+    let object = json_object(value, label)?;
+    let retention_policy =
+        optional_nullable_alias_string(object, "retentionPolicy", "retention_policy", label)?
+            .unwrap_or("");
+    let mut decision = match optional_nullable_alias_string(object, "mode", "mode", label)?
+        .unwrap_or("hash_only")
+    {
+        "none" => CaptureDecision::none(retention_policy),
+        "hash_only" => CaptureDecision::hash_only(retention_policy),
+        "reference_only" => CaptureDecision::reference_only(retention_policy),
+        "redacted_preview" => CaptureDecision::redacted_preview(retention_policy),
+        "full" => CaptureDecision::full(retention_policy),
+        value => {
+            return Err(PyValueError::new_err(format!(
+                "{label}.mode has unknown capture mode {value:?}"
+            )));
+        }
+    };
+    if let Some(consent_ref) =
+        optional_nullable_alias_string(object, "consentRef", "consent_ref", label)?
+    {
+        decision = decision.with_consent_ref(consent_ref);
+    }
+    Ok(decision)
+}
+
+fn parse_tool_result_content_policy(
+    value: Option<&Value>,
+    label: &str,
+) -> PyResult<ToolResultContentPolicy> {
+    let Some(value) = value.filter(|value| !value.is_null()) else {
+        return Ok(ToolResultContentPolicy::new());
+    };
+    let object = json_object(value, label)?;
+    let mut policy = ToolResultContentPolicy::new();
+    if let Some(max_output_bytes) =
+        optional_nullable_alias_u64(object, "maxOutputBytes", "max_output_bytes", label)?
+    {
+        policy = policy.with_max_output_bytes(u64_to_usize(
+            max_output_bytes,
+            &format!("{label}.maxOutputBytes"),
+        )?);
+    }
+    if let Some(redactions) = object.get("redactions") {
+        let Some(redactions) = redactions.as_array() else {
+            return Err(PyValueError::new_err(format!(
+                "{label}.redactions must be an array"
+            )));
+        };
+        let mut parsed_redactions = Vec::new();
+        for (index, redaction) in redactions.iter().enumerate() {
+            let redaction_label = format!("{label}.redactions[{index}]");
+            let redaction = json_object(redaction, &redaction_label)?;
+            parsed_redactions.push(RedactionInstruction::text_range(
+                required_string(redaction, "path", &redaction_label)?,
+                required_u64(redaction, "start", &redaction_label)?,
+                required_u64(redaction, "end", &redaction_label)?,
+                required_string(redaction, "replacement", &redaction_label)?,
+            ));
+        }
+        policy = policy.with_redactions(parsed_redactions);
+    }
+    if let Some(capture_policy) = object
+        .get("capturePolicy")
+        .or_else(|| object.get("capture_policy"))
+        .or_else(|| object.get("captureDecision"))
+        .or_else(|| object.get("capture_decision"))
+        .filter(|value| !value.is_null())
+    {
+        policy =
+            policy.with_capture_decision(parse_capture_decision(capture_policy, "capturePolicy")?);
+    }
+    let trust_designation =
+        optional_nullable_alias_string(object, "trustDesignation", "trust_designation", label)?
+            .unwrap_or("untrusted_external");
+    let prompt_injection_label = optional_nullable_alias_string(
+        object,
+        "promptInjectionLabel",
+        "prompt_injection_label",
+        label,
+    )?
+    .unwrap_or("untrusted_tool_output");
+    let content_classification = optional_nullable_alias_string(
+        object,
+        "contentClassification",
+        "content_classification",
+        label,
+    )?
+    .unwrap_or("external_tool_output");
+    policy = policy.with_model_output_labels(
+        trust_designation,
+        prompt_injection_label,
+        content_classification,
+    );
+    Ok(policy)
+}
+
+fn serialize_content_part(part: &ContentPart) -> Value {
+    let kind = match part.kind {
+        ContentPartKind::Text => "text",
+        ContentPartKind::Json => "json",
+        ContentPartKind::ArtifactRef => "artifact_ref",
+    };
+    json!({
+        "kind": kind,
+        "text": part.text,
+        "data": part.data,
+        "metadata": part.metadata,
+    })
 }
 
 fn parse_work_kind(value: &Value, label: &str) -> PyResult<WorkKind> {
@@ -1931,6 +2957,10 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
         module
     )?)?;
     module.add_function(wrap_pyfunction!(validate_remote_payload_json, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        prepare_tool_result_for_model_json,
+        module
+    )?)?;
     module.add_function(wrap_pyfunction!(run_test_graph_json, module)?)?;
     module.add_function(wrap_pyfunction!(run_stdlib_graph_json, module)?)?;
     module.add_function(wrap_pyfunction!(decide_agent_step_json, module)?)?;
@@ -1945,13 +2975,14 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
 
 #[cfg(test)]
 mod tests {
+    use graphblocks_runtime_core::tool_result::{ContentPart, ToolResult};
     use serde_json::{Value, json};
 
     use super::{
         admit_exhaustion_work_json, compile_graph_json, decide_agent_step_json,
         evaluate_declarative_output_policy_json, evaluate_output_gate_json,
-        finalize_tool_call_json, run_stdlib_graph_json, run_test_graph_json,
-        validate_remote_payload_json, validate_worker_advertisement_json,
+        finalize_tool_call_json, prepare_tool_result_for_model_json, run_stdlib_graph_json,
+        run_test_graph_json, validate_remote_payload_json, validate_worker_advertisement_json,
     };
 
     #[test]
@@ -2043,6 +3074,126 @@ mod tests {
             .to_string();
 
         assert!(error.contains("ArgumentsNotComplete"));
+        Ok(())
+    }
+
+    #[test]
+    fn prepare_tool_result_for_model_json_delegates_to_runtime_validation() -> Result<(), String> {
+        let draft = json!({
+            "responseId": "response-1",
+            "toolCallId": "call-1",
+            "toolName": "knowledge.search",
+            "argumentFragments": ["{}"],
+            "sequence": 1,
+            "status": "arguments_complete"
+        });
+        let call_json = finalize_tool_call_json(
+            &serde_json::to_string(&draft).map_err(|error| error.to_string())?,
+            "resolved-tool-1",
+            1_000,
+        )
+        .map_err(|error| error.to_string())?;
+        let result = ToolResult::completed(
+            "call-1",
+            [ContentPart::text("safe secret suffix")],
+            1_001,
+            1_002,
+        );
+        let result_json = serde_json::to_string(&json!({
+            "toolCallId": "call-1",
+            "status": "completed",
+            "output": [
+                {"kind": "text", "text": "safe secret suffix", "metadata": {}}
+            ],
+            "outputDigest": result.output_digest,
+            "startedAtUnixMs": 1_001,
+            "completedAtUnixMs": 1_002
+        }))
+        .map_err(|error| error.to_string())?;
+        let resolved_tool_json = serde_json::to_string(&json!({
+            "resolvedToolId": "resolved-tool-1",
+            "definition": {
+                "name": "knowledge.search",
+                "description": "Search documentation.",
+                "inputSchema": "schemas/SearchRequest@1"
+            },
+            "binding": {
+                "bindingId": "binding-search",
+                "toolName": "knowledge.search",
+                "implementation": {"kind": "block", "block": "blocks.search"},
+                "effects": ["external_read"],
+                "approval": "never",
+                "idempotency": "not_applicable"
+            },
+            "effectivePolicySnapshotId": "policy-snapshot-1",
+            "allowedForPrincipal": true
+        }))
+        .map_err(|error| error.to_string())?;
+        let content_policy_json = serde_json::to_string(&json!({
+            "redactions": [
+                {
+                    "path": "/parts/0/text",
+                    "start": 5,
+                    "end": 11,
+                    "replacement": "[redacted]"
+                }
+            ],
+            "capturePolicy": {
+                "mode": "redacted_preview",
+                "retentionPolicy": "records-30d"
+            },
+            "trustDesignation": "policy_quarantined",
+            "promptInjectionLabel": "classifier_flagged_tool_output",
+            "contentClassification": "classified_external_tool_output"
+        }))
+        .map_err(|error| error.to_string())?;
+
+        let output_json = prepare_tool_result_for_model_json(
+            &call_json,
+            &result_json,
+            &resolved_tool_json,
+            "[]",
+            Some(&content_policy_json),
+        )
+        .map_err(|error| error.to_string())?;
+        let output =
+            serde_json::from_str::<Value>(&output_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(output.get("ok"), Some(&json!(true)));
+        assert_eq!(
+            output.pointer("/output/0/text").and_then(Value::as_str),
+            Some("safe [redacted] suffix")
+        );
+        assert_eq!(
+            output
+                .pointer("/output/0/metadata/trust_designation")
+                .and_then(Value::as_str),
+            Some("policy_quarantined")
+        );
+        assert_eq!(
+            output
+                .pointer("/output/0/metadata/prompt_injection_label")
+                .and_then(Value::as_str),
+            Some("classifier_flagged_tool_output")
+        );
+        assert_eq!(
+            output
+                .pointer("/output/0/metadata/content_classification")
+                .and_then(Value::as_str),
+            Some("classified_external_tool_output")
+        );
+        assert_eq!(
+            output
+                .pointer("/output/0/metadata/capture/mode")
+                .and_then(Value::as_str),
+            Some("redacted_preview")
+        );
+        assert_eq!(
+            output
+                .pointer("/output/0/metadata/capture/redaction_count")
+                .and_then(Value::as_u64),
+            Some(1)
+        );
         Ok(())
     }
 

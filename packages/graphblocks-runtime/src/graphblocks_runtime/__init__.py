@@ -15,6 +15,7 @@ try:
         evaluate_declarative_output_policy_json,
         evaluate_output_gate_json,
         finalize_tool_call_json,
+        prepare_tool_result_for_model_json,
         run_stdlib_graph_json,
         run_test_graph_json,
         validate_remote_payload_json,
@@ -60,6 +61,15 @@ except ImportError as error:
         draft_json: str,
         resolved_tool_id: str,
         created_at_unix_ms: int,
+    ) -> str:
+        require_native_extension()
+
+    def prepare_tool_result_for_model_json(
+        call_json: str,
+        result_json: str,
+        resolved_tool_json: str,
+        schema_registry_json: str,
+        content_policy_json: str | None = None,
     ) -> str:
         require_native_extension()
 
@@ -161,6 +171,27 @@ def finalize_tool_call(
     )
 
 
+def prepare_tool_result_for_model(
+    call: dict[str, object],
+    result: dict[str, object],
+    resolved_tool: dict[str, object],
+    schema_registry: object,
+    *,
+    content_policy: dict[str, object] | None = None,
+) -> dict[str, object]:
+    content_policy_json = None if content_policy is None else _canonical_json(content_policy)
+    return _json_object_result(
+        prepare_tool_result_for_model_json(
+            _canonical_json(call),
+            _canonical_json(result),
+            _canonical_json(resolved_tool),
+            _canonical_json(schema_registry),
+            content_policy_json,
+        ),
+        "native prepared tool result",
+    )
+
+
 def decide_agent_step(spec: dict[str, object], request: dict[str, object]) -> dict[str, object]:
     return _json_object_result(
         decide_agent_step_json(_canonical_json(spec), _canonical_json(request)),
@@ -236,6 +267,8 @@ __all__ = [
     "finalize_tool_call_json",
     "native_extension_available",
     "native_extension_status",
+    "prepare_tool_result_for_model",
+    "prepare_tool_result_for_model_json",
     "require_native_extension",
     "run_stdlib_graph",
     "run_stdlib_graph_json",
