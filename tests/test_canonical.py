@@ -5,10 +5,46 @@ from types import SimpleNamespace
 
 import graphblocks
 from graphblocks import canonical_hash, compile_graph, compile_graph_native, normalize_graph
+from graphblocks import compiler as compiler_module
+from graphblocks.output_policy import (
+    VALID_DELIVERY_MODES,
+    VALID_DRAFT_DISPOSITIONS,
+    VALID_FLUSH_BOUNDARIES,
+    VALID_OUTPUT_DISPOSITIONS,
+    VALID_OUTPUT_DURABLE_RESULTS,
+    VALID_PENDING_TOOL_CALLS_DISPOSITIONS,
+    VALID_PROVIDER_CANCELLATIONS,
+    VALID_VIOLATION_ACTIONS,
+)
+from graphblocks.policy import VALID_ENFORCEMENT_POINTS
+from graphblocks.tools import (
+    VALID_TOOL_APPROVALS,
+    VALID_TOOL_CANCELLATIONS,
+    VALID_TOOL_EFFECTS,
+    VALID_TOOL_IDEMPOTENCIES,
+    VALID_TOOL_RESULT_MODES,
+)
 
 
 def _error_codes(graph: dict) -> list[str]:
     return [item.code for item in compile_graph(graph).diagnostics.diagnostics if item.severity == "error"]
+
+
+def test_python_compiler_uses_canonical_literal_sets() -> None:
+    assert compiler_module.VALID_TOOL_EFFECTS is VALID_TOOL_EFFECTS
+    assert compiler_module.VALID_TOOL_APPROVALS is VALID_TOOL_APPROVALS
+    assert compiler_module.VALID_TOOL_IDEMPOTENCIES is VALID_TOOL_IDEMPOTENCIES
+    assert compiler_module.VALID_TOOL_CANCELLATIONS is VALID_TOOL_CANCELLATIONS
+    assert compiler_module.VALID_TOOL_RESULT_MODES is VALID_TOOL_RESULT_MODES
+    assert compiler_module.VALID_OUTPUT_DELIVERY_MODES is VALID_DELIVERY_MODES
+    assert compiler_module.VALID_VIOLATION_ACTIONS is VALID_VIOLATION_ACTIONS
+    assert compiler_module.VALID_DRAFT_DISPOSITIONS is VALID_DRAFT_DISPOSITIONS
+    assert compiler_module.VALID_FLUSH_BOUNDARIES is VALID_FLUSH_BOUNDARIES
+    assert compiler_module.VALID_OUTPUT_DISPOSITIONS is VALID_OUTPUT_DISPOSITIONS
+    assert compiler_module.VALID_PROVIDER_CANCELLATIONS is VALID_PROVIDER_CANCELLATIONS
+    assert compiler_module.VALID_PENDING_TOOL_CALLS_DISPOSITIONS is VALID_PENDING_TOOL_CALLS_DISPOSITIONS
+    assert compiler_module.VALID_OUTPUT_DURABLE_RESULTS is VALID_OUTPUT_DURABLE_RESULTS
+    assert compiler_module.VALID_POLICY_ENFORCEMENT_POINTS is VALID_ENFORCEMENT_POINTS
 
 
 def test_normalized_hash_is_stable_for_mapping_order() -> None:
