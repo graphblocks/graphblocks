@@ -62,6 +62,67 @@ def test_worker_advertisement_round_trips_and_admits_current_protocol() -> None:
     assert admit_worker(decoded) is None
 
 
+def test_worker_advertisement_rejects_invalid_wire_payloads() -> None:
+    with pytest.raises(WorkerProtocolError, match="block capability block must be a string"):
+        BlockCapability.from_wire({"block": 7})
+    with pytest.raises(WorkerProtocolError, match="block capability block must not be empty"):
+        BlockCapability(" ")
+
+    base = WorkerAdvertisement.new(
+        "worker-local-1",
+        "doc-cpu",
+        "sha256:package-lock",
+        "sha256:image",
+        [BlockCapability("prompt.render@1")],
+    ).to_wire()
+    invalid_advertisements = (
+        (
+            {**base, "workerId": object()},
+            "worker advertisement worker_id must be a string",
+        ),
+        (
+            {**base, "targetId": " "},
+            "worker advertisement target_id must not be empty",
+        ),
+        (
+            {**base, "protocolVersion": True},
+            "worker advertisement protocol_version must be an integer",
+        ),
+        (
+            {**base, "state": "paused"},
+            "worker advertisement state has invalid value",
+        ),
+        (
+            {**base, "supportedBlocks": {}},
+            "worker advertisement supportedBlocks must be a list",
+        ),
+        (
+            {**base, "supportedBlocks": [object()]},
+            "worker advertisement supportedBlocks entries must be mappings",
+        ),
+        (
+            {**base, "supportedBlocks": [{"block": ""}]},
+            "block capability block must not be empty",
+        ),
+    )
+
+    for payload, message in invalid_advertisements:
+        with pytest.raises(WorkerProtocolError, match=message):
+            WorkerAdvertisement.from_wire(payload)
+
+    with pytest.raises(
+        WorkerProtocolError,
+        match="worker advertisement supported_blocks must be BlockCapability",
+    ):
+        WorkerAdvertisement(
+            "worker-local-1",
+            "doc-cpu",
+            "sha256:package-lock",
+            "sha256:image",
+            ("prompt.render@1",),
+        )
+
+
 def test_worker_admission_rejects_version_and_package_lock_mismatch() -> None:
     advertisement = WorkerAdvertisement.new(
         "worker-local-1",
@@ -111,6 +172,53 @@ def test_worker_admission_decision_reports_drain_and_missing_capability() -> Non
         "worker.missing_required_block",
     ]
     assert WorkerAdmissionDecision.from_wire(decision.to_wire()) == decision
+
+
+def test_worker_admission_decision_rejects_invalid_wire_payloads() -> None:
+    base = WorkerAdmissionDecision(
+        admitted=False,
+        worker_id="worker-local-1",
+        target_id="doc-cpu",
+        protocol_version=WORKER_PROTOCOL_VERSION,
+        package_lock_hash="sha256:package-lock",
+        state="draining",
+        reason_codes=("worker.not_ready",),
+        required_block="model.generate@1",
+    ).to_wire()
+    invalid_decisions = (
+        (
+            {**base, "admitted": "false"},
+            "worker admission decision admitted must be a boolean",
+        ),
+        (
+            {**base, "workerId": object()},
+            "worker admission decision worker_id must be a string",
+        ),
+        (
+            {**base, "protocolVersion": False},
+            "worker admission decision protocol_version must be an integer",
+        ),
+        (
+            {**base, "state": "paused"},
+            "worker admission decision state has invalid value",
+        ),
+        (
+            {**base, "reasonCodes": "worker.not_ready"},
+            "worker admission decision reasonCodes must be a list",
+        ),
+        (
+            {**base, "reasonCodes": ["worker.not_ready", " "]},
+            "worker admission decision reason_code must not be empty",
+        ),
+        (
+            {**base, "requiredBlock": " "},
+            "worker admission decision required_block must not be empty",
+        ),
+    )
+
+    for payload, message in invalid_decisions:
+        with pytest.raises(WorkerProtocolError, match=message):
+            WorkerAdmissionDecision.from_wire(payload)
 
 
 def test_worker_admission_decision_allows_ready_matching_worker() -> None:

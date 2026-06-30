@@ -19,6 +19,18 @@ WorkerState = Literal[
     "unhealthy",
     "terminated",
 ]
+VALID_WORKER_STATES = frozenset(
+    {
+        "starting",
+        "warming",
+        "ready",
+        "saturated",
+        "draining",
+        "degraded",
+        "unhealthy",
+        "terminated",
+    }
+)
 WorkerDrainWorkloadKind = Literal["online_request", "durable_task", "realtime_session"]
 WorkerDrainDisposition = Literal[
     "finish_in_place",
@@ -32,12 +44,19 @@ WorkerDrainDisposition = Literal[
 class BlockCapability:
     block: str
 
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "block",
+            _validate_worker_non_empty_string("block capability", "block", self.block),
+        )
+
     def to_wire(self) -> dict[str, str]:
         return {"block": self.block}
 
     @classmethod
     def from_wire(cls, payload: dict[str, object]) -> BlockCapability:
-        return cls(block=str(payload["block"]))
+        return cls(block=payload["block"])
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,11 +72,46 @@ class WorkerAdvertisement:
     def __post_init__(self) -> None:
         object.__setattr__(
             self,
-            "supported_blocks",
-            tuple(
-                block if isinstance(block, BlockCapability) else BlockCapability(str(block))
-                for block in self.supported_blocks
+            "worker_id",
+            _validate_worker_non_empty_string("worker advertisement", "worker_id", self.worker_id),
+        )
+        object.__setattr__(
+            self,
+            "target_id",
+            _validate_worker_non_empty_string("worker advertisement", "target_id", self.target_id),
+        )
+        object.__setattr__(
+            self,
+            "package_lock_hash",
+            _validate_worker_non_empty_string(
+                "worker advertisement",
+                "package_lock_hash",
+                self.package_lock_hash,
             ),
+        )
+        object.__setattr__(
+            self,
+            "image_digest",
+            _validate_worker_non_empty_string("worker advertisement", "image_digest", self.image_digest),
+        )
+        if not isinstance(self.protocol_version, int) or isinstance(self.protocol_version, bool):
+            raise WorkerProtocolError("worker advertisement protocol_version must be an integer")
+        if self.protocol_version < 0:
+            raise WorkerProtocolError("worker advertisement protocol_version must not be negative")
+        if self.state not in VALID_WORKER_STATES:
+            raise WorkerProtocolError(f"worker advertisement state has invalid value {self.state!r}")
+        if isinstance(self.supported_blocks, str):
+            raise WorkerProtocolError("worker advertisement supported_blocks must be iterable")
+        try:
+            supported_blocks = tuple(self.supported_blocks)
+        except TypeError as error:
+            raise WorkerProtocolError("worker advertisement supported_blocks must be iterable") from error
+        if any(not isinstance(block, BlockCapability) for block in supported_blocks):
+            raise WorkerProtocolError("worker advertisement supported_blocks must be BlockCapability")
+        object.__setattr__(
+            self,
+            "supported_blocks",
+            supported_blocks,
         )
 
     @classmethod
@@ -98,19 +152,21 @@ class WorkerAdvertisement:
     def from_wire(cls, payload: dict[str, object]) -> WorkerAdvertisement:
         supported_blocks = payload.get("supportedBlocks", [])
         if not isinstance(supported_blocks, list):
-            supported_blocks = []
+            raise WorkerProtocolError("worker advertisement supportedBlocks must be a list")
+        for item in supported_blocks:
+            if not isinstance(item, dict):
+                raise WorkerProtocolError("worker advertisement supportedBlocks entries must be mappings")
         return cls(
-            worker_id=str(payload["workerId"]),
-            target_id=str(payload["targetId"]),
-            package_lock_hash=str(payload["packageLockHash"]),
-            image_digest=str(payload["imageDigest"]),
+            worker_id=payload["workerId"],
+            target_id=payload["targetId"],
+            package_lock_hash=payload["packageLockHash"],
+            image_digest=payload["imageDigest"],
             supported_blocks=tuple(
                 BlockCapability.from_wire(item)
                 for item in supported_blocks
-                if isinstance(item, dict)
             ),
-            protocol_version=int(payload.get("protocolVersion", WORKER_PROTOCOL_VERSION)),
-            state=str(payload.get("state", "ready")),
+            protocol_version=payload.get("protocolVersion", WORKER_PROTOCOL_VERSION),
+            state=payload.get("state", "ready"),
         )
 
 
@@ -143,7 +199,46 @@ class WorkerAdmissionDecision:
     required_block: str | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "reason_codes", tuple(self.reason_codes))
+        if not isinstance(self.admitted, bool):
+            raise WorkerProtocolError("worker admission decision admitted must be a boolean")
+        for field_name in ("worker_id", "target_id", "package_lock_hash"):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_worker_non_empty_string(
+                    "worker admission decision",
+                    field_name,
+                    getattr(self, field_name),
+                ),
+            )
+        if not isinstance(self.protocol_version, int) or isinstance(self.protocol_version, bool):
+            raise WorkerProtocolError("worker admission decision protocol_version must be an integer")
+        if self.protocol_version < 0:
+            raise WorkerProtocolError("worker admission decision protocol_version must not be negative")
+        if self.state not in VALID_WORKER_STATES:
+            raise WorkerProtocolError(f"worker admission decision state has invalid value {self.state!r}")
+        if isinstance(self.reason_codes, str):
+            raise WorkerProtocolError("worker admission decision reason_codes must be iterable")
+        try:
+            reason_codes = tuple(self.reason_codes)
+        except TypeError as error:
+            raise WorkerProtocolError("worker admission decision reason_codes must be iterable") from error
+        for reason_code in reason_codes:
+            _validate_worker_non_empty_string(
+                "worker admission decision",
+                "reason_code",
+                reason_code,
+            )
+        object.__setattr__(self, "reason_codes", reason_codes)
+        object.__setattr__(
+            self,
+            "required_block",
+            _validate_worker_optional_non_empty_string(
+                "worker admission decision",
+                "required_block",
+                self.required_block,
+            ),
+        )
 
     def to_wire(self) -> dict[str, object]:
         return {
@@ -161,18 +256,16 @@ class WorkerAdmissionDecision:
     def from_wire(cls, payload: dict[str, object]) -> WorkerAdmissionDecision:
         reason_codes = payload.get("reasonCodes", [])
         if not isinstance(reason_codes, list):
-            reason_codes = []
+            raise WorkerProtocolError("worker admission decision reasonCodes must be a list")
         return cls(
-            admitted=bool(payload["admitted"]),
-            worker_id=str(payload["workerId"]),
-            target_id=str(payload["targetId"]),
-            protocol_version=int(payload["protocolVersion"]),
-            package_lock_hash=str(payload["packageLockHash"]),
-            state=str(payload["state"]),
-            reason_codes=tuple(str(code) for code in reason_codes),
-            required_block=(
-                None if payload.get("requiredBlock") is None else str(payload.get("requiredBlock"))
-            ),
+            admitted=payload["admitted"],
+            worker_id=payload["workerId"],
+            target_id=payload["targetId"],
+            protocol_version=payload["protocolVersion"],
+            package_lock_hash=payload["packageLockHash"],
+            state=payload["state"],
+            reason_codes=tuple(reason_codes),
+            required_block=payload.get("requiredBlock"),
         )
 
 
