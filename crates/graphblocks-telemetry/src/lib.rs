@@ -3,6 +3,13 @@ use std::error::Error;
 use std::fmt;
 
 pub use graphblocks_runtime_core::observability::*;
+use graphblocks_runtime_core::output_policy::{
+    DraftDisposition, DurableResult, OutputDisposition, PendingToolCallsDisposition, TerminalReason,
+};
+use graphblocks_runtime_core::policy::EnforcementPoint;
+use graphblocks_runtime_core::tool::{ToolEffect, ToolResultMode};
+use graphblocks_runtime_core::tool_call::ToolCallStatus;
+use graphblocks_runtime_core::tool_result::{ToolEffectOutcome, ToolResultStatus};
 use serde_json::{Value, json};
 
 pub const DEFAULT_BLOCKED_METRIC_LABELS: &[&str] = &[
@@ -33,6 +40,105 @@ pub const DEFAULT_CONTENT_TELEMETRY_ATTRIBUTE_KEYS: &[&str] = &[
     "output",
     "prompt",
     "tool_result",
+];
+
+const ENFORCEMENT_POINTS: &[EnforcementPoint] = &[
+    EnforcementPoint::Compile,
+    EnforcementPoint::Release,
+    EnforcementPoint::Admission,
+    EnforcementPoint::BeforeNode,
+    EnforcementPoint::BeforeProviderCall,
+    EnforcementPoint::OnGenerationChunk,
+    EnforcementPoint::BeforeClientDelivery,
+    EnforcementPoint::BeforeOutputCommit,
+    EnforcementPoint::OnUsageDelta,
+    EnforcementPoint::BeforeToolOrEffect,
+    EnforcementPoint::BeforeCommit,
+    EnforcementPoint::BeforePublish,
+    EnforcementPoint::OnResume,
+];
+
+const OUTPUT_DISPOSITIONS: &[OutputDisposition] = &[
+    OutputDisposition::Allow,
+    OutputDisposition::Hold,
+    OutputDisposition::Redact,
+    OutputDisposition::Replace,
+    OutputDisposition::AbortResponse,
+    OutputDisposition::AbortTurn,
+    OutputDisposition::DenyCommit,
+];
+
+const TERMINAL_REASONS: &[TerminalReason] = &[
+    TerminalReason::PolicyDenied,
+    TerminalReason::BudgetExhausted,
+    TerminalReason::Cancelled,
+    TerminalReason::ClientDisconnected,
+];
+
+const DRAFT_DISPOSITIONS: &[DraftDisposition] = &[
+    DraftDisposition::Keep,
+    DraftDisposition::MarkIncomplete,
+    DraftDisposition::Retract,
+];
+
+const PENDING_TOOL_CALLS_DISPOSITIONS: &[PendingToolCallsDisposition] = &[
+    PendingToolCallsDisposition::Keep,
+    PendingToolCallsDisposition::Deny,
+    PendingToolCallsDisposition::CancelAdmitted,
+];
+
+const DURABLE_RESULTS: &[DurableResult] = &[
+    DurableResult::None,
+    DurableResult::Incomplete,
+    DurableResult::Partial,
+];
+
+const TOOL_CALL_STATUSES: &[ToolCallStatus] = &[
+    ToolCallStatus::Validated,
+    ToolCallStatus::PolicyPending,
+    ToolCallStatus::ApprovalPending,
+    ToolCallStatus::Admitted,
+    ToolCallStatus::Running,
+    ToolCallStatus::Completed,
+    ToolCallStatus::Failed,
+    ToolCallStatus::Denied,
+    ToolCallStatus::Cancelled,
+    ToolCallStatus::PolicyStopped,
+    ToolCallStatus::Expired,
+];
+
+const TOOL_RESULT_STATUSES: &[ToolResultStatus] = &[
+    ToolResultStatus::Completed,
+    ToolResultStatus::Failed,
+    ToolResultStatus::Denied,
+    ToolResultStatus::Cancelled,
+    ToolResultStatus::PolicyStopped,
+    ToolResultStatus::Incomplete,
+];
+
+const TOOL_RESULT_MODES: &[ToolResultMode] = &[
+    ToolResultMode::Value,
+    ToolResultMode::Incremental,
+    ToolResultMode::BoundedSequence,
+    ToolResultMode::ArtifactReference,
+];
+
+const TOOL_EFFECT_OUTCOMES: &[ToolEffectOutcome] = &[
+    ToolEffectOutcome::NoExternalEffect,
+    ToolEffectOutcome::Committed,
+    ToolEffectOutcome::NotCommitted,
+    ToolEffectOutcome::Unknown,
+];
+
+const TOOL_EFFECTS: &[ToolEffect] = &[
+    ToolEffect::None,
+    ToolEffect::ExternalRead,
+    ToolEffect::ExternalWrite,
+    ToolEffect::FilesystemRead,
+    ToolEffect::FilesystemWrite,
+    ToolEffect::Process,
+    ToolEffect::Network,
+    ToolEffect::Destructive,
 ];
 
 #[derive(Clone, Debug, PartialEq)]
@@ -142,6 +248,27 @@ impl GenerationTelemetryRecord {
     pub fn with_attribute(mut self, key: impl Into<String>, value: impl Into<Value>) -> Self {
         self.attributes.insert(key.into(), value.into());
         self
+    }
+
+    pub fn validate(&self) -> Result<(), TelemetryProjectionError> {
+        for (field, value) in [
+            ("record_id", self.record_id.as_str()),
+            ("run_id", self.run_id.as_str()),
+            ("span_id", self.span_id.as_str()),
+            ("node_id", self.node_id.as_str()),
+            ("provider", self.provider.as_str()),
+            ("model", self.model.as_str()),
+        ] {
+            require_non_empty(field, value)?;
+        }
+        for (field, value) in [
+            ("release_id", self.release_id.as_deref()),
+            ("input_digest", self.input_digest.as_deref()),
+            ("output_digest", self.output_digest.as_deref()),
+        ] {
+            require_optional_non_empty(field, value)?;
+        }
+        Ok(())
     }
 
     pub fn observation_contract(&self) -> Value {
@@ -254,6 +381,66 @@ impl OutputPolicyTelemetryRecord {
         self
     }
 
+    pub fn validate(&self) -> Result<(), TelemetryProjectionError> {
+        for (field, value) in [
+            ("record_id", self.record_id.as_str()),
+            ("run_id", self.run_id.as_str()),
+            ("stream_id", self.stream_id.as_str()),
+            ("response_id", self.response_id.as_str()),
+        ] {
+            require_non_empty(field, value)?;
+        }
+        require_one_of(
+            "enforcement_point",
+            &self.enforcement_point,
+            ENFORCEMENT_POINTS
+                .iter()
+                .copied()
+                .map(EnforcementPoint::as_str),
+        )?;
+        require_one_of(
+            "disposition",
+            &self.disposition,
+            OUTPUT_DISPOSITIONS
+                .iter()
+                .copied()
+                .map(output_disposition_name),
+        )?;
+        for (field, value) in [
+            ("release_id", self.release_id.as_deref()),
+            ("policy_snapshot_id", self.policy_snapshot_id.as_deref()),
+        ] {
+            require_optional_non_empty(field, value)?;
+        }
+        require_optional_one_of(
+            "terminal_reason",
+            self.terminal_reason.as_deref(),
+            TERMINAL_REASONS.iter().copied().map(terminal_reason_name),
+        )?;
+        require_optional_one_of(
+            "draft_disposition",
+            self.draft_disposition.as_deref(),
+            DRAFT_DISPOSITIONS
+                .iter()
+                .copied()
+                .map(draft_disposition_name),
+        )?;
+        require_optional_one_of(
+            "pending_tool_calls",
+            self.pending_tool_calls.as_deref(),
+            PENDING_TOOL_CALLS_DISPOSITIONS
+                .iter()
+                .copied()
+                .map(pending_tool_calls_disposition_name),
+        )?;
+        require_optional_one_of(
+            "durable_result",
+            self.durable_result.as_deref(),
+            DURABLE_RESULTS.iter().copied().map(durable_result_name),
+        )?;
+        Ok(())
+    }
+
     pub fn observation_contract(&self) -> Value {
         json!({
             "record_id": self.record_id,
@@ -341,6 +528,40 @@ impl ToolExecutionTelemetryRecord {
     pub fn with_attribute(mut self, key: impl Into<String>, value: impl Into<Value>) -> Self {
         self.attributes.insert(key.into(), value.into());
         self
+    }
+
+    pub fn validate(&self) -> Result<(), TelemetryProjectionError> {
+        for (field, value) in [
+            ("record_id", self.record_id.as_str()),
+            ("run_id", self.run_id.as_str()),
+            ("tool_call_id", self.tool_call_id.as_str()),
+            ("tool_name", self.tool_name.as_str()),
+        ] {
+            require_non_empty(field, value)?;
+        }
+        require_tool_status(&self.status)?;
+        require_optional_non_empty("release_id", self.release_id.as_deref())?;
+        require_optional_one_of(
+            "result_mode",
+            self.result_mode.as_deref(),
+            TOOL_RESULT_MODES.iter().copied().map(tool_result_mode_name),
+        )?;
+        require_optional_one_of(
+            "effect_outcome",
+            self.effect_outcome.as_deref(),
+            TOOL_EFFECT_OUTCOMES
+                .iter()
+                .copied()
+                .map(tool_effect_outcome_name),
+        )?;
+        for effect in &self.effects {
+            require_one_of(
+                "effect",
+                effect,
+                TOOL_EFFECTS.iter().copied().map(ToolEffect::as_str),
+            )?;
+        }
+        Ok(())
     }
 
     pub fn observation_contract(&self) -> Value {
@@ -1102,17 +1323,28 @@ fn diagnostic_summary(diagnostics: &[TelemetryDiagnostic]) -> BTreeMap<String, u
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TelemetryProjectionError {
+    EmptyField { field: &'static str },
     ExportAffectsRunCorrectness,
+    InvalidLiteral { field: &'static str, value: String },
     InvalidMetricSampleName,
 }
 
 impl fmt::Display for TelemetryProjectionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::EmptyField { field } => {
+                write!(formatter, "telemetry field '{field}' must be non-empty")
+            }
             Self::ExportAffectsRunCorrectness => {
                 write!(
                     formatter,
                     "telemetry export result must not affect run correctness"
+                )
+            }
+            Self::InvalidLiteral { field, value } => {
+                write!(
+                    formatter,
+                    "telemetry field '{field}' has invalid literal '{value}'"
                 )
             }
             Self::InvalidMetricSampleName => {
@@ -1123,3 +1355,158 @@ impl fmt::Display for TelemetryProjectionError {
 }
 
 impl Error for TelemetryProjectionError {}
+
+fn require_non_empty(field: &'static str, value: &str) -> Result<(), TelemetryProjectionError> {
+    if value.trim().is_empty() {
+        return Err(TelemetryProjectionError::EmptyField { field });
+    }
+    Ok(())
+}
+
+fn require_optional_non_empty(
+    field: &'static str,
+    value: Option<&str>,
+) -> Result<(), TelemetryProjectionError> {
+    if let Some(value) = value {
+        require_non_empty(field, value)?;
+    }
+    Ok(())
+}
+
+fn require_one_of(
+    field: &'static str,
+    value: &str,
+    valid_values: impl IntoIterator<Item = &'static str>,
+) -> Result<(), TelemetryProjectionError> {
+    require_non_empty(field, value)?;
+    if valid_values.into_iter().any(|valid| valid == value) {
+        return Ok(());
+    }
+    Err(TelemetryProjectionError::InvalidLiteral {
+        field,
+        value: value.to_owned(),
+    })
+}
+
+fn require_optional_one_of(
+    field: &'static str,
+    value: Option<&str>,
+    valid_values: impl IntoIterator<Item = &'static str>,
+) -> Result<(), TelemetryProjectionError> {
+    if let Some(value) = value {
+        require_one_of(field, value, valid_values)?;
+    }
+    Ok(())
+}
+
+fn require_tool_status(value: &str) -> Result<(), TelemetryProjectionError> {
+    require_non_empty("status", value)?;
+    if TOOL_CALL_STATUSES
+        .iter()
+        .copied()
+        .map(tool_call_status_name)
+        .chain(
+            TOOL_RESULT_STATUSES
+                .iter()
+                .copied()
+                .map(tool_result_status_name),
+        )
+        .any(|valid| valid == value)
+    {
+        return Ok(());
+    }
+    Err(TelemetryProjectionError::InvalidLiteral {
+        field: "status",
+        value: value.to_owned(),
+    })
+}
+
+fn output_disposition_name(disposition: OutputDisposition) -> &'static str {
+    match disposition {
+        OutputDisposition::Allow => "allow",
+        OutputDisposition::Hold => "hold",
+        OutputDisposition::Redact => "redact",
+        OutputDisposition::Replace => "replace",
+        OutputDisposition::AbortResponse => "abort_response",
+        OutputDisposition::AbortTurn => "abort_turn",
+        OutputDisposition::DenyCommit => "deny_commit",
+    }
+}
+
+fn terminal_reason_name(reason: TerminalReason) -> &'static str {
+    match reason {
+        TerminalReason::PolicyDenied => "policy_denied",
+        TerminalReason::BudgetExhausted => "budget_exhausted",
+        TerminalReason::Cancelled => "cancelled",
+        TerminalReason::ClientDisconnected => "client_disconnected",
+    }
+}
+
+fn draft_disposition_name(disposition: DraftDisposition) -> &'static str {
+    match disposition {
+        DraftDisposition::Keep => "keep",
+        DraftDisposition::MarkIncomplete => "mark_incomplete",
+        DraftDisposition::Retract => "retract",
+    }
+}
+
+fn pending_tool_calls_disposition_name(disposition: PendingToolCallsDisposition) -> &'static str {
+    match disposition {
+        PendingToolCallsDisposition::Keep => "keep",
+        PendingToolCallsDisposition::Deny => "deny",
+        PendingToolCallsDisposition::CancelAdmitted => "cancel_admitted",
+    }
+}
+
+fn durable_result_name(result: DurableResult) -> &'static str {
+    match result {
+        DurableResult::None => "none",
+        DurableResult::Incomplete => "incomplete",
+        DurableResult::Partial => "partial",
+    }
+}
+
+fn tool_call_status_name(status: ToolCallStatus) -> &'static str {
+    match status {
+        ToolCallStatus::Validated => "validated",
+        ToolCallStatus::PolicyPending => "policy_pending",
+        ToolCallStatus::ApprovalPending => "approval_pending",
+        ToolCallStatus::Admitted => "admitted",
+        ToolCallStatus::Running => "running",
+        ToolCallStatus::Completed => "completed",
+        ToolCallStatus::Failed => "failed",
+        ToolCallStatus::Denied => "denied",
+        ToolCallStatus::Cancelled => "cancelled",
+        ToolCallStatus::PolicyStopped => "policy_stopped",
+        ToolCallStatus::Expired => "expired",
+    }
+}
+
+fn tool_result_status_name(status: ToolResultStatus) -> &'static str {
+    match status {
+        ToolResultStatus::Completed => "completed",
+        ToolResultStatus::Failed => "failed",
+        ToolResultStatus::Denied => "denied",
+        ToolResultStatus::Cancelled => "cancelled",
+        ToolResultStatus::PolicyStopped => "policy_stopped",
+        ToolResultStatus::Incomplete => "incomplete",
+    }
+}
+
+fn tool_result_mode_name(mode: ToolResultMode) -> &'static str {
+    match mode {
+        ToolResultMode::Value => "value",
+        ToolResultMode::Incremental => "incremental",
+        ToolResultMode::BoundedSequence => "bounded_sequence",
+        ToolResultMode::ArtifactReference => "artifact_reference",
+    }
+}
+
+fn tool_effect_outcome_name(outcome: ToolEffectOutcome) -> &'static str {
+    match outcome {
+        ToolEffectOutcome::NoExternalEffect => "no_external_effect",
+        ToolEffectOutcome::Committed => "committed",
+        ToolEffectOutcome::NotCommitted => "not_committed",
+        ToolEffectOutcome::Unknown => "unknown",
+    }
+}

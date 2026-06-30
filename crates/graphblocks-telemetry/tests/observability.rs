@@ -231,6 +231,127 @@ fn policy_and_tool_telemetry_records_apply_capture_policy() {
 }
 
 #[test]
+fn telemetry_records_validate_runtime_literal_contracts() {
+    let generation_record =
+        GenerationTelemetryRecord::new("gen-1", "run-1", "span-1", "agent", "openai", "gpt-test")
+            .with_release_id("release-1")
+            .with_input_digest("sha256:input")
+            .with_output_digest("sha256:output");
+    let output_record = OutputPolicyTelemetryRecord::new(
+        "policy-1",
+        "run-1",
+        "stream-1",
+        "response-1",
+        "before_client_delivery",
+        "abort_response",
+    )
+    .with_terminal_reason("policy_denied")
+    .with_draft_disposition("retract")
+    .with_pending_tool_calls("deny")
+    .with_durable_result("none");
+    let tool_record =
+        ToolExecutionTelemetryRecord::new("tool-1", "run-1", "call-1", "ticket.create", "running")
+            .with_result_mode("incremental")
+            .with_effect_outcome("committed")
+            .with_effect("external_write")
+            .with_effect("network");
+
+    assert_eq!(generation_record.validate(), Ok(()));
+    assert_eq!(output_record.validate(), Ok(()));
+    assert_eq!(tool_record.validate(), Ok(()));
+
+    assert_eq!(
+        GenerationTelemetryRecord::new("", "run-1", "span-1", "agent", "openai", "gpt-test")
+            .validate(),
+        Err(TelemetryProjectionError::EmptyField { field: "record_id" })
+    );
+    assert_eq!(
+        OutputPolicyTelemetryRecord::new(
+            "policy-1",
+            "run-1",
+            "stream-1",
+            "response-1",
+            "after_delivery",
+            "abort_response",
+        )
+        .validate(),
+        Err(TelemetryProjectionError::InvalidLiteral {
+            field: "enforcement_point",
+            value: "after_delivery".to_owned(),
+        })
+    );
+    assert_eq!(
+        OutputPolicyTelemetryRecord::new(
+            "policy-1",
+            "run-1",
+            "stream-1",
+            "response-1",
+            "before_client_delivery",
+            "block",
+        )
+        .validate(),
+        Err(TelemetryProjectionError::InvalidLiteral {
+            field: "disposition",
+            value: "block".to_owned(),
+        })
+    );
+    assert_eq!(
+        OutputPolicyTelemetryRecord::new(
+            "policy-1",
+            "run-1",
+            "stream-1",
+            "response-1",
+            "before_client_delivery",
+            "abort_response",
+        )
+        .with_pending_tool_calls("drop")
+        .validate(),
+        Err(TelemetryProjectionError::InvalidLiteral {
+            field: "pending_tool_calls",
+            value: "drop".to_owned(),
+        })
+    );
+    assert_eq!(
+        ToolExecutionTelemetryRecord::new("tool-1", "run-1", "call-1", "ticket.create", "waiting",)
+            .validate(),
+        Err(TelemetryProjectionError::InvalidLiteral {
+            field: "status",
+            value: "waiting".to_owned(),
+        })
+    );
+    assert_eq!(
+        ToolExecutionTelemetryRecord::new(
+            "tool-1",
+            "run-1",
+            "call-1",
+            "ticket.create",
+            "completed",
+        )
+        .with_result_mode("stream")
+        .validate(),
+        Err(TelemetryProjectionError::InvalidLiteral {
+            field: "result_mode",
+            value: "stream".to_owned(),
+        })
+    );
+    assert_eq!(
+        ToolExecutionTelemetryRecord::new(
+            "tool-1",
+            "run-1",
+            "call-1",
+            "ticket.create",
+            "completed",
+        )
+        .with_effect("telepathy")
+        .validate(),
+        Err(TelemetryProjectionError::InvalidLiteral {
+            field: "effect",
+            value: "telepathy".to_owned(),
+        })
+    );
+}
+
+#[test]
 fn telemetry_capture_policy_redacts_drops_and_removes_disabled_digests() {
     let record =
         GenerationTelemetryRecord::new("gen-1", "run-1", "span-1", "agent", "openai", "gpt-test")
