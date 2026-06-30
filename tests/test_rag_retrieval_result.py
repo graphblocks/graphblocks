@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from graphblocks.documents import create_local_text_revision, parse_plain_text_document, chunk_document_by_lines
 from graphblocks.rag import InMemoryChunkRetriever, RetrievalResult, SearchRequest
 
@@ -35,3 +37,9 @@ def test_in_memory_chunk_retriever_returns_empty_retrieval_result_for_blank_quer
     assert result.request == request
     assert result.hits == []
     assert result.total_candidates == 0
+
+
+@pytest.mark.parametrize("top_k", [-1, True, 1.5])
+def test_search_request_rejects_invalid_top_k(top_k: object) -> None:
+    with pytest.raises(ValueError, match="top_k must be a non-negative integer"):
+        SearchRequest(query_text="beta", top_k=top_k)  # type: ignore[arg-type]

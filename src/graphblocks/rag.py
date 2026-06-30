@@ -24,6 +24,10 @@ class SearchRequest:
     filters: dict[str, object] = field(default_factory=dict)
     metadata: dict[str, object] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.top_k, int) or isinstance(self.top_k, bool) or self.top_k < 0:
+            raise ValueError("search request top_k must be a non-negative integer")
+
 
 @dataclass(frozen=True, slots=True)
 class QueryPlan:
