@@ -236,6 +236,9 @@ def test_output_policy_contract_rejects_unknown_literals() -> None:
     with pytest.raises(ValueError, match="generation chunk sequence must be non-negative"):
         GenerationChunk.text("stream-1", "response-1", -1, "late")
 
+    with pytest.raises(ValueError, match="generation chunk sequence must be positive"):
+        GenerationChunk.text("stream-1", "response-1", 0, "late")
+
     with pytest.raises(ValueError, match="generation chunk stream_id must not be empty"):
         GenerationChunk.text(" ", "response-1", 1, "late")
 
@@ -954,6 +957,27 @@ def test_output_delivery_gate_rejects_non_text_replacement_parts() -> None:
         )
 
     assert str(error.value) == "replacement part 0 must be text"
+
+
+def test_output_delivery_gate_rejects_zero_sequence_replacement_part() -> None:
+    gate = OutputDeliveryGate("stream-1", "response-1")
+
+    with pytest.raises(OutputGateError) as error:
+        gate.apply_decision(
+            OutputPolicyDecision.replace(
+                "decision-replace",
+                accepted_through_sequence=0,
+                replacement_parts=(ContentPart(kind="text", text="replacement"),),
+                input_digest="sha256:replace",
+            ),
+            occurred_at="2026-06-23T00:00:01Z",
+        )
+
+    assert str(error.value) == "replacement sequence 0 must be positive"
+    assert gate.last_generated_sequence == 0
+    assert gate.last_policy_accepted_sequence == 0
+    assert gate.last_client_delivered_sequence == 0
+    assert gate.pending_chunks() == ()
 
 
 def test_output_delivery_gate_policy_abort_cuts_off_and_rejects_late_chunks() -> None:

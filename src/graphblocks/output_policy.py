@@ -234,6 +234,8 @@ class GenerationChunk:
         _validate_non_empty_string("generation chunk", "stream_id", stream_id)
         _validate_non_empty_string("generation chunk", "response_id", response_id)
         sequence = _validate_non_negative_integer("sequence", sequence, owner="generation chunk")
+        if sequence == 0:
+            raise ValueError("generation chunk sequence must be positive")
         if not isinstance(text, str):
             raise ValueError("generation chunk text must be a string")
         self.stream_id = stream_id
@@ -945,6 +947,8 @@ class OutputDeliveryGate:
                 if part.kind != "text" or part.text is None:
                     raise OutputGateError(f"replacement part {index} must be text")
                 sequence = replacement_base_sequence + index
+                if sequence <= 0:
+                    raise OutputGateError(f"replacement sequence {sequence} must be positive")
                 self.pending[sequence] = GenerationChunk.text(
                     self.stream_id,
                     self.response_id,
