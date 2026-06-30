@@ -8488,6 +8488,7 @@ fn evaluate_durable_tool_terminal_store_json(operations_json: &str) -> PyResult<
             ToolTerminalStoreError::ClientDeliveredSequenceBeyondGenerated { .. } => {
                 "client_delivered_sequence_beyond_generated"
             }
+            ToolTerminalStoreError::DeniedEffectCommitted { .. } => "denied_effect_committed",
             ToolTerminalStoreError::TerminalStateConflict { .. } => "terminal_state_conflict",
             ToolTerminalStoreError::ResponsePolicyStopConflict { .. } => {
                 "response_policy_stop_conflict"
@@ -13431,6 +13432,40 @@ mod tests {
             json!(true)
         );
         assert_eq!(payload["toolTerminalCount"], json!(1));
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_durable_tool_terminal_store_json_rejects_denied_committed_effect()
+    -> Result<(), String> {
+        let operations_json = json!([
+            {
+                "op": "record_tool_terminal",
+                "record": {
+                    "runId": "run-000001",
+                    "responseId": "response-1",
+                    "toolCallId": "call-denied",
+                    "revision": 1,
+                    "terminalState": "denied",
+                    "argumentsDigest": "sha256:arguments-denied",
+                    "effectCommitted": true,
+                    "completedAtUnixMs": 1_820_000_000_000_u64
+                }
+            },
+            {"op": "tool_terminal_count"}
+        ])
+        .to_string();
+
+        let payload = evaluate_durable_tool_terminal_store_json(&operations_json)
+            .map_err(|error| error.to_string())?;
+        let payload = serde_json::from_str::<Value>(&payload).map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            payload["operations"][0]["error"],
+            json!("denied_effect_committed")
+        );
+        assert_eq!(payload["operations"][1]["count"], json!(0));
+        assert_eq!(payload["toolTerminalCount"], json!(0));
         Ok(())
     }
 
