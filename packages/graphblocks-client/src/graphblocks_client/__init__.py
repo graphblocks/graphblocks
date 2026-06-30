@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 import json
 from urllib.request import Request, urlopen
 
@@ -49,6 +50,10 @@ from graphblocks.runtime import InProcessRuntime, RuntimeRegistry, stdlib_regist
 from graphblocks.server import ApplicationProtocolCapabilities
 
 
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
 @dataclass(frozen=True, slots=True)
 class RunGraphCommand:
     graph: dict[str, object]
@@ -58,7 +63,7 @@ class RunGraphCommand:
     turn_id: str | None = None
     release_id: str = "local"
     policy_snapshot_id: str = "local"
-    occurred_at: str = ""
+    occurred_at: str = field(default_factory=_utc_now_iso)
 
     def __post_init__(self) -> None:
         if not isinstance(self.graph, Mapping):
@@ -77,6 +82,8 @@ class RunGraphCommand:
             raise ValueError("run graph command turn_id must be a non-empty string")
         if not isinstance(self.occurred_at, str):
             raise ValueError("run graph command occurred_at must be a string")
+        if not self.occurred_at.strip():
+            raise ValueError("run graph command occurred_at must be a non-empty string")
         object.__setattr__(self, "graph", deepcopy(dict(self.graph)))
         object.__setattr__(self, "inputs", deepcopy(dict(self.inputs)))
 

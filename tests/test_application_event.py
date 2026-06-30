@@ -109,6 +109,26 @@ def test_application_event_metadata_rejects_empty_required_ids_and_negative_sequ
             policy_snapshot_id="policy-1",
             occurred_at="2026-06-23T00:00:00Z",
         )
+    with pytest.raises(ApplicationEventError, match="application event occurred_at must be a string"):
+        ApplicationEventMetadata(
+            event_id="event-1",
+            run_id="run-1",
+            response_id="response-1",
+            sequence=1,
+            release_id="release-1",
+            policy_snapshot_id="policy-1",
+            occurred_at=object(),  # type: ignore[arg-type]
+        )
+    with pytest.raises(ApplicationEventError, match="application event occurred_at must not be empty"):
+        ApplicationEventMetadata(
+            event_id="event-1",
+            run_id="run-1",
+            response_id="response-1",
+            sequence=1,
+            release_id="release-1",
+            policy_snapshot_id="policy-1",
+            occurred_at=" ",
+        )
 
 
 def test_standard_application_event_names_match_tool_and_output_policy_contract() -> None:

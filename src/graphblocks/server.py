@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 import json
 from types import MappingProxyType
 from typing import Literal, Protocol
@@ -15,6 +16,10 @@ from .runtime import InProcessRuntime, RuntimeRegistry, stdlib_registry
 ServerTransport = Literal["http", "sse", "websocket"]
 ServerHealthStatus = Literal["healthy", "degraded", "unhealthy"]
 VALID_SERVER_TRANSPORTS = frozenset({"http", "sse", "websocket"})
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
@@ -515,9 +520,13 @@ class GraphBlocksServerApp:
                     "policySnapshotId",
                     payload.get("policySnapshotId", payload.get("policy_snapshot_id", "local")),
                 )
-                occurred_at = payload.get("occurredAt", payload.get("occurred_at", ""))
+                occurred_at = payload.get("occurredAt", payload.get("occurred_at"))
+                if occurred_at is None:
+                    occurred_at = _utc_now_iso()
                 if not isinstance(occurred_at, str):
                     raise ValueError("run request occurredAt must be a string")
+                if not occurred_at.strip():
+                    raise ValueError("run request occurredAt must not be empty")
                 turn_id_value = payload.get("turnId", payload.get("turn_id"))
                 turn_id = (
                     _validate_non_empty_string("run request", "turnId", turn_id_value)

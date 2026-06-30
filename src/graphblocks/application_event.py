@@ -546,6 +546,7 @@ class ApplicationEventMetadata:
             ("response_id", self.response_id),
             ("release_id", self.release_id),
             ("policy_snapshot_id", self.policy_snapshot_id),
+            ("occurred_at", self.occurred_at),
         ):
             _validate_non_empty_string(
                 ApplicationEventError,
