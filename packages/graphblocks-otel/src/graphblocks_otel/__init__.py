@@ -143,6 +143,7 @@ def otlp_span_from_generation(
     schema_url: str,
     capture_policy: TelemetryCapturePolicy | None = None,
 ) -> OtlpSpanProjection:
+    schema_url = _require_non_empty("schema_url", schema_url)
     observation = (capture_policy or DEFAULT_OTLP_CAPTURE_POLICY).apply_generation(observation)
     attributes = {
         "gen_ai.request.model": observation.model,
@@ -171,6 +172,7 @@ def otlp_span_from_output_policy(
     schema_url: str,
     capture_policy: TelemetryCapturePolicy | None = None,
 ) -> OtlpSpanProjection:
+    schema_url = _require_non_empty("schema_url", schema_url)
     observation = (capture_policy or DEFAULT_OTLP_CAPTURE_POLICY).apply_output_policy(observation)
     attributes: dict[str, object] = {
         "graphblocks.disposition": observation.disposition,
@@ -213,6 +215,7 @@ def otlp_span_from_tool_execution(
     schema_url: str,
     capture_policy: TelemetryCapturePolicy | None = None,
 ) -> OtlpSpanProjection:
+    schema_url = _require_non_empty("schema_url", schema_url)
     observation = (capture_policy or DEFAULT_OTLP_CAPTURE_POLICY).apply_tool_execution(observation)
     attributes: dict[str, object] = {
         "graphblocks.record_id": observation.record_id,

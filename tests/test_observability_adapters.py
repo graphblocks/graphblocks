@@ -611,6 +611,42 @@ def test_otel_projection_uses_versioned_schema_without_importing_sdk(monkeypatch
     }
 
 
+def test_otel_span_projection_requires_schema_url(monkeypatch) -> None:
+    _add_observability_package_paths(monkeypatch)
+    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
+    graphblocks_otel = importlib.import_module("graphblocks_otel")
+    generation_record = graphblocks_telemetry.GenerationTelemetryRecord(
+        record_id="gen-1",
+        run_id="run-1",
+        span_id="span-1",
+        node_id="agent",
+        provider="openai-compatible",
+        model="gpt-test",
+    )
+    output_record = graphblocks_telemetry.OutputPolicyTelemetryRecord(
+        record_id="policy-1",
+        run_id="run-1",
+        stream_id="stream-1",
+        response_id="response-1",
+        enforcement_point="before_client_delivery",
+        disposition="allow",
+    )
+    tool_record = graphblocks_telemetry.ToolExecutionTelemetryRecord(
+        record_id="tool-1",
+        run_id="run-1",
+        tool_call_id="call-1",
+        tool_name="knowledge.search",
+        status="completed",
+    )
+
+    with pytest.raises(graphblocks_otel.OtelCollectorTemplateError, match="schema_url"):
+        graphblocks_otel.otlp_span_from_generation(generation_record, schema_url=" ")
+    with pytest.raises(graphblocks_otel.OtelCollectorTemplateError, match="schema_url"):
+        graphblocks_otel.otlp_span_from_output_policy(output_record, schema_url="")
+    with pytest.raises(graphblocks_otel.OtelCollectorTemplateError, match="schema_url"):
+        graphblocks_otel.otlp_span_from_tool_execution(tool_record, schema_url=" ")
+
+
 def test_otel_projection_applies_capture_policy_before_export(monkeypatch) -> None:
     _add_observability_package_paths(monkeypatch)
     graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
