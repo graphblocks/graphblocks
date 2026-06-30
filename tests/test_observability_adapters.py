@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import importlib
+import json
 from pathlib import Path
+
+import pytest
 
 
 ROOT = Path(__file__).parents[1]
@@ -282,6 +285,81 @@ def test_otel_projection_applies_capture_policy_before_export(monkeypatch) -> No
     assert attributes["graphblocks.attribute.tenant"] == "tenant-1"
     assert "graphblocks.attribute.prompt" not in attributes
     assert "secret prompt" not in repr(span.span_contract())
+
+
+def test_otel_collector_template_renders_otlp_pipeline_without_sdk_import(monkeypatch) -> None:
+    _add_observability_package_paths(monkeypatch)
+    graphblocks_otel = importlib.import_module("graphblocks_otel")
+
+    template = graphblocks_otel.otlp_collector_template(
+        "collector.example:4317",
+        name="support-agent-collector",
+        pipelines=("traces", "metrics", "logs"),
+        resource_attributes={
+            "service.name": "graphblocks-support",
+            "deployment.environment.name": "prod",
+        },
+        memory_limit_mib=256,
+        batch_timeout="500ms",
+    )
+
+    assert template.template_contract()["name"] == "support-agent-collector"
+    assert template.config_contract() == {
+        "exporters": {
+            "otlp/graphblocks": {
+                "endpoint": "collector.example:4317",
+                "tls": {"insecure": True},
+            }
+        },
+        "processors": {
+            "batch": {"timeout": "500ms"},
+            "memory_limiter": {"check_interval": "1s", "limit_mib": 256},
+            "resource/graphblocks": {
+                "attributes": [
+                    {"action": "upsert", "key": "deployment.environment.name", "value": "prod"},
+                    {"action": "upsert", "key": "service.name", "value": "graphblocks-support"},
+                ]
+            },
+        },
+        "receivers": {
+            "otlp": {
+                "protocols": {
+                    "grpc": {"endpoint": "0.0.0.0:4317"},
+                    "http": {"endpoint": "0.0.0.0:4318"},
+                }
+            }
+        },
+        "service": {
+            "pipelines": {
+                "logs": {
+                    "exporters": ["otlp/graphblocks"],
+                    "processors": ["memory_limiter", "resource/graphblocks", "batch"],
+                    "receivers": ["otlp"],
+                },
+                "metrics": {
+                    "exporters": ["otlp/graphblocks"],
+                    "processors": ["memory_limiter", "resource/graphblocks", "batch"],
+                    "receivers": ["otlp"],
+                },
+                "traces": {
+                    "exporters": ["otlp/graphblocks"],
+                    "processors": ["memory_limiter", "resource/graphblocks", "batch"],
+                    "receivers": ["otlp"],
+                },
+            }
+        },
+    }
+    assert json.loads(template.render_json()) == template.config_contract()
+    assert "OtelCollectorTemplate" in graphblocks_otel.__all__
+    assert "otlp_collector_template" in graphblocks_otel.__all__
+
+
+def test_otel_collector_template_rejects_invalid_pipeline(monkeypatch) -> None:
+    _add_observability_package_paths(monkeypatch)
+    graphblocks_otel = importlib.import_module("graphblocks_otel")
+
+    with pytest.raises(graphblocks_otel.OtelCollectorTemplateError, match="unknown collector pipeline"):
+        graphblocks_otel.otlp_collector_template("collector.example:4317", pipelines=("profiles",))
 
 
 def test_langfuse_projection_uses_trace_generation_contract(monkeypatch) -> None:
