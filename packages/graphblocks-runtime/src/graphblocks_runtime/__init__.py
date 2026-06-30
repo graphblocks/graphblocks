@@ -22,6 +22,7 @@ try:
         evaluate_tool_execution_plan_json,
         evaluate_tool_result_stream_json,
         finalize_tool_call_json,
+        negotiate_application_protocol_capabilities_json,
         prepare_tool_result_for_model_json,
         run_stdlib_graph_json,
         run_test_graph_json,
@@ -77,6 +78,12 @@ except ImportError as error:
         draft_json: str,
         resolved_tool_id: str,
         created_at_unix_ms: int,
+    ) -> str:
+        require_native_extension()
+
+    def negotiate_application_protocol_capabilities_json(
+        server_json: str,
+        client_json: str,
     ) -> str:
         require_native_extension()
 
@@ -308,6 +315,19 @@ def evaluate_application_protocol_stream(
     )
 
 
+def negotiate_application_protocol_capabilities(
+    server: dict[str, object],
+    client: dict[str, object],
+) -> dict[str, object]:
+    return _json_object_result(
+        negotiate_application_protocol_capabilities_json(
+            _canonical_json(server),
+            _canonical_json(client),
+        ),
+        "native application protocol capability negotiation result",
+    )
+
+
 def evaluate_durable_tool_terminal_store(operations: object) -> dict[str, object]:
     return _json_object_result(
         evaluate_durable_tool_terminal_store_json(_canonical_json(operations)),
@@ -401,6 +421,8 @@ __all__ = [
     "finalize_tool_call_json",
     "native_extension_available",
     "native_extension_status",
+    "negotiate_application_protocol_capabilities",
+    "negotiate_application_protocol_capabilities_json",
     "prepare_tool_result_for_model",
     "prepare_tool_result_for_model_json",
     "require_native_extension",

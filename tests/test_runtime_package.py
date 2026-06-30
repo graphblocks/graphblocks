@@ -86,6 +86,15 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             }
         )
 
+    def negotiate_application_protocol_capabilities_json(
+        server_json: str,
+        client_json: str,
+    ) -> str:
+        calls.append(("application_protocol_capabilities", (server_json, client_json)))
+        return json.dumps(
+            {"ok": True, "server": json.loads(server_json), "client": json.loads(client_json)}
+        )
+
     def prepare_tool_result_for_model_json(
         call_json: str,
         result_json: str,
@@ -221,6 +230,9 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         evaluate_tool_execution_plan_json=evaluate_tool_execution_plan_json,
         evaluate_tool_result_stream_json=evaluate_tool_result_stream_json,
         finalize_tool_call_json=finalize_tool_call_json,
+        negotiate_application_protocol_capabilities_json=(
+            negotiate_application_protocol_capabilities_json
+        ),
         prepare_tool_result_for_model_json=prepare_tool_result_for_model_json,
         run_stdlib_graph_json=run_stdlib_graph_json,
         run_test_graph_json=run_test_graph_json,
@@ -283,6 +295,18 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
                 },
             }
         ],
+    )
+    protocol_capabilities = runtime.negotiate_application_protocol_capabilities(
+        {
+            "protocolVersion": "graphblocks.app.v1",
+            "commands": ["InvokeGraph", "CancelRun"],
+            "events": ["RunStarted", "RunCompleted"],
+        },
+        {
+            "protocolVersion": "graphblocks.app.v1",
+            "commands": ["CancelRun"],
+            "events": ["RunCompleted"],
+        },
     )
     durable_terminal = runtime.evaluate_durable_tool_terminal_store(
         [{"op": "tool_terminal_count"}],
@@ -378,6 +402,19 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             }
         ],
     }
+    assert protocol_capabilities == {
+        "ok": True,
+        "server": {
+            "commands": ["InvokeGraph", "CancelRun"],
+            "events": ["RunStarted", "RunCompleted"],
+            "protocolVersion": "graphblocks.app.v1",
+        },
+        "client": {
+            "commands": ["CancelRun"],
+            "events": ["RunCompleted"],
+            "protocolVersion": "graphblocks.app.v1",
+        },
+    }
     assert durable_terminal == {"operations": [{"op": "tool_terminal_count"}]}
     assert tool_execution == {
         "plan": {"maximumParallelism": 2, "planId": "plan-1"},
@@ -472,6 +509,20 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             ),
         ),
         (
+            "application_protocol_capabilities",
+            (
+                (
+                    '{"commands":["InvokeGraph","CancelRun"],'
+                    '"events":["RunStarted","RunCompleted"],'
+                    '"protocolVersion":"graphblocks.app.v1"}'
+                ),
+                (
+                    '{"commands":["CancelRun"],"events":["RunCompleted"],'
+                    '"protocolVersion":"graphblocks.app.v1"}'
+                ),
+            ),
+        ),
+        (
             "durable_tool_terminal",
             ('[{"op":"tool_terminal_count"}]',),
         ),
@@ -531,6 +582,8 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     assert "run_stdlib_graph" in runtime.__all__
     assert "run_test_graph" in runtime.__all__
     assert "finalize_tool_call" in runtime.__all__
+    assert "negotiate_application_protocol_capabilities" in runtime.__all__
+    assert "negotiate_application_protocol_capabilities_json" in runtime.__all__
     assert "prepare_tool_result_for_model" in runtime.__all__
     assert "prepare_tool_result_for_model_json" in runtime.__all__
     assert "evaluate_output_gate" in runtime.__all__

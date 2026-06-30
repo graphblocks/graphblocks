@@ -9,9 +9,9 @@ use graphblocks_protocol::{
 };
 use graphblocks_runtime_core::agent::{AgentLoopController, AgentLoopDecision, AgentSpec};
 use graphblocks_runtime_core::application_event::{
-    ApplicationEvent, ApplicationEventKind, ApplicationEventMetadata, ApplicationEventStreamState,
-    ApplicationProtocolEvent, ApplicationProtocolEventKind, ApplicationProtocolEventMetadata,
-    ApplicationProtocolStreamState,
+    ApplicationCommandKind, ApplicationEvent, ApplicationEventKind, ApplicationEventMetadata,
+    ApplicationEventStreamState, ApplicationProtocolCapabilities, ApplicationProtocolEvent,
+    ApplicationProtocolEventKind, ApplicationProtocolEventMetadata, ApplicationProtocolStreamState,
 };
 use graphblocks_runtime_core::budget::{BudgetPermit, UsageAmount};
 use graphblocks_runtime_core::exhaustion::{
@@ -738,6 +738,47 @@ fn evaluate_application_protocol_stream_json(
     serde_json::to_string(&payload).map_err(|error| {
         PyRuntimeError::new_err(format!(
             "failed to serialize application protocol stream evaluation: {error}"
+        ))
+    })
+}
+
+#[pyfunction]
+fn negotiate_application_protocol_capabilities_json(
+    server_json: &str,
+    client_json: &str,
+) -> PyResult<String> {
+    let server_value =
+        parse_json_argument(server_json, "server application protocol capabilities")?;
+    let client_value =
+        parse_json_argument(client_json, "client application protocol capabilities")?;
+    let server = parse_application_protocol_capabilities(&server_value, "server capabilities")?;
+    let client = parse_application_protocol_capabilities(&client_value, "client capabilities")?;
+    let negotiated = server.negotiate(&client).map_err(|error| {
+        PyValueError::new_err(format!(
+            "application protocol capability negotiation failed: {error}"
+        ))
+    })?;
+    let mut commands = negotiated
+        .commands
+        .iter()
+        .map(ApplicationCommandKind::as_str)
+        .collect::<Vec<_>>();
+    commands.sort_unstable();
+    let mut events = negotiated
+        .events
+        .iter()
+        .map(ApplicationProtocolEventKind::as_str)
+        .collect::<Vec<_>>();
+    events.sort_unstable();
+    let payload = json!({
+        "ok": true,
+        "protocolVersion": negotiated.protocol_version,
+        "commands": commands,
+        "events": events,
+    });
+    serde_json::to_string(&payload).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize application protocol capability negotiation: {error}"
         ))
     })
 }
@@ -2478,6 +2519,81 @@ fn serialize_application_protocol_event(event: &ApplicationProtocolEvent) -> Val
         "metadata": serialize_application_protocol_event_metadata(&event.metadata),
         "payload": &event.payload,
     })
+}
+
+fn parse_application_command_kind(value: &str, label: &str) -> PyResult<ApplicationCommandKind> {
+    match value {
+        "InvokeGraph" => Ok(ApplicationCommandKind::InvokeGraph),
+        "CancelRun" => Ok(ApplicationCommandKind::CancelRun),
+        "SubmitInput" => Ok(ApplicationCommandKind::SubmitInput),
+        "ApproveEffect" => Ok(ApplicationCommandKind::ApproveEffect),
+        "DenyEffect" => Ok(ApplicationCommandKind::DenyEffect),
+        "SubmitReview" => Ok(ApplicationCommandKind::SubmitReview),
+        "RequestBudgetExtension" => Ok(ApplicationCommandKind::RequestBudgetExtension),
+        "ApplyPolicyOverride" => Ok(ApplicationCommandKind::ApplyPolicyOverride),
+        "ResumeInterrupt" => Ok(ApplicationCommandKind::ResumeInterrupt),
+        "SelectCandidate" => Ok(ApplicationCommandKind::SelectCandidate),
+        "OpenArtifact" => Ok(ApplicationCommandKind::OpenArtifact),
+        "SetBreakpoint" => Ok(ApplicationCommandKind::SetBreakpoint),
+        "RequestSnapshot" => Ok(ApplicationCommandKind::RequestSnapshot),
+        value => Err(PyValueError::new_err(format!(
+            "{label} has unknown application command kind {value:?}"
+        ))),
+    }
+}
+
+fn parse_application_protocol_capabilities(
+    value: &Value,
+    label: &str,
+) -> PyResult<ApplicationProtocolCapabilities> {
+    let object = json_object(value, label)?;
+    let mut capabilities = ApplicationProtocolCapabilities::new(required_alias_string(
+        object,
+        "protocolVersion",
+        "protocol_version",
+        label,
+    )?);
+    if let Some(commands) = object.get("commands") {
+        let Some(commands) = commands.as_array() else {
+            return Err(PyValueError::new_err(format!(
+                "{label}.commands must be an array"
+            )));
+        };
+        let parsed_commands = commands
+            .iter()
+            .enumerate()
+            .map(|(index, command)| {
+                let Some(command) = command.as_str() else {
+                    return Err(PyValueError::new_err(format!(
+                        "{label}.commands[{index}] must be a string"
+                    )));
+                };
+                parse_application_command_kind(command, &format!("{label}.commands[{index}]"))
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        capabilities = capabilities.with_commands(parsed_commands);
+    }
+    if let Some(events) = object.get("events") {
+        let Some(events) = events.as_array() else {
+            return Err(PyValueError::new_err(format!(
+                "{label}.events must be an array"
+            )));
+        };
+        let parsed_events = events
+            .iter()
+            .enumerate()
+            .map(|(index, event)| {
+                let Some(event) = event.as_str() else {
+                    return Err(PyValueError::new_err(format!(
+                        "{label}.events[{index}] must be a string"
+                    )));
+                };
+                parse_application_protocol_event_kind(event, &format!("{label}.events[{index}]"))
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        capabilities = capabilities.with_events(parsed_events);
+    }
+    Ok(capabilities)
 }
 
 fn parse_work_kind(value: &Value, label: &str) -> PyResult<WorkKind> {
@@ -5034,6 +5150,10 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
         evaluate_application_protocol_stream_json,
         module
     )?)?;
+    module.add_function(wrap_pyfunction!(
+        negotiate_application_protocol_capabilities_json,
+        module
+    )?)?;
     module.add_function(wrap_pyfunction!(evaluate_output_gate_json, module)?)?;
     module.add_function(wrap_pyfunction!(
         evaluate_declarative_output_policy_json,
@@ -5063,9 +5183,9 @@ mod tests {
         evaluate_durable_tool_terminal_store_json, evaluate_output_gate_json,
         evaluate_sequential_tool_queue_json, evaluate_tool_execution_plan_json,
         evaluate_tool_result_stream_json, finalize_tool_call_json,
-        prepare_tool_result_for_model_json, run_stdlib_graph_json, run_test_graph_json,
-        validate_remote_payload_json, validate_worker_advertisement_json,
-        validate_worker_protocol_message_json,
+        negotiate_application_protocol_capabilities_json, prepare_tool_result_for_model_json,
+        run_stdlib_graph_json, run_test_graph_json, validate_remote_payload_json,
+        validate_worker_advertisement_json, validate_worker_protocol_message_json,
     };
 
     #[test]
@@ -6200,6 +6320,60 @@ mod tests {
                 .map(Vec::len),
             Some(3)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn negotiate_application_protocol_capabilities_json_intersects_sets() -> Result<(), String> {
+        let server = json!({
+            "protocolVersion": "graphblocks.app.v1",
+            "commands": ["InvokeGraph", "CancelRun"],
+            "events": ["RunStarted", "RunCompleted"]
+        });
+        let client = json!({
+            "protocol_version": "graphblocks.app.v1",
+            "commands": ["CancelRun", "OpenArtifact"],
+            "events": ["RunCompleted", "ArtifactReady"]
+        });
+
+        let output_json = negotiate_application_protocol_capabilities_json(
+            &serde_json::to_string(&server).map_err(|error| error.to_string())?,
+            &serde_json::to_string(&client).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let output =
+            serde_json::from_str::<Value>(&output_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(output.get("ok"), Some(&json!(true)));
+        assert_eq!(
+            output.get("protocolVersion"),
+            Some(&json!("graphblocks.app.v1"))
+        );
+        assert_eq!(output.get("commands"), Some(&json!(["CancelRun"])));
+        assert_eq!(output.get("events"), Some(&json!(["RunCompleted"])));
+        Ok(())
+    }
+
+    #[test]
+    fn negotiate_application_protocol_capabilities_json_rejects_version_mismatch()
+    -> Result<(), String> {
+        let server = json!({
+            "protocolVersion": "graphblocks.app.v1",
+            "commands": ["InvokeGraph"],
+            "events": ["RunStarted"]
+        });
+        let client = json!({
+            "protocolVersion": "graphblocks.app.v2",
+            "commands": ["InvokeGraph"],
+            "events": ["RunStarted"]
+        });
+
+        let result = negotiate_application_protocol_capabilities_json(
+            &serde_json::to_string(&server).map_err(|error| error.to_string())?,
+            &serde_json::to_string(&client).map_err(|error| error.to_string())?,
+        );
+
+        assert!(result.is_err());
         Ok(())
     }
 
