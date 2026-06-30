@@ -516,6 +516,34 @@
     }
   },
   {
+    "name": "decision_rejects_zero_occurred_at",
+    "delivery": {
+      "mode": "bounded_holdback",
+      "holdbackMaxTokens": 8
+    },
+    "operations": [
+      {
+        "op": "chunk",
+        "sequence": 1,
+        "text": "safe draft"
+      },
+      {
+        "op": "allow",
+        "decisionId": "decision-missing-occurred-at",
+        "acceptedThrough": 1,
+        "inputDigest": "sha256:missing-occurred-at",
+        "occurredAt": 0,
+        "expectError": "missing_occurred_at_unix_ms"
+      }
+    ],
+    "expected": {
+      "lastGeneratedSequence": 1,
+      "lastPolicyAcceptedSequence": 0,
+      "lastClientDeliveredSequence": 0,
+      "stopped": false
+    }
+  },
+  {
     "name": "immediate_draft_retracts_after_policy_abort",
     "delivery": {
       "mode": "immediate_draft"
