@@ -1,0 +1,143 @@
+[
+  {
+    "name": "completed_tool_result_is_labeled_redacted_and_captured",
+    "kind": "prepare_for_model",
+    "tool": {
+      "name": "knowledge.search",
+      "description": "Search support documentation.",
+      "inputSchema": "schemas/SearchRequest@1",
+      "bindingId": "binding-search",
+      "block": "blocks.search",
+      "effects": ["external_read"]
+    },
+    "arguments": {},
+    "result": {
+      "status": "completed",
+      "output": [
+        {
+          "kind": "text",
+          "text": "safe secret suffix"
+        }
+      ]
+    },
+    "contentPolicy": {
+      "redactions": [
+        {
+          "path": "/parts/0/text",
+          "start": 5,
+          "end": 11,
+          "replacement": "[redacted]"
+        }
+      ],
+      "capturePolicy": {
+        "mode": "redacted_preview",
+        "retention_policy": "records-30d"
+      },
+      "trustDesignation": "policy_quarantined",
+      "promptInjectionLabel": "classifier_flagged_tool_output",
+      "contentClassification": "classified_external_tool_output"
+    },
+    "expected": {
+      "ok": true,
+      "texts": ["safe [redacted] suffix"],
+      "trustDesignations": ["policy_quarantined"],
+      "promptInjectionLabels": ["classifier_flagged_tool_output"],
+      "contentClassifications": ["classified_external_tool_output"],
+      "captureModes": ["redacted_preview"],
+      "redactionCounts": [1]
+    }
+  },
+  {
+    "name": "invalid_json_output_schema_is_rejected_before_model_return",
+    "kind": "prepare_for_model",
+    "tool": {
+      "name": "knowledge.search",
+      "description": "Search support documentation.",
+      "inputSchema": "schemas/SearchRequest@1",
+      "outputSchema": "schemas/SearchResult@1",
+      "bindingId": "binding-search",
+      "block": "blocks.search"
+    },
+    "arguments": {},
+    "schemas": [
+      {
+        "schemaId": "schemas/SearchResult@1",
+        "root": {
+          "type": "object",
+          "required": ["answer"],
+          "properties": {
+            "answer": {"type": "string"}
+          }
+        }
+      }
+    ],
+    "result": {
+      "status": "completed",
+      "output": [
+        {
+          "kind": "json",
+          "data": {"answer": 7}
+        }
+      ]
+    },
+    "expected": {
+      "ok": false,
+      "errorContains": "expected string"
+    }
+  },
+  {
+    "name": "stale_output_digest_is_rejected_before_model_return",
+    "kind": "prepare_for_model",
+    "tool": {
+      "name": "knowledge.search",
+      "description": "Search support documentation.",
+      "inputSchema": "schemas/SearchRequest@1",
+      "bindingId": "binding-search",
+      "block": "blocks.search"
+    },
+    "arguments": {},
+    "result": {
+      "status": "completed",
+      "output": [
+        {
+          "kind": "json",
+          "data": {"answer": "initial"}
+        }
+      ],
+      "mutateAfterDigest": {
+        "part": 0,
+        "data": {"answer": "mutated"}
+      }
+    },
+    "expected": {
+      "ok": false,
+      "errorContains": "output digest does not match"
+    }
+  },
+  {
+    "name": "artifact_reference_mode_rejects_inline_output",
+    "kind": "prepare_for_model",
+    "tool": {
+      "name": "report.export",
+      "description": "Export a report.",
+      "inputSchema": "schemas/ReportRequest@1",
+      "bindingId": "binding-report",
+      "block": "blocks.report",
+      "resultMode": "artifact_reference"
+    },
+    "arguments": {},
+    "result": {
+      "status": "completed",
+      "output": [
+        {
+          "kind": "text",
+          "text": "large report body"
+        }
+      ]
+    },
+    "expected": {
+      "ok": false,
+      "errorContains": "artifact_reference mode"
+    }
+  }
+]

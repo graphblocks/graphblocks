@@ -145,6 +145,7 @@ from graphblocks.tools import (
     BlockToolImplementation,
     JsonSchema,
     JsonSchemaNode,
+    ResolvedTool,
     ToolApprovalRecord,
     ToolApprovalRequest,
     ToolBinding,
@@ -161,6 +162,7 @@ from graphblocks.tools import (
     ToolResolutionScope,
     ToolSchemaRegistry,
     admit_tool_call,
+    validate_tool_result_for_model,
 )
 from graphblocks.usage import InMemoryUsageLedger, UsageRecord
 
@@ -185,6 +187,7 @@ TckCaseKind = Literal[
     "retry",
     "tool-lifecycle",
     "tool-execution",
+    "tool-result",
     "usage",
     "voice",
 ]
@@ -276,6 +279,7 @@ class TckCase:
     retry_fixture: dict[str, object] = field(default_factory=dict)
     tool_lifecycle_fixture: dict[str, object] = field(default_factory=dict)
     tool_execution_fixture: dict[str, object] = field(default_factory=dict)
+    tool_result_fixture: dict[str, object] = field(default_factory=dict)
     usage_fixture: dict[str, object] = field(default_factory=dict)
     voice_fixture: dict[str, object] = field(default_factory=dict)
     approval_review_fixture: dict[str, object] = field(default_factory=dict)
@@ -303,6 +307,7 @@ class TckCase:
             "retry",
             "tool-lifecycle",
             "tool-execution",
+            "tool-result",
             "usage",
             "voice",
         }:
@@ -334,6 +339,7 @@ class TckCase:
         object.__setattr__(self, "retry_fixture", dict(self.retry_fixture))
         object.__setattr__(self, "tool_lifecycle_fixture", dict(self.tool_lifecycle_fixture))
         object.__setattr__(self, "tool_execution_fixture", dict(self.tool_execution_fixture))
+        object.__setattr__(self, "tool_result_fixture", dict(self.tool_result_fixture))
         object.__setattr__(self, "usage_fixture", dict(self.usage_fixture))
         object.__setattr__(self, "voice_fixture", dict(self.voice_fixture))
         object.__setattr__(self, "approval_review_fixture", dict(self.approval_review_fixture))
@@ -373,6 +379,8 @@ class TckCase:
             raise ValueError("tool-lifecycle TCK case requires fixture")
         if self.kind == "tool-execution" and not self.tool_execution_fixture:
             raise ValueError("tool-execution TCK case requires fixture")
+        if self.kind == "tool-result" and not self.tool_result_fixture:
+            raise ValueError("tool-result TCK case requires fixture")
         if self.kind == "usage" and not self.usage_fixture:
             raise ValueError("usage TCK case requires fixture")
         if self.kind == "voice" and not self.voice_fixture:
@@ -558,6 +566,10 @@ class TckCase:
     @classmethod
     def tool_execution(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
         return cls(case_id=case_id, kind="tool-execution", tool_execution_fixture=fixture)
+
+    @classmethod
+    def tool_result(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
+        return cls(case_id=case_id, kind="tool-result", tool_result_fixture=fixture)
 
     @classmethod
     def usage(cls, *, case_id: str, fixture: dict[str, object]) -> TckCase:
@@ -1804,6 +1816,33 @@ def load_tool_execution_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     return tuple(cases)
 
 
+def load_tool_result_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
+    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(raw_cases, list):
+        raise ValueError("tool-result TCK root must be a list")
+    cases: list[TckCase] = []
+    for index, raw_case in enumerate(raw_cases):
+        if not isinstance(raw_case, Mapping):
+            raise ValueError(f"tool-result TCK case {index} must be a mapping")
+        case_id = _first_mapping_value(raw_case, "name", "case_id", "caseId")
+        if not isinstance(case_id, str) or not case_id.strip():
+            raise ValueError(f"tool-result TCK case {index} requires name")
+        case_kind = raw_case.get("kind")
+        if case_kind != "prepare_for_model":
+            raise ValueError(f"tool-result TCK case {case_id} has unsupported kind {case_kind!r}")
+        tool = raw_case.get("tool")
+        if not isinstance(tool, Mapping):
+            raise ValueError(f"tool-result TCK case {case_id} tool must be a mapping")
+        result = raw_case.get("result")
+        if not isinstance(result, Mapping):
+            raise ValueError(f"tool-result TCK case {case_id} result must be a mapping")
+        expected = raw_case.get("expected")
+        if not isinstance(expected, Mapping):
+            raise ValueError(f"tool-result TCK case {case_id} requires expected result")
+        cases.append(TckCase.tool_result(case_id=case_id, fixture=dict(raw_case)))
+    return tuple(cases)
+
+
 def load_usage_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(raw_cases, list):
@@ -2051,6 +2090,8 @@ def load_tck_cases_for_suite(suite: str, path: str | Path) -> tuple[TckCase, ...
         return load_tool_lifecycle_tck_cases(path)
     if suite == "tool-execution":
         return load_tool_execution_tck_cases(path)
+    if suite == "tool-result":
+        return load_tool_result_tck_cases(path)
     if suite == "usage":
         return load_usage_tck_cases(path)
     if suite == "voice":
@@ -2092,6 +2133,7 @@ def main(argv: list[str] | None = None) -> int:
             "budget-race",
             "tool-lifecycle",
             "tool-execution",
+            "tool-result",
             "usage",
             "voice",
         ),
@@ -2704,6 +2746,8 @@ class TckRunner:
                 results.append(self._run_tool_execution_case(case))
             elif case.kind == "tool-lifecycle":
                 results.append(self._run_tool_lifecycle_case(case))
+            elif case.kind == "tool-result":
+                results.append(self._run_tool_result_case(case))
             elif case.kind == "usage":
                 results.append(self._run_usage_case(case))
             elif case.kind == "voice":
@@ -6501,6 +6545,237 @@ class TckRunner:
             observed=observed,
         )
 
+    def _tool_result_schema_node_from_fixture(self, raw_node: object) -> JsonSchemaNode:
+        if not isinstance(raw_node, Mapping):
+            return JsonSchemaNode.any()
+        raw_type = raw_node.get("type", raw_node.get("expectedType", raw_node.get("expected_type")))
+        if raw_type == "string":
+            node = JsonSchemaNode.string()
+        elif raw_type == "integer":
+            node = JsonSchemaNode.integer()
+        elif raw_type == "number":
+            node = JsonSchemaNode.number()
+        elif raw_type == "boolean":
+            node = JsonSchemaNode.boolean()
+        elif raw_type == "array":
+            node = JsonSchemaNode.array(self._tool_result_schema_node_from_fixture(raw_node.get("items", {})))
+        elif raw_type == "object":
+            node = JsonSchemaNode.object()
+        else:
+            node = JsonSchemaNode.any()
+        raw_required = raw_node.get("required", ())
+        required = {str(item) for item in raw_required} if isinstance(raw_required, list | tuple) else set()
+        raw_properties = raw_node.get("properties", {})
+        if isinstance(raw_properties, Mapping):
+            for property_name, property_schema in raw_properties.items():
+                if str(property_name) in required:
+                    node = node.required_property(
+                        str(property_name),
+                        self._tool_result_schema_node_from_fixture(property_schema),
+                    )
+                else:
+                    node = node.property(
+                        str(property_name),
+                        self._tool_result_schema_node_from_fixture(property_schema),
+                    )
+        return node
+
+    def _tool_result_content_part_from_fixture(self, raw_part: object) -> ContentPart:
+        if not isinstance(raw_part, Mapping):
+            raise ValueError("tool-result output part must be a mapping")
+        kind = str(raw_part.get("kind", "text"))
+        metadata = raw_part.get("metadata", {})
+        if not isinstance(metadata, Mapping):
+            raise ValueError("tool-result output part metadata must be a mapping")
+        if kind == "text":
+            text = raw_part.get("text")
+            if not isinstance(text, str):
+                raise ValueError("tool-result text output part requires text")
+            return ContentPart(kind="text", text=text, metadata=dict(metadata))
+        if kind in {"json", "artifact_ref"}:
+            data = raw_part.get("data")
+            if not isinstance(data, Mapping):
+                raise ValueError(f"tool-result {kind} output part requires object data")
+            return ContentPart(kind=kind, data=dict(data), metadata=dict(metadata))
+        raise ValueError(f"tool-result output part has unsupported kind {kind!r}")
+
+    def _run_tool_result_case(self, case: TckCase) -> TckResult:
+        diagnostics: list[dict[str, str]] = []
+        fixture = case.tool_result_fixture
+        expected = fixture.get("expected", {})
+        if not isinstance(expected, Mapping):
+            expected = {}
+            diagnostics.append(
+                {
+                    "code": "ToolResultExpectedInvalid",
+                    "message": "tool-result TCK expected result must be a mapping",
+                    "path": "$.expected",
+                }
+            )
+
+        observed: dict[str, object]
+        try:
+            raw_tool = fixture.get("tool", {})
+            if not isinstance(raw_tool, Mapping):
+                raise ValueError("tool-result tool must be a mapping")
+            tool_name = str(raw_tool.get("name", "knowledge.search"))
+            output_schema = raw_tool.get("outputSchema", raw_tool.get("output_schema"))
+            definition = ToolDefinition(
+                tool_name,
+                str(raw_tool.get("description", "Execute a tool.")),
+                str(raw_tool.get("inputSchema", raw_tool.get("input_schema", "schemas/ToolRequest@1"))),
+                output_schema=str(output_schema) if output_schema is not None else None,
+            )
+            binding = ToolBinding(
+                str(raw_tool.get("bindingId", raw_tool.get("binding_id", "binding-tool"))),
+                tool_name,
+                BlockToolImplementation(str(raw_tool.get("block", "blocks.tool"))),
+                effects=frozenset(str(effect) for effect in raw_tool.get("effects", ())),
+                approval=str(raw_tool.get("approval", "never")),
+                idempotency=str(raw_tool.get("idempotency", "not_applicable")),
+                result_mode=str(raw_tool.get("resultMode", raw_tool.get("result_mode", "value"))),
+            )
+            resolved_tool = ResolvedTool.from_definition_and_binding(
+                resolved_tool_id=str(raw_tool.get("resolvedToolId", "resolved-tool-1")),
+                definition=definition,
+                binding=binding,
+                effective_policy_snapshot_id=str(raw_tool.get("policySnapshotId", "policy-snapshot-1")),
+                allowed_for_principal=True,
+            )
+            arguments = fixture.get("arguments", {})
+            draft = ToolCallDraft.proposed("response-1", "call-1", tool_name)
+            call = draft.append_argument_fragment(json.dumps(arguments, sort_keys=True)).complete_arguments().into_tool_call(
+                resolved_tool.resolved_tool_id,
+                created_at="2026-06-23T00:00:00Z",
+            )
+
+            schemas: list[JsonSchema] = []
+            raw_schemas = fixture.get("schemas", [])
+            if isinstance(raw_schemas, list):
+                for schema_index, raw_schema in enumerate(raw_schemas):
+                    if not isinstance(raw_schema, Mapping):
+                        raise ValueError(f"tool-result schemas[{schema_index}] must be a mapping")
+                    schema_id = raw_schema.get("schemaId", raw_schema.get("schema_id"))
+                    if not isinstance(schema_id, str):
+                        raise ValueError(f"tool-result schemas[{schema_index}] requires schemaId")
+                    schemas.append(
+                        JsonSchema(
+                            schema_id,
+                            self._tool_result_schema_node_from_fixture(raw_schema.get("root", raw_schema)),
+                        )
+                    )
+            schema_registry = ToolSchemaRegistry(tuple(schemas))
+
+            raw_result = fixture.get("result", {})
+            if not isinstance(raw_result, Mapping):
+                raise ValueError("tool-result result must be a mapping")
+            raw_output = raw_result.get("output", [])
+            if not isinstance(raw_output, list):
+                raise ValueError("tool-result output must be a list")
+            output = tuple(self._tool_result_content_part_from_fixture(part) for part in raw_output)
+            result = ToolResult.completed(
+                "call-1",
+                output,
+                started_at=str(raw_result.get("startedAt", "2026-06-23T00:00:01Z")),
+                completed_at=str(raw_result.get("completedAt", "2026-06-23T00:00:02Z")),
+            )
+            mutation = raw_result.get("mutateAfterDigest")
+            if isinstance(mutation, Mapping):
+                part_index = int(mutation.get("part", 0))
+                if "data" in mutation and result.output[part_index].data is not None:
+                    result.output[part_index].data.clear()
+                    replacement = mutation["data"]
+                    if isinstance(replacement, Mapping):
+                        result.output[part_index].data.update(dict(replacement))
+
+            content_policy = fixture.get("contentPolicy", fixture.get("content_policy", {}))
+            if not isinstance(content_policy, Mapping):
+                content_policy = {}
+            model_output = validate_tool_result_for_model(
+                call,
+                result,
+                resolved_tool,
+                schema_registry,
+                max_output_bytes=(
+                    int(content_policy["maxOutputBytes"])
+                    if content_policy.get("maxOutputBytes") is not None
+                    else None
+                ),
+                redactions=tuple(dict(item) for item in content_policy.get("redactions", ()) if isinstance(item, Mapping)),
+                capture_policy=(
+                    dict(content_policy["capturePolicy"])
+                    if isinstance(content_policy.get("capturePolicy"), Mapping)
+                    else (
+                        dict(content_policy["capture_policy"])
+                        if isinstance(content_policy.get("capture_policy"), Mapping)
+                        else None
+                    )
+                ),
+                trust_designation=str(content_policy.get("trustDesignation", "untrusted_external")),
+                prompt_injection_label=str(content_policy.get("promptInjectionLabel", "untrusted_tool_output")),
+                content_classification=str(content_policy.get("contentClassification", "external_tool_output")),
+            )
+            observed = {
+                "ok": True,
+                "outputKinds": [part.kind for part in model_output],
+                "texts": [part.text for part in model_output if part.text is not None],
+                "jsonOutputs": [dict(part.data) for part in model_output if part.kind == "json" and part.data is not None],
+                "trustDesignations": [part.metadata.get("trust_designation") for part in model_output],
+                "promptInjectionLabels": [part.metadata.get("prompt_injection_label") for part in model_output],
+                "contentClassifications": [part.metadata.get("content_classification") for part in model_output],
+                "captureModes": [
+                    part.metadata.get("capture", {}).get("mode")
+                    for part in model_output
+                    if isinstance(part.metadata.get("capture"), Mapping)
+                ],
+                "redactionCounts": [
+                    part.metadata.get("capture", {}).get("redaction_count")
+                    for part in model_output
+                    if isinstance(part.metadata.get("capture"), Mapping)
+                ],
+            }
+        except Exception as error:
+            observed = {
+                "ok": False,
+                "error": str(error),
+                "errorType": type(error).__name__,
+            }
+
+        for key, expected_value in expected.items():
+            if key == "errorContains":
+                if expected_value is not None and str(expected_value) not in str(observed.get("error")):
+                    diagnostics.append(
+                        {
+                            "code": "ToolResultErrorMismatch",
+                            "message": "tool-result observed error did not contain expected text",
+                            "path": "$.expected.errorContains",
+                        }
+                    )
+                continue
+            if observed.get(str(key)) != expected_value:
+                diagnostics.append(
+                    {
+                        "code": "ToolResultExpectedMismatch",
+                        "message": f"tool-result observed {key} did not match expected value",
+                        "path": f"$.expected.{key}",
+                    }
+                )
+        if expected.get("errorContains") is None and observed.get("error") is not None:
+            diagnostics.append(
+                {
+                    "code": "ToolResultUnexpectedError",
+                    "message": "tool-result case produced an unexpected error",
+                    "path": "$.observed.error",
+                }
+            )
+        return TckResult(
+            case_id=case.case_id,
+            kind=case.kind,
+            status="passed" if not diagnostics else "failed",
+            diagnostics=tuple(diagnostics),
+            observed=observed,
+        )
+
     def _run_tool_execution_case(self, case: TckCase) -> TckResult:
         diagnostics: list[dict[str, str]] = []
         fixture = case.tool_execution_fixture
@@ -7823,6 +8098,7 @@ __all__ = [
     "load_tck_suite_manifests",
     "load_tool_execution_tck_cases",
     "load_tool_lifecycle_tck_cases",
+    "load_tool_result_tck_cases",
     "load_usage_tck_cases",
     "load_voice_tck_cases",
     "main",

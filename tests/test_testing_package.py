@@ -495,6 +495,30 @@ def test_testing_package_loads_shared_tool_execution_tck_cases(monkeypatch) -> N
     assert "load_tool_execution_tck_cases" in graphblocks_testing.__all__
 
 
+def test_testing_package_loads_shared_tool_result_tck_cases(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    cases = graphblocks_testing.load_tool_result_tck_cases(
+        ROOT / "tck" / "tool-result" / "cases.json"
+    )
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
+
+    assert [case.kind for case in cases] == ["tool-result"] * 4
+    assert report.ok
+    assert {case.case_id for case in cases} == {
+        "completed_tool_result_is_labeled_redacted_and_captured",
+        "invalid_json_output_schema_is_rejected_before_model_return",
+        "stale_output_digest_is_rejected_before_model_return",
+        "artifact_reference_mode_rejects_inline_output",
+    }
+    assert any(result.observed.get("texts") == ["safe [redacted] suffix"] for result in report.results)
+    assert any("expected string" in str(result.observed.get("error")) for result in report.results)
+    assert any("output digest does not match" in str(result.observed.get("error")) for result in report.results)
+    assert any("artifact_reference mode" in str(result.observed.get("error")) for result in report.results)
+    assert "load_tool_result_tck_cases" in graphblocks_testing.__all__
+
+
 def test_testing_package_loads_shared_usage_tck_cases(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -563,6 +587,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "sequence",
         "tool-execution",
         "tool-lifecycle",
+        "tool-result",
         "usage",
         "voice",
     )
@@ -642,6 +667,12 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "invalid_arguments_denied_before_policy_admission",
         "approval_invalid_after_argument_mutation",
     )
+    assert by_suite["tool-result"].case_ids == (
+        "completed_tool_result_is_labeled_redacted_and_captured",
+        "invalid_json_output_schema_is_rejected_before_model_return",
+        "stale_output_digest_is_rejected_before_model_return",
+        "artifact_reference_mode_rejects_inline_output",
+    )
     assert by_suite["retry"].case_ids == (
         "effect_retry_preserves_idempotency_key",
         "effect_retry_exhaustion_preserves_idempotency_key",
@@ -688,7 +719,7 @@ def test_testing_package_cli_lists_tck_suite_manifests(monkeypatch, capsys) -> N
     assert graphblocks_testing.main(["list", str(ROOT / "tck"), "--json"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload["suiteCount"] == 21
+    assert payload["suiteCount"] == 22
     assert payload["suites"][0]["suite_id"] == "application-events"
     assert payload["suites"][0]["case_count"] == 5
     assert payload["contentDigest"].startswith("sha256:")
@@ -727,6 +758,7 @@ def test_testing_package_cli_checks_tck_suite_coverage(monkeypatch, capsys) -> N
         "sequence",
         "tool-execution",
         "tool-lifecycle",
+        "tool-result",
         "usage",
     ]
     assert payload["missing_suites"] == []
@@ -985,6 +1017,21 @@ def test_testing_package_cli_runs_tool_execution_tck_suite(monkeypatch, capsys) 
     assert payload["contentDigest"].startswith("sha256:")
 
 
+def test_testing_package_cli_runs_tool_result_tck_suite(monkeypatch, capsys) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    exit_code = graphblocks_testing.main(
+        ["run", "tool-result", str(ROOT / "tck" / "tool-result" / "cases.json"), "--json"]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert {result["kind"] for result in payload["results"]} == {"tool-result"}
+    assert payload["contentDigest"].startswith("sha256:")
+
+
 def test_testing_package_cli_runs_usage_tck_suite(monkeypatch, capsys) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")
@@ -1047,6 +1094,7 @@ def test_testing_package_cli_runs_all_supported_tck_suites(monkeypatch, capsys) 
         "sequence",
         "tool-execution",
         "tool-lifecycle",
+        "tool-result",
         "usage",
         "voice",
     )

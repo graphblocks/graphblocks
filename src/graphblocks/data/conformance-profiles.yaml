@@ -34,6 +34,7 @@ spec:
     - sequence
     - tool-execution
     - tool-lifecycle
+    - tool-result
   - id: GB-C2-AI-APPLICATION
     status: normative-profile
     extends:
