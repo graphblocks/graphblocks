@@ -2921,7 +2921,93 @@ class TckRunner:
                 policy_snapshot_id=str(operation.get("policySnapshotId", "policy-1")),
                 occurred_at=str(operation.get("occurredAt", "2026-06-23T00:00:00Z")),
             )
-            if operation.get("op") == "output_cutoff":
+            if operation.get("op") == "output_policy_evaluation_started":
+                chunk = GenerationChunk.text(
+                    str(operation.get("streamId", "stream-1")),
+                    response_id,
+                    int(operation.get("sequence", operation.get("chunkSequence", 0))),
+                    str(operation.get("text", "")),
+                )
+                event = ApplicationEvent.output_policy_evaluation_started(
+                    metadata,
+                    chunk,
+                    input_digest=str(operation.get("inputDigest", "")),
+                )
+                accepted = state.accept(event)
+                if (accepted is not None) is not bool(operation.get("expectAccepted", True)):
+                    diagnostics.append(
+                        {
+                            "code": "ApplicationEventAcceptanceMismatch",
+                            "message": "application event acceptance did not match expected result",
+                            "path": f"$.operations[{sequence - 1}].expectAccepted",
+                        }
+                    )
+            elif operation.get("op") == "output_policy_decision":
+                accepted_through = operation.get("acceptedThrough", operation.get("acceptedThroughSequence"))
+                accepted_sequence = int(accepted_through) if accepted_through is not None else None
+                disposition = str(operation.get("disposition", "allow"))
+                decision_id = str(operation.get("decisionId", ""))
+                input_digest = str(operation.get("inputDigest", ""))
+                if disposition == "allow":
+                    decision = OutputPolicyDecision.allow(
+                        decision_id,
+                        accepted_through_sequence=accepted_sequence,
+                        input_digest=input_digest,
+                    )
+                elif disposition == "hold":
+                    decision = OutputPolicyDecision.hold(decision_id, input_digest=input_digest)
+                elif disposition == "redact":
+                    decision = OutputPolicyDecision.redact(
+                        decision_id,
+                        accepted_through_sequence=accepted_sequence,
+                        input_digest=input_digest,
+                    )
+                elif disposition == "replace":
+                    replacement_parts = []
+                    for raw_part in operation.get("replacementParts", []):
+                        if isinstance(raw_part, Mapping):
+                            replacement_parts.append(ContentPart(kind="text", text=str(raw_part.get("text", ""))))
+                    decision = OutputPolicyDecision.replace(
+                        decision_id,
+                        accepted_through_sequence=accepted_sequence,
+                        replacement_parts=tuple(replacement_parts),
+                        input_digest=input_digest,
+                    )
+                elif disposition == "abort_turn":
+                    decision = OutputPolicyDecision.abort_turn(decision_id, input_digest=input_digest)
+                elif disposition == "deny_commit":
+                    decision = OutputPolicyDecision.deny_commit(decision_id, input_digest=input_digest)
+                else:
+                    decision = OutputPolicyDecision.abort_response(decision_id, input_digest=input_digest)
+                reason_codes = operation.get("reasonCodes", operation.get("reason_codes"))
+                if isinstance(reason_codes, list):
+                    decision = decision.with_reason_codes(tuple(str(reason_code) for reason_code in reason_codes))
+                policy_refs = operation.get("policyRefs", operation.get("policy_refs"))
+                if isinstance(policy_refs, list):
+                    decision = decision.with_policy_refs(tuple(str(policy_ref) for policy_ref in policy_refs))
+                provider_cancellation = operation.get("providerCancellation")
+                if isinstance(provider_cancellation, str):
+                    decision = decision.with_provider_cancellation(provider_cancellation)
+                draft_disposition = operation.get("draftDisposition")
+                if isinstance(draft_disposition, str):
+                    decision = decision.with_draft_disposition(draft_disposition)
+                pending_tool_calls = operation.get("pendingToolCalls")
+                if isinstance(pending_tool_calls, str):
+                    decision = decision.with_pending_tool_calls(pending_tool_calls)
+                evaluated_at = operation.get("evaluatedAt")
+                if isinstance(evaluated_at, str):
+                    decision = decision.evaluated_at_time(evaluated_at)
+                event = ApplicationEvent.output_policy_decision(metadata, decision)
+                accepted = state.accept(event)
+                if (accepted is not None) is not bool(operation.get("expectAccepted", True)):
+                    diagnostics.append(
+                        {
+                            "code": "ApplicationEventAcceptanceMismatch",
+                            "message": "application event acceptance did not match expected result",
+                            "path": f"$.operations[{sequence - 1}].expectAccepted",
+                        }
+                    )
+            elif operation.get("op") == "output_cutoff":
                 cutoff = OutputCutoff(
                     stream_id=str(operation.get("streamId", "stream-1")),
                     response_id=response_id,

@@ -252,6 +252,69 @@
     ]
   },
   {
+    "name": "output_policy_events_track_evaluation_and_decisions",
+    "streamId": "stream-policy-1",
+    "responseId": "response-policy-1",
+    "turnId": "turn-policy-1",
+    "operations": [
+      {
+        "op": "output_policy_evaluation_started",
+        "streamId": "stream-policy-1",
+        "sequence": 4,
+        "text": "sensitive text",
+        "inputDigest": "sha256:pending-window",
+        "occurredAt": "2026-06-23T00:00:03Z",
+        "occurredAtUnixMs": 1700003
+      },
+      {
+        "op": "output_policy_decision",
+        "decisionId": "decision-hold",
+        "disposition": "hold",
+        "inputDigest": "sha256:pending-window",
+        "reasonCodes": [
+          "needs_more_context"
+        ],
+        "policyRefs": [
+          "policy/output-standard"
+        ],
+        "evaluatedAt": "2026-06-23T00:00:04Z",
+        "evaluatedAtUnixMs": 1700004
+      },
+      {
+        "op": "output_policy_decision",
+        "decisionId": "decision-redact",
+        "disposition": "redact",
+        "acceptedThrough": 4,
+        "inputDigest": "sha256:redact",
+        "reasonCodes": [
+          "pii.detected"
+        ],
+        "policyRefs": [
+          "policy/output-standard"
+        ],
+        "evaluatedAt": "2026-06-23T00:00:05Z",
+        "evaluatedAtUnixMs": 1700005
+      },
+      {
+        "op": "output_policy_decision",
+        "decisionId": "decision-abort",
+        "disposition": "abort_response",
+        "inputDigest": "sha256:blocked",
+        "providerCancellation": "required_if_supported",
+        "draftDisposition": "retract",
+        "pendingToolCalls": "deny",
+        "evaluatedAt": "2026-06-23T00:00:06Z",
+        "evaluatedAtUnixMs": 1700006
+      }
+    ],
+    "expectedAcceptedKinds": [
+      "OutputPolicyEvaluationStarted",
+      "OutputPolicyHeld",
+      "OutputPolicyRedacted",
+      "OutputPolicyViolationDetected"
+    ]
+  },
+  {
     "name": "tool_result_delta_is_draft_until_completed",
     "responseId": "response-tools-1",
     "turnId": "turn-tools-1",

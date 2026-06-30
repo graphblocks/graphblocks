@@ -3,7 +3,8 @@ use graphblocks_runtime_core::application_event::{
 };
 use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory};
 use graphblocks_runtime_core::output_policy::{
-    DraftDisposition, DurableResult, OutputCutoff, TerminalReason,
+    DraftDisposition, DurableResult, GenerationChunk, OutputCutoff, OutputPolicyDecision,
+    PendingToolCallsDisposition, ProviderCancellation, TerminalReason,
 };
 use graphblocks_runtime_core::tool_call::{ToolCallDraft, ToolCallStatus};
 use graphblocks_runtime_core::tool_result::{
@@ -57,6 +58,41 @@ fn run_case(case: &Value) -> Result<(), String> {
         };
 
         match op {
+            "output_policy_evaluation_started" => {
+                let chunk = GenerationChunk::text(
+                    optional_str(operation, "streamId")
+                        .or_else(|| optional_str(case, "streamId"))
+                        .unwrap_or("stream-1"),
+                    response_id,
+                    optional_u64(operation, "sequence")
+                        .or_else(|| optional_u64(operation, "chunkSequence"))
+                        .unwrap_or(1),
+                    optional_str(operation, "text").unwrap_or(""),
+                );
+                let event = ApplicationEvent::output_policy_evaluation_started(
+                    metadata,
+                    &chunk,
+                    required_str(operation, "inputDigest")?,
+                )
+                .map_err(|error| format!("{case_name}: {error:?}"))?;
+                let accepted = state.accept(event).is_some();
+                assert_eq!(
+                    accepted,
+                    optional_bool(operation, "expectAccepted").unwrap_or(true),
+                    "{case_name}",
+                );
+            }
+            "output_policy_decision" => {
+                let decision = output_policy_decision(operation)?;
+                let event = ApplicationEvent::output_policy_decision(metadata, &decision)
+                    .map_err(|error| format!("{case_name}: {error:?}"))?;
+                let accepted = state.accept(event).is_some();
+                assert_eq!(
+                    accepted,
+                    optional_bool(operation, "expectAccepted").unwrap_or(true),
+                    "{case_name}",
+                );
+            }
             "output_cutoff" => {
                 let cutoff = OutputCutoff {
                     stream_id: optional_str(operation, "streamId")
@@ -492,6 +528,109 @@ fn tool_effect_outcome(value: Option<&str>, case_name: &str) -> Result<ToolEffec
         other => Err(format!(
             "application-events TCK case {case_name} has unknown effect outcome {other}"
         )),
+    }
+}
+
+fn output_policy_decision(operation: &Value) -> Result<OutputPolicyDecision, String> {
+    let decision_id = required_str(operation, "decisionId")?;
+    let input_digest = required_str(operation, "inputDigest")?;
+    let accepted_through_sequence = optional_u64(operation, "acceptedThrough")
+        .or_else(|| optional_u64(operation, "acceptedThroughSequence"));
+    let mut decision = match required_str(operation, "disposition")? {
+        "allow" => {
+            OutputPolicyDecision::allow(decision_id, accepted_through_sequence, input_digest)
+        }
+        "hold" => OutputPolicyDecision::hold(decision_id, input_digest),
+        "redact" => OutputPolicyDecision::redact(
+            decision_id,
+            accepted_through_sequence,
+            Vec::new(),
+            input_digest,
+        ),
+        "replace" => {
+            let replacement_chunks = operation
+                .get("replacementChunks")
+                .and_then(Value::as_array)
+                .map(Vec::as_slice)
+                .unwrap_or(&[])
+                .iter()
+                .map(|chunk| {
+                    Ok(GenerationChunk::text(
+                        optional_str(chunk, "streamId").unwrap_or("stream-1"),
+                        optional_str(chunk, "responseId").unwrap_or("response-1"),
+                        required_u64(chunk, "sequence")?,
+                        required_str(chunk, "text")?,
+                    ))
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            OutputPolicyDecision::replace(
+                decision_id,
+                accepted_through_sequence,
+                replacement_chunks,
+                input_digest,
+            )
+        }
+        "abort_response" => OutputPolicyDecision::abort_response(decision_id, input_digest),
+        "abort_turn" => OutputPolicyDecision::abort_turn(decision_id, input_digest),
+        "deny_commit" => OutputPolicyDecision::deny_commit(decision_id, input_digest),
+        other => return Err(format!("unknown output policy disposition {other}")),
+    };
+    if let Some(reason_codes) = string_array(operation, "reasonCodes")? {
+        decision = decision.with_reason_codes(reason_codes);
+    }
+    if let Some(policy_refs) = string_array(operation, "policyRefs")? {
+        decision = decision.with_policy_refs(policy_refs);
+    }
+    if let Some(provider_cancellation_value) = optional_str(operation, "providerCancellation") {
+        decision = decision
+            .with_provider_cancellation(provider_cancellation(provider_cancellation_value)?);
+    }
+    if let Some(draft_disposition_value) = optional_str(operation, "draftDisposition") {
+        decision = decision.with_draft_disposition(draft_disposition(draft_disposition_value)?);
+    }
+    if let Some(pending_tool_calls_value) = optional_str(operation, "pendingToolCalls") {
+        decision = decision.with_pending_tool_calls(pending_tool_calls(pending_tool_calls_value)?);
+    }
+    if let Some(evaluated_at_unix_ms) = optional_u64(operation, "evaluatedAtUnixMs") {
+        decision = decision.evaluated_at_unix_ms(evaluated_at_unix_ms);
+    }
+    Ok(decision)
+}
+
+fn string_array(value: &Value, key: &str) -> Result<Option<Vec<String>>, String> {
+    let Some(values) = value.get(key) else {
+        return Ok(None);
+    };
+    let values = values
+        .as_array()
+        .ok_or_else(|| format!("{key} must be an array"))?;
+    values
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| format!("{key} values must be strings"))
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Some)
+}
+
+fn provider_cancellation(value: &str) -> Result<ProviderCancellation, String> {
+    match value {
+        "none" => Ok(ProviderCancellation::None),
+        "request" => Ok(ProviderCancellation::Request),
+        "required_if_supported" => Ok(ProviderCancellation::RequiredIfSupported),
+        other => Err(format!("unknown provider cancellation {other}")),
+    }
+}
+
+fn pending_tool_calls(value: &str) -> Result<PendingToolCallsDisposition, String> {
+    match value {
+        "keep" => Ok(PendingToolCallsDisposition::Keep),
+        "deny" => Ok(PendingToolCallsDisposition::Deny),
+        "cancel_admitted" => Ok(PendingToolCallsDisposition::CancelAdmitted),
+        other => Err(format!("unknown pending tool calls disposition {other}")),
     }
 }
 

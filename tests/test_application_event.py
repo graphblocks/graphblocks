@@ -1400,7 +1400,82 @@ def test_application_event_stream_state_matches_shared_tck_cases() -> None:
                 policy_snapshot_id=case.get("policySnapshotId", "policy-1"),
                 occurred_at=operation.get("occurredAt", "2026-06-23T00:00:00Z"),
             )
-            if operation["op"] == "output_cutoff":
+            if operation["op"] == "output_policy_evaluation_started":
+                chunk = GenerationChunk.text(
+                    operation.get("streamId", case.get("streamId", "stream-1")),
+                    response_id,
+                    operation.get("sequence", operation.get("chunkSequence", 0)),
+                    operation.get("text", ""),
+                )
+                event = ApplicationEvent.output_policy_evaluation_started(
+                    metadata,
+                    chunk,
+                    input_digest=operation["inputDigest"],
+                )
+                accepted = state.accept(event)
+                assert (accepted is not None) is operation.get("expectAccepted", True), case_name
+            elif operation["op"] == "output_policy_decision":
+                accepted_through = operation.get("acceptedThrough", operation.get("acceptedThroughSequence"))
+                disposition = operation["disposition"]
+                if disposition == "allow":
+                    decision = OutputPolicyDecision.allow(
+                        operation["decisionId"],
+                        accepted_through_sequence=accepted_through,
+                        input_digest=operation["inputDigest"],
+                    )
+                elif disposition == "hold":
+                    decision = OutputPolicyDecision.hold(
+                        operation["decisionId"],
+                        input_digest=operation["inputDigest"],
+                    )
+                elif disposition == "redact":
+                    decision = OutputPolicyDecision.redact(
+                        operation["decisionId"],
+                        accepted_through_sequence=accepted_through,
+                        input_digest=operation["inputDigest"],
+                    )
+                elif disposition == "replace":
+                    replacement_parts = tuple(
+                        ContentPart(kind=part.get("kind", "text"), text=part.get("text"))
+                        for part in operation.get("replacementParts", ())
+                    )
+                    decision = OutputPolicyDecision.replace(
+                        operation["decisionId"],
+                        accepted_through_sequence=accepted_through,
+                        replacement_parts=replacement_parts,
+                        input_digest=operation["inputDigest"],
+                    )
+                elif disposition == "abort_turn":
+                    decision = OutputPolicyDecision.abort_turn(
+                        operation["decisionId"],
+                        input_digest=operation["inputDigest"],
+                    )
+                elif disposition == "deny_commit":
+                    decision = OutputPolicyDecision.deny_commit(
+                        operation["decisionId"],
+                        input_digest=operation["inputDigest"],
+                    )
+                else:
+                    decision = OutputPolicyDecision.abort_response(
+                        operation["decisionId"],
+                        input_digest=operation["inputDigest"],
+                    )
+                if operation.get("reasonCodes") is not None:
+                    decision = decision.with_reason_codes(tuple(operation["reasonCodes"]))
+                if operation.get("policyRefs") is not None:
+                    decision = decision.with_policy_refs(tuple(operation["policyRefs"]))
+                if operation.get("providerCancellation") is not None:
+                    decision = decision.with_provider_cancellation(operation["providerCancellation"])
+                if operation.get("draftDisposition") is not None:
+                    decision = decision.with_draft_disposition(operation["draftDisposition"])
+                if operation.get("pendingToolCalls") is not None:
+                    decision = decision.with_pending_tool_calls(operation["pendingToolCalls"])
+                if operation.get("evaluatedAt") is not None:
+                    decision = decision.evaluated_at_time(operation["evaluatedAt"])
+                event = ApplicationEvent.output_policy_decision(metadata, decision)
+                accepted = state.accept(event)
+                assert (accepted is not None) is operation.get("expectAccepted", True), case_name
+            elif operation["op"] == "output_cutoff":
                 cutoff = OutputCutoff(
                     stream_id=operation.get("streamId", case.get("streamId", "stream-1")),
                     response_id=response_id,

@@ -240,7 +240,7 @@ def test_testing_package_loads_shared_application_event_tck_cases(monkeypatch) -
     )
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["application-events"] * 6
+    assert [case.kind for case in cases] == ["application-events"] * 7
     assert report.ok
     assert {tuple(result.observed["accepted_kinds"]) for result in report.results} == {
         (
@@ -256,6 +256,12 @@ def test_testing_package_loads_shared_application_event_tck_cases(monkeypatch) -
         ),
         ("OutputCutoff", "AssistantRetracted", "RunSucceeded"),
         ("OutputCutoff", "AssistantIncomplete", "RunSucceeded"),
+        (
+            "OutputPolicyEvaluationStarted",
+            "OutputPolicyHeld",
+            "OutputPolicyRedacted",
+            "OutputPolicyViolationDetected",
+        ),
         ("ToolResultStarted", "ToolResultDelta", "ToolResultArtifactReady", "ToolResultCompleted"),
         (
             "ToolResultStarted",
@@ -747,6 +753,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "tool_call_lifecycle_states_emit_standard_events",
         "output_cutoff_discards_late_commit_for_same_response",
         "output_cutoff_marks_draft_incomplete",
+        "output_policy_events_track_evaluation_and_decisions",
         "tool_result_delta_is_draft_until_completed",
         "terminal_tool_result_events_preserve_partial_status",
         "failed_and_denied_tool_result_events_are_terminal",
@@ -870,7 +877,7 @@ def test_testing_package_cli_lists_tck_suite_manifests(monkeypatch, capsys) -> N
     payload = json.loads(capsys.readouterr().out)
     assert payload["suiteCount"] == 22
     assert payload["suites"][0]["suite_id"] == "application-events"
-    assert payload["suites"][0]["case_count"] == 6
+    assert payload["suites"][0]["case_count"] == 7
     assert payload["contentDigest"].startswith("sha256:")
     assert "main" in graphblocks_testing.__all__
 
