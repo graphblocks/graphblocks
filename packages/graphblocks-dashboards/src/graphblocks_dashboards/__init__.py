@@ -172,6 +172,42 @@ def default_generation_dashboard() -> DashboardTemplate:
     )
 
 
+def default_policy_tool_dashboard() -> DashboardTemplate:
+    return DashboardTemplate(
+        name="graphblocks-policy-tools",
+        title="GraphBlocks Policy and Tools",
+        variables=(
+            DashboardVariable("release_id", "label_values(release_id)"),
+        ),
+        panels=(
+            DashboardPanel(
+                "Output Policy Decisions",
+                'sum(rate(graphblocks_output_policy_decisions_total{release_id="$release_id"}[5m])) '
+                "by (enforcement_point, disposition)",
+                unit="decisions/sec",
+            ),
+            DashboardPanel(
+                "Output Policy Cutoffs",
+                'sum(rate(graphblocks_output_policy_cutoffs_total{release_id="$release_id"}[5m])) '
+                "by (terminal_reason, draft_disposition)",
+                unit="cutoffs/sec",
+            ),
+            DashboardPanel(
+                "Tool Executions",
+                'sum(rate(graphblocks_tool_executions_total{release_id="$release_id"}[5m])) '
+                "by (tool_name, status)",
+                unit="calls/sec",
+            ),
+            DashboardPanel(
+                "Tool Execution Duration",
+                'avg(graphblocks_tool_execution_duration_milliseconds{release_id="$release_id"}) '
+                "by (tool_name, status)",
+                unit="ms",
+            ),
+        ),
+    )
+
+
 __all__ = [
     "DashboardAssetError",
     "DashboardPanel",
@@ -180,4 +216,5 @@ __all__ = [
     "RunbookTemplate",
     "SloRule",
     "default_generation_dashboard",
+    "default_policy_tool_dashboard",
 ]

@@ -37,6 +37,45 @@ def test_dashboards_package_builds_default_generation_dashboard(monkeypatch) -> 
     assert dashboard.content_digest().startswith("sha256:")
 
 
+def test_dashboards_package_builds_policy_tool_dashboard(monkeypatch) -> None:
+    graphblocks_dashboards = _import_dashboards(monkeypatch)
+
+    dashboard = graphblocks_dashboards.default_policy_tool_dashboard()
+    contract = dashboard.dashboard_contract()
+
+    assert contract["name"] == "graphblocks-policy-tools"
+    assert contract["title"] == "GraphBlocks Policy and Tools"
+    assert contract["variables"] == [{"name": "release_id", "query": "label_values(release_id)"}]
+    assert contract["panels"] == [
+        {
+            "title": "Output Policy Decisions",
+            "query": 'sum(rate(graphblocks_output_policy_decisions_total{release_id="$release_id"}[5m])) '
+            "by (enforcement_point, disposition)",
+            "unit": "decisions/sec",
+        },
+        {
+            "title": "Output Policy Cutoffs",
+            "query": 'sum(rate(graphblocks_output_policy_cutoffs_total{release_id="$release_id"}[5m])) '
+            "by (terminal_reason, draft_disposition)",
+            "unit": "cutoffs/sec",
+        },
+        {
+            "title": "Tool Executions",
+            "query": 'sum(rate(graphblocks_tool_executions_total{release_id="$release_id"}[5m])) '
+            "by (tool_name, status)",
+            "unit": "calls/sec",
+        },
+        {
+            "title": "Tool Execution Duration",
+            "query": 'avg(graphblocks_tool_execution_duration_milliseconds{release_id="$release_id"}) '
+            "by (tool_name, status)",
+            "unit": "ms",
+        },
+    ]
+    assert dashboard.content_digest().startswith("sha256:")
+    assert "default_policy_tool_dashboard" in graphblocks_dashboards.__all__
+
+
 def test_dashboards_package_builds_slo_and_runbook_contracts(monkeypatch) -> None:
     graphblocks_dashboards = _import_dashboards(monkeypatch)
     slo = graphblocks_dashboards.SloRule(
