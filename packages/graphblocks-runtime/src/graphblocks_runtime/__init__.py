@@ -27,6 +27,7 @@ try:
         evaluate_retry_policy_json,
         evaluate_sequential_tool_queue_json,
         evaluate_task_group_json,
+        evaluate_timeout_deadline_json,
         evaluate_tool_approval_json,
         evaluate_tool_execution_plan_json,
         evaluate_tool_result_stream_json,
@@ -146,6 +147,9 @@ except ImportError as error:
         require_native_extension()
 
     def evaluate_provider_limit_policy_json(policy_json: str, incident_json: str) -> str:
+        require_native_extension()
+
+    def evaluate_timeout_deadline_json(policy_json: str, request_json: str) -> str:
         require_native_extension()
 
     def evaluate_cancellation_scope_json(root_json: str, operations_json: str) -> str:
@@ -433,6 +437,13 @@ def evaluate_provider_limit_policy(
     )
 
 
+def evaluate_timeout_deadline(policy: dict[str, object], request: dict[str, object]) -> dict[str, object]:
+    return _json_object_result(
+        evaluate_timeout_deadline_json(_canonical_json(policy), _canonical_json(request)),
+        "native timeout deadline evaluation result",
+    )
+
+
 def evaluate_cancellation_scope(root: dict[str, object], operations: object) -> dict[str, object]:
     return _json_object_result(
         evaluate_cancellation_scope_json(_canonical_json(root), _canonical_json(operations)),
@@ -654,6 +665,8 @@ __all__ = [
     "evaluate_sequential_tool_queue_json",
     "evaluate_task_group",
     "evaluate_task_group_json",
+    "evaluate_timeout_deadline",
+    "evaluate_timeout_deadline_json",
     "evaluate_tool_approval",
     "evaluate_tool_approval_json",
     "evaluate_tool_execution_plan",

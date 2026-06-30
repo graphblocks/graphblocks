@@ -51,6 +51,7 @@ use graphblocks_runtime_core::task_group::{
     TaskGroupFailurePolicy, TaskGroupPolicy, TaskGroupState,
 };
 use graphblocks_runtime_core::test_runtime::{InProcessTestRuntime, NodeExecutor, TestRunStatus};
+use graphblocks_runtime_core::timeout::{Deadline, TimeoutDecision, TimeoutPolicy};
 use graphblocks_runtime_core::tool::{
     BlockToolImplementation, GraphToolImplementation, McpToolImplementation,
     OpenApiToolImplementation, RemoteToolImplementation, ResolvedTool, ToolApproval, ToolBinding,
@@ -603,6 +604,65 @@ fn evaluate_provider_limit_policy_json(policy_json: &str, incident_json: &str) -
     serde_json::to_string(&payload).map_err(|error| {
         PyRuntimeError::new_err(format!(
             "failed to serialize provider limit decision: {error}"
+        ))
+    })
+}
+
+#[pyfunction]
+fn evaluate_timeout_deadline_json(policy_json: &str, request_json: &str) -> PyResult<String> {
+    let policy_value = parse_json_argument(policy_json, "timeout policy")?;
+    let request_value = parse_json_argument(request_json, "timeout request")?;
+    let policy_object = json_object(&policy_value, "timeout policy")?;
+    let request_object = json_object(&request_value, "timeout request")?;
+    let policy = TimeoutPolicy::new(required_alias_u64(
+        policy_object,
+        "durationMs",
+        "duration_ms",
+        "timeout policy",
+    )?)
+    .map_err(|error| PyValueError::new_err(format!("invalid timeout policy: {error:?}")))?;
+    let node_id = required_alias_string(request_object, "nodeId", "node_id", "timeout request")?;
+    let started_at_ms = required_alias_u64(
+        request_object,
+        "startedAtMs",
+        "started_at_ms",
+        "timeout request",
+    )?;
+    let now_ms = required_alias_u64(request_object, "nowMs", "now_ms", "timeout request")?;
+    let deadline = Deadline::new(node_id, started_at_ms, policy)
+        .map_err(|error| PyValueError::new_err(format!("invalid timeout deadline: {error:?}")))?;
+    let decision = deadline.check(now_ms);
+    let decision_json = match &decision {
+        TimeoutDecision::Pending { remaining_ms } => json!({
+            "status": "pending",
+            "remainingMs": remaining_ms,
+            "nodeId": deadline.node_id(),
+            "startedAtMs": deadline.started_at_ms(),
+            "deadlineMs": deadline.deadline_ms(),
+            "nowMs": now_ms,
+        }),
+        TimeoutDecision::Expired {
+            node_id,
+            deadline_ms,
+            now_ms,
+        } => json!({
+            "status": "expired",
+            "remainingMs": 0,
+            "nodeId": node_id,
+            "startedAtMs": deadline.started_at_ms(),
+            "deadlineMs": deadline_ms,
+            "nowMs": now_ms,
+        }),
+    };
+    let payload = json!({
+        "ok": true,
+        "decision": decision_json,
+        "cancelReason": serialize_cancel_reason(&decision.cancel_reason()),
+        "error": serialize_block_error(&decision.block_error()),
+    });
+    serde_json::to_string(&payload).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize timeout deadline evaluation: {error}"
         ))
     })
 }
@@ -7117,6 +7177,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
         evaluate_provider_limit_policy_json,
         module
     )?)?;
+    module.add_function(wrap_pyfunction!(evaluate_timeout_deadline_json, module)?)?;
     module.add_function(wrap_pyfunction!(evaluate_cancellation_scope_json, module)?)?;
     module.add_function(wrap_pyfunction!(evaluate_task_group_json, module)?)?;
     module.add_function(wrap_pyfunction!(evaluate_node_lifecycle_json, module)?)?;
@@ -7182,7 +7243,8 @@ mod tests {
         evaluate_declarative_output_policy_json, evaluate_durable_tool_terminal_store_json,
         evaluate_node_lifecycle_json, evaluate_output_gate_json,
         evaluate_provider_limit_policy_json, evaluate_retry_policy_json,
-        evaluate_sequential_tool_queue_json, evaluate_task_group_json, evaluate_tool_approval_json,
+        evaluate_sequential_tool_queue_json, evaluate_task_group_json,
+        evaluate_timeout_deadline_json, evaluate_tool_approval_json,
         evaluate_tool_execution_plan_json, evaluate_tool_result_stream_json,
         evaluate_usage_ledger_json, finalize_tool_call_json,
         negotiate_application_protocol_capabilities_json, parse_resolved_tool, parse_tool_call,
@@ -7958,6 +8020,56 @@ mod tests {
             Some("openai-compatible:gpt-economy")
         );
         assert_eq!(fallback.get("requiresPolicyRecheck"), Some(&json!(true)));
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_timeout_deadline_json_returns_expired_decision_with_canonical_error()
+    -> Result<(), String> {
+        let policy = json!({"durationMs": 250});
+        let request = json!({
+            "nodeId": "model",
+            "startedAtMs": 1_000,
+            "nowMs": 1_250
+        });
+        let result_json = evaluate_timeout_deadline_json(
+            &serde_json::to_string(&policy).map_err(|error| error.to_string())?,
+            &serde_json::to_string(&request).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            result.pointer("/decision/status").and_then(Value::as_str),
+            Some("expired")
+        );
+        assert_eq!(
+            result
+                .pointer("/decision/deadlineMs")
+                .and_then(Value::as_u64),
+            Some(1_250)
+        );
+        assert_eq!(
+            result.pointer("/cancelReason/code").and_then(Value::as_str),
+            Some("timeout")
+        );
+        assert_eq!(
+            result
+                .pointer("/cancelReason/message")
+                .and_then(Value::as_str),
+            Some("node model exceeded timeout deadline")
+        );
+        assert_eq!(
+            result.pointer("/error/code").and_then(Value::as_str),
+            Some("runtime.timeout")
+        );
+        assert_eq!(
+            result
+                .pointer("/error/details/now_ms")
+                .and_then(Value::as_u64),
+            Some(1_250)
+        );
         Ok(())
     }
 

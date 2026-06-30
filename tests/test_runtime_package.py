@@ -283,6 +283,16 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             }
         )
 
+    def evaluate_timeout_deadline_json(policy_json: str, request_json: str) -> str:
+        calls.append(("timeout_deadline", (policy_json, request_json)))
+        return json.dumps(
+            {
+                "ok": True,
+                "policy": json.loads(policy_json),
+                "request": json.loads(request_json),
+            }
+        )
+
     def evaluate_cancellation_scope_json(root_json: str, operations_json: str) -> str:
         calls.append(("cancellation_scope", (root_json, operations_json)))
         return json.dumps(
@@ -433,6 +443,7 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         evaluate_retry_policy_json=evaluate_retry_policy_json,
         evaluate_sequential_tool_queue_json=evaluate_sequential_tool_queue_json,
         evaluate_task_group_json=evaluate_task_group_json,
+        evaluate_timeout_deadline_json=evaluate_timeout_deadline_json,
         evaluate_tool_approval_json=evaluate_tool_approval_json,
         evaluate_tool_execution_plan_json=evaluate_tool_execution_plan_json,
         evaluate_tool_result_stream_json=evaluate_tool_result_stream_json,
@@ -553,6 +564,10 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             "kind": "provider_quota_exceeded",
             "compatibleFallbacks": ["openai-compatible:gpt-economy"],
         },
+    )
+    timeout_deadline = runtime.evaluate_timeout_deadline(
+        {"durationMs": 250},
+        {"nodeId": "model", "startedAtMs": 1_000, "nowMs": 1_250},
     )
     cancellation_scope = runtime.evaluate_cancellation_scope(
         {"tokenId": "run", "scope": "run", "guarantee": "cooperative"},
@@ -805,6 +820,11 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             "kind": "provider_quota_exceeded",
         },
     }
+    assert timeout_deadline == {
+        "ok": True,
+        "policy": {"durationMs": 250},
+        "request": {"nodeId": "model", "nowMs": 1_250, "startedAtMs": 1_000},
+    }
     assert cancellation_scope == {
         "ok": True,
         "root": {"guarantee": "cooperative", "scope": "run", "tokenId": "run"},
@@ -1055,6 +1075,13 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             ),
         ),
         (
+            "timeout_deadline",
+            (
+                '{"durationMs":250}',
+                '{"nodeId":"model","nowMs":1250,"startedAtMs":1000}',
+            ),
+        ),
+        (
             "cancellation_scope",
             (
                 '{"guarantee":"cooperative","scope":"run","tokenId":"run"}',
@@ -1206,6 +1233,8 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     assert "evaluate_retry_policy_json" in runtime.__all__
     assert "evaluate_provider_limit_policy" in runtime.__all__
     assert "evaluate_provider_limit_policy_json" in runtime.__all__
+    assert "evaluate_timeout_deadline" in runtime.__all__
+    assert "evaluate_timeout_deadline_json" in runtime.__all__
     assert "evaluate_cancellation_scope" in runtime.__all__
     assert "evaluate_cancellation_scope_json" in runtime.__all__
     assert "evaluate_task_group" in runtime.__all__
