@@ -710,6 +710,77 @@ def test_client_package_rejects_malformed_http_event_metadata(
 @pytest.mark.parametrize(
     ("payload_override", "message"),
     (
+        ({"events": {}}, "GraphBlocks HTTP response events must be a JSON array"),
+        (
+            {"events": [{"kind": None, "metadata": {}}]},
+            "GraphBlocks HTTP event kind must be a non-empty string",
+        ),
+        (
+            {"events": [{"kind": "RunStarted", "metadata": {}, "payload": []}]},
+            "GraphBlocks HTTP event payload must be a JSON object",
+        ),
+        (
+            {"events": [{"kind": "ToolCallStarted", "metadata": {}, "payload": {}, "toolCallId": True}]},
+            "GraphBlocks HTTP event tool_call_id must be a non-empty string",
+        ),
+    ),
+)
+def test_client_package_rejects_malformed_http_event_payloads(
+    monkeypatch,
+    payload_override: dict[str, object],
+    message: str,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+
+    valid_metadata = {
+        "eventId": "event-1",
+        "runId": "run-http-1",
+        "responseId": "response-http-1",
+        "turnId": None,
+        "sequence": 1,
+        "releaseId": "release-1",
+        "policySnapshotId": "policy-1",
+        "occurredAt": "2026-06-24T00:00:00Z",
+    }
+
+    class FakeResponse:
+        def read(self) -> bytes:
+            payload: dict[str, object] = {
+                "runId": "run-http-1",
+                "status": "succeeded",
+                "outputs": {},
+                "events": [
+                    {
+                        "kind": "RunStarted",
+                        "metadata": valid_metadata,
+                        "payload": {"status": "running"},
+                    }
+                ],
+            }
+            payload.update(payload_override)
+            for event_payload in payload.get("events", []) if isinstance(payload.get("events"), list) else []:
+                if isinstance(event_payload, dict):
+                    if "metadata" not in event_payload or event_payload["metadata"] == {}:
+                        event_payload["metadata"] = valid_metadata
+            return json.dumps(payload).encode("utf-8")
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        transport=lambda request, *, timeout: FakeResponse(),
+    )
+
+    with pytest.raises(ValueError, match=message):
+        client.run_graph(
+            graphblocks_client.RunGraphCommand(
+                graph={"kind": "Graph", "metadata": {"name": "remote-run"}},
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    ("payload_override", "message"),
+    (
         ({"runId": True}, "GraphBlocks HTTP response run_id must be a non-empty string"),
         ({"status": None}, "GraphBlocks HTTP response status must be a non-empty string"),
         ({"outputs": []}, "GraphBlocks HTTP response outputs must be a JSON object"),

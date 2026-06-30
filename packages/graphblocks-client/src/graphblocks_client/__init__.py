@@ -726,7 +726,7 @@ class HttpGraphBlocksClient:
         )
         response = (self.transport or urlopen)(request, timeout=self.timeout)
         payload = _read_json_response(response, "GraphBlocks run events response")
-        return _application_events_from_payloads(payload.get("events", ()) or ())
+        return _events_from_payload(payload, "GraphBlocks run events response")
 
     def run_stream(self, run_id: str) -> RunStreamSnapshot:
         headers = {
@@ -744,7 +744,7 @@ class HttpGraphBlocksClient:
         response = (self.transport or urlopen)(request, timeout=self.timeout)
         payload = _read_json_response(response, "GraphBlocks run stream response")
         stream_payload = _payload_object(payload, "GraphBlocks run stream response", "stream", "stream")
-        events = _application_events_from_payloads(payload.get("events", ()) or ())
+        events = _events_from_payload(payload, "GraphBlocks run stream response")
         stream_state = ApplicationEventStreamState()
         for event in events:
             stream_state.accept(event)
@@ -785,7 +785,7 @@ class HttpGraphBlocksClient:
         response = (self.transport or urlopen)(request, timeout=self.timeout)
         payload = _read_json_response(response, "GraphBlocks HTTP response")
 
-        events = _application_events_from_payloads(payload.get("events", ()) or ())
+        events = _events_from_payload(payload, "GraphBlocks HTTP response")
 
         stream_state = ApplicationEventStreamState()
         for event in events:
@@ -836,6 +836,15 @@ def _payload_object(payload: Mapping[str, object], label: str, field_name: str, 
     return dict(value)
 
 
+def _events_from_payload(payload: Mapping[str, object], label: str) -> tuple[ApplicationEvent, ...]:
+    if "events" not in payload:
+        return ()
+    event_payloads = payload["events"]
+    if not isinstance(event_payloads, list):
+        raise ValueError(f"{label} events must be a JSON array")
+    return _application_events_from_payloads(event_payloads)
+
+
 def _validate_resolved_tool_capability(
     admitted: AdmittedToolCall,
     resolved_tool: ResolvedTool,
@@ -857,10 +866,15 @@ def _validate_resolved_tool_capability(
 
 
 def _application_events_from_payloads(event_payloads: object) -> tuple[ApplicationEvent, ...]:
+    if not isinstance(event_payloads, list):
+        raise ValueError("GraphBlocks HTTP events must be a JSON array")
     events: list[ApplicationEvent] = []
     for event_payload in event_payloads:
         if not isinstance(event_payload, dict):
             raise ValueError("GraphBlocks HTTP event must be a JSON object")
+        kind = event_payload.get("kind")
+        if not isinstance(kind, str) or not kind.strip():
+            raise ValueError("GraphBlocks HTTP event kind must be a non-empty string")
         metadata_payload = event_payload.get("metadata")
         if not isinstance(metadata_payload, dict):
             raise ValueError("GraphBlocks HTTP event metadata must be a JSON object")
@@ -900,15 +914,19 @@ def _application_events_from_payloads(event_payloads: object) -> tuple[Applicati
             policy_snapshot_id=policy_snapshot_id,
             occurred_at=occurred_at,
         )
-        kind = str(event_payload.get("kind"))
-        event_body = dict(event_payload.get("payload", {}) or {})
+        event_body_payload = event_payload.get("payload", {})
+        if not isinstance(event_body_payload, Mapping):
+            raise ValueError("GraphBlocks HTTP event payload must be a JSON object")
+        event_body = dict(event_body_payload)
         tool_call_id = event_payload.get("toolCallId", event_payload.get("tool_call_id"))
         if tool_call_id is not None:
+            if not isinstance(tool_call_id, str) or not tool_call_id.strip():
+                raise ValueError("GraphBlocks HTTP event tool_call_id must be a non-empty string")
             events.append(
                 ApplicationEvent.tool(
                     kind,
                     metadata,
-                    tool_call_id=str(tool_call_id),
+                    tool_call_id=tool_call_id,
                     payload=event_body,
                 )
             )
