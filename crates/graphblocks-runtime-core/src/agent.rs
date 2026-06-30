@@ -25,6 +25,7 @@ pub struct AgentSpec {
     pub budget_policy_ref: Option<String>,
     pub completion_reserve_ref: Option<String>,
     pub completion_reserve_units: Option<i64>,
+    pub output_policy_profile_ref: Option<String>,
 }
 
 impl AgentSpec {
@@ -40,6 +41,7 @@ impl AgentSpec {
             budget_policy_ref: None,
             completion_reserve_ref: None,
             completion_reserve_units: None,
+            output_policy_profile_ref: None,
         }
     }
 
@@ -59,6 +61,14 @@ impl AgentSpec {
 
     pub fn with_completion_reserve_units(mut self, completion_reserve_units: i64) -> Self {
         self.completion_reserve_units = Some(completion_reserve_units);
+        self
+    }
+
+    pub fn with_output_policy_profile_ref(
+        mut self,
+        output_policy_profile_ref: impl Into<String>,
+    ) -> Self {
+        self.output_policy_profile_ref = Some(output_policy_profile_ref.into());
         self
     }
 }

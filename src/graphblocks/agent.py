@@ -24,6 +24,7 @@ class AgentSpec:
     budget_policy_ref: str | None = None
     completion_reserve_ref: str | None = None
     completion_reserve_units: int | None = None
+    output_policy_profile_ref: str | None = None
 
     def __post_init__(self) -> None:
         if self.tool_failure not in VALID_TOOL_FAILURE_POLICIES:
@@ -39,6 +40,9 @@ class AgentSpec:
 
     def with_completion_reserve_units(self, completion_reserve_units: int) -> AgentSpec:
         return replace(self, completion_reserve_units=completion_reserve_units)
+
+    def with_output_policy_profile_ref(self, output_policy_profile_ref: str) -> AgentSpec:
+        return replace(self, output_policy_profile_ref=output_policy_profile_ref)
 
 
 @dataclass(frozen=True, slots=True)

@@ -15,6 +15,7 @@ fn agent_spec_defaults_match_conversation_profile() {
     assert_eq!(spec.tool_failure, ToolFailurePolicy::ReturnToModel);
     assert!(spec.parallel_tool_calls);
     assert!(spec.tools.is_empty());
+    assert_eq!(spec.output_policy_profile_ref, None);
 }
 
 #[test]
@@ -81,6 +82,19 @@ fn agent_loop_forces_finalization_at_completion_reserve() {
             reason: "completion_reserve_reached".to_owned()
         }
     );
+}
+
+#[test]
+fn agent_spec_records_output_policy_profile_ref_for_agent_run() {
+    let spec = AgentSpec::new("support-models")
+        .with_tools(["knowledge.search"])
+        .with_output_policy_profile_ref("assistant-output-standard");
+
+    assert_eq!(
+        spec.output_policy_profile_ref.as_deref(),
+        Some("assistant-output-standard")
+    );
+    assert_eq!(spec.tools, vec!["knowledge.search"]);
 }
 
 #[test]

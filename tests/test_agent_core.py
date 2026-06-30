@@ -23,6 +23,7 @@ def test_agent_spec_defaults_match_rust_runtime_contract() -> None:
     assert spec.tool_failure == "return_to_model"
     assert spec.parallel_tool_calls is True
     assert spec.tools == ()
+    assert spec.output_policy_profile_ref is None
 
 
 def test_agent_state_patch_increments_revision_and_preserves_json_null() -> None:
@@ -97,3 +98,14 @@ def test_agent_loop_controller_respects_step_and_completion_reserve_boundaries()
     assert controller.decide_next_step(completed_steps=3, remaining_budget_units=101) == AgentLoopDecision.continue_(
         "admitted"
     )
+
+
+def test_agent_spec_records_output_policy_profile_ref_for_agent_run() -> None:
+    spec = (
+        AgentSpec("support-models")
+        .with_tools(("knowledge.search",))
+        .with_output_policy_profile_ref("assistant-output-standard")
+    )
+
+    assert spec.output_policy_profile_ref == "assistant-output-standard"
+    assert spec.tools == ("knowledge.search",)
