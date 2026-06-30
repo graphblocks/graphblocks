@@ -68,6 +68,26 @@ def test_application_event_metadata_rejects_empty_required_ids_and_negative_sequ
             policy_snapshot_id="policy-1",
             occurred_at="2026-06-23T00:00:00Z",
         )
+    with pytest.raises(ApplicationEventError, match="application event event_id must be a string"):
+        ApplicationEventMetadata(
+            event_id=object(),  # type: ignore[arg-type]
+            run_id="run-1",
+            response_id="response-1",
+            sequence=1,
+            release_id="release-1",
+            policy_snapshot_id="policy-1",
+            occurred_at="2026-06-23T00:00:00Z",
+        )
+    with pytest.raises(ApplicationEventError, match="application event sequence must be an integer"):
+        ApplicationEventMetadata(
+            event_id="event-1",
+            run_id="run-1",
+            response_id="response-1",
+            sequence=True,  # type: ignore[arg-type]
+            release_id="release-1",
+            policy_snapshot_id="policy-1",
+            occurred_at="2026-06-23T00:00:00Z",
+        )
     with pytest.raises(ApplicationEventError, match="application event sequence must be non-negative"):
         ApplicationEventMetadata(
             event_id="event-1",
@@ -244,6 +264,17 @@ def test_application_protocol_command_and_event_envelopes_match_client_contract(
 def test_application_protocol_metadata_rejects_empty_required_fields() -> None:
     with pytest.raises(
         ApplicationProtocolError,
+        match="application command id must be a string",
+    ):
+        ApplicationCommandMetadata(
+            command_id=object(),  # type: ignore[arg-type]
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            sequence=1,
+            issued_at_unix_ms=1_765_843_200_000,
+        )
+    with pytest.raises(
+        ApplicationProtocolError,
         match="application command protocol_version must not be empty",
     ):
         ApplicationCommandMetadata(
@@ -290,6 +321,28 @@ def test_application_protocol_metadata_rejects_empty_required_fields() -> None:
         )
     with pytest.raises(
         ApplicationProtocolError,
+        match="application command sequence must be an integer",
+    ):
+        ApplicationCommandMetadata(
+            command_id="command-1",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            sequence=True,  # type: ignore[arg-type]
+            issued_at_unix_ms=1_765_843_200_000,
+        )
+    with pytest.raises(
+        ApplicationProtocolError,
+        match="application command issued_at_unix_ms must be an integer",
+    ):
+        ApplicationCommandMetadata(
+            command_id="command-1",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            sequence=1,
+            issued_at_unix_ms=True,  # type: ignore[arg-type]
+        )
+    with pytest.raises(
+        ApplicationProtocolError,
         match="application event protocol_version must not be empty",
     ):
         ApplicationProtocolEventMetadata(
@@ -309,6 +362,28 @@ def test_application_protocol_metadata_rejects_empty_required_fields() -> None:
             run_id=" ",
             sequence=1,
             occurred_at_unix_ms=1_765_843_201_000,
+        )
+    with pytest.raises(
+        ApplicationProtocolError,
+        match="application event sequence must be an integer",
+    ):
+        ApplicationProtocolEventMetadata(
+            event_id="event-1",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            sequence=True,  # type: ignore[arg-type]
+            occurred_at_unix_ms=1_765_843_201_000,
+        )
+    with pytest.raises(
+        ApplicationProtocolError,
+        match="application event occurred_at_unix_ms must be an integer",
+    ):
+        ApplicationProtocolEventMetadata(
+            event_id="event-1",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            sequence=1,
+            occurred_at_unix_ms=True,  # type: ignore[arg-type]
         )
     with pytest.raises(
         ApplicationProtocolError,
@@ -334,6 +409,42 @@ def test_application_protocol_metadata_rejects_empty_required_fields() -> None:
             sequence=1,
             occurred_at_unix_ms=1_765_843_201_000,
         )
+
+
+def test_application_protocol_envelopes_reject_invalid_metadata_payloads_and_log_args() -> None:
+    command_metadata = ApplicationCommandMetadata(
+        command_id="command-1",
+        protocol_version="graphblocks.app.v1",
+        run_id="run-1",
+        sequence=1,
+        issued_at_unix_ms=1_765_843_200_000,
+    )
+    event_metadata = ApplicationProtocolEventMetadata(
+        event_id="event-1",
+        protocol_version="graphblocks.app.v1",
+        run_id="run-1",
+        sequence=1,
+        occurred_at_unix_ms=1_765_843_201_000,
+    )
+    event = ApplicationProtocolEvent.new("RunStarted", event_metadata, payload={})
+    log = ApplicationProtocolLog()
+
+    with pytest.raises(ApplicationProtocolError, match="application command metadata must be"):
+        ApplicationCommand("CancelRun", object(), payload={})  # type: ignore[arg-type]
+    with pytest.raises(ApplicationProtocolError, match="application command payload must be a mapping"):
+        ApplicationCommand.new("CancelRun", command_metadata, payload=object())  # type: ignore[arg-type]
+    with pytest.raises(ApplicationProtocolError, match="application protocol event metadata must be"):
+        ApplicationProtocolEvent("RunStarted", object(), payload={})  # type: ignore[arg-type]
+    with pytest.raises(ApplicationProtocolError, match="application protocol event payload must be a mapping"):
+        ApplicationProtocolEvent.new("RunStarted", event_metadata, payload=object())  # type: ignore[arg-type]
+    with pytest.raises(ApplicationProtocolError, match="application protocol log event must be"):
+        log.append(object())  # type: ignore[arg-type]
+    with pytest.raises(ApplicationProtocolError, match="application protocol replay cursor must be a string"):
+        log.replay_after(cursor=object())  # type: ignore[arg-type]
+    with pytest.raises(ApplicationProtocolError, match="application protocol replay limit must be an integer"):
+        log.replay_after(limit=True)  # type: ignore[arg-type]
+
+    assert log.append(event) is True
 
 
 def test_application_protocol_log_suppresses_duplicates_and_replays_after_cursor() -> None:
@@ -625,6 +736,24 @@ def test_application_event_payloads_are_copied_and_read_only() -> None:
     assert event.payload == {"status": "running"}
     with pytest.raises(TypeError):
         event.payload["status"] = "mutated"
+    with pytest.raises(ApplicationEventError, match="application event metadata must be"):
+        ApplicationEvent.new("RunStarted", object(), payload={})  # type: ignore[arg-type]
+    with pytest.raises(ApplicationEventError, match="application event payload must be a mapping"):
+        ApplicationEvent.new("RunStarted", _metadata(), payload=object())  # type: ignore[arg-type]
+    with pytest.raises(ApplicationEventError, match="tool_call_id must be a string"):
+        ApplicationEvent.tool(
+            "ToolCallStarted",
+            _metadata(),
+            tool_call_id=object(),  # type: ignore[arg-type]
+            payload={"status": "running"},
+        )
+    with pytest.raises(ApplicationEventError, match="application event payload must be a mapping"):
+        ApplicationEvent.tool(
+            "ToolCallStarted",
+            _metadata(),
+            tool_call_id="tool-call-1",
+            payload=object(),  # type: ignore[arg-type]
+        )
 
 
 def test_tool_events_cannot_be_created_without_tool_call_id() -> None:

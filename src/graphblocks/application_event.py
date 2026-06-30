@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import Literal, Mapping
+from typing import Literal
 
 from .output_policy import GenerationChunk, OutputCutoff, OutputPolicyDecision
 from .policy import PolicyDecision
@@ -245,6 +246,29 @@ class ApplicationProtocolError(RuntimeError):
     pass
 
 
+def _validate_non_empty_string(error_type: type[RuntimeError], label: str, value: object) -> None:
+    if not isinstance(value, str):
+        raise error_type(f"{label} must be a string")
+    if not value.strip():
+        raise error_type(f"{label} must not be empty")
+
+
+def _validate_optional_non_empty_string(
+    error_type: type[RuntimeError],
+    label: str,
+    value: object,
+) -> None:
+    if value is not None:
+        _validate_non_empty_string(error_type, label, value)
+
+
+def _validate_non_negative_integer(error_type: type[RuntimeError], label: str, value: object) -> None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise error_type(f"{label} must be an integer")
+    if value < 0:
+        raise error_type(f"{label} must be non-negative")
+
+
 @dataclass(frozen=True, slots=True)
 class ApplicationCommandMetadata:
     command_id: str
@@ -257,19 +281,28 @@ class ApplicationCommandMetadata:
 
     def __post_init__(self) -> None:
         for field_name in ("command_id", "protocol_version", "run_id"):
-            if not getattr(self, field_name).strip():
-                label = "id" if field_name == "command_id" else field_name
-                raise ApplicationProtocolError(
-                    f"application command {label} must not be empty"
-                )
+            label = "id" if field_name == "command_id" else field_name
+            _validate_non_empty_string(
+                ApplicationProtocolError,
+                f"application command {label}",
+                getattr(self, field_name),
+            )
         for field_name in ("turn_id", "idempotency_key"):
-            value = getattr(self, field_name)
-            if value is not None and not value.strip():
-                raise ApplicationProtocolError(f"application command {field_name} must not be empty")
-        if self.sequence < 0:
-            raise ApplicationProtocolError("application command sequence must be non-negative")
-        if self.issued_at_unix_ms < 0:
-            raise ApplicationProtocolError("application command issued_at_unix_ms must be non-negative")
+            _validate_optional_non_empty_string(
+                ApplicationProtocolError,
+                f"application command {field_name}",
+                getattr(self, field_name),
+            )
+        _validate_non_negative_integer(
+            ApplicationProtocolError,
+            "application command sequence",
+            self.sequence,
+        )
+        _validate_non_negative_integer(
+            ApplicationProtocolError,
+            "application command issued_at_unix_ms",
+            self.issued_at_unix_ms,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -279,8 +312,12 @@ class ApplicationCommand:
     payload: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.metadata, ApplicationCommandMetadata):
+            raise ApplicationProtocolError("application command metadata must be ApplicationCommandMetadata")
         if self.kind not in APPLICATION_COMMAND_KINDS:
             raise ApplicationProtocolError(f"unknown application command kind {self.kind}")
+        if not isinstance(self.payload, Mapping):
+            raise ApplicationProtocolError("application command payload must be a mapping")
         object.__setattr__(self, "payload", MappingProxyType(dict(self.payload)))
 
     @classmethod
@@ -291,7 +328,7 @@ class ApplicationCommand:
         *,
         payload: Mapping[str, object] | None = None,
     ) -> ApplicationCommand:
-        return cls(kind=kind, metadata=metadata, payload=dict(payload or {}))
+        return cls(kind=kind, metadata=metadata, payload={} if payload is None else payload)
 
 
 @dataclass(frozen=True, slots=True)
@@ -306,19 +343,28 @@ class ApplicationProtocolEventMetadata:
 
     def __post_init__(self) -> None:
         for field_name in ("event_id", "protocol_version", "run_id"):
-            if not getattr(self, field_name).strip():
-                label = "id" if field_name == "event_id" else field_name
-                raise ApplicationProtocolError(
-                    f"application event {label} must not be empty"
-                )
+            label = "id" if field_name == "event_id" else field_name
+            _validate_non_empty_string(
+                ApplicationProtocolError,
+                f"application event {label}",
+                getattr(self, field_name),
+            )
         for field_name in ("turn_id", "cursor"):
-            value = getattr(self, field_name)
-            if value is not None and not value.strip():
-                raise ApplicationProtocolError(f"application event {field_name} must not be empty")
-        if self.sequence < 0:
-            raise ApplicationProtocolError("application event sequence must be non-negative")
-        if self.occurred_at_unix_ms < 0:
-            raise ApplicationProtocolError("application event occurred_at_unix_ms must be non-negative")
+            _validate_optional_non_empty_string(
+                ApplicationProtocolError,
+                f"application event {field_name}",
+                getattr(self, field_name),
+            )
+        _validate_non_negative_integer(
+            ApplicationProtocolError,
+            "application event sequence",
+            self.sequence,
+        )
+        _validate_non_negative_integer(
+            ApplicationProtocolError,
+            "application event occurred_at_unix_ms",
+            self.occurred_at_unix_ms,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -328,8 +374,14 @@ class ApplicationProtocolEvent:
     payload: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.metadata, ApplicationProtocolEventMetadata):
+            raise ApplicationProtocolError(
+                "application protocol event metadata must be ApplicationProtocolEventMetadata"
+            )
         if self.kind not in APPLICATION_PROTOCOL_EVENT_KINDS:
             raise ApplicationProtocolError(f"unknown application protocol event kind {self.kind}")
+        if not isinstance(self.payload, Mapping):
+            raise ApplicationProtocolError("application protocol event payload must be a mapping")
         object.__setattr__(self, "payload", MappingProxyType(dict(self.payload)))
 
     @classmethod
@@ -340,7 +392,7 @@ class ApplicationProtocolEvent:
         *,
         payload: Mapping[str, object] | None = None,
     ) -> ApplicationProtocolEvent:
-        return cls(kind=kind, metadata=metadata, payload=dict(payload or {}))
+        return cls(kind=kind, metadata=metadata, payload={} if payload is None else payload)
 
     @classmethod
     def tool_result_stream(
@@ -397,6 +449,8 @@ class ApplicationProtocolLog:
             self.append(event)
 
     def append(self, event: ApplicationProtocolEvent) -> bool:
+        if not isinstance(event, ApplicationProtocolEvent):
+            raise ApplicationProtocolError("application protocol log event must be ApplicationProtocolEvent")
         if event.metadata.event_id in self._event_ids:
             return False
         if self._last_sequence is not None and event.metadata.sequence <= self._last_sequence:
@@ -414,6 +468,10 @@ class ApplicationProtocolLog:
         cursor: str | None = None,
         limit: int = 100,
     ) -> tuple[ApplicationProtocolEvent, ...]:
+        if cursor is not None and not isinstance(cursor, str):
+            raise ApplicationProtocolError("application protocol replay cursor must be a string")
+        if isinstance(limit, bool) or not isinstance(limit, int):
+            raise ApplicationProtocolError("application protocol replay limit must be an integer")
         if limit < 0:
             raise ApplicationProtocolError("application protocol replay limit must be non-negative")
         start_index = 0
@@ -489,12 +547,21 @@ class ApplicationEventMetadata:
             ("release_id", self.release_id),
             ("policy_snapshot_id", self.policy_snapshot_id),
         ):
-            if not value.strip():
-                raise ApplicationEventError(f"application event {field_name} must not be empty")
-        if self.turn_id is not None and not self.turn_id.strip():
-            raise ApplicationEventError("application event turn_id must not be empty")
-        if self.sequence < 0:
-            raise ApplicationEventError("application event sequence must be non-negative")
+            _validate_non_empty_string(
+                ApplicationEventError,
+                f"application event {field_name}",
+                value,
+            )
+        _validate_optional_non_empty_string(
+            ApplicationEventError,
+            "application event turn_id",
+            self.turn_id,
+        )
+        _validate_non_negative_integer(
+            ApplicationEventError,
+            "application event sequence",
+            self.sequence,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -505,6 +572,16 @@ class ApplicationEvent:
     tool_call_id: str | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.metadata, ApplicationEventMetadata):
+            raise ApplicationEventError("application event metadata must be ApplicationEventMetadata")
+        if self.kind not in STANDARD_APPLICATION_EVENT_KINDS:
+            raise ApplicationEventError(f"unknown application event kind {self.kind}")
+        if self.kind in TOOL_APPLICATION_EVENT_KINDS:
+            _validate_non_empty_string(ApplicationEventError, "tool_call_id", self.tool_call_id)
+        elif self.tool_call_id is not None:
+            _validate_non_empty_string(ApplicationEventError, "tool_call_id", self.tool_call_id)
+        if not isinstance(self.payload, Mapping):
+            raise ApplicationEventError("application event payload must be a mapping")
         object.__setattr__(self, "payload", MappingProxyType(dict(self.payload)))
 
     @classmethod
@@ -880,7 +957,12 @@ class ApplicationEvent:
             raise ApplicationEventError(f"unknown application event kind {kind}")
         if kind in TOOL_APPLICATION_EVENT_KINDS:
             raise ApplicationEventError(f"tool event {kind} requires tool_call_id")
-        return cls(kind=kind, metadata=metadata, payload=dict(payload or {}), tool_call_id=None)
+        return cls(
+            kind=kind,
+            metadata=metadata,
+            payload={} if payload is None else payload,
+            tool_call_id=None,
+        )
 
     @classmethod
     def tool(
@@ -895,9 +977,13 @@ class ApplicationEvent:
             raise ApplicationEventError(f"unknown application event kind {kind}")
         if kind not in TOOL_APPLICATION_EVENT_KINDS:
             raise ApplicationEventError(f"event {kind} is not a tool event")
-        if not tool_call_id.strip():
-            raise ApplicationEventError("tool_call_id must not be empty")
-        return cls(kind=kind, metadata=metadata, payload=dict(payload or {}), tool_call_id=tool_call_id)
+        _validate_non_empty_string(ApplicationEventError, "tool_call_id", tool_call_id)
+        return cls(
+            kind=kind,
+            metadata=metadata,
+            payload={} if payload is None else payload,
+            tool_call_id=tool_call_id,
+        )
 
 
 @dataclass(slots=True)
