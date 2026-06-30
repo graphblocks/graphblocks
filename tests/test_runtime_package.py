@@ -166,8 +166,15 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         client_json: str,
     ) -> str:
         calls.append(("application_protocol_capabilities", (server_json, client_json)))
+        server = json.loads(server_json)
+        protocol_version = server.get("protocolVersion", server.get("protocol_version", ""))
+        if isinstance(protocol_version, str) and not protocol_version.strip():
+            raise ValueError(
+                "application protocol capability negotiation failed: "
+                "application protocol metadata field protocol_version must not be empty"
+            )
         return json.dumps(
-            {"ok": True, "server": json.loads(server_json), "client": json.loads(client_json)}
+            {"ok": True, "server": server, "client": json.loads(client_json)}
         )
 
     def prepare_tool_result_for_model_json(
@@ -1050,6 +1057,15 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             "protocolVersion": "graphblocks.app.v1",
         },
     }
+    with pytest.raises(ValueError, match="protocol_version must not be empty"):
+        runtime.negotiate_application_protocol_capabilities(
+            {"protocolVersion": " ", "commands": ["InvokeGraph"], "events": ["RunStarted"]},
+            {
+                "protocolVersion": "graphblocks.app.v1",
+                "commands": ["InvokeGraph"],
+                "events": ["RunStarted"],
+            },
+        )
     assert durable_terminal == {"operations": [{"op": "tool_terminal_count"}]}
     assert tool_execution == {
         "plan": {"maximumParallelism": 2, "planId": "plan-1"},
@@ -1389,6 +1405,16 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         (
             "remote_payload",
             ('{"kind":"inline_json","value":{"ok":true}}', 128),
+        ),
+        (
+            "application_protocol_capabilities",
+            (
+                '{"commands":["InvokeGraph"],"events":["RunStarted"],"protocolVersion":" "}',
+                (
+                    '{"commands":["InvokeGraph"],"events":["RunStarted"],'
+                    '"protocolVersion":"graphblocks.app.v1"}'
+                ),
+            ),
         ),
     ]
     assert "admit_exhaustion_work" in runtime.__all__

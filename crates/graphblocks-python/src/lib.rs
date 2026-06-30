@@ -11606,6 +11606,36 @@ mod tests {
     }
 
     #[test]
+    fn negotiate_application_protocol_capabilities_json_rejects_blank_protocol_version()
+    -> Result<(), String> {
+        pyo3::Python::initialize();
+        let server = json!({
+            "protocolVersion": " ",
+            "commands": ["InvokeGraph"],
+            "events": ["RunStarted"]
+        });
+        let client = json!({
+            "protocolVersion": "graphblocks.app.v1",
+            "commands": ["InvokeGraph"],
+            "events": ["RunStarted"]
+        });
+
+        let result = negotiate_application_protocol_capabilities_json(
+            &serde_json::to_string(&server).map_err(|error| error.to_string())?,
+            &serde_json::to_string(&client).map_err(|error| error.to_string())?,
+        );
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .err()
+                .map(|error| error.to_string().contains("protocol_version"))
+                .unwrap_or(false)
+        );
+        Ok(())
+    }
+
+    #[test]
     fn evaluate_output_gate_json_delivers_accepted_chunks_and_records_cutoff() -> Result<(), String>
     {
         let gate = json!({
