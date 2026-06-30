@@ -8,8 +8,6 @@ rust-version.workspace = true
 
 [dependencies]
 graphblocks-protocol = { path = "../graphblocks-protocol" }
-
-[dev-dependencies]
 serde_json = "1.0"
 
 [lints]

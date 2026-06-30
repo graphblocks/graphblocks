@@ -6,6 +6,7 @@ use graphblocks_protocol::{
     WorkerProtocolMessageKind, WorkerProtocolMessagePayload, WorkerState,
     evaluate_worker_admission,
 };
+use serde_json::Value;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DaemonConfig {
@@ -184,6 +185,16 @@ impl WorkerRegistry {
         Ok(response)
     }
 
+    pub fn admit_worker_message_wire_value(
+        &mut self,
+        message: &Value,
+        response_message_id: impl Into<String>,
+        response_sequence: u64,
+    ) -> Result<WorkerProtocolMessage, WorkerRegistryError> {
+        let message = parse_worker_advertisement_message_wire_value(message)?;
+        self.admit_worker_message(message, response_message_id, response_sequence)
+    }
+
     pub fn ready_worker_ids(&self) -> Vec<String> {
         self.worker_ids_by_state(WorkerState::Ready)
     }
@@ -269,4 +280,153 @@ pub enum WorkerRegistryError {
     UnexpectedWorkerMessageKind {
         kind: WorkerProtocolMessageKind,
     },
+    InvalidWireMessage {
+        field: &'static str,
+        expected: &'static str,
+    },
+    WirePayloadDecode {
+        kind: WorkerProtocolMessageKind,
+        source: String,
+    },
+}
+
+fn parse_worker_advertisement_message_wire_value(
+    value: &Value,
+) -> Result<WorkerProtocolMessage, WorkerRegistryError> {
+    let Some(object) = value.as_object() else {
+        return Err(WorkerRegistryError::InvalidWireMessage {
+            field: "$",
+            expected: "object",
+        });
+    };
+    let protocol_version = optional_wire_u16(
+        object,
+        "protocolVersion",
+        "protocol_version",
+        WORKER_PROTOCOL_VERSION,
+        "$.protocolVersion",
+    )?;
+    let message_id = required_wire_string(object, "messageId", "message_id", "$.messageId")?;
+    let kind_value =
+        wire_alias(object, "kind", "kind").ok_or(WorkerRegistryError::InvalidWireMessage {
+            field: "$.kind",
+            expected: "worker protocol message kind",
+        })?;
+    let kind =
+        serde_json::from_value::<WorkerProtocolMessageKind>(kind_value.clone()).map_err(|_| {
+            WorkerRegistryError::InvalidWireMessage {
+                field: "$.kind",
+                expected: "worker protocol message kind",
+            }
+        })?;
+    if kind != WorkerProtocolMessageKind::Advertisement {
+        return Err(WorkerRegistryError::UnexpectedWorkerMessageKind { kind });
+    }
+    let sequence = required_wire_u64(object, "sequence", "sequence", "$.sequence")?;
+    let correlation_id =
+        optional_wire_string(object, "correlationId", "correlation_id", "$.correlationId")?;
+    let causation_id =
+        optional_wire_string(object, "causationId", "causation_id", "$.causationId")?;
+    let payload = wire_alias(object, "payload", "payload").ok_or(
+        WorkerRegistryError::InvalidWireMessage {
+            field: "$.payload",
+            expected: "advertisement payload",
+        },
+    )?;
+    let advertisement =
+        serde_json::from_value::<WorkerAdvertisement>(payload.clone()).map_err(|source| {
+            WorkerRegistryError::WirePayloadDecode {
+                kind,
+                source: source.to_string(),
+            }
+        })?;
+
+    Ok(WorkerProtocolMessage {
+        protocol_version,
+        message_id: message_id.to_owned(),
+        kind,
+        sequence,
+        correlation_id: correlation_id.map(str::to_owned),
+        causation_id: causation_id.map(str::to_owned),
+        payload: WorkerProtocolMessagePayload::Advertisement(advertisement),
+    })
+}
+
+fn wire_alias<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    primary: &str,
+    alternate: &str,
+) -> Option<&'a Value> {
+    object.get(primary).or_else(|| object.get(alternate))
+}
+
+fn required_wire_string<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    primary: &'static str,
+    alternate: &'static str,
+    field: &'static str,
+) -> Result<&'a str, WorkerRegistryError> {
+    wire_alias(object, primary, alternate)
+        .and_then(Value::as_str)
+        .ok_or(WorkerRegistryError::InvalidWireMessage {
+            field,
+            expected: "string",
+        })
+}
+
+fn optional_wire_string<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    primary: &'static str,
+    alternate: &'static str,
+    field: &'static str,
+) -> Result<Option<&'a str>, WorkerRegistryError> {
+    let Some(value) = wire_alias(object, primary, alternate) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    value
+        .as_str()
+        .map(Some)
+        .ok_or(WorkerRegistryError::InvalidWireMessage {
+            field,
+            expected: "string or null",
+        })
+}
+
+fn required_wire_u64(
+    object: &serde_json::Map<String, Value>,
+    primary: &'static str,
+    alternate: &'static str,
+    field: &'static str,
+) -> Result<u64, WorkerRegistryError> {
+    wire_alias(object, primary, alternate)
+        .and_then(Value::as_u64)
+        .ok_or(WorkerRegistryError::InvalidWireMessage {
+            field,
+            expected: "unsigned integer",
+        })
+}
+
+fn optional_wire_u16(
+    object: &serde_json::Map<String, Value>,
+    primary: &'static str,
+    alternate: &'static str,
+    default_value: u16,
+    field: &'static str,
+) -> Result<u16, WorkerRegistryError> {
+    let Some(value) = wire_alias(object, primary, alternate) else {
+        return Ok(default_value);
+    };
+    let Some(value) = value.as_u64() else {
+        return Err(WorkerRegistryError::InvalidWireMessage {
+            field,
+            expected: "unsigned integer",
+        });
+    };
+    u16::try_from(value).map_err(|_| WorkerRegistryError::InvalidWireMessage {
+        field,
+        expected: "u16",
+    })
 }

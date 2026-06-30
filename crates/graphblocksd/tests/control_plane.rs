@@ -1,3 +1,6 @@
+use std::io::Write;
+use std::process::{Command, Stdio};
+
 use graphblocks_protocol::{
     BlockCapability, WORKER_PROTOCOL_VERSION, WorkerAdvertisement, WorkerDrainDisposition,
     WorkerDrainPlan, WorkerDrainPolicy, WorkerDrainTask, WorkerDrainWorkloadKind,
@@ -133,6 +136,49 @@ fn worker_registry_returns_denial_message_for_incompatible_worker_advertisement_
 }
 
 #[test]
+fn wire_admission_denies_incompatible_worker_protocol() -> Result<(), WorkerRegistryError> {
+    let mut registry = WorkerRegistry::new(DaemonConfig::new("daemon-1", "127.0.0.1:8080"))
+        .expect("daemon config should be valid");
+    let message = json!({
+        "protocolVersion": WORKER_PROTOCOL_VERSION,
+        "messageId": "message-worker-1",
+        "kind": "advertisement",
+        "sequence": 1,
+        "correlationId": "worker-1",
+        "payload": {
+            "protocolVersion": WORKER_PROTOCOL_VERSION + 1,
+            "workerId": "worker-1",
+            "targetId": "doc-cpu",
+            "packageLockHash": "sha256:package-lock",
+            "imageDigest": "sha256:image",
+            "supportedBlocks": [{"block": "document.parse@1"}],
+            "state": "ready",
+        },
+    });
+
+    let response = registry.admit_worker_message_wire_value(&message, "message-daemon-1", 2)?;
+    let status = registry.status();
+
+    assert_eq!(response.kind, WorkerProtocolMessageKind::AdmissionDecision);
+    assert_eq!(response.correlation_id.as_deref(), Some("worker-1"));
+    assert_eq!(response.causation_id.as_deref(), Some("message-worker-1"));
+    assert!(matches!(
+        response.payload,
+        WorkerProtocolMessagePayload::AdmissionDecision(_)
+    ));
+    if let WorkerProtocolMessagePayload::AdmissionDecision(decision) = response.payload {
+        assert!(!decision.admitted);
+        assert_eq!(
+            decision.reason_codes,
+            vec!["worker.incompatible_protocol_version"]
+        );
+    }
+    assert_eq!(status.admitted_workers, 0);
+    assert_eq!(status.rejected_workers, 1);
+    Ok(())
+}
+
+#[test]
 fn worker_registry_rejects_non_advertisement_worker_messages() {
     let mut registry = WorkerRegistry::new(DaemonConfig::new("daemon-1", "127.0.0.1:8080"))
         .expect("daemon config should be valid");
@@ -174,6 +220,80 @@ fn worker_registry_rejects_worker_message_kind_payload_mismatch() {
             payload_kind: WorkerProtocolMessageKind::Error,
         }),
     );
+}
+
+#[test]
+fn graphblocksd_admits_worker_message_from_stdin() -> Result<(), Box<dyn std::error::Error>> {
+    let message = json!({
+        "protocolVersion": WORKER_PROTOCOL_VERSION,
+        "messageId": "message-worker-1",
+        "kind": "advertisement",
+        "sequence": 1,
+        "correlationId": "worker-1",
+        "payload": {
+            "protocolVersion": WORKER_PROTOCOL_VERSION + 1,
+            "workerId": "worker-1",
+            "targetId": "doc-cpu",
+            "packageLockHash": "sha256:package-lock",
+            "imageDigest": "sha256:image",
+            "supportedBlocks": [{"block": "document.parse@1"}],
+            "state": "ready",
+        },
+    });
+    let mut child = Command::new(env!("CARGO_BIN_EXE_graphblocksd"))
+        .args([
+            "admit-worker-message",
+            "--daemon-id",
+            "daemon-test",
+            "--bind-address",
+            "127.0.0.1:8080",
+            "--response-message-id",
+            "message-daemon-1",
+            "--response-sequence",
+            "2",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()?;
+    let stdin = child
+        .stdin
+        .as_mut()
+        .ok_or("graphblocksd stdin pipe was not available")?;
+    stdin.write_all(serde_json::to_string(&message)?.as_bytes())?;
+
+    let output = child.wait_with_output()?;
+    assert!(output.status.success());
+    let payload = serde_json::from_slice::<serde_json::Value>(&output.stdout)?;
+
+    assert_eq!(
+        payload.pointer("/ok").and_then(|value| value.as_bool()),
+        Some(true)
+    );
+    assert_eq!(
+        payload
+            .pointer("/response/kind")
+            .and_then(|value| value.as_str()),
+        Some("admission_decision"),
+    );
+    assert_eq!(
+        payload
+            .pointer("/response/payload/admitted")
+            .and_then(|value| value.as_bool()),
+        Some(false),
+    );
+    assert_eq!(
+        payload
+            .pointer("/response/payload/reasonCodes/0")
+            .and_then(|value| value.as_str()),
+        Some("worker.incompatible_protocol_version"),
+    );
+    assert_eq!(
+        payload
+            .pointer("/status/rejectedWorkers")
+            .and_then(|value| value.as_u64()),
+        Some(1),
+    );
+    Ok(())
 }
 
 #[test]
