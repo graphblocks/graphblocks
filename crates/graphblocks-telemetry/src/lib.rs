@@ -850,6 +850,257 @@ impl MetricCardinalityLinter {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TelemetryDiagnostic {
+    pub code: String,
+    pub severity: String,
+    pub path: String,
+    pub message: String,
+}
+
+impl TelemetryDiagnostic {
+    pub fn error(
+        code: impl Into<String>,
+        path: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            code: code.into(),
+            severity: "error".to_owned(),
+            path: path.into(),
+            message: message.into(),
+        }
+    }
+
+    pub fn warning(
+        code: impl Into<String>,
+        path: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            code: code.into(),
+            severity: "warning".to_owned(),
+            path: path.into(),
+            message: message.into(),
+        }
+    }
+
+    pub fn diagnostic_contract(&self) -> Value {
+        json!({
+            "code": self.code,
+            "severity": self.severity,
+            "path": self.path,
+            "message": self.message,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TelemetryDiagnosticBundleSection {
+    pub name: String,
+    pub diagnostics: Vec<TelemetryDiagnostic>,
+}
+
+impl TelemetryDiagnosticBundleSection {
+    pub fn new(
+        name: impl Into<String>,
+        diagnostics: impl IntoIterator<Item = TelemetryDiagnostic>,
+    ) -> Self {
+        let mut diagnostics = diagnostics.into_iter().collect::<Vec<_>>();
+        diagnostics.sort_by(|left, right| {
+            (
+                left.severity.as_str(),
+                left.code.as_str(),
+                left.path.as_str(),
+                left.message.as_str(),
+            )
+                .cmp(&(
+                    right.severity.as_str(),
+                    right.code.as_str(),
+                    right.path.as_str(),
+                    right.message.as_str(),
+                ))
+        });
+        Self {
+            name: name.into(),
+            diagnostics,
+        }
+    }
+
+    pub fn ok(&self) -> bool {
+        !self
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.severity == "error")
+    }
+
+    pub fn summary(&self) -> BTreeMap<String, u64> {
+        diagnostic_summary(&self.diagnostics)
+    }
+
+    pub fn section_contract(&self) -> Value {
+        json!({
+            "name": self.name,
+            "ok": self.ok(),
+            "summary": self.summary(),
+            "diagnostics": self.diagnostics.iter().map(TelemetryDiagnostic::diagnostic_contract).collect::<Vec<_>>(),
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TelemetryDiagnosticBundle {
+    pub bundle_id: String,
+    pub sections: Vec<TelemetryDiagnosticBundleSection>,
+}
+
+impl TelemetryDiagnosticBundle {
+    pub fn new(
+        bundle_id: impl Into<String>,
+        sections: impl IntoIterator<Item = TelemetryDiagnosticBundleSection>,
+    ) -> Self {
+        let mut sections = sections.into_iter().collect::<Vec<_>>();
+        sections.sort_by(|left, right| left.name.cmp(&right.name));
+        Self {
+            bundle_id: bundle_id.into(),
+            sections,
+        }
+    }
+
+    pub fn ok(&self) -> bool {
+        self.sections
+            .iter()
+            .all(TelemetryDiagnosticBundleSection::ok)
+    }
+
+    pub fn summary(&self) -> BTreeMap<String, u64> {
+        let mut summary = empty_diagnostic_summary();
+        for section in &self.sections {
+            for (severity, count) in section.summary() {
+                *summary.entry(severity).or_default() += count;
+            }
+        }
+        summary
+    }
+
+    pub fn bundle_contract(&self) -> Value {
+        json!({
+            "bundle_id": self.bundle_id,
+            "ok": self.ok(),
+            "summary": self.summary(),
+            "sections": self.sections.iter().map(TelemetryDiagnosticBundleSection::section_contract).collect::<Vec<_>>(),
+        })
+    }
+}
+
+pub fn telemetry_diagnostic_bundle<'a>(
+    bundle_id: impl Into<String>,
+    capture_policy_result: Option<&TelemetryCapturePolicyLintResult>,
+    metric_cardinality_result: Option<&MetricCardinalityLintResult>,
+    export_results: impl IntoIterator<Item = &'a TelemetryExportResult>,
+) -> TelemetryDiagnosticBundle {
+    let mut sections = Vec::new();
+    if let Some(result) = capture_policy_result {
+        sections.push(TelemetryDiagnosticBundleSection::new(
+            "capture_policy",
+            capture_policy_diagnostics(result),
+        ));
+    }
+    if let Some(result) = metric_cardinality_result {
+        sections.push(TelemetryDiagnosticBundleSection::new(
+            "metric_cardinality",
+            metric_cardinality_diagnostics(result),
+        ));
+    }
+    let export_diagnostics = export_result_diagnostics(export_results);
+    if !export_diagnostics.is_empty() {
+        sections.push(TelemetryDiagnosticBundleSection::new(
+            "exporters",
+            export_diagnostics,
+        ));
+    }
+    TelemetryDiagnosticBundle::new(bundle_id, sections)
+}
+
+fn capture_policy_diagnostics(
+    result: &TelemetryCapturePolicyLintResult,
+) -> Vec<TelemetryDiagnostic> {
+    result
+        .issues
+        .iter()
+        .map(|issue| {
+            TelemetryDiagnostic::error(
+                format!("TelemetryCapturePolicy.{}", issue.reason),
+                format!("$.capturePolicy.attributes.{}", issue.attribute_key),
+                format!(
+                    "Telemetry attribute '{}' failed capture-policy lint; required action: {}",
+                    issue.attribute_key, issue.required_action
+                ),
+            )
+        })
+        .collect()
+}
+
+fn metric_cardinality_diagnostics(
+    result: &MetricCardinalityLintResult,
+) -> Vec<TelemetryDiagnostic> {
+    result
+        .issues
+        .iter()
+        .map(|issue| {
+            TelemetryDiagnostic::warning(
+                format!("TelemetryMetricCardinality.{}", issue.reason),
+                format!("$.metrics.{}.labels.{}", issue.metric_name, issue.label),
+                format!(
+                    "Telemetry metric '{}' label '{}' observed {} distinct value(s); limit: {}",
+                    issue.metric_name, issue.label, issue.distinct_values, issue.limit
+                ),
+            )
+        })
+        .collect()
+}
+
+fn export_result_diagnostics<'a>(
+    results: impl IntoIterator<Item = &'a TelemetryExportResult>,
+) -> Vec<TelemetryDiagnostic> {
+    results
+        .into_iter()
+        .filter(|result| result.status != "completed")
+        .map(|result| {
+            TelemetryDiagnostic::warning(
+                format!("TelemetryExport.{}", result.status),
+                format!("$.exporters.{}", result.exporter),
+                format!(
+                    "Telemetry exporter '{}' reported status '{}' for {} record(s); retryable: {}; error_type: {}",
+                    result.exporter,
+                    result.status,
+                    result.record_ids.len(),
+                    result.retryable,
+                    result.error_type.as_deref().unwrap_or("none")
+                ),
+            )
+        })
+        .collect()
+}
+
+fn empty_diagnostic_summary() -> BTreeMap<String, u64> {
+    [
+        ("error".to_owned(), 0),
+        ("warning".to_owned(), 0),
+        ("info".to_owned(), 0),
+    ]
+    .into_iter()
+    .collect()
+}
+
+fn diagnostic_summary(diagnostics: &[TelemetryDiagnostic]) -> BTreeMap<String, u64> {
+    let mut summary = empty_diagnostic_summary();
+    for diagnostic in diagnostics {
+        *summary.entry(diagnostic.severity.clone()).or_default() += 1;
+    }
+    summary
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TelemetryProjectionError {
     ExportAffectsRunCorrectness,
     InvalidMetricSampleName,
