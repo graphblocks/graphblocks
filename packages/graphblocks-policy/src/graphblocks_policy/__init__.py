@@ -81,6 +81,27 @@ def evaluate_native_declarative_output_policy(
     )
 
 
+def evaluate_native_retry_policy(policy: dict[str, object], request: dict[str, object]) -> dict[str, object]:
+    from graphblocks_runtime import evaluate_retry_policy
+
+    return evaluate_retry_policy(policy, request)
+
+
+def evaluate_native_provider_limit_policy(
+    policy: dict[str, object],
+    incident: dict[str, object],
+) -> dict[str, object]:
+    from graphblocks_runtime import evaluate_provider_limit_policy
+
+    return evaluate_provider_limit_policy(policy, incident)
+
+
+def evaluate_native_timeout_deadline(policy: dict[str, object], request: dict[str, object]) -> dict[str, object]:
+    from graphblocks_runtime import evaluate_timeout_deadline
+
+    return evaluate_timeout_deadline(policy, request)
+
+
 __all__ = [
     "DeclarativeOutputPolicyEvaluator",
     "DeclarativeOutputPolicyRule",
@@ -132,6 +153,9 @@ __all__ = [
     "ViolationAction",
     "evaluate_native_declarative_output_policy",
     "evaluate_native_output_gate",
+    "evaluate_native_provider_limit_policy",
+    "evaluate_native_retry_policy",
+    "evaluate_native_timeout_deadline",
     "resolve_policy_snapshot",
     "run_policy_tests",
     "unavailable_policy_decision",

@@ -156,12 +156,30 @@ def test_policy_package_lazy_native_output_helpers_delegate_to_runtime(monkeypat
             "evaluatedAtUnixMs": evaluated_at_unix_ms,
         }
 
+    def evaluate_retry_policy(policy: dict[str, object], request: dict[str, object]) -> dict[str, object]:
+        calls.append(("retry", policy, request, None))
+        return {"decision": "retry", "delayMs": 250, "policy": policy, "request": request}
+
+    def evaluate_provider_limit_policy(
+        policy: dict[str, object],
+        incident: dict[str, object],
+    ) -> dict[str, object]:
+        calls.append(("provider_limit", policy, incident, None))
+        return {"decision": "fallback", "policy": policy, "incident": incident}
+
+    def evaluate_timeout_deadline(policy: dict[str, object], request: dict[str, object]) -> dict[str, object]:
+        calls.append(("timeout", policy, request, None))
+        return {"status": "pending", "policy": policy, "request": request}
+
     monkeypatch.setitem(
         sys.modules,
         "graphblocks_runtime",
         SimpleNamespace(
             evaluate_declarative_output_policy=evaluate_declarative_output_policy,
             evaluate_output_gate=evaluate_output_gate,
+            evaluate_provider_limit_policy=evaluate_provider_limit_policy,
+            evaluate_retry_policy=evaluate_retry_policy,
+            evaluate_timeout_deadline=evaluate_timeout_deadline,
         ),
     )
     graphblocks_policy = importlib.import_module("graphblocks_policy")
@@ -175,6 +193,18 @@ def test_policy_package_lazy_native_output_helpers_delegate_to_runtime(monkeypat
         {"streamId": "stream-1", "responseId": "response-1", "sequence": 1},
         evaluated_at_unix_ms=1_782_300_001_000,
     )
+    retry_result = graphblocks_policy.evaluate_native_retry_policy(
+        {"maxAttempts": 3, "retryOn": ["timeout"]},
+        {"attempt": 1, "error": {"category": "timeout", "retryable": True}},
+    )
+    provider_limit_result = graphblocks_policy.evaluate_native_provider_limit_policy(
+        {"fallbackEnabled": True},
+        {"kind": "provider_quota_exceeded", "compatibleFallbacks": ["models.fallback"]},
+    )
+    timeout_result = graphblocks_policy.evaluate_native_timeout_deadline(
+        {"durationMs": 1_000},
+        {"nodeId": "model", "startedAtMs": 1_000, "nowMs": 1_250},
+    )
 
     assert gate_result == {
         "ok": True,
@@ -186,6 +216,22 @@ def test_policy_package_lazy_native_output_helpers_delegate_to_runtime(monkeypat
         "rules": [{"ruleId": "allow"}],
         "chunk": {"streamId": "stream-1", "responseId": "response-1", "sequence": 1},
         "evaluatedAtUnixMs": 1_782_300_001_000,
+    }
+    assert retry_result == {
+        "decision": "retry",
+        "delayMs": 250,
+        "policy": {"maxAttempts": 3, "retryOn": ["timeout"]},
+        "request": {"attempt": 1, "error": {"category": "timeout", "retryable": True}},
+    }
+    assert provider_limit_result == {
+        "decision": "fallback",
+        "policy": {"fallbackEnabled": True},
+        "incident": {"kind": "provider_quota_exceeded", "compatibleFallbacks": ["models.fallback"]},
+    }
+    assert timeout_result == {
+        "status": "pending",
+        "policy": {"durationMs": 1_000},
+        "request": {"nodeId": "model", "startedAtMs": 1_000, "nowMs": 1_250},
     }
     assert calls == [
         (
@@ -200,6 +246,27 @@ def test_policy_package_lazy_native_output_helpers_delegate_to_runtime(monkeypat
             {"streamId": "stream-1", "responseId": "response-1", "sequence": 1},
             1_782_300_001_000,
         ),
+        (
+            "retry",
+            {"maxAttempts": 3, "retryOn": ["timeout"]},
+            {"attempt": 1, "error": {"category": "timeout", "retryable": True}},
+            None,
+        ),
+        (
+            "provider_limit",
+            {"fallbackEnabled": True},
+            {"kind": "provider_quota_exceeded", "compatibleFallbacks": ["models.fallback"]},
+            None,
+        ),
+        (
+            "timeout",
+            {"durationMs": 1_000},
+            {"nodeId": "model", "startedAtMs": 1_000, "nowMs": 1_250},
+            None,
+        ),
     ]
     assert "evaluate_native_output_gate" in graphblocks_policy.__all__
     assert "evaluate_native_declarative_output_policy" in graphblocks_policy.__all__
+    assert "evaluate_native_provider_limit_policy" in graphblocks_policy.__all__
+    assert "evaluate_native_retry_policy" in graphblocks_policy.__all__
+    assert "evaluate_native_timeout_deadline" in graphblocks_policy.__all__
