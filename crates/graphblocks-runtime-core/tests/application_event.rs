@@ -370,6 +370,92 @@ fn final_tool_calls_map_to_validated_and_admitted_application_events() {
 }
 
 #[test]
+fn final_tool_calls_map_to_started_and_terminal_application_events() {
+    let mut draft = ToolCallDraft::proposed("response-1", "call-1", "knowledge.search");
+    draft
+        .append_argument_fragment("{\"query\":\"runtime\"}")
+        .expect("argument fragment should append");
+    let call = draft
+        .into_completed_tool_call("resolved-tool-1", 1_000)
+        .expect("arguments should parse");
+    let admitted = call
+        .transition_status(ToolCallStatus::Admitted, 1_100)
+        .expect("admitted transition should be valid");
+    let running = admitted
+        .transition_status(ToolCallStatus::Running, 1_200)
+        .expect("running transition should be valid");
+
+    let started = ApplicationEvent::tool_call_state(metadata(), &running)
+        .expect("running call state should be valid")
+        .expect("running calls should emit an event");
+    assert_eq!(started.kind, ApplicationEventKind::ToolCallStarted);
+    assert_eq!(started.payload["status"], json!("running"));
+    assert_eq!(started.payload["admitted_at_unix_ms"], json!(1_100));
+
+    for (status, expected_kind, expected_status) in [
+        (
+            ToolCallStatus::Completed,
+            ApplicationEventKind::ToolCallCompleted,
+            "completed",
+        ),
+        (
+            ToolCallStatus::Failed,
+            ApplicationEventKind::ToolCallFailed,
+            "failed",
+        ),
+        (
+            ToolCallStatus::Denied,
+            ApplicationEventKind::ToolCallDenied,
+            "denied",
+        ),
+        (
+            ToolCallStatus::Cancelled,
+            ApplicationEventKind::ToolCallCancelled,
+            "cancelled",
+        ),
+        (
+            ToolCallStatus::PolicyStopped,
+            ApplicationEventKind::ToolCallPolicyStopped,
+            "policy_stopped",
+        ),
+        (
+            ToolCallStatus::Expired,
+            ApplicationEventKind::ToolCallIncomplete,
+            "expired",
+        ),
+    ] {
+        let terminal = running
+            .transition_status(status, 1_300)
+            .expect("terminal transition should be valid");
+        let event = ApplicationEvent::tool_call_state(metadata(), &terminal)
+            .expect("terminal call state should be valid")
+            .expect("terminal calls should emit an event");
+
+        assert_eq!(event.kind, expected_kind);
+        assert_eq!(event.tool_call_id.as_deref(), Some("call-1"));
+        assert_eq!(event.payload["status"], json!(expected_status));
+        assert_eq!(event.payload["completed_at_unix_ms"], json!(1_300));
+    }
+
+    let policy_pending = call
+        .transition_status(ToolCallStatus::PolicyPending, 1_100)
+        .expect("policy pending transition should be valid");
+    let approval_pending = call
+        .transition_status(ToolCallStatus::ApprovalPending, 1_100)
+        .expect("approval pending transition should be valid");
+    assert_eq!(
+        ApplicationEvent::tool_call_state(metadata(), &policy_pending)
+            .expect("policy pending call state should be valid"),
+        None,
+    );
+    assert_eq!(
+        ApplicationEvent::tool_call_state(metadata(), &approval_pending)
+            .expect("approval pending call state should be valid"),
+        None,
+    );
+}
+
+#[test]
 fn tool_call_state_rejects_invalid_final_tool_call() {
     let mut draft = ToolCallDraft::proposed("response-1", "call-1", "knowledge.search");
     draft

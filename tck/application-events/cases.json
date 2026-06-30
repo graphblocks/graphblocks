@@ -1,5 +1,175 @@
 [
   {
+    "name": "tool_call_lifecycle_states_emit_standard_events",
+    "responseId": "response-tool-calls-1",
+    "turnId": "turn-tool-calls-1",
+    "operations": [
+      {
+        "op": "tool_call_state",
+        "toolCallId": "call-validated",
+        "toolName": "knowledge.search",
+        "resolvedToolId": "resolved-knowledge-search",
+        "status": "validated",
+        "arguments": {
+          "query": "runtime"
+        },
+        "createdAt": "2026-06-23T00:00:00Z",
+        "createdAtUnixMs": 1700000
+      },
+      {
+        "op": "tool_call_state",
+        "toolCallId": "call-policy-pending",
+        "toolName": "knowledge.search",
+        "resolvedToolId": "resolved-knowledge-search",
+        "status": "policy_pending",
+        "arguments": {
+          "query": "runtime"
+        },
+        "createdAt": "2026-06-23T00:00:00Z",
+        "createdAtUnixMs": 1700000,
+        "expectAccepted": false
+      },
+      {
+        "op": "tool_call_state",
+        "toolCallId": "call-approval-pending",
+        "toolName": "ticket.create",
+        "resolvedToolId": "resolved-ticket-create",
+        "status": "approval_pending",
+        "arguments": {
+          "resource_id": "ticket-1"
+        },
+        "createdAt": "2026-06-23T00:00:00Z",
+        "createdAtUnixMs": 1700000,
+        "expectAccepted": false
+      },
+      {
+        "op": "tool_call_state",
+        "toolCallId": "call-admitted",
+        "toolName": "ticket.create",
+        "resolvedToolId": "resolved-ticket-create",
+        "status": "admitted",
+        "arguments": {
+          "resource_id": "ticket-1"
+        },
+        "createdAt": "2026-06-23T00:00:00Z",
+        "admittedAt": "2026-06-23T00:00:01Z",
+        "createdAtUnixMs": 1700000,
+        "admittedAtUnixMs": 1700001
+      },
+      {
+        "op": "tool_call_state",
+        "toolCallId": "call-running",
+        "toolName": "ticket.create",
+        "resolvedToolId": "resolved-ticket-create",
+        "status": "running",
+        "arguments": {
+          "resource_id": "ticket-2"
+        },
+        "createdAt": "2026-06-23T00:00:00Z",
+        "admittedAt": "2026-06-23T00:00:01Z",
+        "createdAtUnixMs": 1700000,
+        "admittedAtUnixMs": 1700001
+      },
+      {
+        "op": "tool_call_state",
+        "toolCallId": "call-completed",
+        "toolName": "ticket.create",
+        "resolvedToolId": "resolved-ticket-create",
+        "status": "completed",
+        "arguments": {
+          "resource_id": "ticket-3"
+        },
+        "createdAt": "2026-06-23T00:00:00Z",
+        "admittedAt": "2026-06-23T00:00:01Z",
+        "completedAt": "2026-06-23T00:00:02Z",
+        "createdAtUnixMs": 1700000,
+        "admittedAtUnixMs": 1700001,
+        "completedAtUnixMs": 1700002
+      },
+      {
+        "op": "tool_call_state",
+        "toolCallId": "call-failed",
+        "toolName": "ticket.create",
+        "resolvedToolId": "resolved-ticket-create",
+        "status": "failed",
+        "arguments": {
+          "resource_id": "ticket-4"
+        },
+        "createdAt": "2026-06-23T00:00:00Z",
+        "completedAt": "2026-06-23T00:00:02Z",
+        "createdAtUnixMs": 1700000,
+        "completedAtUnixMs": 1700002
+      },
+      {
+        "op": "tool_call_state",
+        "toolCallId": "call-denied",
+        "toolName": "ticket.create",
+        "resolvedToolId": "resolved-ticket-create",
+        "status": "denied",
+        "arguments": {
+          "resource_id": "ticket-5"
+        },
+        "createdAt": "2026-06-23T00:00:00Z",
+        "completedAt": "2026-06-23T00:00:02Z",
+        "createdAtUnixMs": 1700000,
+        "completedAtUnixMs": 1700002
+      },
+      {
+        "op": "tool_call_state",
+        "toolCallId": "call-cancelled",
+        "toolName": "ticket.create",
+        "resolvedToolId": "resolved-ticket-create",
+        "status": "cancelled",
+        "arguments": {
+          "resource_id": "ticket-6"
+        },
+        "createdAt": "2026-06-23T00:00:00Z",
+        "completedAt": "2026-06-23T00:00:02Z",
+        "createdAtUnixMs": 1700000,
+        "completedAtUnixMs": 1700002
+      },
+      {
+        "op": "tool_call_state",
+        "toolCallId": "call-policy-stopped",
+        "toolName": "ticket.create",
+        "resolvedToolId": "resolved-ticket-create",
+        "status": "policy_stopped",
+        "arguments": {
+          "resource_id": "ticket-7"
+        },
+        "createdAt": "2026-06-23T00:00:00Z",
+        "completedAt": "2026-06-23T00:00:02Z",
+        "createdAtUnixMs": 1700000,
+        "completedAtUnixMs": 1700002
+      },
+      {
+        "op": "tool_call_state",
+        "toolCallId": "call-expired",
+        "toolName": "ticket.create",
+        "resolvedToolId": "resolved-ticket-create",
+        "status": "expired",
+        "arguments": {
+          "resource_id": "ticket-8"
+        },
+        "createdAt": "2026-06-23T00:00:00Z",
+        "completedAt": "2026-06-23T00:00:02Z",
+        "createdAtUnixMs": 1700000,
+        "completedAtUnixMs": 1700002
+      }
+    ],
+    "expectedAcceptedKinds": [
+      "ToolCallValidated",
+      "ToolCallAdmitted",
+      "ToolCallStarted",
+      "ToolCallCompleted",
+      "ToolCallFailed",
+      "ToolCallDenied",
+      "ToolCallCancelled",
+      "ToolCallPolicyStopped",
+      "ToolCallIncomplete"
+    ]
+  },
+  {
     "name": "output_cutoff_discards_late_commit_for_same_response",
     "streamId": "stream-1",
     "responseId": "response-1",

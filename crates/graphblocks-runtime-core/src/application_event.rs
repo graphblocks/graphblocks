@@ -229,15 +229,14 @@ impl ApplicationEvent {
         let kind = match call.status {
             ToolCallStatus::Validated => ApplicationEventKind::ToolCallValidated,
             ToolCallStatus::Admitted => ApplicationEventKind::ToolCallAdmitted,
-            ToolCallStatus::PolicyPending
-            | ToolCallStatus::ApprovalPending
-            | ToolCallStatus::Running
-            | ToolCallStatus::Completed
-            | ToolCallStatus::Failed
-            | ToolCallStatus::Denied
-            | ToolCallStatus::Cancelled
-            | ToolCallStatus::PolicyStopped
-            | ToolCallStatus::Expired => return Ok(None),
+            ToolCallStatus::Running => ApplicationEventKind::ToolCallStarted,
+            ToolCallStatus::Completed => ApplicationEventKind::ToolCallCompleted,
+            ToolCallStatus::Failed => ApplicationEventKind::ToolCallFailed,
+            ToolCallStatus::Denied => ApplicationEventKind::ToolCallDenied,
+            ToolCallStatus::Cancelled => ApplicationEventKind::ToolCallCancelled,
+            ToolCallStatus::PolicyStopped => ApplicationEventKind::ToolCallPolicyStopped,
+            ToolCallStatus::Expired => ApplicationEventKind::ToolCallIncomplete,
+            ToolCallStatus::PolicyPending | ToolCallStatus::ApprovalPending => return Ok(None),
         };
 
         Self::tool(

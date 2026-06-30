@@ -721,6 +721,50 @@ def test_final_tool_calls_map_to_validated_and_admitted_application_events() -> 
     }
 
 
+def test_final_tool_calls_map_to_started_and_terminal_application_events() -> None:
+    call = (
+        ToolCallDraft.proposed("response-1", "call-1", "knowledge.search")
+        .append_argument_fragment('{"query":"runtime"}')
+        .complete_arguments()
+        .into_tool_call("resolved-tool-1", created_at="2026-06-23T00:00:00Z")
+    )
+    admitted = call.transition_status("admitted", at="2026-06-23T00:00:01Z")
+    running = admitted.transition_status("running", at="2026-06-23T00:00:02Z")
+
+    started = ApplicationEvent.tool_call_state(_metadata(), running)
+    assert started is not None
+    assert started.kind == "ToolCallStarted"
+    assert started.payload["status"] == "running"
+    assert started.payload["admitted_at"] == "2026-06-23T00:00:01Z"
+
+    terminal_expectations = (
+        ("completed", "ToolCallCompleted"),
+        ("failed", "ToolCallFailed"),
+        ("denied", "ToolCallDenied"),
+        ("cancelled", "ToolCallCancelled"),
+        ("policy_stopped", "ToolCallPolicyStopped"),
+        ("expired", "ToolCallIncomplete"),
+    )
+    for status, expected_kind in terminal_expectations:
+        terminal = running.transition_status(status, at="2026-06-23T00:00:03Z")
+        event = ApplicationEvent.tool_call_state(_metadata(), terminal)
+
+        assert event is not None
+        assert event.kind == expected_kind
+        assert event.tool_call_id == "call-1"
+        assert event.payload["status"] == status
+        assert event.payload["completed_at"] == "2026-06-23T00:00:03Z"
+
+    assert ApplicationEvent.tool_call_state(
+        _metadata(),
+        call.transition_status("policy_pending", at="2026-06-23T00:00:01Z"),
+    ) is None
+    assert ApplicationEvent.tool_call_state(
+        _metadata(),
+        call.transition_status("approval_pending", at="2026-06-23T00:00:01Z"),
+    ) is None
+
+
 def test_tool_policy_decisions_map_to_policy_evaluated_application_events() -> None:
     call = (
         ToolCallDraft.proposed("response-1", "call-1", "knowledge.search")
@@ -1186,6 +1230,48 @@ def test_application_event_stream_state_matches_shared_tck_cases() -> None:
                 )
                 accepted = state.accept(event)
                 assert (accepted is not None) is operation.get("expectAccepted", True), case_name
+            elif operation["op"] == "tool_call_state":
+                arguments = operation.get("arguments", {})
+                draft = (
+                    ToolCallDraft.proposed(
+                        response_id,
+                        operation["toolCallId"],
+                        operation["toolName"],
+                    )
+                    .append_argument_fragment(json.dumps(arguments, sort_keys=True, separators=(",", ":")))
+                    .complete_arguments()
+                )
+                call = draft.into_tool_call(
+                    operation["resolvedToolId"],
+                    created_at=operation.get("createdAt", "2026-06-23T00:00:00Z"),
+                )
+                status = operation["status"]
+                admitted_at = operation.get("admittedAt", operation.get("createdAt", "2026-06-23T00:00:01Z"))
+                completed_at = operation.get("completedAt", admitted_at)
+                if status == "policy_pending":
+                    call = call.transition_status("policy_pending", at=admitted_at)
+                elif status == "approval_pending":
+                    call = call.transition_status("approval_pending", at=admitted_at)
+                elif status == "admitted":
+                    call = call.transition_status("admitted", at=admitted_at)
+                elif status == "running":
+                    call = call.transition_status("admitted", at=admitted_at).transition_status(
+                        "running",
+                        at=admitted_at,
+                    )
+                elif status == "completed":
+                    call = (
+                        call.transition_status("admitted", at=admitted_at)
+                        .transition_status("running", at=admitted_at)
+                        .transition_status("completed", at=completed_at)
+                    )
+                elif status in {"failed", "denied", "cancelled", "policy_stopped", "expired"}:
+                    call = call.transition_status(status, at=completed_at)
+                elif status != "validated":
+                    raise AssertionError(f"{case_name}: unknown tool call status {status!r}")
+                event = ApplicationEvent.tool_call_state(metadata, call)
+                accepted = state.accept(event) is not None if event is not None else False
+                assert accepted is operation.get("expectAccepted", True), case_name
             elif operation["op"] in {
                 "tool_result_started",
                 "tool_result_delta",

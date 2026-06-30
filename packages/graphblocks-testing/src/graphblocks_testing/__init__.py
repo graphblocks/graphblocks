@@ -2939,6 +2939,64 @@ class TckRunner:
                             "path": f"$.operations[{sequence - 1}].expectAccepted",
                         }
                     )
+            elif operation.get("op") == "tool_call_state":
+                arguments = operation.get("arguments", {})
+                draft = ToolCallDraft.proposed(
+                    response_id,
+                    str(operation.get("toolCallId", "")),
+                    str(operation.get("toolName", "")),
+                )
+                draft = draft.append_argument_fragment(
+                    json.dumps(arguments, sort_keys=True, separators=(",", ":"))
+                ).complete_arguments()
+                call = draft.into_tool_call(
+                    str(operation.get("resolvedToolId", "")),
+                    created_at=str(operation.get("createdAt", "2026-06-23T00:00:00Z")),
+                )
+                status = str(operation.get("status", "validated"))
+                admitted_at = str(operation.get("admittedAt", operation.get("createdAt", "2026-06-23T00:00:01Z")))
+                completed_at = str(operation.get("completedAt", admitted_at))
+                try:
+                    if status == "policy_pending":
+                        call = call.transition_status("policy_pending", at=admitted_at)
+                    elif status == "approval_pending":
+                        call = call.transition_status("approval_pending", at=admitted_at)
+                    elif status == "admitted":
+                        call = call.transition_status("admitted", at=admitted_at)
+                    elif status == "running":
+                        call = call.transition_status("admitted", at=admitted_at).transition_status(
+                            "running",
+                            at=admitted_at,
+                        )
+                    elif status == "completed":
+                        call = (
+                            call.transition_status("admitted", at=admitted_at)
+                            .transition_status("running", at=admitted_at)
+                            .transition_status("completed", at=completed_at)
+                        )
+                    elif status in {"failed", "denied", "cancelled", "policy_stopped", "expired"}:
+                        call = call.transition_status(status, at=completed_at)
+                    elif status != "validated":
+                        raise ValueError(f"unknown tool call status {status!r}")
+                except (ToolCallError, ValueError) as error:
+                    diagnostics.append(
+                        {
+                            "code": "ApplicationEventToolCallInvalid",
+                            "message": str(error),
+                            "path": f"$.operations[{sequence - 1}]",
+                        }
+                    )
+                    continue
+                event = ApplicationEvent.tool_call_state(metadata, call)
+                accepted = state.accept(event) is not None if event is not None else False
+                if accepted is not bool(operation.get("expectAccepted", True)):
+                    diagnostics.append(
+                        {
+                            "code": "ApplicationEventAcceptanceMismatch",
+                            "message": "application event acceptance did not match expected result",
+                            "path": f"$.operations[{sequence - 1}].expectAccepted",
+                        }
+                    )
             elif operation.get("op") in {
                 "tool_result_started",
                 "tool_result_delta",

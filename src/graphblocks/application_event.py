@@ -513,6 +513,20 @@ class ApplicationEvent:
             kind: ApplicationEventKind = "ToolCallValidated"
         elif call.status == "admitted":
             kind = "ToolCallAdmitted"
+        elif call.status == "running":
+            kind = "ToolCallStarted"
+        elif call.status == "completed":
+            kind = "ToolCallCompleted"
+        elif call.status == "failed":
+            kind = "ToolCallFailed"
+        elif call.status == "denied":
+            kind = "ToolCallDenied"
+        elif call.status == "cancelled":
+            kind = "ToolCallCancelled"
+        elif call.status == "policy_stopped":
+            kind = "ToolCallPolicyStopped"
+        elif call.status == "expired":
+            kind = "ToolCallIncomplete"
         else:
             return None
 

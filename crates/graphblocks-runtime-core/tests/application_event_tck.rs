@@ -5,6 +5,7 @@ use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory};
 use graphblocks_runtime_core::output_policy::{
     DraftDisposition, DurableResult, OutputCutoff, TerminalReason,
 };
+use graphblocks_runtime_core::tool_call::{ToolCallDraft, ToolCallStatus};
 use graphblocks_runtime_core::tool_result::{
     ArtifactRef, ContentPart, ToolEffectOutcome, ToolResult, ToolResultEvent,
 };
@@ -102,6 +103,87 @@ fn run_case(case: &Value) -> Result<(), String> {
                 )
                 .map_err(|error| format!("{case_name}: {error:?}"))?;
                 let accepted = state.accept(event).is_some();
+                assert_eq!(
+                    accepted,
+                    optional_bool(operation, "expectAccepted").unwrap_or(true),
+                    "{case_name}",
+                );
+            }
+            "tool_call_state" => {
+                let tool_call_id = required_str(operation, "toolCallId")?;
+                let tool_name = required_str(operation, "toolName")?;
+                let resolved_tool_id = required_str(operation, "resolvedToolId")?;
+                let created_at_unix_ms = required_u64(operation, "createdAtUnixMs")?;
+                let admitted_at_unix_ms =
+                    optional_u64(operation, "admittedAtUnixMs").unwrap_or(created_at_unix_ms + 1);
+                let completed_at_unix_ms =
+                    optional_u64(operation, "completedAtUnixMs").unwrap_or(admitted_at_unix_ms + 1);
+                let mut draft = ToolCallDraft::proposed(response_id, tool_call_id, tool_name);
+                let arguments = operation
+                    .get("arguments")
+                    .cloned()
+                    .unwrap_or_else(|| json!({}));
+                draft
+                    .append_argument_fragment(arguments.to_string())
+                    .map_err(|error| format!("{case_name}: {error:?}"))?;
+                let base_call = draft
+                    .into_completed_tool_call(resolved_tool_id, created_at_unix_ms)
+                    .map_err(|error| format!("{case_name}: {error:?}"))?;
+                let call = match required_str(operation, "status")? {
+                    "validated" => base_call,
+                    "policy_pending" => base_call
+                        .transition_status(ToolCallStatus::PolicyPending, admitted_at_unix_ms)
+                        .map_err(|error| format!("{case_name}: {error:?}"))?,
+                    "approval_pending" => base_call
+                        .transition_status(ToolCallStatus::ApprovalPending, admitted_at_unix_ms)
+                        .map_err(|error| format!("{case_name}: {error:?}"))?,
+                    "admitted" => base_call
+                        .transition_status(ToolCallStatus::Admitted, admitted_at_unix_ms)
+                        .map_err(|error| format!("{case_name}: {error:?}"))?,
+                    "running" => base_call
+                        .transition_status(ToolCallStatus::Admitted, admitted_at_unix_ms)
+                        .and_then(|call| {
+                            call.transition_status(ToolCallStatus::Running, admitted_at_unix_ms)
+                        })
+                        .map_err(|error| format!("{case_name}: {error:?}"))?,
+                    "completed" => base_call
+                        .transition_status(ToolCallStatus::Admitted, admitted_at_unix_ms)
+                        .and_then(|call| {
+                            call.transition_status(ToolCallStatus::Running, admitted_at_unix_ms)
+                        })
+                        .and_then(|call| {
+                            call.transition_status(ToolCallStatus::Completed, completed_at_unix_ms)
+                        })
+                        .map_err(|error| format!("{case_name}: {error:?}"))?,
+                    "failed" => base_call
+                        .transition_status(ToolCallStatus::Failed, completed_at_unix_ms)
+                        .map_err(|error| format!("{case_name}: {error:?}"))?,
+                    "denied" => base_call
+                        .transition_status(ToolCallStatus::Denied, completed_at_unix_ms)
+                        .map_err(|error| format!("{case_name}: {error:?}"))?,
+                    "cancelled" => base_call
+                        .transition_status(ToolCallStatus::Cancelled, completed_at_unix_ms)
+                        .map_err(|error| format!("{case_name}: {error:?}"))?,
+                    "policy_stopped" => base_call
+                        .transition_status(ToolCallStatus::PolicyStopped, completed_at_unix_ms)
+                        .map_err(|error| format!("{case_name}: {error:?}"))?,
+                    "expired" => base_call
+                        .transition_status(ToolCallStatus::Expired, completed_at_unix_ms)
+                        .map_err(|error| format!("{case_name}: {error:?}"))?,
+                    other => {
+                        return Err(format!(
+                            "application-events TCK case {case_name} has unknown tool call status {other}"
+                        ));
+                    }
+                };
+                let accepted = if let Some(event) =
+                    ApplicationEvent::tool_call_state(metadata, &call)
+                        .map_err(|error| format!("{case_name}: {error:?}"))?
+                {
+                    state.accept(event).is_some()
+                } else {
+                    false
+                };
                 assert_eq!(
                     accepted,
                     optional_bool(operation, "expectAccepted").unwrap_or(true),
