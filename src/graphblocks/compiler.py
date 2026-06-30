@@ -1008,3 +1008,9 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                 diagnostics.append(Diagnostic("GB1001", f"node {node_name!r} is not connected", f"$.spec.nodes.{node_name}", "warning"))
 
     return Plan(normalized, canonical_hash(normalized), DiagnosticSet(tuple(diagnostics)))
+
+
+def compile_graph_native(document: dict[str, object], block_catalog: object | None = None) -> dict[str, object]:
+    from graphblocks_runtime import compile_graph as native_compile_graph
+
+    return native_compile_graph(document, block_catalog=block_catalog)

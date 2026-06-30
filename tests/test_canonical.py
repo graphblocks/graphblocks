@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from graphblocks import canonical_hash, compile_graph, normalize_graph
+import sys
+from types import SimpleNamespace
+
+import graphblocks
+from graphblocks import canonical_hash, compile_graph, compile_graph_native, normalize_graph
 
 
 def _error_codes(graph: dict) -> list[str]:
@@ -160,6 +164,39 @@ def test_compile_allows_effect_retry_with_idempotency_key() -> None:
     plan = compile_graph(graph)
 
     assert "GB1011" not in [item.code for item in plan.diagnostics.diagnostics]
+
+
+def test_native_compile_helper_delegates_to_runtime(monkeypatch) -> None:
+    calls: list[tuple[dict[str, object], object | None]] = []
+
+    def native_compile_graph(document: dict[str, object], block_catalog: object | None = None) -> dict[str, object]:
+        calls.append((document, block_catalog))
+        return {"ok": True, "graph": document, "blockCatalog": block_catalog, "diagnostics": []}
+
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(compile_graph=native_compile_graph),
+    )
+
+    result = compile_graph_native(
+        {"kind": "Graph", "metadata": {"name": "native"}},
+        block_catalog=[{"typeId": "prompt.render@1"}],
+    )
+
+    assert result == {
+        "ok": True,
+        "graph": {"kind": "Graph", "metadata": {"name": "native"}},
+        "blockCatalog": [{"typeId": "prompt.render@1"}],
+        "diagnostics": [],
+    }
+    assert calls == [
+        (
+            {"kind": "Graph", "metadata": {"name": "native"}},
+            [{"typeId": "prompt.render@1"}],
+        )
+    ]
+    assert "compile_graph_native" in graphblocks.__all__
 
 
 def test_compile_rejects_unbounded_output_holdback_and_unsafe_immediate_draft() -> None:

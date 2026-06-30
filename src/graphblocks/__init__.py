@@ -77,7 +77,7 @@ from .budget import (
     UsageAmount,
 )
 from .canonical import canonical_dumps, canonical_hash, normalize_graph
-from .compiler import Plan, compile_graph
+from .compiler import Plan, compile_graph, compile_graph_native
 from .conversation import (
     BranchRequest,
     CompactionRecord,
@@ -959,6 +959,7 @@ __all__ = [
     "canonical_dumps",
     "canonical_hash",
     "compile_graph",
+    "compile_graph_native",
     "chunk_document_by_lines",
     "create_local_text_revision",
     "default_server_route_manifest",
