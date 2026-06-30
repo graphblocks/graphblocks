@@ -170,6 +170,16 @@ from graphblocks.tools import (
 from graphblocks.usage import InMemoryUsageLedger, UsageRecord
 
 
+def run_native_test_graph(
+    graph: dict[str, object],
+    inputs: dict[str, object],
+    node_outputs: dict[str, object],
+) -> dict[str, object]:
+    from graphblocks_runtime import run_test_graph
+
+    return run_test_graph(graph, inputs, node_outputs)
+
+
 TckCaseKind = Literal[
     "compiler",
     "runtime",
@@ -8453,5 +8463,6 @@ __all__ = [
     "load_voice_tck_cases",
     "main",
     "migrate_document",
+    "run_native_test_graph",
     "stdlib_registry",
 ]

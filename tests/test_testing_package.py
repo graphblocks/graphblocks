@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib
 import json
 from pathlib import Path
+import sys
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).parents[1]
@@ -36,6 +38,54 @@ def test_testing_package_exposes_deterministic_in_process_runtime(monkeypatch) -
     assert result.status == "succeeded"
     assert result.outputs == {"prompt": "Test ok"}
     assert result.journal.terminal_kind == "run_succeeded"
+
+
+def test_testing_package_lazy_native_runner_delegates_to_runtime(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    calls: list[tuple[dict[str, object], dict[str, object], dict[str, object]]] = []
+
+    def run_test_graph(
+        graph: dict[str, object],
+        inputs: dict[str, object],
+        node_outputs: dict[str, object],
+    ) -> dict[str, object]:
+        calls.append((graph, inputs, node_outputs))
+        return {
+            "runId": "test-run-1",
+            "status": "succeeded",
+            "graph": graph,
+            "inputs": inputs,
+            "nodeOutputs": node_outputs,
+        }
+
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(run_test_graph=run_test_graph),
+    )
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    result = graphblocks_testing.run_native_test_graph(
+        {"kind": "Graph", "metadata": {"name": "test"}},
+        {"message": "hi"},
+        {"render": {"prompt": "Hello"}},
+    )
+
+    assert result == {
+        "runId": "test-run-1",
+        "status": "succeeded",
+        "graph": {"kind": "Graph", "metadata": {"name": "test"}},
+        "inputs": {"message": "hi"},
+        "nodeOutputs": {"render": {"prompt": "Hello"}},
+    }
+    assert calls == [
+        (
+            {"kind": "Graph", "metadata": {"name": "test"}},
+            {"message": "hi"},
+            {"render": {"prompt": "Hello"}},
+        )
+    ]
+    assert "run_native_test_graph" in graphblocks_testing.__all__
 
 
 def test_testing_package_runs_compiler_tck_case_and_reports_hash(monkeypatch) -> None:
