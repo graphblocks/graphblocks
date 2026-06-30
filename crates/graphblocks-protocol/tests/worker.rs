@@ -396,7 +396,10 @@ fn worker_protocol_message_round_trips_typed_invoke_request_payload()
         encoded["payload"]["nodeAttemptId"],
         json!("render-attempt-1")
     );
-    assert!(digest.starts_with("sha256:"));
+    assert_eq!(
+        digest,
+        "sha256:7f9eb71b38fd97576ffe9c6d07a6f93a5decd8b76a2ebbe800221ce07099e7e0"
+    );
     assert_eq!(decoded, message);
     assert_eq!(decoded.content_digest()?, digest);
     assert_eq!(

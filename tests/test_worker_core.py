@@ -457,6 +457,14 @@ def test_worker_protocol_message_envelopes_route_typed_payloads() -> None:
     assert [WorkerProtocolMessage.from_wire(item) for item in encoded] == list(messages)
     assert messages[0].content_digest().startswith("sha256:")
     assert messages[0].content_digest() == WorkerProtocolMessage.from_wire(encoded[0]).content_digest()
+    canonical_message = WorkerProtocolMessage.invoke_request("message-000001", 42, request)
+    assert (
+        canonical_message.content_digest()
+        == "sha256:7f9eb71b38fd97576ffe9c6d07a6f93a5decd8b76a2ebbe800221ce07099e7e0"
+    )
+    assert canonical_message.content_digest() == WorkerProtocolMessage.from_wire(
+        canonical_message.to_wire()
+    ).content_digest()
     assert isinstance(graphblocks.WorkerProtocolMessage.from_wire(encoded[2]), graphblocks.WorkerProtocolMessage)
 
 
