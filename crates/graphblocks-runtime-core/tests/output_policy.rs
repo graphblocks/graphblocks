@@ -709,6 +709,29 @@ fn policy_abort_forces_kept_pending_tool_calls_to_denied_cleanup() -> Result<(),
 }
 
 #[test]
+fn deny_commit_preserves_kept_pending_tool_calls() -> Result<(), OutputGateError> {
+    let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
+    gate.record_chunk(GenerationChunk::text(
+        "stream-1",
+        "response-1",
+        1,
+        "blocked",
+    ))?;
+
+    let stopped = gate.apply_decision(
+        OutputPolicyDecision::deny_commit("decision-deny-commit", "sha256:abort")
+            .with_pending_tool_calls(PendingToolCallsDisposition::Keep),
+        1_000,
+    )?;
+
+    assert_eq!(
+        stopped.pending_tool_calls,
+        Some(PendingToolCallsDisposition::Keep)
+    );
+    Ok(())
+}
+
+#[test]
 fn bounded_holdback_policy_requires_a_bound() {
     let policy = OutputDeliveryPolicy::bounded_holdback(
         ViolationAction::AbortResponse,

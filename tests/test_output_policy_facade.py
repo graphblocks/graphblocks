@@ -979,6 +979,20 @@ def test_output_delivery_gate_policy_abort_forces_kept_pending_tool_calls_to_den
     assert stopped.pending_tool_calls == "deny"
 
 
+def test_output_delivery_gate_deny_commit_preserves_kept_pending_tool_calls() -> None:
+    gate = OutputDeliveryGate("stream-1", "response-1")
+    gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "blocked"))
+
+    stopped = gate.apply_decision(
+        OutputPolicyDecision.deny_commit("decision-deny-commit", input_digest="sha256:blocked").with_pending_tool_calls(
+            "keep"
+        ),
+        occurred_at="2026-06-23T00:00:02Z",
+    )
+
+    assert stopped.pending_tool_calls == "keep"
+
+
 def test_output_delivery_gate_immediate_draft_delivers_before_policy_and_retracts_on_abort() -> None:
     gate = OutputDeliveryGate(
         "stream-1",

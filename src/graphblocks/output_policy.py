@@ -926,7 +926,11 @@ class OutputDeliveryGate:
                     self.last_policy_accepted_sequence,
                     decision.accepted_through_sequence,
                 )
-            pending_tool_calls = "deny" if decision.pending_tool_calls == "keep" else decision.pending_tool_calls
+            pending_tool_calls = (
+                "deny"
+                if decision.disposition in {"abort_response", "abort_turn"} and decision.pending_tool_calls == "keep"
+                else decision.pending_tool_calls
+            )
             cutoff = OutputCutoff(
                 stream_id=self.stream_id,
                 response_id=self.response_id,

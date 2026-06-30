@@ -1508,9 +1508,13 @@ impl OutputDeliveryGate {
                         self.last_policy_accepted_sequence = accepted_through_sequence;
                     }
                 }
-                let pending_tool_calls = match decision.pending_tool_calls {
-                    PendingToolCallsDisposition::Keep => PendingToolCallsDisposition::Deny,
-                    disposition => disposition,
+                let terminal_disposition = decision.disposition;
+                let pending_tool_calls = match (terminal_disposition, decision.pending_tool_calls) {
+                    (
+                        OutputDisposition::AbortResponse | OutputDisposition::AbortTurn,
+                        PendingToolCallsDisposition::Keep,
+                    ) => PendingToolCallsDisposition::Deny,
+                    (_, disposition) => disposition,
                 };
                 let cutoff = OutputCutoff {
                     stream_id: self.stream_id.clone(),
