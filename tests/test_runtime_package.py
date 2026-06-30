@@ -172,6 +172,16 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         calls.append(("sequential_tool_queue", (queue_json, operations_json)))
         return json.dumps({"queue": json.loads(queue_json), "operations": json.loads(operations_json)})
 
+    def evaluate_usage_ledger_json(operations_json: str, run_id: str | None = None) -> str:
+        calls.append(("usage_ledger", (operations_json, run_id)))
+        return json.dumps(
+            {
+                "operations": json.loads(operations_json),
+                "runId": run_id,
+                "recordIds": ["usage-1"] if run_id else [],
+            }
+        )
+
     def decide_agent_step_json(spec_json: str, request_json: str) -> str:
         calls.append(("agent_step", (spec_json, request_json)))
         return json.dumps({"decision": "continue", "spec": json.loads(spec_json), "request": json.loads(request_json)})
@@ -234,6 +244,7 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         evaluate_sequential_tool_queue_json=evaluate_sequential_tool_queue_json,
         evaluate_tool_execution_plan_json=evaluate_tool_execution_plan_json,
         evaluate_tool_result_stream_json=evaluate_tool_result_stream_json,
+        evaluate_usage_ledger_json=evaluate_usage_ledger_json,
         finalize_tool_call_json=finalize_tool_call_json,
         negotiate_application_protocol_capabilities_json=(
             negotiate_application_protocol_capabilities_json
@@ -331,6 +342,10 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     sequential_queue = runtime.evaluate_sequential_tool_queue(
         {"planId": "plan-1", "responseId": "response-1", "calls": []},
         [{"op": "start_next_ready"}],
+    )
+    usage_ledger = runtime.evaluate_usage_ledger(
+        [{"op": "append", "record": {"recordId": "usage-1"}}],
+        run_id="run-1",
     )
     agent_decision = runtime.decide_agent_step(
         {"maxSteps": 4},
@@ -440,6 +455,11 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     assert sequential_queue == {
         "queue": {"calls": [], "planId": "plan-1", "responseId": "response-1"},
         "operations": [{"op": "start_next_ready"}],
+    }
+    assert usage_ledger == {
+        "operations": [{"op": "append", "record": {"recordId": "usage-1"}}],
+        "recordIds": ["usage-1"],
+        "runId": "run-1",
     }
     assert agent_decision == {
         "decision": "continue",
@@ -565,6 +585,10 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             ),
         ),
         (
+            "usage_ledger",
+            ('[{"op":"append","record":{"recordId":"usage-1"}}]', "run-1"),
+        ),
+        (
             "agent_step",
             ('{"maxSteps":4}', '{"pendingToolCalls":0,"step":2}'),
         ),
@@ -622,6 +646,8 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     assert "evaluate_tool_result_stream_json" in runtime.__all__
     assert "evaluate_sequential_tool_queue" in runtime.__all__
     assert "evaluate_sequential_tool_queue_json" in runtime.__all__
+    assert "evaluate_usage_ledger" in runtime.__all__
+    assert "evaluate_usage_ledger_json" in runtime.__all__
     assert "validate_worker_advertisement" in runtime.__all__
     assert "validate_worker_protocol_message" in runtime.__all__
     assert "validate_remote_payload" in runtime.__all__

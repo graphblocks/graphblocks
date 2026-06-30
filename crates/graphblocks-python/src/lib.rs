@@ -49,6 +49,10 @@ use graphblocks_runtime_core::tool_result::{
     ToolResultStreamState, ToolResultValidation, ToolResultValidationRequest,
 };
 use graphblocks_runtime_core::tool_schema::{JsonSchema, JsonSchemaNode, ToolSchemaRegistry};
+use graphblocks_runtime_core::usage::{
+    InMemoryUsageLedger, UsageAmount as LedgerUsageAmount, UsageConfidence, UsageLedgerError,
+    UsageRecord, UsageSource,
+};
 use graphblocks_runtime_durable::{
     DurableOutputCutoffDraftDisposition, DurableOutputCutoffDurableResult,
     DurableOutputCutoffTerminalReason, DurableResponsePolicyStopRecord, DurableToolTerminalRecord,
@@ -4865,6 +4869,259 @@ fn evaluate_sequential_tool_queue_json(
 }
 
 #[pyfunction]
+fn evaluate_usage_ledger_json(operations_json: &str, run_id: Option<&str>) -> PyResult<String> {
+    let usage_source = |value: &str, label: &str| -> PyResult<UsageSource> {
+        match value {
+            "provider_reported" => Ok(UsageSource::ProviderReported),
+            "runtime_measured" => Ok(UsageSource::RuntimeMeasured),
+            "tokenizer_estimated" => Ok(UsageSource::TokenizerEstimated),
+            "pricing_estimated" => Ok(UsageSource::PricingEstimated),
+            "reconciled" => Ok(UsageSource::Reconciled),
+            value => Err(PyValueError::new_err(format!(
+                "{label}.source has unknown usage source {value:?}"
+            ))),
+        }
+    };
+    let usage_confidence = |value: &str, label: &str| -> PyResult<UsageConfidence> {
+        match value {
+            "exact" => Ok(UsageConfidence::Exact),
+            "provider_exact" => Ok(UsageConfidence::ProviderExact),
+            "estimated" => Ok(UsageConfidence::Estimated),
+            "unknown" => Ok(UsageConfidence::Unknown),
+            value => Err(PyValueError::new_err(format!(
+                "{label}.confidence has unknown usage confidence {value:?}"
+            ))),
+        }
+    };
+    let usage_amounts = |value: &Value, label: &str| -> PyResult<Vec<LedgerUsageAmount>> {
+        let amounts = value
+            .as_array()
+            .ok_or_else(|| PyValueError::new_err(format!("{label} must be an array")))?;
+        let mut parsed = Vec::new();
+        for (index, amount) in amounts.iter().enumerate() {
+            let amount_label = format!("{label}[{index}]");
+            let amount_object = json_object(amount, &amount_label)?;
+            let kind = required_string(amount_object, "kind", &amount_label)?;
+            let amount_value = amount_object
+                .get("amount")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| {
+                    PyValueError::new_err(format!("{amount_label}.amount must be an integer"))
+                })?;
+            let unit = required_string(amount_object, "unit", &amount_label)?;
+            let mut usage_amount = LedgerUsageAmount::new(kind, amount_value, unit);
+            if let Some(dimensions) = amount_object.get("dimensions") {
+                let dimensions = dimensions.as_object().ok_or_else(|| {
+                    PyValueError::new_err(format!("{amount_label}.dimensions must be an object"))
+                })?;
+                for (key, value) in dimensions {
+                    let value = value.as_str().ok_or_else(|| {
+                        PyValueError::new_err(format!(
+                            "{amount_label}.dimensions.{key} must be a string"
+                        ))
+                    })?;
+                    usage_amount = usage_amount.with_dimension(key, value);
+                }
+            }
+            parsed.push(usage_amount);
+        }
+        Ok(parsed)
+    };
+    let usage_record = |value: &Value, label: &str| -> PyResult<UsageRecord> {
+        let record = json_object(value, label)?;
+        let mut usage_record = UsageRecord::new(
+            required_alias_string(record, "recordId", "record_id", label)?,
+            usage_source(required_string(record, "source", label)?, label)?,
+            usage_confidence(required_string(record, "confidence", label)?, label)?,
+            usage_amounts(
+                record
+                    .get("amounts")
+                    .ok_or_else(|| PyValueError::new_err(format!("{label}.amounts is required")))?,
+                &format!("{label}.amounts"),
+            )?,
+            required_alias_u64(record, "occurredAtUnixMs", "occurred_at_unix_ms", label)?,
+        );
+        if let Some(value) = optional_alias_string(record, "runId", "run_id", label)? {
+            usage_record = usage_record.with_run_id(value);
+        }
+        if let Some(value) = optional_alias_string(record, "attemptId", "attempt_id", label)? {
+            usage_record = usage_record.with_attempt_id(value);
+        }
+        if let Some(value) =
+            optional_alias_string(record, "providerResponseId", "provider_response_id", label)?
+        {
+            usage_record = usage_record.with_provider_response_id(value);
+        }
+        if let Some(value) = optional_alias_string(record, "pricingRef", "pricing_ref", label)? {
+            usage_record = usage_record.with_pricing_ref(value);
+        }
+        if let Some(value) =
+            optional_alias_string(record, "quotaWindowId", "quota_window_id", label)?
+        {
+            usage_record = usage_record.with_quota_window_id(value);
+        }
+        if let Some(value) =
+            optional_alias_string(record, "executionScope", "execution_scope", label)?
+        {
+            usage_record = usage_record.with_execution_scope(value);
+        }
+        if let Some(value) =
+            optional_alias_string(record, "reconciliationOf", "reconciliation_of", label)?
+        {
+            usage_record.reconciliation_of = Some(value.to_owned());
+        }
+        if let Some(metadata) = record.get("metadata") {
+            let metadata = metadata.as_object().ok_or_else(|| {
+                PyValueError::new_err(format!("{label}.metadata must be an object"))
+            })?;
+            for (key, value) in metadata {
+                let value = value.as_str().ok_or_else(|| {
+                    PyValueError::new_err(format!("{label}.metadata.{key} must be a string"))
+                })?;
+                usage_record = usage_record.with_metadata(key, value);
+            }
+        }
+        Ok(usage_record)
+    };
+    let usage_amount_json = |amount: &LedgerUsageAmount| {
+        json!({
+            "kind": amount.kind,
+            "amount": amount.amount,
+            "unit": amount.unit,
+            "dimensions": amount.dimensions,
+        })
+    };
+    let usage_error_json = |index: usize, op: &str, error: UsageLedgerError| {
+        let (error_code, error_message) = match &error {
+            UsageLedgerError::RecordNotFound { record_id } => (
+                "record_not_found",
+                format!("usage record {record_id:?} was not found"),
+            ),
+            UsageLedgerError::RecordConflict { record_id } => (
+                "record_conflict",
+                format!("usage record {record_id:?} conflicts with an existing record"),
+            ),
+            UsageLedgerError::InvalidRecord { message } => ("invalid_record", message.clone()),
+            UsageLedgerError::Storage { message } => ("storage", message.clone()),
+        };
+        json!({
+            "index": index,
+            "op": op,
+            "error": error_code,
+            "errorMessage": error_message,
+            "errorDebug": format!("{error:?}"),
+        })
+    };
+
+    let operations_value = parse_json_argument(operations_json, "usage ledger operations")?;
+    let operations = operations_value
+        .as_array()
+        .ok_or_else(|| PyValueError::new_err("usage ledger operations must be an array"))?;
+    let mut ledger = InMemoryUsageLedger::new();
+    let mut operation_results = Vec::new();
+    let mut append_results = Vec::new();
+
+    for (index, operation) in operations.iter().enumerate() {
+        let label = format!("operations[{index}]");
+        let operation = json_object(operation, &label)?;
+        let op = required_string(operation, "op", &label)?;
+        let result = match op {
+            "append" => {
+                let record = usage_record(
+                    operation.get("record").ok_or_else(|| {
+                        PyValueError::new_err(format!("{label}.record is required"))
+                    })?,
+                    &format!("{label}.record"),
+                )?;
+                match ledger.append(record) {
+                    Ok(record) => {
+                        append_results.push(record.record_id.clone());
+                        json!({
+                            "index": index,
+                            "op": op,
+                            "error": Value::Null,
+                            "recordId": record.record_id,
+                        })
+                    }
+                    Err(error) => usage_error_json(index, op, error),
+                }
+            }
+            "reconcile" => {
+                let amounts = usage_amounts(
+                    operation.get("amounts").ok_or_else(|| {
+                        PyValueError::new_err(format!("{label}.amounts is required"))
+                    })?,
+                    &format!("{label}.amounts"),
+                )?;
+                match ledger.reconcile(
+                    required_alias_string(operation, "sourceRecordId", "source_record_id", &label)?,
+                    amounts,
+                    required_alias_u64(
+                        operation,
+                        "occurredAtUnixMs",
+                        "occurred_at_unix_ms",
+                        &label,
+                    )?,
+                    optional_alias_string(operation, "recordId", "record_id", &label)?
+                        .map(str::to_owned),
+                ) {
+                    Ok(record) => {
+                        append_results.push(record.record_id.clone());
+                        json!({
+                            "index": index,
+                            "op": op,
+                            "error": Value::Null,
+                            "recordId": record.record_id,
+                        })
+                    }
+                    Err(error) => usage_error_json(index, op, error),
+                }
+            }
+            value => {
+                return Err(PyValueError::new_err(format!(
+                    "{label}.op has unknown usage ledger operation {value:?}"
+                )));
+            }
+        };
+        operation_results.push(result);
+    }
+
+    let (record_ids, totals) = if let Some(run_id) = run_id {
+        (
+            ledger
+                .records_for_run(run_id)
+                .iter()
+                .map(|record| record.record_id.clone())
+                .collect::<Vec<_>>(),
+            ledger
+                .totals_for_run(run_id)
+                .iter()
+                .map(usage_amount_json)
+                .collect::<Vec<_>>(),
+        )
+    } else {
+        (Vec::new(), Vec::new())
+    };
+    let ok = operation_results
+        .iter()
+        .all(|result| result.get("error").is_some_and(Value::is_null));
+
+    serde_json::to_string(&json!({
+        "ok": ok,
+        "operations": operation_results,
+        "appendResults": append_results,
+        "runId": run_id,
+        "recordIds": record_ids,
+        "totals": totals,
+    }))
+    .map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize usage ledger evaluation: {error}"
+        ))
+    })
+}
+
+#[pyfunction]
 fn evaluate_durable_tool_terminal_store_json(operations_json: &str) -> PyResult<String> {
     let terminal_state_name = |state: DurableToolTerminalState| -> &'static str {
         match state {
@@ -5327,6 +5584,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
         evaluate_sequential_tool_queue_json,
         module
     )?)?;
+    module.add_function(wrap_pyfunction!(evaluate_usage_ledger_json, module)?)?;
     module.add_function(wrap_pyfunction!(
         evaluate_durable_tool_terminal_store_json,
         module
@@ -5346,10 +5604,10 @@ mod tests {
         evaluate_declarative_output_policy_json, evaluate_durable_tool_terminal_store_json,
         evaluate_output_gate_json, evaluate_sequential_tool_queue_json,
         evaluate_tool_execution_plan_json, evaluate_tool_result_stream_json,
-        finalize_tool_call_json, negotiate_application_protocol_capabilities_json,
-        prepare_tool_result_for_model_json, run_stdlib_graph_json, run_test_graph_json,
-        validate_remote_payload_json, validate_worker_advertisement_json,
-        validate_worker_protocol_message_json,
+        evaluate_usage_ledger_json, finalize_tool_call_json,
+        negotiate_application_protocol_capabilities_json, prepare_tool_result_for_model_json,
+        run_stdlib_graph_json, run_test_graph_json, validate_remote_payload_json,
+        validate_worker_advertisement_json, validate_worker_protocol_message_json,
     };
 
     #[test]
@@ -7833,6 +8091,95 @@ mod tests {
             .to_string();
 
         assert!(error.contains("tool_call_not_admitted"), "{error}");
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_usage_ledger_json_reconciles_and_reports_invalid_records() -> Result<(), String> {
+        let operations_json = json!([
+            {
+                "op": "append",
+                "record": {
+                    "recordId": "usage-provisional",
+                    "source": "tokenizer_estimated",
+                    "confidence": "estimated",
+                    "amounts": [
+                        {
+                            "kind": "model_output_tokens",
+                            "amount": 18,
+                            "unit": "tokens"
+                        }
+                    ],
+                    "occurredAtUnixMs": 1_700_000,
+                    "runId": "run-1",
+                    "attemptId": "attempt-1",
+                    "providerResponseId": "resp-1"
+                }
+            },
+            {
+                "op": "reconcile",
+                "sourceRecordId": "usage-provisional",
+                "recordId": "usage-reconciled",
+                "amounts": [
+                    {
+                        "kind": "model_output_tokens",
+                        "amount": 21,
+                        "unit": "tokens"
+                    }
+                ],
+                "occurredAtUnixMs": 1_700_300
+            },
+            {
+                "op": "append",
+                "record": {
+                    "recordId": "usage-negative",
+                    "source": "runtime_measured",
+                    "confidence": "exact",
+                    "amounts": [
+                        {
+                            "kind": "model_output_tokens",
+                            "amount": -1,
+                            "unit": "tokens"
+                        }
+                    ],
+                    "occurredAtUnixMs": 1_700_400,
+                    "runId": "run-1"
+                }
+            }
+        ])
+        .to_string();
+
+        let payload = evaluate_usage_ledger_json(&operations_json, Some("run-1"))
+            .map_err(|error| error.to_string())?;
+        let payload = serde_json::from_str::<Value>(&payload).map_err(|error| error.to_string())?;
+
+        assert_eq!(payload["ok"], json!(false));
+        assert_eq!(
+            payload["appendResults"],
+            json!(["usage-provisional", "usage-reconciled"])
+        );
+        assert_eq!(
+            payload["recordIds"],
+            json!(["usage-provisional", "usage-reconciled"])
+        );
+        assert_eq!(
+            payload["totals"],
+            json!([
+                {
+                    "kind": "model_output_tokens",
+                    "amount": 21,
+                    "unit": "tokens",
+                    "dimensions": {}
+                }
+            ])
+        );
+        assert_eq!(payload["operations"][0]["error"], Value::Null);
+        assert_eq!(payload["operations"][1]["error"], Value::Null);
+        assert_eq!(payload["operations"][2]["error"], json!("invalid_record"));
+        assert_eq!(
+            payload["operations"][2]["errorMessage"],
+            json!("usage amount must be non-negative")
+        );
         Ok(())
     }
 

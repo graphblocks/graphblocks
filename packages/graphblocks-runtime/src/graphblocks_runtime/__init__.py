@@ -22,6 +22,7 @@ try:
         evaluate_sequential_tool_queue_json,
         evaluate_tool_execution_plan_json,
         evaluate_tool_result_stream_json,
+        evaluate_usage_ledger_json,
         finalize_tool_call_json,
         negotiate_application_protocol_capabilities_json,
         prepare_tool_result_for_model_json,
@@ -129,6 +130,9 @@ except ImportError as error:
         require_native_extension()
 
     def evaluate_sequential_tool_queue_json(queue_json: str, operations_json: str) -> str:
+        require_native_extension()
+
+    def evaluate_usage_ledger_json(operations_json: str, run_id: str | None = None) -> str:
         require_native_extension()
 
     def validate_worker_advertisement_json(
@@ -379,6 +383,13 @@ def evaluate_sequential_tool_queue(
     )
 
 
+def evaluate_usage_ledger(operations: object, *, run_id: str | None = None) -> dict[str, object]:
+    return _json_object_result(
+        evaluate_usage_ledger_json(_canonical_json(operations), run_id),
+        "native usage ledger result",
+    )
+
+
 def validate_worker_advertisement(
     advertisement: dict[str, object],
     *,
@@ -433,6 +444,8 @@ __all__ = [
     "evaluate_tool_execution_plan_json",
     "evaluate_tool_result_stream",
     "evaluate_tool_result_stream_json",
+    "evaluate_usage_ledger",
+    "evaluate_usage_ledger_json",
     "finalize_tool_call",
     "finalize_tool_call_json",
     "native_extension_available",
