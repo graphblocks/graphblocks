@@ -18,6 +18,10 @@ from graphblocks.output_policy import (
     VALID_VIOLATION_ACTIONS,
 )
 from graphblocks.policy import (
+    EnforcementPoint,
+    PolicyEffect,
+    PolicyEnforcementStatus,
+    RuleEffect,
     VALID_ENFORCEMENT_POINTS,
     VALID_ENFORCEMENT_STATUSES,
     VALID_POLICY_EFFECTS,
@@ -162,6 +166,14 @@ def test_policy_package_exposes_canonical_literal_sets(monkeypatch) -> None:
     assert graphblocks.VALID_RULE_EFFECTS is VALID_RULE_EFFECTS
     assert "VALID_ENFORCEMENT_POINTS" in graphblocks.__all__
     assert "VALID_POLICY_EFFECTS" in graphblocks.__all__
+    assert graphblocks.EnforcementPoint is EnforcementPoint
+    assert graphblocks.PolicyEffect is PolicyEffect
+    assert graphblocks.PolicyEnforcementStatus is PolicyEnforcementStatus
+    assert graphblocks.RuleEffect is RuleEffect
+    assert "EnforcementPoint" in graphblocks.__all__
+    assert "PolicyEffect" in graphblocks.__all__
+    assert "PolicyEnforcementStatus" in graphblocks.__all__
+    assert "RuleEffect" in graphblocks.__all__
     for name, value in output_constants.items():
         assert getattr(graphblocks_policy, name) is value
         assert name in graphblocks_policy.__all__
