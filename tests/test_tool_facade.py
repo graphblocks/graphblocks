@@ -3131,6 +3131,33 @@ def test_tool_execution_plan_skips_dependents_after_dependency_failure() -> None
     assert plan.ready_call_ids() == []
 
 
+def test_tool_execution_plan_skips_dependents_after_policy_stopped_dependency() -> None:
+    dependent = replace(_tool_call("call-b", '{"resource_id":"b"}'), depends_on=("call-a",))
+    transitive = replace(_tool_call("call-c", '{"resource_id":"c"}'), depends_on=("call-b",))
+    independent = _tool_call("call-d", '{"resource_id":"d"}')
+    plan = ToolExecutionPlan(
+        plan_id="plan-1",
+        response_id="response-1",
+        calls=(
+            ToolPlanCall(_tool_call("call-a", '{"resource_id":"a"}')),
+            ToolPlanCall(dependent),
+            ToolPlanCall(transitive),
+            ToolPlanCall(independent),
+        ),
+        maximum_parallelism=4,
+    )
+
+    assert plan.ready_call_ids() == ["call-a", "call-d"]
+    plan.record_started("call-a")
+    plan.record_policy_stopped("call-a")
+
+    assert plan.state("call-a") == "policy_stopped"
+    assert plan.state("call-b") == "skipped"
+    assert plan.state("call-c") == "skipped"
+    assert plan.state("call-d") == "pending"
+    assert plan.ready_call_ids() == ["call-d"]
+
+
 def test_tool_execution_plan_skips_dependents_after_pending_call_denied() -> None:
     dependent = replace(_tool_call("call-b", '{"resource_id":"b"}'), depends_on=("call-a",))
     independent = _tool_call("call-c", '{"resource_id":"c"}')

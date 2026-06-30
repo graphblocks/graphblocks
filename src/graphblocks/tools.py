@@ -67,6 +67,7 @@ ToolExecutionState = Literal[
     "failed",
     "denied",
     "cancelled",
+    "policy_stopped",
     "expired",
     "skipped",
 ]
@@ -1590,6 +1591,10 @@ class ToolExecutionPlan:
             return
         raise ToolExecutionPlanError(f"unknown cancellation policy {self.cancellation_policy}")
 
+    def record_policy_stopped(self, tool_call_id: str) -> None:
+        self._enter_terminal(tool_call_id, "policy_stopped")
+        self._mark_blocked_dependents("skipped")
+
     def _mark_blocked_dependents(self, blocked_state: ToolExecutionState) -> None:
         while True:
             blocked: list[str] = []
@@ -1598,7 +1603,8 @@ class ToolExecutionPlan:
                 if self._states[candidate_id] != "pending":
                     continue
                 if any(
-                    self._states.get(dependency) in {"failed", "denied", "cancelled", "expired", "skipped"}
+                    self._states.get(dependency)
+                    in {"failed", "denied", "cancelled", "policy_stopped", "expired", "skipped"}
                     for dependency in planned_call.call.depends_on
                 ):
                     blocked.append(candidate_id)

@@ -445,6 +445,90 @@
     }
   },
   {
+    "name": "policy_stopped_dependency_skips_dependents",
+    "kind": "execution_plan",
+    "planId": "plan-7b",
+    "responseId": "response-1",
+    "maximumParallelism": 4,
+    "calls": [
+      {
+        "toolCallId": "call-a",
+        "toolName": "ticket.read",
+        "arguments": {
+          "resource_id": "ticket-1"
+        },
+        "effects": [
+          "external_read"
+        ]
+      },
+      {
+        "toolCallId": "call-b",
+        "toolName": "ticket.enrich",
+        "arguments": {
+          "resource_id": "ticket-1"
+        },
+        "dependsOn": [
+          "call-a"
+        ],
+        "effects": [
+          "external_read"
+        ]
+      },
+      {
+        "toolCallId": "call-c",
+        "toolName": "ticket.summarize",
+        "arguments": {
+          "resource_id": "ticket-1"
+        },
+        "dependsOn": [
+          "call-b"
+        ],
+        "effects": [
+          "none"
+        ]
+      },
+      {
+        "toolCallId": "call-d",
+        "toolName": "knowledge.search",
+        "arguments": {
+          "query": "runtime"
+        },
+        "effects": [
+          "external_read"
+        ]
+      }
+    ],
+    "operations": [
+      {
+        "op": "ready",
+        "expect": [
+          "call-a",
+          "call-d"
+        ]
+      },
+      {
+        "op": "start",
+        "toolCallId": "call-a"
+      },
+      {
+        "op": "policy_stopped",
+        "toolCallId": "call-a"
+      },
+      {
+        "op": "ready",
+        "expect": [
+          "call-d"
+        ]
+      }
+    ],
+    "expectedStates": {
+      "call-a": "policy_stopped",
+      "call-b": "skipped",
+      "call-c": "skipped",
+      "call-d": "pending"
+    }
+  },
+  {
     "name": "denied_dependency_skips_dependent_and_allows_independent",
     "kind": "execution_plan",
     "planId": "plan-8",

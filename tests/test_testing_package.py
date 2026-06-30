@@ -463,7 +463,7 @@ def test_testing_package_loads_shared_tool_execution_tck_cases(monkeypatch) -> N
     )
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["tool-execution"] * 15
+    assert [case.kind for case in cases] == ["tool-execution"] * 16
     assert report.ok
     assert {case.case_id for case in cases} == {
         "independent_read_tools_execute_concurrently",
@@ -475,6 +475,7 @@ def test_testing_package_loads_shared_tool_execution_tck_cases(monkeypatch) -> N
         "policy_abort_cancels_running_read_and_denies_pending",
         "policy_abort_preserves_running_state_changing_call_without_safe_cancellation",
         "failed_dependency_skips_dependents",
+        "policy_stopped_dependency_skips_dependents",
         "denied_dependency_skips_dependent_and_allows_independent",
         "expired_dependency_skips_dependent",
         "cancel_dependents_policy_cancels_dependents",
@@ -698,6 +699,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "policy_abort_cancels_running_read_and_denies_pending",
         "policy_abort_preserves_running_state_changing_call_without_safe_cancellation",
         "failed_dependency_skips_dependents",
+        "policy_stopped_dependency_skips_dependents",
         "denied_dependency_skips_dependent_and_allows_independent",
         "expired_dependency_skips_dependent",
         "cancel_dependents_policy_cancels_dependents",

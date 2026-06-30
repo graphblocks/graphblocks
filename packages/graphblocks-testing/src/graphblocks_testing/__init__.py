@@ -7075,6 +7075,34 @@ class TckRunner:
                             "path": f"$.operations[{operation_index}]",
                         }
                     )
+            elif op == "policy_stopped":
+                tool_call_id = str(operation.get("toolCallId", operation.get("tool_call_id", "")))
+                expected_error = operation.get("expectError")
+                actual_error = None
+                try:
+                    plan.record_policy_stopped(tool_call_id)
+                except ToolExecutionPlanError as error:
+                    actual_error = _tool_execution_error_code(error)
+                operation_observations.append(
+                    {"op": "policy_stopped", "toolCallId": tool_call_id, "error": actual_error}
+                )
+                if expected_error is not None:
+                    if actual_error != expected_error:
+                        diagnostics.append(
+                            {
+                                "code": "ToolExecutionOperationErrorMismatch",
+                                "message": "tool-execution operation error did not match expected result",
+                                "path": f"$.operations[{operation_index}].expectError",
+                            }
+                        )
+                elif actual_error is not None:
+                    diagnostics.append(
+                        {
+                            "code": "ToolExecutionOperationUnexpectedError",
+                            "message": "tool-execution policy_stopped operation failed unexpectedly",
+                            "path": f"$.operations[{operation_index}]",
+                        }
+                    )
             elif op == "policy_stop":
                 pending_tool_calls = str(operation.get("pendingToolCalls", "deny"))
                 affected = plan.apply_policy_stop(pending_tool_calls)

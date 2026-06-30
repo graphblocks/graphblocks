@@ -28,6 +28,7 @@ pub enum ToolExecutionState {
     Failed,
     Denied,
     Cancelled,
+    PolicyStopped,
     Expired,
     Skipped,
 }
@@ -529,6 +530,15 @@ impl ToolExecutionPlan {
         Ok(())
     }
 
+    pub fn record_policy_stopped(
+        &mut self,
+        tool_call_id: impl AsRef<str>,
+    ) -> Result<(), ToolExecutionPlanError> {
+        self.enter_terminal(tool_call_id.as_ref(), ToolExecutionState::PolicyStopped)?;
+        self.mark_blocked_dependents(ToolExecutionState::Skipped);
+        Ok(())
+    }
+
     pub fn apply_policy_stop(
         &mut self,
         pending_tool_calls: PendingToolCallsDisposition,
@@ -630,6 +640,7 @@ impl ToolExecutionPlan {
                                 ToolExecutionState::Failed
                                     | ToolExecutionState::Denied
                                     | ToolExecutionState::Cancelled
+                                    | ToolExecutionState::PolicyStopped
                                     | ToolExecutionState::Expired
                                     | ToolExecutionState::Skipped
                             )

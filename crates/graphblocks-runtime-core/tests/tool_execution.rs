@@ -193,6 +193,42 @@ fn failed_dependencies_skip_dependent_calls() -> Result<(), ToolExecutionPlanErr
 }
 
 #[test]
+fn policy_stopped_dependency_skips_dependent_calls() -> Result<(), ToolExecutionPlanError> {
+    let mut dependent = tool_call("call-b", "{\"resource_id\":\"b\"}");
+    dependent.depends_on = vec!["call-a".to_owned()];
+    let mut transitive = tool_call("call-c", "{\"resource_id\":\"c\"}");
+    transitive.depends_on = vec!["call-b".to_owned()];
+    let mut plan = ToolExecutionPlan::new(
+        "plan-1",
+        "response-1",
+        [
+            ToolPlanCall::new(tool_call("call-a", "{\"resource_id\":\"a\"}")),
+            ToolPlanCall::new(dependent),
+            ToolPlanCall::new(transitive),
+            ToolPlanCall::new(tool_call("call-d", "{\"resource_id\":\"d\"}")),
+        ],
+        4,
+    )?;
+
+    assert_eq!(
+        plan.ready_call_ids(),
+        vec!["call-a".to_owned(), "call-d".to_owned()]
+    );
+    plan.record_started("call-a")?;
+    plan.record_policy_stopped("call-a")?;
+
+    assert_eq!(
+        plan.state("call-a"),
+        Some(ToolExecutionState::PolicyStopped)
+    );
+    assert_eq!(plan.state("call-b"), Some(ToolExecutionState::Skipped));
+    assert_eq!(plan.state("call-c"), Some(ToolExecutionState::Skipped));
+    assert_eq!(plan.state("call-d"), Some(ToolExecutionState::Pending));
+    assert_eq!(plan.ready_call_ids(), vec!["call-d".to_owned()]);
+    Ok(())
+}
+
+#[test]
 fn denied_pending_call_skips_dependents() -> Result<(), ToolExecutionPlanError> {
     let mut dependent = tool_call("call-b", "{\"resource_id\":\"b\"}");
     dependent.depends_on = vec!["call-a".to_owned()];

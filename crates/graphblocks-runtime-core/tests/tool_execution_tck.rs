@@ -131,6 +131,13 @@ fn run_case(case: &Value) -> Result<(), String> {
                     .map(|error| execution_error_code(&error));
                 assert_operation_error(case_name, operation_index, operation, actual_error)?;
             }
+            "policy_stopped" => {
+                let actual_error = plan
+                    .record_policy_stopped(required_str(operation, "toolCallId")?)
+                    .err()
+                    .map(|error| execution_error_code(&error));
+                assert_operation_error(case_name, operation_index, operation, actual_error)?;
+            }
             "policy_stop" => {
                 let affected = plan.apply_policy_stop(pending_tool_calls_disposition(
                     required_str(operation, "pendingToolCalls")?,
@@ -334,6 +341,7 @@ fn execution_state_str(state: ToolExecutionState) -> &'static str {
         ToolExecutionState::Failed => "failed",
         ToolExecutionState::Denied => "denied",
         ToolExecutionState::Cancelled => "cancelled",
+        ToolExecutionState::PolicyStopped => "policy_stopped",
         ToolExecutionState::Expired => "expired",
         ToolExecutionState::Skipped => "skipped",
     }
