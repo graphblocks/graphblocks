@@ -495,15 +495,35 @@ class GraphBlocksServerApp:
                 inputs = payload.get("inputs", {})
                 if not isinstance(inputs, dict):
                     raise ValueError("run request inputs must be a JSON object")
-                run_id = str(payload.get("runId", payload.get("run_id", "run-000001")))
-                response_id = str(payload.get("responseId", payload.get("response_id", "response-000001")))
-                release_id = str(payload.get("releaseId", payload.get("release_id", "local")))
-                policy_snapshot_id = str(
-                    payload.get("policySnapshotId", payload.get("policy_snapshot_id", "local"))
+                run_id = _validate_non_empty_string(
+                    "run request",
+                    "runId",
+                    payload.get("runId", payload.get("run_id", "run-000001")),
                 )
-                occurred_at = str(payload.get("occurredAt", payload.get("occurred_at", "")))
+                response_id = _validate_non_empty_string(
+                    "run request",
+                    "responseId",
+                    payload.get("responseId", payload.get("response_id", "response-000001")),
+                )
+                release_id = _validate_non_empty_string(
+                    "run request",
+                    "releaseId",
+                    payload.get("releaseId", payload.get("release_id", "local")),
+                )
+                policy_snapshot_id = _validate_non_empty_string(
+                    "run request",
+                    "policySnapshotId",
+                    payload.get("policySnapshotId", payload.get("policy_snapshot_id", "local")),
+                )
+                occurred_at = payload.get("occurredAt", payload.get("occurred_at", ""))
+                if not isinstance(occurred_at, str):
+                    raise ValueError("run request occurredAt must be a string")
                 turn_id_value = payload.get("turnId", payload.get("turn_id"))
-                turn_id = str(turn_id_value) if turn_id_value is not None else None
+                turn_id = (
+                    _validate_non_empty_string("run request", "turnId", turn_id_value)
+                    if turn_id_value is not None
+                    else None
+                )
 
                 result = InProcessRuntime(self.registry).run(graph, inputs, run_id=run_id)
                 start_payload = result.journal.records[0].payload if result.journal.records else {}

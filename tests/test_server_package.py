@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 from pathlib import Path
 
 
@@ -62,3 +63,46 @@ def test_server_package_reexports_framework_neutral_contracts(monkeypatch) -> No
     assert "ApplicationProtocolEvent" in graphblocks_server.__all__
     assert "ApplicationProtocolLog" in graphblocks_server.__all__
     assert "ServerResponse" in graphblocks_server.__all__
+
+
+def test_server_package_rejects_malformed_run_metadata(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-server" / "src"))
+    graphblocks_server = importlib.import_module("graphblocks_server")
+
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "server-run-validation"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Server validation {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+    app = graphblocks_server.GraphBlocksServerApp()
+
+    response = app.handle(
+        graphblocks_server.ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "ok"}},
+                    "runId": True,
+                }
+            ).encode("utf-8"),
+        )
+    )
+    payload = json.loads(response.body.decode("utf-8"))
+
+    assert response.status_code == 400
+    assert payload["error"] == "run request runId must be a string"
