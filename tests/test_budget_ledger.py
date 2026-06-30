@@ -4,6 +4,7 @@ from decimal import Decimal
 
 import pytest
 
+import graphblocks
 from graphblocks.budget import (
     BudgetAccount,
     BudgetCompletionReserveStateError,
@@ -16,12 +17,41 @@ from graphblocks.budget import (
     BudgetReservationStateError,
     SQLiteBudgetLedger,
     UsageAmount,
+    VALID_BUDGET_STATUSES,
+    VALID_COMPLETION_RESERVE_PURPOSES,
+    VALID_COMPLETION_RESERVE_STATUSES,
+    VALID_RESERVATION_PURPOSES,
+    VALID_RESERVATION_STATUSES,
 )
 from graphblocks.policy import ResourceRef
 
 
 def _tokens(value: str) -> UsageAmount:
     return UsageAmount(kind="model_total_tokens", amount=Decimal(value), unit="tokens")
+
+
+def test_root_facade_exports_budget_literal_contract() -> None:
+    expected_exports = {
+        "BudgetStatus",
+        "ReservationPurpose",
+        "ReservationStatus",
+        "CompletionReservePurpose",
+        "CompletionReserveStatus",
+        "VALID_BUDGET_STATUSES",
+        "VALID_RESERVATION_PURPOSES",
+        "VALID_RESERVATION_STATUSES",
+        "VALID_COMPLETION_RESERVE_PURPOSES",
+        "VALID_COMPLETION_RESERVE_STATUSES",
+    }
+
+    assert sorted(name for name in expected_exports if name not in graphblocks.__all__) == []
+    for name in expected_exports:
+        assert hasattr(graphblocks, name)
+    assert graphblocks.VALID_BUDGET_STATUSES == VALID_BUDGET_STATUSES
+    assert graphblocks.VALID_RESERVATION_PURPOSES == VALID_RESERVATION_PURPOSES
+    assert graphblocks.VALID_RESERVATION_STATUSES == VALID_RESERVATION_STATUSES
+    assert graphblocks.VALID_COMPLETION_RESERVE_PURPOSES == VALID_COMPLETION_RESERVE_PURPOSES
+    assert graphblocks.VALID_COMPLETION_RESERVE_STATUSES == VALID_COMPLETION_RESERVE_STATUSES
 
 
 def test_usage_amount_rejects_negative_amounts_and_freezes_dimensions() -> None:
