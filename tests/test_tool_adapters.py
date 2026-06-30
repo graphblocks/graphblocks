@@ -266,6 +266,29 @@ def test_mcp_adapter_prepares_admitted_invocation_contract(monkeypatch) -> None:
         "effective_policy_snapshot_id": "policy-snapshot-1",
         "idempotency_key": "idem-1",
     }
+    direct_kwargs = {
+        "binding_id": invocation.binding_id,
+        "resolved_tool_id": invocation.resolved_tool_id,
+        "tool_name": invocation.tool_name,
+        "tool_call_id": invocation.tool_call_id,
+        "server": invocation.server,
+        "remote_name": invocation.remote_name,
+        "arguments_json": '{"query":"billing","limit":5}',
+        "arguments_digest": invocation.arguments_digest,
+        "definition_digest": invocation.definition_digest,
+        "binding_digest": invocation.binding_digest,
+        "effective_policy_snapshot_id": invocation.effective_policy_snapshot_id,
+        "idempotency_key": invocation.idempotency_key,
+    }
+    direct = graphblocks_mcp.McpToolInvocation(**direct_kwargs)
+
+    assert direct.arguments_json == '{"limit":5,"query":"billing"}'
+    with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="server must not be empty"):
+        graphblocks_mcp.McpToolInvocation(**{**direct_kwargs, "server": " "})
+    with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="must decode to an object"):
+        graphblocks_mcp.McpToolInvocation(**{**direct_kwargs, "arguments_json": "[]"})
+    with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="digest does not match"):
+        graphblocks_mcp.McpToolInvocation(**{**direct_kwargs, "arguments_json": '{"query":"changed"}'})
 
 
 def test_mcp_adapter_rejects_stale_argument_digest(monkeypatch) -> None:
@@ -754,6 +777,29 @@ def test_openapi_adapter_prepares_admitted_invocation_contract(monkeypatch) -> N
         "effective_policy_snapshot_id": "policy-snapshot-1",
         "idempotency_key": "idem-1",
     }
+    direct_kwargs = {
+        "binding_id": invocation.binding_id,
+        "resolved_tool_id": invocation.resolved_tool_id,
+        "tool_name": invocation.tool_name,
+        "tool_call_id": invocation.tool_call_id,
+        "connection": invocation.connection,
+        "operation_id": invocation.operation_id,
+        "arguments_json": '{"title":"Need help","priority":"normal"}',
+        "arguments_digest": invocation.arguments_digest,
+        "definition_digest": invocation.definition_digest,
+        "binding_digest": invocation.binding_digest,
+        "effective_policy_snapshot_id": invocation.effective_policy_snapshot_id,
+        "idempotency_key": invocation.idempotency_key,
+    }
+    direct = graphblocks_openapi.OpenApiOperationInvocation(**direct_kwargs)
+
+    assert direct.arguments_json == '{"priority":"normal","title":"Need help"}'
+    with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="connection must not be empty"):
+        graphblocks_openapi.OpenApiOperationInvocation(**{**direct_kwargs, "connection": " "})
+    with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="must decode to an object"):
+        graphblocks_openapi.OpenApiOperationInvocation(**{**direct_kwargs, "arguments_json": "[]"})
+    with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="digest does not match"):
+        graphblocks_openapi.OpenApiOperationInvocation(**{**direct_kwargs, "arguments_json": '{"title":"changed"}'})
 
 
 def test_openapi_adapter_rejects_stale_argument_digest(monkeypatch) -> None:
