@@ -170,6 +170,7 @@ pub enum ApplicationEventError {
     NotToolEvent { kind: ApplicationEventKind },
     EmptyMetadataField { field: &'static str },
     EmptyPayloadField { field: &'static str },
+    InvalidPayload { field: &'static str },
     EmptyToolCallId,
     InvalidToolCall { source: ToolCallError },
     InvalidToolResultEvent { source: ToolResultEventError },
@@ -682,6 +683,9 @@ impl ApplicationEvent {
             return Err(ApplicationEventError::ToolEventRequiresToolCallId { kind });
         }
         Self::validate_metadata(&metadata)?;
+        if !payload.is_object() {
+            return Err(ApplicationEventError::InvalidPayload { field: "payload" });
+        }
 
         Ok(Self {
             kind,
@@ -705,6 +709,9 @@ impl ApplicationEvent {
         let tool_call_id = tool_call_id.into();
         if tool_call_id.trim().is_empty() {
             return Err(ApplicationEventError::EmptyToolCallId);
+        }
+        if !payload.is_object() {
+            return Err(ApplicationEventError::InvalidPayload { field: "payload" });
         }
 
         Ok(Self {
@@ -990,6 +997,7 @@ pub enum ApplicationProtocolError {
     EmptyCommandId,
     EmptyEventId,
     EmptyMetadataField { field: &'static str },
+    InvalidPayload { field: &'static str },
     InvalidToolResultEvent { source: ToolResultEventError },
     NonMonotonicSequence { previous: u64, next: u64 },
     ProtocolVersionMismatch { left: String, right: String },
@@ -1004,6 +1012,12 @@ impl fmt::Display for ApplicationProtocolError {
                 write!(
                     formatter,
                     "application protocol metadata field {field} must not be empty"
+                )
+            }
+            Self::InvalidPayload { field } => {
+                write!(
+                    formatter,
+                    "application protocol {field} must be a JSON object"
                 )
             }
             Self::InvalidToolResultEvent { source } => {
@@ -1047,6 +1061,9 @@ impl ApplicationCommand {
                 return Err(ApplicationProtocolError::EmptyMetadataField { field });
             }
         }
+        if !payload.is_object() {
+            return Err(ApplicationProtocolError::InvalidPayload { field: "payload" });
+        }
         Ok(Self {
             kind,
             metadata,
@@ -1079,6 +1096,9 @@ impl ApplicationProtocolEvent {
             if value.is_some_and(|value| value.trim().is_empty()) {
                 return Err(ApplicationProtocolError::EmptyMetadataField { field });
             }
+        }
+        if !payload.is_object() {
+            return Err(ApplicationProtocolError::InvalidPayload { field: "payload" });
         }
         Ok(Self {
             kind,
@@ -1313,6 +1333,11 @@ impl ApplicationProtocolCapabilities {
         &self,
         peer: &ApplicationProtocolCapabilities,
     ) -> Result<ApplicationProtocolCapabilities, ApplicationProtocolError> {
+        if self.protocol_version.trim().is_empty() || peer.protocol_version.trim().is_empty() {
+            return Err(ApplicationProtocolError::EmptyMetadataField {
+                field: "protocol_version",
+            });
+        }
         if self.protocol_version != peer.protocol_version {
             return Err(ApplicationProtocolError::ProtocolVersionMismatch {
                 left: self.protocol_version.clone(),

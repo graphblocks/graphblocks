@@ -137,6 +137,27 @@ fn run_events_use_the_common_application_event_envelope() {
 }
 
 #[test]
+fn application_events_reject_non_object_payloads() {
+    assert_eq!(
+        ApplicationEvent::new(
+            ApplicationEventKind::RunStarted,
+            metadata(),
+            json!("running")
+        ),
+        Err(ApplicationEventError::InvalidPayload { field: "payload" })
+    );
+    assert_eq!(
+        ApplicationEvent::tool(
+            ApplicationEventKind::ToolCallStarted,
+            metadata(),
+            "tool-call-1",
+            json!(["running"]),
+        ),
+        Err(ApplicationEventError::InvalidPayload { field: "payload" })
+    );
+}
+
+#[test]
 fn application_events_reject_empty_required_metadata_fields() {
     let empty_event_id = ApplicationEventMetadata {
         event_id: " ".to_owned(),
@@ -1314,6 +1335,18 @@ fn application_command_preserves_common_envelope_and_payload() {
 }
 
 #[test]
+fn application_commands_reject_non_object_payloads() {
+    assert_eq!(
+        ApplicationCommand::new(
+            ApplicationCommandKind::ApproveEffect,
+            command_metadata(),
+            json!("approve"),
+        ),
+        Err(ApplicationProtocolError::InvalidPayload { field: "payload" })
+    );
+}
+
+#[test]
 fn application_commands_reject_empty_required_protocol_metadata() {
     assert_eq!(
         ApplicationCommand::new(
@@ -1421,6 +1454,18 @@ fn application_protocol_event_names_and_envelope_match_client_protocol() {
     assert_eq!(event.metadata.protocol_version, "graphblocks.app.v1");
     assert_eq!(event.metadata.cursor.as_deref(), Some("cursor-5"));
     assert_eq!(event.payload, json!({"revision": 2}));
+}
+
+#[test]
+fn application_protocol_events_reject_non_object_payloads() {
+    assert_eq!(
+        ApplicationProtocolEvent::new(
+            ApplicationProtocolEventKind::RunStarted,
+            protocol_event_metadata("event-1", 5, "cursor-5"),
+            json!(null),
+        ),
+        Err(ApplicationProtocolError::InvalidPayload { field: "payload" })
+    );
 }
 
 #[test]
@@ -1741,5 +1786,24 @@ fn protocol_capability_negotiation_intersects_commands_and_events() {
     assert_eq!(
         negotiated.events,
         [ApplicationProtocolEventKind::RunCompleted].into()
+    );
+}
+
+#[test]
+fn protocol_capability_negotiation_rejects_blank_protocol_version() {
+    let valid = ApplicationProtocolCapabilities::new("graphblocks.app.v1");
+    let blank = ApplicationProtocolCapabilities::new(" ");
+
+    assert_eq!(
+        blank.negotiate(&valid),
+        Err(ApplicationProtocolError::EmptyMetadataField {
+            field: "protocol_version",
+        })
+    );
+    assert_eq!(
+        valid.negotiate(&blank),
+        Err(ApplicationProtocolError::EmptyMetadataField {
+            field: "protocol_version",
+        })
     );
 }

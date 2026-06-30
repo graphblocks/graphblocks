@@ -5660,6 +5660,10 @@ fn serialize_application_protocol_log_error(error: &ApplicationProtocolError) ->
             "code": "empty_metadata_field",
             "field": field,
         }),
+        ApplicationProtocolError::InvalidPayload { field } => json!({
+            "code": "invalid_payload",
+            "field": field,
+        }),
     }
 }
 
