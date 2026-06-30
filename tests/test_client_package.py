@@ -5,8 +5,76 @@ import json
 from pathlib import Path
 from urllib.parse import urlparse
 
+import pytest
+
+from graphblocks import (
+    AdmittedToolCall,
+    JsonSchema,
+    JsonSchemaNode,
+    RemoteToolImplementation,
+    ResolvedTool,
+    ToolBinding,
+    ToolCall,
+    ToolDefinition,
+    ToolSchemaRegistry,
+    canonical_hash,
+)
+
 
 ROOT = Path(__file__).parents[1]
+
+
+def _remote_admitted_call(
+    *,
+    arguments: dict[str, object],
+    output_schema: str | None = None,
+) -> tuple[AdmittedToolCall, ResolvedTool]:
+    definition = ToolDefinition(
+        name="knowledge.search",
+        description="Search support documentation.",
+        input_schema="schemas/SearchRequest@1",
+        output_schema=output_schema,
+    )
+    binding = ToolBinding(
+        binding_id="binding-remote-search",
+        tool_name="knowledge.search",
+        implementation=RemoteToolImplementation(connection="support-api", operation="search"),
+        effects=frozenset({"external_read", "network"}),
+        approval="never",
+        idempotency="not_applicable",
+    )
+    resolved = ResolvedTool.from_definition_and_binding(
+        resolved_tool_id="resolved-remote-search",
+        definition=definition,
+        binding=binding,
+        effective_policy_snapshot_id="policy-snapshot-1",
+        allowed_for_principal=True,
+    )
+    call = ToolCall(
+        tool_call_id="call-1",
+        response_id="response-1",
+        resolved_tool_id=resolved.resolved_tool_id,
+        name="knowledge.search",
+        arguments=arguments,
+        arguments_digest=canonical_hash(arguments),
+        status="admitted",
+        admitted_at="2026-06-24T00:00:00Z",
+    )
+    return AdmittedToolCall(call=call, idempotency_key="idem-1"), resolved
+
+
+def _remote_output_registry() -> ToolSchemaRegistry:
+    return ToolSchemaRegistry(
+        (
+            JsonSchema(
+                "schemas/SearchResult@1",
+                JsonSchemaNode.object().required_property(
+                    "items",
+                    JsonSchemaNode.array(JsonSchemaNode.string()),
+                ),
+            ),
+        )
+    )
 
 
 def test_client_package_exposes_application_event_protocol(monkeypatch) -> None:
@@ -128,6 +196,167 @@ def test_client_package_exposes_application_protocol_envelopes(monkeypatch) -> N
     assert "ApplicationCommand" in graphblocks_client.__all__
     assert "ApplicationProtocolEvent" in graphblocks_client.__all__
     assert "ApplicationProtocolStreamState" in graphblocks_client.__all__
+
+
+def test_client_package_builds_remote_tool_definition_binding_and_invocation(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+    arguments = {"query": "billing", "limit": 5}
+    admitted, resolved = _remote_admitted_call(arguments=arguments)
+
+    definition = graphblocks_client.define_remote_tool(
+        name="knowledge.search",
+        description="Search support documentation.",
+        input_schema="schemas/SearchRequest@1",
+        output_schema="schemas/SearchResult@1",
+        tags=("support", "search"),
+        version="1.0.0",
+    )
+    binding = graphblocks_client.bind_remote_tool(
+        binding_id="binding-remote-search",
+        tool_name="knowledge.search",
+        connection="support-api",
+        operation="search",
+        effects=("external_read", "network"),
+        approval="never",
+        idempotency="not_applicable",
+        timeout_ms=1_000,
+        retry_policy_ref="retry/read",
+        policy_profile_ref="policy/tool-output",
+        execution_class="io-bound",
+    )
+
+    invocation = graphblocks_client.prepare_remote_tool_invocation(admitted, resolved)
+    arguments["query"] = "mutated"
+
+    assert definition.model_contract()["tags"] == ["search", "support"]
+    assert binding.binding_contract()["implementation"] == {
+        "kind": "remote",
+        "connection": "support-api",
+        "operation": "search",
+    }
+    assert binding.binding_contract()["timeout_ms"] == 1_000
+    assert invocation.request_contract() == {
+        "kind": "remote",
+        "binding_id": "binding-remote-search",
+        "resolved_tool_id": "resolved-remote-search",
+        "tool_name": "knowledge.search",
+        "tool_call_id": "call-1",
+        "connection": "support-api",
+        "operation": "search",
+        "arguments": {"limit": 5, "query": "billing"},
+        "arguments_digest": admitted.call.arguments_digest,
+        "definition_digest": resolved.definition_digest,
+        "binding_digest": resolved.binding_digest,
+        "effective_policy_snapshot_id": "policy-snapshot-1",
+        "idempotency_key": "idem-1",
+    }
+    assert "prepare_remote_tool_invocation" in graphblocks_client.__all__
+
+
+def test_client_package_remote_adapter_rejects_stale_argument_digest(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+    admitted, resolved = _remote_admitted_call(arguments={"query": "billing"})
+    object.__setattr__(admitted.call, "arguments", {"query": "mutated"})
+
+    with pytest.raises(graphblocks_client.RemoteToolAdapterError, match="arguments digest does not match"):
+        graphblocks_client.prepare_remote_tool_invocation(admitted, resolved)
+
+
+def test_client_package_remote_adapter_validates_result_before_model_return(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+    admitted, resolved = _remote_admitted_call(
+        arguments={"query": "billing"},
+        output_schema="schemas/SearchResult@1",
+    )
+    registry = _remote_output_registry()
+
+    result = graphblocks_client.remote_tool_result_from_response(
+        admitted,
+        resolved,
+        registry,
+        output={"items": ["refund policy"]},
+        started_at="2026-06-24T00:00:01Z",
+        completed_at="2026-06-24T00:00:02Z",
+        effect_outcome="no_external_effect",
+    )
+    model_output = graphblocks_client.prepare_remote_tool_result_for_model(
+        admitted,
+        resolved,
+        registry,
+        result,
+    )
+
+    assert result.status == "completed"
+    assert result.effect_outcome == "no_external_effect"
+    assert result.output[0].metadata["adapter"] == "remote"
+    assert model_output[0].metadata["trust_designation"] == "untrusted_external"
+    assert model_output[0].metadata["prompt_injection_label"] == "untrusted_tool_output"
+    with pytest.raises(graphblocks_client.RemoteToolAdapterError, match="failed validation"):
+        graphblocks_client.remote_tool_result_from_response(
+            admitted,
+            resolved,
+            registry,
+            output={"items": [7]},
+            started_at="2026-06-24T00:00:01Z",
+            completed_at="2026-06-24T00:00:02Z",
+        )
+
+
+def test_client_package_remote_adapter_builds_streaming_and_terminal_results(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+    admitted, resolved = _remote_admitted_call(arguments={"query": "billing"})
+
+    started = graphblocks_client.remote_tool_result_started(
+        admitted,
+        resolved,
+        sequence=1,
+        started_at="2026-06-24T00:00:01Z",
+    )
+    delta = graphblocks_client.remote_tool_result_delta(
+        admitted,
+        resolved,
+        sequence=2,
+        output=("partial", {"kind": "json", "data": {"items": ["draft"]}}),
+    )
+    artifact = graphblocks_client.remote_tool_result_artifact_ready(
+        admitted,
+        resolved,
+        sequence=3,
+        artifact={
+            "artifactId": "artifact-1",
+            "uri": "blob://artifact-1",
+            "mediaType": "application/json",
+            "metadata": {"source": "remote"},
+        },
+    )
+    stopped = graphblocks_client.remote_tool_result_policy_stopped(
+        admitted,
+        resolved,
+        error={"code": "policy.denied", "message": "stopped after remote response"},
+        started_at="2026-06-24T00:00:01Z",
+        completed_at="2026-06-24T00:00:03Z",
+        effect_outcome="unknown",
+    )
+    incomplete = graphblocks_client.remote_tool_result_incomplete(
+        admitted,
+        resolved,
+        started_at="2026-06-24T00:00:01Z",
+        completed_at="2026-06-24T00:00:03Z",
+    )
+
+    assert started.kind == "started"
+    assert delta.output[0].metadata == {"adapter": "remote", "trust_designation": "untrusted_external"}
+    assert delta.output[1].metadata == {"adapter": "remote", "trust_designation": "untrusted_external"}
+    assert artifact.artifact is not None
+    assert artifact.artifact.media_type == "application/json"
+    assert stopped.status == "policy_stopped"
+    assert stopped.effect_outcome == "unknown"
+    assert incomplete.status == "incomplete"
+    assert "remote_tool_result_policy_stopped" in graphblocks_client.__all__
 
 
 def test_client_package_runs_local_graph_command_and_emits_events(monkeypatch) -> None:
