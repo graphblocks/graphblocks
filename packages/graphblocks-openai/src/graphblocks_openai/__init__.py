@@ -21,6 +21,29 @@ class OpenAICompatibleAdapterError(ValueError):
     """Raised when an OpenAI-compatible adapter contract is invalid."""
 
 
+def _strip_required_string(field_name: str, value: object) -> str:
+    if not isinstance(value, str):
+        raise OpenAICompatibleAdapterError(f"{field_name} must be a string")
+    stripped = value.strip()
+    if not stripped:
+        raise OpenAICompatibleAdapterError(f"{field_name} must not be empty")
+    return stripped
+
+
+def _strip_optional_string(field_name: str, value: object) -> str | None:
+    if value is None:
+        return None
+    return _strip_required_string(field_name, value)
+
+
+def _non_negative_integer(field_name: str, value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise OpenAICompatibleAdapterError(f"{field_name} must be a non-negative integer")
+    if value < 0:
+        raise OpenAICompatibleAdapterError(f"{field_name} must be a non-negative integer")
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class OpenAIChatCompletionRequest:
     body: Mapping[str, object]
@@ -28,11 +51,9 @@ class OpenAIChatCompletionRequest:
     endpoint: str = "/chat/completions"
 
     def __post_init__(self) -> None:
-        if not self.endpoint.strip():
-            raise OpenAICompatibleAdapterError("endpoint must not be empty")
         if not self.body:
             raise OpenAICompatibleAdapterError("body must not be empty")
-        object.__setattr__(self, "endpoint", self.endpoint.strip())
+        object.__setattr__(self, "endpoint", _strip_required_string("endpoint", self.endpoint))
         object.__setattr__(self, "body", deepcopy(dict(self.body)))
         object.__setattr__(self, "metadata", deepcopy(dict(self.metadata)))
 
@@ -54,10 +75,8 @@ class OpenAIChatResponse:
     usage: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not self.response_id.strip():
-            raise OpenAICompatibleAdapterError("response_id must not be empty")
-        if not self.model.strip():
-            raise OpenAICompatibleAdapterError("model must not be empty")
+        object.__setattr__(self, "response_id", _strip_required_string("response_id", self.response_id))
+        object.__setattr__(self, "model", _strip_required_string("model", self.model))
         object.__setattr__(self, "parts", tuple(self.parts))
         object.__setattr__(self, "tool_calls", [deepcopy(call) for call in self.tool_calls])
         object.__setattr__(self, "usage", deepcopy(dict(self.usage)))
@@ -95,17 +114,34 @@ class OpenAIChatDelta:
     usage_delta: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not self.response_id.strip():
-            raise OpenAICompatibleAdapterError("response_id must not be empty")
-        if self.sequence < 0:
-            raise OpenAICompatibleAdapterError("sequence must be non-negative")
-        if self.choice_index is not None and (
-            isinstance(self.choice_index, bool) or not isinstance(self.choice_index, int)
-        ):
-            raise OpenAICompatibleAdapterError("choice_index must be an integer")
-        if self.choice_index is not None and self.choice_index < 0:
-            raise OpenAICompatibleAdapterError("choice_index must be non-negative")
-        object.__setattr__(self, "tool_call_deltas", [deepcopy(delta) for delta in self.tool_call_deltas])
+        object.__setattr__(self, "response_id", _strip_required_string("response_id", self.response_id))
+        object.__setattr__(self, "sequence", _non_negative_integer("sequence", self.sequence))
+        if self.choice_index is not None:
+            object.__setattr__(self, "choice_index", _non_negative_integer("choice_index", self.choice_index))
+        if self.content_delta is not None and not isinstance(self.content_delta, str):
+            raise OpenAICompatibleAdapterError("content_delta must be a string")
+        if self.finish_reason is not None and not isinstance(self.finish_reason, str):
+            raise OpenAICompatibleAdapterError("finish_reason must be a string")
+        normalized_tool_call_deltas: list[dict[str, object]] = []
+        for delta in self.tool_call_deltas:
+            if not isinstance(delta, Mapping):
+                raise OpenAICompatibleAdapterError("tool_call_delta must be a mapping")
+            normalized_delta: dict[str, object] = {
+                "index": _non_negative_integer("tool_call_delta index", delta.get("index", 0))
+            }
+            if "id" in delta:
+                normalized_delta["id"] = _strip_optional_string("tool_call_delta id", delta.get("id"))
+            if "type" in delta:
+                normalized_delta["type"] = _strip_optional_string("tool_call_delta type", delta.get("type"))
+            if "name" in delta:
+                normalized_delta["name"] = _strip_optional_string("tool_call_delta name", delta.get("name"))
+            if "arguments_delta" in delta:
+                arguments_delta = delta.get("arguments_delta")
+                if arguments_delta is not None and not isinstance(arguments_delta, str):
+                    raise OpenAICompatibleAdapterError("tool_call_delta arguments_delta must be a string")
+                normalized_delta["arguments_delta"] = arguments_delta
+            normalized_tool_call_deltas.append(normalized_delta)
+        object.__setattr__(self, "tool_call_deltas", normalized_tool_call_deltas)
         object.__setattr__(self, "usage_delta", deepcopy(dict(self.usage_delta)))
 
     def delta_contract(self) -> dict[str, object]:
@@ -437,10 +473,8 @@ def openai_chat_response_from_provider(data: Mapping[str, object]) -> OpenAIChat
     response_id = data.get("id")
     model = data.get("model")
     choices = data.get("choices")
-    if not isinstance(response_id, str) or not response_id.strip():
-        raise OpenAICompatibleAdapterError("provider response id must not be empty")
-    if not isinstance(model, str) or not model.strip():
-        raise OpenAICompatibleAdapterError("provider response model must not be empty")
+    response_id = _strip_required_string("provider response id", response_id)
+    model = _strip_required_string("provider response model", model)
     if not isinstance(choices, Sequence) or isinstance(choices, (str, bytes)) or not choices:
         raise OpenAICompatibleAdapterError("provider response choices must be a non-empty sequence")
 
@@ -493,16 +527,20 @@ def openai_chat_response_from_provider(data: Mapping[str, object]) -> OpenAIChat
             call_id = raw_tool_call.get("id")
             name = function.get("name")
             arguments = function.get("arguments", "")
-            if not isinstance(call_id, str) or not call_id.strip():
-                raise OpenAICompatibleAdapterError("provider response tool_call id must not be empty")
-            if not isinstance(name, str) or not name.strip():
-                raise OpenAICompatibleAdapterError("provider response tool_call name must not be empty")
+            call_id = _strip_required_string("provider response tool_call id", call_id)
+            name = _strip_required_string("provider response tool_call name", name)
             if not isinstance(arguments, str):
                 raise OpenAICompatibleAdapterError("provider response tool_call arguments must be a string")
+            tool_type = raw_tool_call.get("type")
+            tool_type = (
+                _strip_required_string("provider response tool_call type", tool_type)
+                if tool_type is not None
+                else "function"
+            )
             tool_calls.append(
                 {
                     "id": call_id,
-                    "type": raw_tool_call.get("type") if isinstance(raw_tool_call.get("type"), str) else "function",
+                    "type": tool_type,
                     "name": name,
                     "arguments": arguments,
                 }
@@ -533,8 +571,7 @@ def openai_chat_delta_from_chunk(data: Mapping[str, object], *, sequence: int) -
         usage = {}
     if not isinstance(usage, Mapping):
         raise OpenAICompatibleAdapterError("provider chunk usage must be a mapping")
-    if not isinstance(response_id, str) or not response_id.strip():
-        raise OpenAICompatibleAdapterError("provider chunk id must not be empty")
+    response_id = _strip_required_string("provider chunk id", response_id)
     if not isinstance(choices, Sequence) or isinstance(choices, (str, bytes)):
         raise OpenAICompatibleAdapterError("provider chunk choices must be a sequence")
     if not choices:
@@ -550,8 +587,7 @@ def openai_chat_delta_from_chunk(data: Mapping[str, object], *, sequence: int) -
     if not isinstance(choice, Mapping):
         raise OpenAICompatibleAdapterError("provider chunk choice must be a mapping")
     choice_index = choice.get("index", 0)
-    if isinstance(choice_index, bool) or not isinstance(choice_index, int):
-        raise OpenAICompatibleAdapterError("provider chunk choice index must be an integer")
+    choice_index = _non_negative_integer("provider chunk choice index", choice_index)
     delta = choice.get("delta", {})
     if not isinstance(delta, Mapping):
         raise OpenAICompatibleAdapterError("provider chunk delta must be a mapping")
@@ -568,6 +604,7 @@ def openai_chat_delta_from_chunk(data: Mapping[str, object], *, sequence: int) -
     for raw_delta in raw_tool_call_deltas:
         if not isinstance(raw_delta, Mapping):
             raise OpenAICompatibleAdapterError("provider chunk tool_call delta must be a mapping")
+        tool_call_index = _non_negative_integer("provider chunk tool_call index", raw_delta.get("index", 0))
         function = raw_delta.get("function", {})
         if function is None:
             function = {}
@@ -576,12 +613,19 @@ def openai_chat_delta_from_chunk(data: Mapping[str, object], *, sequence: int) -
         arguments = function.get("arguments")
         if arguments is not None and not isinstance(arguments, str):
             raise OpenAICompatibleAdapterError("provider chunk tool_call function arguments must be a string")
+        tool_call_id = _strip_optional_string("provider chunk tool_call id", raw_delta.get("id"))
+        tool_call_type = (
+            _strip_required_string("provider chunk tool_call type", raw_delta.get("type"))
+            if raw_delta.get("type") is not None
+            else "function"
+        )
+        function_name = _strip_optional_string("provider chunk tool_call function name", function.get("name"))
         tool_call_deltas.append(
             {
-                "index": raw_delta.get("index", 0),
-                "id": raw_delta.get("id") if isinstance(raw_delta.get("id"), str) else None,
-                "type": raw_delta.get("type") if isinstance(raw_delta.get("type"), str) else "function",
-                "name": function.get("name") if isinstance(function.get("name"), str) else None,
+                "index": tool_call_index,
+                "id": tool_call_id,
+                "type": tool_call_type,
+                "name": function_name,
                 "arguments_delta": arguments,
             }
         )

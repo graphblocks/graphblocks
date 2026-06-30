@@ -235,6 +235,81 @@ def test_openai_stream_chunk_normalizes_content_delta(monkeypatch) -> None:
     }
 
 
+def test_openai_stream_chunk_trims_provider_identity(monkeypatch) -> None:
+    _add_openai_package_paths(monkeypatch)
+    graphblocks_openai = importlib.import_module("graphblocks_openai")
+
+    response = graphblocks_openai.openai_chat_response_from_provider(
+        {
+            "id": " chatcmpl-1 ",
+            "model": " gpt-test ",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "id": " call-1 ",
+                                "type": " function ",
+                                "function": {
+                                    "name": " knowledge.search ",
+                                    "arguments": "{}",
+                                },
+                            }
+                        ],
+                    },
+                }
+            ],
+        }
+    )
+    delta = graphblocks_openai.openai_chat_delta_from_chunk(
+        {
+            "id": " chatcmpl-2 ",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": " call-2 ",
+                                "type": " function ",
+                                "function": {
+                                    "name": " knowledge.search ",
+                                    "arguments": "{}",
+                                },
+                            }
+                        ]
+                    },
+                }
+            ],
+        },
+        sequence=1,
+    )
+
+    assert response.response_id == "chatcmpl-1"
+    assert response.model == "gpt-test"
+    assert response.tool_calls == [
+        {
+            "id": "call-1",
+            "type": "function",
+            "name": "knowledge.search",
+            "arguments": "{}",
+        }
+    ]
+    assert delta.response_id == "chatcmpl-2"
+    assert delta.tool_call_deltas == [
+        {
+            "index": 0,
+            "id": "call-2",
+            "type": "function",
+            "name": "knowledge.search",
+            "arguments_delta": "{}",
+        }
+    ]
+
+
 def test_openai_stream_content_delta_normalizes_to_generation_chunk(monkeypatch) -> None:
     _add_openai_package_paths(monkeypatch)
     graphblocks_openai = importlib.import_module("graphblocks_openai")
@@ -559,6 +634,89 @@ def test_openai_stream_chunk_rejects_non_string_tool_argument_delta(monkeypatch)
                 ],
             },
             sequence=1,
+        )
+
+
+def test_openai_stream_chunk_rejects_malformed_tool_call_metadata(monkeypatch) -> None:
+    _add_openai_package_paths(monkeypatch)
+    graphblocks_openai = importlib.import_module("graphblocks_openai")
+
+    cases = (
+        (
+            {"index": True, "id": "call-1", "function": {"name": "knowledge.search"}},
+            "provider chunk tool_call index must be a non-negative integer",
+        ),
+        (
+            {"index": -1, "id": "call-1", "function": {"name": "knowledge.search"}},
+            "provider chunk tool_call index must be a non-negative integer",
+        ),
+        (
+            {"index": 0, "id": object(), "function": {"name": "knowledge.search"}},
+            "provider chunk tool_call id must be a string",
+        ),
+        (
+            {"index": 0, "id": " ", "function": {"name": "knowledge.search"}},
+            "provider chunk tool_call id must not be empty",
+        ),
+        (
+            {"index": 0, "id": "call-1", "type": " ", "function": {"name": "knowledge.search"}},
+            "provider chunk tool_call type must not be empty",
+        ),
+        (
+            {"index": 0, "id": "call-1", "function": {"name": object()}},
+            "provider chunk tool_call function name must be a string",
+        ),
+        (
+            {"index": 0, "id": "call-1", "function": {"name": " "}},
+            "provider chunk tool_call function name must not be empty",
+        ),
+    )
+
+    for raw_delta, message in cases:
+        with pytest.raises(graphblocks_openai.OpenAICompatibleAdapterError, match=message):
+            graphblocks_openai.openai_chat_delta_from_chunk(
+                {
+                    "id": "chatcmpl-metadata",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"tool_calls": [raw_delta]},
+                        }
+                    ],
+                },
+                sequence=1,
+            )
+
+
+def test_openai_delta_rejects_invalid_sequence_and_metadata(monkeypatch) -> None:
+    _add_openai_package_paths(monkeypatch)
+    graphblocks_openai = importlib.import_module("graphblocks_openai")
+
+    with pytest.raises(graphblocks_openai.OpenAICompatibleAdapterError, match="sequence"):
+        graphblocks_openai.OpenAIChatDelta(
+            response_id="chatcmpl-1",
+            sequence=True,
+            choice_index=0,
+        )
+    with pytest.raises(graphblocks_openai.OpenAICompatibleAdapterError, match="choice_index"):
+        graphblocks_openai.OpenAIChatDelta(
+            response_id="chatcmpl-1",
+            sequence=1,
+            choice_index=-1,
+        )
+    with pytest.raises(graphblocks_openai.OpenAICompatibleAdapterError, match="tool_call_delta id"):
+        graphblocks_openai.OpenAIChatDelta(
+            response_id="chatcmpl-1",
+            sequence=1,
+            choice_index=0,
+            tool_call_deltas=[{"index": 0, "id": " ", "name": "knowledge.search"}],
+        )
+    with pytest.raises(graphblocks_openai.OpenAICompatibleAdapterError, match="arguments_delta"):
+        graphblocks_openai.OpenAIChatDelta(
+            response_id="chatcmpl-1",
+            sequence=1,
+            choice_index=0,
+            tool_call_deltas=[{"index": 0, "arguments_delta": {"query": "refund"}}],
         )
 
 
