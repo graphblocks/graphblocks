@@ -188,3 +188,30 @@ fn sequential_tool_queue_policy_stop_clears_cancelled_running_call()
     assert_eq!(queue.start_next_ready()?, None);
     Ok(())
 }
+
+#[test]
+fn sequential_tool_queue_policy_stop_keep_preserves_pending_and_running_calls()
+-> Result<(), SequentialToolQueueError> {
+    let mut queue = SequentialToolQueue::new(
+        "plan-1",
+        "response-1",
+        [
+            ToolPlanCall::new(tool_call("call-a", ToolCallStatus::Admitted)),
+            ToolPlanCall::new(tool_call("call-b", ToolCallStatus::Admitted)),
+        ],
+    )?;
+    queue.start_next_ready()?;
+
+    assert_eq!(
+        queue.apply_policy_stop(PendingToolCallsDisposition::Keep),
+        Vec::<String>::new(),
+    );
+    assert_eq!(queue.running_call_id(), Some("call-a"));
+    assert_eq!(queue.state("call-a"), Some(ToolExecutionState::Running));
+    assert_eq!(queue.state("call-b"), Some(ToolExecutionState::Pending));
+    assert_eq!(queue.start_next_ready()?, None);
+
+    queue.record_completed("call-a")?;
+    assert_eq!(queue.start_next_ready()?, Some("call-b".to_owned()));
+    Ok(())
+}

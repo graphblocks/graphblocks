@@ -535,7 +535,8 @@ impl ToolExecutionPlan {
     ) -> Vec<String> {
         let mut affected = Vec::new();
         match pending_tool_calls {
-            PendingToolCallsDisposition::Keep | PendingToolCallsDisposition::Deny => {
+            PendingToolCallsDisposition::Keep => {}
+            PendingToolCallsDisposition::Deny => {
                 for (tool_call_id, state) in &mut self.states {
                     if *state == ToolExecutionState::Pending {
                         *state = ToolExecutionState::Denied;
