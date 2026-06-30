@@ -3,6 +3,8 @@ from __future__ import annotations
 from decimal import Decimal
 import importlib
 from pathlib import Path
+import sys
+from types import SimpleNamespace
 
 from graphblocks.budget import (
     VALID_BUDGET_STATUSES,
@@ -11,6 +13,7 @@ from graphblocks.budget import (
     VALID_RESERVATION_PURPOSES,
     VALID_RESERVATION_STATUSES,
 )
+from graphblocks.exhaustion import ExhaustionPolicy
 
 
 ROOT = Path(__file__).parents[1]
@@ -97,6 +100,29 @@ def test_budget_package_exposes_completion_reserve_contract(monkeypatch) -> None
     assert ledger.release_completion_reserve("reserve-2").status == "released"
 
 
+def test_budget_package_exposes_exhaustion_continuation_contract(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-budget" / "src"))
+    graphblocks_budget = importlib.import_module("graphblocks_budget")
+
+    continuation = graphblocks_budget.ContinuationEnvelope(
+        allowed_work={"declared_finalization"},
+        max_additional_steps=1,
+    )
+    policy = graphblocks_budget.ExhaustionPolicy.from_preset(
+        "finish_current_turn",
+        unit="turn",
+        continuation=continuation,
+    )
+
+    assert policy.continuation is not None
+    assert "declared_finalization" in policy.continuation.allowed_work
+    assert graphblocks_budget.validate_exhaustion_policy(policy, production=True) == []
+    assert graphblocks_budget.ExhaustionPolicy is ExhaustionPolicy
+    assert "ExhaustionPolicy" in graphblocks_budget.__all__
+    assert "ContinuationEnvelope" in graphblocks_budget.__all__
+    assert "validate_exhaustion_policy" in graphblocks_budget.__all__
+
+
 def test_budget_package_exposes_local_sqlite_ledger(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-budget" / "src"))
     graphblocks_budget = importlib.import_module("graphblocks_budget")
@@ -121,6 +147,40 @@ def test_budget_package_exposes_local_sqlite_ledger(monkeypatch) -> None:
     ]
     assert "SQLiteBudgetLedger" in graphblocks_budget.__all__
     ledger.close()
+
+
+def test_budget_package_lazy_native_exhaustion_helper_delegates_to_runtime(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-budget" / "src"))
+    calls: list[tuple[dict[str, object], dict[str, object]]] = []
+
+    def admit_exhaustion_work(policy: dict[str, object], request: dict[str, object]) -> dict[str, object]:
+        calls.append((policy, request))
+        return {"allowed": True, "policy": policy, "request": request}
+
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(admit_exhaustion_work=admit_exhaustion_work),
+    )
+    graphblocks_budget = importlib.import_module("graphblocks_budget")
+
+    result = graphblocks_budget.admit_native_exhaustion_work(
+        {"preset": "finish_current_turn", "unit": "turn"},
+        {"workKind": "declared_finalization", "workEpoch": 8},
+    )
+
+    assert result == {
+        "allowed": True,
+        "policy": {"preset": "finish_current_turn", "unit": "turn"},
+        "request": {"workKind": "declared_finalization", "workEpoch": 8},
+    }
+    assert calls == [
+        (
+            {"preset": "finish_current_turn", "unit": "turn"},
+            {"workKind": "declared_finalization", "workEpoch": 8},
+        )
+    ]
+    assert "admit_native_exhaustion_work" in graphblocks_budget.__all__
 
 
 def test_budget_package_exposes_canonical_literal_sets(monkeypatch) -> None:

@@ -35,10 +35,38 @@ from graphblocks.budget import (
     VALID_RESERVATION_PURPOSES,
     VALID_RESERVATION_STATUSES,
 )
+from graphblocks.exhaustion import (
+    AdmissionDecision,
+    AfterUnitPolicy,
+    ClientDelivery,
+    ContinuationEnvelope,
+    ContinuationWork,
+    DurableResult,
+    EffectPolicy,
+    ExhaustionController,
+    ExhaustionPolicy,
+    ExhaustionPolicyError,
+    ExhaustionPreset,
+    ExhaustionUnit,
+    ForbiddenWork,
+    InFlightPolicy,
+    MissingExhaustionBoundaryError,
+    PartialOutputPolicy,
+    WorkKind,
+    validate_exhaustion_policy,
+)
 from graphblocks.policy import ResourceRef
 
 
+def admit_native_exhaustion_work(policy: dict[str, object], request: dict[str, object]) -> dict[str, object]:
+    from graphblocks_runtime import admit_exhaustion_work
+
+    return admit_exhaustion_work(policy, request)
+
+
 __all__ = [
+    "AdmissionDecision",
+    "AfterUnitPolicy",
     "BudgetAccount",
     "BudgetBalance",
     "BudgetCompletionReserveConflictError",
@@ -59,10 +87,24 @@ __all__ = [
     "BudgetReservationStateError",
     "BudgetSettlement",
     "BudgetStatus",
+    "ClientDelivery",
     "CompletionReserve",
     "CompletionReservePurpose",
     "CompletionReserveStatus",
+    "ContinuationEnvelope",
+    "ContinuationWork",
+    "DurableResult",
+    "EffectPolicy",
+    "ExhaustionController",
+    "ExhaustionPolicy",
+    "ExhaustionPolicyError",
+    "ExhaustionPreset",
+    "ExhaustionUnit",
+    "ForbiddenWork",
     "InMemoryBudgetLedger",
+    "InFlightPolicy",
+    "MissingExhaustionBoundaryError",
+    "PartialOutputPolicy",
     "ReservationPurpose",
     "ReservationStatus",
     "SQLiteBudgetLedger",
@@ -73,4 +115,7 @@ __all__ = [
     "VALID_COMPLETION_RESERVE_STATUSES",
     "VALID_RESERVATION_PURPOSES",
     "VALID_RESERVATION_STATUSES",
+    "WorkKind",
+    "admit_native_exhaustion_work",
+    "validate_exhaustion_policy",
 ]
