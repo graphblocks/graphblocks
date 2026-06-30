@@ -965,7 +965,7 @@ def test_output_delivery_gate_terminal_decision_requires_occurred_at() -> None:
     assert [(chunk.sequence, chunk.text) for chunk in gate.pending_chunks()] == [(1, "blocked")]
 
 
-def test_output_delivery_gate_policy_abort_denies_kept_pending_tool_calls() -> None:
+def test_output_delivery_gate_policy_abort_preserves_kept_pending_tool_calls() -> None:
     gate = OutputDeliveryGate("stream-1", "response-1")
     gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "blocked"))
 
@@ -976,7 +976,7 @@ def test_output_delivery_gate_policy_abort_denies_kept_pending_tool_calls() -> N
         occurred_at="2026-06-23T00:00:02Z",
     )
 
-    assert stopped.pending_tool_calls == "deny"
+    assert stopped.pending_tool_calls == "keep"
 
 
 def test_output_delivery_gate_immediate_draft_delivers_before_policy_and_retracts_on_abort() -> None:

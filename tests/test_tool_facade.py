@@ -3101,10 +3101,10 @@ def test_tool_execution_plan_policy_stop_denies_pending_and_can_cancel_running()
     )
     keep_plan.record_started("call-a")
 
-    assert keep_plan.apply_policy_stop("keep") == ["call-b"]
+    assert keep_plan.apply_policy_stop("keep") == []
     assert keep_plan.state("call-a") == "running"
-    assert keep_plan.state("call-b") == "denied"
-    assert keep_plan.ready_call_ids() == []
+    assert keep_plan.state("call-b") == "pending"
+    assert keep_plan.ready_call_ids() == ["call-b"]
 
     cancel_plan = ToolExecutionPlan(
         plan_id="plan-2",
