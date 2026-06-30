@@ -201,13 +201,14 @@ def test_testing_package_loads_shared_application_protocol_tck_cases(monkeypatch
     )
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["application-protocol"] * 5
+    assert [case.kind for case in cases] == ["application-protocol"] * 6
     assert report.ok
     assert {case.case_id for case in cases} == {
         "application_protocol_kind_sets_match_contract",
         "command_envelope_preserves_metadata_and_payload",
         "event_envelope_accepts_output_cutoff_event",
         "capability_negotiation_intersects_commands_and_events",
+        "protocol_log_suppresses_duplicates_and_replays_after_cursor",
         "protocol_stream_cutoff_discards_late_output",
     }
     assert any("OutputCutoff" in result.observed.get("events", []) for result in report.results)
@@ -636,6 +637,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "command_envelope_preserves_metadata_and_payload",
         "event_envelope_accepts_output_cutoff_event",
         "capability_negotiation_intersects_commands_and_events",
+        "protocol_log_suppresses_duplicates_and_replays_after_cursor",
         "protocol_stream_cutoff_discards_late_output",
     )
     assert by_suite["approval-review"].case_ids == (

@@ -21,6 +21,7 @@ from graphblocks.application_event import (
     ApplicationEventStreamState,
     ApplicationProtocolEvent,
     ApplicationProtocolEventMetadata,
+    ApplicationProtocolLog,
     ApplicationProtocolStreamState,
 )
 from graphblocks.canonical import canonical_hash
@@ -1501,6 +1502,7 @@ def load_application_protocol_tck_cases(path: str | Path) -> tuple[TckCase, ...]
             "command_envelope",
             "event_envelope",
             "capability_negotiation",
+            "protocol_log",
             "stream_cutoff",
         }:
             raise ValueError(f"application-protocol TCK case {case_id} has unsupported kind {case_kind!r}")
@@ -3387,6 +3389,70 @@ class TckRunner:
                     "sequence": event.metadata.sequence,
                     "cursor": event.metadata.cursor,
                     "payload": dict(event.payload),
+                }
+            elif kind == "protocol_log":
+                raw_operations = fixture.get("operations", [])
+                if not isinstance(raw_operations, list):
+                    raise ValueError("application-protocol protocol_log operations must be a list")
+                log = ApplicationProtocolLog()
+                append_results: list[bool] = []
+                for operation_index, raw_operation in enumerate(raw_operations):
+                    if not isinstance(raw_operation, Mapping):
+                        raise ValueError("application-protocol protocol_log operation must be a mapping")
+                    raw_metadata = raw_operation.get("metadata", {})
+                    if not isinstance(raw_metadata, Mapping):
+                        raise ValueError("application-protocol protocol_log operation metadata must be a mapping")
+                    raw_payload = raw_operation.get("payload", {})
+                    if not isinstance(raw_payload, Mapping):
+                        raise ValueError("application-protocol protocol_log operation payload must be a mapping")
+                    event = ApplicationProtocolEvent.new(
+                        str(raw_operation.get("eventKind", raw_operation.get("event_kind", "RunStarted"))),
+                        ApplicationProtocolEventMetadata(
+                            event_id=str(raw_metadata.get("eventId", raw_metadata.get("event_id", ""))),
+                            protocol_version=str(
+                                raw_metadata.get("protocolVersion", raw_metadata.get("protocol_version", ""))
+                            ),
+                            run_id=str(raw_metadata.get("runId", raw_metadata.get("run_id", ""))),
+                            turn_id=(
+                                str(raw_metadata["turnId"])
+                                if raw_metadata.get("turnId") is not None
+                                else (
+                                    str(raw_metadata["turn_id"])
+                                    if raw_metadata.get("turn_id") is not None
+                                    else None
+                                )
+                            ),
+                            sequence=int(raw_metadata.get("sequence", 0)),
+                            cursor=(
+                                str(raw_metadata["cursor"]) if raw_metadata.get("cursor") is not None else None
+                            ),
+                            occurred_at_unix_ms=int(
+                                raw_metadata.get("occurredAtUnixMs", raw_metadata.get("occurred_at_unix_ms", 0))
+                            ),
+                        ),
+                        payload=dict(raw_payload),
+                    )
+                    appended = log.append(event)
+                    append_results.append(appended)
+                    if appended is not bool(raw_operation.get("expectAppended", True)):
+                        diagnostics.append(
+                            {
+                                "code": "ApplicationProtocolAppendMismatch",
+                                "message": "application protocol log append result did not match expected result",
+                                "path": f"$.operations[{operation_index}].expectAppended",
+                            }
+                        )
+                replay_cursor = fixture.get("replayAfter", fixture.get("replay_after"))
+                replay_limit = int(fixture.get("replayLimit", fixture.get("replay_limit", 100)))
+                replay = log.replay_after(
+                    str(replay_cursor) if replay_cursor is not None else None,
+                    limit=replay_limit,
+                )
+                observed = {
+                    "eventIds": [event.metadata.event_id for event in log.events],
+                    "appendResults": append_results,
+                    "replayEventIds": [event.metadata.event_id for event in replay],
+                    "length": len(log),
                 }
             elif kind == "stream_cutoff":
                 raw_operations = fixture.get("operations", [])

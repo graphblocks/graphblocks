@@ -150,6 +150,80 @@
     }
   },
   {
+    "name": "protocol_log_suppresses_duplicates_and_replays_after_cursor",
+    "kind": "protocol_log",
+    "operations": [
+      {
+        "eventKind": "JobProgress",
+        "metadata": {
+          "eventId": "event-progress-1",
+          "protocolVersion": "graphblocks.app.v1",
+          "runId": "run-1",
+          "turnId": "turn-1",
+          "sequence": 1,
+          "cursor": "cursor-1",
+          "occurredAtUnixMs": 1765843200000
+        },
+        "payload": {
+          "done": 1,
+          "total": 2
+        },
+        "expectAppended": true
+      },
+      {
+        "eventKind": "JobProgress",
+        "metadata": {
+          "eventId": "event-progress-1",
+          "protocolVersion": "graphblocks.app.v1",
+          "runId": "run-1",
+          "turnId": "turn-1",
+          "sequence": 1,
+          "cursor": "cursor-1",
+          "occurredAtUnixMs": 1765843200000
+        },
+        "payload": {
+          "done": 1,
+          "total": 2
+        },
+        "expectAppended": false
+      },
+      {
+        "eventKind": "JobProgress",
+        "metadata": {
+          "eventId": "event-progress-2",
+          "protocolVersion": "graphblocks.app.v1",
+          "runId": "run-1",
+          "turnId": "turn-1",
+          "sequence": 2,
+          "cursor": "cursor-2",
+          "occurredAtUnixMs": 1765843200100
+        },
+        "payload": {
+          "done": 2,
+          "total": 2
+        },
+        "expectAppended": true
+      }
+    ],
+    "replayAfter": "cursor-1",
+    "replayLimit": 10,
+    "expected": {
+      "eventIds": [
+        "event-progress-1",
+        "event-progress-2"
+      ],
+      "appendResults": [
+        true,
+        false,
+        true
+      ],
+      "replayEventIds": [
+        "event-progress-2"
+      ],
+      "length": 2
+    }
+  },
+  {
     "name": "protocol_stream_cutoff_discards_late_output",
     "kind": "stream_cutoff",
     "operations": [
