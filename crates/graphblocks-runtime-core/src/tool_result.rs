@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use graphblocks_compiler::canonical::canonical_hash;
 use serde_json::{Value, json};
@@ -1008,6 +1008,16 @@ pub enum ToolResultStreamError {
         tool_call_id: String,
         final_status: ToolResultStatus,
     },
+    DuplicateStarted {
+        tool_call_id: String,
+        last_sequence: u64,
+        sequence: u64,
+    },
+    EventBeforeStarted {
+        tool_call_id: String,
+        kind: String,
+        sequence: u64,
+    },
 }
 
 impl ToolResultEvent {
@@ -1244,6 +1254,7 @@ impl ToolResultEvent {
 #[derive(Clone, Debug, Default)]
 pub struct ToolResultStreamState {
     last_sequences: BTreeMap<String, u64>,
+    started_tool_calls: BTreeSet<String>,
     final_results: BTreeMap<String, ToolResult>,
     accepted_events: Vec<ToolResultEvent>,
 }
@@ -1279,8 +1290,62 @@ impl ToolResultStreamState {
             });
         }
 
+        match &event {
+            ToolResultEvent::Started { .. } => {
+                if self.started_tool_calls.contains(&tool_call_id) {
+                    return Err(ToolResultStreamError::DuplicateStarted {
+                        tool_call_id,
+                        last_sequence: *self.last_sequences.get(event.tool_call_id()).unwrap_or(&0),
+                        sequence,
+                    });
+                }
+            }
+            ToolResultEvent::Delta { .. } | ToolResultEvent::ArtifactReady { .. } => {
+                if !self.started_tool_calls.contains(&tool_call_id) {
+                    return Err(ToolResultStreamError::EventBeforeStarted {
+                        tool_call_id,
+                        kind: match &event {
+                            ToolResultEvent::Delta { .. } => "delta",
+                            ToolResultEvent::ArtifactReady { .. } => "artifact_ready",
+                            _ => unreachable!(),
+                        }
+                        .to_owned(),
+                        sequence,
+                    });
+                }
+            }
+            ToolResultEvent::Completed { result, .. }
+            | ToolResultEvent::Failed { result, .. }
+            | ToolResultEvent::Denied { result, .. }
+            | ToolResultEvent::Cancelled { result, .. }
+            | ToolResultEvent::PolicyStopped { result, .. }
+            | ToolResultEvent::Incomplete { result, .. } => {
+                if result.started_at_unix_ms.is_some()
+                    && !self.started_tool_calls.contains(&tool_call_id)
+                {
+                    return Err(ToolResultStreamError::EventBeforeStarted {
+                        tool_call_id,
+                        kind: match &event {
+                            ToolResultEvent::Completed { .. } => "completed",
+                            ToolResultEvent::Failed { .. } => "failed",
+                            ToolResultEvent::Denied { .. } => "denied",
+                            ToolResultEvent::Cancelled { .. } => "cancelled",
+                            ToolResultEvent::PolicyStopped { .. } => "policy_stopped",
+                            ToolResultEvent::Incomplete { .. } => "incomplete",
+                            _ => unreachable!(),
+                        }
+                        .to_owned(),
+                        sequence,
+                    });
+                }
+            }
+        }
+
         if let Some(result) = event.clone().into_result() {
             self.final_results.insert(tool_call_id.clone(), result);
+        }
+        if matches!(event, ToolResultEvent::Started { .. }) {
+            self.started_tool_calls.insert(tool_call_id.clone());
         }
         self.last_sequences.insert(tool_call_id, sequence);
         self.accepted_events.push(event.clone());

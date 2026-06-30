@@ -847,6 +847,65 @@ fn tool_result_stream_state_rejects_stale_sequence_and_late_events_after_final()
 }
 
 #[test]
+fn tool_result_stream_state_requires_started_before_incremental_output() {
+    let mut stream = ToolResultStreamState::new();
+    let result = ToolResult::completed("call-1", [ContentPart::text("done")], 1_000, 1_100);
+
+    assert_eq!(
+        stream.accept(ToolResultEvent::delta(
+            "call-1",
+            1,
+            [ContentPart::text("draft")]
+        )),
+        Err(ToolResultStreamError::EventBeforeStarted {
+            tool_call_id: "call-1".to_owned(),
+            kind: "delta".to_owned(),
+            sequence: 1,
+        })
+    );
+    assert_eq!(
+        stream.accept(ToolResultEvent::completed("call-1", 2, result)),
+        Err(ToolResultStreamError::EventBeforeStarted {
+            tool_call_id: "call-1".to_owned(),
+            kind: "completed".to_owned(),
+            sequence: 2,
+        })
+    );
+    assert!(stream.accepted_events().is_empty());
+}
+
+#[test]
+fn tool_result_stream_state_allows_pre_execution_denial_without_started() {
+    let mut stream = ToolResultStreamState::new();
+    let denied = ToolResult::denied(
+        "call-1",
+        BlockError::new("tool.denied", ErrorCategory::Policy, "blocked", false),
+        1_100,
+    );
+    let event = ToolResultEvent::denied("call-1", 1, denied.clone());
+
+    assert_eq!(stream.accept(event.clone()), Ok(event));
+    assert_eq!(stream.final_result_for("call-1"), Some(&denied));
+}
+
+#[test]
+fn tool_result_stream_state_rejects_duplicate_started_event() {
+    let mut stream = ToolResultStreamState::new();
+
+    stream
+        .accept(ToolResultEvent::started("call-1", 1, 1_000))
+        .expect("started event should be accepted");
+    assert_eq!(
+        stream.accept(ToolResultEvent::started("call-1", 2, 1_050)),
+        Err(ToolResultStreamError::DuplicateStarted {
+            tool_call_id: "call-1".to_owned(),
+            last_sequence: 1,
+            sequence: 2,
+        })
+    );
+}
+
+#[test]
 fn completed_event_carries_the_final_durable_result() {
     let result = ToolResult::completed("call-1", [ContentPart::text("done")], 1_000, 1_050)
         .with_artifacts([
