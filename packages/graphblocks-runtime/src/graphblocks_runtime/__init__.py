@@ -21,6 +21,7 @@ try:
         evaluate_declarative_output_policy_json,
         evaluate_durable_tool_terminal_store_json,
         evaluate_output_gate_json,
+        evaluate_provider_limit_policy_json,
         evaluate_retry_policy_json,
         evaluate_sequential_tool_queue_json,
         evaluate_tool_approval_json,
@@ -139,6 +140,9 @@ except ImportError as error:
         require_native_extension()
 
     def evaluate_retry_policy_json(policy_json: str, request_json: str) -> str:
+        require_native_extension()
+
+    def evaluate_provider_limit_policy_json(policy_json: str, incident_json: str) -> str:
         require_native_extension()
 
     def evaluate_declarative_output_policy_json(
@@ -407,6 +411,16 @@ def evaluate_retry_policy(policy: dict[str, object], request: dict[str, object])
     )
 
 
+def evaluate_provider_limit_policy(
+    policy: dict[str, object],
+    incident: dict[str, object],
+) -> dict[str, object]:
+    return _json_object_result(
+        evaluate_provider_limit_policy_json(_canonical_json(policy), _canonical_json(incident)),
+        "native provider limit policy decision",
+    )
+
+
 def evaluate_declarative_output_policy(
     rules: object,
     chunk: dict[str, object],
@@ -595,6 +609,8 @@ __all__ = [
     "evaluate_durable_tool_terminal_store_json",
     "evaluate_output_gate",
     "evaluate_output_gate_json",
+    "evaluate_provider_limit_policy",
+    "evaluate_provider_limit_policy_json",
     "evaluate_retry_policy",
     "evaluate_retry_policy_json",
     "evaluate_sequential_tool_queue",

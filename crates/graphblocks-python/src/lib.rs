@@ -36,7 +36,8 @@ use graphblocks_runtime_core::output_policy::{
 use graphblocks_runtime_core::policy::{PrincipalRef, ResourceRef};
 use graphblocks_runtime_core::readiness::{InputDependency, PortRef};
 use graphblocks_runtime_core::retry::{
-    Backoff, EffectKind, PartialOutputPolicy, RetryDecision, RetryPolicy, RetryRequest,
+    Backoff, EffectKind, PartialOutputPolicy, ProviderLimitDecision, ProviderLimitIncident,
+    ProviderLimitKind, ProviderLimitPolicy, RetryDecision, RetryPolicy, RetryRequest,
 };
 use graphblocks_runtime_core::scheduler::{ScheduledNode, StartedNode};
 use graphblocks_runtime_core::test_runtime::{InProcessTestRuntime, NodeExecutor, TestRunStatus};
@@ -579,6 +580,20 @@ fn evaluate_retry_policy_json(policy_json: &str, request_json: &str) -> PyResult
     };
     serde_json::to_string(&payload).map_err(|error| {
         PyRuntimeError::new_err(format!("failed to serialize retry decision: {error}"))
+    })
+}
+
+#[pyfunction]
+fn evaluate_provider_limit_policy_json(policy_json: &str, incident_json: &str) -> PyResult<String> {
+    let policy_value = parse_json_argument(policy_json, "provider limit policy")?;
+    let incident_value = parse_json_argument(incident_json, "provider limit incident")?;
+    let policy = parse_provider_limit_policy(&policy_value, "provider limit policy")?;
+    let incident = parse_provider_limit_incident(&incident_value, "provider limit incident")?;
+    let payload = provider_limit_decision_json(policy.decide(&incident));
+    serde_json::to_string(&payload).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize provider limit decision: {error}"
+        ))
     })
 }
 
@@ -2560,6 +2575,119 @@ fn parse_retry_request(value: &Value, label: &str) -> PyResult<RetryRequest> {
         request = request.with_retry_after_ms(retry_after_ms);
     }
     Ok(request)
+}
+
+fn parse_provider_limit_kind(value: &str, label: &str) -> PyResult<ProviderLimitKind> {
+    match value {
+        "graphblocks_quota_exceeded" => Ok(ProviderLimitKind::GraphBlocksQuotaExceeded),
+        "provider_quota_exceeded" => Ok(ProviderLimitKind::ProviderQuotaExceeded),
+        "capacity_unavailable" => Ok(ProviderLimitKind::CapacityUnavailable),
+        value => Err(PyValueError::new_err(format!(
+            "{label} has unknown provider limit kind {value:?}"
+        ))),
+    }
+}
+
+fn parse_provider_limit_policy(value: &Value, label: &str) -> PyResult<ProviderLimitPolicy> {
+    let object = json_object(value, label)?;
+    Ok(ProviderLimitPolicy::new()
+        .with_fallback_enabled(
+            optional_nullable_alias_bool(object, "fallbackEnabled", "fallback_enabled", label)?
+                .unwrap_or(false),
+        )
+        .with_queue_enabled(
+            optional_nullable_alias_bool(object, "queueEnabled", "queue_enabled", label)?
+                .unwrap_or(false),
+        )
+        .with_credential_or_topup_enabled(
+            optional_nullable_alias_bool(
+                object,
+                "credentialOrTopupEnabled",
+                "credential_or_topup_enabled",
+                label,
+            )?
+            .unwrap_or(false),
+        ))
+}
+
+fn parse_provider_limit_incident(value: &Value, label: &str) -> PyResult<ProviderLimitIncident> {
+    let object = json_object(value, label)?;
+    let mut incident = ProviderLimitIncident::new(parse_provider_limit_kind(
+        required_string(object, "kind", label)?,
+        &format!("{label}.kind"),
+    )?);
+    if let Some(retry_after_ms) =
+        optional_nullable_alias_u64(object, "retryAfterMs", "retry_after_ms", label)?
+    {
+        incident = incident.with_retry_after_ms(retry_after_ms);
+    }
+    for fallback in parse_string_vec(
+        object
+            .get("compatibleFallbacks")
+            .or_else(|| object.get("compatible_fallbacks")),
+        &format!("{label}.compatibleFallbacks"),
+    )? {
+        incident = incident.with_fallback(fallback);
+    }
+    if optional_nullable_alias_bool(
+        object,
+        "credentialOrTopupAvailable",
+        "credential_or_topup_available",
+        label,
+    )?
+    .unwrap_or(false)
+    {
+        incident = incident.with_credential_or_topup_available();
+    }
+    Ok(incident)
+}
+
+fn provider_limit_decision_json(decision: ProviderLimitDecision) -> Value {
+    match decision {
+        ProviderLimitDecision::RetryAfter { delay_ms } => json!({
+            "ok": true,
+            "decision": "retry_after",
+            "delayMs": delay_ms,
+            "target": Value::Null,
+            "requiresPolicyRecheck": false,
+            "reason": Value::Null,
+        }),
+        ProviderLimitDecision::Fallback {
+            target,
+            requires_policy_recheck,
+        } => json!({
+            "ok": true,
+            "decision": "fallback",
+            "delayMs": Value::Null,
+            "target": target,
+            "requiresPolicyRecheck": requires_policy_recheck,
+            "reason": Value::Null,
+        }),
+        ProviderLimitDecision::Pause { reason } => json!({
+            "ok": true,
+            "decision": "pause",
+            "delayMs": Value::Null,
+            "target": Value::Null,
+            "requiresPolicyRecheck": false,
+            "reason": reason,
+        }),
+        ProviderLimitDecision::RequestCredentialOrTopup => json!({
+            "ok": true,
+            "decision": "request_credential_or_topup",
+            "delayMs": Value::Null,
+            "target": Value::Null,
+            "requiresPolicyRecheck": false,
+            "reason": Value::Null,
+        }),
+        ProviderLimitDecision::Fail { reason } => json!({
+            "ok": true,
+            "decision": "fail",
+            "delayMs": Value::Null,
+            "target": Value::Null,
+            "requiresPolicyRecheck": false,
+            "reason": reason,
+        }),
+    }
 }
 
 fn parse_tool_result_status(value: &str, label: &str) -> PyResult<ToolResultStatus> {
@@ -6347,6 +6475,10 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(evaluate_tool_approval_json, module)?)?;
     module.add_function(wrap_pyfunction!(evaluate_retry_policy_json, module)?)?;
     module.add_function(wrap_pyfunction!(
+        evaluate_provider_limit_policy_json,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
         record_tool_effect_precondition_json,
         module
     )?)?;
@@ -6406,9 +6538,10 @@ mod tests {
         evaluate_application_protocol_log_json, evaluate_application_protocol_stream_json,
         evaluate_connector_capabilities_json, evaluate_declarative_output_policy_json,
         evaluate_durable_tool_terminal_store_json, evaluate_output_gate_json,
-        evaluate_retry_policy_json, evaluate_sequential_tool_queue_json,
-        evaluate_tool_approval_json, evaluate_tool_execution_plan_json,
-        evaluate_tool_result_stream_json, evaluate_usage_ledger_json, finalize_tool_call_json,
+        evaluate_provider_limit_policy_json, evaluate_retry_policy_json,
+        evaluate_sequential_tool_queue_json, evaluate_tool_approval_json,
+        evaluate_tool_execution_plan_json, evaluate_tool_result_stream_json,
+        evaluate_usage_ledger_json, finalize_tool_call_json,
         negotiate_application_protocol_capabilities_json, parse_resolved_tool, parse_tool_call,
         prepare_tool_result_for_model_json, record_tool_effect_audit_event_json,
         record_tool_effect_precondition_json, run_stdlib_graph_json, run_test_graph_json,
@@ -7136,6 +7269,52 @@ mod tests {
         assert_eq!(retry.get("decision"), Some(&json!("retry")));
         assert_eq!(retry.get("delayMs").and_then(Value::as_u64), Some(1_500));
         assert_eq!(retry.get("reason"), Some(&Value::Null));
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_provider_limit_policy_json_selects_retry_after_and_fallback() -> Result<(), String>
+    {
+        let policy = json!({
+            "fallbackEnabled": true,
+            "queueEnabled": true,
+            "credentialOrTopupEnabled": true
+        });
+        let retry_after_incident = json!({
+            "kind": "provider_quota_exceeded",
+            "retryAfterMs": 2_500,
+            "compatibleFallbacks": ["openai-compatible:gpt-economy"]
+        });
+        let retry_after_json = evaluate_provider_limit_policy_json(
+            &serde_json::to_string(&policy).map_err(|error| error.to_string())?,
+            &serde_json::to_string(&retry_after_incident).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let retry_after =
+            serde_json::from_str::<Value>(&retry_after_json).map_err(|error| error.to_string())?;
+        assert_eq!(retry_after.get("decision"), Some(&json!("retry_after")));
+        assert_eq!(
+            retry_after.get("delayMs").and_then(Value::as_u64),
+            Some(2_500)
+        );
+
+        let fallback_incident = json!({
+            "kind": "provider_quota_exceeded",
+            "compatibleFallbacks": ["openai-compatible:gpt-economy"]
+        });
+        let fallback_json = evaluate_provider_limit_policy_json(
+            &serde_json::to_string(&policy).map_err(|error| error.to_string())?,
+            &serde_json::to_string(&fallback_incident).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let fallback =
+            serde_json::from_str::<Value>(&fallback_json).map_err(|error| error.to_string())?;
+        assert_eq!(fallback.get("decision"), Some(&json!("fallback")));
+        assert_eq!(
+            fallback.get("target").and_then(Value::as_str),
+            Some("openai-compatible:gpt-economy")
+        );
+        assert_eq!(fallback.get("requiresPolicyRecheck"), Some(&json!(true)));
         Ok(())
     }
 

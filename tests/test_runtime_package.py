@@ -268,6 +268,21 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             }
         )
 
+    def evaluate_provider_limit_policy_json(policy_json: str, incident_json: str) -> str:
+        calls.append(("provider_limit", (policy_json, incident_json)))
+        return json.dumps(
+            {
+                "ok": True,
+                "decision": "fallback",
+                "delayMs": None,
+                "target": "openai-compatible:gpt-economy",
+                "requiresPolicyRecheck": True,
+                "reason": None,
+                "policy": json.loads(policy_json),
+                "incident": json.loads(incident_json),
+            }
+        )
+
     def evaluate_declarative_output_policy_json(
         rules_json: str,
         chunk_json: str,
@@ -382,6 +397,7 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         evaluate_declarative_output_policy_json=evaluate_declarative_output_policy_json,
         evaluate_durable_tool_terminal_store_json=evaluate_durable_tool_terminal_store_json,
         evaluate_output_gate_json=evaluate_output_gate_json,
+        evaluate_provider_limit_policy_json=evaluate_provider_limit_policy_json,
         evaluate_retry_policy_json=evaluate_retry_policy_json,
         evaluate_sequential_tool_queue_json=evaluate_sequential_tool_queue_json,
         evaluate_tool_approval_json=evaluate_tool_approval_json,
@@ -496,6 +512,13 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
                 "retryable": True,
             },
             "retryAfterMs": 1_500,
+        },
+    )
+    provider_limit = runtime.evaluate_provider_limit_policy(
+        {"fallbackEnabled": True, "queueEnabled": True},
+        {
+            "kind": "provider_quota_exceeded",
+            "compatibleFallbacks": ["openai-compatible:gpt-economy"],
         },
     )
     policy_decision = runtime.evaluate_declarative_output_policy(
@@ -692,6 +715,19 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             "retryAfterMs": 1_500,
         },
     }
+    assert provider_limit == {
+        "ok": True,
+        "decision": "fallback",
+        "delayMs": None,
+        "target": "openai-compatible:gpt-economy",
+        "requiresPolicyRecheck": True,
+        "reason": None,
+        "policy": {"fallbackEnabled": True, "queueEnabled": True},
+        "incident": {
+            "compatibleFallbacks": ["openai-compatible:gpt-economy"],
+            "kind": "provider_quota_exceeded",
+        },
+    }
     assert policy_decision == {
         "disposition": "allow",
         "rules": [{"ruleId": "allow"}],
@@ -885,6 +921,16 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             ),
         ),
         (
+            "provider_limit",
+            (
+                '{"fallbackEnabled":true,"queueEnabled":true}',
+                (
+                    '{"compatibleFallbacks":["openai-compatible:gpt-economy"],'
+                    '"kind":"provider_quota_exceeded"}'
+                ),
+            ),
+        ),
+        (
             "output_policy",
             ('[{"ruleId":"allow"}]', '{"sequence":1,"streamId":"stream-1"}', 1_010),
         ),
@@ -999,6 +1045,8 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     assert "evaluate_output_gate" in runtime.__all__
     assert "evaluate_retry_policy" in runtime.__all__
     assert "evaluate_retry_policy_json" in runtime.__all__
+    assert "evaluate_provider_limit_policy" in runtime.__all__
+    assert "evaluate_provider_limit_policy_json" in runtime.__all__
     assert "evaluate_declarative_output_policy" in runtime.__all__
     assert "evaluate_application_event_stream" in runtime.__all__
     assert "evaluate_application_event_stream_json" in runtime.__all__
