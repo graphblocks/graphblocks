@@ -87,11 +87,19 @@ fn rust_retry_matches_shared_tck_cases() {
 
         let policy = RetryPolicy::new(max_attempts).retry_on([ErrorCategory::Transient]);
         let mut boundary = NodeRetryBoundary::new(policy);
-        if effects
-            .iter()
-            .any(|effect| effect.as_str() == Some("external_write"))
+        if let Some(effect) =
+            effects
+                .iter()
+                .filter_map(Value::as_str)
+                .find_map(|effect| match effect {
+                    "external_write" => Some(EffectKind::ExternalWrite),
+                    "filesystem_write" => Some(EffectKind::FilesystemWrite),
+                    "destructive" => Some(EffectKind::Destructive),
+                    "process" => Some(EffectKind::Process),
+                    _ => None,
+                })
         {
-            boundary = boundary.with_effect(EffectKind::ExternalWrite);
+            boundary = boundary.with_effect(effect);
         }
         if let Some(idempotency_key) = idempotency_key {
             boundary = boundary.with_idempotency_key(idempotency_key);

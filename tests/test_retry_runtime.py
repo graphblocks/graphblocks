@@ -40,53 +40,54 @@ def test_runtime_retries_node_until_success() -> None:
 
 
 def test_runtime_preserves_idempotency_key_across_effect_retries() -> None:
-    attempts = {"count": 0}
-    seen_idempotency_keys: list[str | None] = []
-    registry = RuntimeRegistry()
+    for effect in ("external_write", "filesystem_write"):
+        attempts = {"count": 0}
+        seen_idempotency_keys: list[str | None] = []
+        registry = RuntimeRegistry()
 
-    def flaky_write(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
-        attempts["count"] += 1
-        seen_idempotency_keys.append(context.get("idempotency_key"))
-        if attempts["count"] < 3:
-            raise RuntimeError("temporary write failure")
-        return {"value": "committed"}
+        def flaky_write(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+            attempts["count"] += 1
+            seen_idempotency_keys.append(context.get("idempotency_key"))
+            if attempts["count"] < 3:
+                raise RuntimeError("temporary write failure")
+            return {"value": "committed"}
 
-    registry.register("test.flaky_write@1", flaky_write)
-    graph = {
-        "apiVersion": "graphblocks.ai/v1alpha3",
-        "kind": "Graph",
-        "metadata": {"name": "retry-effect-idempotency"},
-        "spec": {
-            "nodes": {
-                "write": {
-                    "block": "test.flaky_write@1",
-                    "effects": ["external_write"],
-                    "flow": {
-                        "retry": {
-                            "maxAttempts": 3,
-                            "idempotencyKey": "ticket-create:request-1",
-                        }
-                    },
-                    "outputs": {"value": "$output.value"},
+        registry.register("test.flaky_write@1", flaky_write)
+        graph = {
+            "apiVersion": "graphblocks.ai/v1alpha3",
+            "kind": "Graph",
+            "metadata": {"name": f"retry-effect-idempotency-{effect}"},
+            "spec": {
+                "nodes": {
+                    "write": {
+                        "block": "test.flaky_write@1",
+                        "effects": [effect],
+                        "flow": {
+                            "retry": {
+                                "maxAttempts": 3,
+                                "idempotencyKey": "ticket-create:request-1",
+                            }
+                        },
+                        "outputs": {"value": "$output.value"},
+                    }
                 }
-            }
-        },
-    }
+            },
+        }
 
-    result = InProcessRuntime(registry).run(graph, {})
+        result = InProcessRuntime(registry).run(graph, {})
 
-    assert result.status == "succeeded"
-    assert result.outputs == {"value": "committed"}
-    assert seen_idempotency_keys == [
-        "ticket-create:request-1",
-        "ticket-create:request-1",
-        "ticket-create:request-1",
-    ]
-    assert [
-        record.payload.get("idempotencyKey")
-        for record in result.journal.records
-        if record.kind == "node_retry"
-    ] == ["ticket-create:request-1", "ticket-create:request-1"]
+        assert result.status == "succeeded"
+        assert result.outputs == {"value": "committed"}
+        assert seen_idempotency_keys == [
+            "ticket-create:request-1",
+            "ticket-create:request-1",
+            "ticket-create:request-1",
+        ]
+        assert [
+            record.payload.get("idempotencyKey")
+            for record in result.journal.records
+            if record.kind == "node_retry"
+        ] == ["ticket-create:request-1", "ticket-create:request-1"]
 
 
 def test_runtime_fails_after_retry_attempts_are_exhausted() -> None:

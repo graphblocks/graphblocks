@@ -551,70 +551,71 @@ impl NodeExecutor for ExternalWriteFlakyExecutor {
 
 #[test]
 fn in_process_test_runtime_rejects_effect_retry_without_idempotency_key() {
-    let policy = RetryPolicy::new(3).retry_on([ErrorCategory::Transient]);
-    let mut runtime = InProcessTestRuntime::new("run-000001", [ScheduledNode::new("tool", [])])
-        .expect("runtime should be created")
-        .with_retry_boundary(
-            "tool",
-            NodeRetryBoundary::new(policy).with_effect(EffectKind::ExternalWrite),
+    for effect in [EffectKind::ExternalWrite, EffectKind::FilesystemWrite] {
+        let policy = RetryPolicy::new(3).retry_on([ErrorCategory::Transient]);
+        let mut runtime = InProcessTestRuntime::new("run-000001", [ScheduledNode::new("tool", [])])
+            .expect("runtime should be created")
+            .with_retry_boundary("tool", NodeRetryBoundary::new(policy).with_effect(effect));
+        let mut executor = ExternalWriteFlakyExecutor {
+            attempts: 0,
+            failures_before_success: 1,
+        };
+
+        let result = runtime.run(&mut executor).expect("runtime should run");
+
+        assert_eq!(result.status, TestRunStatus::Failed);
+        assert_eq!(executor.attempts, 1);
+        assert_eq!(
+            result
+                .journal
+                .records()
+                .last()
+                .and_then(|record| record.payload.as_ref())
+                .and_then(|payload| payload.get("retryStopReason"))
+                .and_then(Value::as_str),
+            Some("missing_idempotency_key"),
         );
-    let mut executor = ExternalWriteFlakyExecutor {
-        attempts: 0,
-        failures_before_success: 1,
-    };
-
-    let result = runtime.run(&mut executor).expect("runtime should run");
-
-    assert_eq!(result.status, TestRunStatus::Failed);
-    assert_eq!(executor.attempts, 1);
-    assert_eq!(
-        result
-            .journal
-            .records()
-            .last()
-            .and_then(|record| record.payload.as_ref())
-            .and_then(|payload| payload.get("retryStopReason"))
-            .and_then(Value::as_str),
-        Some("missing_idempotency_key"),
-    );
+    }
 }
 
 #[test]
 fn in_process_test_runtime_retries_effect_with_idempotency_key() {
-    let policy = RetryPolicy::new(3).retry_on([ErrorCategory::Transient]);
-    let mut runtime = InProcessTestRuntime::new("run-000001", [ScheduledNode::new("tool", [])])
-        .expect("runtime should be created")
-        .with_retry_boundary(
-            "tool",
-            NodeRetryBoundary::new(policy)
-                .with_effect(EffectKind::ExternalWrite)
-                .with_idempotency_key("tool-call-1"),
+    for effect in [EffectKind::ExternalWrite, EffectKind::FilesystemWrite] {
+        let policy = RetryPolicy::new(3).retry_on([ErrorCategory::Transient]);
+        let mut runtime = InProcessTestRuntime::new("run-000001", [ScheduledNode::new("tool", [])])
+            .expect("runtime should be created")
+            .with_retry_boundary(
+                "tool",
+                NodeRetryBoundary::new(policy)
+                    .with_effect(effect)
+                    .with_idempotency_key("tool-call-1"),
+            );
+        let mut executor = ExternalWriteFlakyExecutor {
+            attempts: 0,
+            failures_before_success: 1,
+        };
+
+        let result = runtime.run(&mut executor).expect("runtime should run");
+
+        assert_eq!(result.status, TestRunStatus::Succeeded);
+        assert_eq!(executor.attempts, 2);
+        assert_eq!(
+            result
+                .journal
+                .records()
+                .iter()
+                .map(|record| record.kind.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "run_started",
+                "node_started",
+                "node_retry",
+                "node_started",
+                "node_completed",
+                "run_succeeded",
+            ],
         );
-    let mut executor = ExternalWriteFlakyExecutor {
-        attempts: 0,
-        failures_before_success: 1,
-    };
-
-    let result = runtime.run(&mut executor).expect("runtime should run");
-
-    assert_eq!(result.status, TestRunStatus::Succeeded);
-    assert_eq!(executor.attempts, 2);
-    assert_eq!(
-        result
-            .journal
-            .records()
-            .iter()
-            .map(|record| record.kind.as_str())
-            .collect::<Vec<_>>(),
-        vec![
-            "run_started",
-            "node_started",
-            "node_retry",
-            "node_started",
-            "node_completed",
-            "run_succeeded",
-        ],
-    );
+    }
 }
 
 #[test]

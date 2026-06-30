@@ -44,6 +44,29 @@
     }
   },
   {
+    "name": "filesystem_write_retry_preserves_idempotency_key",
+    "kind": "node_retry",
+    "block": "test.flaky_file_write@1",
+    "nodeId": "writeFile",
+    "effects": [
+      "filesystem_write"
+    ],
+    "maxAttempts": 3,
+    "failuresBeforeSuccess": 2,
+    "idempotencyKey": "file-write:request-1",
+    "outputValue": "written",
+    "expected": {
+      "status": "succeeded",
+      "terminalKind": "run_succeeded",
+      "attempts": 3,
+      "retryCount": 2,
+      "retryIdempotencyKeys": [
+        "file-write:request-1",
+        "file-write:request-1"
+      ]
+    }
+  },
+  {
     "name": "cancelled_effect_attempt_does_not_retry",
     "kind": "cancelled_before_retry",
     "block": "test.cancelled_write@1",

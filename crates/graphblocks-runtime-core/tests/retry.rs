@@ -81,20 +81,27 @@ fn retry_policy_allows_partial_output_only_when_policy_allows_resume() {
 #[test]
 fn effect_retry_requires_idempotency_key() {
     let policy = RetryPolicy::new(3).retry_on([ErrorCategory::Transient]);
-    let request = RetryRequest::new(1, error(ErrorCategory::Transient, true))
-        .with_effect(EffectKind::ExternalWrite);
+    for effect in [
+        EffectKind::ExternalWrite,
+        EffectKind::FilesystemWrite,
+        EffectKind::Destructive,
+        EffectKind::Process,
+    ] {
+        let request =
+            RetryRequest::new(1, error(ErrorCategory::Transient, true)).with_effect(effect);
 
-    assert_eq!(
-        policy.decide(&request),
-        RetryDecision::Stop {
-            reason: "missing_idempotency_key",
-        },
-    );
+        assert_eq!(
+            policy.decide(&request),
+            RetryDecision::Stop {
+                reason: "missing_idempotency_key",
+            },
+        );
 
-    assert_eq!(
-        policy.decide(&request.with_idempotency_key("request-1")),
-        RetryDecision::Retry { delay_ms: 0 },
-    );
+        assert_eq!(
+            policy.decide(&request.with_idempotency_key("request-1")),
+            RetryDecision::Retry { delay_ms: 0 },
+        );
+    }
 }
 
 #[test]

@@ -411,16 +411,18 @@ def test_testing_package_loads_shared_retry_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_retry_tck_cases(ROOT / "tck" / "retry" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["retry"] * 3
+    assert [case.kind for case in cases] == ["retry"] * 4
     assert report.ok
     assert {case.case_id for case in cases} == {
         "effect_retry_preserves_idempotency_key",
         "effect_retry_exhaustion_preserves_idempotency_key",
+        "filesystem_write_retry_preserves_idempotency_key",
         "cancelled_effect_attempt_does_not_retry",
     }
     assert {tuple(result.observed["retryIdempotencyKeys"]) for result in report.results} == {
         ("ticket-create:request-1", "ticket-create:request-1"),
         ("ticket-create:request-2",),
+        ("file-write:request-1", "file-write:request-1"),
         (),
     }
     assert any(result.observed["status"] == "cancelled" for result in report.results)
@@ -641,6 +643,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
     assert by_suite["retry"].case_ids == (
         "effect_retry_preserves_idempotency_key",
         "effect_retry_exhaustion_preserves_idempotency_key",
+        "filesystem_write_retry_preserves_idempotency_key",
         "cancelled_effect_attempt_does_not_retry",
     )
     assert by_suite["rag"].case_ids == (

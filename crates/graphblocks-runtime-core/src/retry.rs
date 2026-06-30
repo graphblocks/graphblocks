@@ -5,6 +5,7 @@ use crate::outcome::{BlockError, ErrorCategory};
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum EffectKind {
     ExternalWrite,
+    FilesystemWrite,
     Destructive,
     Process,
 }
