@@ -247,6 +247,13 @@ def test_application_protocol_capabilities_negotiate_intersection() -> None:
     assert error.value.left == "graphblocks.app.v1"
     assert error.value.right == "graphblocks.app.v2"
 
+    with pytest.raises(ValueError, match="application protocol capabilities protocol_version must not be empty"):
+        ApplicationProtocolCapabilities(" ")
+    with pytest.raises(ValueError, match="application protocol capabilities commands must not be empty"):
+        ApplicationProtocolCapabilities("graphblocks.app.v1", commands=(" ",))
+    with pytest.raises(ValueError, match="application protocol capabilities events must be a sequence"):
+        ApplicationProtocolCapabilities("graphblocks.app.v1", events="RunStarted")  # type: ignore[arg-type]
+
 
 def test_server_app_handles_health_auth_and_run_requests() -> None:
     app = GraphBlocksServerApp(

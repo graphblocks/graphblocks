@@ -112,6 +112,42 @@
     }
   },
   {
+    "name": "command_envelope_rejects_non_object_payload",
+    "kind": "command_envelope_error",
+    "commandKind": "ApproveEffect",
+    "metadata": {
+      "commandId": "command-invalid-payload-1",
+      "protocolVersion": "graphblocks.app.v1",
+      "runId": "run-1",
+      "sequence": 4,
+      "issuedAtUnixMs": 1765843200000
+    },
+    "payload": "not an object",
+    "expected": {
+      "error": "invalid_payload"
+    }
+  },
+  {
+    "name": "event_envelope_rejects_non_object_payload",
+    "kind": "event_envelope_error",
+    "eventKind": "AssistantDraftDelta",
+    "metadata": {
+      "eventId": "event-invalid-payload-1",
+      "protocolVersion": "graphblocks.app.v1",
+      "runId": "run-1",
+      "sequence": 10,
+      "occurredAtUnixMs": 1765843201000
+    },
+    "payload": [
+      "not",
+      "an",
+      "object"
+    ],
+    "expected": {
+      "error": "invalid_payload"
+    }
+  },
+  {
     "name": "capability_negotiation_intersects_commands_and_events",
     "kind": "capability_negotiation",
     "server": {
@@ -147,6 +183,31 @@
         "OutputCutoff",
         "RunCompleted"
       ]
+    }
+  },
+  {
+    "name": "capability_negotiation_rejects_blank_protocol_version",
+    "kind": "capability_negotiation_error",
+    "server": {
+      "protocolVersion": " ",
+      "commands": [
+        "CancelRun"
+      ],
+      "events": [
+        "RunCompleted"
+      ]
+    },
+    "client": {
+      "protocolVersion": "graphblocks.app.v1",
+      "commands": [
+        "CancelRun"
+      ],
+      "events": [
+        "RunCompleted"
+      ]
+    },
+    "expected": {
+      "error": "empty_protocol_version"
     }
   },
   {

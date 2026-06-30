@@ -608,8 +608,37 @@ class ApplicationProtocolCapabilities:
     events: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "commands", tuple(sorted(set(self.commands))))
-        object.__setattr__(self, "events", tuple(sorted(set(self.events))))
+        object.__setattr__(
+            self,
+            "protocol_version",
+            _validate_non_empty_string(
+                "application protocol capabilities",
+                "protocol_version",
+                self.protocol_version,
+            ),
+        )
+        for field_name in ("commands", "events"):
+            values = getattr(self, field_name)
+            if isinstance(values, str):
+                raise ValueError(f"application protocol capabilities {field_name} must be a sequence")
+            try:
+                normalized = tuple(
+                    sorted(
+                        {
+                            _validate_non_empty_string(
+                                "application protocol capabilities",
+                                field_name,
+                                value,
+                            )
+                            for value in values
+                        }
+                    )
+                )
+            except TypeError as error:
+                raise ValueError(
+                    f"application protocol capabilities {field_name} must be a sequence"
+                ) from error
+            object.__setattr__(self, field_name, normalized)
 
     def with_commands(self, commands: list[str] | tuple[str, ...]) -> ApplicationProtocolCapabilities:
         return replace(self, commands=tuple(commands))

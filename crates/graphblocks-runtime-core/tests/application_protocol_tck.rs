@@ -1,7 +1,8 @@
 use graphblocks_runtime_core::application_event::{
     ApplicationCommand, ApplicationCommandKind, ApplicationCommandMetadata,
-    ApplicationProtocolCapabilities, ApplicationProtocolEvent, ApplicationProtocolEventKind,
-    ApplicationProtocolEventMetadata, ApplicationProtocolLog, ApplicationProtocolStreamState,
+    ApplicationProtocolCapabilities, ApplicationProtocolError, ApplicationProtocolEvent,
+    ApplicationProtocolEventKind, ApplicationProtocolEventMetadata, ApplicationProtocolLog,
+    ApplicationProtocolStreamState,
 };
 use serde_json::{Value, json};
 
@@ -82,6 +83,18 @@ fn strings(value: &Value, key: &str) -> Result<Vec<String>, String> {
 
 fn run_case(case: &Value) -> Result<Value, String> {
     let kind = required_str(case, "kind")?;
+    let protocol_error_code = |error: &ApplicationProtocolError| match error {
+        ApplicationProtocolError::InvalidPayload { .. } => "invalid_payload",
+        ApplicationProtocolError::EmptyMetadataField {
+            field: "protocol_version",
+        } => "empty_protocol_version",
+        ApplicationProtocolError::ProtocolVersionMismatch { .. } => "protocol_version_mismatch",
+        ApplicationProtocolError::EmptyCommandId => "empty_command_id",
+        ApplicationProtocolError::EmptyEventId => "empty_event_id",
+        ApplicationProtocolError::EmptyMetadataField { .. } => "empty_metadata_field",
+        ApplicationProtocolError::InvalidToolResultEvent { .. } => "invalid_tool_result_event",
+        ApplicationProtocolError::NonMonotonicSequence { .. } => "non_monotonic_sequence",
+    };
     match kind {
         "kind_sets" => Ok(json!({
             "commands": [
@@ -129,12 +142,12 @@ fn run_case(case: &Value) -> Result<Value, String> {
                 ApplicationProtocolEventKind::RunCancelled.as_str(),
             ],
         })),
-        "command_envelope" => {
+        "command_envelope" | "command_envelope_error" => {
             let metadata = case
                 .get("metadata")
                 .and_then(Value::as_object)
                 .ok_or_else(|| "command_envelope case missing metadata".to_owned())?;
-            let command = ApplicationCommand::new(
+            let command_result = ApplicationCommand::new(
                 command_kind(required_str(case, "commandKind")?)?,
                 ApplicationCommandMetadata {
                     command_id: required_str(&case["metadata"], "commandId")?.to_owned(),
@@ -159,8 +172,17 @@ fn run_case(case: &Value) -> Result<Value, String> {
                         .unwrap_or(0),
                 },
                 case.get("payload").cloned().unwrap_or_else(|| json!({})),
-            )
-            .map_err(|error| error.to_string())?;
+            );
+            if kind == "command_envelope_error" {
+                return Ok(json!({
+                    "error": command_result
+                        .as_ref()
+                        .err()
+                        .map(protocol_error_code)
+                        .unwrap_or("none"),
+                }));
+            }
+            let command = command_result.map_err(|error| error.to_string())?;
             Ok(json!({
                 "kind": command.kind.as_str(),
                 "commandId": command.metadata.command_id,
@@ -172,12 +194,12 @@ fn run_case(case: &Value) -> Result<Value, String> {
                 "payload": command.payload,
             }))
         }
-        "event_envelope" => {
+        "event_envelope" | "event_envelope_error" => {
             let metadata = case
                 .get("metadata")
                 .and_then(Value::as_object)
                 .ok_or_else(|| "event_envelope case missing metadata".to_owned())?;
-            let event = ApplicationProtocolEvent::new(
+            let event_result = ApplicationProtocolEvent::new(
                 event_kind(required_str(case, "eventKind")?)?,
                 ApplicationProtocolEventMetadata {
                     event_id: required_str(&case["metadata"], "eventId")?.to_owned(),
@@ -202,8 +224,17 @@ fn run_case(case: &Value) -> Result<Value, String> {
                         .unwrap_or(0),
                 },
                 case.get("payload").cloned().unwrap_or_else(|| json!({})),
-            )
-            .map_err(|error| error.to_string())?;
+            );
+            if kind == "event_envelope_error" {
+                return Ok(json!({
+                    "error": event_result
+                        .as_ref()
+                        .err()
+                        .map(protocol_error_code)
+                        .unwrap_or("none"),
+                }));
+            }
+            let event = event_result.map_err(|error| error.to_string())?;
             Ok(json!({
                 "kind": event.kind.as_str(),
                 "eventId": event.metadata.event_id,
@@ -366,7 +397,7 @@ fn run_case(case: &Value) -> Result<Value, String> {
                     .and_then(|response_id| state.cutoff_for_response(response_id)),
             }))
         }
-        "capability_negotiation" => {
+        "capability_negotiation" | "capability_negotiation_error" => {
             let server = case
                 .get("server")
                 .ok_or_else(|| "capability_negotiation case missing server".to_owned())?;
@@ -389,7 +420,7 @@ fn run_case(case: &Value) -> Result<Value, String> {
                 .iter()
                 .map(|item| event_kind(item))
                 .collect::<Result<Vec<_>, _>>()?;
-            let negotiated =
+            let negotiated_result =
                 ApplicationProtocolCapabilities::new(required_str(server, "protocolVersion")?)
                     .with_commands(server_commands)
                     .with_events(server_events)
@@ -400,8 +431,17 @@ fn run_case(case: &Value) -> Result<Value, String> {
                         )?)
                         .with_commands(client_commands)
                         .with_events(client_events),
-                    )
-                    .map_err(|error| error.to_string())?;
+                    );
+            if kind == "capability_negotiation_error" {
+                return Ok(json!({
+                    "error": negotiated_result
+                        .as_ref()
+                        .err()
+                        .map(protocol_error_code)
+                        .unwrap_or("none"),
+                }));
+            }
+            let negotiated = negotiated_result.map_err(|error| error.to_string())?;
             let mut commands = negotiated
                 .commands
                 .iter()

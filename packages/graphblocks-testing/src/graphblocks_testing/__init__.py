@@ -1510,8 +1510,11 @@ def load_application_protocol_tck_cases(path: str | Path) -> tuple[TckCase, ...]
         if case_kind not in {
             "kind_sets",
             "command_envelope",
+            "command_envelope_error",
             "event_envelope",
+            "event_envelope_error",
             "capability_negotiation",
+            "capability_negotiation_error",
             "protocol_log",
             "stream_cutoff",
         }:
@@ -3311,100 +3314,120 @@ class TckRunner:
                     "commands": list(APPLICATION_COMMAND_KINDS),
                     "events": list(APPLICATION_PROTOCOL_EVENT_KINDS),
                 }
-            elif kind == "command_envelope":
+            elif kind in {"command_envelope", "command_envelope_error"}:
                 raw_metadata = fixture.get("metadata", {})
                 if not isinstance(raw_metadata, Mapping):
                     raise ValueError("application-protocol command metadata must be a mapping")
                 raw_payload = fixture.get("payload", {})
-                if not isinstance(raw_payload, Mapping):
+                if kind == "command_envelope" and not isinstance(raw_payload, Mapping):
                     raise ValueError("application-protocol command payload must be a mapping")
-                command = ApplicationCommand.new(
-                    str(fixture.get("commandKind", fixture.get("command_kind", "InvokeGraph"))),
-                    ApplicationCommandMetadata(
-                        command_id=str(raw_metadata.get("commandId", raw_metadata.get("command_id", ""))),
-                        protocol_version=str(
-                            raw_metadata.get("protocolVersion", raw_metadata.get("protocol_version", ""))
+                try:
+                    command = ApplicationCommand.new(
+                        str(fixture.get("commandKind", fixture.get("command_kind", "InvokeGraph"))),
+                        ApplicationCommandMetadata(
+                            command_id=str(raw_metadata.get("commandId", raw_metadata.get("command_id", ""))),
+                            protocol_version=str(
+                                raw_metadata.get("protocolVersion", raw_metadata.get("protocol_version", ""))
+                            ),
+                            run_id=str(raw_metadata.get("runId", raw_metadata.get("run_id", ""))),
+                            turn_id=(
+                                str(raw_metadata["turnId"])
+                                if raw_metadata.get("turnId") is not None
+                                else (
+                                    str(raw_metadata["turn_id"])
+                                    if raw_metadata.get("turn_id") is not None
+                                    else None
+                                )
+                            ),
+                            sequence=int(raw_metadata.get("sequence", 0)),
+                            idempotency_key=(
+                                str(raw_metadata["idempotencyKey"])
+                                if raw_metadata.get("idempotencyKey") is not None
+                                else (
+                                    str(raw_metadata["idempotency_key"])
+                                    if raw_metadata.get("idempotency_key") is not None
+                                    else None
+                                )
+                            ),
+                            issued_at_unix_ms=int(
+                                raw_metadata.get("issuedAtUnixMs", raw_metadata.get("issued_at_unix_ms", 0))
+                            ),
                         ),
-                        run_id=str(raw_metadata.get("runId", raw_metadata.get("run_id", ""))),
-                        turn_id=(
-                            str(raw_metadata["turnId"])
-                            if raw_metadata.get("turnId") is not None
-                            else (
-                                str(raw_metadata["turn_id"])
-                                if raw_metadata.get("turn_id") is not None
-                                else None
-                            )
-                        ),
-                        sequence=int(raw_metadata.get("sequence", 0)),
-                        idempotency_key=(
-                            str(raw_metadata["idempotencyKey"])
-                            if raw_metadata.get("idempotencyKey") is not None
-                            else (
-                                str(raw_metadata["idempotency_key"])
-                                if raw_metadata.get("idempotency_key") is not None
-                                else None
-                            )
-                        ),
-                        issued_at_unix_ms=int(
-                            raw_metadata.get("issuedAtUnixMs", raw_metadata.get("issued_at_unix_ms", 0))
-                        ),
-                    ),
-                    payload=dict(raw_payload),
-                )
-                observed = {
-                    "kind": command.kind,
-                    "commandId": command.metadata.command_id,
-                    "protocolVersion": command.metadata.protocol_version,
-                    "runId": command.metadata.run_id,
-                    "turnId": command.metadata.turn_id,
-                    "sequence": command.metadata.sequence,
-                    "idempotencyKey": command.metadata.idempotency_key,
-                    "payload": dict(command.payload),
-                }
-            elif kind == "event_envelope":
+                        payload=dict(raw_payload) if isinstance(raw_payload, Mapping) else raw_payload,  # type: ignore[arg-type]
+                    )
+                except Exception as error:
+                    if kind != "command_envelope_error":
+                        raise
+                    message = str(error)
+                    observed = {"error": "invalid_payload" if "payload" in message else message}
+                else:
+                    if kind == "command_envelope_error":
+                        observed = {"error": "none"}
+                    else:
+                        observed = {
+                            "kind": command.kind,
+                            "commandId": command.metadata.command_id,
+                            "protocolVersion": command.metadata.protocol_version,
+                            "runId": command.metadata.run_id,
+                            "turnId": command.metadata.turn_id,
+                            "sequence": command.metadata.sequence,
+                            "idempotencyKey": command.metadata.idempotency_key,
+                            "payload": dict(command.payload),
+                        }
+            elif kind in {"event_envelope", "event_envelope_error"}:
                 raw_metadata = fixture.get("metadata", {})
                 if not isinstance(raw_metadata, Mapping):
                     raise ValueError("application-protocol event metadata must be a mapping")
                 raw_payload = fixture.get("payload", {})
-                if not isinstance(raw_payload, Mapping):
+                if kind == "event_envelope" and not isinstance(raw_payload, Mapping):
                     raise ValueError("application-protocol event payload must be a mapping")
-                event = ApplicationProtocolEvent.new(
-                    str(fixture.get("eventKind", fixture.get("event_kind", "RunStarted"))),
-                    ApplicationProtocolEventMetadata(
-                        event_id=str(raw_metadata.get("eventId", raw_metadata.get("event_id", ""))),
-                        protocol_version=str(
-                            raw_metadata.get("protocolVersion", raw_metadata.get("protocol_version", ""))
+                try:
+                    event = ApplicationProtocolEvent.new(
+                        str(fixture.get("eventKind", fixture.get("event_kind", "RunStarted"))),
+                        ApplicationProtocolEventMetadata(
+                            event_id=str(raw_metadata.get("eventId", raw_metadata.get("event_id", ""))),
+                            protocol_version=str(
+                                raw_metadata.get("protocolVersion", raw_metadata.get("protocol_version", ""))
+                            ),
+                            run_id=str(raw_metadata.get("runId", raw_metadata.get("run_id", ""))),
+                            turn_id=(
+                                str(raw_metadata["turnId"])
+                                if raw_metadata.get("turnId") is not None
+                                else (
+                                    str(raw_metadata["turn_id"])
+                                    if raw_metadata.get("turn_id") is not None
+                                    else None
+                                )
+                            ),
+                            sequence=int(raw_metadata.get("sequence", 0)),
+                            cursor=(
+                                str(raw_metadata["cursor"]) if raw_metadata.get("cursor") is not None else None
+                            ),
+                            occurred_at_unix_ms=int(
+                                raw_metadata.get("occurredAtUnixMs", raw_metadata.get("occurred_at_unix_ms", 0))
+                            ),
                         ),
-                        run_id=str(raw_metadata.get("runId", raw_metadata.get("run_id", ""))),
-                        turn_id=(
-                            str(raw_metadata["turnId"])
-                            if raw_metadata.get("turnId") is not None
-                            else (
-                                str(raw_metadata["turn_id"])
-                                if raw_metadata.get("turn_id") is not None
-                                else None
-                            )
-                        ),
-                        sequence=int(raw_metadata.get("sequence", 0)),
-                        cursor=(
-                            str(raw_metadata["cursor"]) if raw_metadata.get("cursor") is not None else None
-                        ),
-                        occurred_at_unix_ms=int(
-                            raw_metadata.get("occurredAtUnixMs", raw_metadata.get("occurred_at_unix_ms", 0))
-                        ),
-                    ),
-                    payload=dict(raw_payload),
-                )
-                observed = {
-                    "kind": event.kind,
-                    "eventId": event.metadata.event_id,
-                    "protocolVersion": event.metadata.protocol_version,
-                    "runId": event.metadata.run_id,
-                    "turnId": event.metadata.turn_id,
-                    "sequence": event.metadata.sequence,
-                    "cursor": event.metadata.cursor,
-                    "payload": dict(event.payload),
-                }
+                        payload=dict(raw_payload) if isinstance(raw_payload, Mapping) else raw_payload,  # type: ignore[arg-type]
+                    )
+                except Exception as error:
+                    if kind != "event_envelope_error":
+                        raise
+                    message = str(error)
+                    observed = {"error": "invalid_payload" if "payload" in message else message}
+                else:
+                    if kind == "event_envelope_error":
+                        observed = {"error": "none"}
+                    else:
+                        observed = {
+                            "kind": event.kind,
+                            "eventId": event.metadata.event_id,
+                            "protocolVersion": event.metadata.protocol_version,
+                            "runId": event.metadata.run_id,
+                            "turnId": event.metadata.turn_id,
+                            "sequence": event.metadata.sequence,
+                            "cursor": event.metadata.cursor,
+                            "payload": dict(event.payload),
+                        }
             elif kind == "protocol_log":
                 raw_operations = fixture.get("operations", [])
                 if not isinstance(raw_operations, list):
@@ -3529,27 +3552,46 @@ class TckRunner:
                         else None
                     ),
                 }
-            elif kind == "capability_negotiation":
+            elif kind in {"capability_negotiation", "capability_negotiation_error"}:
                 raw_server = fixture.get("server", {})
                 raw_client = fixture.get("client", {})
                 if not isinstance(raw_server, Mapping) or not isinstance(raw_client, Mapping):
                     raise ValueError("application-protocol capabilities must be mappings")
-                server = ApplicationProtocolCapabilities(
-                    protocol_version=str(raw_server.get("protocolVersion", raw_server.get("protocol_version", ""))),
-                    commands=_string_tuple(raw_server.get("commands")),
-                    events=_string_tuple(raw_server.get("events")),
-                )
-                client = ApplicationProtocolCapabilities(
-                    protocol_version=str(raw_client.get("protocolVersion", raw_client.get("protocol_version", ""))),
-                    commands=_string_tuple(raw_client.get("commands")),
-                    events=_string_tuple(raw_client.get("events")),
-                )
-                negotiated = server.negotiate(client)
-                observed = {
-                    "protocolVersion": negotiated.protocol_version,
-                    "commands": list(negotiated.commands),
-                    "events": list(negotiated.events),
-                }
+                try:
+                    server = ApplicationProtocolCapabilities(
+                        protocol_version=str(
+                            raw_server.get("protocolVersion", raw_server.get("protocol_version", ""))
+                        ),
+                        commands=_string_tuple(raw_server.get("commands")),
+                        events=_string_tuple(raw_server.get("events")),
+                    )
+                    client = ApplicationProtocolCapabilities(
+                        protocol_version=str(
+                            raw_client.get("protocolVersion", raw_client.get("protocol_version", ""))
+                        ),
+                        commands=_string_tuple(raw_client.get("commands")),
+                        events=_string_tuple(raw_client.get("events")),
+                    )
+                    negotiated = server.negotiate(client)
+                except Exception as error:
+                    if kind != "capability_negotiation_error":
+                        raise
+                    message = str(error)
+                    if "protocol_version must not be empty" in message:
+                        observed = {"error": "empty_protocol_version"}
+                    elif "version mismatch" in message:
+                        observed = {"error": "protocol_version_mismatch"}
+                    else:
+                        observed = {"error": message}
+                else:
+                    if kind == "capability_negotiation_error":
+                        observed = {"error": "none"}
+                    else:
+                        observed = {
+                            "protocolVersion": negotiated.protocol_version,
+                            "commands": list(negotiated.commands),
+                            "events": list(negotiated.events),
+                        }
             else:
                 diagnostics.append(
                     {
