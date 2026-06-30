@@ -108,6 +108,76 @@ def test_worker_package_native_message_helper_delegates_to_runtime(monkeypatch) 
     assert "validate_worker_protocol_message_native" in graphblocks_worker.__all__
 
 
+def test_worker_package_native_advertisement_helper_delegates_to_runtime(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-worker" / "src"))
+    graphblocks_worker = importlib.import_module("graphblocks_worker")
+    calls: list[tuple[dict[str, object], str | None]] = []
+
+    def validate_worker_advertisement(
+        advertisement: dict[str, object],
+        *,
+        expected_package_lock_hash: str | None = None,
+    ) -> dict[str, object]:
+        calls.append((advertisement, expected_package_lock_hash))
+        return {"ok": True, "advertisement": advertisement, "expected": expected_package_lock_hash}
+
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(validate_worker_advertisement=validate_worker_advertisement),
+    )
+    advertisement = graphblocks_worker.WorkerAdvertisement.new(
+        "worker-1",
+        "doc-cpu",
+        "sha256:package-lock",
+        "sha256:image",
+        [graphblocks_worker.BlockCapability("document.parse@1")],
+    )
+
+    result = graphblocks_worker.validate_worker_advertisement_native(
+        advertisement,
+        expected_package_lock_hash="sha256:package-lock",
+    )
+    mapping_result = graphblocks_worker.validate_worker_advertisement_native(advertisement.to_wire())
+
+    assert result["ok"] is True
+    assert mapping_result["ok"] is True
+    assert calls == [
+        (advertisement.to_wire(), "sha256:package-lock"),
+        (advertisement.to_wire(), None),
+    ]
+    assert "validate_worker_advertisement_native" in graphblocks_worker.__all__
+
+
+def test_worker_package_native_remote_payload_helper_delegates_to_runtime(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-worker" / "src"))
+    graphblocks_worker = importlib.import_module("graphblocks_worker")
+    calls: list[tuple[dict[str, object], int]] = []
+
+    def validate_remote_payload(payload: dict[str, object], *, max_inline_bytes: int) -> dict[str, object]:
+        calls.append((payload, max_inline_bytes))
+        return {"ok": True, "payload": payload, "maxInlineBytes": max_inline_bytes}
+
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(validate_remote_payload=validate_remote_payload),
+    )
+    payload = graphblocks_worker.RemoteEdgePayload.artifact_ref(
+        "graphblocks.ai/PdfDocument@1",
+        artifact_id="artifact-1",
+        uri="s3://graphblocks/documents/source.pdf",
+    )
+
+    result = graphblocks_worker.validate_remote_payload_native(payload, max_inline_bytes=8)
+    mapping_result = graphblocks_worker.validate_remote_payload_native(payload.to_wire(), max_inline_bytes=16)
+
+    assert result["ok"] is True
+    assert mapping_result["ok"] is True
+    assert calls == [(payload.to_wire(), 8), (payload.to_wire(), 16)]
+    assert "validate_remote_payload_native" in graphblocks_worker.__all__
+
+
 def test_worker_package_native_admission_helper_delegates_to_runtime(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-worker" / "src"))
     graphblocks_worker = importlib.import_module("graphblocks_worker")
