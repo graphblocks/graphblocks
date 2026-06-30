@@ -119,6 +119,149 @@ fn rust_stdlib_runtime_preserves_tool_implementation_mappings() -> Result<(), St
 }
 
 #[test]
+fn rust_stdlib_runtime_rejects_invalid_tool_tags_and_scope_entries() -> Result<(), String> {
+    let cases = [
+        (
+            "non-string tag",
+            json!({
+                "effectivePolicySnapshotId": "policy-snapshot-1",
+                "definitions": [
+                    {
+                        "name": "knowledge.search",
+                        "description": "Search support documentation.",
+                        "inputSchema": "schemas/SearchRequest@1",
+                        "tags": ["search", 1]
+                    }
+                ],
+                "bindings": [
+                    {
+                        "bindingId": "binding-search",
+                        "toolName": "knowledge.search",
+                        "implementation": {"kind": "block", "block": "knowledge.search@1"},
+                        "effects": ["external_read"],
+                        "approval": "never"
+                    }
+                ],
+                "scope": {"principalTools": ["knowledge.search"]}
+            }),
+            "tools.resolve@1 config.definitions[0].tags[1] must be a string",
+        ),
+        (
+            "blank tag",
+            json!({
+                "effectivePolicySnapshotId": "policy-snapshot-1",
+                "definitions": [
+                    {
+                        "name": "knowledge.search",
+                        "description": "Search support documentation.",
+                        "inputSchema": "schemas/SearchRequest@1",
+                        "tags": ["search", " "]
+                    }
+                ],
+                "bindings": [
+                    {
+                        "bindingId": "binding-search",
+                        "toolName": "knowledge.search",
+                        "implementation": {"kind": "block", "block": "knowledge.search@1"},
+                        "effects": ["external_read"],
+                        "approval": "never"
+                    }
+                ],
+                "scope": {"principalTools": ["knowledge.search"]}
+            }),
+            "tools.resolve@1 config.definitions[0].tags[1] must not be empty",
+        ),
+        (
+            "non-string scope entry",
+            json!({
+                "effectivePolicySnapshotId": "policy-snapshot-1",
+                "definitions": [
+                    {
+                        "name": "knowledge.search",
+                        "description": "Search support documentation.",
+                        "inputSchema": "schemas/SearchRequest@1"
+                    }
+                ],
+                "bindings": [
+                    {
+                        "bindingId": "binding-search",
+                        "toolName": "knowledge.search",
+                        "implementation": {"kind": "block", "block": "knowledge.search@1"},
+                        "effects": ["external_read"],
+                        "approval": "never"
+                    }
+                ],
+                "scope": {"principalTools": ["knowledge.search", 1]}
+            }),
+            "tools.resolve@1 config.scope.principalTools[1] must be a string",
+        ),
+        (
+            "blank scope entry",
+            json!({
+                "effectivePolicySnapshotId": "policy-snapshot-1",
+                "definitions": [
+                    {
+                        "name": "knowledge.search",
+                        "description": "Search support documentation.",
+                        "inputSchema": "schemas/SearchRequest@1"
+                    }
+                ],
+                "bindings": [
+                    {
+                        "bindingId": "binding-search",
+                        "toolName": "knowledge.search",
+                        "implementation": {"kind": "block", "block": "knowledge.search@1"},
+                        "effects": ["external_read"],
+                        "approval": "never"
+                    }
+                ],
+                "scope": {"principalTools": ["knowledge.search", " "]}
+            }),
+            "tools.resolve@1 config.scope.principalTools[1] must not be empty",
+        ),
+    ];
+
+    for (case_name, config, expected_error) in cases {
+        let graph = json!({
+            "apiVersion": "graphblocks.ai/v1alpha3",
+            "kind": "Graph",
+            "metadata": {"name": "runtime-invalid-tool-resolution-config"},
+            "spec": {
+                "nodes": {
+                    "resolve": {
+                        "block": "tools.resolve@1",
+                        "config": config,
+                        "outputs": {"tools": "$output.tools"}
+                    }
+                }
+            }
+        });
+        let result = run_graph(&graph, &json!({}))?;
+        let node_error = result["journal"]
+            .as_array()
+            .and_then(|journal| {
+                journal
+                    .iter()
+                    .find(|record| record["kind"].as_str() == Some("node_failed"))
+            })
+            .and_then(|record| record.pointer("/payload/message"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("{case_name}: missing node failure error"))?;
+
+        assert_eq!(
+            result["status"].as_str(),
+            Some("failed"),
+            "{case_name}: status mismatch",
+        );
+        assert!(
+            node_error.contains(expected_error),
+            "{case_name}: expected {expected_error:?} in {node_error:?}",
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn rust_stdlib_agent_run_surfaces_output_policy_profile_ref() -> Result<(), String> {
     let graph = json!({
         "apiVersion": "graphblocks.ai/v1alpha3",

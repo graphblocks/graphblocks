@@ -575,7 +575,31 @@ fn execute_resolve_tools(inputs: &Value, config: &Value) -> Result<Value, BlockE
                         false,
                     ));
                 };
-                parsed = parsed.with_tags(tags.iter().map(json_display));
+                let mut parsed_tags = Vec::new();
+                for (tag_index, tag) in tags.iter().enumerate() {
+                    let Some(tag) = tag.as_str() else {
+                        return Err(BlockError::new(
+                            "tools.resolve.invalid_definition",
+                            ErrorCategory::Configuration,
+                            format!(
+                                "tools.resolve@1 config.definitions[{index}].tags[{tag_index}] must be a string"
+                            ),
+                            false,
+                        ));
+                    };
+                    if tag.trim().is_empty() {
+                        return Err(BlockError::new(
+                            "tools.resolve.invalid_definition",
+                            ErrorCategory::Configuration,
+                            format!(
+                                "tools.resolve@1 config.definitions[{index}].tags[{tag_index}] must not be empty"
+                            ),
+                            false,
+                        ));
+                    }
+                    parsed_tags.push(tag.to_owned());
+                }
+                parsed = parsed.with_tags(parsed_tags);
             }
             if let Some(version) = definition.get("version").filter(|value| !value.is_null()) {
                 let Some(version) = version.as_str() else {
@@ -1433,6 +1457,14 @@ fn parse_tool_name_list(
                 false,
             ));
         };
+        if item.trim().is_empty() {
+            return Err(BlockError::new(
+                "tools.resolve.invalid_scope",
+                ErrorCategory::Configuration,
+                format!("tools.resolve@1 config.scope.{camel_key}[{index}] must not be empty"),
+                false,
+            ));
+        }
         names.push(item.to_owned());
     }
     Ok(Some(names))
