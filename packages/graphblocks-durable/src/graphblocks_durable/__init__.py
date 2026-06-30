@@ -5,6 +5,16 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Literal
 
+from graphblocks.output_policy import (
+    DraftDisposition as OutputCutoffDraftDisposition,
+    OutputDurableResult as OutputCutoffDurableResult,
+    TerminalReason as OutputCutoffTerminalReason,
+    VALID_DRAFT_DISPOSITIONS as VALID_OUTPUT_CUTOFF_DRAFT_DISPOSITIONS,
+    VALID_OUTPUT_DURABLE_RESULTS as VALID_OUTPUT_CUTOFF_DURABLE_RESULTS,
+    VALID_TERMINAL_REASONS as VALID_OUTPUT_CUTOFF_TERMINAL_REASONS,
+)
+from graphblocks.tools import ToolResultStatus, VALID_TOOL_RESULT_STATUSES
+
 if TYPE_CHECKING:
     from graphblocks.output_policy import OutputCutoff
     from graphblocks.tools import ToolResult
@@ -13,36 +23,10 @@ if TYPE_CHECKING:
 DeliveryGuarantee = Literal["best_effort", "at_most_once", "at_least_once"]
 WatermarkKind = Literal["event_time", "processing_time"]
 AccumulationMode = Literal["discarding", "accumulating"]
-OutputCutoffTerminalReason = Literal["policy_denied", "budget_exhausted", "cancelled", "client_disconnected"]
-OutputCutoffDraftDisposition = Literal["keep", "mark_incomplete", "retract"]
-OutputCutoffDurableResult = Literal["none", "incomplete", "partial"]
-DurableToolTerminalState = Literal[
-    "completed",
-    "failed",
-    "denied",
-    "cancelled",
-    "policy_stopped",
-    "incomplete",
-    "expired",
-]
+DurableToolTerminalState = ToolResultStatus | Literal["expired"]
 
 VALID_DELIVERY_GUARANTEES = frozenset({"best_effort", "at_most_once", "at_least_once"})
-VALID_OUTPUT_CUTOFF_TERMINAL_REASONS = frozenset(
-    {"policy_denied", "budget_exhausted", "cancelled", "client_disconnected"}
-)
-VALID_OUTPUT_CUTOFF_DRAFT_DISPOSITIONS = frozenset({"keep", "mark_incomplete", "retract"})
-VALID_OUTPUT_CUTOFF_DURABLE_RESULTS = frozenset({"none", "incomplete", "partial"})
-VALID_DURABLE_TOOL_TERMINAL_STATES = frozenset(
-    {
-        "completed",
-        "failed",
-        "denied",
-        "cancelled",
-        "policy_stopped",
-        "incomplete",
-        "expired",
-    }
-)
+VALID_DURABLE_TOOL_TERMINAL_STATES = VALID_TOOL_RESULT_STATUSES | frozenset({"expired"})
 
 
 class DurableError(ValueError):
@@ -894,6 +878,11 @@ __all__ = [
     "ToolTerminalStateConflictError",
     "ToolTerminalStoreError",
     "UnknownSourceCursorError",
+    "VALID_DELIVERY_GUARANTEES",
+    "VALID_DURABLE_TOOL_TERMINAL_STATES",
+    "VALID_OUTPUT_CUTOFF_DRAFT_DISPOSITIONS",
+    "VALID_OUTPUT_CUTOFF_DURABLE_RESULTS",
+    "VALID_OUTPUT_CUTOFF_TERMINAL_REASONS",
     "Watermark",
     "WatermarkKind",
     "WindowAccumulator",

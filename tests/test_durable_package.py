@@ -8,7 +8,16 @@ from types import SimpleNamespace
 import pytest
 
 from graphblocks import ContentPart, ToolResult
+from graphblocks.output_policy import (
+    DraftDisposition,
+    OutputDurableResult,
+    TerminalReason,
+    VALID_DRAFT_DISPOSITIONS,
+    VALID_OUTPUT_DURABLE_RESULTS,
+    VALID_TERMINAL_REASONS,
+)
 from graphblocks.packages import load_package_catalog, package_rows
+from graphblocks.tools import VALID_TOOL_RESULT_STATUSES
 
 
 ROOT = Path(__file__).parents[1]
@@ -44,6 +53,25 @@ def _checkpoint(graphblocks_durable, checkpoint_id: str, state_revision: int, pl
         schema_versions={"checkpoint": 1},
         created_at_unix_ms=1_820_000_000_000 + state_revision,
     )
+
+
+def test_durable_package_uses_canonical_output_and_tool_literals(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+
+    assert graphblocks_durable.OutputCutoffTerminalReason is TerminalReason
+    assert graphblocks_durable.OutputCutoffDraftDisposition is DraftDisposition
+    assert graphblocks_durable.OutputCutoffDurableResult is OutputDurableResult
+    assert graphblocks_durable.VALID_OUTPUT_CUTOFF_TERMINAL_REASONS is VALID_TERMINAL_REASONS
+    assert graphblocks_durable.VALID_OUTPUT_CUTOFF_DRAFT_DISPOSITIONS is VALID_DRAFT_DISPOSITIONS
+    assert graphblocks_durable.VALID_OUTPUT_CUTOFF_DURABLE_RESULTS is VALID_OUTPUT_DURABLE_RESULTS
+    assert graphblocks_durable.VALID_DURABLE_TOOL_TERMINAL_STATES == VALID_TOOL_RESULT_STATUSES | {"expired"}
+    for name in (
+        "VALID_DURABLE_TOOL_TERMINAL_STATES",
+        "VALID_OUTPUT_CUTOFF_TERMINAL_REASONS",
+        "VALID_OUTPUT_CUTOFF_DRAFT_DISPOSITIONS",
+        "VALID_OUTPUT_CUTOFF_DURABLE_RESULTS",
+    ):
+        assert name in graphblocks_durable.__all__
 
 
 def test_durable_package_lazy_native_terminal_store_helper_delegates_to_runtime(monkeypatch) -> None:
