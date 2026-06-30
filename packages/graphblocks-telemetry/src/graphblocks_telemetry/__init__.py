@@ -5,6 +5,21 @@ from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 
 from graphblocks.diagnostics import Diagnostic, Severity
+from graphblocks.output_policy import (
+    VALID_DRAFT_DISPOSITIONS,
+    VALID_OUTPUT_DISPOSITIONS,
+    VALID_OUTPUT_DURABLE_RESULTS,
+    VALID_PENDING_TOOL_CALLS_DISPOSITIONS,
+    VALID_TERMINAL_REASONS,
+)
+from graphblocks.policy import VALID_ENFORCEMENT_POINTS
+from graphblocks.tools import (
+    VALID_TOOL_CALL_STATUSES,
+    VALID_TOOL_EFFECT_OUTCOMES,
+    VALID_TOOL_EFFECTS,
+    VALID_TOOL_RESULT_MODES,
+    VALID_TOOL_RESULT_STATUSES,
+)
 
 
 DEFAULT_BLOCKED_METRIC_LABELS = (
@@ -40,6 +55,40 @@ class TelemetryProjectionError(RuntimeError):
     pass
 
 
+def _require_non_empty_string(owner: str, field_name: str, value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise TelemetryProjectionError(f"{owner} {field_name} must be a non-empty string")
+    return value
+
+
+def _require_literal(owner: str, field_name: str, value: object, valid_values: frozenset[str]) -> str:
+    value = _require_non_empty_string(owner, field_name, value)
+    if value not in valid_values:
+        raise TelemetryProjectionError(f"{owner} {field_name} has invalid value {value!r}")
+    return value
+
+
+def _optional_literal(
+    owner: str,
+    field_name: str,
+    value: object | None,
+    valid_values: frozenset[str],
+) -> str | None:
+    if value is None:
+        return None
+    return _require_literal(owner, field_name, value, valid_values)
+
+
+def _optional_non_negative_integer(owner: str, field_name: str, value: object | None) -> int | None:
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise TelemetryProjectionError(f"{owner} {field_name} must be an integer")
+    if value < 0:
+        raise TelemetryProjectionError(f"{owner} {field_name} must be non-negative")
+    return value
+
+
 def capture_native_telemetry_content(
     decision: Mapping[str, object],
     content: Mapping[str, object],
@@ -72,6 +121,16 @@ class GenerationTelemetryRecord:
     attributes: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        for field_name in ("record_id", "run_id", "span_id", "node_id", "provider", "model"):
+            object.__setattr__(
+                self,
+                field_name,
+                _require_non_empty_string(
+                    "generation telemetry record",
+                    field_name,
+                    getattr(self, field_name),
+                ),
+            )
         object.__setattr__(self, "usage", MappingProxyType(dict(self.usage)))
         object.__setattr__(self, "timing_ms", MappingProxyType(dict(self.timing_ms)))
         object.__setattr__(self, "attributes", MappingProxyType(dict(self.attributes)))
@@ -112,6 +171,94 @@ class OutputPolicyTelemetryRecord:
     attributes: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        for field_name in ("record_id", "run_id", "stream_id", "response_id"):
+            object.__setattr__(
+                self,
+                field_name,
+                _require_non_empty_string(
+                    "output policy telemetry record",
+                    field_name,
+                    getattr(self, field_name),
+                ),
+            )
+        object.__setattr__(
+            self,
+            "enforcement_point",
+            _require_literal(
+                "output policy telemetry record",
+                "enforcement_point",
+                self.enforcement_point,
+                VALID_ENFORCEMENT_POINTS,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "disposition",
+            _require_literal(
+                "output policy telemetry record",
+                "disposition",
+                self.disposition,
+                VALID_OUTPUT_DISPOSITIONS,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "terminal_reason",
+            _optional_literal(
+                "output policy telemetry record",
+                "terminal_reason",
+                self.terminal_reason,
+                VALID_TERMINAL_REASONS,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "draft_disposition",
+            _optional_literal(
+                "output policy telemetry record",
+                "draft_disposition",
+                self.draft_disposition,
+                VALID_DRAFT_DISPOSITIONS,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "pending_tool_calls",
+            _optional_literal(
+                "output policy telemetry record",
+                "pending_tool_calls",
+                self.pending_tool_calls,
+                VALID_PENDING_TOOL_CALLS_DISPOSITIONS,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "durable_result",
+            _optional_literal(
+                "output policy telemetry record",
+                "durable_result",
+                self.durable_result,
+                VALID_OUTPUT_DURABLE_RESULTS,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "accepted_through_sequence",
+            _optional_non_negative_integer(
+                "output policy telemetry record",
+                "accepted_through_sequence",
+                self.accepted_through_sequence,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "last_client_delivered_sequence",
+            _optional_non_negative_integer(
+                "output policy telemetry record",
+                "last_client_delivered_sequence",
+                self.last_client_delivered_sequence,
+            ),
+        )
         object.__setattr__(self, "attributes", MappingProxyType(dict(self.attributes)))
 
     def observation_contract(self) -> dict[str, object]:
@@ -149,7 +296,62 @@ class ToolExecutionTelemetryRecord:
     attributes: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "effects", tuple(sorted(str(effect) for effect in self.effects)))
+        for field_name in ("record_id", "run_id", "tool_call_id", "tool_name"):
+            object.__setattr__(
+                self,
+                field_name,
+                _require_non_empty_string(
+                    "tool execution telemetry record",
+                    field_name,
+                    getattr(self, field_name),
+                ),
+            )
+        object.__setattr__(
+            self,
+            "status",
+            _require_literal(
+                "tool execution telemetry record",
+                "status",
+                self.status,
+                VALID_TOOL_CALL_STATUSES | VALID_TOOL_RESULT_STATUSES,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "result_mode",
+            _optional_literal(
+                "tool execution telemetry record",
+                "result_mode",
+                self.result_mode,
+                VALID_TOOL_RESULT_MODES,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "effect_outcome",
+            _optional_literal(
+                "tool execution telemetry record",
+                "effect_outcome",
+                self.effect_outcome,
+                VALID_TOOL_EFFECT_OUTCOMES,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "duration_ms",
+            _optional_non_negative_integer(
+                "tool execution telemetry record",
+                "duration_ms",
+                self.duration_ms,
+            ),
+        )
+        effects = tuple(sorted(str(effect) for effect in self.effects))
+        for effect in effects:
+            if effect not in VALID_TOOL_EFFECTS:
+                raise TelemetryProjectionError(
+                    f"tool execution telemetry record effects has invalid value {effect!r}"
+                )
+        object.__setattr__(self, "effects", effects)
         object.__setattr__(self, "attributes", MappingProxyType(dict(self.attributes)))
 
     def observation_contract(self) -> dict[str, object]:

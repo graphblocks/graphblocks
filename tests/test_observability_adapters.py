@@ -182,6 +182,75 @@ def test_telemetry_policy_and_tool_records_apply_capture_policy(monkeypatch) -> 
     assert "ToolExecutionTelemetryRecord" in graphblocks_telemetry.__all__
 
 
+def test_telemetry_records_validate_policy_and_tool_literal_fields(monkeypatch) -> None:
+    _add_observability_package_paths(monkeypatch)
+    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
+
+    with pytest.raises(graphblocks_telemetry.TelemetryProjectionError, match="enforcement_point"):
+        graphblocks_telemetry.OutputPolicyTelemetryRecord(
+            record_id="policy-invalid",
+            run_id="run-1",
+            stream_id="stream-1",
+            response_id="response-1",
+            enforcement_point="after_delivery",
+            disposition="allow",
+        )
+    with pytest.raises(graphblocks_telemetry.TelemetryProjectionError, match="disposition"):
+        graphblocks_telemetry.OutputPolicyTelemetryRecord(
+            record_id="policy-invalid",
+            run_id="run-1",
+            stream_id="stream-1",
+            response_id="response-1",
+            enforcement_point="before_client_delivery",
+            disposition="permit",
+        )
+    with pytest.raises(graphblocks_telemetry.TelemetryProjectionError, match="accepted_through_sequence"):
+        graphblocks_telemetry.OutputPolicyTelemetryRecord(
+            record_id="policy-invalid",
+            run_id="run-1",
+            stream_id="stream-1",
+            response_id="response-1",
+            enforcement_point="before_client_delivery",
+            disposition="allow",
+            accepted_through_sequence=-1,
+        )
+
+    running = graphblocks_telemetry.ToolExecutionTelemetryRecord(
+        record_id="tool-running",
+        run_id="run-1",
+        tool_call_id="call-1",
+        tool_name="knowledge.search",
+        status="running",
+    )
+    assert running.status == "running"
+    with pytest.raises(graphblocks_telemetry.TelemetryProjectionError, match="status"):
+        graphblocks_telemetry.ToolExecutionTelemetryRecord(
+            record_id="tool-invalid",
+            run_id="run-1",
+            tool_call_id="call-1",
+            tool_name="knowledge.search",
+            status="waiting",
+        )
+    with pytest.raises(graphblocks_telemetry.TelemetryProjectionError, match="result_mode"):
+        graphblocks_telemetry.ToolExecutionTelemetryRecord(
+            record_id="tool-invalid",
+            run_id="run-1",
+            tool_call_id="call-1",
+            tool_name="knowledge.search",
+            status="completed",
+            result_mode="stream",
+        )
+    with pytest.raises(graphblocks_telemetry.TelemetryProjectionError, match="effects"):
+        graphblocks_telemetry.ToolExecutionTelemetryRecord(
+            record_id="tool-invalid",
+            run_id="run-1",
+            tool_call_id="call-1",
+            tool_name="knowledge.search",
+            status="completed",
+            effects=("network", "telepathy"),
+        )
+
+
 def test_telemetry_capture_policy_redacts_sensitive_observation_fields(monkeypatch) -> None:
     _add_observability_package_paths(monkeypatch)
     graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
