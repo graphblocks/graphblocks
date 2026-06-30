@@ -529,78 +529,141 @@ def stdlib_registry() -> RuntimeRegistry:
 
     def resolve_tools(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         definitions = []
-        for item in config.get("definitions", []):
+        definition_configs = config.get("definitions", [])
+        if not isinstance(definition_configs, list | tuple):
+            raise TypeError("tools.resolve@1 config.definitions must be a sequence")
+        for index, item in enumerate(definition_configs):
             if not isinstance(item, dict):
                 raise TypeError("tools.resolve@1 config.definitions entries must be mappings")
             definitions.append(
                 ToolDefinition(
-                    name=str(item["name"]),
-                    description=str(item.get("description", "")),
-                    input_schema=str(item.get("inputSchema", item.get("input_schema"))),
-                    output_schema=(
-                        str(item.get("outputSchema", item.get("output_schema")))
-                        if item.get("outputSchema", item.get("output_schema")) is not None
-                        else None
+                    name=_required_string(item, "name", "name", f"config.definitions[{index}].name"),
+                    description=_string_with_default(
+                        item,
+                        "description",
+                        "description",
+                        "",
+                        f"config.definitions[{index}].description",
                     ),
-                    tags=frozenset(str(tag) for tag in item.get("tags", ())),
-                    version=str(item["version"]) if item.get("version") is not None else None,
+                    input_schema=_required_string(
+                        item,
+                        "inputSchema",
+                        "input_schema",
+                        f"config.definitions[{index}].inputSchema",
+                    ),
+                    output_schema=_optional_string(
+                        item,
+                        "outputSchema",
+                        "output_schema",
+                        f"config.definitions[{index}].outputSchema",
+                    ),
+                    tags=_string_collection(item.get("tags", ()), f"config.definitions[{index}].tags"),
+                    version=_optional_string(item, "version", "version", f"config.definitions[{index}].version"),
                 )
             )
 
         bindings = []
-        for index, item in enumerate(config.get("bindings", [])):
+        binding_configs = config.get("bindings", [])
+        if not isinstance(binding_configs, list | tuple):
+            raise TypeError("tools.resolve@1 config.bindings must be a sequence")
+        for index, item in enumerate(binding_configs):
             if not isinstance(item, dict):
                 raise TypeError("tools.resolve@1 config.bindings entries must be mappings")
             implementation_config = item.get("implementation")
             if not isinstance(implementation_config, dict):
                 raise TypeError("tools.resolve@1 binding implementation must be a mapping")
-            kind = implementation_config.get("kind")
+            kind = _required_string(
+                implementation_config,
+                "kind",
+                "kind",
+                f"config.bindings[{index}].implementation.kind",
+            )
             if kind == "block":
                 implementation = BlockToolImplementation(
-                    block=str(implementation_config["block"]),
-                    input_mapping=dict(
-                        implementation_config.get(
-                            "inputMapping",
-                            implementation_config.get("input_mapping", {}),
-                        )
+                    block=_required_string(
+                        implementation_config,
+                        "block",
+                        "block",
+                        f"config.bindings[{index}].implementation.block",
                     ),
-                    output_mapping=dict(
-                        implementation_config.get(
-                            "outputMapping",
-                            implementation_config.get("output_mapping", {}),
-                        )
+                    input_mapping=_string_mapping(
+                        implementation_config,
+                        "inputMapping",
+                        "input_mapping",
+                        f"config.bindings[{index}].implementation.inputMapping",
+                    ),
+                    output_mapping=_string_mapping(
+                        implementation_config,
+                        "outputMapping",
+                        "output_mapping",
+                        f"config.bindings[{index}].implementation.outputMapping",
                     ),
                 )
             elif kind == "graph":
                 implementation = GraphToolImplementation(
-                    graph=str(implementation_config["graph"]),
-                    input_mapping=dict(
-                        implementation_config.get(
-                            "inputMapping",
-                            implementation_config.get("input_mapping", {}),
-                        )
+                    graph=_required_string(
+                        implementation_config,
+                        "graph",
+                        "graph",
+                        f"config.bindings[{index}].implementation.graph",
                     ),
-                    output_mapping=dict(
-                        implementation_config.get(
-                            "outputMapping",
-                            implementation_config.get("output_mapping", {}),
-                        )
+                    input_mapping=_string_mapping(
+                        implementation_config,
+                        "inputMapping",
+                        "input_mapping",
+                        f"config.bindings[{index}].implementation.inputMapping",
+                    ),
+                    output_mapping=_string_mapping(
+                        implementation_config,
+                        "outputMapping",
+                        "output_mapping",
+                        f"config.bindings[{index}].implementation.outputMapping",
                     ),
                 )
             elif kind == "remote":
                 implementation = RemoteToolImplementation(
-                    connection=str(implementation_config["connection"]),
-                    operation=str(implementation_config["operation"]),
+                    connection=_required_string(
+                        implementation_config,
+                        "connection",
+                        "connection",
+                        f"config.bindings[{index}].implementation.connection",
+                    ),
+                    operation=_required_string(
+                        implementation_config,
+                        "operation",
+                        "operation",
+                        f"config.bindings[{index}].implementation.operation",
+                    ),
                 )
             elif kind == "mcp":
                 implementation = McpToolImplementation(
-                    server=str(implementation_config["server"]),
-                    remote_name=str(implementation_config.get("remoteName", implementation_config.get("remote_name"))),
+                    server=_required_string(
+                        implementation_config,
+                        "server",
+                        "server",
+                        f"config.bindings[{index}].implementation.server",
+                    ),
+                    remote_name=_required_string(
+                        implementation_config,
+                        "remoteName",
+                        "remote_name",
+                        f"config.bindings[{index}].implementation.remoteName",
+                    ),
                 )
             elif kind == "openapi":
                 implementation = OpenApiToolImplementation(
-                    connection=str(implementation_config["connection"]),
-                    operation_id=str(implementation_config.get("operationId", implementation_config.get("operation_id"))),
+                    connection=_required_string(
+                        implementation_config,
+                        "connection",
+                        "connection",
+                        f"config.bindings[{index}].implementation.connection",
+                    ),
+                    operation_id=_required_string(
+                        implementation_config,
+                        "operationId",
+                        "operation_id",
+                        f"config.bindings[{index}].implementation.operationId",
+                    ),
                 )
             else:
                 raise TypeError(f"tools.resolve@1 unsupported implementation kind {kind!r}")
@@ -613,29 +676,66 @@ def stdlib_registry() -> RuntimeRegistry:
                 )
             bindings.append(
                 ToolBinding(
-                    binding_id=str(item.get("bindingId", item.get("binding_id"))),
-                    tool_name=str(item.get("toolName", item.get("tool_name"))),
+                    binding_id=_required_string(
+                        item,
+                        "bindingId",
+                        "binding_id",
+                        f"config.bindings[{index}].bindingId",
+                    ),
+                    tool_name=_required_string(
+                        item,
+                        "toolName",
+                        "tool_name",
+                        f"config.bindings[{index}].toolName",
+                    ),
                     implementation=implementation,
-                    effects=frozenset(str(effect) for effect in item.get("effects", ())),
-                    approval=str(item.get("approval", "policy")),
-                    idempotency=str(item.get("idempotency", "optional")),
-                    cancellation=str(item.get("cancellation", "cooperative")),
-                    result_mode=str(item.get("resultMode", item.get("result_mode", "value"))),
+                    effects=_string_collection(item.get("effects", ()), f"config.bindings[{index}].effects"),
+                    approval=_string_with_default(
+                        item,
+                        "approval",
+                        "approval",
+                        "policy",
+                        f"config.bindings[{index}].approval",
+                    ),
+                    idempotency=_string_with_default(
+                        item,
+                        "idempotency",
+                        "idempotency",
+                        "optional",
+                        f"config.bindings[{index}].idempotency",
+                    ),
+                    cancellation=_string_with_default(
+                        item,
+                        "cancellation",
+                        "cancellation",
+                        "cooperative",
+                        f"config.bindings[{index}].cancellation",
+                    ),
+                    result_mode=_string_with_default(
+                        item,
+                        "resultMode",
+                        "result_mode",
+                        "value",
+                        f"config.bindings[{index}].resultMode",
+                    ),
                     timeout_ms=timeout_ms,
-                    retry_policy_ref=(
-                        str(item.get("retryPolicyRef", item.get("retry_policy_ref")))
-                        if item.get("retryPolicyRef", item.get("retry_policy_ref")) is not None
-                        else None
+                    retry_policy_ref=_optional_string(
+                        item,
+                        "retryPolicyRef",
+                        "retry_policy_ref",
+                        f"config.bindings[{index}].retryPolicyRef",
                     ),
-                    policy_profile_ref=(
-                        str(item.get("policyProfileRef", item.get("policy_profile_ref")))
-                        if item.get("policyProfileRef", item.get("policy_profile_ref")) is not None
-                        else None
+                    policy_profile_ref=_optional_string(
+                        item,
+                        "policyProfileRef",
+                        "policy_profile_ref",
+                        f"config.bindings[{index}].policyProfileRef",
                     ),
-                    execution_class=(
-                        str(item.get("executionClass", item.get("execution_class")))
-                        if item.get("executionClass", item.get("execution_class")) is not None
-                        else None
+                    execution_class=_optional_string(
+                        item,
+                        "executionClass",
+                        "execution_class",
+                        f"config.bindings[{index}].executionClass",
                     ),
                 )
             )
@@ -828,17 +928,74 @@ def stdlib_registry() -> RuntimeRegistry:
             return {"value": config["default"], "selected": "default"}
         raise KeyError("control.select@1 found no present case")
 
+    def _config_value(config: Mapping[str, Any], camel_key: str, snake_key: str) -> tuple[bool, Any]:
+        if camel_key in config:
+            return True, config[camel_key]
+        if snake_key in config:
+            return True, config[snake_key]
+        return False, None
+
+    def _validate_config_string(value: Any, label: str) -> str:
+        if not isinstance(value, str):
+            raise TypeError(f"tools.resolve@1 {label} must be a string")
+        if not value.strip():
+            raise TypeError(f"tools.resolve@1 {label} must not be empty")
+        return value
+
+    def _required_string(config: Mapping[str, Any], camel_key: str, snake_key: str, label: str) -> str:
+        found, value = _config_value(config, camel_key, snake_key)
+        if not found:
+            raise TypeError(f"tools.resolve@1 {label} is required")
+        return _validate_config_string(value, label)
+
+    def _optional_string(config: Mapping[str, Any], camel_key: str, snake_key: str, label: str) -> str | None:
+        found, value = _config_value(config, camel_key, snake_key)
+        if not found or value is None:
+            return None
+        return _validate_config_string(value, label)
+
+    def _string_with_default(
+        config: Mapping[str, Any],
+        camel_key: str,
+        snake_key: str,
+        default: str,
+        label: str,
+    ) -> str:
+        found, value = _config_value(config, camel_key, snake_key)
+        if not found:
+            return default
+        return _validate_config_string(value, label)
+
+    def _string_collection(value: Any, label: str) -> frozenset[str]:
+        if not isinstance(value, list | tuple | set | frozenset):
+            raise TypeError(f"tools.resolve@1 {label} must be a sequence")
+        if any(not isinstance(item, str) for item in value):
+            raise TypeError(f"tools.resolve@1 {label} entries must be strings")
+        if any(not item.strip() for item in value):
+            raise TypeError(f"tools.resolve@1 {label} entries must not be empty")
+        return frozenset(value)
+
+    def _string_mapping(
+        config: Mapping[str, Any],
+        camel_key: str,
+        snake_key: str,
+        label: str,
+    ) -> dict[str, str]:
+        found, value = _config_value(config, camel_key, snake_key)
+        if not found:
+            return {}
+        if not isinstance(value, Mapping):
+            raise TypeError(f"tools.resolve@1 {label} must be a mapping")
+        mapping = dict(value)
+        if any(not isinstance(key, str) or not isinstance(item, str) for key, item in mapping.items()):
+            raise TypeError(f"tools.resolve@1 {label} entries must be strings")
+        return mapping
+
     def _string_set(config: dict[str, Any], camel_key: str, snake_key: str) -> frozenset[str] | None:
         value = config.get(camel_key, config.get(snake_key))
         if value is None:
             return None
-        if not isinstance(value, list | tuple | set | frozenset):
-            raise TypeError(f"tools.resolve@1 scope {camel_key} must be a sequence")
-        if any(not isinstance(item, str) for item in value):
-            raise TypeError(f"tools.resolve@1 scope {camel_key} entries must be strings")
-        if any(not item.strip() for item in value):
-            raise TypeError(f"tools.resolve@1 scope {camel_key} entries must not be empty")
-        return frozenset(value)
+        return _string_collection(value, f"scope {camel_key}")
 
     registry.register("conversation.begin_turn@1", begin_turn)
     registry.register("prompt.render@1", prompt_render)

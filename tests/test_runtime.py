@@ -310,6 +310,126 @@ def test_stdlib_tool_resolution_rejects_invalid_scope_entries(
     assert error in failed[0].payload["error"]
 
 
+@pytest.mark.parametrize(
+    "path,value,error",
+    [
+        (
+            ["definitions", 0, "name"],
+            42,
+            "tools.resolve@1 config.definitions[0].name must be a string",
+        ),
+        (
+            ["definitions", 0, "inputSchema"],
+            " ",
+            "tools.resolve@1 config.definitions[0].inputSchema must not be empty",
+        ),
+        (
+            ["definitions", 0, "tags"],
+            ["search", 1],
+            "tools.resolve@1 config.definitions[0].tags entries must be strings",
+        ),
+        (
+            ["bindings", 0, "bindingId"],
+            42,
+            "tools.resolve@1 config.bindings[0].bindingId must be a string",
+        ),
+        (
+            ["bindings", 0, "toolName"],
+            "",
+            "tools.resolve@1 config.bindings[0].toolName must not be empty",
+        ),
+        (
+            ["bindings", 0, "effects"],
+            ["external_read", 1],
+            "tools.resolve@1 config.bindings[0].effects entries must be strings",
+        ),
+        (
+            ["bindings", 0, "approval"],
+            1,
+            "tools.resolve@1 config.bindings[0].approval must be a string",
+        ),
+        (
+            ["bindings", 0, "retryPolicyRef"],
+            " ",
+            "tools.resolve@1 config.bindings[0].retryPolicyRef must not be empty",
+        ),
+        (
+            ["bindings", 0, "implementation", "kind"],
+            1,
+            "tools.resolve@1 config.bindings[0].implementation.kind must be a string",
+        ),
+        (
+            ["bindings", 0, "implementation", "block"],
+            1,
+            "tools.resolve@1 config.bindings[0].implementation.block must be a string",
+        ),
+        (
+            ["bindings", 0, "implementation", "inputMapping"],
+            {"query": 1},
+            "tools.resolve@1 config.bindings[0].implementation.inputMapping entries must be strings",
+        ),
+    ],
+)
+def test_stdlib_tool_resolution_rejects_invalid_definition_and_binding_fields(
+    path: list[object],
+    value: object,
+    error: str,
+) -> None:
+    tool_config: dict[str, object] = {
+        "effectivePolicySnapshotId": "policy-snapshot-1",
+        "definitions": [
+            {
+                "name": "knowledge.search",
+                "description": "Search support documentation.",
+                "inputSchema": "schemas/SearchRequest@1",
+            }
+        ],
+        "bindings": [
+            {
+                "bindingId": "binding-search",
+                "toolName": "knowledge.search",
+                "implementation": {"kind": "block", "block": "knowledge.search@1"},
+                "effects": ["external_read"],
+                "approval": "never",
+            }
+        ],
+        "scope": {"principalTools": ["knowledge.search"]},
+    }
+    cursor: object = tool_config
+    for part in path[:-1]:
+        if isinstance(cursor, dict) and isinstance(part, str):
+            cursor = cursor[part]
+        elif isinstance(cursor, list) and isinstance(part, int):
+            cursor = cursor[part]
+        else:
+            raise AssertionError(f"invalid test mutation path: {path}")
+    if not isinstance(cursor, dict) or not isinstance(path[-1], str):
+        raise AssertionError(f"invalid test mutation target: {path}")
+    cursor[path[-1]] = value
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "tool-field-validation"},
+        "spec": {
+            "nodes": {
+                "resolve": {
+                    "block": "tools.resolve@1",
+                    "config": tool_config,
+                    "outputs": {"tools": "$output.tools"},
+                }
+            }
+        },
+    }
+
+    result = InProcessRuntime(stdlib_registry()).run(graph, {})
+
+    assert result.status == "failed"
+    assert result.outputs == {}
+    failed = [record for record in result.journal.records if record.kind == "node_failed"]
+    assert failed[0].payload["node"] == "resolve"
+    assert error in failed[0].payload["error"]
+
+
 def test_journal_rejects_second_terminal_record() -> None:
     journal = ExecutionJournal("run-test")
 
