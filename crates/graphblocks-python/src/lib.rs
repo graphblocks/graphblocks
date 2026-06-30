@@ -2397,6 +2397,26 @@ fn serialize_tool_result_stream_error(error: &ToolResultStreamError) -> Value {
             "toolCallId": tool_call_id,
             "finalStatus": serialize_tool_result_status(*final_status),
         }),
+        ToolResultStreamError::DuplicateStarted {
+            tool_call_id,
+            last_sequence,
+            sequence,
+        } => json!({
+            "code": "duplicate_started",
+            "toolCallId": tool_call_id,
+            "lastSequence": last_sequence,
+            "sequence": sequence,
+        }),
+        ToolResultStreamError::EventBeforeStarted {
+            tool_call_id,
+            kind,
+            sequence,
+        } => json!({
+            "code": "event_before_started",
+            "toolCallId": tool_call_id,
+            "kind": kind,
+            "sequence": sequence,
+        }),
     }
 }
 
@@ -6284,6 +6304,77 @@ mod tests {
                 .and_then(Value::as_array)
                 .map(Vec::len),
             Some(3)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_tool_result_stream_json_reports_started_ordering_errors() -> Result<(), String> {
+        let operations = json!([
+            {
+                "kind": "event",
+                "event": {
+                    "kind": "delta",
+                    "toolCallId": "call-1",
+                    "sequence": 1,
+                    "output": [{"kind": "text", "text": "draft"}]
+                }
+            },
+            {
+                "kind": "event",
+                "event": {
+                    "kind": "started",
+                    "toolCallId": "call-2",
+                    "sequence": 1,
+                    "startedAtUnixMs": 1_000
+                }
+            },
+            {
+                "kind": "event",
+                "event": {
+                    "kind": "started",
+                    "toolCallId": "call-2",
+                    "sequence": 2,
+                    "startedAtUnixMs": 1_050
+                }
+            }
+        ]);
+
+        let output_json = evaluate_tool_result_stream_json(
+            "{}",
+            &serde_json::to_string(&operations).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let output =
+            serde_json::from_str::<Value>(&output_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(output.get("ok"), Some(&json!(false)));
+        assert_eq!(
+            output.pointer("/updates/0/error/code"),
+            Some(&json!("event_before_started"))
+        );
+        assert_eq!(
+            output.pointer("/updates/0/error/kind"),
+            Some(&json!("delta"))
+        );
+        assert_eq!(
+            output.pointer("/updates/2/error/code"),
+            Some(&json!("duplicate_started"))
+        );
+        assert_eq!(
+            output.pointer("/updates/2/error/lastSequence"),
+            Some(&json!(1))
+        );
+        assert_eq!(
+            output.pointer("/state/lastSequences/call-2"),
+            Some(&json!(1))
+        );
+        assert_eq!(
+            output
+                .pointer("/state/acceptedEvents")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(1)
         );
         Ok(())
     }
