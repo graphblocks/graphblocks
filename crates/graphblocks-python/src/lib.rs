@@ -43,6 +43,7 @@ use graphblocks_runtime_core::tool_result::{
     ToolResultValidationRequest,
 };
 use graphblocks_runtime_core::tool_schema::{JsonSchema, JsonSchemaNode, ToolSchemaRegistry};
+use graphblocks_runtime_seq::tool_queue::{SequentialToolQueue, SequentialToolQueueError};
 use graphblocksd::{DaemonConfig, DaemonStatus, WorkerRegistry, WorkerRegistryError};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -3451,6 +3452,274 @@ fn evaluate_tool_execution_plan_json(plan_json: &str, operations_json: &str) -> 
     })
 }
 
+#[pyfunction]
+fn evaluate_sequential_tool_queue_json(
+    queue_json: &str,
+    operations_json: &str,
+) -> PyResult<String> {
+    let tool_execution_error_code = |error: &ToolExecutionPlanError| -> &'static str {
+        match error {
+            ToolExecutionPlanError::UnsafeParallelEffects { .. } => "unsafe_parallel_effects",
+            ToolExecutionPlanError::EffectConflict { .. } => "effect_conflict",
+            ToolExecutionPlanError::ParallelismExhausted => "parallelism_exhausted",
+            ToolExecutionPlanError::DependenciesNotReady { .. } => "dependencies_not_ready",
+            ToolExecutionPlanError::ToolCallNotPending { .. } => "tool_call_not_pending",
+            ToolExecutionPlanError::ToolCallNotRunning { .. } => "tool_call_not_running",
+            _ => "tool_execution_plan_error",
+        }
+    };
+    let queue_error_code = |error: &SequentialToolQueueError| -> &'static str {
+        match error {
+            SequentialToolQueueError::ToolCallNotAdmitted { .. } => "tool_call_not_admitted",
+            SequentialToolQueueError::ToolCallMissingAdmissionTimestamp { .. } => {
+                "tool_call_missing_admission_timestamp"
+            }
+            SequentialToolQueueError::RunningCallMismatch { .. } => "running_call_mismatch",
+            SequentialToolQueueError::Plan(error) => tool_execution_error_code(error),
+        }
+    };
+    let queue_error_to_py = |error: SequentialToolQueueError| {
+        PyValueError::new_err(format!(
+            "sequential tool queue error {}: {error:?}",
+            queue_error_code(&error)
+        ))
+    };
+    let operation_result =
+        |index: usize, op: &str, result: Result<(), SequentialToolQueueError>| -> Value {
+            match result {
+                Ok(()) => json!({"index": index, "op": op, "error": Value::Null}),
+                Err(error) => json!({
+                    "index": index,
+                    "op": op,
+                    "error": queue_error_code(&error),
+                    "errorDebug": format!("{error:?}"),
+                }),
+            }
+        };
+    let start_result = |index: usize,
+                        op: &str,
+                        result: Result<Option<String>, SequentialToolQueueError>|
+     -> Value {
+        match result {
+            Ok(started) => {
+                json!({"index": index, "op": op, "started": started, "error": Value::Null})
+            }
+            Err(error) => json!({
+                "index": index,
+                "op": op,
+                "started": Value::Null,
+                "error": queue_error_code(&error),
+                "errorDebug": format!("{error:?}"),
+            }),
+        }
+    };
+
+    let queue_value = parse_json_argument(queue_json, "sequential tool queue")?;
+    let operations_value =
+        parse_json_argument(operations_json, "sequential tool queue operations")?;
+    let queue_object = json_object(&queue_value, "queue")?;
+    let plan_id = required_alias_string(queue_object, "planId", "plan_id", "queue")?;
+    let response_id = required_alias_string(queue_object, "responseId", "response_id", "queue")?;
+    let raw_calls = alias_value(queue_object, "calls", "calls")
+        .and_then(Value::as_array)
+        .ok_or_else(|| PyValueError::new_err("queue.calls must be an array"))?;
+    let planned_calls = raw_calls
+        .iter()
+        .enumerate()
+        .map(|(index, raw_call)| {
+            let label = format!("queue.calls[{index}]");
+            let object = json_object(raw_call, &label)?;
+            let (call_value, call_label) = if let Some(call_value) = object.get("call") {
+                (call_value, format!("{label}.call"))
+            } else {
+                (raw_call, label.clone())
+            };
+            let mut planned_call = ToolPlanCall::new(parse_tool_call(call_value, &call_label)?)
+                .with_effects(parse_tool_effects(
+                    alias_value(object, "effects", "effects"),
+                    &format!("{label}.effects"),
+                )?);
+            if let Some(cancellation) =
+                optional_nullable_alias_string(object, "cancellation", "cancellation", &label)?
+            {
+                planned_call = planned_call.with_cancellation(parse_tool_cancellation(
+                    cancellation,
+                    &format!("{label}.cancellation"),
+                )?);
+            }
+            if let Some(effect_key) =
+                optional_nullable_alias_string(object, "effectKey", "effect_key", &label)?
+            {
+                planned_call = planned_call.with_effect_key(effect_key);
+            }
+            Ok(planned_call)
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    let mut queue = SequentialToolQueue::new(plan_id, response_id, planned_calls)
+        .map_err(|error| queue_error_to_py(error))?;
+    if let Some(failure_policy) =
+        optional_nullable_alias_string(queue_object, "failurePolicy", "failure_policy", "queue")?
+    {
+        queue = queue.with_failure_policy(match failure_policy {
+            "fail_fast" => ToolExecutionFailurePolicy::FailFast,
+            "collect" => ToolExecutionFailurePolicy::Collect,
+            "return_failures_to_model" => ToolExecutionFailurePolicy::ReturnFailuresToModel,
+            value => {
+                return Err(PyValueError::new_err(format!(
+                    "queue.failurePolicy has unknown failure policy {value:?}"
+                )));
+            }
+        });
+    }
+    if let Some(cancellation_policy) = optional_nullable_alias_string(
+        queue_object,
+        "cancellationPolicy",
+        "cancellation_policy",
+        "queue",
+    )? {
+        queue = queue.with_cancellation_policy(match cancellation_policy {
+            "cancel_dependents" => ToolExecutionCancellationPolicy::CancelDependents,
+            "cancel_all" => ToolExecutionCancellationPolicy::CancelAll,
+            "allow_independent_calls" => ToolExecutionCancellationPolicy::AllowIndependentCalls,
+            value => {
+                return Err(PyValueError::new_err(format!(
+                    "queue.cancellationPolicy has unknown cancellation policy {value:?}"
+                )));
+            }
+        });
+    }
+
+    let operations = operations_value.as_array().ok_or_else(|| {
+        PyValueError::new_err("sequential tool queue operations must be an array")
+    })?;
+    let mut operation_results = Vec::new();
+    for (index, operation) in operations.iter().enumerate() {
+        let label = format!("operations[{index}]");
+        let operation = json_object(operation, &label)?;
+        let op = required_string(operation, "op", &label)?;
+        let result = match op {
+            "start_next_ready" => start_result(index, op, queue.start_next_ready()),
+            "complete" => operation_result(
+                index,
+                op,
+                queue.record_completed(required_alias_string(
+                    operation,
+                    "toolCallId",
+                    "tool_call_id",
+                    &label,
+                )?),
+            ),
+            "fail" => operation_result(
+                index,
+                op,
+                queue.record_failed(required_alias_string(
+                    operation,
+                    "toolCallId",
+                    "tool_call_id",
+                    &label,
+                )?),
+            ),
+            "deny" => operation_result(
+                index,
+                op,
+                queue.record_denied(required_alias_string(
+                    operation,
+                    "toolCallId",
+                    "tool_call_id",
+                    &label,
+                )?),
+            ),
+            "expire" => operation_result(
+                index,
+                op,
+                queue.record_expired(required_alias_string(
+                    operation,
+                    "toolCallId",
+                    "tool_call_id",
+                    &label,
+                )?),
+            ),
+            "cancel" => operation_result(
+                index,
+                op,
+                queue.record_cancelled(required_alias_string(
+                    operation,
+                    "toolCallId",
+                    "tool_call_id",
+                    &label,
+                )?),
+            ),
+            "policy_stop" => {
+                let pending_tool_calls = required_alias_string(
+                    operation,
+                    "pendingToolCalls",
+                    "pending_tool_calls",
+                    &label,
+                )?;
+                let affected = queue.apply_policy_stop(match pending_tool_calls {
+                    "keep" => PendingToolCallsDisposition::Keep,
+                    "deny" => PendingToolCallsDisposition::Deny,
+                    "cancel_admitted" => PendingToolCallsDisposition::CancelAdmitted,
+                    value => {
+                        return Err(PyValueError::new_err(format!(
+                            "{label}.pendingToolCalls has unknown pending tool calls disposition {value:?}"
+                        )));
+                    }
+                });
+                json!({
+                    "index": index,
+                    "op": op,
+                    "affected": affected,
+                })
+            }
+            value => {
+                return Err(PyValueError::new_err(format!(
+                    "{label}.op has unknown sequential tool queue operation {value:?}"
+                )));
+            }
+        };
+        operation_results.push(result);
+    }
+
+    let states = raw_calls
+        .iter()
+        .enumerate()
+        .map(|(index, raw_call)| {
+            let label = format!("queue.calls[{index}]");
+            let object = json_object(raw_call, &label)?;
+            let call_value = object.get("call").unwrap_or(raw_call);
+            let call = json_object(call_value, &label)?;
+            let tool_call_id = required_alias_string(call, "toolCallId", "tool_call_id", &label)?;
+            Ok((
+                tool_call_id.to_owned(),
+                queue.state(tool_call_id).map(|state| match state {
+                    ToolExecutionState::Pending => "pending",
+                    ToolExecutionState::Running => "running",
+                    ToolExecutionState::Completed => "completed",
+                    ToolExecutionState::Failed => "failed",
+                    ToolExecutionState::Denied => "denied",
+                    ToolExecutionState::Cancelled => "cancelled",
+                    ToolExecutionState::PolicyStopped => "policy_stopped",
+                    ToolExecutionState::Expired => "expired",
+                    ToolExecutionState::Skipped => "skipped",
+                }),
+            ))
+        })
+        .collect::<PyResult<BTreeMap<_, _>>>()?;
+    serde_json::to_string(&json!({
+        "planId": plan_id,
+        "responseId": response_id,
+        "runningCallId": queue.running_call_id(),
+        "operations": operation_results,
+        "states": states,
+    }))
+    .map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize sequential tool queue evaluation: {error}"
+        ))
+    })
+}
+
 fn parse_tool_cancellation(value: &str, label: &str) -> PyResult<ToolCancellation> {
     match value {
         "unsupported" => Ok(ToolCancellation::Unsupported),
@@ -3492,6 +3761,10 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
         module
     )?)?;
     module.add_function(wrap_pyfunction!(evaluate_tool_execution_plan_json, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        evaluate_sequential_tool_queue_json,
+        module
+    )?)?;
     Ok(())
 }
 
@@ -3503,9 +3776,9 @@ mod tests {
     use super::{
         admit_exhaustion_work_json, admit_worker_message_json, compile_graph_json,
         decide_agent_step_json, evaluate_declarative_output_policy_json, evaluate_output_gate_json,
-        evaluate_tool_execution_plan_json, finalize_tool_call_json,
-        prepare_tool_result_for_model_json, run_stdlib_graph_json, run_test_graph_json,
-        validate_remote_payload_json, validate_worker_advertisement_json,
+        evaluate_sequential_tool_queue_json, evaluate_tool_execution_plan_json,
+        finalize_tool_call_json, prepare_tool_result_for_model_json, run_stdlib_graph_json,
+        run_test_graph_json, validate_remote_payload_json, validate_worker_advertisement_json,
         validate_worker_protocol_message_json,
     };
 
@@ -5414,6 +5687,94 @@ mod tests {
             .to_string();
 
         assert!(error.contains("unsafe_parallel_effects"), "{error}");
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_sequential_tool_queue_json_runs_admitted_calls_in_order() -> Result<(), String> {
+        let admitted_call = |tool_call_id: &str| -> Result<Value, String> {
+            let draft_json = json!({
+                "toolCallId": tool_call_id,
+                "responseId": "response-1",
+                "toolName": "knowledge.search",
+                "status": "arguments_complete",
+                "argumentFragments": ["{\"resource_id\":\"docs\"}"],
+                "sequence": 1
+            })
+            .to_string();
+            let call_json = finalize_tool_call_json(&draft_json, "resolved-tool-1", 1_000)
+                .map_err(|error| error.to_string())?;
+            let mut call =
+                serde_json::from_str::<Value>(&call_json).map_err(|error| error.to_string())?;
+            call["status"] = json!("admitted");
+            call["admittedAtUnixMs"] = json!(1_100);
+            Ok(call)
+        };
+        let call_a = admitted_call("call-a")?;
+        let mut call_b = admitted_call("call-b")?;
+        call_b["dependsOn"] = json!(["call-a"]);
+        let queue_json = json!({
+            "planId": "plan-1",
+            "responseId": "response-1",
+            "calls": [
+                {"call": call_a, "effects": ["external_read"]},
+                {"call": call_b, "effects": ["external_read"]}
+            ]
+        })
+        .to_string();
+        let operations_json = json!([
+            {"op": "start_next_ready"},
+            {"op": "start_next_ready"},
+            {"op": "complete", "toolCallId": "call-a"},
+            {"op": "start_next_ready"},
+            {"op": "complete", "toolCallId": "call-b"}
+        ])
+        .to_string();
+
+        let payload = evaluate_sequential_tool_queue_json(&queue_json, &operations_json)
+            .map_err(|error| error.to_string())?;
+        let payload = serde_json::from_str::<Value>(&payload).map_err(|error| error.to_string())?;
+
+        assert_eq!(payload["operations"][0]["started"], json!("call-a"));
+        assert_eq!(payload["operations"][1]["started"], Value::Null);
+        assert_eq!(payload["operations"][2]["error"], Value::Null);
+        assert_eq!(payload["operations"][3]["started"], json!("call-b"));
+        assert_eq!(payload["operations"][4]["error"], Value::Null);
+        assert_eq!(payload["runningCallId"], Value::Null);
+        assert_eq!(payload["states"]["call-a"], json!("completed"));
+        assert_eq!(payload["states"]["call-b"], json!("completed"));
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_sequential_tool_queue_json_rejects_non_admitted_calls() -> Result<(), String> {
+        pyo3::Python::initialize();
+        let draft_json = json!({
+            "toolCallId": "call-a",
+            "responseId": "response-1",
+            "toolName": "knowledge.search",
+            "status": "arguments_complete",
+            "argumentFragments": ["{}"],
+            "sequence": 1
+        })
+        .to_string();
+        let call = serde_json::from_str::<Value>(
+            &finalize_tool_call_json(&draft_json, "resolved-tool-1", 1_000)
+                .map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let queue_json = json!({
+            "planId": "plan-1",
+            "responseId": "response-1",
+            "calls": [{"call": call}]
+        })
+        .to_string();
+
+        let error = evaluate_sequential_tool_queue_json(&queue_json, "[]")
+            .expect_err("sequential queue should require admitted tool calls")
+            .to_string();
+
+        assert!(error.contains("tool_call_not_admitted"), "{error}");
         Ok(())
     }
 

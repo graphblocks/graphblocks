@@ -15,6 +15,7 @@ try:
         decide_agent_step_json,
         evaluate_declarative_output_policy_json,
         evaluate_output_gate_json,
+        evaluate_sequential_tool_queue_json,
         evaluate_tool_execution_plan_json,
         finalize_tool_call_json,
         prepare_tool_result_for_model_json,
@@ -98,6 +99,9 @@ except ImportError as error:
         require_native_extension()
 
     def evaluate_tool_execution_plan_json(plan_json: str, operations_json: str) -> str:
+        require_native_extension()
+
+    def evaluate_sequential_tool_queue_json(queue_json: str, operations_json: str) -> str:
         require_native_extension()
 
     def validate_worker_advertisement_json(
@@ -278,6 +282,16 @@ def evaluate_tool_execution_plan(
     )
 
 
+def evaluate_sequential_tool_queue(
+    queue: dict[str, object],
+    operations: object,
+) -> dict[str, object]:
+    return _json_object_result(
+        evaluate_sequential_tool_queue_json(_canonical_json(queue), _canonical_json(operations)),
+        "native sequential tool queue result",
+    )
+
+
 def validate_worker_advertisement(
     advertisement: dict[str, object],
     *,
@@ -318,6 +332,8 @@ __all__ = [
     "evaluate_declarative_output_policy_json",
     "evaluate_output_gate",
     "evaluate_output_gate_json",
+    "evaluate_sequential_tool_queue",
+    "evaluate_sequential_tool_queue_json",
     "evaluate_tool_execution_plan",
     "evaluate_tool_execution_plan_json",
     "finalize_tool_call",
