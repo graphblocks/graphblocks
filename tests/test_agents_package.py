@@ -136,14 +136,34 @@ def test_agents_package_lazy_native_helpers_delegate_to_runtime(monkeypatch) -> 
             "nowUnixMs": now_unix_ms,
         }
 
+    def evaluate_tool_admission(request: dict[str, object]) -> dict[str, object]:
+        calls.append(("tool_admission", (request,)))
+        return {"kind": "tool_admission", "request": request}
+
+    def evaluate_tool_resolution(
+        catalog: dict[str, object],
+        scope: dict[str, object],
+        *,
+        effective_policy_snapshot_id: str,
+    ) -> dict[str, object]:
+        calls.append(("tool_resolution", (catalog, scope, effective_policy_snapshot_id)))
+        return {
+            "kind": "tool_resolution",
+            "catalog": catalog,
+            "scope": scope,
+            "effectivePolicySnapshotId": effective_policy_snapshot_id,
+        }
+
     monkeypatch.setitem(
         sys.modules,
         "graphblocks_runtime",
         SimpleNamespace(
             decide_agent_step=decide_agent_step,
             evaluate_sequential_tool_queue=evaluate_sequential_tool_queue,
+            evaluate_tool_admission=evaluate_tool_admission,
             evaluate_tool_approval=evaluate_tool_approval,
             evaluate_tool_execution_plan=evaluate_tool_execution_plan,
+            evaluate_tool_resolution=evaluate_tool_resolution,
             evaluate_tool_result_stream=evaluate_tool_result_stream,
             finalize_tool_call=finalize_tool_call,
             prepare_tool_result_for_model=prepare_tool_result_for_model,
@@ -186,6 +206,14 @@ def test_agents_package_lazy_native_helpers_delegate_to_runtime(monkeypatch) -> 
         principal_id="user-1",
         now_unix_ms=1_500,
     )
+    admission = graphblocks_agents.evaluate_native_tool_admission(
+        {"call": {"toolCallId": "call-1"}, "principalId": "user-1"},
+    )
+    resolution = graphblocks_agents.evaluate_native_tool_resolution(
+        {"definitions": [{"name": "knowledge.search"}]},
+        {"principalTools": ["knowledge.search"]},
+        effective_policy_snapshot_id="policy-snapshot-1",
+    )
 
     assert plan == {"kind": "plan", "plan": {"planId": "plan-1"}, "operations": [{"op": "ready"}]}
     assert finalized == {
@@ -224,6 +252,16 @@ def test_agents_package_lazy_native_helpers_delegate_to_runtime(monkeypatch) -> 
         "call": {"toolCallId": "call-1"},
         "principalId": "user-1",
         "nowUnixMs": 1_500,
+    }
+    assert admission == {
+        "kind": "tool_admission",
+        "request": {"call": {"toolCallId": "call-1"}, "principalId": "user-1"},
+    }
+    assert resolution == {
+        "kind": "tool_resolution",
+        "catalog": {"definitions": [{"name": "knowledge.search"}]},
+        "scope": {"principalTools": ["knowledge.search"]},
+        "effectivePolicySnapshotId": "policy-snapshot-1",
     }
     assert calls == [
         ("plan", ({"planId": "plan-1"}, [{"op": "ready"}])),
@@ -264,9 +302,23 @@ def test_agents_package_lazy_native_helpers_delegate_to_runtime(monkeypatch) -> 
                 1_500,
             ),
         ),
+        (
+            "tool_admission",
+            ({"call": {"toolCallId": "call-1"}, "principalId": "user-1"},),
+        ),
+        (
+            "tool_resolution",
+            (
+                {"definitions": [{"name": "knowledge.search"}]},
+                {"principalTools": ["knowledge.search"]},
+                "policy-snapshot-1",
+            ),
+        ),
     ]
     assert "decide_native_agent_step" in graphblocks_agents.__all__
+    assert "evaluate_native_tool_admission" in graphblocks_agents.__all__
     assert "evaluate_native_tool_approval" in graphblocks_agents.__all__
+    assert "evaluate_native_tool_resolution" in graphblocks_agents.__all__
     assert "evaluate_native_tool_result_stream" in graphblocks_agents.__all__
     assert "finalize_native_tool_call" in graphblocks_agents.__all__
     assert "prepare_native_tool_result_for_model" in graphblocks_agents.__all__

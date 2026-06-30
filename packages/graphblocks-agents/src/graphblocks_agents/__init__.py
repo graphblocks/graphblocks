@@ -164,6 +164,27 @@ def evaluate_native_tool_approval(
     )
 
 
+def evaluate_native_tool_admission(request: dict[str, object]) -> dict[str, object]:
+    from graphblocks_runtime import evaluate_tool_admission
+
+    return evaluate_tool_admission(request)
+
+
+def evaluate_native_tool_resolution(
+    catalog: dict[str, object],
+    scope: dict[str, object],
+    *,
+    effective_policy_snapshot_id: str,
+) -> dict[str, object]:
+    from graphblocks_runtime import evaluate_tool_resolution
+
+    return evaluate_tool_resolution(
+        catalog,
+        scope,
+        effective_policy_snapshot_id=effective_policy_snapshot_id,
+    )
+
+
 __all__ = [
     "AdmittedToolCall",
     "AgentLoopController",
@@ -236,9 +257,11 @@ __all__ = [
     "build_before_tool_or_effect_policy_request",
     "decide_native_agent_step",
     "evaluate_native_sequential_tool_queue",
+    "evaluate_native_tool_admission",
     "evaluate_native_tool_approval",
     "evaluate_native_tool_execution_plan",
     "evaluate_native_tool_result_stream",
+    "evaluate_native_tool_resolution",
     "finalize_native_tool_call",
     "prepare_native_tool_result_for_model",
     "validate_tool_result_for_model",
