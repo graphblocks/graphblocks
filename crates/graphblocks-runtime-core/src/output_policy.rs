@@ -1493,6 +1493,43 @@ impl OutputDeliveryGate {
                     });
                 }
 
+                if decision.disposition == OutputDisposition::Replace {
+                    let mut expected_sequence = decision
+                        .accepted_through_sequence
+                        .unwrap_or(self.last_generated_sequence);
+                    let mut previous_sequence = expected_sequence.saturating_sub(1);
+                    for chunk in &decision.replacement_chunks {
+                        chunk
+                            .validate()
+                            .map_err(|source| OutputGateError::InvalidGenerationChunk { source })?;
+                        if chunk.stream_id != self.stream_id {
+                            return Err(OutputGateError::StreamMismatch {
+                                expected_stream_id: self.stream_id.clone(),
+                                actual_stream_id: chunk.stream_id.clone(),
+                            });
+                        }
+                        if chunk.response_id != self.response_id {
+                            return Err(OutputGateError::ResponseMismatch {
+                                expected_response_id: self.response_id.clone(),
+                                actual_response_id: chunk.response_id.clone(),
+                            });
+                        }
+                        if chunk.sequence != expected_sequence {
+                            return Err(OutputGateError::NonContiguousSequence {
+                                last_generated_sequence: previous_sequence,
+                                attempted_sequence: chunk.sequence,
+                            });
+                        }
+                        previous_sequence = expected_sequence;
+                        expected_sequence = expected_sequence.checked_add(1).ok_or(
+                            OutputGateError::NonContiguousSequence {
+                                last_generated_sequence: previous_sequence,
+                                attempted_sequence: chunk.sequence,
+                            },
+                        )?;
+                    }
+                }
+
                 if decision.disposition == OutputDisposition::Redact
                     && !decision.redactions.is_empty()
                 {

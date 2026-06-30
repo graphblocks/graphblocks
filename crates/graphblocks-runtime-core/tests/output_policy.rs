@@ -1351,6 +1351,47 @@ fn replace_decision_delivers_all_policy_approved_replacements() -> Result<(), Ou
 }
 
 #[test]
+fn replace_decision_rejects_non_contiguous_replacement_chunks() -> Result<(), OutputGateError> {
+    let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
+
+    gate.record_chunk(GenerationChunk::text(
+        "stream-1",
+        "response-1",
+        1,
+        "blocked draft",
+    ))?;
+
+    assert_eq!(
+        gate.apply_decision(
+            OutputPolicyDecision::replace(
+                "decision-replace",
+                Some(1),
+                [
+                    GenerationChunk::text("stream-1", "response-1", 1, "policy-approved "),
+                    GenerationChunk::text("stream-1", "response-1", 3, "replacement"),
+                ],
+                "sha256:replace",
+            ),
+            1_000,
+        ),
+        Err(OutputGateError::NonContiguousSequence {
+            last_generated_sequence: 1,
+            attempted_sequence: 3,
+        }),
+    );
+    assert_eq!(gate.last_generated_sequence(), 1);
+    assert_eq!(gate.last_policy_accepted_sequence(), 0);
+    assert_eq!(gate.last_client_delivered_sequence(), 0);
+    assert_eq!(
+        gate.pending_chunks()
+            .map(|chunk| (chunk.sequence, chunk.text.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(1, "blocked draft")]
+    );
+    Ok(())
+}
+
+#[test]
 fn replace_decision_preserves_earlier_pending_chunks() -> Result<(), OutputGateError> {
     let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
 
