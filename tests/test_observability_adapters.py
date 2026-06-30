@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 import importlib
 import json
 from pathlib import Path
@@ -431,3 +432,97 @@ def test_langfuse_projection_applies_capture_policy_before_export(monkeypatch) -
     }
     assert "messages" not in metadata["attributes"]
     assert "private" not in repr(generation.generation_contract())
+
+
+def test_langfuse_prompt_score_and_dataset_projections_are_body_free(monkeypatch) -> None:
+    _add_observability_package_paths(monkeypatch)
+    graphblocks_langfuse = importlib.import_module("graphblocks_langfuse")
+    from graphblocks.evaluation import MetricObservation, ResourceSnapshotRef
+
+    prompt = graphblocks_langfuse.langfuse_prompt_from_reference(
+        "support.answer",
+        version="2026-06-23",
+        label="production",
+        prompt_digest="sha256:prompt",
+        variables_schema_ref="schemas/SupportPrompt@1",
+        metadata={"release_id": "release-1"},
+    )
+    subject = ResourceSnapshotRef(
+        "answer-1",
+        "sha256:answer",
+        resource_kind="answer",
+        metadata={"split": "golden"},
+    )
+    metric = MetricObservation(
+        "answer_grounded",
+        Decimal("0.91"),
+        unit="ratio",
+        direction="maximize",
+        baseline_value=Decimal("0.85"),
+        subject=subject,
+        evaluator={"name": "grounding-check", "version": "1"},
+    )
+    score = graphblocks_langfuse.langfuse_score_from_metric(
+        metric,
+        trace_id="trace-1",
+        observation_id="span-1",
+        comment="offline evaluation",
+    )
+    dataset_item = graphblocks_langfuse.langfuse_dataset_item_from_snapshots(
+        "support-golden",
+        "case-1",
+        input_snapshot=ResourceSnapshotRef("question-1", "sha256:question", resource_kind="question"),
+        expected_output=subject,
+        metadata={"split": "validation"},
+    )
+
+    assert prompt.prompt_contract() == {
+        "name": "support.answer",
+        "version": "2026-06-23",
+        "label": "production",
+        "prompt_digest": "sha256:prompt",
+        "variables_schema_ref": "schemas/SupportPrompt@1",
+        "metadata": {"release_id": "release-1"},
+    }
+    assert score.score_contract() == {
+        "trace_id": "trace-1",
+        "observation_id": "span-1",
+        "name": "answer_grounded",
+        "value": "0.91",
+        "comment": "offline evaluation",
+        "metadata": {
+            "baseline_value": "0.85",
+            "direction": "maximize",
+            "evaluator": {"name": "grounding-check", "version": "1"},
+            "subject": {
+                "resource_id": "answer-1",
+                "digest": "sha256:answer",
+                "resource_kind": "answer",
+                "uri": None,
+                "metadata": {"split": "golden"},
+            },
+            "unit": "ratio",
+        },
+    }
+    assert dataset_item.dataset_item_contract() == {
+        "dataset_name": "support-golden",
+        "item_id": "case-1",
+        "input": {
+            "resource_id": "question-1",
+            "digest": "sha256:question",
+            "resource_kind": "question",
+            "uri": None,
+            "metadata": {},
+        },
+        "expected_output": {
+            "resource_id": "answer-1",
+            "digest": "sha256:answer",
+            "resource_kind": "answer",
+            "uri": None,
+            "metadata": {"split": "golden"},
+        },
+        "metadata": {"split": "validation"},
+    }
+    assert "prompt body" not in repr(prompt.prompt_contract())
+    assert "LangfusePromptProjection" in graphblocks_langfuse.__all__
+    assert "langfuse_score_from_metric" in graphblocks_langfuse.__all__
