@@ -14,6 +14,7 @@ try:
         compile_graph_json,
         decide_agent_step_json,
         evaluate_application_event_stream_json,
+        evaluate_application_protocol_log_json,
         evaluate_application_protocol_stream_json,
         evaluate_declarative_output_policy_json,
         evaluate_durable_tool_terminal_store_json,
@@ -110,6 +111,9 @@ except ImportError as error:
         require_native_extension()
 
     def evaluate_application_event_stream_json(state_json: str, operations_json: str) -> str:
+        require_native_extension()
+
+    def evaluate_application_protocol_log_json(state_json: str, operations_json: str) -> str:
         require_native_extension()
 
     def evaluate_application_protocol_stream_json(state_json: str, operations_json: str) -> str:
@@ -305,6 +309,16 @@ def evaluate_application_event_stream(
     )
 
 
+def evaluate_application_protocol_log(
+    state: dict[str, object],
+    operations: object,
+) -> dict[str, object]:
+    return _json_object_result(
+        evaluate_application_protocol_log_json(_canonical_json(state), _canonical_json(operations)),
+        "native application protocol log result",
+    )
+
+
 def evaluate_application_protocol_stream(
     state: dict[str, object],
     operations: object,
@@ -405,6 +419,8 @@ __all__ = [
     "evaluate_declarative_output_policy_json",
     "evaluate_application_event_stream",
     "evaluate_application_event_stream_json",
+    "evaluate_application_protocol_log",
+    "evaluate_application_protocol_log_json",
     "evaluate_application_protocol_stream",
     "evaluate_application_protocol_stream_json",
     "evaluate_durable_tool_terminal_store",

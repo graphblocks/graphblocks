@@ -148,6 +148,10 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         calls.append(("application_event_stream", (state_json, operations_json)))
         return json.dumps({"state": json.loads(state_json), "updates": json.loads(operations_json)})
 
+    def evaluate_application_protocol_log_json(state_json: str, operations_json: str) -> str:
+        calls.append(("application_protocol_log", (state_json, operations_json)))
+        return json.dumps({"state": json.loads(state_json), "updates": json.loads(operations_json)})
+
     def evaluate_application_protocol_stream_json(state_json: str, operations_json: str) -> str:
         calls.append(("application_protocol_stream", (state_json, operations_json)))
         return json.dumps({"state": json.loads(state_json), "updates": json.loads(operations_json)})
@@ -222,6 +226,7 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         compile_graph_json=compile_graph_json,
         decide_agent_step_json=decide_agent_step_json,
         evaluate_application_event_stream_json=evaluate_application_event_stream_json,
+        evaluate_application_protocol_log_json=evaluate_application_protocol_log_json,
         evaluate_application_protocol_stream_json=evaluate_application_protocol_stream_json,
         evaluate_declarative_output_policy_json=evaluate_declarative_output_policy_json,
         evaluate_durable_tool_terminal_store_json=evaluate_durable_tool_terminal_store_json,
@@ -276,6 +281,10 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     application_event_stream = runtime.evaluate_application_event_stream(
         {"acceptedEvents": []},
         [{"kind": "event", "event": {"kind": "RunStarted", "metadata": {"eventId": "event-1"}}}],
+    )
+    application_protocol_log = runtime.evaluate_application_protocol_log(
+        {"events": []},
+        [{"kind": "replay_after", "cursor": "cursor-1", "limit": 10}],
     )
     application_protocol_stream = runtime.evaluate_application_protocol_stream(
         {"acceptedEvents": []},
@@ -382,6 +391,10 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     assert application_event_stream == {
         "state": {"acceptedEvents": []},
         "updates": [{"event": {"kind": "RunStarted", "metadata": {"eventId": "event-1"}}, "kind": "event"}],
+    }
+    assert application_protocol_log == {
+        "state": {"events": []},
+        "updates": [{"cursor": "cursor-1", "kind": "replay_after", "limit": 10}],
     }
     assert application_protocol_stream == {
         "state": {"acceptedEvents": []},
@@ -497,6 +510,13 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             ),
         ),
         (
+            "application_protocol_log",
+            (
+                '{"events":[]}',
+                '[{"cursor":"cursor-1","kind":"replay_after","limit":10}]',
+            ),
+        ),
+        (
             "application_protocol_stream",
             (
                 '{"acceptedEvents":[]}',
@@ -590,6 +610,8 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     assert "evaluate_declarative_output_policy" in runtime.__all__
     assert "evaluate_application_event_stream" in runtime.__all__
     assert "evaluate_application_event_stream_json" in runtime.__all__
+    assert "evaluate_application_protocol_log" in runtime.__all__
+    assert "evaluate_application_protocol_log_json" in runtime.__all__
     assert "evaluate_application_protocol_stream" in runtime.__all__
     assert "evaluate_application_protocol_stream_json" in runtime.__all__
     assert "evaluate_durable_tool_terminal_store" in runtime.__all__

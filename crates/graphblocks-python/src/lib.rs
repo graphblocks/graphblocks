@@ -10,8 +10,9 @@ use graphblocks_protocol::{
 use graphblocks_runtime_core::agent::{AgentLoopController, AgentLoopDecision, AgentSpec};
 use graphblocks_runtime_core::application_event::{
     ApplicationCommandKind, ApplicationEvent, ApplicationEventKind, ApplicationEventMetadata,
-    ApplicationEventStreamState, ApplicationProtocolCapabilities, ApplicationProtocolEvent,
-    ApplicationProtocolEventKind, ApplicationProtocolEventMetadata, ApplicationProtocolStreamState,
+    ApplicationEventStreamState, ApplicationProtocolCapabilities, ApplicationProtocolError,
+    ApplicationProtocolEvent, ApplicationProtocolEventKind, ApplicationProtocolEventMetadata,
+    ApplicationProtocolLog, ApplicationProtocolStreamState,
 };
 use graphblocks_runtime_core::budget::{BudgetPermit, UsageAmount};
 use graphblocks_runtime_core::exhaustion::{
@@ -738,6 +739,115 @@ fn evaluate_application_protocol_stream_json(
     serde_json::to_string(&payload).map_err(|error| {
         PyRuntimeError::new_err(format!(
             "failed to serialize application protocol stream evaluation: {error}"
+        ))
+    })
+}
+
+#[pyfunction]
+fn evaluate_application_protocol_log_json(
+    state_json: &str,
+    operations_json: &str,
+) -> PyResult<String> {
+    let state_value = parse_json_argument(state_json, "application protocol log state")?;
+    let operations_value =
+        parse_json_argument(operations_json, "application protocol log operations")?;
+    let state_object = json_object(&state_value, "application protocol log state")?;
+    let mut log = ApplicationProtocolLog::new();
+    if let Some(events) = state_object
+        .get("events")
+        .or_else(|| state_object.get("acceptedEvents"))
+        .or_else(|| state_object.get("accepted_events"))
+    {
+        let Some(events) = events.as_array() else {
+            return Err(PyValueError::new_err(
+                "application protocol log state.events must be an array",
+            ));
+        };
+        for (event_index, event) in events.iter().enumerate() {
+            let event = parse_application_protocol_event(
+                event,
+                &format!("application protocol log state.events[{event_index}]"),
+            )?;
+            log.append(event).map_err(|error| {
+                PyValueError::new_err(format!(
+                    "invalid application protocol log state event {event_index}: {error}"
+                ))
+            })?;
+        }
+    }
+
+    let operations = operations_value.as_array().ok_or_else(|| {
+        PyValueError::new_err("application protocol log operations JSON must be an array")
+    })?;
+    let mut updates = Vec::new();
+    for (operation_index, operation) in operations.iter().enumerate() {
+        let label = format!("operations[{operation_index}]");
+        let operation = json_object(operation, &label)?;
+        match required_string(operation, "kind", &label)? {
+            "append" => {
+                let event_value = operation
+                    .get("event")
+                    .ok_or_else(|| PyValueError::new_err(format!("{label}.event is required")))?;
+                let event =
+                    parse_application_protocol_event(event_value, &format!("{label}.event"))?;
+                let event_payload = serialize_application_protocol_event(&event);
+                match log.append(event) {
+                    Ok(true) => updates.push(json!({
+                        "operationIndex": operation_index,
+                        "kind": "appended",
+                        "event": event_payload,
+                    })),
+                    Ok(false) => updates.push(json!({
+                        "operationIndex": operation_index,
+                        "kind": "duplicate",
+                        "event": event_payload,
+                    })),
+                    Err(error) => updates.push(json!({
+                        "operationIndex": operation_index,
+                        "kind": "error",
+                        "error": serialize_application_protocol_log_error(&error),
+                        "event": event_payload,
+                    })),
+                }
+            }
+            "replay_after" | "replayAfter" => {
+                let cursor = optional_nullable_alias_string(operation, "cursor", "cursor", &label)?;
+                let limit = optional_alias_u64(operation, "limit", "limit", &label)?.unwrap_or(100);
+                let replay = log
+                    .replay_after(cursor, limit as usize)
+                    .iter()
+                    .map(serialize_application_protocol_event)
+                    .collect::<Vec<_>>();
+                updates.push(json!({
+                    "operationIndex": operation_index,
+                    "kind": "replay",
+                    "events": replay,
+                }));
+            }
+            value => {
+                return Err(PyValueError::new_err(format!(
+                    "{label}.kind has unknown kind {value:?}"
+                )));
+            }
+        }
+    }
+
+    let events = log
+        .replay_after(None, usize::MAX)
+        .iter()
+        .map(serialize_application_protocol_event)
+        .collect::<Vec<_>>();
+    let payload = json!({
+        "ok": updates.iter().all(|update| update.get("kind").and_then(Value::as_str) != Some("error")),
+        "updates": updates,
+        "state": {
+            "events": events,
+            "length": log.len(),
+        },
+    });
+    serde_json::to_string(&payload).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize application protocol log evaluation: {error}"
         ))
     })
 }
@@ -2519,6 +2629,35 @@ fn serialize_application_protocol_event(event: &ApplicationProtocolEvent) -> Val
         "metadata": serialize_application_protocol_event_metadata(&event.metadata),
         "payload": &event.payload,
     })
+}
+
+fn serialize_application_protocol_log_error(error: &ApplicationProtocolError) -> Value {
+    match error {
+        ApplicationProtocolError::NonMonotonicSequence { previous, next } => json!({
+            "code": "non_monotonic_sequence",
+            "previous": previous,
+            "next": next,
+        }),
+        ApplicationProtocolError::InvalidToolResultEvent { source } => json!({
+            "code": "invalid_tool_result_event",
+            "source": format!("{source:?}"),
+        }),
+        ApplicationProtocolError::ProtocolVersionMismatch { left, right } => json!({
+            "code": "protocol_version_mismatch",
+            "left": left,
+            "right": right,
+        }),
+        ApplicationProtocolError::EmptyCommandId => json!({
+            "code": "empty_command_id",
+        }),
+        ApplicationProtocolError::EmptyEventId => json!({
+            "code": "empty_event_id",
+        }),
+        ApplicationProtocolError::EmptyMetadataField { field } => json!({
+            "code": "empty_metadata_field",
+            "field": field,
+        }),
+    }
 }
 
 fn parse_application_command_kind(value: &str, label: &str) -> PyResult<ApplicationCommandKind> {
@@ -5151,6 +5290,10 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
         module
     )?)?;
     module.add_function(wrap_pyfunction!(
+        evaluate_application_protocol_log_json,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
         negotiate_application_protocol_capabilities_json,
         module
     )?)?;
@@ -5179,13 +5322,14 @@ mod tests {
     use super::{
         admit_exhaustion_work_json, admit_worker_message_json, compile_graph_json,
         decide_agent_step_json, evaluate_application_event_stream_json,
-        evaluate_application_protocol_stream_json, evaluate_declarative_output_policy_json,
-        evaluate_durable_tool_terminal_store_json, evaluate_output_gate_json,
-        evaluate_sequential_tool_queue_json, evaluate_tool_execution_plan_json,
-        evaluate_tool_result_stream_json, finalize_tool_call_json,
-        negotiate_application_protocol_capabilities_json, prepare_tool_result_for_model_json,
-        run_stdlib_graph_json, run_test_graph_json, validate_remote_payload_json,
-        validate_worker_advertisement_json, validate_worker_protocol_message_json,
+        evaluate_application_protocol_log_json, evaluate_application_protocol_stream_json,
+        evaluate_declarative_output_policy_json, evaluate_durable_tool_terminal_store_json,
+        evaluate_output_gate_json, evaluate_sequential_tool_queue_json,
+        evaluate_tool_execution_plan_json, evaluate_tool_result_stream_json,
+        finalize_tool_call_json, negotiate_application_protocol_capabilities_json,
+        prepare_tool_result_for_model_json, run_stdlib_graph_json, run_test_graph_json,
+        validate_remote_payload_json, validate_worker_advertisement_json,
+        validate_worker_protocol_message_json,
     };
 
     #[test]
@@ -6320,6 +6464,102 @@ mod tests {
                 .map(Vec::len),
             Some(3)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_application_protocol_log_json_appends_duplicates_and_replays() -> Result<(), String>
+    {
+        let event = |event_id: &str, sequence: u64, cursor: &str| {
+            json!({
+                "kind": "JobProgress",
+                "metadata": {
+                    "eventId": event_id,
+                    "protocolVersion": "graphblocks.app.v1",
+                    "runId": "run-1",
+                    "turnId": "turn-1",
+                    "sequence": sequence,
+                    "cursor": cursor,
+                    "occurredAtUnixMs": 1_000 + sequence
+                },
+                "payload": {"done": sequence, "total": 2}
+            })
+        };
+        let first = event("event-1", 1, "cursor-1");
+        let second = event("event-2", 2, "cursor-2");
+        let operations = json!([
+            {"kind": "append", "event": first.clone()},
+            {"kind": "append", "event": first},
+            {"kind": "append", "event": second},
+            {"kind": "replay_after", "cursor": "cursor-1", "limit": 10}
+        ]);
+
+        let output_json = evaluate_application_protocol_log_json(
+            "{}",
+            &serde_json::to_string(&operations).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let output =
+            serde_json::from_str::<Value>(&output_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(output.get("ok"), Some(&json!(true)));
+        assert_eq!(output.pointer("/updates/0/kind"), Some(&json!("appended")));
+        assert_eq!(output.pointer("/updates/1/kind"), Some(&json!("duplicate")));
+        assert_eq!(output.pointer("/updates/2/kind"), Some(&json!("appended")));
+        assert_eq!(output.pointer("/updates/3/kind"), Some(&json!("replay")));
+        assert_eq!(
+            output.pointer("/updates/3/events/0/metadata/eventId"),
+            Some(&json!("event-2"))
+        );
+        assert_eq!(output.pointer("/state/length"), Some(&json!(2)));
+        assert_eq!(
+            output
+                .pointer("/state/events")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(2)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_application_protocol_log_json_reports_non_monotonic_append() -> Result<(), String> {
+        let event = |event_id: &str, sequence: u64| {
+            json!({
+                "kind": "JobProgress",
+                "metadata": {
+                    "eventId": event_id,
+                    "protocolVersion": "graphblocks.app.v1",
+                    "runId": "run-1",
+                    "turnId": "turn-1",
+                    "sequence": sequence,
+                    "cursor": format!("cursor-{sequence}"),
+                    "occurredAtUnixMs": 1_000 + sequence
+                },
+                "payload": {"done": sequence, "total": 2}
+            })
+        };
+        let operations = json!([
+            {"kind": "append", "event": event("event-2", 2)},
+            {"kind": "append", "event": event("event-1", 1)}
+        ]);
+
+        let output_json = evaluate_application_protocol_log_json(
+            "{}",
+            &serde_json::to_string(&operations).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let output =
+            serde_json::from_str::<Value>(&output_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(output.get("ok"), Some(&json!(false)));
+        assert_eq!(output.pointer("/updates/0/kind"), Some(&json!("appended")));
+        assert_eq!(output.pointer("/updates/1/kind"), Some(&json!("error")));
+        assert_eq!(
+            output.pointer("/updates/1/error/code"),
+            Some(&json!("non_monotonic_sequence"))
+        );
+        assert_eq!(output.pointer("/state/length"), Some(&json!(1)));
         Ok(())
     }
 
