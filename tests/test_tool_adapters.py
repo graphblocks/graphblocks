@@ -200,6 +200,43 @@ def test_mcp_adapter_discovers_tool_definitions_from_capabilities(monkeypatch) -
     assert "discover_mcp_tool_definitions" in graphblocks_mcp.__all__
 
 
+def test_mcp_adapter_discovery_rejects_blank_tool_metadata(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
+    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+
+    with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="name"):
+        graphblocks_mcp.discover_mcp_tool_definitions({"tools": [{"name": " "}]})
+
+    with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="tags"):
+        graphblocks_mcp.discover_mcp_tool_definitions(
+            {"tools": [{"name": "knowledge.search", "tags": ["support", " "]}]},
+        )
+
+    with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="schema"):
+        graphblocks_mcp.discover_mcp_tool_definitions(
+            {"tools": [{"name": "knowledge.search", "inputSchema": " "}]},
+        )
+
+    definitions = graphblocks_mcp.discover_mcp_tool_definitions(
+        {
+            "tools": [
+                {
+                    "name": " knowledge.search ",
+                    "description": " Search support documentation. ",
+                    "inputSchema": " schemas/KnowledgeSearchRequest@1 ",
+                    "tags": [" support "],
+                },
+            ]
+        },
+        tags=(" global ",),
+    )
+
+    assert definitions[0].name == "knowledge.search"
+    assert definitions[0].description == "Search support documentation."
+    assert definitions[0].input_schema == "schemas/KnowledgeSearchRequest@1"
+    assert definitions[0].tags == frozenset({"global", "support"})
+
+
 def test_mcp_adapter_prepares_admitted_invocation_contract(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
     graphblocks_mcp = importlib.import_module("graphblocks_mcp")
@@ -638,6 +675,54 @@ def test_openapi_adapter_discovers_tool_definitions_from_operation_schemas(monke
     assert definitions[0].output_schema == "schemas/openapi/ticket@1"
     assert definitions[0].tags == frozenset({"support", "tickets"})
     assert "define_openapi_tools_from_spec" in graphblocks_openapi.__all__
+
+
+def test_openapi_adapter_discovery_rejects_blank_operation_metadata(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
+    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+
+    with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="operationId"):
+        graphblocks_openapi.define_openapi_tools_from_spec(
+            {"paths": {"/tickets": {"post": {"operationId": " "}}}},
+        )
+
+    with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="tags"):
+        graphblocks_openapi.define_openapi_tools_from_spec(
+            {"paths": {"/tickets": {"post": {"operationId": "createTicket", "tags": ["tickets", " "]}}}},
+        )
+
+    with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="input schema"):
+        graphblocks_openapi.define_openapi_tools_from_spec(
+            {
+                "paths": {
+                    "/tickets": {
+                        "post": {
+                            "operationId": "createTicket",
+                            "x-graphblocks-input-schema": " ",
+                        }
+                    }
+                }
+            },
+        )
+
+    definitions = graphblocks_openapi.define_openapi_tools_from_spec(
+        {
+            "paths": {
+                "/tickets": {
+                    "post": {
+                        "operationId": " createTicket ",
+                        "summary": " Create a support ticket. ",
+                        "tags": [" tickets "],
+                    }
+                }
+            }
+        },
+        tags=(" support ",),
+    )
+
+    assert definitions[0].name == "createTicket"
+    assert definitions[0].description == "Create a support ticket."
+    assert definitions[0].tags == frozenset({"support", "tickets"})
 
 
 def test_openapi_adapter_prepares_admitted_invocation_contract(monkeypatch) -> None:

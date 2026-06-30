@@ -631,7 +631,10 @@ def _operation_schema_ref(
 ) -> str | None:
     if value is None:
         return fallback
-    if isinstance(value, str) and value:
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            raise OpenApiToolAdapterError(f"{owner} must not be empty")
         return value
     if isinstance(value, Mapping):
         return _schema_ref_from_openapi_schema(value, fallback=fallback, schema_prefix=schema_prefix)
@@ -685,14 +688,17 @@ def _validate_resolved_tool_capability(
 
 def _required_string(value: Mapping[str, object], name: str, *, owner: str) -> str:
     item = value.get(name)
-    if not isinstance(item, str) or not item:
+    if not isinstance(item, str) or not item.strip():
         raise OpenApiToolAdapterError(f"{owner} requires non-empty string {name}")
-    return item
+    return item.strip()
 
 
 def _optional_text(value: Mapping[str, object], name: str) -> str | None:
     item = value.get(name)
-    return item if isinstance(item, str) and item else None
+    if not isinstance(item, str):
+        return None
+    item = item.strip()
+    return item or None
 
 
 def _string_set(value: Iterable[str] | object, *, owner: str) -> frozenset[str]:
@@ -704,9 +710,12 @@ def _string_set(value: Iterable[str] | object, *, owner: str) -> frozenset[str]:
         values = tuple(value)  # type: ignore[arg-type]
     except TypeError as error:
         raise OpenApiToolAdapterError(f"{owner} must be a sequence of strings") from error
-    if any(not isinstance(item, str) or not item for item in values):
-        raise OpenApiToolAdapterError(f"{owner} must contain only non-empty strings")
-    return frozenset(values)
+    stripped_values: list[str] = []
+    for item in values:
+        if not isinstance(item, str) or not item.strip():
+            raise OpenApiToolAdapterError(f"{owner} must contain only non-empty strings")
+        stripped_values.append(item.strip())
+    return frozenset(stripped_values)
 
 
 def _generated_schema_ref(schema_prefix: str, operation_id: str, direction: str) -> str:
