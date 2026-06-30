@@ -9,6 +9,7 @@ import graphblocks
 import pytest
 
 from graphblocks.agent import VALID_TOOL_FAILURE_POLICIES
+from graphblocks.output_policy import PendingToolCallsDisposition, VALID_PENDING_TOOL_CALLS_DISPOSITIONS
 from graphblocks.tools import (
     FINAL_TOOL_RESULT_EVENT_STATUSES,
     VALID_TOOL_APPROVALS,
@@ -90,6 +91,7 @@ def test_agents_package_exposes_tool_literal_sets(monkeypatch) -> None:
     graphblocks_agents = importlib.import_module("graphblocks_agents")
     expected_constants = {
         "FINAL_TOOL_RESULT_EVENT_STATUSES": FINAL_TOOL_RESULT_EVENT_STATUSES,
+        "VALID_PENDING_TOOL_CALLS_DISPOSITIONS": VALID_PENDING_TOOL_CALLS_DISPOSITIONS,
         "VALID_TOOL_FAILURE_POLICIES": VALID_TOOL_FAILURE_POLICIES,
         "VALID_TOOL_APPROVALS": VALID_TOOL_APPROVALS,
         "VALID_TOOL_APPROVAL_STATUSES": VALID_TOOL_APPROVAL_STATUSES,
@@ -109,6 +111,8 @@ def test_agents_package_exposes_tool_literal_sets(monkeypatch) -> None:
     assert sorted(name for name in expected_constants if name not in graphblocks_agents.__all__) == []
     for name, value in expected_constants.items():
         assert getattr(graphblocks_agents, name) is value
+    assert graphblocks_agents.PendingToolCallsDisposition is PendingToolCallsDisposition
+    assert "PendingToolCallsDisposition" in graphblocks_agents.__all__
     assert graphblocks.VALID_TOOL_FAILURE_POLICIES is VALID_TOOL_FAILURE_POLICIES
     assert "VALID_TOOL_FAILURE_POLICIES" in graphblocks.__all__
 

@@ -15,6 +15,7 @@ from graphblocks.agent import (
     VALID_TOOL_FAILURE_POLICIES,
 )
 from graphblocks.conversation import ContentPart
+from graphblocks.output_policy import PendingToolCallsDisposition, VALID_PENDING_TOOL_CALLS_DISPOSITIONS
 from graphblocks.policy import (
     PolicyDecision,
     PolicyEffect,
@@ -222,6 +223,7 @@ __all__ = [
     "JsonSchemaRef",
     "McpToolImplementation",
     "OpenApiToolImplementation",
+    "PendingToolCallsDisposition",
     "PolicyDecision",
     "PolicyEffect",
     "PolicyObligation",
@@ -253,6 +255,7 @@ __all__ = [
     "ToolExecutionPlanError",
     "ToolFailurePolicy",
     "VALID_TOOL_FAILURE_POLICIES",
+    "VALID_PENDING_TOOL_CALLS_DISPOSITIONS",
     "ToolExecutionState",
     "ToolIdempotency",
     "ToolImplementation",
