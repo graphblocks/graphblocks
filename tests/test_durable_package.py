@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib
 from pathlib import Path
+import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -42,6 +44,32 @@ def _checkpoint(graphblocks_durable, checkpoint_id: str, state_revision: int, pl
         schema_versions={"checkpoint": 1},
         created_at_unix_ms=1_820_000_000_000 + state_revision,
     )
+
+
+def test_durable_package_lazy_native_terminal_store_helper_delegates_to_runtime(monkeypatch) -> None:
+    calls: list[object] = []
+
+    def evaluate_durable_tool_terminal_store(operations: object) -> dict[str, object]:
+        calls.append(operations)
+        return {"ok": True, "operations": operations}
+
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(evaluate_durable_tool_terminal_store=evaluate_durable_tool_terminal_store),
+    )
+    graphblocks_durable = _import_durable(monkeypatch)
+
+    result = graphblocks_durable.evaluate_native_durable_tool_terminal_store(
+        [{"op": "record_response_policy_stopped", "responseId": "response-1"}]
+    )
+
+    assert result == {
+        "ok": True,
+        "operations": [{"op": "record_response_policy_stopped", "responseId": "response-1"}],
+    }
+    assert calls == [[{"op": "record_response_policy_stopped", "responseId": "response-1"}]]
+    assert "evaluate_native_durable_tool_terminal_store" in graphblocks_durable.__all__
 
 
 def test_durable_source_replays_from_committed_or_explicit_cursor(monkeypatch) -> None:

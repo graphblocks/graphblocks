@@ -843,6 +843,12 @@ class InMemoryCheckpointStore:
         return _copy_checkpoint_barrier(max(compatible, key=lambda checkpoint: checkpoint.state_revision))
 
 
+def evaluate_native_durable_tool_terminal_store(operations: object) -> dict[str, object]:
+    from graphblocks_runtime import evaluate_durable_tool_terminal_store
+
+    return evaluate_durable_tool_terminal_store(operations)
+
+
 __all__ = [
     "AccumulationMode",
     "CheckpointBarrier",
@@ -893,4 +899,5 @@ __all__ = [
     "WindowAccumulator",
     "WindowPane",
     "WindowPolicy",
+    "evaluate_native_durable_tool_terminal_store",
 ]
