@@ -129,6 +129,19 @@ class RolloutError(ValueError):
     """Base error for rollout planning and gate decisions."""
 
 
+def _require_non_empty_string(
+    value: object,
+    field_name: str,
+    empty_message: str,
+    error_class: type[ValueError],
+) -> str:
+    if not isinstance(value, str):
+        raise error_class(f"{field_name} must be a string")
+    if not value.strip():
+        raise error_class(empty_message)
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class GraphRelease:
     name: str
@@ -398,12 +411,20 @@ class DeploymentCondition:
     message: str = ""
 
     def __post_init__(self) -> None:
-        if not self.condition_type.strip():
-            raise GraphDeploymentError("deployment condition type must not be empty")
+        _require_non_empty_string(
+            self.condition_type,
+            "deployment condition type",
+            "deployment condition type must not be empty",
+            GraphDeploymentError,
+        )
         if self.status not in {"true", "false", "unknown"}:
             raise GraphDeploymentError(f"invalid deployment condition status {self.status!r}")
-        if not self.reason.strip():
-            raise GraphDeploymentError("deployment condition reason must not be empty")
+        _require_non_empty_string(
+            self.reason,
+            "deployment condition reason",
+            "deployment condition reason must not be empty",
+            GraphDeploymentError,
+        )
 
     def condition_contract(self) -> dict[str, str]:
         return {
@@ -420,8 +441,12 @@ class DeploymentSloProfile:
     slo_objective_ids: tuple[str, ...]
 
     def __post_init__(self) -> None:
-        if not self.profile_id.strip():
-            raise GraphDeploymentError("deployment SLO profile id must not be empty")
+        _require_non_empty_string(
+            self.profile_id,
+            "deployment SLO profile id",
+            "deployment SLO profile id must not be empty",
+            GraphDeploymentError,
+        )
         objective_ids = tuple(sorted({str(item) for item in self.slo_objective_ids if str(item).strip()}))
         if not objective_ids:
             raise GraphDeploymentError("deployment SLO profile requires at least one SLO objective")
@@ -476,12 +501,24 @@ class RecoveryObjective:
     rpo: str
 
     def __post_init__(self) -> None:
-        if not self.target.strip():
-            raise GraphDeploymentError("recovery objective target must not be empty")
-        if not self.rto.strip():
-            raise GraphDeploymentError("recovery objective rto must not be empty")
-        if not self.rpo.strip():
-            raise GraphDeploymentError("recovery objective rpo must not be empty")
+        _require_non_empty_string(
+            self.target,
+            "recovery objective target",
+            "recovery objective target must not be empty",
+            GraphDeploymentError,
+        )
+        _require_non_empty_string(
+            self.rto,
+            "recovery objective rto",
+            "recovery objective rto must not be empty",
+            GraphDeploymentError,
+        )
+        _require_non_empty_string(
+            self.rpo,
+            "recovery objective rpo",
+            "recovery objective rpo must not be empty",
+            GraphDeploymentError,
+        )
 
     def objective_contract(self) -> dict[str, str]:
         return {"target": self.target, "rto": self.rto, "rpo": self.rpo}
@@ -496,8 +533,12 @@ class DeploymentRecoveryProfile:
     max_restore_test_age_seconds: int | None = None
 
     def __post_init__(self) -> None:
-        if not self.profile_id.strip():
-            raise GraphDeploymentError("deployment recovery profile id must not be empty")
+        _require_non_empty_string(
+            self.profile_id,
+            "deployment recovery profile id",
+            "deployment recovery profile id must not be empty",
+            GraphDeploymentError,
+        )
         if self.max_restore_test_age_seconds is not None and (
             isinstance(self.max_restore_test_age_seconds, bool) or self.max_restore_test_age_seconds <= 0
         ):
@@ -571,8 +612,12 @@ class RolloutStep:
     effects: RolloutEffectsMode = "normal"
 
     def __post_init__(self) -> None:
-        if not self.step_id.strip():
-            raise RolloutError("rollout step_id must not be empty")
+        _require_non_empty_string(
+            self.step_id,
+            "rollout step_id",
+            "rollout step_id must not be empty",
+            RolloutError,
+        )
         if self.kind not in {"validate", "shadow", "canary", "blue_green", "promote"}:
             raise RolloutError(f"invalid rollout step kind {self.kind!r}")
         if isinstance(self.traffic_percent, bool) or not 0 <= self.traffic_percent <= 100:
@@ -631,8 +676,12 @@ class RolloutAnalysisResult:
     non_reversible_effect_observed: bool = False
 
     def __post_init__(self) -> None:
-        if not self.step_id.strip():
-            raise RolloutError("rollout analysis step_id must not be empty")
+        _require_non_empty_string(
+            self.step_id,
+            "rollout analysis step_id",
+            "rollout analysis step_id must not be empty",
+            RolloutError,
+        )
         if isinstance(self.sample_count, bool) or self.sample_count < 0:
             raise RolloutError("rollout analysis sample_count must be non-negative")
         if isinstance(self.duration_seconds, bool) or self.duration_seconds < 0:
@@ -659,12 +708,24 @@ class RolloutPlan:
     steps: tuple[RolloutStep, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
-        if not self.rollout_id.strip():
-            raise RolloutError("rollout_id must not be empty")
-        if not self.stable_revision_id.strip():
-            raise RolloutError("stable_revision_id must not be empty")
-        if not self.candidate_revision_id.strip():
-            raise RolloutError("candidate_revision_id must not be empty")
+        _require_non_empty_string(
+            self.rollout_id,
+            "rollout_id",
+            "rollout_id must not be empty",
+            RolloutError,
+        )
+        _require_non_empty_string(
+            self.stable_revision_id,
+            "stable_revision_id",
+            "stable_revision_id must not be empty",
+            RolloutError,
+        )
+        _require_non_empty_string(
+            self.candidate_revision_id,
+            "candidate_revision_id",
+            "candidate_revision_id must not be empty",
+            RolloutError,
+        )
         if self.strategy not in {"canary", "blue_green"}:
             raise RolloutError(f"invalid rollout strategy {self.strategy!r}")
         steps = tuple(self.steps)

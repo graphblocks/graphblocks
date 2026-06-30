@@ -12,6 +12,7 @@ from graphblocks.deployment import (
     DeploymentSloProfile,
     ExecutionTarget,
     GraphDeployment,
+    GraphDeploymentError,
     GraphRelease,
     GraphReleaseGraph,
     GraphReleaseMutableReferencesError,
@@ -26,7 +27,9 @@ from graphblocks.deployment import (
     SupplyChainLock,
     ReleaseBundle,
     RevisionDecision,
+    RecoveryObjective,
     RolloutAnalysisResult,
+    RolloutError,
     RolloutPlan,
     RolloutStep,
     UpgradePolicy,
@@ -366,6 +369,34 @@ def test_rollout_plan_builds_validate_shadow_canary_and_promote_sequence() -> No
     assert plan.affinity == "conversation_id"
 
 
+def test_rollout_models_reject_invalid_string_fields() -> None:
+    with pytest.raises(RolloutError, match="rollout step_id must be a string"):
+        RolloutStep(step_id=object(), kind="validate")  # type: ignore[arg-type]
+    with pytest.raises(RolloutError, match="rollout analysis step_id must be a string"):
+        RolloutAnalysisResult(step_id=object(), passed=True)  # type: ignore[arg-type]
+    with pytest.raises(RolloutError, match="rollout_id must be a string"):
+        RolloutPlan(
+            rollout_id=object(),  # type: ignore[arg-type]
+            stable_revision_id="rev-stable",
+            candidate_revision_id="rev-canary",
+            steps=(RolloutStep.validate(), RolloutStep.promote()),
+        )
+    with pytest.raises(RolloutError, match="stable_revision_id must be a string"):
+        RolloutPlan(
+            rollout_id="rollout-1",
+            stable_revision_id=object(),  # type: ignore[arg-type]
+            candidate_revision_id="rev-canary",
+            steps=(RolloutStep.validate(), RolloutStep.promote()),
+        )
+    with pytest.raises(RolloutError, match="candidate_revision_id must be a string"):
+        RolloutPlan(
+            rollout_id="rollout-1",
+            stable_revision_id="rev-stable",
+            candidate_revision_id=object(),  # type: ignore[arg-type]
+            steps=(RolloutStep.validate(), RolloutStep.promote()),
+        )
+
+
 def test_rollout_gate_holds_until_minimum_samples_and_duration_are_met() -> None:
     plan = RolloutPlan.canary(
         "rollout-1",
@@ -464,6 +495,13 @@ def test_deployment_slo_profile_evaluates_slo_within_budget_condition() -> None:
     assert profile.content_digest().startswith("sha256:")
 
 
+def test_deployment_condition_rejects_invalid_string_fields() -> None:
+    with pytest.raises(GraphDeploymentError, match="deployment condition type must be a string"):
+        DeploymentCondition(object(), "true", "ready")  # type: ignore[arg-type]
+    with pytest.raises(GraphDeploymentError, match="deployment condition reason must be a string"):
+        DeploymentCondition("Ready", "true", object())  # type: ignore[arg-type]
+
+
 def test_deployment_slo_profile_reports_missing_or_no_data_as_unknown() -> None:
     profile = DeploymentSloProfile(
         profile_id="rag-production",
@@ -479,6 +517,19 @@ def test_deployment_slo_profile_reports_missing_or_no_data_as_unknown() -> None:
     assert condition.status == "unknown"
     assert condition.reason == "slo_no_data"
     assert condition.message == "missing or no-data SLO objectives: availability, p95-latency"
+
+
+def test_deployment_profiles_reject_invalid_string_fields() -> None:
+    with pytest.raises(GraphDeploymentError, match="deployment SLO profile id must be a string"):
+        DeploymentSloProfile(profile_id=object(), slo_objective_ids=("availability",))  # type: ignore[arg-type]
+    with pytest.raises(GraphDeploymentError, match="deployment recovery profile id must be a string"):
+        DeploymentRecoveryProfile(profile_id=object())  # type: ignore[arg-type]
+    with pytest.raises(GraphDeploymentError, match="recovery objective target must be a string"):
+        RecoveryObjective(target=object(), rto="15m", rpo="5m")  # type: ignore[arg-type]
+    with pytest.raises(GraphDeploymentError, match="recovery objective rto must be a string"):
+        RecoveryObjective(target="service", rto=object(), rpo="5m")  # type: ignore[arg-type]
+    with pytest.raises(GraphDeploymentError, match="recovery objective rpo must be a string"):
+        RecoveryObjective(target="service", rto="15m", rpo=object())  # type: ignore[arg-type]
 
 
 def test_deployment_recovery_profile_evaluates_restore_test_freshness() -> None:
