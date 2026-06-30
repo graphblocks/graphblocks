@@ -87,6 +87,12 @@ def evaluate_native_tool_execution_plan(
     return evaluate_tool_execution_plan(plan, operations)
 
 
+def decide_native_agent_step(spec: dict[str, object], request: dict[str, object]) -> dict[str, object]:
+    from graphblocks_runtime import decide_agent_step
+
+    return decide_agent_step(spec, request)
+
+
 def evaluate_native_sequential_tool_queue(
     queue: dict[str, object],
     operations: object,
@@ -175,6 +181,7 @@ __all__ = [
     "ToolSchemaValidationError",
     "admit_tool_call",
     "build_before_tool_or_effect_policy_request",
+    "decide_native_agent_step",
     "evaluate_native_sequential_tool_queue",
     "evaluate_native_tool_execution_plan",
     "evaluate_native_tool_result_stream",

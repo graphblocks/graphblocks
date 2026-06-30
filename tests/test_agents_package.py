@@ -74,6 +74,10 @@ def test_agents_package_lazy_native_helpers_delegate_to_runtime(monkeypatch) -> 
         calls.append(("plan", (plan, operations)))
         return {"kind": "plan", "plan": plan, "operations": operations}
 
+    def decide_agent_step(spec: dict[str, object], request: dict[str, object]) -> dict[str, object]:
+        calls.append(("agent_step", (spec, request)))
+        return {"kind": "agent_step", "spec": spec, "request": request}
+
     def evaluate_sequential_tool_queue(queue: dict[str, object], operations: object) -> dict[str, object]:
         calls.append(("queue", (queue, operations)))
         return {"kind": "queue", "queue": queue, "operations": operations}
@@ -86,6 +90,7 @@ def test_agents_package_lazy_native_helpers_delegate_to_runtime(monkeypatch) -> 
         sys.modules,
         "graphblocks_runtime",
         SimpleNamespace(
+            decide_agent_step=decide_agent_step,
             evaluate_sequential_tool_queue=evaluate_sequential_tool_queue,
             evaluate_tool_execution_plan=evaluate_tool_execution_plan,
             evaluate_tool_result_stream=evaluate_tool_result_stream,
@@ -97,6 +102,10 @@ def test_agents_package_lazy_native_helpers_delegate_to_runtime(monkeypatch) -> 
         {"planId": "plan-1"},
         [{"op": "ready"}],
     )
+    decision = graphblocks_agents.decide_native_agent_step(
+        {"maxSteps": 3},
+        {"step": 1, "toolResults": []},
+    )
     queue = graphblocks_agents.evaluate_native_sequential_tool_queue(
         {"planId": "plan-1", "responseId": "response-1", "calls": []},
         [{"op": "start_next_ready"}],
@@ -107,6 +116,11 @@ def test_agents_package_lazy_native_helpers_delegate_to_runtime(monkeypatch) -> 
     )
 
     assert plan == {"kind": "plan", "plan": {"planId": "plan-1"}, "operations": [{"op": "ready"}]}
+    assert decision == {
+        "kind": "agent_step",
+        "spec": {"maxSteps": 3},
+        "request": {"step": 1, "toolResults": []},
+    }
     assert queue == {
         "kind": "queue",
         "queue": {"planId": "plan-1", "responseId": "response-1", "calls": []},
@@ -119,6 +133,7 @@ def test_agents_package_lazy_native_helpers_delegate_to_runtime(monkeypatch) -> 
     }
     assert calls == [
         ("plan", ({"planId": "plan-1"}, [{"op": "ready"}])),
+        ("agent_step", ({"maxSteps": 3}, {"step": 1, "toolResults": []})),
         (
             "queue",
             (
@@ -128,6 +143,7 @@ def test_agents_package_lazy_native_helpers_delegate_to_runtime(monkeypatch) -> 
         ),
         ("tool_result_stream", ({"toolCallId": "call-1"}, [{"op": "delta", "sequence": 2}])),
     ]
+    assert "decide_native_agent_step" in graphblocks_agents.__all__
     assert "evaluate_native_tool_result_stream" in graphblocks_agents.__all__
 
 
