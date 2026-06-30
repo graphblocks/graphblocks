@@ -961,12 +961,24 @@ class DeploymentTargetProfile:
     default_replicas: int = 1
 
     def __post_init__(self) -> None:
-        if not self.target_id.strip():
-            raise GraphDeploymentError("deployment target profile id must not be empty")
-        if not self.image_role.strip():
-            raise GraphDeploymentError("deployment target image_role must not be empty")
-        if not self.execution_host.strip():
-            raise GraphDeploymentError("deployment target execution_host must not be empty")
+        _require_non_empty_string(
+            self.target_id,
+            "deployment target profile id",
+            "deployment target profile id must not be empty",
+            GraphDeploymentError,
+        )
+        _require_non_empty_string(
+            self.image_role,
+            "deployment target image_role",
+            "deployment target image_role must not be empty",
+            GraphDeploymentError,
+        )
+        _require_non_empty_string(
+            self.execution_host,
+            "deployment target execution_host",
+            "deployment target execution_host must not be empty",
+            GraphDeploymentError,
+        )
         if self.default_replicas <= 0:
             raise GraphDeploymentError("deployment target default_replicas must be positive")
         object.__setattr__(self, "capabilities", tuple(sorted({str(item) for item in self.capabilities})))

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import yaml
 
-from graphblocks.deployment import DeploymentTargetProfileSet
+from graphblocks.deployment import DeploymentTargetProfile, DeploymentTargetProfileSet, GraphDeploymentError
 
 
 ROOT = Path(__file__).parents[1]
@@ -63,6 +64,30 @@ def test_production_target_profiles_project_to_execution_targets() -> None:
         "image": "registry.example.com/gb/control@sha256:control",
     }
     assert target_set.content_digest().startswith("sha256:")
+
+
+def test_deployment_target_profile_rejects_invalid_string_fields() -> None:
+    with pytest.raises(GraphDeploymentError, match="deployment target profile id must be a string"):
+        DeploymentTargetProfile(
+            target_id=object(),  # type: ignore[arg-type]
+            image_role="control-plane",
+            kind="service",
+            execution_host="rust",
+        )
+    with pytest.raises(GraphDeploymentError, match="deployment target image_role must be a string"):
+        DeploymentTargetProfile(
+            target_id="control",
+            image_role=object(),  # type: ignore[arg-type]
+            kind="service",
+            execution_host="rust",
+        )
+    with pytest.raises(GraphDeploymentError, match="deployment target execution_host must be a string"):
+        DeploymentTargetProfile(
+            target_id="control",
+            image_role="control-plane",
+            kind="service",
+            execution_host=object(),  # type: ignore[arg-type]
+        )
 
 
 def test_deployment_target_coverage_reports_missing_image_role() -> None:
