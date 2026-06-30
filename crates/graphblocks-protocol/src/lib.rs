@@ -1,5 +1,8 @@
 use std::collections::BTreeMap;
+use std::fmt;
 
+use graphblocks_compiler::canonical::canonical_hash;
+use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -137,6 +140,480 @@ pub enum WorkerProtocolError {
     EmptySupportedBlocks,
     EmptyBlockCapability,
     MissingRequiredBlock { required_block: String },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkerProtocolMessageKind {
+    Advertisement,
+    AdmissionDecision,
+    InvokeRequest,
+    InvokeResult,
+    DrainPlan,
+    Error,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkerProtocolErrorPayload {
+    pub code: String,
+    pub message: String,
+    #[serde(default)]
+    pub retryable: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<BTreeMap<String, Value>>,
+}
+
+impl WorkerProtocolErrorPayload {
+    pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            code: code.into(),
+            message: message.into(),
+            retryable: false,
+            details: None,
+        }
+    }
+
+    pub fn retryable(mut self, retryable: bool) -> Self {
+        self.retryable = retryable;
+        self
+    }
+
+    pub fn with_detail(mut self, key: impl Into<String>, value: Value) -> Self {
+        self.details
+            .get_or_insert_with(BTreeMap::new)
+            .insert(key.into(), value);
+        self
+    }
+
+    pub fn validate(&self) -> Result<(), WorkerProtocolMessageError> {
+        if self.code.trim().is_empty() {
+            return Err(WorkerProtocolMessageError::InvalidErrorPayload { field: "code" });
+        }
+        if self.message.trim().is_empty() {
+            return Err(WorkerProtocolMessageError::InvalidErrorPayload { field: "message" });
+        }
+        if let Some(details) = &self.details
+            && details.keys().any(|key| key.trim().is_empty())
+        {
+            return Err(WorkerProtocolMessageError::InvalidErrorPayload { field: "details" });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum WorkerProtocolMessagePayload {
+    Advertisement(WorkerAdvertisement),
+    AdmissionDecision(WorkerAdmissionDecision),
+    InvokeRequest(Box<WorkerInvokeRequest>),
+    InvokeResult(WorkerInvokeResult),
+    DrainPlan(WorkerDrainPlan),
+    Error(WorkerProtocolErrorPayload),
+}
+
+impl WorkerProtocolMessagePayload {
+    pub fn kind(&self) -> WorkerProtocolMessageKind {
+        match self {
+            Self::Advertisement(_) => WorkerProtocolMessageKind::Advertisement,
+            Self::AdmissionDecision(_) => WorkerProtocolMessageKind::AdmissionDecision,
+            Self::InvokeRequest(_) => WorkerProtocolMessageKind::InvokeRequest,
+            Self::InvokeResult(_) => WorkerProtocolMessageKind::InvokeResult,
+            Self::DrainPlan(_) => WorkerProtocolMessageKind::DrainPlan,
+            Self::Error(_) => WorkerProtocolMessageKind::Error,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), WorkerProtocolMessageError> {
+        match self {
+            Self::Advertisement(advertisement) => admit_worker(advertisement)
+                .map_err(|source| WorkerProtocolMessageError::InvalidAdvertisement { source }),
+            Self::AdmissionDecision(decision) => validate_worker_admission_decision(decision),
+            Self::InvokeRequest(request) => request
+                .validate()
+                .map_err(|source| WorkerProtocolMessageError::InvalidInvokeRequest { source }),
+            Self::InvokeResult(result) => result
+                .validate()
+                .map_err(|source| WorkerProtocolMessageError::InvalidInvokeResult { source }),
+            Self::DrainPlan(plan) => plan
+                .validate()
+                .map_err(|source| WorkerProtocolMessageError::InvalidDrainPlan { source }),
+            Self::Error(payload) => payload.validate(),
+        }
+    }
+
+    fn to_value(&self) -> Result<Value, WorkerProtocolMessageError> {
+        match self {
+            Self::Advertisement(payload) => serde_json::to_value(payload),
+            Self::AdmissionDecision(payload) => serde_json::to_value(payload),
+            Self::InvokeRequest(payload) => serde_json::to_value(payload),
+            Self::InvokeResult(payload) => serde_json::to_value(payload),
+            Self::DrainPlan(payload) => serde_json::to_value(payload),
+            Self::Error(payload) => serde_json::to_value(payload),
+        }
+        .map_err(|source| WorkerProtocolMessageError::PayloadEncoding {
+            kind: self.kind(),
+            source: source.to_string(),
+        })
+    }
+
+    fn from_kind_and_value(
+        kind: WorkerProtocolMessageKind,
+        payload: Value,
+    ) -> Result<Self, WorkerProtocolMessageError> {
+        let payload = match kind {
+            WorkerProtocolMessageKind::Advertisement => {
+                Self::Advertisement(serde_json::from_value(payload).map_err(|source| {
+                    WorkerProtocolMessageError::PayloadDecoding {
+                        kind,
+                        source: source.to_string(),
+                    }
+                })?)
+            }
+            WorkerProtocolMessageKind::AdmissionDecision => {
+                Self::AdmissionDecision(serde_json::from_value(payload).map_err(|source| {
+                    WorkerProtocolMessageError::PayloadDecoding {
+                        kind,
+                        source: source.to_string(),
+                    }
+                })?)
+            }
+            WorkerProtocolMessageKind::InvokeRequest => {
+                Self::InvokeRequest(Box::new(serde_json::from_value(payload).map_err(
+                    |source| WorkerProtocolMessageError::PayloadDecoding {
+                        kind,
+                        source: source.to_string(),
+                    },
+                )?))
+            }
+            WorkerProtocolMessageKind::InvokeResult => {
+                Self::InvokeResult(serde_json::from_value(payload).map_err(|source| {
+                    WorkerProtocolMessageError::PayloadDecoding {
+                        kind,
+                        source: source.to_string(),
+                    }
+                })?)
+            }
+            WorkerProtocolMessageKind::DrainPlan => {
+                Self::DrainPlan(serde_json::from_value(payload).map_err(|source| {
+                    WorkerProtocolMessageError::PayloadDecoding {
+                        kind,
+                        source: source.to_string(),
+                    }
+                })?)
+            }
+            WorkerProtocolMessageKind::Error => {
+                Self::Error(serde_json::from_value(payload).map_err(|source| {
+                    WorkerProtocolMessageError::PayloadDecoding {
+                        kind,
+                        source: source.to_string(),
+                    }
+                })?)
+            }
+        };
+        payload.validate()?;
+        Ok(payload)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct WorkerProtocolMessage {
+    pub protocol_version: u16,
+    pub message_id: String,
+    pub kind: WorkerProtocolMessageKind,
+    pub sequence: u64,
+    pub correlation_id: Option<String>,
+    pub causation_id: Option<String>,
+    pub payload: WorkerProtocolMessagePayload,
+}
+
+impl WorkerProtocolMessage {
+    pub fn new(
+        message_id: impl Into<String>,
+        sequence: u64,
+        payload: WorkerProtocolMessagePayload,
+    ) -> Self {
+        let kind = payload.kind();
+        Self {
+            protocol_version: WORKER_PROTOCOL_VERSION,
+            message_id: message_id.into(),
+            kind,
+            sequence,
+            correlation_id: None,
+            causation_id: None,
+            payload,
+        }
+    }
+
+    pub fn advertisement(
+        message_id: impl Into<String>,
+        sequence: u64,
+        advertisement: WorkerAdvertisement,
+    ) -> Self {
+        Self::new(
+            message_id,
+            sequence,
+            WorkerProtocolMessagePayload::Advertisement(advertisement),
+        )
+    }
+
+    pub fn admission_decision(
+        message_id: impl Into<String>,
+        sequence: u64,
+        decision: WorkerAdmissionDecision,
+    ) -> Self {
+        Self::new(
+            message_id,
+            sequence,
+            WorkerProtocolMessagePayload::AdmissionDecision(decision),
+        )
+    }
+
+    pub fn invoke_request(
+        message_id: impl Into<String>,
+        sequence: u64,
+        request: WorkerInvokeRequest,
+    ) -> Self {
+        let correlation_id = request.invocation_id.clone();
+        Self::new(
+            message_id,
+            sequence,
+            WorkerProtocolMessagePayload::InvokeRequest(Box::new(request)),
+        )
+        .with_correlation_id(correlation_id)
+    }
+
+    pub fn invoke_result(
+        message_id: impl Into<String>,
+        sequence: u64,
+        result: WorkerInvokeResult,
+    ) -> Self {
+        let correlation_id = result.invocation_id.clone();
+        Self::new(
+            message_id,
+            sequence,
+            WorkerProtocolMessagePayload::InvokeResult(result),
+        )
+        .with_correlation_id(correlation_id)
+    }
+
+    pub fn drain_plan(message_id: impl Into<String>, sequence: u64, plan: WorkerDrainPlan) -> Self {
+        Self::new(
+            message_id,
+            sequence,
+            WorkerProtocolMessagePayload::DrainPlan(plan),
+        )
+    }
+
+    pub fn error(
+        message_id: impl Into<String>,
+        sequence: u64,
+        code: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self::new(
+            message_id,
+            sequence,
+            WorkerProtocolMessagePayload::Error(WorkerProtocolErrorPayload::new(code, message)),
+        )
+    }
+
+    pub fn with_correlation_id(mut self, correlation_id: impl Into<String>) -> Self {
+        self.correlation_id = Some(correlation_id.into());
+        self
+    }
+
+    pub fn with_causation_id(mut self, causation_id: impl Into<String>) -> Self {
+        self.causation_id = Some(causation_id.into());
+        self
+    }
+
+    pub fn validate(&self) -> Result<(), WorkerProtocolMessageError> {
+        if self.protocol_version != WORKER_PROTOCOL_VERSION {
+            return Err(WorkerProtocolMessageError::IncompatibleVersion {
+                expected: WORKER_PROTOCOL_VERSION,
+                actual: self.protocol_version,
+            });
+        }
+        if self.message_id.trim().is_empty() {
+            return Err(WorkerProtocolMessageError::EmptyMessageId);
+        }
+        if let Some(correlation_id) = &self.correlation_id
+            && correlation_id.trim().is_empty()
+        {
+            return Err(WorkerProtocolMessageError::EmptyCorrelationId);
+        }
+        if let Some(causation_id) = &self.causation_id
+            && causation_id.trim().is_empty()
+        {
+            return Err(WorkerProtocolMessageError::EmptyCausationId);
+        }
+        let payload_kind = self.payload.kind();
+        if self.kind != payload_kind {
+            return Err(WorkerProtocolMessageError::KindPayloadMismatch {
+                kind: self.kind,
+                payload_kind,
+            });
+        }
+        self.payload.validate()
+    }
+
+    pub fn to_wire_value(&self) -> Result<Value, WorkerProtocolMessageError> {
+        self.validate()?;
+        serde_json::to_value(self).map_err(|source| WorkerProtocolMessageError::MessageEncoding {
+            source: source.to_string(),
+        })
+    }
+
+    pub fn content_digest(&self) -> Result<String, WorkerProtocolMessageError> {
+        Ok(canonical_hash(&self.to_wire_value()?))
+    }
+}
+
+impl Serialize for WorkerProtocolMessage {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut state = serializer.serialize_struct("WorkerProtocolMessage", 7)?;
+        state.serialize_field("protocolVersion", &self.protocol_version)?;
+        state.serialize_field("messageId", &self.message_id)?;
+        state.serialize_field("kind", &self.kind)?;
+        state.serialize_field("sequence", &self.sequence)?;
+        state.serialize_field("correlationId", &self.correlation_id)?;
+        state.serialize_field("causationId", &self.causation_id)?;
+        state.serialize_field(
+            "payload",
+            &self.payload.to_value().map_err(serde::ser::Error::custom)?,
+        )?;
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for WorkerProtocolMessage {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct WireWorkerProtocolMessage {
+            #[serde(default = "default_worker_protocol_version")]
+            protocol_version: u16,
+            message_id: String,
+            kind: WorkerProtocolMessageKind,
+            sequence: u64,
+            #[serde(default)]
+            correlation_id: Option<String>,
+            #[serde(default)]
+            causation_id: Option<String>,
+            payload: Value,
+        }
+
+        let wire = WireWorkerProtocolMessage::deserialize(deserializer)?;
+        let payload = WorkerProtocolMessagePayload::from_kind_and_value(wire.kind, wire.payload)
+            .map_err(serde::de::Error::custom)?;
+        let message = Self {
+            protocol_version: wire.protocol_version,
+            message_id: wire.message_id,
+            kind: wire.kind,
+            sequence: wire.sequence,
+            correlation_id: wire.correlation_id,
+            causation_id: wire.causation_id,
+            payload,
+        };
+        message.validate().map_err(serde::de::Error::custom)?;
+        Ok(message)
+    }
+}
+
+fn default_worker_protocol_version() -> u16 {
+    WORKER_PROTOCOL_VERSION
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WorkerProtocolMessageError {
+    IncompatibleVersion {
+        expected: u16,
+        actual: u16,
+    },
+    EmptyMessageId,
+    EmptyCorrelationId,
+    EmptyCausationId,
+    KindPayloadMismatch {
+        kind: WorkerProtocolMessageKind,
+        payload_kind: WorkerProtocolMessageKind,
+    },
+    PayloadEncoding {
+        kind: WorkerProtocolMessageKind,
+        source: String,
+    },
+    PayloadDecoding {
+        kind: WorkerProtocolMessageKind,
+        source: String,
+    },
+    MessageEncoding {
+        source: String,
+    },
+    InvalidAdvertisement {
+        source: WorkerProtocolError,
+    },
+    InvalidAdmissionDecision {
+        field: &'static str,
+    },
+    InvalidInvokeRequest {
+        source: WorkerInvokeRequestError,
+    },
+    InvalidInvokeResult {
+        source: WorkerInvokeResultError,
+    },
+    InvalidDrainPlan {
+        source: WorkerDrainError,
+    },
+    InvalidErrorPayload {
+        field: &'static str,
+    },
+}
+
+impl fmt::Display for WorkerProtocolMessageError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{self:?}")
+    }
+}
+
+impl std::error::Error for WorkerProtocolMessageError {}
+
+fn validate_worker_admission_decision(
+    decision: &WorkerAdmissionDecision,
+) -> Result<(), WorkerProtocolMessageError> {
+    if decision.worker_id.trim().is_empty() {
+        return Err(WorkerProtocolMessageError::InvalidAdmissionDecision { field: "worker_id" });
+    }
+    if decision.target_id.trim().is_empty() {
+        return Err(WorkerProtocolMessageError::InvalidAdmissionDecision { field: "target_id" });
+    }
+    if decision.package_lock_hash.trim().is_empty() {
+        return Err(WorkerProtocolMessageError::InvalidAdmissionDecision {
+            field: "package_lock_hash",
+        });
+    }
+    if decision
+        .reason_codes
+        .iter()
+        .any(|reason_code| reason_code.trim().is_empty())
+    {
+        return Err(WorkerProtocolMessageError::InvalidAdmissionDecision {
+            field: "reason_codes",
+        });
+    }
+    if let Some(required_block) = &decision.required_block
+        && required_block.trim().is_empty()
+    {
+        return Err(WorkerProtocolMessageError::InvalidAdmissionDecision {
+            field: "required_block",
+        });
+    }
+    Ok(())
 }
 
 pub fn admit_worker(advertisement: &WorkerAdvertisement) -> Result<(), WorkerProtocolError> {

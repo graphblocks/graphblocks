@@ -6,10 +6,12 @@ use graphblocks_protocol::{
     WorkerDrainError, WorkerDrainPlan, WorkerDrainPolicy, WorkerDrainTask, WorkerDrainWorkloadKind,
     WorkerInvocationContext, WorkerInvocationContextError, WorkerInvokeRequest,
     WorkerInvokeRequestError, WorkerInvokeResult, WorkerInvokeResultError, WorkerProtocolError,
-    WorkerResultError, WorkerSelectionError, WorkerState, admit_worker, admit_worker_with_policy,
+    WorkerProtocolErrorPayload, WorkerProtocolMessage, WorkerProtocolMessageError,
+    WorkerProtocolMessageKind, WorkerProtocolMessagePayload, WorkerResultError,
+    WorkerSelectionError, WorkerState, admit_worker, admit_worker_with_policy,
     evaluate_worker_admission, select_worker_for_block, validate_worker_result,
 };
-use serde_json::json;
+use serde_json::{Value, json};
 
 #[test]
 fn worker_advertisement_round_trips_and_admits_current_protocol() -> Result<(), serde_json::Error> {
@@ -361,6 +363,139 @@ fn worker_invocation_envelopes_preserve_json_payloads() -> Result<(), serde_json
     assert_eq!(result.validate(), Ok(()));
     assert_eq!(validate_worker_result(&request, &result), Ok(()));
     Ok(())
+}
+
+#[test]
+fn worker_protocol_message_round_trips_typed_invoke_request_payload()
+-> Result<(), Box<dyn std::error::Error>> {
+    let request = WorkerInvokeRequest {
+        invocation_id: "invoke-000001".to_owned(),
+        run_id: "run-000001".to_owned(),
+        node_id: "render".to_owned(),
+        node_attempt_id: "render-attempt-1".to_owned(),
+        lease_epoch: 7,
+        block: "prompt.render@1".to_owned(),
+        context: WorkerInvocationContext::new("release-1", "rev-1"),
+        inputs: json!({"message": {"text": "Hello"}}),
+        config: json!({"template": "Echo {message.text}"}),
+    };
+    let message = WorkerProtocolMessage::invoke_request("message-000001", 42, request.clone());
+
+    let encoded = serde_json::to_value(&message)?;
+    let digest = message.content_digest()?;
+    let decoded = serde_json::from_value::<WorkerProtocolMessage>(encoded.clone())?;
+
+    assert_eq!(message.kind, WorkerProtocolMessageKind::InvokeRequest);
+    assert_eq!(message.correlation_id.as_deref(), Some("invoke-000001"));
+    assert_eq!(encoded["protocolVersion"], json!(WORKER_PROTOCOL_VERSION));
+    assert_eq!(encoded["kind"], json!("invoke_request"));
+    assert_eq!(encoded["sequence"], json!(42));
+    assert_eq!(encoded["correlationId"], json!("invoke-000001"));
+    assert_eq!(encoded["causationId"], Value::Null);
+    assert_eq!(
+        encoded["payload"]["nodeAttemptId"],
+        json!("render-attempt-1")
+    );
+    assert!(digest.starts_with("sha256:"));
+    assert_eq!(decoded, message);
+    assert_eq!(decoded.content_digest()?, digest);
+    assert_eq!(
+        decoded.payload,
+        WorkerProtocolMessagePayload::InvokeRequest(Box::new(request)),
+    );
+    Ok(())
+}
+
+#[test]
+fn worker_protocol_message_error_payload_is_validated_and_wire_stable()
+-> Result<(), Box<dyn std::error::Error>> {
+    let message = WorkerProtocolMessage::new(
+        "message-error",
+        43,
+        WorkerProtocolMessagePayload::Error(
+            WorkerProtocolErrorPayload::new("worker.failed", "worker failed")
+                .retryable(true)
+                .with_detail("invocationId", json!("invoke-000001")),
+        ),
+    )
+    .with_correlation_id("invoke-000001")
+    .with_causation_id("message-000001");
+
+    let encoded = message.to_wire_value()?;
+    let decoded = serde_json::from_value::<WorkerProtocolMessage>(encoded.clone())?;
+
+    assert_eq!(encoded["kind"], json!("error"));
+    assert_eq!(encoded["payload"]["code"], json!("worker.failed"));
+    assert_eq!(encoded["payload"]["retryable"], json!(true));
+    assert_eq!(
+        encoded["payload"]["details"]["invocationId"],
+        json!("invoke-000001")
+    );
+    assert_eq!(decoded, message);
+    Ok(())
+}
+
+#[test]
+fn worker_protocol_message_rejects_invalid_kind_specific_payload() {
+    let error = serde_json::from_value::<WorkerProtocolMessage>(json!({
+        "protocolVersion": WORKER_PROTOCOL_VERSION,
+        "messageId": "message-000001",
+        "kind": "invoke_request",
+        "sequence": 1,
+        "correlationId": null,
+        "causationId": null,
+        "payload": {
+            "invocationId": " ",
+            "runId": "run-000001",
+            "nodeId": "render",
+            "nodeAttemptId": "render-attempt-1",
+            "leaseEpoch": 7,
+            "block": "prompt.render@1",
+            "context": {
+                "releaseId": "release-1",
+                "deploymentRevisionId": "rev-1",
+                "traceId": null,
+                "parentSpanId": null,
+                "policySnapshotId": null,
+                "policySnapshotDigest": null,
+                "budgetPermitId": null,
+                "budgetPermitDigest": null,
+                "attributes": {}
+            },
+            "inputs": {},
+            "config": {}
+        }
+    }))
+    .expect_err("blank invocation id is invalid");
+
+    assert!(
+        error.to_string().contains("InvalidInvokeRequest"),
+        "{error}"
+    );
+}
+
+#[test]
+fn worker_protocol_message_validation_rejects_kind_payload_mismatch() {
+    let mut message = WorkerProtocolMessage::advertisement(
+        "message-000001",
+        1,
+        WorkerAdvertisement::new(
+            "worker-local-1",
+            "doc-cpu",
+            "sha256:package-lock",
+            "sha256:image",
+            [BlockCapability::new("prompt.render@1")],
+        ),
+    );
+    message.kind = WorkerProtocolMessageKind::InvokeRequest;
+
+    assert_eq!(
+        message.validate(),
+        Err(WorkerProtocolMessageError::KindPayloadMismatch {
+            kind: WorkerProtocolMessageKind::InvokeRequest,
+            payload_kind: WorkerProtocolMessageKind::Advertisement,
+        }),
+    );
 }
 
 #[test]
@@ -782,8 +917,10 @@ fn worker_drain_plan_cancels_uncheckpointable_tasks_after_checkpoint_deadline() 
 
 #[test]
 fn worker_drain_validation_rejects_invalid_wire_shapes() {
-    let mut policy = WorkerDrainPolicy::default();
-    policy.online_request_timeout_ms = 0;
+    let policy = WorkerDrainPolicy {
+        online_request_timeout_ms: 0,
+        ..WorkerDrainPolicy::default()
+    };
     assert_eq!(
         policy.validate(),
         Err(WorkerDrainError::NonPositiveTimeout {

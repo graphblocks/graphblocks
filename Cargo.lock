@@ -131,6 +131,7 @@ dependencies = [
 name = "graphblocks-protocol"
 version = "0.1.0"
 dependencies = [
+ "graphblocks-compiler",
  "serde",
  "serde_json",
 ]
