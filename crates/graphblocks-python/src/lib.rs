@@ -31,7 +31,8 @@ use graphblocks_runtime_core::observability::{
     CaptureDecision, CaptureMode, CapturedContent, RedactionRule,
 };
 use graphblocks_runtime_core::outcome::{
-    BlockError, CancelCode, CancelReason, ErrorCategory, Outcome,
+    BlockError, BudgetExhaustion, CancelCode, CancelReason, ErrorCategory, Outcome, PauseReason,
+    PolicyDecisionRef, SkipReason,
 };
 use graphblocks_runtime_core::output_policy::{
     DeclarativeOutputPolicyEvaluator, DeclarativeOutputPolicyRule, DraftDisposition, DurableResult,
@@ -40,7 +41,9 @@ use graphblocks_runtime_core::output_policy::{
     RedactionInstruction, TerminalReason, ViolationAction,
 };
 use graphblocks_runtime_core::policy::{PrincipalRef, ResourceRef};
-use graphblocks_runtime_core::readiness::{InputDependency, PortRef};
+use graphblocks_runtime_core::readiness::{
+    InputDependency, PortRef, Readiness, ReadinessTracker, ResolvedInput,
+};
 use graphblocks_runtime_core::retry::{
     Backoff, EffectKind, PartialOutputPolicy, ProviderLimitDecision, ProviderLimitIncident,
     ProviderLimitKind, ProviderLimitPolicy, RetryDecision, RetryPolicy, RetryRequest,
@@ -664,6 +667,225 @@ fn evaluate_timeout_deadline_json(policy_json: &str, request_json: &str) -> PyRe
         PyRuntimeError::new_err(format!(
             "failed to serialize timeout deadline evaluation: {error}"
         ))
+    })
+}
+
+#[pyfunction]
+fn evaluate_readiness_json(signals_json: &str, dependencies_json: &str) -> PyResult<String> {
+    let parse_port_ref = |value: &Value, label: &str| -> PyResult<PortRef> {
+        let object = json_object(value, label)?;
+        Ok(PortRef::new(
+            required_alias_string(object, "node", "node", label)?,
+            required_alias_string(object, "port", "port", label)?,
+        ))
+    };
+    let serialize_port_ref = |port: &PortRef| {
+        json!({
+            "node": port.node.as_str(),
+            "port": port.port.as_str(),
+        })
+    };
+    let parse_outcome = |value: &Value, label: &str| -> PyResult<Outcome<Value>> {
+        let object = json_object(value, label)?;
+        match required_alias_string(object, "status", "kind", label)? {
+            "value" => Ok(Outcome::Value(
+                alias_value(object, "value", "value")
+                    .cloned()
+                    .unwrap_or(Value::Null),
+            )),
+            "absent" => Ok(Outcome::Absent),
+            "skipped" => {
+                let reason_value = alias_value(object, "reason", "reason").unwrap_or(value);
+                let reason_object = json_object(reason_value, &format!("{label}.reason"))?;
+                let mut reason = SkipReason::new(required_alias_string(
+                    reason_object,
+                    "code",
+                    "code",
+                    &format!("{label}.reason"),
+                )?);
+                reason.message = optional_nullable_alias_string(
+                    reason_object,
+                    "message",
+                    "message",
+                    &format!("{label}.reason"),
+                )?
+                .map(ToOwned::to_owned);
+                Ok(Outcome::Skipped(reason))
+            }
+            "denied" => Ok(Outcome::Denied(PolicyDecisionRef::new(
+                required_alias_string(object, "decisionId", "decision_id", label)?,
+            ))),
+            "budget_exhausted" | "budgetExhausted" => {
+                let mut reason =
+                    BudgetExhaustion::new(required_alias_string(object, "code", "code", label)?);
+                reason.message =
+                    optional_nullable_alias_string(object, "message", "message", label)?
+                        .map(ToOwned::to_owned);
+                Ok(Outcome::BudgetExhausted(reason))
+            }
+            "paused" => {
+                let mut reason =
+                    PauseReason::new(required_alias_string(object, "code", "code", label)?);
+                reason.message =
+                    optional_nullable_alias_string(object, "message", "message", label)?
+                        .map(ToOwned::to_owned);
+                Ok(Outcome::Paused(reason))
+            }
+            "failed" => {
+                let error_value = alias_value(object, "error", "error")
+                    .ok_or_else(|| PyValueError::new_err(format!("{label}.error is required")))?;
+                Ok(Outcome::Failed(parse_block_error(
+                    error_value,
+                    &format!("{label}.error"),
+                )?))
+            }
+            "cancelled" => {
+                let reason_value = alias_value(object, "reason", "reason")
+                    .ok_or_else(|| PyValueError::new_err(format!("{label}.reason is required")))?;
+                Ok(Outcome::Cancelled(parse_cancel_reason(
+                    reason_value,
+                    &format!("{label}.reason"),
+                )?))
+            }
+            value => Err(PyValueError::new_err(format!(
+                "{label}.status has unknown outcome status {value:?}"
+            ))),
+        }
+    };
+    let serialize_outcome = |outcome: &Outcome<Value>| match outcome {
+        Outcome::Value(value) => json!({
+            "status": "value",
+            "value": value,
+        }),
+        Outcome::Absent => json!({"status": "absent"}),
+        Outcome::Skipped(reason) => json!({
+            "status": "skipped",
+            "reason": {
+                "code": reason.code.as_str(),
+                "message": reason.message.as_deref(),
+            },
+        }),
+        Outcome::Denied(decision) => json!({
+            "status": "denied",
+            "decisionId": decision.decision_id.as_str(),
+        }),
+        Outcome::BudgetExhausted(reason) => json!({
+            "status": "budget_exhausted",
+            "code": reason.code.as_str(),
+            "message": reason.message.as_deref(),
+        }),
+        Outcome::Paused(reason) => json!({
+            "status": "paused",
+            "code": reason.code.as_str(),
+            "message": reason.message.as_deref(),
+        }),
+        Outcome::Failed(error) => json!({
+            "status": "failed",
+            "error": serialize_block_error(error),
+        }),
+        Outcome::Cancelled(reason) => json!({
+            "status": "cancelled",
+            "reason": serialize_cancel_reason(reason),
+        }),
+    };
+
+    let signals_value = parse_json_argument(signals_json, "readiness signals")?;
+    let dependencies_value = parse_json_argument(dependencies_json, "readiness dependencies")?;
+    let signals = signals_value
+        .as_array()
+        .ok_or_else(|| PyValueError::new_err("readiness signals must be an array"))?;
+    let dependencies = dependencies_value
+        .as_array()
+        .ok_or_else(|| PyValueError::new_err("readiness dependencies must be an array"))?;
+    let mut tracker = ReadinessTracker::new();
+    let mut signal_payloads = Vec::new();
+
+    for (signal_index, signal) in signals.iter().enumerate() {
+        let label = format!("readiness signals[{signal_index}]");
+        let signal_object = json_object(signal, &label)?;
+        let port = parse_port_ref(
+            alias_value(signal_object, "portRef", "port_ref").unwrap_or(signal),
+            &format!("{label}.portRef"),
+        )?;
+        let outcome_value = alias_value(signal_object, "outcome", "outcome")
+            .ok_or_else(|| PyValueError::new_err(format!("{label}.outcome is required")))?;
+        let outcome = parse_outcome(outcome_value, &format!("{label}.outcome"))?;
+        tracker.publish(port.clone(), outcome.clone());
+        signal_payloads.push(json!({
+            "portRef": serialize_port_ref(&port),
+            "outcome": serialize_outcome(&outcome),
+        }));
+    }
+
+    let dependencies = dependencies
+        .iter()
+        .enumerate()
+        .map(|(dependency_index, dependency)| {
+            let label = format!("readiness dependencies[{dependency_index}]");
+            let object = json_object(dependency, &label)?;
+            let input = required_alias_string(object, "input", "input", &label)?;
+            let source = parse_port_ref(
+                alias_value(object, "source", "source")
+                    .ok_or_else(|| PyValueError::new_err(format!("{label}.source is required")))?,
+                &format!("{label}.source"),
+            )?;
+            let mode =
+                optional_nullable_alias_string(object, "mode", "mode", &label)?.unwrap_or("value");
+            match mode {
+                "value" => Ok(InputDependency::value(input, source)),
+                "outcome" => Ok(InputDependency::outcome(input, source)),
+                value => Err(PyValueError::new_err(format!(
+                    "{label}.mode has unknown input mode {value:?}"
+                ))),
+            }
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    let readiness = tracker.readiness(dependencies);
+    let readiness = match readiness {
+        Readiness::Ready(inputs) => {
+            let inputs = inputs
+                .iter()
+                .map(|(input, value)| {
+                    let value = match value {
+                        ResolvedInput::Value(value) => json!({
+                            "mode": "value",
+                            "value": value,
+                        }),
+                        ResolvedInput::Outcome(outcome) => json!({
+                            "mode": "outcome",
+                            "outcome": serialize_outcome(outcome),
+                        }),
+                    };
+                    (input.clone(), value)
+                })
+                .collect::<serde_json::Map<_, _>>();
+            json!({
+                "status": "ready",
+                "inputs": inputs,
+            })
+        }
+        Readiness::Waiting { missing } => json!({
+            "status": "waiting",
+            "missing": missing.iter().map(&serialize_port_ref).collect::<Vec<_>>(),
+        }),
+        Readiness::Blocked {
+            input,
+            source,
+            outcome,
+        } => json!({
+            "status": "blocked",
+            "input": input,
+            "source": serialize_port_ref(&source),
+            "outcome": serialize_outcome(&outcome),
+        }),
+    };
+    let payload = json!({
+        "ok": true,
+        "signals": signal_payloads,
+        "readiness": readiness,
+    });
+    serde_json::to_string(&payload).map_err(|error| {
+        PyRuntimeError::new_err(format!("failed to serialize readiness evaluation: {error}"))
     })
 }
 
@@ -7178,6 +7400,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
         module
     )?)?;
     module.add_function(wrap_pyfunction!(evaluate_timeout_deadline_json, module)?)?;
+    module.add_function(wrap_pyfunction!(evaluate_readiness_json, module)?)?;
     module.add_function(wrap_pyfunction!(evaluate_cancellation_scope_json, module)?)?;
     module.add_function(wrap_pyfunction!(evaluate_task_group_json, module)?)?;
     module.add_function(wrap_pyfunction!(evaluate_node_lifecycle_json, module)?)?;
@@ -7242,7 +7465,7 @@ mod tests {
         evaluate_cancellation_scope_json, evaluate_connector_capabilities_json,
         evaluate_declarative_output_policy_json, evaluate_durable_tool_terminal_store_json,
         evaluate_node_lifecycle_json, evaluate_output_gate_json,
-        evaluate_provider_limit_policy_json, evaluate_retry_policy_json,
+        evaluate_provider_limit_policy_json, evaluate_readiness_json, evaluate_retry_policy_json,
         evaluate_sequential_tool_queue_json, evaluate_task_group_json,
         evaluate_timeout_deadline_json, evaluate_tool_approval_json,
         evaluate_tool_execution_plan_json, evaluate_tool_result_stream_json,
@@ -8069,6 +8292,99 @@ mod tests {
                 .pointer("/error/details/now_ms")
                 .and_then(Value::as_u64),
             Some(1_250)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_readiness_json_preserves_blocked_and_outcome_inputs() -> Result<(), String> {
+        let blocked_signals = json!([
+            {
+                "node": "model",
+                "port": "answer",
+                "outcome": {
+                    "status": "failed",
+                    "error": {
+                        "code": "provider.timeout",
+                        "category": "timeout",
+                        "message": "provider timed out",
+                        "retryable": true
+                    }
+                }
+            }
+        ]);
+        let blocked_dependencies = json!([
+            {
+                "input": "answer",
+                "source": {"node": "model", "port": "answer"},
+                "mode": "value"
+            }
+        ]);
+        let blocked_json = evaluate_readiness_json(
+            &serde_json::to_string(&blocked_signals).map_err(|error| error.to_string())?,
+            &serde_json::to_string(&blocked_dependencies).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let blocked =
+            serde_json::from_str::<Value>(&blocked_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            blocked.pointer("/readiness/status").and_then(Value::as_str),
+            Some("blocked")
+        );
+        assert_eq!(
+            blocked
+                .pointer("/readiness/outcome/status")
+                .and_then(Value::as_str),
+            Some("failed")
+        );
+        assert_eq!(
+            blocked
+                .pointer("/readiness/outcome/error/category")
+                .and_then(Value::as_str),
+            Some("timeout")
+        );
+
+        let ready_signals = json!([
+            {
+                "node": "branch",
+                "port": "maybe",
+                "outcome": {
+                    "status": "skipped",
+                    "reason": {"code": "condition_false"}
+                }
+            }
+        ]);
+        let ready_dependencies = json!([
+            {
+                "input": "branch_outcome",
+                "source": {"node": "branch", "port": "maybe"},
+                "mode": "outcome"
+            }
+        ]);
+        let ready_json = evaluate_readiness_json(
+            &serde_json::to_string(&ready_signals).map_err(|error| error.to_string())?,
+            &serde_json::to_string(&ready_dependencies).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let ready =
+            serde_json::from_str::<Value>(&ready_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            ready.pointer("/readiness/status").and_then(Value::as_str),
+            Some("ready")
+        );
+        assert_eq!(
+            ready
+                .pointer("/readiness/inputs/branch_outcome/mode")
+                .and_then(Value::as_str),
+            Some("outcome")
+        );
+        assert_eq!(
+            ready
+                .pointer("/readiness/inputs/branch_outcome/outcome/status")
+                .and_then(Value::as_str),
+            Some("skipped")
         );
         Ok(())
     }

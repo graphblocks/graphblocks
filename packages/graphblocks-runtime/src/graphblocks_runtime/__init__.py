@@ -24,6 +24,7 @@ try:
         evaluate_node_lifecycle_json,
         evaluate_output_gate_json,
         evaluate_provider_limit_policy_json,
+        evaluate_readiness_json,
         evaluate_retry_policy_json,
         evaluate_sequential_tool_queue_json,
         evaluate_task_group_json,
@@ -150,6 +151,9 @@ except ImportError as error:
         require_native_extension()
 
     def evaluate_timeout_deadline_json(policy_json: str, request_json: str) -> str:
+        require_native_extension()
+
+    def evaluate_readiness_json(signals_json: str, dependencies_json: str) -> str:
         require_native_extension()
 
     def evaluate_cancellation_scope_json(root_json: str, operations_json: str) -> str:
@@ -444,6 +448,13 @@ def evaluate_timeout_deadline(policy: dict[str, object], request: dict[str, obje
     )
 
 
+def evaluate_readiness(signals: object, dependencies: object) -> dict[str, object]:
+    return _json_object_result(
+        evaluate_readiness_json(_canonical_json(signals), _canonical_json(dependencies)),
+        "native readiness evaluation result",
+    )
+
+
 def evaluate_cancellation_scope(root: dict[str, object], operations: object) -> dict[str, object]:
     return _json_object_result(
         evaluate_cancellation_scope_json(_canonical_json(root), _canonical_json(operations)),
@@ -659,6 +670,8 @@ __all__ = [
     "evaluate_output_gate_json",
     "evaluate_provider_limit_policy",
     "evaluate_provider_limit_policy_json",
+    "evaluate_readiness",
+    "evaluate_readiness_json",
     "evaluate_retry_policy",
     "evaluate_retry_policy_json",
     "evaluate_sequential_tool_queue",

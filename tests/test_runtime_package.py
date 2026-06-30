@@ -293,6 +293,16 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             }
         )
 
+    def evaluate_readiness_json(signals_json: str, dependencies_json: str) -> str:
+        calls.append(("readiness", (signals_json, dependencies_json)))
+        return json.dumps(
+            {
+                "ok": True,
+                "signals": json.loads(signals_json),
+                "dependencies": json.loads(dependencies_json),
+            }
+        )
+
     def evaluate_cancellation_scope_json(root_json: str, operations_json: str) -> str:
         calls.append(("cancellation_scope", (root_json, operations_json)))
         return json.dumps(
@@ -440,6 +450,7 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         evaluate_node_lifecycle_json=evaluate_node_lifecycle_json,
         evaluate_output_gate_json=evaluate_output_gate_json,
         evaluate_provider_limit_policy_json=evaluate_provider_limit_policy_json,
+        evaluate_readiness_json=evaluate_readiness_json,
         evaluate_retry_policy_json=evaluate_retry_policy_json,
         evaluate_sequential_tool_queue_json=evaluate_sequential_tool_queue_json,
         evaluate_task_group_json=evaluate_task_group_json,
@@ -568,6 +579,16 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     timeout_deadline = runtime.evaluate_timeout_deadline(
         {"durationMs": 250},
         {"nodeId": "model", "startedAtMs": 1_000, "nowMs": 1_250},
+    )
+    readiness = runtime.evaluate_readiness(
+        [
+            {
+                "node": "render",
+                "port": "prompt",
+                "outcome": {"status": "value", "value": "hello"},
+            }
+        ],
+        [{"input": "prompt", "source": {"node": "render", "port": "prompt"}}],
     )
     cancellation_scope = runtime.evaluate_cancellation_scope(
         {"tokenId": "run", "scope": "run", "guarantee": "cooperative"},
@@ -824,6 +845,17 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         "ok": True,
         "policy": {"durationMs": 250},
         "request": {"nodeId": "model", "nowMs": 1_250, "startedAtMs": 1_000},
+    }
+    assert readiness == {
+        "ok": True,
+        "signals": [
+            {
+                "node": "render",
+                "outcome": {"status": "value", "value": "hello"},
+                "port": "prompt",
+            }
+        ],
+        "dependencies": [{"input": "prompt", "source": {"node": "render", "port": "prompt"}}],
     }
     assert cancellation_scope == {
         "ok": True,
@@ -1082,6 +1114,13 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             ),
         ),
         (
+            "readiness",
+            (
+                '[{"node":"render","outcome":{"status":"value","value":"hello"},"port":"prompt"}]',
+                '[{"input":"prompt","source":{"node":"render","port":"prompt"}}]',
+            ),
+        ),
+        (
             "cancellation_scope",
             (
                 '{"guarantee":"cooperative","scope":"run","tokenId":"run"}',
@@ -1235,6 +1274,8 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     assert "evaluate_provider_limit_policy_json" in runtime.__all__
     assert "evaluate_timeout_deadline" in runtime.__all__
     assert "evaluate_timeout_deadline_json" in runtime.__all__
+    assert "evaluate_readiness" in runtime.__all__
+    assert "evaluate_readiness_json" in runtime.__all__
     assert "evaluate_cancellation_scope" in runtime.__all__
     assert "evaluate_cancellation_scope_json" in runtime.__all__
     assert "evaluate_task_group" in runtime.__all__
