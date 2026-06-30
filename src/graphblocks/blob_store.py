@@ -246,8 +246,12 @@ class S3CompatibleBlobStore:
     uri_scheme: str = "s3"
 
     def __post_init__(self) -> None:
+        if not isinstance(self.bucket, str):
+            raise ValueError("bucket must be a string")
         if not self.bucket.strip():
             raise ValueError("bucket must not be empty")
+        if not isinstance(self.uri_scheme, str):
+            raise ValueError("uri_scheme must be a string")
         if not self.uri_scheme.strip():
             raise ValueError("uri_scheme must not be empty")
 

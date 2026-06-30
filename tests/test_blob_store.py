@@ -124,6 +124,17 @@ def test_s3_compatible_blob_store_uses_injected_client_without_sdk_dependency() 
     }
 
 
+def test_s3_compatible_blob_store_rejects_invalid_identity_fields() -> None:
+    with pytest.raises(ValueError, match="bucket must be a string"):
+        S3CompatibleBlobStore(bucket=object(), client=_FakeS3Client())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="bucket must not be empty"):
+        S3CompatibleBlobStore(bucket=" ", client=_FakeS3Client())
+    with pytest.raises(ValueError, match="uri_scheme must be a string"):
+        S3CompatibleBlobStore(bucket="kb-artifacts", client=_FakeS3Client(), uri_scheme=object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="uri_scheme must not be empty"):
+        S3CompatibleBlobStore(bucket="kb-artifacts", client=_FakeS3Client(), uri_scheme=" ")
+
+
 def test_s3_compatible_blob_store_supports_range_reads_and_pagination() -> None:
     client = _FakeS3Client()
     store = S3CompatibleBlobStore(bucket="kb-artifacts", client=client)
