@@ -7426,6 +7426,7 @@ class TckRunner:
         fixture = case.usage_fixture
         ledger = InMemoryUsageLedger()
         append_results: list[str] = []
+        observed_errors: list[dict[str, object]] = []
         operations = fixture.get("operations", [])
         if not isinstance(operations, list):
             operations = []
@@ -7448,146 +7449,179 @@ class TckRunner:
                 )
                 continue
             op = str(operation.get("op", ""))
-            if op == "append":
-                record_mapping = operation.get("record")
-                if not isinstance(record_mapping, Mapping):
-                    diagnostics.append(
-                        {
-                            "code": "UsageRecordMissing",
-                            "message": "append operation requires a usage record",
-                            "path": f"$.operations[{operation_index}].record",
-                        }
-                    )
-                    continue
-                raw_amounts = record_mapping.get("amounts", [])
-                if not isinstance(raw_amounts, list):
-                    diagnostics.append(
-                        {
-                            "code": "UsageAmountsInvalid",
-                            "message": "usage record amounts must be a list",
-                            "path": f"$.operations[{operation_index}].record.amounts",
-                        }
-                    )
-                    continue
-                amounts: list[UsageAmount] = []
-                for amount_index, amount in enumerate(raw_amounts):
-                    if not isinstance(amount, Mapping):
-                        diagnostics.append(
-                            {
-                                "code": "UsageAmountInvalid",
-                                "message": "usage amount must be a mapping",
-                                "path": f"$.operations[{operation_index}].record.amounts[{amount_index}]",
-                            }
-                        )
-                        continue
-                    dimensions = amount.get("dimensions", {})
-                    if not isinstance(dimensions, Mapping):
-                        diagnostics.append(
-                            {
-                                "code": "UsageAmountInvalid",
-                                "message": "usage amount dimensions must be a mapping",
-                                "path": f"$.operations[{operation_index}].record.amounts[{amount_index}].dimensions",
-                            }
-                        )
-                        continue
-                    amounts.append(
-                        UsageAmount(
-                            kind=str(amount.get("kind", "")),
-                            amount=Decimal(str(amount.get("amount", "0"))),
-                            unit=str(amount.get("unit", "")),
-                            dimensions={str(key): str(value) for key, value in dimensions.items()},
-                        )
-                    )
-                metadata = record_mapping.get("metadata", {})
-                if not isinstance(metadata, Mapping):
-                    diagnostics.append(
-                        {
-                            "code": "UsageMetadataInvalid",
-                            "message": "usage record metadata must be a mapping",
-                            "path": f"$.operations[{operation_index}].record.metadata",
-                        }
-                    )
-                    continue
-                optional_fields: dict[str, object] = {}
-                for field_name, keys in (
-                    ("run_id", ("runId", "run_id")),
-                    ("attempt_id", ("attemptId", "attempt_id")),
-                    ("provider_response_id", ("providerResponseId", "provider_response_id")),
-                    ("pricing_ref", ("pricingRef", "pricing_ref")),
-                    ("quota_window_id", ("quotaWindowId", "quota_window_id")),
-                    ("execution_scope", ("executionScope", "execution_scope")),
-                    ("reconciliation_of", ("reconciliationOf", "reconciliation_of")),
-                ):
-                    value = _first_mapping_value(record_mapping, *keys)
-                    if value is not None:
-                        optional_fields[field_name] = str(value)
-                record = UsageRecord(
-                    record_id=str(_first_mapping_value(record_mapping, "recordId", "record_id")),
-                    source=str(record_mapping.get("source", "")),
-                    confidence=str(record_mapping.get("confidence", "")),
-                    amounts=tuple(amounts),
-                    occurred_at=str(_first_mapping_value(record_mapping, "occurredAt", "occurred_at")),
-                    metadata={str(key): value for key, value in metadata.items()},
-                    **optional_fields,
-                )
-                append_results.append(ledger.append(record).record_id)
-            elif op == "reconcile":
-                raw_amounts = operation.get("amounts", [])
-                if not isinstance(raw_amounts, list):
-                    diagnostics.append(
-                        {
-                            "code": "UsageAmountsInvalid",
-                            "message": "usage reconcile amounts must be a list",
-                            "path": f"$.operations[{operation_index}].amounts",
-                        }
-                    )
-                    continue
-                amounts = []
-                for amount_index, amount in enumerate(raw_amounts):
-                    if not isinstance(amount, Mapping):
-                        diagnostics.append(
-                            {
-                                "code": "UsageAmountInvalid",
-                                "message": "usage amount must be a mapping",
-                                "path": f"$.operations[{operation_index}].amounts[{amount_index}]",
-                            }
-                        )
-                        continue
-                    dimensions = amount.get("dimensions", {})
-                    if not isinstance(dimensions, Mapping):
-                        diagnostics.append(
-                            {
-                                "code": "UsageAmountInvalid",
-                                "message": "usage amount dimensions must be a mapping",
-                                "path": f"$.operations[{operation_index}].amounts[{amount_index}].dimensions",
-                            }
-                        )
-                        continue
-                    amounts.append(
-                        UsageAmount(
-                            kind=str(amount.get("kind", "")),
-                            amount=Decimal(str(amount.get("amount", "0"))),
-                            unit=str(amount.get("unit", "")),
-                            dimensions={str(key): str(value) for key, value in dimensions.items()},
-                        )
-                    )
-                reconciled = ledger.reconcile(
-                    str(_first_mapping_value(operation, "sourceRecordId", "source_record_id")),
-                    amounts=amounts,
-                    occurred_at=str(_first_mapping_value(operation, "occurredAt", "occurred_at")),
-                    record_id=(
-                        str(_first_mapping_value(operation, "recordId", "record_id"))
-                        if _first_mapping_value(operation, "recordId", "record_id") is not None
-                        else None
-                    ),
-                )
-                append_results.append(reconciled.record_id)
-            else:
+            expected_error_value = operation.get("expectError")
+            if expected_error_value is not None and not isinstance(expected_error_value, str):
                 diagnostics.append(
                     {
-                        "code": "UsageOperationUnknown",
-                        "message": f"usage TCK operation {op!r} is not supported",
-                        "path": f"$.operations[{operation_index}].op",
+                        "code": "UsageExpectedErrorInvalid",
+                        "message": "usage operation expectError must be a string",
+                        "path": f"$.operations[{operation_index}].expectError",
+                    }
+                )
+                continue
+            expected_error = expected_error_value if isinstance(expected_error_value, str) else None
+            actual_error: str | None = None
+            try:
+                if op == "append":
+                    record_mapping = operation.get("record")
+                    if not isinstance(record_mapping, Mapping):
+                        diagnostics.append(
+                            {
+                                "code": "UsageRecordMissing",
+                                "message": "append operation requires a usage record",
+                                "path": f"$.operations[{operation_index}].record",
+                            }
+                        )
+                        continue
+                    raw_amounts = record_mapping.get("amounts", [])
+                    if not isinstance(raw_amounts, list):
+                        diagnostics.append(
+                            {
+                                "code": "UsageAmountsInvalid",
+                                "message": "usage record amounts must be a list",
+                                "path": f"$.operations[{operation_index}].record.amounts",
+                            }
+                        )
+                        continue
+                    amounts: list[UsageAmount] = []
+                    for amount_index, amount in enumerate(raw_amounts):
+                        if not isinstance(amount, Mapping):
+                            diagnostics.append(
+                                {
+                                    "code": "UsageAmountInvalid",
+                                    "message": "usage amount must be a mapping",
+                                    "path": f"$.operations[{operation_index}].record.amounts[{amount_index}]",
+                                }
+                            )
+                            continue
+                        dimensions = amount.get("dimensions", {})
+                        if not isinstance(dimensions, Mapping):
+                            diagnostics.append(
+                                {
+                                    "code": "UsageAmountInvalid",
+                                    "message": "usage amount dimensions must be a mapping",
+                                    "path": f"$.operations[{operation_index}].record.amounts[{amount_index}].dimensions",
+                                }
+                            )
+                            continue
+                        amounts.append(
+                            UsageAmount(
+                                kind=str(amount.get("kind", "")),
+                                amount=Decimal(str(amount.get("amount", "0"))),
+                                unit=str(amount.get("unit", "")),
+                                dimensions={str(key): str(value) for key, value in dimensions.items()},
+                            )
+                        )
+                    metadata = record_mapping.get("metadata", {})
+                    if not isinstance(metadata, Mapping):
+                        diagnostics.append(
+                            {
+                                "code": "UsageMetadataInvalid",
+                                "message": "usage record metadata must be a mapping",
+                                "path": f"$.operations[{operation_index}].record.metadata",
+                            }
+                        )
+                        continue
+                    optional_fields: dict[str, object] = {}
+                    for field_name, keys in (
+                        ("run_id", ("runId", "run_id")),
+                        ("attempt_id", ("attemptId", "attempt_id")),
+                        ("provider_response_id", ("providerResponseId", "provider_response_id")),
+                        ("pricing_ref", ("pricingRef", "pricing_ref")),
+                        ("quota_window_id", ("quotaWindowId", "quota_window_id")),
+                        ("execution_scope", ("executionScope", "execution_scope")),
+                        ("reconciliation_of", ("reconciliationOf", "reconciliation_of")),
+                    ):
+                        value = _first_mapping_value(record_mapping, *keys)
+                        if value is not None:
+                            optional_fields[field_name] = str(value)
+                    record = UsageRecord(
+                        record_id=str(_first_mapping_value(record_mapping, "recordId", "record_id")),
+                        source=str(record_mapping.get("source", "")),
+                        confidence=str(record_mapping.get("confidence", "")),
+                        amounts=tuple(amounts),
+                        occurred_at=str(_first_mapping_value(record_mapping, "occurredAt", "occurred_at")),
+                        metadata={str(key): value for key, value in metadata.items()},
+                        **optional_fields,
+                    )
+                    append_results.append(ledger.append(record).record_id)
+                elif op == "reconcile":
+                    raw_amounts = operation.get("amounts", [])
+                    if not isinstance(raw_amounts, list):
+                        diagnostics.append(
+                            {
+                                "code": "UsageAmountsInvalid",
+                                "message": "usage reconcile amounts must be a list",
+                                "path": f"$.operations[{operation_index}].amounts",
+                            }
+                        )
+                        continue
+                    amounts = []
+                    for amount_index, amount in enumerate(raw_amounts):
+                        if not isinstance(amount, Mapping):
+                            diagnostics.append(
+                                {
+                                    "code": "UsageAmountInvalid",
+                                    "message": "usage amount must be a mapping",
+                                    "path": f"$.operations[{operation_index}].amounts[{amount_index}]",
+                                }
+                            )
+                            continue
+                        dimensions = amount.get("dimensions", {})
+                        if not isinstance(dimensions, Mapping):
+                            diagnostics.append(
+                                {
+                                    "code": "UsageAmountInvalid",
+                                    "message": "usage amount dimensions must be a mapping",
+                                    "path": f"$.operations[{operation_index}].amounts[{amount_index}].dimensions",
+                                }
+                            )
+                            continue
+                        amounts.append(
+                            UsageAmount(
+                                kind=str(amount.get("kind", "")),
+                                amount=Decimal(str(amount.get("amount", "0"))),
+                                unit=str(amount.get("unit", "")),
+                                dimensions={str(key): str(value) for key, value in dimensions.items()},
+                            )
+                        )
+                    reconciled = ledger.reconcile(
+                        str(_first_mapping_value(operation, "sourceRecordId", "source_record_id")),
+                        amounts=amounts,
+                        occurred_at=str(_first_mapping_value(operation, "occurredAt", "occurred_at")),
+                        record_id=(
+                            str(_first_mapping_value(operation, "recordId", "record_id"))
+                            if _first_mapping_value(operation, "recordId", "record_id") is not None
+                            else None
+                        ),
+                    )
+                    append_results.append(reconciled.record_id)
+                else:
+                    actual_error = f"usage TCK operation {op!r} is not supported"
+            except Exception as error:
+                actual_error = str(error)
+
+            if actual_error is not None:
+                observed_errors.append({"operation": operation_index, "message": actual_error})
+            if expected_error is not None:
+                if actual_error != expected_error:
+                    diagnostics.append(
+                        {
+                            "code": "UsageOperationExpectedErrorMismatch",
+                            "message": "usage operation error did not match expected error",
+                            "path": f"$.operations[{operation_index}].expectError",
+                        }
+                    )
+            elif actual_error is not None:
+                diagnostics.append(
+                    {
+                        "code": (
+                            "UsageOperationUnknown"
+                            if op not in {"append", "reconcile"}
+                            else "UsageOperationUnexpectedError"
+                        ),
+                        "message": actual_error,
+                        "path": f"$.operations[{operation_index}]",
                     }
                 )
 
@@ -7621,6 +7655,7 @@ class TckRunner:
             "appendResults": append_results,
             "recordIds": [record.record_id for record in records],
             "totals": observed_totals,
+            "errors": observed_errors,
         }
         for key, path in (
             ("appendResults", "$.expected.appendResults"),

@@ -31,38 +31,66 @@ fn run_case(case: &Value) -> Result<(), String> {
     let mut ledger = InMemoryUsageLedger::new();
     let mut append_results = Vec::new();
 
-    for operation in operations {
-        match required_str(operation, "op")? {
-            "append" => {
-                let record = usage_record(
-                    operation
-                        .get("record")
-                        .and_then(Value::as_object)
-                        .ok_or_else(|| {
-                            format!("usage TCK case {case_name} append missing record")
-                        })?,
-                )?;
-                let appended = ledger
-                    .append(record)
-                    .map_err(|error| usage_error(case_name, error))?;
-                append_results.push(appended.record_id);
-            }
+    for (operation_index, operation) in operations.iter().enumerate() {
+        let expected_error = match operation.get("expectError") {
+            Some(value) => Some(value.as_str().ok_or_else(|| {
+                format!(
+                    "usage TCK case {case_name} operation {operation_index} expectError must be a string"
+                )
+            })?),
+            None => None,
+        };
+        let actual_error = match required_str(operation, "op")? {
+            "append" => match operation.get("record").and_then(Value::as_object) {
+                Some(record) => match usage_record(record) {
+                    Ok(record) => match ledger.append(record) {
+                        Ok(appended) => {
+                            append_results.push(appended.record_id);
+                            None
+                        }
+                        Err(error) => Some(usage_error_message(error)),
+                    },
+                    Err(error) => Some(error),
+                },
+                None => Some(format!("usage TCK case {case_name} append missing record")),
+            },
             "reconcile" => {
-                let reconciled = ledger
-                    .reconcile(
-                        required_str(operation, "sourceRecordId")?,
-                        usage_amounts(operation, "amounts")?,
-                        required_u64(operation, "occurredAtUnixMs")?,
-                        optional_str(operation, "recordId").map(str::to_owned),
-                    )
-                    .map_err(|error| usage_error(case_name, error))?;
-                append_results.push(reconciled.record_id);
+                match (
+                    required_str(operation, "sourceRecordId"),
+                    usage_amounts(operation, "amounts"),
+                    required_u64(operation, "occurredAtUnixMs"),
+                ) {
+                    (Ok(source_record_id), Ok(amounts), Ok(occurred_at_unix_ms)) => match ledger
+                        .reconcile(
+                            source_record_id,
+                            amounts,
+                            occurred_at_unix_ms,
+                            optional_str(operation, "recordId").map(str::to_owned),
+                        ) {
+                        Ok(reconciled) => {
+                            append_results.push(reconciled.record_id);
+                            None
+                        }
+                        Err(error) => Some(usage_error_message(error)),
+                    },
+                    (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Some(error),
+                }
             }
-            other => {
+            other => Some(format!(
+                "usage TCK case {case_name} has unknown operation {other}"
+            )),
+        };
+
+        if let Some(expected_error) = expected_error {
+            if actual_error.as_deref() != Some(expected_error) {
                 return Err(format!(
-                    "usage TCK case {case_name} has unknown operation {other}"
+                    "usage TCK case {case_name} operation {operation_index} expected error {expected_error:?} but observed {actual_error:?}"
                 ));
             }
+        } else if let Some(actual_error) = actual_error {
+            return Err(format!(
+                "usage TCK case {case_name} operation {operation_index} failed: {actual_error}"
+            ));
         }
     }
 
@@ -204,8 +232,11 @@ fn usage_confidence(confidence: &str) -> Result<UsageConfidence, String> {
     }
 }
 
-fn usage_error(case_name: &str, error: UsageLedgerError) -> String {
-    format!("usage TCK case {case_name} failed: {error:?}")
+fn usage_error_message(error: UsageLedgerError) -> String {
+    match error {
+        UsageLedgerError::InvalidRecord { message } => message,
+        other => format!("{other:?}"),
+    }
 }
 
 fn required_str<'a>(value: &'a Value, key: &str) -> Result<&'a str, String> {

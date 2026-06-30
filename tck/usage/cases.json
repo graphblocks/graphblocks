@@ -126,5 +126,35 @@
         }
       ]
     }
+  },
+  {
+    "name": "negative_usage_amount_is_rejected",
+    "operations": [
+      {
+        "op": "append",
+        "expectError": "usage amount must be non-negative",
+        "record": {
+          "recordId": "usage-negative",
+          "source": "runtime_measured",
+          "confidence": "exact",
+          "amounts": [
+            {
+              "kind": "model_output_tokens",
+              "amount": -1,
+              "unit": "tokens"
+            }
+          ],
+          "occurredAt": "2026-06-23T00:00:00Z",
+          "occurredAtUnixMs": 1700000,
+          "runId": "run-negative"
+        }
+      }
+    ],
+    "expected": {
+      "runId": "run-negative",
+      "appendResults": [],
+      "recordIds": [],
+      "totals": []
+    }
   }
 ]

@@ -555,16 +555,24 @@ def test_testing_package_loads_shared_usage_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_usage_tck_cases(ROOT / "tck" / "usage" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["usage"] * 2
+    assert [case.kind for case in cases] == ["usage"] * 3
     assert report.ok
     assert {tuple(result.observed["recordIds"]) for result in report.results} == {
         ("usage-provisional", "usage-reconciled"),
         ("usage-provider-1",),
+        (),
     }
     assert {tuple(result.observed["appendResults"]) for result in report.results} == {
         ("usage-provisional", "usage-reconciled"),
         ("usage-provider-1", "usage-provider-1"),
+        (),
     }
+    assert any(
+        result.observed.get("errors") == [
+            {"operation": 0, "message": "usage amount must be non-negative"}
+        ]
+        for result in report.results
+    )
     assert "load_usage_tck_cases" in graphblocks_testing.__all__
 
 
