@@ -503,11 +503,26 @@ def test_client_package_remote_adapter_builds_streaming_and_terminal_results(mon
         started_at="2026-06-24T00:00:01Z",
         completed_at="2026-06-24T00:00:03Z",
     )
+    completed = graphblocks_client.ToolResult.completed(
+        "call-1",
+        (graphblocks_client.ContentPart(kind="json", data={"items": ["billing"]}),),
+        started_at="2026-06-24T00:00:01Z",
+        completed_at="2026-06-24T00:00:03Z",
+    )
     stream = graphblocks_client.ToolResultStreamState()
-    stopped_event = graphblocks_client.ToolResultEvent.policy_stopped(
-        admitted.call.tool_call_id,
-        4,
-        stopped,
+    stopped_event = graphblocks_client.remote_tool_result_terminal_event(
+        admitted,
+        resolved,
+        _remote_output_registry(),
+        sequence=4,
+        result=stopped,
+    )
+    completed_event = graphblocks_client.remote_tool_result_completed(
+        admitted,
+        resolved,
+        _remote_output_registry(),
+        sequence=4,
+        result=completed,
     )
 
     assert started.kind == "started"
@@ -532,10 +547,53 @@ def test_client_package_remote_adapter_builds_streaming_and_terminal_results(mon
     assert stopped.status == "policy_stopped"
     assert stopped.effect_outcome == "unknown"
     assert incomplete.status == "incomplete"
+    assert completed_event.kind == "completed"
+    assert completed_event.into_result() == completed
     assert "ToolResultEvent" in graphblocks_client.__all__
     assert "ToolResultStreamState" in graphblocks_client.__all__
     assert "ToolResultStreamError" in graphblocks_client.__all__
+    assert "remote_tool_result_completed" in graphblocks_client.__all__
     assert "remote_tool_result_policy_stopped" in graphblocks_client.__all__
+    assert "remote_tool_result_terminal_event" in graphblocks_client.__all__
+
+
+def test_client_package_remote_adapter_terminal_events_require_validation(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+    admitted, resolved = _remote_admitted_call(
+        arguments={"query": "billing"},
+        output_schema="schemas/SearchResult@1",
+    )
+    invalid = graphblocks_client.ToolResult.completed(
+        "call-1",
+        (graphblocks_client.ContentPart(kind="json", data={"items": [7]}),),
+        started_at="2026-06-24T00:00:01Z",
+        completed_at="2026-06-24T00:00:03Z",
+    )
+
+    with pytest.raises(graphblocks_client.RemoteToolAdapterError, match="failed validation"):
+        graphblocks_client.remote_tool_result_terminal_event(
+            admitted,
+            resolved,
+            _remote_output_registry(),
+            sequence=4,
+            result=invalid,
+        )
+
+    failed = graphblocks_client.ToolResult.failed(
+        "call-other",
+        error={"code": "remote.failed", "message": "failed"},
+        started_at="2026-06-24T00:00:01Z",
+        completed_at="2026-06-24T00:00:03Z",
+    )
+    with pytest.raises(graphblocks_client.RemoteToolAdapterError, match="terminal event is invalid"):
+        graphblocks_client.remote_tool_result_terminal_event(
+            admitted,
+            resolved,
+            _remote_output_registry(),
+            sequence=5,
+            result=failed,
+        )
 
 
 def test_client_package_runs_local_graph_command_and_emits_events(monkeypatch) -> None:

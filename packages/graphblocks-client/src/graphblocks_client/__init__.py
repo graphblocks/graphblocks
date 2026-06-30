@@ -520,6 +520,74 @@ def remote_tool_result_artifact_ready(
     )
 
 
+def remote_tool_result_completed(
+    admitted: AdmittedToolCall,
+    resolved_tool: ResolvedTool,
+    schema_registry: ToolSchemaRegistry,
+    *,
+    sequence: int,
+    result: ToolResult,
+    max_output_bytes: int | None = None,
+    redactions: Iterable[Mapping[str, object]] = (),
+    capture_policy: Mapping[str, object] | None = None,
+) -> ToolResultEvent:
+    if result.status != "completed":
+        raise RemoteToolAdapterError("remote completed event requires a completed tool result")
+    prepare_remote_tool_result_for_model(
+        admitted,
+        resolved_tool,
+        schema_registry,
+        result,
+        max_output_bytes=max_output_bytes,
+        redactions=redactions,
+        capture_policy=capture_policy,
+    )
+    try:
+        return ToolResultEvent.completed(admitted.call.tool_call_id, sequence, result)
+    except ValueError as error:
+        raise RemoteToolAdapterError("remote completed event is invalid") from error
+
+
+def remote_tool_result_terminal_event(
+    admitted: AdmittedToolCall,
+    resolved_tool: ResolvedTool,
+    schema_registry: ToolSchemaRegistry,
+    *,
+    sequence: int,
+    result: ToolResult,
+    max_output_bytes: int | None = None,
+    redactions: Iterable[Mapping[str, object]] = (),
+    capture_policy: Mapping[str, object] | None = None,
+) -> ToolResultEvent:
+    if result.status == "completed":
+        return remote_tool_result_completed(
+            admitted,
+            resolved_tool,
+            schema_registry,
+            sequence=sequence,
+            result=result,
+            max_output_bytes=max_output_bytes,
+            redactions=redactions,
+            capture_policy=capture_policy,
+        )
+
+    prepare_remote_tool_invocation(admitted, resolved_tool)
+    constructors = {
+        "failed": ToolResultEvent.failed,
+        "denied": ToolResultEvent.denied,
+        "cancelled": ToolResultEvent.cancelled,
+        "policy_stopped": ToolResultEvent.policy_stopped,
+        "incomplete": ToolResultEvent.incomplete,
+    }
+    constructor = constructors.get(result.status)
+    if constructor is None:
+        raise RemoteToolAdapterError(f"remote terminal event does not support result status {result.status}")
+    try:
+        return constructor(admitted.call.tool_call_id, sequence, result)
+    except ValueError as error:
+        raise RemoteToolAdapterError("remote terminal event is invalid") from error
+
+
 def prepare_remote_tool_result_for_model(
     admitted: AdmittedToolCall,
     resolved_tool: ResolvedTool,
@@ -1013,6 +1081,7 @@ __all__ = [
     "prepare_remote_tool_result_for_model",
     "remote_tool_result_artifact_ready",
     "remote_tool_result_cancelled",
+    "remote_tool_result_completed",
     "remote_tool_result_denied",
     "remote_tool_result_delta",
     "remote_tool_result_from_error",
@@ -1020,4 +1089,5 @@ __all__ = [
     "remote_tool_result_incomplete",
     "remote_tool_result_policy_stopped",
     "remote_tool_result_started",
+    "remote_tool_result_terminal_event",
 ]
