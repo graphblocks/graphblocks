@@ -572,12 +572,13 @@ def test_testing_package_loads_shared_tool_execution_tck_cases(monkeypatch) -> N
     )
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["tool-execution"] * 16
+    assert [case.kind for case in cases] == ["tool-execution"] * 17
     assert report.ok
     assert {case.case_id for case in cases} == {
         "independent_read_tools_execute_concurrently",
         "conflicting_write_tools_are_serialized_by_effect_key",
         "parallel_state_changing_tools_require_effect_keys",
+        "dependency_serialized_write_tools_do_not_require_effect_keys",
         "parallel_filesystem_write_tools_require_effect_keys",
         "parallel_process_and_destructive_tools_require_effect_keys",
         "policy_abort_denies_pending_tool_calls",
@@ -834,6 +835,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "independent_read_tools_execute_concurrently",
         "conflicting_write_tools_are_serialized_by_effect_key",
         "parallel_state_changing_tools_require_effect_keys",
+        "dependency_serialized_write_tools_do_not_require_effect_keys",
         "parallel_filesystem_write_tools_require_effect_keys",
         "parallel_process_and_destructive_tools_require_effect_keys",
         "policy_abort_denies_pending_tool_calls",
