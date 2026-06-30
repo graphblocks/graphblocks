@@ -686,7 +686,7 @@ fn terminal_decision_records_accepted_prefix_in_cutoff() -> Result<(), OutputGat
 }
 
 #[test]
-fn policy_abort_cannot_keep_pending_tool_calls() -> Result<(), OutputGateError> {
+fn policy_abort_preserves_kept_pending_tool_calls() -> Result<(), OutputGateError> {
     let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
     gate.record_chunk(GenerationChunk::text(
         "stream-1",
@@ -703,7 +703,7 @@ fn policy_abort_cannot_keep_pending_tool_calls() -> Result<(), OutputGateError> 
 
     assert_eq!(
         stopped.pending_tool_calls,
-        Some(PendingToolCallsDisposition::Deny)
+        Some(PendingToolCallsDisposition::Keep)
     );
     Ok(())
 }

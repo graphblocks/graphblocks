@@ -1508,10 +1508,6 @@ impl OutputDeliveryGate {
                         self.last_policy_accepted_sequence = accepted_through_sequence;
                     }
                 }
-                let pending_tool_calls = match decision.pending_tool_calls {
-                    PendingToolCallsDisposition::Keep => PendingToolCallsDisposition::Deny,
-                    disposition => disposition,
-                };
                 let cutoff = OutputCutoff {
                     stream_id: self.stream_id.clone(),
                     response_id: self.response_id.clone(),
@@ -1531,7 +1527,7 @@ impl OutputDeliveryGate {
                     deliverable: Vec::new(),
                     cutoff: Some(cutoff),
                     provider_cancellation: Some(decision.provider_cancellation),
-                    pending_tool_calls: Some(pending_tool_calls),
+                    pending_tool_calls: Some(decision.pending_tool_calls),
                 })
             }
         }
