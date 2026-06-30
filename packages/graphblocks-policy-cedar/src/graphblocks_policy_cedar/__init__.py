@@ -283,6 +283,10 @@ def _redactions(raw_redactions: object) -> tuple[dict[str, object], ...]:
 __all__ = [
     "CedarAuthorizationRequest",
     "CedarPolicyAdapterError",
+    "VALID_DRAFT_DISPOSITIONS",
+    "VALID_OUTPUT_DISPOSITIONS",
+    "VALID_PENDING_TOOL_CALLS",
+    "VALID_PROVIDER_CANCELLATIONS",
     "output_policy_decision_from_cedar_result",
     "policy_decision_from_cedar_result",
     "prepare_cedar_authorization_request",

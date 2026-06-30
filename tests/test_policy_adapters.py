@@ -73,16 +73,26 @@ def test_policy_adapters_use_canonical_literal_sets(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-cedar" / "src"))
     graphblocks_policy_opa = importlib.import_module("graphblocks_policy_opa")
     graphblocks_policy_cedar = importlib.import_module("graphblocks_policy_cedar")
+    opa_constants = {
+        "VALID_POLICY_EFFECTS": VALID_POLICY_EFFECTS,
+        "VALID_OUTPUT_DISPOSITIONS": VALID_OUTPUT_DISPOSITIONS,
+        "VALID_PROVIDER_CANCELLATIONS": VALID_PROVIDER_CANCELLATIONS,
+        "VALID_DRAFT_DISPOSITIONS": VALID_DRAFT_DISPOSITIONS,
+        "VALID_PENDING_TOOL_CALLS": VALID_PENDING_TOOL_CALLS_DISPOSITIONS,
+    }
+    cedar_constants = {
+        "VALID_OUTPUT_DISPOSITIONS": VALID_OUTPUT_DISPOSITIONS,
+        "VALID_PROVIDER_CANCELLATIONS": VALID_PROVIDER_CANCELLATIONS,
+        "VALID_DRAFT_DISPOSITIONS": VALID_DRAFT_DISPOSITIONS,
+        "VALID_PENDING_TOOL_CALLS": VALID_PENDING_TOOL_CALLS_DISPOSITIONS,
+    }
 
-    assert graphblocks_policy_opa.VALID_POLICY_EFFECTS is VALID_POLICY_EFFECTS
-    assert graphblocks_policy_opa.VALID_OUTPUT_DISPOSITIONS is VALID_OUTPUT_DISPOSITIONS
-    assert graphblocks_policy_opa.VALID_PROVIDER_CANCELLATIONS is VALID_PROVIDER_CANCELLATIONS
-    assert graphblocks_policy_opa.VALID_DRAFT_DISPOSITIONS is VALID_DRAFT_DISPOSITIONS
-    assert graphblocks_policy_opa.VALID_PENDING_TOOL_CALLS is VALID_PENDING_TOOL_CALLS_DISPOSITIONS
-    assert graphblocks_policy_cedar.VALID_OUTPUT_DISPOSITIONS is VALID_OUTPUT_DISPOSITIONS
-    assert graphblocks_policy_cedar.VALID_PROVIDER_CANCELLATIONS is VALID_PROVIDER_CANCELLATIONS
-    assert graphblocks_policy_cedar.VALID_DRAFT_DISPOSITIONS is VALID_DRAFT_DISPOSITIONS
-    assert graphblocks_policy_cedar.VALID_PENDING_TOOL_CALLS is VALID_PENDING_TOOL_CALLS_DISPOSITIONS
+    for name, value in opa_constants.items():
+        assert getattr(graphblocks_policy_opa, name) is value
+        assert name in graphblocks_policy_opa.__all__
+    for name, value in cedar_constants.items():
+        assert getattr(graphblocks_policy_cedar, name) is value
+        assert name in graphblocks_policy_cedar.__all__
 
 
 def test_opa_adapter_prepares_canonical_policy_input(monkeypatch) -> None:

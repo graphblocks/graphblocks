@@ -291,6 +291,11 @@ def _redactions(raw_redactions: object) -> tuple[dict[str, object], ...]:
 __all__ = [
     "OpaPolicyAdapterError",
     "OpaPolicyInput",
+    "VALID_DRAFT_DISPOSITIONS",
+    "VALID_OUTPUT_DISPOSITIONS",
+    "VALID_PENDING_TOOL_CALLS",
+    "VALID_POLICY_EFFECTS",
+    "VALID_PROVIDER_CANCELLATIONS",
     "output_policy_decision_from_opa_result",
     "policy_decision_from_opa_result",
     "prepare_opa_policy_input",
