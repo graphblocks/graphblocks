@@ -804,8 +804,13 @@ def _read_json_response(response: object, label: str) -> dict[str, object]:
     if not isinstance(payload, dict):
         raise ValueError(f"{label} must be a JSON object")
     status_code = getattr(response, "status", getattr(response, "status_code", None))
-    if status_code is not None and int(status_code) >= 400:
-        raise GraphBlocksHttpError(int(status_code), payload)
+    if status_code is not None:
+        if isinstance(status_code, bool) or not isinstance(status_code, int):
+            raise ValueError(f"{label} status code must be an integer")
+        if status_code < 100 or status_code > 599:
+            raise ValueError(f"{label} status code must be a valid HTTP status")
+        if status_code >= 400:
+            raise GraphBlocksHttpError(status_code, payload)
     return payload
 
 

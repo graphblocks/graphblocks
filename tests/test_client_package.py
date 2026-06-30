@@ -770,6 +770,26 @@ def test_client_package_rejects_malformed_http_stream_response(monkeypatch) -> N
         client.run_stream("run-http-1")
 
 
+@pytest.mark.parametrize("status_code", (True, "500"))
+def test_client_package_rejects_malformed_http_status_code(monkeypatch, status_code: object) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+
+    class FakeResponse:
+        status = status_code
+
+        def read(self) -> bytes:
+            return json.dumps({"ok": True}).encode("utf-8")
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        transport=lambda request, *, timeout: FakeResponse(),
+    )
+
+    with pytest.raises(ValueError, match="GraphBlocks health response status code must be an integer"):
+        client.health()
+
+
 def test_client_package_reads_server_health_over_http_transport(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
     graphblocks_client = importlib.import_module("graphblocks_client")
