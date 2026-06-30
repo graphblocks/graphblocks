@@ -65,6 +65,18 @@ fn run_case(case: &Value) -> Result<(), String> {
                     gate.apply_decision(decision, required_u64(operation, "occurredAt", name)?);
                 assert_update_result(name, operation, result)?;
             }
+            "hold" => {
+                let decision = with_decision_metadata(
+                    OutputPolicyDecision::hold(
+                        required_str(operation, "decisionId", name)?,
+                        required_str(operation, "inputDigest", name)?,
+                    ),
+                    operation,
+                );
+                let result =
+                    gate.apply_decision(decision, required_u64(operation, "occurredAt", name)?);
+                assert_update_result(name, operation, result)?;
+            }
             "redact" | "replace" => {
                 let mut replacement_chunks = Vec::new();
                 if let Some(chunks) = operation.get("replacementChunks").and_then(Value::as_array) {

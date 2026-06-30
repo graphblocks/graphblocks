@@ -8129,6 +8129,11 @@ class TckRunner:
                         accepted_through_sequence=int(accepted_through) if accepted_through is not None else None,
                         input_digest=str(operation.get("inputDigest", "")),
                     )
+                elif op == "hold":
+                    decision = OutputPolicyDecision.hold(
+                        str(operation.get("decisionId", "")),
+                        input_digest=str(operation.get("inputDigest", "")),
+                    )
                 elif op in {"redact", "replace"}:
                     accepted_through = operation.get("acceptedThrough")
                     accepted_sequence = int(accepted_through) if accepted_through is not None else None

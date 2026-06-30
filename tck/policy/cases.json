@@ -38,6 +38,54 @@
     }
   },
   {
+    "name": "hold_keeps_pending_output_until_later_allow",
+    "delivery": {
+      "mode": "bounded_holdback",
+      "holdbackMaxTokens": 8
+    },
+    "operations": [
+      {
+        "op": "chunk",
+        "sequence": 1,
+        "text": "safe "
+      },
+      {
+        "op": "hold",
+        "decisionId": "decision-hold",
+        "inputDigest": "sha256:hold",
+        "occurredAt": 1000
+      },
+      {
+        "op": "chunk",
+        "sequence": 2,
+        "text": "answer"
+      },
+      {
+        "op": "allow",
+        "decisionId": "decision-allow-after-hold",
+        "acceptedThrough": 2,
+        "inputDigest": "sha256:allow-after-hold",
+        "occurredAt": 1100,
+        "deliver": [
+          {
+            "sequence": 1,
+            "text": "safe "
+          },
+          {
+            "sequence": 2,
+            "text": "answer"
+          }
+        ]
+      }
+    ],
+    "expected": {
+      "lastGeneratedSequence": 2,
+      "lastPolicyAcceptedSequence": 2,
+      "lastClientDeliveredSequence": 2,
+      "stopped": false
+    }
+  },
+  {
     "name": "bounded_holdback_flushes_only_at_sentence_boundary",
     "delivery": {
       "mode": "bounded_holdback",
