@@ -1697,6 +1697,8 @@ class ToolResult:
             raise ValueError(f"invalid tool result status {self.status}")
         if self.effect_outcome not in VALID_TOOL_EFFECT_OUTCOMES:
             raise ValueError(f"invalid tool effect outcome {self.effect_outcome}")
+        if self.status == "denied" and self.effect_outcome in {"committed", "unknown"}:
+            raise ValueError("denied tool result effect_outcome must be not_committed or no_external_effect")
         if (
             self.started_at is not None
             and self.completed_at is not None

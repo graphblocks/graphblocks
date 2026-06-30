@@ -6815,59 +6815,66 @@ class TckRunner:
                 if not isinstance(operations, list):
                     raise ValueError("tool-result stream_state operations must be a list")
                 for operation_index, operation in enumerate(operations):
-                    if not isinstance(operation, Mapping):
-                        raise ValueError("tool-result stream_state operation must be a mapping")
-                    raw_event = operation.get("event")
-                    if not isinstance(raw_event, Mapping):
-                        raise ValueError("tool-result stream_state accept operation requires event")
-                    event_kind = str(raw_event.get("kind", ""))
-                    tool_call_id = str(raw_event.get("toolCallId", raw_event.get("tool_call_id", "")))
-                    sequence = int(raw_event.get("sequence", 0))
-                    tool_call_ids.add(tool_call_id)
-                    if event_kind == "started":
-                        result_event = ToolResultEvent.started(
-                            tool_call_id,
-                            sequence,
-                            started_at=str(raw_event.get("startedAt", raw_event.get("started_at", ""))),
-                        )
-                    elif event_kind == "delta":
-                        raw_output = raw_event.get("output", [])
-                        if not isinstance(raw_output, list):
-                            raise ValueError("tool-result stream_state delta output must be a list")
-                        result_event = ToolResultEvent.delta(
-                            tool_call_id,
-                            sequence,
-                            tuple(self._tool_result_content_part_from_fixture(part) for part in raw_output),
-                        )
-                    elif event_kind == "completed":
-                        raw_result = raw_event.get("result", {})
-                        if not isinstance(raw_result, Mapping):
-                            raise ValueError("tool-result stream_state completed event requires result")
-                        raw_output = raw_result.get("output", [])
-                        if not isinstance(raw_output, list):
-                            raise ValueError("tool-result stream_state completed output must be a list")
-                        result = ToolResult.completed(
-                            tool_call_id,
-                            tuple(self._tool_result_content_part_from_fixture(part) for part in raw_output),
-                            started_at=str(raw_result.get("startedAt", raw_result.get("started_at", ""))),
-                            completed_at=str(raw_result.get("completedAt", raw_result.get("completed_at", ""))),
-                        )
-                        result_event = ToolResultEvent.completed(tool_call_id, sequence, result)
-                    elif event_kind == "denied":
-                        raw_result = raw_event.get("result", {})
-                        if not isinstance(raw_result, Mapping):
-                            raise ValueError("tool-result stream_state denied event requires result")
-                        raw_error = raw_result.get("error", {})
-                        if not isinstance(raw_error, Mapping):
-                            raw_error = {"code": "tool.denied", "message": str(raw_error)}
-                        result = ToolResult.denied(
-                            tool_call_id,
-                            error=dict(raw_error),
-                            completed_at=str(raw_result.get("completedAt", raw_result.get("completed_at", ""))),
-                        )
-                        result_event = ToolResultEvent.denied(tool_call_id, sequence, result)
-                    else:
-                        raise ValueError(f"tool-result stream_state event kind {event_kind!r} is not supported")
+                    try:
+                        if not isinstance(operation, Mapping):
+                            raise ValueError("tool-result stream_state operation must be a mapping")
+                        raw_event = operation.get("event")
+                        if not isinstance(raw_event, Mapping):
+                            raise ValueError("tool-result stream_state accept operation requires event")
+                        event_kind = str(raw_event.get("kind", ""))
+                        tool_call_id = str(raw_event.get("toolCallId", raw_event.get("tool_call_id", "")))
+                        sequence = int(raw_event.get("sequence", 0))
+                        tool_call_ids.add(tool_call_id)
+                        if event_kind == "started":
+                            result_event = ToolResultEvent.started(
+                                tool_call_id,
+                                sequence,
+                                started_at=str(raw_event.get("startedAt", raw_event.get("started_at", ""))),
+                            )
+                        elif event_kind == "delta":
+                            raw_output = raw_event.get("output", [])
+                            if not isinstance(raw_output, list):
+                                raise ValueError("tool-result stream_state delta output must be a list")
+                            result_event = ToolResultEvent.delta(
+                                tool_call_id,
+                                sequence,
+                                tuple(self._tool_result_content_part_from_fixture(part) for part in raw_output),
+                            )
+                        elif event_kind == "completed":
+                            raw_result = raw_event.get("result", {})
+                            if not isinstance(raw_result, Mapping):
+                                raise ValueError("tool-result stream_state completed event requires result")
+                            raw_output = raw_result.get("output", [])
+                            if not isinstance(raw_output, list):
+                                raise ValueError("tool-result stream_state completed output must be a list")
+                            result = ToolResult.completed(
+                                tool_call_id,
+                                tuple(self._tool_result_content_part_from_fixture(part) for part in raw_output),
+                                started_at=str(raw_result.get("startedAt", raw_result.get("started_at", ""))),
+                                completed_at=str(raw_result.get("completedAt", raw_result.get("completed_at", ""))),
+                            )
+                            result_event = ToolResultEvent.completed(tool_call_id, sequence, result)
+                        elif event_kind == "denied":
+                            raw_result = raw_event.get("result", {})
+                            if not isinstance(raw_result, Mapping):
+                                raise ValueError("tool-result stream_state denied event requires result")
+                            raw_error = raw_result.get("error", {})
+                            if not isinstance(raw_error, Mapping):
+                                raw_error = {"code": "tool.denied", "message": str(raw_error)}
+                            result = ToolResult.denied(
+                                tool_call_id,
+                                error=dict(raw_error),
+                                completed_at=str(raw_result.get("completedAt", raw_result.get("completed_at", ""))),
+                            )
+                            effect_outcome = raw_result.get("effectOutcome", raw_result.get("effect_outcome"))
+                            if effect_outcome is not None:
+                                result = result.with_effect_outcome(str(effect_outcome))
+                            result_event = ToolResultEvent.denied(tool_call_id, sequence, result)
+                        else:
+                            raise ValueError(f"tool-result stream_state event kind {event_kind!r} is not supported")
+                    except (TypeError, ValueError):
+                        errors.append({"operation": operation_index, "code": "InvalidEvent"})
+                        continue
 
                     try:
                         accepted_event = stream.accept(result_event)

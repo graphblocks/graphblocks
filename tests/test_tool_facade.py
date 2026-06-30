@@ -2759,6 +2759,27 @@ def test_denied_tool_result_records_pre_execution_denial() -> None:
     assert result.error == {"code": "tool.denied", "message": "tool was denied before execution"}
 
 
+def test_denied_tool_result_rejects_committed_or_unknown_effect_outcome() -> None:
+    denied = ToolResult.denied(
+        "call-1",
+        error={"code": "tool.denied", "message": "tool was denied before execution"},
+        completed_at="2026-06-23T00:00:01Z",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="denied tool result effect_outcome must be not_committed or no_external_effect",
+    ):
+        denied.with_effect_outcome("committed")
+    with pytest.raises(
+        ValueError,
+        match="denied tool result effect_outcome must be not_committed or no_external_effect",
+    ):
+        denied.with_effect_outcome("unknown")
+
+    assert denied.with_effect_outcome("no_external_effect").effect_outcome == "no_external_effect"
+
+
 def test_policy_stopped_tool_result_can_report_committed_effect_outcome() -> None:
     result = ToolResult.policy_stopped(
         "call-1",

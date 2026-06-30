@@ -9,9 +9,9 @@ use graphblocks_runtime_core::tool::{
 };
 use graphblocks_runtime_core::tool_call::ToolCallDraft;
 use graphblocks_runtime_core::tool_result::{
-    ContentPart, ContentPartKind, ToolResult, ToolResultContentPolicy, ToolResultEvent,
-    ToolResultStreamError, ToolResultStreamState, ToolResultValidation, ToolResultValidationError,
-    ToolResultValidationRequest,
+    ContentPart, ContentPartKind, ToolEffectOutcome, ToolResult, ToolResultContentPolicy,
+    ToolResultEvent, ToolResultStreamError, ToolResultStreamState, ToolResultValidation,
+    ToolResultValidationError, ToolResultValidationRequest,
 };
 use graphblocks_runtime_core::tool_schema::{JsonSchema, JsonSchemaNode, ToolSchemaRegistry};
 use serde_json::{Map, Value, json};
@@ -390,22 +390,25 @@ fn tool_result_event_from_fixture(
                 .get("error")
                 .and_then(Value::as_object)
                 .ok_or_else(|| "tool-result denied result requires error".to_owned())?;
-            Ok(ToolResultEvent::denied(
+            let mut result = ToolResult::denied(
                 tool_call_id,
-                sequence,
-                ToolResult::denied(
-                    tool_call_id,
-                    BlockError::new(
-                        optional_map_str(raw_error, "code").unwrap_or("tool.denied"),
-                        ErrorCategory::Policy,
-                        optional_map_str(raw_error, "message").unwrap_or("tool denied"),
-                        false,
-                    ),
-                    optional_map_u64(raw_result, "completedAtUnixMs")
-                        .or_else(|| optional_map_u64(raw_result, "completed_at_unix_ms"))
-                        .unwrap_or(1_200),
+                BlockError::new(
+                    optional_map_str(raw_error, "code").unwrap_or("tool.denied"),
+                    ErrorCategory::Policy,
+                    optional_map_str(raw_error, "message").unwrap_or("tool denied"),
+                    false,
                 ),
-            ))
+                optional_map_u64(raw_result, "completedAtUnixMs")
+                    .or_else(|| optional_map_u64(raw_result, "completed_at_unix_ms"))
+                    .unwrap_or(1_200),
+            );
+            if let Some(effect_outcome) = optional_map_str(raw_result, "effectOutcome")
+                .or_else(|| optional_map_str(raw_result, "effect_outcome"))
+            {
+                result =
+                    result.with_effect_outcome(tool_effect_outcome_from_fixture(effect_outcome)?);
+            }
+            Ok(ToolResultEvent::denied(tool_call_id, sequence, result))
         }
         other => Err(format!("unsupported tool-result stream event kind {other}")),
     }
@@ -731,6 +734,16 @@ fn tool_result_mode_from_fixture(result_mode: &str) -> Result<ToolResultMode, St
         "bounded_sequence" => Ok(ToolResultMode::BoundedSequence),
         "artifact_reference" => Ok(ToolResultMode::ArtifactReference),
         other => Err(format!("unsupported tool result mode {other}")),
+    }
+}
+
+fn tool_effect_outcome_from_fixture(effect_outcome: &str) -> Result<ToolEffectOutcome, String> {
+    match effect_outcome {
+        "no_external_effect" => Ok(ToolEffectOutcome::NoExternalEffect),
+        "committed" => Ok(ToolEffectOutcome::Committed),
+        "not_committed" => Ok(ToolEffectOutcome::NotCommitted),
+        "unknown" => Ok(ToolEffectOutcome::Unknown),
+        other => Err(format!("unsupported tool effect outcome {other}")),
     }
 }
 

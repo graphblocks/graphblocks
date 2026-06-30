@@ -245,5 +245,65 @@
         "call-3": 1
       }
     }
+  },
+  {
+    "name": "stream_state_rejects_denied_result_with_committed_effect",
+    "kind": "stream_state",
+    "operations": [
+      {
+        "op": "accept",
+        "event": {
+          "kind": "denied",
+          "toolCallId": "call-1",
+          "sequence": 1,
+          "result": {
+            "status": "denied",
+            "error": {
+              "code": "tool.denied",
+              "message": "blocked before execution"
+            },
+            "effectOutcome": "committed",
+            "completedAt": "2026-06-23T00:00:01Z"
+          }
+        }
+      },
+      {
+        "op": "accept",
+        "event": {
+          "kind": "denied",
+          "toolCallId": "call-2",
+          "sequence": 1,
+          "result": {
+            "status": "denied",
+            "error": {
+              "code": "tool.denied",
+              "message": "blocked before execution"
+            },
+            "effectOutcome": "no_external_effect",
+            "completedAt": "2026-06-23T00:00:02Z"
+          }
+        }
+      }
+    ],
+    "expected": {
+      "accepted": [
+        {
+          "toolCallId": "call-2",
+          "kind": "denied"
+        }
+      ],
+      "errors": [
+        {
+          "operation": 0,
+          "code": "InvalidEvent"
+        }
+      ],
+      "finalStatuses": {
+        "call-2": "denied"
+      },
+      "lastSequences": {
+        "call-2": 1
+      }
+    }
   }
 ]

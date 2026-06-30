@@ -613,7 +613,7 @@ def test_testing_package_loads_shared_tool_result_tck_cases(monkeypatch) -> None
     )
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["tool-result"] * 5
+    assert [case.kind for case in cases] == ["tool-result"] * 6
     assert report.ok
     assert {case.case_id for case in cases} == {
         "completed_tool_result_is_labeled_redacted_and_captured",
@@ -621,6 +621,7 @@ def test_testing_package_loads_shared_tool_result_tck_cases(monkeypatch) -> None
         "stale_output_digest_is_rejected_before_model_return",
         "artifact_reference_mode_rejects_inline_output",
         "stream_state_requires_started_before_incremental_output",
+        "stream_state_rejects_denied_result_with_committed_effect",
     }
     assert any(result.observed.get("texts") == ["safe [redacted] suffix"] for result in report.results)
     assert any("expected string" in str(result.observed.get("error")) for result in report.results)
@@ -633,6 +634,11 @@ def test_testing_package_loads_shared_tool_result_tck_cases(monkeypatch) -> None
             {"operation": 1, "code": "EventBeforeStarted"},
             {"operation": 4, "code": "DuplicateStarted"},
         ]
+        for result in report.results
+    )
+    assert any(
+        result.observed.get("errors") == [{"operation": 0, "code": "InvalidEvent"}]
+        and result.observed.get("finalStatuses") == {"call-2": "denied"}
         for result in report.results
     )
     assert "load_tool_result_tck_cases" in graphblocks_testing.__all__
@@ -806,6 +812,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "stale_output_digest_is_rejected_before_model_return",
         "artifact_reference_mode_rejects_inline_output",
         "stream_state_requires_started_before_incremental_output",
+        "stream_state_rejects_denied_result_with_committed_effect",
     )
     assert by_suite["retry"].case_ids == (
         "effect_retry_preserves_idempotency_key",
