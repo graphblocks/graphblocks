@@ -17,6 +17,7 @@ try:
         evaluate_application_event_stream_json,
         evaluate_application_protocol_log_json,
         evaluate_application_protocol_stream_json,
+        evaluate_cancellation_scope_json,
         evaluate_connector_capabilities_json,
         evaluate_declarative_output_policy_json,
         evaluate_durable_tool_terminal_store_json,
@@ -143,6 +144,9 @@ except ImportError as error:
         require_native_extension()
 
     def evaluate_provider_limit_policy_json(policy_json: str, incident_json: str) -> str:
+        require_native_extension()
+
+    def evaluate_cancellation_scope_json(root_json: str, operations_json: str) -> str:
         require_native_extension()
 
     def evaluate_declarative_output_policy_json(
@@ -421,6 +425,13 @@ def evaluate_provider_limit_policy(
     )
 
 
+def evaluate_cancellation_scope(root: dict[str, object], operations: object) -> dict[str, object]:
+    return _json_object_result(
+        evaluate_cancellation_scope_json(_canonical_json(root), _canonical_json(operations)),
+        "native cancellation scope evaluation result",
+    )
+
+
 def evaluate_declarative_output_policy(
     rules: object,
     chunk: dict[str, object],
@@ -603,6 +614,8 @@ __all__ = [
     "evaluate_application_protocol_log_json",
     "evaluate_application_protocol_stream",
     "evaluate_application_protocol_stream_json",
+    "evaluate_cancellation_scope",
+    "evaluate_cancellation_scope_json",
     "evaluate_connector_capabilities",
     "evaluate_connector_capabilities_json",
     "evaluate_durable_tool_terminal_store",

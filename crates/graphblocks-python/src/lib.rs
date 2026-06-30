@@ -18,6 +18,9 @@ use graphblocks_runtime_core::audit::{
     AuditEvent, ToolEffectAuditContext, ToolEffectPrecondition, ToolEffectPreconditionContext,
 };
 use graphblocks_runtime_core::budget::{BudgetPermit, UsageAmount};
+use graphblocks_runtime_core::cancellation::{
+    CancellationGuarantee, CancellationScope, CancellationToken,
+};
 use graphblocks_runtime_core::connectors::{ConnectionSpec, SecretRef, ensure_capabilities};
 use graphblocks_runtime_core::exhaustion::{
     ContinuationEnvelope, ExhaustionController, ExhaustionPolicy, ExhaustionPreset, ExhaustionUnit,
@@ -26,7 +29,9 @@ use graphblocks_runtime_core::exhaustion::{
 use graphblocks_runtime_core::observability::{
     CaptureDecision, CaptureMode, CapturedContent, RedactionRule,
 };
-use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory, Outcome};
+use graphblocks_runtime_core::outcome::{
+    BlockError, CancelCode, CancelReason, ErrorCategory, Outcome,
+};
 use graphblocks_runtime_core::output_policy::{
     DeclarativeOutputPolicyEvaluator, DeclarativeOutputPolicyRule, DraftDisposition, DurableResult,
     FlushBoundary, GenerationChunk, OutputCutoff, OutputDeliveryGate, OutputDeliveryPolicy,
@@ -593,6 +598,260 @@ fn evaluate_provider_limit_policy_json(policy_json: &str, incident_json: &str) -
     serde_json::to_string(&payload).map_err(|error| {
         PyRuntimeError::new_err(format!(
             "failed to serialize provider limit decision: {error}"
+        ))
+    })
+}
+
+#[pyfunction]
+fn evaluate_cancellation_scope_json(root_json: &str, operations_json: &str) -> PyResult<String> {
+    let parse_scope = |value: &str, label: &str| -> PyResult<CancellationScope> {
+        match value {
+            "provider_call" | "providerCall" => Ok(CancellationScope::ProviderCall),
+            "node" => Ok(CancellationScope::Node),
+            "branch" => Ok(CancellationScope::Branch),
+            "task_group" | "taskGroup" => Ok(CancellationScope::TaskGroup),
+            "agent_step" | "agentStep" => Ok(CancellationScope::AgentStep),
+            "turn" => Ok(CancellationScope::Turn),
+            "map_item" | "mapItem" => Ok(CancellationScope::MapItem),
+            "task" => Ok(CancellationScope::Task),
+            "trial" => Ok(CancellationScope::Trial),
+            "run" => Ok(CancellationScope::Run),
+            "job" => Ok(CancellationScope::Job),
+            "session" => Ok(CancellationScope::Session),
+            value => Err(PyValueError::new_err(format!(
+                "{label} has unknown cancellation scope {value:?}"
+            ))),
+        }
+    };
+    let parse_guarantee = |value: &str, label: &str| -> PyResult<CancellationGuarantee> {
+        match value {
+            "immediate_local" | "immediateLocal" => Ok(CancellationGuarantee::ImmediateLocal),
+            "cooperative" => Ok(CancellationGuarantee::Cooperative),
+            "best_effort_remote" | "bestEffortRemote" => {
+                Ok(CancellationGuarantee::BestEffortRemote)
+            }
+            "non_cancellable_atomic_section" | "nonCancellableAtomicSection" => {
+                Ok(CancellationGuarantee::NonCancellableAtomicSection)
+            }
+            value => Err(PyValueError::new_err(format!(
+                "{label} has unknown cancellation guarantee {value:?}"
+            ))),
+        }
+    };
+    let parse_cancel_reason = |value: &Value, label: &str| -> PyResult<CancelReason> {
+        let object = json_object(value, label)?;
+        let code = match required_alias_string(object, "code", "code", label)? {
+            "client_disconnect" | "clientDisconnect" => CancelCode::ClientDisconnect,
+            "user_cancel" | "userCancel" => CancelCode::UserCancel,
+            "timeout" => CancelCode::Timeout,
+            "superseded" => CancelCode::Superseded,
+            "policy_denied" | "policyDenied" => CancelCode::PolicyDenied,
+            "budget_exhausted" | "budgetExhausted" => CancelCode::BudgetExhausted,
+            "provider_quota_exhausted" | "providerQuotaExhausted" => {
+                CancelCode::ProviderQuotaExhausted
+            }
+            "dependency_failed" | "dependencyFailed" => CancelCode::DependencyFailed,
+            "shutdown" => CancelCode::Shutdown,
+            "barge_in" | "bargeIn" => CancelCode::BargeIn,
+            "rollout_drain" | "rolloutDrain" => CancelCode::RolloutDrain,
+            "lease_lost" | "leaseLost" => CancelCode::LeaseLost,
+            "entitlement_revoked" | "entitlementRevoked" => CancelCode::EntitlementRevoked,
+            value => {
+                return Err(PyValueError::new_err(format!(
+                    "{label}.code has unknown cancellation code {value:?}"
+                )));
+            }
+        };
+        let mut reason = CancelReason::new(code);
+        reason.message = optional_nullable_alias_string(object, "message", "message", label)?
+            .map(ToOwned::to_owned);
+        reason.requested_by =
+            optional_nullable_alias_string(object, "requestedBy", "requested_by", label)?
+                .map(ToOwned::to_owned);
+        reason.policy_decision_ref = optional_nullable_alias_string(
+            object,
+            "policyDecisionRef",
+            "policy_decision_ref",
+            label,
+        )?
+        .map(ToOwned::to_owned);
+        Ok(reason)
+    };
+    let scope_name = |scope: CancellationScope| match scope {
+        CancellationScope::ProviderCall => "provider_call",
+        CancellationScope::Node => "node",
+        CancellationScope::Branch => "branch",
+        CancellationScope::TaskGroup => "task_group",
+        CancellationScope::AgentStep => "agent_step",
+        CancellationScope::Turn => "turn",
+        CancellationScope::MapItem => "map_item",
+        CancellationScope::Task => "task",
+        CancellationScope::Trial => "trial",
+        CancellationScope::Run => "run",
+        CancellationScope::Job => "job",
+        CancellationScope::Session => "session",
+    };
+    let guarantee_name = |guarantee: CancellationGuarantee| match guarantee {
+        CancellationGuarantee::ImmediateLocal => "immediate_local",
+        CancellationGuarantee::Cooperative => "cooperative",
+        CancellationGuarantee::BestEffortRemote => "best_effort_remote",
+        CancellationGuarantee::NonCancellableAtomicSection => "non_cancellable_atomic_section",
+    };
+    let reason_json = |reason: CancelReason| {
+        let code = match reason.code {
+            CancelCode::ClientDisconnect => "client_disconnect",
+            CancelCode::UserCancel => "user_cancel",
+            CancelCode::Timeout => "timeout",
+            CancelCode::Superseded => "superseded",
+            CancelCode::PolicyDenied => "policy_denied",
+            CancelCode::BudgetExhausted => "budget_exhausted",
+            CancelCode::ProviderQuotaExhausted => "provider_quota_exhausted",
+            CancelCode::DependencyFailed => "dependency_failed",
+            CancelCode::Shutdown => "shutdown",
+            CancelCode::BargeIn => "barge_in",
+            CancelCode::RolloutDrain => "rollout_drain",
+            CancelCode::LeaseLost => "lease_lost",
+            CancelCode::EntitlementRevoked => "entitlement_revoked",
+        };
+        json!({
+            "code": code,
+            "message": reason.message,
+            "requestedBy": reason.requested_by,
+            "policyDecisionRef": reason.policy_decision_ref,
+        })
+    };
+
+    let root_value = parse_json_argument(root_json, "cancellation root")?;
+    let operations_value = parse_json_argument(operations_json, "cancellation operations")?;
+    let root_object = json_object(&root_value, "cancellation root")?;
+    let operations = operations_value
+        .as_array()
+        .ok_or_else(|| PyValueError::new_err("cancellation operations must be an array"))?;
+    let root_id =
+        required_alias_string(root_object, "tokenId", "token_id", "cancellation root")?.to_owned();
+    let root_scope = parse_scope(
+        required_alias_string(root_object, "scope", "scope", "cancellation root")?,
+        "cancellation root.scope",
+    )?;
+    let root_guarantee = parse_guarantee(
+        required_alias_string(root_object, "guarantee", "guarantee", "cancellation root")?,
+        "cancellation root.guarantee",
+    )?;
+    let mut tokens = BTreeMap::from([(
+        root_id.clone(),
+        CancellationToken::new(root_scope, root_guarantee),
+    )]);
+    let mut operation_results = Vec::new();
+
+    for (operation_index, operation) in operations.iter().enumerate() {
+        let label = format!("cancellation operations[{operation_index}]");
+        let operation = json_object(operation, &label)?;
+        match required_alias_string(operation, "op", "kind", &label)? {
+            "child" => {
+                let parent_id = required_alias_string(operation, "parentId", "parent_id", &label)?;
+                let token_id = required_alias_string(operation, "tokenId", "token_id", &label)?;
+                if tokens.contains_key(token_id) {
+                    return Err(PyValueError::new_err(format!(
+                        "{label}.tokenId duplicates existing token {token_id:?}"
+                    )));
+                }
+                let parent = tokens.get(parent_id).cloned().ok_or_else(|| {
+                    PyValueError::new_err(format!(
+                        "{label}.parentId references unknown token {parent_id:?}"
+                    ))
+                })?;
+                let child_scope = parse_scope(
+                    required_alias_string(operation, "scope", "scope", &label)?,
+                    &format!("{label}.scope"),
+                )?;
+                let child_guarantee = parse_guarantee(
+                    required_alias_string(operation, "guarantee", "guarantee", &label)?,
+                    &format!("{label}.guarantee"),
+                )?;
+                let child = parent.child(child_scope, child_guarantee);
+                let cancelled = child.is_cancelled();
+                tokens.insert(token_id.to_owned(), child);
+                operation_results.push(json!({
+                    "op": "child",
+                    "parentId": parent_id,
+                    "tokenId": token_id,
+                    "cancelled": cancelled,
+                }));
+            }
+            "cancel" => {
+                let token_id = required_alias_string(operation, "tokenId", "token_id", &label)?;
+                let reason_value = alias_value(operation, "reason", "reason")
+                    .ok_or_else(|| PyValueError::new_err(format!("{label}.reason is required")))?;
+                let reason = parse_cancel_reason(reason_value, &format!("{label}.reason"))?;
+                let token = tokens.get(token_id).cloned().ok_or_else(|| {
+                    PyValueError::new_err(format!(
+                        "{label}.tokenId references unknown token {token_id:?}"
+                    ))
+                })?;
+                let accepted = token.cancel(reason);
+                operation_results.push(json!({
+                    "op": "cancel",
+                    "tokenId": token_id,
+                    "accepted": accepted,
+                    "cancelled": token.is_cancelled(),
+                    "reason": token.reason().map(&reason_json).unwrap_or(Value::Null),
+                }));
+            }
+            "effective_guarantee" | "effectiveGuarantee" => {
+                let requested = parse_guarantee(
+                    required_alias_string(operation, "requested", "requested", &label)?,
+                    &format!("{label}.requested"),
+                )?;
+                let capability = parse_guarantee(
+                    required_alias_string(operation, "capability", "capability", &label)?,
+                    &format!("{label}.capability"),
+                )?;
+                operation_results.push(json!({
+                    "op": "effective_guarantee",
+                    "requested": guarantee_name(requested),
+                    "capability": guarantee_name(capability),
+                    "effective": guarantee_name(CancellationGuarantee::effective(requested, capability)),
+                }));
+            }
+            value => {
+                return Err(PyValueError::new_err(format!(
+                    "{label}.op has unknown operation {value:?}"
+                )));
+            }
+        }
+    }
+
+    let states = tokens
+        .iter()
+        .map(|(token_id, token)| {
+            json!({
+                "tokenId": token_id,
+                "scope": scope_name(token.scope()),
+                "guarantee": guarantee_name(token.guarantee()),
+                "cancelled": token.is_cancelled(),
+                "reason": token.reason().map(&reason_json).unwrap_or(Value::Null),
+            })
+        })
+        .collect::<Vec<_>>();
+    let state_by_token_id = states
+        .iter()
+        .filter_map(|state| {
+            state
+                .get("tokenId")
+                .and_then(Value::as_str)
+                .map(|token_id| (token_id.to_owned(), state.clone()))
+        })
+        .collect::<serde_json::Map<_, _>>();
+    let payload = json!({
+        "ok": true,
+        "rootTokenId": root_id,
+        "operations": operation_results,
+        "states": states,
+        "stateByTokenId": state_by_token_id,
+    });
+    serde_json::to_string(&payload).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize cancellation scope evaluation: {error}"
         ))
     })
 }
@@ -6478,6 +6737,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
         evaluate_provider_limit_policy_json,
         module
     )?)?;
+    module.add_function(wrap_pyfunction!(evaluate_cancellation_scope_json, module)?)?;
     module.add_function(wrap_pyfunction!(
         record_tool_effect_precondition_json,
         module
@@ -6536,9 +6796,9 @@ mod tests {
         admit_exhaustion_work_json, admit_worker_message_json, capture_telemetry_content_json,
         compile_graph_json, decide_agent_step_json, evaluate_application_event_stream_json,
         evaluate_application_protocol_log_json, evaluate_application_protocol_stream_json,
-        evaluate_connector_capabilities_json, evaluate_declarative_output_policy_json,
-        evaluate_durable_tool_terminal_store_json, evaluate_output_gate_json,
-        evaluate_provider_limit_policy_json, evaluate_retry_policy_json,
+        evaluate_cancellation_scope_json, evaluate_connector_capabilities_json,
+        evaluate_declarative_output_policy_json, evaluate_durable_tool_terminal_store_json,
+        evaluate_output_gate_json, evaluate_provider_limit_policy_json, evaluate_retry_policy_json,
         evaluate_sequential_tool_queue_json, evaluate_tool_approval_json,
         evaluate_tool_execution_plan_json, evaluate_tool_result_stream_json,
         evaluate_usage_ledger_json, finalize_tool_call_json,
@@ -7315,6 +7575,95 @@ mod tests {
             Some("openai-compatible:gpt-economy")
         );
         assert_eq!(fallback.get("requiresPolicyRecheck"), Some(&json!(true)));
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_cancellation_scope_json_propagates_and_preserves_first_reason() -> Result<(), String>
+    {
+        let root = json!({
+            "tokenId": "run",
+            "scope": "run",
+            "guarantee": "cooperative"
+        });
+        let operations = json!([
+            {
+                "op": "child",
+                "parentId": "run",
+                "tokenId": "provider",
+                "scope": "provider_call",
+                "guarantee": "best_effort_remote"
+            },
+            {
+                "op": "cancel",
+                "tokenId": "run",
+                "reason": {
+                    "code": "policy_denied",
+                    "message": "blocked by output policy",
+                    "requestedBy": "policy",
+                    "policyDecisionRef": "decision-1"
+                }
+            },
+            {
+                "op": "child",
+                "parentId": "run",
+                "tokenId": "late-task",
+                "scope": "task",
+                "guarantee": "immediate_local"
+            },
+            {
+                "op": "cancel",
+                "tokenId": "run",
+                "reason": {"code": "timeout"}
+            },
+            {
+                "op": "effective_guarantee",
+                "requested": "immediate_local",
+                "capability": "best_effort_remote"
+            }
+        ]);
+        let result_json = evaluate_cancellation_scope_json(
+            &serde_json::to_string(&root).map_err(|error| error.to_string())?,
+            &serde_json::to_string(&operations).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(result.get("ok"), Some(&json!(true)));
+        assert_eq!(result.pointer("/operations/1/accepted"), Some(&json!(true)));
+        assert_eq!(
+            result.pointer("/operations/2/cancelled"),
+            Some(&json!(true))
+        );
+        assert_eq!(
+            result.pointer("/operations/3/accepted"),
+            Some(&json!(false))
+        );
+        assert_eq!(
+            result
+                .pointer("/operations/4/effective")
+                .and_then(Value::as_str),
+            Some("best_effort_remote")
+        );
+        assert_eq!(
+            result
+                .pointer("/stateByTokenId/provider/reason/code")
+                .and_then(Value::as_str),
+            Some("policy_denied")
+        );
+        assert_eq!(
+            result
+                .pointer("/stateByTokenId/late-task/reason/policyDecisionRef")
+                .and_then(Value::as_str),
+            Some("decision-1")
+        );
+        assert_eq!(
+            result
+                .pointer("/stateByTokenId/run/reason/code")
+                .and_then(Value::as_str),
+            Some("policy_denied")
+        );
         Ok(())
     }
 

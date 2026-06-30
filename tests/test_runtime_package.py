@@ -283,6 +283,16 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             }
         )
 
+    def evaluate_cancellation_scope_json(root_json: str, operations_json: str) -> str:
+        calls.append(("cancellation_scope", (root_json, operations_json)))
+        return json.dumps(
+            {
+                "ok": True,
+                "root": json.loads(root_json),
+                "operations": json.loads(operations_json),
+            }
+        )
+
     def evaluate_declarative_output_policy_json(
         rules_json: str,
         chunk_json: str,
@@ -393,6 +403,7 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         evaluate_application_event_stream_json=evaluate_application_event_stream_json,
         evaluate_application_protocol_log_json=evaluate_application_protocol_log_json,
         evaluate_application_protocol_stream_json=evaluate_application_protocol_stream_json,
+        evaluate_cancellation_scope_json=evaluate_cancellation_scope_json,
         evaluate_connector_capabilities_json=evaluate_connector_capabilities_json,
         evaluate_declarative_output_policy_json=evaluate_declarative_output_policy_json,
         evaluate_durable_tool_terminal_store_json=evaluate_durable_tool_terminal_store_json,
@@ -520,6 +531,19 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             "kind": "provider_quota_exceeded",
             "compatibleFallbacks": ["openai-compatible:gpt-economy"],
         },
+    )
+    cancellation_scope = runtime.evaluate_cancellation_scope(
+        {"tokenId": "run", "scope": "run", "guarantee": "cooperative"},
+        [
+            {
+                "op": "child",
+                "parentId": "run",
+                "tokenId": "provider",
+                "scope": "provider_call",
+                "guarantee": "best_effort_remote",
+            },
+            {"op": "cancel", "tokenId": "run", "reason": {"code": "policy_denied"}},
+        ],
     )
     policy_decision = runtime.evaluate_declarative_output_policy(
         [{"ruleId": "allow"}],
@@ -728,6 +752,20 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             "kind": "provider_quota_exceeded",
         },
     }
+    assert cancellation_scope == {
+        "ok": True,
+        "root": {"guarantee": "cooperative", "scope": "run", "tokenId": "run"},
+        "operations": [
+            {
+                "guarantee": "best_effort_remote",
+                "op": "child",
+                "parentId": "run",
+                "scope": "provider_call",
+                "tokenId": "provider",
+            },
+            {"op": "cancel", "reason": {"code": "policy_denied"}, "tokenId": "run"},
+        ],
+    }
     assert policy_decision == {
         "disposition": "allow",
         "rules": [{"ruleId": "allow"}],
@@ -931,6 +969,17 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             ),
         ),
         (
+            "cancellation_scope",
+            (
+                '{"guarantee":"cooperative","scope":"run","tokenId":"run"}',
+                (
+                    '[{"guarantee":"best_effort_remote","op":"child","parentId":"run",'
+                    '"scope":"provider_call","tokenId":"provider"},'
+                    '{"op":"cancel","reason":{"code":"policy_denied"},"tokenId":"run"}]'
+                ),
+            ),
+        ),
+        (
             "output_policy",
             ('[{"ruleId":"allow"}]', '{"sequence":1,"streamId":"stream-1"}', 1_010),
         ),
@@ -1047,6 +1096,8 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     assert "evaluate_retry_policy_json" in runtime.__all__
     assert "evaluate_provider_limit_policy" in runtime.__all__
     assert "evaluate_provider_limit_policy_json" in runtime.__all__
+    assert "evaluate_cancellation_scope" in runtime.__all__
+    assert "evaluate_cancellation_scope_json" in runtime.__all__
     assert "evaluate_declarative_output_policy" in runtime.__all__
     assert "evaluate_application_event_stream" in runtime.__all__
     assert "evaluate_application_event_stream_json" in runtime.__all__
