@@ -8,8 +8,10 @@ import graphblocks
 import pytest
 
 from graphblocks.canonical import canonical_hash
+from graphblocks.output_policy import PendingToolCallsDisposition as OutputPendingToolCallsDisposition
 from graphblocks.tools import (
     FINAL_TOOL_RESULT_EVENT_STATUSES,
+    PendingToolCallsDisposition as ToolPendingToolCallsDisposition,
     VALID_TOOL_APPROVALS,
     VALID_TOOL_APPROVAL_STATUSES,
     VALID_TOOL_CALL_DRAFT_STATUSES,
@@ -115,6 +117,8 @@ def test_root_facade_exports_tool_schema_aliases() -> None:
     assert missing == []
     for name in expected_exports:
         assert hasattr(graphblocks, name)
+    assert graphblocks.PendingToolCallsDisposition is OutputPendingToolCallsDisposition
+    assert graphblocks.PendingToolCallsDisposition is ToolPendingToolCallsDisposition
     for name, value in expected_constants.items():
         assert getattr(graphblocks, name) is value
 

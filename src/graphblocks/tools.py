@@ -9,6 +9,7 @@ from typing import Literal
 from .canonical import canonical_hash
 from .conversation import ContentPart
 from .documents import ArtifactRef
+from .output_policy import PendingToolCallsDisposition
 from .policy import PolicyDecision, PolicyRequest, PrincipalRef, ResourceRef as PolicyResourceRef
 from .schema import SchemaId, SchemaIdError
 
@@ -71,7 +72,6 @@ ToolExecutionState = Literal[
     "expired",
     "skipped",
 ]
-PendingToolCallsDisposition = Literal["keep", "deny", "cancel_admitted"]
 JsonSchemaType = Literal["null", "boolean", "integer", "number", "string", "array", "object"]
 ToolApprovalStatus = Literal["requested", "approved", "denied", "invalidated"]
 

@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import graphblocks
 from graphblocks.output_policy import (
+    PendingToolCallsDisposition,
     VALID_DELIVERY_MODES,
     VALID_DRAFT_DISPOSITIONS,
     VALID_FLUSH_BOUNDARIES,
@@ -209,6 +210,7 @@ def test_root_facade_exports_output_policy_literal_contract() -> None:
     assert sorted(name for name in expected_exports if name not in graphblocks.__all__) == []
     for name in expected_aliases:
         assert hasattr(graphblocks, name)
+    assert graphblocks.PendingToolCallsDisposition is PendingToolCallsDisposition
     for name, value in expected_constants.items():
         assert getattr(graphblocks, name) is value
 
