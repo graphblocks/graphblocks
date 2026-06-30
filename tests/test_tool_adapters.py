@@ -618,6 +618,80 @@ def test_mcp_adapter_builds_streaming_tool_result_events(monkeypatch) -> None:
     assert "mcp_tool_result_delta" in graphblocks_mcp.__all__
 
 
+def test_mcp_adapter_builds_validated_completed_tool_result_event(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
+    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    admitted, resolved = _admitted_call_for(
+        McpToolImplementation(server="support-mcp", remote_name="search"),
+        tool_name="knowledge.search",
+        binding_id="binding-mcp-search",
+        arguments={"query": "billing"},
+        output_schema="schemas/SearchResult@1",
+    )
+    result = ToolResult.completed(
+        "call-1",
+        (ContentPart(kind="json", data={"items": ["billing"]}),),
+        started_at="2026-06-23T00:00:01Z",
+        completed_at="2026-06-23T00:00:02Z",
+    )
+
+    event = graphblocks_mcp.mcp_tool_result_completed(
+        admitted,
+        resolved,
+        _tool_output_registry(),
+        sequence=4,
+        result=result,
+    )
+
+    assert event.kind == "completed"
+    assert event.into_result() == result
+    assert event.is_final_durable_result() is True
+    assert "mcp_tool_result_completed" in graphblocks_mcp.__all__
+
+
+def test_mcp_adapter_completed_tool_result_event_requires_result_validation(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
+    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    admitted, resolved = _admitted_call_for(
+        McpToolImplementation(server="support-mcp", remote_name="search"),
+        tool_name="knowledge.search",
+        binding_id="binding-mcp-search",
+        arguments={"query": "billing"},
+        output_schema="schemas/SearchResult@1",
+    )
+    result = ToolResult.completed(
+        "call-1",
+        (ContentPart(kind="json", data={"items": ["billing"]}),),
+        started_at="2026-06-23T00:00:01Z",
+        completed_at="2026-06-23T00:00:02Z",
+    )
+
+    with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="failed validation"):
+        graphblocks_mcp.mcp_tool_result_completed(
+            admitted,
+            resolved,
+            _tool_output_registry(),
+            sequence=4,
+            result=result,
+            max_output_bytes=4,
+        )
+
+    failed = ToolResult.failed(
+        "call-1",
+        error={"code": "mcp.failed", "message": "failed"},
+        started_at="2026-06-23T00:00:01Z",
+        completed_at="2026-06-23T00:00:02Z",
+    )
+    with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="requires a completed tool result"):
+        graphblocks_mcp.mcp_tool_result_completed(
+            admitted,
+            resolved,
+            _tool_output_registry(),
+            sequence=5,
+            result=failed,
+        )
+
+
 def test_mcp_adapter_rejects_invalid_streaming_tool_result_events(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
     graphblocks_mcp = importlib.import_module("graphblocks_mcp")
@@ -1133,6 +1207,78 @@ def test_openapi_adapter_builds_streaming_tool_result_events(monkeypatch) -> Non
     assert artifact.kind == "artifact_ready"
     assert artifact.artifact == ArtifactRef("artifact-2", "blob://tool-results/2", checksum="sha256:artifact")
     assert "openapi_tool_result_artifact_ready" in graphblocks_openapi.__all__
+
+
+def test_openapi_adapter_builds_validated_completed_tool_result_event(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
+    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    admitted, resolved = _admitted_call_for(
+        OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
+        tool_name="ticket.create",
+        binding_id="binding-ticket-create",
+        arguments={"title": "Need help"},
+        output_schema="schemas/Ticket@1",
+    )
+    result = ToolResult.completed(
+        "call-1",
+        (ContentPart(kind="json", data={"ticket_id": "ticket-1"}),),
+        started_at="2026-06-23T00:00:01Z",
+        completed_at="2026-06-23T00:00:02Z",
+    )
+
+    event = graphblocks_openapi.openapi_tool_result_completed(
+        admitted,
+        resolved,
+        _tool_output_registry(),
+        sequence=4,
+        result=result,
+    )
+
+    assert event.kind == "completed"
+    assert event.into_result() == result
+    assert event.is_final_durable_result() is True
+    assert "openapi_tool_result_completed" in graphblocks_openapi.__all__
+
+
+def test_openapi_adapter_completed_tool_result_event_requires_result_validation(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
+    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    admitted, resolved = _admitted_call_for(
+        OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
+        tool_name="ticket.create",
+        binding_id="binding-ticket-create",
+        arguments={"title": "Need help"},
+        output_schema="schemas/Ticket@1",
+    )
+    result = ToolResult.completed(
+        "call-1",
+        (ContentPart(kind="json", data={"id": "ticket-1"}),),
+        started_at="2026-06-23T00:00:01Z",
+        completed_at="2026-06-23T00:00:02Z",
+    )
+
+    with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="failed validation"):
+        graphblocks_openapi.openapi_tool_result_completed(
+            admitted,
+            resolved,
+            _tool_output_registry(),
+            sequence=4,
+            result=result,
+        )
+
+    denied = ToolResult.denied(
+        "call-1",
+        error={"code": "openapi.denied", "message": "denied"},
+        completed_at="2026-06-23T00:00:02Z",
+    )
+    with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="requires a completed tool result"):
+        graphblocks_openapi.openapi_tool_result_completed(
+            admitted,
+            resolved,
+            _tool_output_registry(),
+            sequence=5,
+            result=denied,
+        )
 
 
 def test_openapi_adapter_rejects_invalid_streaming_tool_result_events(monkeypatch) -> None:

@@ -371,6 +371,34 @@ def openapi_tool_result_artifact_ready(
     )
 
 
+def openapi_tool_result_completed(
+    admitted: AdmittedToolCall,
+    resolved_tool: ResolvedTool,
+    schema_registry: ToolSchemaRegistry,
+    *,
+    sequence: int,
+    result: ToolResult,
+    max_output_bytes: int | None = None,
+    redactions: Iterable[Mapping[str, object]] = (),
+    capture_policy: Mapping[str, object] | None = None,
+) -> ToolResultEvent:
+    if result.status != "completed":
+        raise OpenApiToolAdapterError("OpenAPI completed event requires a completed tool result")
+    prepare_openapi_tool_result_for_model(
+        admitted,
+        resolved_tool,
+        schema_registry,
+        result,
+        max_output_bytes=max_output_bytes,
+        redactions=redactions,
+        capture_policy=capture_policy,
+    )
+    try:
+        return ToolResultEvent.completed(admitted.call.tool_call_id, sequence, result)
+    except ValueError as error:
+        raise OpenApiToolAdapterError("OpenAPI completed event is invalid") from error
+
+
 def prepare_openapi_tool_result_for_model(
     admitted: AdmittedToolCall,
     resolved_tool: ResolvedTool,
@@ -790,6 +818,7 @@ __all__ = [
     "evaluate_native_connector_capabilities",
     "openapi_tool_result_artifact_ready",
     "openapi_tool_result_cancelled",
+    "openapi_tool_result_completed",
     "openapi_tool_result_denied",
     "openapi_tool_result_delta",
     "openapi_tool_result_from_error",
