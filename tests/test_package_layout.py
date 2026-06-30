@@ -836,6 +836,38 @@ def test_observability_projection_packages_have_pure_python_layouts_without_sdk_
         assert (package_root / "src" / import_name / "py.typed").exists()
 
 
+def test_observability_package_catalog_tracks_implemented_projection_surfaces() -> None:
+    manifests = {manifest["distribution"]: manifest for manifest in load_package_catalog()["packages"]}
+
+    assert manifests["graphblocks-telemetry"]["responsibility"] == [
+        "canonical observation model",
+        "output policy and tool execution telemetry records",
+        "capture/redaction",
+        "low-cardinality metric linting",
+        "diagnostic bundle projection",
+        "semantic mapping",
+    ]
+    assert manifests["graphblocks-otel"]["responsibility"] == [
+        "generation/output policy/tool execution span projections",
+        "OTLP exporter contracts",
+        "collector templates",
+    ]
+    assert manifests["graphblocks-langfuse"]["responsibility"] == [
+        "generation/output policy/tool execution event projections",
+        "prompt/evaluation/dataset adapters",
+    ]
+    assert manifests["graphblocks-prometheus"]["responsibility"] == [
+        "generation/output policy/tool execution metric projections",
+        "recording_and_alert_rules",
+        "metric cardinality lint integration",
+    ]
+    assert manifests["graphblocks-dashboards"]["responsibility"] == [
+        "generation and policy/tool dashboard templates",
+        "slo_rules",
+        "runbook_templates",
+    ]
+
+
 def test_prometheus_package_has_pure_python_layout_without_client_dependency() -> None:
     package_root = ROOT / "packages" / "graphblocks-prometheus"
     pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))

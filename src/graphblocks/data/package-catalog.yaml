@@ -398,7 +398,10 @@ packages:
   - graphblocks-core
   responsibility:
   - canonical observation model
+  - output policy and tool execution telemetry records
   - capture/redaction
+  - low-cardinality metric linting
+  - diagnostic bundle projection
   - semantic mapping
   implementationPhase: 3
   stability: first-party-extension
@@ -410,7 +413,8 @@ packages:
   dependsOn:
   - graphblocks-telemetry
   responsibility:
-  - OTLP exporters
+  - generation/output policy/tool execution span projections
+  - OTLP exporter contracts
   - collector templates
   implementationPhase: 3
   stability: first-party-extension
@@ -422,7 +426,8 @@ packages:
   dependsOn:
   - graphblocks-telemetry
   responsibility:
-  - telemetry/prompt/evaluation/dataset adapters
+  - generation/output policy/tool execution event projections
+  - prompt/evaluation/dataset adapters
   implementationPhase: 3
   stability: first-party-extension
 - distribution: graphblocks-audit
@@ -509,8 +514,9 @@ packages:
   dependsOn:
   - graphblocks-telemetry
   responsibility:
-  - prometheus_metrics_export
+  - generation/output policy/tool execution metric projections
   - recording_and_alert_rules
+  - metric cardinality lint integration
   implementationPhase: 3
   stability: first-party-extension
 - distribution: graphblocks-dashboards
@@ -521,7 +527,7 @@ packages:
   dependsOn:
   - graphblocks-telemetry
   responsibility:
-  - dashboard_templates
+  - generation and policy/tool dashboard templates
   - slo_rules
   - runbook_templates
   implementationPhase: 3
