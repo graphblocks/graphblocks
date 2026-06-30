@@ -64,6 +64,12 @@ def admit_native_exhaustion_work(policy: dict[str, object], request: dict[str, o
     return admit_exhaustion_work(policy, request)
 
 
+def evaluate_native_budget_ledger(operations: object) -> dict[str, object]:
+    from graphblocks_runtime import evaluate_budget_ledger
+
+    return evaluate_budget_ledger(operations)
+
+
 __all__ = [
     "AdmissionDecision",
     "AfterUnitPolicy",
@@ -117,5 +123,6 @@ __all__ = [
     "VALID_RESERVATION_STATUSES",
     "WorkKind",
     "admit_native_exhaustion_work",
+    "evaluate_native_budget_ledger",
     "validate_exhaustion_policy",
 ]

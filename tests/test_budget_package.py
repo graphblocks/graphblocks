@@ -183,6 +183,32 @@ def test_budget_package_lazy_native_exhaustion_helper_delegates_to_runtime(monke
     assert "admit_native_exhaustion_work" in graphblocks_budget.__all__
 
 
+def test_budget_package_lazy_native_budget_ledger_helper_delegates_to_runtime(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-budget" / "src"))
+    calls: list[object] = []
+
+    def evaluate_budget_ledger(operations: object) -> dict[str, object]:
+        calls.append(operations)
+        return {"ok": True, "operations": operations}
+
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(evaluate_budget_ledger=evaluate_budget_ledger),
+    )
+    graphblocks_budget = importlib.import_module("graphblocks_budget")
+    operations = [{"op": "allocate", "budgetId": "budget-1"}]
+
+    result = graphblocks_budget.evaluate_native_budget_ledger(operations)
+
+    assert result == {
+        "ok": True,
+        "operations": [{"op": "allocate", "budgetId": "budget-1"}],
+    }
+    assert calls == [operations]
+    assert "evaluate_native_budget_ledger" in graphblocks_budget.__all__
+
+
 def test_budget_package_exposes_canonical_literal_sets(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-budget" / "src"))
     graphblocks_budget = importlib.import_module("graphblocks_budget")
