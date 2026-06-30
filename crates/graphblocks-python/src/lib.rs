@@ -26,6 +26,7 @@ use graphblocks_runtime_core::exhaustion::{
     ContinuationEnvelope, ExhaustionController, ExhaustionPolicy, ExhaustionPreset, ExhaustionUnit,
     WorkKind,
 };
+use graphblocks_runtime_core::lifecycle::{LifecycleError, NodeLifecycle, NodeStatus};
 use graphblocks_runtime_core::observability::{
     CaptureDecision, CaptureMode, CapturedContent, RedactionRule,
 };
@@ -642,45 +643,6 @@ fn evaluate_cancellation_scope_json(root_json: &str, operations_json: &str) -> P
             ))),
         }
     };
-    let parse_cancel_reason = |value: &Value, label: &str| -> PyResult<CancelReason> {
-        let object = json_object(value, label)?;
-        let code = match required_alias_string(object, "code", "code", label)? {
-            "client_disconnect" | "clientDisconnect" => CancelCode::ClientDisconnect,
-            "user_cancel" | "userCancel" => CancelCode::UserCancel,
-            "timeout" => CancelCode::Timeout,
-            "superseded" => CancelCode::Superseded,
-            "policy_denied" | "policyDenied" => CancelCode::PolicyDenied,
-            "budget_exhausted" | "budgetExhausted" => CancelCode::BudgetExhausted,
-            "provider_quota_exhausted" | "providerQuotaExhausted" => {
-                CancelCode::ProviderQuotaExhausted
-            }
-            "dependency_failed" | "dependencyFailed" => CancelCode::DependencyFailed,
-            "shutdown" => CancelCode::Shutdown,
-            "barge_in" | "bargeIn" => CancelCode::BargeIn,
-            "rollout_drain" | "rolloutDrain" => CancelCode::RolloutDrain,
-            "lease_lost" | "leaseLost" => CancelCode::LeaseLost,
-            "entitlement_revoked" | "entitlementRevoked" => CancelCode::EntitlementRevoked,
-            value => {
-                return Err(PyValueError::new_err(format!(
-                    "{label}.code has unknown cancellation code {value:?}"
-                )));
-            }
-        };
-        let mut reason = CancelReason::new(code);
-        reason.message = optional_nullable_alias_string(object, "message", "message", label)?
-            .map(ToOwned::to_owned);
-        reason.requested_by =
-            optional_nullable_alias_string(object, "requestedBy", "requested_by", label)?
-                .map(ToOwned::to_owned);
-        reason.policy_decision_ref = optional_nullable_alias_string(
-            object,
-            "policyDecisionRef",
-            "policy_decision_ref",
-            label,
-        )?
-        .map(ToOwned::to_owned);
-        Ok(reason)
-    };
     let scope_name = |scope: CancellationScope| match scope {
         CancellationScope::ProviderCall => "provider_call",
         CancellationScope::Node => "node",
@@ -701,30 +663,6 @@ fn evaluate_cancellation_scope_json(root_json: &str, operations_json: &str) -> P
         CancellationGuarantee::BestEffortRemote => "best_effort_remote",
         CancellationGuarantee::NonCancellableAtomicSection => "non_cancellable_atomic_section",
     };
-    let reason_json = |reason: CancelReason| {
-        let code = match reason.code {
-            CancelCode::ClientDisconnect => "client_disconnect",
-            CancelCode::UserCancel => "user_cancel",
-            CancelCode::Timeout => "timeout",
-            CancelCode::Superseded => "superseded",
-            CancelCode::PolicyDenied => "policy_denied",
-            CancelCode::BudgetExhausted => "budget_exhausted",
-            CancelCode::ProviderQuotaExhausted => "provider_quota_exhausted",
-            CancelCode::DependencyFailed => "dependency_failed",
-            CancelCode::Shutdown => "shutdown",
-            CancelCode::BargeIn => "barge_in",
-            CancelCode::RolloutDrain => "rollout_drain",
-            CancelCode::LeaseLost => "lease_lost",
-            CancelCode::EntitlementRevoked => "entitlement_revoked",
-        };
-        json!({
-            "code": code,
-            "message": reason.message,
-            "requestedBy": reason.requested_by,
-            "policyDecisionRef": reason.policy_decision_ref,
-        })
-    };
-
     let root_value = parse_json_argument(root_json, "cancellation root")?;
     let operations_value = parse_json_argument(operations_json, "cancellation operations")?;
     let root_object = json_object(&root_value, "cancellation root")?;
@@ -798,7 +736,7 @@ fn evaluate_cancellation_scope_json(root_json: &str, operations_json: &str) -> P
                     "tokenId": token_id,
                     "accepted": accepted,
                     "cancelled": token.is_cancelled(),
-                    "reason": token.reason().map(&reason_json).unwrap_or(Value::Null),
+                    "reason": token.reason().map(|reason| serialize_cancel_reason(&reason)).unwrap_or(Value::Null),
                 }));
             }
             "effective_guarantee" | "effectiveGuarantee" => {
@@ -833,7 +771,7 @@ fn evaluate_cancellation_scope_json(root_json: &str, operations_json: &str) -> P
                 "scope": scope_name(token.scope()),
                 "guarantee": guarantee_name(token.guarantee()),
                 "cancelled": token.is_cancelled(),
-                "reason": token.reason().map(&reason_json).unwrap_or(Value::Null),
+                "reason": token.reason().map(|reason| serialize_cancel_reason(&reason)).unwrap_or(Value::Null),
             })
         })
         .collect::<Vec<_>>();
@@ -1059,6 +997,174 @@ fn evaluate_task_group_json(group_json: &str, operations_json: &str) -> PyResult
     serde_json::to_string(&payload).map_err(|error| {
         PyRuntimeError::new_err(format!(
             "failed to serialize task group evaluation: {error}"
+        ))
+    })
+}
+
+#[pyfunction]
+fn evaluate_node_lifecycle_json(state_json: &str, operations_json: &str) -> PyResult<String> {
+    let parse_node_status = |value: &str, label: &str| -> PyResult<NodeStatus> {
+        match value {
+            "pending" => Ok(NodeStatus::Pending),
+            "ready" => Ok(NodeStatus::Ready),
+            "waiting_budget" | "waitingBudget" => Ok(NodeStatus::WaitingBudget),
+            "waiting_lease" | "waitingLease" => Ok(NodeStatus::WaitingLease),
+            "waiting_approval" | "waitingApproval" => Ok(NodeStatus::WaitingApproval),
+            "running" => Ok(NodeStatus::Running),
+            "completed" => Ok(NodeStatus::Completed),
+            "failed" => Ok(NodeStatus::Failed),
+            "cancelled" => Ok(NodeStatus::Cancelled),
+            "skipped" => Ok(NodeStatus::Skipped),
+            "paused" => Ok(NodeStatus::Paused),
+            "policy_stopped" | "policyStopped" => Ok(NodeStatus::PolicyStopped),
+            value => Err(PyValueError::new_err(format!(
+                "{label} has unknown node lifecycle status {value:?}"
+            ))),
+        }
+    };
+    let status_name = |status: NodeStatus| match status {
+        NodeStatus::Pending => "pending",
+        NodeStatus::Ready => "ready",
+        NodeStatus::WaitingBudget => "waiting_budget",
+        NodeStatus::WaitingLease => "waiting_lease",
+        NodeStatus::WaitingApproval => "waiting_approval",
+        NodeStatus::Running => "running",
+        NodeStatus::Completed => "completed",
+        NodeStatus::Failed => "failed",
+        NodeStatus::Cancelled => "cancelled",
+        NodeStatus::Skipped => "skipped",
+        NodeStatus::Paused => "paused",
+        NodeStatus::PolicyStopped => "policy_stopped",
+    };
+    let lifecycle_error_json = |error: LifecycleError| match error {
+        LifecycleError::AlreadyTerminal { current } => json!({
+            "code": "AlreadyTerminal",
+            "current": status_name(current),
+        }),
+        LifecycleError::OutputAfterTerminal { current } => json!({
+            "code": "OutputAfterTerminal",
+            "current": status_name(current),
+        }),
+        LifecycleError::PatchAfterTerminal { current } => json!({
+            "code": "PatchAfterTerminal",
+            "current": status_name(current),
+        }),
+        LifecycleError::TerminalTransitionRequiresOutcome { requested } => json!({
+            "code": "TerminalTransitionRequiresOutcome",
+            "requested": status_name(requested),
+        }),
+    };
+    let lifecycle_state_json = |lifecycle: &NodeLifecycle| {
+        json!({
+            "status": status_name(lifecycle.status()),
+            "terminal": lifecycle.status().is_terminal(),
+            "outputs": lifecycle.outputs().iter().map(|output| {
+                json!({
+                    "port": output.port.as_str(),
+                    "value": &output.value,
+                })
+            }).collect::<Vec<_>>(),
+            "statePatches": lifecycle.state_patches(),
+            "terminalError": lifecycle.terminal_error().map(serialize_block_error).unwrap_or(Value::Null),
+            "cancelReason": lifecycle.cancel_reason().map(serialize_cancel_reason).unwrap_or(Value::Null),
+        })
+    };
+
+    let state_value = parse_json_argument(state_json, "node lifecycle state")?;
+    let operations_value = parse_json_argument(operations_json, "node lifecycle operations")?;
+    let state_object = json_object(&state_value, "node lifecycle state")?;
+    let operations = operations_value
+        .as_array()
+        .ok_or_else(|| PyValueError::new_err("node lifecycle operations must be an array"))?;
+    let mut lifecycle = NodeLifecycle::new();
+    if let Some(initial_status) = optional_nullable_alias_string(
+        state_object,
+        "initialStatus",
+        "initial_status",
+        "node lifecycle state",
+    )? {
+        let status = parse_node_status(initial_status, "node lifecycle state.initialStatus")?;
+        if status != NodeStatus::Pending {
+            lifecycle.transition(status).map_err(|error| {
+                PyValueError::new_err(format!("invalid node lifecycle state: {error:?}"))
+            })?;
+        }
+    }
+    let mut operation_results = Vec::new();
+
+    for (operation_index, operation) in operations.iter().enumerate() {
+        let label = format!("node lifecycle operations[{operation_index}]");
+        let operation = json_object(operation, &label)?;
+        let op = required_alias_string(operation, "op", "kind", &label)?;
+        let result = match op {
+            "transition" => {
+                let status = parse_node_status(
+                    required_alias_string(operation, "status", "status", &label)?,
+                    &format!("{label}.status"),
+                )?;
+                lifecycle.transition(status).map(|()| Value::Null)
+            }
+            "output" | "record_output" | "recordOutput" => {
+                let port = required_alias_string(operation, "port", "port", &label)?;
+                let value = alias_value(operation, "value", "value")
+                    .ok_or_else(|| PyValueError::new_err(format!("{label}.value is required")))?;
+                lifecycle
+                    .record_output(port, value.clone())
+                    .map(|()| Value::Null)
+            }
+            "patch" | "state_patch" | "statePatch" => {
+                let patch = alias_value(operation, "patch", "patch")
+                    .ok_or_else(|| PyValueError::new_err(format!("{label}.patch is required")))?;
+                lifecycle
+                    .apply_state_patch(patch.clone())
+                    .map(|()| Value::Null)
+            }
+            "complete" => lifecycle.complete().map(|changed| json!(changed)),
+            "skip" => lifecycle.skip().map(|changed| json!(changed)),
+            "pause" => lifecycle.pause().map(|changed| json!(changed)),
+            "policy_stop" | "policyStop" => lifecycle.policy_stop().map(|changed| json!(changed)),
+            "fail" => {
+                let error_value = alias_value(operation, "error", "error")
+                    .ok_or_else(|| PyValueError::new_err(format!("{label}.error is required")))?;
+                let error = parse_block_error(error_value, &format!("{label}.error"))?;
+                lifecycle.fail(error).map(|changed| json!(changed))
+            }
+            "cancel" => {
+                let reason_value = alias_value(operation, "reason", "reason")
+                    .ok_or_else(|| PyValueError::new_err(format!("{label}.reason is required")))?;
+                let reason = parse_cancel_reason(reason_value, &format!("{label}.reason"))?;
+                lifecycle.cancel(reason).map(|changed| json!(changed))
+            }
+            value => {
+                return Err(PyValueError::new_err(format!(
+                    "{label}.op has unknown operation {value:?}"
+                )));
+            }
+        };
+        match result {
+            Ok(changed) => operation_results.push(json!({
+                "op": op,
+                "ok": true,
+                "changed": changed,
+                "status": status_name(lifecycle.status()),
+            })),
+            Err(error) => operation_results.push(json!({
+                "op": op,
+                "ok": false,
+                "error": lifecycle_error_json(error),
+                "status": status_name(lifecycle.status()),
+            })),
+        }
+    }
+
+    let payload = json!({
+        "ok": true,
+        "state": lifecycle_state_json(&lifecycle),
+        "operations": operation_results,
+    });
+    serde_json::to_string(&payload).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize node lifecycle evaluation: {error}"
         ))
     })
 }
@@ -2885,6 +2991,46 @@ fn parse_block_error(value: &Value, label: &str) -> PyResult<BlockError> {
     Ok(error)
 }
 
+fn parse_cancel_code(value: &str, label: &str) -> PyResult<CancelCode> {
+    match value {
+        "client_disconnect" | "clientDisconnect" => Ok(CancelCode::ClientDisconnect),
+        "user_cancel" | "userCancel" => Ok(CancelCode::UserCancel),
+        "timeout" => Ok(CancelCode::Timeout),
+        "superseded" => Ok(CancelCode::Superseded),
+        "policy_denied" | "policyDenied" => Ok(CancelCode::PolicyDenied),
+        "budget_exhausted" | "budgetExhausted" => Ok(CancelCode::BudgetExhausted),
+        "provider_quota_exhausted" | "providerQuotaExhausted" => {
+            Ok(CancelCode::ProviderQuotaExhausted)
+        }
+        "dependency_failed" | "dependencyFailed" => Ok(CancelCode::DependencyFailed),
+        "shutdown" => Ok(CancelCode::Shutdown),
+        "barge_in" | "bargeIn" => Ok(CancelCode::BargeIn),
+        "rollout_drain" | "rolloutDrain" => Ok(CancelCode::RolloutDrain),
+        "lease_lost" | "leaseLost" => Ok(CancelCode::LeaseLost),
+        "entitlement_revoked" | "entitlementRevoked" => Ok(CancelCode::EntitlementRevoked),
+        value => Err(PyValueError::new_err(format!(
+            "{label} has unknown cancellation code {value:?}"
+        ))),
+    }
+}
+
+fn parse_cancel_reason(value: &Value, label: &str) -> PyResult<CancelReason> {
+    let object = json_object(value, label)?;
+    let mut reason = CancelReason::new(parse_cancel_code(
+        required_alias_string(object, "code", "code", label)?,
+        &format!("{label}.code"),
+    )?);
+    reason.message =
+        optional_nullable_alias_string(object, "message", "message", label)?.map(ToOwned::to_owned);
+    reason.requested_by =
+        optional_nullable_alias_string(object, "requestedBy", "requested_by", label)?
+            .map(ToOwned::to_owned);
+    reason.policy_decision_ref =
+        optional_nullable_alias_string(object, "policyDecisionRef", "policy_decision_ref", label)?
+            .map(ToOwned::to_owned);
+    Ok(reason)
+}
+
 fn parse_retry_backoff(value: Option<&Value>, label: &str) -> PyResult<Backoff> {
     let Some(value) = value.filter(|value| !value.is_null()) else {
         return Ok(Backoff::None);
@@ -3532,6 +3678,33 @@ fn serialize_error_category(category: ErrorCategory) -> &'static str {
         ErrorCategory::Conflict => "conflict",
         ErrorCategory::Internal => "internal",
     }
+}
+
+fn serialize_cancel_code(code: CancelCode) -> &'static str {
+    match code {
+        CancelCode::ClientDisconnect => "client_disconnect",
+        CancelCode::UserCancel => "user_cancel",
+        CancelCode::Timeout => "timeout",
+        CancelCode::Superseded => "superseded",
+        CancelCode::PolicyDenied => "policy_denied",
+        CancelCode::BudgetExhausted => "budget_exhausted",
+        CancelCode::ProviderQuotaExhausted => "provider_quota_exhausted",
+        CancelCode::DependencyFailed => "dependency_failed",
+        CancelCode::Shutdown => "shutdown",
+        CancelCode::BargeIn => "barge_in",
+        CancelCode::RolloutDrain => "rollout_drain",
+        CancelCode::LeaseLost => "lease_lost",
+        CancelCode::EntitlementRevoked => "entitlement_revoked",
+    }
+}
+
+fn serialize_cancel_reason(reason: &CancelReason) -> Value {
+    json!({
+        "code": serialize_cancel_code(reason.code),
+        "message": reason.message.as_deref(),
+        "requestedBy": reason.requested_by.as_deref(),
+        "policyDecisionRef": reason.policy_decision_ref.as_deref(),
+    })
 }
 
 fn serialize_tool_result_status(status: ToolResultStatus) -> &'static str {
@@ -6946,6 +7119,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     )?)?;
     module.add_function(wrap_pyfunction!(evaluate_cancellation_scope_json, module)?)?;
     module.add_function(wrap_pyfunction!(evaluate_task_group_json, module)?)?;
+    module.add_function(wrap_pyfunction!(evaluate_node_lifecycle_json, module)?)?;
     module.add_function(wrap_pyfunction!(
         record_tool_effect_precondition_json,
         module
@@ -7006,7 +7180,8 @@ mod tests {
         evaluate_application_protocol_log_json, evaluate_application_protocol_stream_json,
         evaluate_cancellation_scope_json, evaluate_connector_capabilities_json,
         evaluate_declarative_output_policy_json, evaluate_durable_tool_terminal_store_json,
-        evaluate_output_gate_json, evaluate_provider_limit_policy_json, evaluate_retry_policy_json,
+        evaluate_node_lifecycle_json, evaluate_output_gate_json,
+        evaluate_provider_limit_policy_json, evaluate_retry_policy_json,
         evaluate_sequential_tool_queue_json, evaluate_task_group_json, evaluate_tool_approval_json,
         evaluate_tool_execution_plan_json, evaluate_tool_result_stream_json,
         evaluate_usage_ledger_json, finalize_tool_call_json,
@@ -7946,6 +8121,69 @@ mod tests {
                 .pointer("/children/tickets/status")
                 .and_then(Value::as_str),
             Some("pending")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_node_lifecycle_json_blocks_late_output_after_terminal() -> Result<(), String> {
+        let state = json!({"initialStatus": "running"});
+        let operations = json!([
+            {"op": "output", "port": "value", "value": "before-terminal"},
+            {"op": "patch", "patch": {"seen": true}},
+            {"op": "complete"},
+            {"op": "output", "port": "value", "value": "after-terminal"},
+            {"op": "patch", "patch": {"late": true}},
+            {
+                "op": "fail",
+                "error": {
+                    "code": "provider.late",
+                    "category": "provider",
+                    "message": "late provider failure",
+                    "retryable": false
+                }
+            }
+        ]);
+        let result_json = evaluate_node_lifecycle_json(
+            &serde_json::to_string(&state).map_err(|error| error.to_string())?,
+            &serde_json::to_string(&operations).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            result.pointer("/state/status").and_then(Value::as_str),
+            Some("completed")
+        );
+        assert_eq!(result.pointer("/state/terminal"), Some(&json!(true)));
+        assert_eq!(
+            result
+                .pointer("/state/outputs/0/value")
+                .and_then(Value::as_str),
+            Some("before-terminal")
+        );
+        assert_eq!(
+            result.pointer("/state/statePatches/0"),
+            Some(&json!({"seen": true}))
+        );
+        assert_eq!(
+            result
+                .pointer("/operations/3/error/code")
+                .and_then(Value::as_str),
+            Some("OutputAfterTerminal")
+        );
+        assert_eq!(
+            result
+                .pointer("/operations/4/error/code")
+                .and_then(Value::as_str),
+            Some("PatchAfterTerminal")
+        );
+        assert_eq!(
+            result
+                .pointer("/operations/5/error/code")
+                .and_then(Value::as_str),
+            Some("AlreadyTerminal")
         );
         Ok(())
     }

@@ -21,6 +21,7 @@ try:
         evaluate_connector_capabilities_json,
         evaluate_declarative_output_policy_json,
         evaluate_durable_tool_terminal_store_json,
+        evaluate_node_lifecycle_json,
         evaluate_output_gate_json,
         evaluate_provider_limit_policy_json,
         evaluate_retry_policy_json,
@@ -151,6 +152,9 @@ except ImportError as error:
         require_native_extension()
 
     def evaluate_task_group_json(group_json: str, operations_json: str) -> str:
+        require_native_extension()
+
+    def evaluate_node_lifecycle_json(state_json: str, operations_json: str) -> str:
         require_native_extension()
 
     def evaluate_declarative_output_policy_json(
@@ -443,6 +447,13 @@ def evaluate_task_group(group: dict[str, object], operations: object) -> dict[st
     )
 
 
+def evaluate_node_lifecycle(state: dict[str, object], operations: object) -> dict[str, object]:
+    return _json_object_result(
+        evaluate_node_lifecycle_json(_canonical_json(state), _canonical_json(operations)),
+        "native node lifecycle evaluation result",
+    )
+
+
 def evaluate_declarative_output_policy(
     rules: object,
     chunk: dict[str, object],
@@ -631,6 +642,8 @@ __all__ = [
     "evaluate_connector_capabilities_json",
     "evaluate_durable_tool_terminal_store",
     "evaluate_durable_tool_terminal_store_json",
+    "evaluate_node_lifecycle",
+    "evaluate_node_lifecycle_json",
     "evaluate_output_gate",
     "evaluate_output_gate_json",
     "evaluate_provider_limit_policy",

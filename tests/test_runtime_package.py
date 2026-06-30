@@ -303,6 +303,16 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             }
         )
 
+    def evaluate_node_lifecycle_json(state_json: str, operations_json: str) -> str:
+        calls.append(("node_lifecycle", (state_json, operations_json)))
+        return json.dumps(
+            {
+                "ok": True,
+                "state": json.loads(state_json),
+                "operations": json.loads(operations_json),
+            }
+        )
+
     def evaluate_declarative_output_policy_json(
         rules_json: str,
         chunk_json: str,
@@ -417,6 +427,7 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         evaluate_connector_capabilities_json=evaluate_connector_capabilities_json,
         evaluate_declarative_output_policy_json=evaluate_declarative_output_policy_json,
         evaluate_durable_tool_terminal_store_json=evaluate_durable_tool_terminal_store_json,
+        evaluate_node_lifecycle_json=evaluate_node_lifecycle_json,
         evaluate_output_gate_json=evaluate_output_gate_json,
         evaluate_provider_limit_policy_json=evaluate_provider_limit_policy_json,
         evaluate_retry_policy_json=evaluate_retry_policy_json,
@@ -577,6 +588,14 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
                     "retryable": True,
                 },
             },
+        ],
+    )
+    node_lifecycle = runtime.evaluate_node_lifecycle(
+        {"initialStatus": "running"},
+        [
+            {"op": "output", "port": "value", "value": "before-terminal"},
+            {"op": "complete"},
+            {"op": "output", "port": "value", "value": "after-terminal"},
         ],
     )
     policy_decision = runtime.evaluate_declarative_output_policy(
@@ -824,6 +843,15 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             },
         ],
     }
+    assert node_lifecycle == {
+        "ok": True,
+        "state": {"initialStatus": "running"},
+        "operations": [
+            {"op": "output", "port": "value", "value": "before-terminal"},
+            {"op": "complete"},
+            {"op": "output", "port": "value", "value": "after-terminal"},
+        ],
+    }
     assert policy_decision == {
         "disposition": "allow",
         "rules": [{"ruleId": "allow"}],
@@ -1052,6 +1080,16 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             ),
         ),
         (
+            "node_lifecycle",
+            (
+                '{"initialStatus":"running"}',
+                (
+                    '[{"op":"output","port":"value","value":"before-terminal"},'
+                    '{"op":"complete"},{"op":"output","port":"value","value":"after-terminal"}]'
+                ),
+            ),
+        ),
+        (
             "output_policy",
             ('[{"ruleId":"allow"}]', '{"sequence":1,"streamId":"stream-1"}', 1_010),
         ),
@@ -1172,6 +1210,8 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     assert "evaluate_cancellation_scope_json" in runtime.__all__
     assert "evaluate_task_group" in runtime.__all__
     assert "evaluate_task_group_json" in runtime.__all__
+    assert "evaluate_node_lifecycle" in runtime.__all__
+    assert "evaluate_node_lifecycle_json" in runtime.__all__
     assert "evaluate_declarative_output_policy" in runtime.__all__
     assert "evaluate_application_event_stream" in runtime.__all__
     assert "evaluate_application_event_stream_json" in runtime.__all__
