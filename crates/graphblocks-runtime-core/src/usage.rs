@@ -623,6 +623,11 @@ fn validate_usage_record(record: &UsageRecord) -> Result<(), UsageLedgerError> {
         }
     }
     for amount in &record.amounts {
+        if amount.amount < 0 {
+            return Err(UsageLedgerError::InvalidRecord {
+                message: "usage amount must be non-negative".to_string(),
+            });
+        }
         if amount.kind.trim().is_empty() {
             return Err(UsageLedgerError::InvalidRecord {
                 message: "usage amount kind must not be empty".to_string(),

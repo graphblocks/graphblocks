@@ -49,6 +49,13 @@ fn usage_ledgers_reject_invalid_usage_records() -> Result<(), UsageLedgerError> 
         [UsageAmount::new("model_output_tokens", 12, "   ")],
         1_000,
     );
+    let negative_amount = UsageRecord::new(
+        "usage-negative",
+        UsageSource::RuntimeMeasured,
+        UsageConfidence::Estimated,
+        [tokens(-1)],
+        1_000,
+    );
     let blank_run_id = UsageRecord::new(
         "usage-3",
         UsageSource::RuntimeMeasured,
@@ -88,6 +95,18 @@ fn usage_ledgers_reject_invalid_usage_records() -> Result<(), UsageLedgerError> 
         sqlite.append(blank_amount_unit),
         Err(UsageLedgerError::InvalidRecord {
             message: "usage amount unit must not be empty".to_string()
+        })
+    );
+    assert_eq!(
+        memory.append(negative_amount.clone()),
+        Err(UsageLedgerError::InvalidRecord {
+            message: "usage amount must be non-negative".to_string()
+        })
+    );
+    assert_eq!(
+        sqlite.append(negative_amount),
+        Err(UsageLedgerError::InvalidRecord {
+            message: "usage amount must be non-negative".to_string()
         })
     );
     assert_eq!(
