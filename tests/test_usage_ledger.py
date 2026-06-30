@@ -62,6 +62,24 @@ def test_usage_record_deep_copies_mutable_amounts_and_metadata() -> None:
         record.amounts[0].dimensions["scope"] = "direct"
     with pytest.raises(TypeError):
         record.metadata["phase"] = "direct"
+    with pytest.raises(ValueError, match="usage metadata must be a mapping"):
+        UsageRecord(
+            record_id="usage-2",
+            source="runtime_measured",
+            confidence="estimated",
+            amounts=[_tokens("12")],
+            occurred_at="2026-06-22T00:00:00Z",
+            metadata=object(),  # type: ignore[arg-type]
+        )
+    with pytest.raises(ValueError, match="usage metadata keys must be non-empty strings"):
+        UsageRecord(
+            record_id="usage-2",
+            source="runtime_measured",
+            confidence="estimated",
+            amounts=[_tokens("12")],
+            occurred_at="2026-06-22T00:00:00Z",
+            metadata={" ": "generation"},
+        )
 
 
 def test_usage_record_rejects_invalid_identity_source_and_confidence() -> None:

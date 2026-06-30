@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
 import json
@@ -104,7 +105,12 @@ class UsageRecord:
             for amount in raw_amounts
         )
         object.__setattr__(self, "amounts", amounts)
-        object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
+        if not isinstance(self.metadata, Mapping):
+            raise ValueError("usage metadata must be a mapping")
+        metadata = dict(self.metadata)
+        if any(not isinstance(key, str) or not key.strip() for key in metadata):
+            raise ValueError("usage metadata keys must be non-empty strings")
+        object.__setattr__(self, "metadata", MappingProxyType(metadata))
 
 
 @dataclass(slots=True)
