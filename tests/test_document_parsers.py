@@ -50,6 +50,10 @@ def test_parser_registry_selects_by_media_type_and_records_lock_inputs() -> None
     }
     with pytest.raises(TypeError):
         resolved.metadata["profile"] = "changed"
+    with pytest.raises(ValueError, match="parser selection lock metadata must be a mapping"):
+        ParserSelectionLock("plain-text", "1", "media_type", metadata=object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="parser selection lock metadata keys must be non-empty strings"):
+        ParserSelectionLock("plain-text", "1", "media_type", metadata={" ": "value"})
 
 
 def test_parser_registry_normalizes_registered_fields_and_selection_inputs() -> None:

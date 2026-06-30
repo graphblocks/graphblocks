@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from types import MappingProxyType
@@ -43,7 +43,12 @@ class ParserSelectionLock:
     metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
+        if not isinstance(self.metadata, Mapping):
+            raise ValueError("parser selection lock metadata must be a mapping")
+        metadata = dict(self.metadata)
+        if any(not isinstance(key, str) or not key.strip() for key in metadata):
+            raise ValueError("parser selection lock metadata keys must be non-empty strings")
+        object.__setattr__(self, "metadata", MappingProxyType(metadata))
 
 
 @dataclass(slots=True)
