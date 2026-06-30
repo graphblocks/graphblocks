@@ -7217,6 +7217,9 @@ fn evaluate_declarative_output_policy_json(
         required_u64(chunk, "sequence", "chunk")?,
         required_string(chunk, "text", "chunk")?,
     );
+    chunk
+        .validate()
+        .map_err(|error| PyValueError::new_err(format!("invalid generation chunk: {error:?}")))?;
     let decision =
         DeclarativeOutputPolicyEvaluator::new(rules).evaluate_chunk(&chunk, evaluated_at_unix_ms);
     let disposition = decision.disposition.as_str();
@@ -13536,6 +13539,32 @@ mod tests {
                 .and_then(Value::as_str),
             Some("policy-approved")
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_declarative_output_policy_json_rejects_zero_sequence_chunk() -> Result<(), String> {
+        pyo3::Python::initialize();
+        let rules = json!([]);
+        let chunk = json!({
+            "streamId": "stream-1",
+            "responseId": "response-1",
+            "sequence": 0,
+            "text": "invalid"
+        });
+        let rules_json = serde_json::to_string(&rules).map_err(|error| error.to_string())?;
+        let chunk_json = serde_json::to_string(&chunk).map_err(|error| error.to_string())?;
+
+        let error = evaluate_declarative_output_policy_json(&rules_json, &chunk_json, 1_000)
+            .expect_err("zero-sequence chunks must be rejected")
+            .to_string();
+
+        assert!(
+            error.contains("InvalidSequence"),
+            "unexpected error: {error}"
+        );
+        assert!(error.contains("sequence: 0"), "unexpected error: {error}");
 
         Ok(())
     }
