@@ -53,10 +53,13 @@ fn run_case(case: &Value) -> Result<(), String> {
                 assert_chunk_result(name, operation, result)?;
             }
             "allow" => {
-                let decision = OutputPolicyDecision::allow(
-                    required_str(operation, "decisionId", name)?,
-                    optional_u64(operation, "acceptedThrough"),
-                    required_str(operation, "inputDigest", name)?,
+                let decision = with_decision_metadata(
+                    OutputPolicyDecision::allow(
+                        required_str(operation, "decisionId", name)?,
+                        optional_u64(operation, "acceptedThrough"),
+                        required_str(operation, "inputDigest", name)?,
+                    ),
+                    operation,
                 );
                 let result =
                     gate.apply_decision(decision, required_u64(operation, "occurredAt", name)?);
@@ -101,6 +104,7 @@ fn run_case(case: &Value) -> Result<(), String> {
                     }
                     decision = decision.with_redactions(parsed_redactions);
                 }
+                decision = with_decision_metadata(decision, operation);
                 let result =
                     gate.apply_decision(decision, required_u64(operation, "occurredAt", name)?);
                 assert_update_result(name, operation, result)?;
@@ -135,6 +139,7 @@ fn run_case(case: &Value) -> Result<(), String> {
                     decision =
                         decision.with_pending_tool_calls(pending_tool_calls(disposition, name)?);
                 }
+                decision = with_decision_metadata(decision, operation);
                 let result =
                     gate.apply_decision(decision, required_u64(operation, "occurredAt", name)?);
                 assert_update_result(name, operation, result)?;
@@ -203,6 +208,16 @@ fn delivery_policy(value: &Value, name: &str) -> Result<OutputDeliveryPolicy, St
         policy = policy.flush_on(parsed);
     }
     Ok(policy)
+}
+
+fn with_decision_metadata(
+    mut decision: OutputPolicyDecision,
+    operation: &Value,
+) -> OutputPolicyDecision {
+    if let Some(evaluated_at) = optional_u64(operation, "evaluatedAt") {
+        decision = decision.evaluated_at_unix_ms(evaluated_at);
+    }
+    decision
 }
 
 fn flush_boundary(raw: &str, name: &str) -> Result<FlushBoundary, String> {

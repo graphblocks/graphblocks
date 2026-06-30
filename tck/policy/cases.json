@@ -427,6 +427,35 @@
     }
   },
   {
+    "name": "decision_rejects_zero_evaluated_at",
+    "delivery": {
+      "mode": "bounded_holdback",
+      "holdbackMaxTokens": 8
+    },
+    "operations": [
+      {
+        "op": "chunk",
+        "sequence": 1,
+        "text": "safe draft"
+      },
+      {
+        "op": "allow",
+        "decisionId": "decision-invalid-time",
+        "acceptedThrough": 1,
+        "inputDigest": "sha256:invalid-time",
+        "evaluatedAt": 0,
+        "occurredAt": 1000,
+        "expectError": "invalid_evaluated_at_unix_ms"
+      }
+    ],
+    "expected": {
+      "lastGeneratedSequence": 1,
+      "lastPolicyAcceptedSequence": 0,
+      "lastClientDeliveredSequence": 0,
+      "stopped": false
+    }
+  },
+  {
     "name": "immediate_draft_retracts_after_policy_abort",
     "delivery": {
       "mode": "immediate_draft"
