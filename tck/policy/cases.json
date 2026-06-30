@@ -186,8 +186,12 @@
           "lastGeneratedSequence": 2,
           "lastPolicyAcceptedSequence": 1,
           "lastClientDeliveredSequence": 1,
+          "terminalReason": "policy_denied",
           "draftDisposition": "retract",
-          "policyDecisionId": "decision-abort"
+          "durableResult": "none",
+          "policyDecisionId": "decision-abort",
+          "occurredAt": "1970-01-01T00:00:01.100Z",
+          "occurredAtUnixMs": 1100
         }
       },
       {
@@ -241,8 +245,12 @@
           "lastGeneratedSequence": 1,
           "lastPolicyAcceptedSequence": 0,
           "lastClientDeliveredSequence": 1,
+          "terminalReason": "policy_denied",
           "draftDisposition": "mark_incomplete",
-          "policyDecisionId": "decision-abort-turn"
+          "durableResult": "none",
+          "policyDecisionId": "decision-abort-turn",
+          "occurredAt": "1970-01-01T00:00:01.100Z",
+          "occurredAtUnixMs": 1100
         }
       },
       {
@@ -293,8 +301,12 @@
           "lastGeneratedSequence": 2,
           "lastPolicyAcceptedSequence": 2,
           "lastClientDeliveredSequence": 0,
+          "terminalReason": "policy_denied",
           "draftDisposition": "retract",
-          "policyDecisionId": "decision-deny-commit"
+          "durableResult": "none",
+          "policyDecisionId": "decision-deny-commit",
+          "occurredAt": "1970-01-01T00:00:01.100Z",
+          "occurredAtUnixMs": 1100
         }
       },
       {
@@ -531,8 +543,12 @@
           "lastGeneratedSequence": 1,
           "lastPolicyAcceptedSequence": 0,
           "lastClientDeliveredSequence": 1,
+          "terminalReason": "policy_denied",
           "draftDisposition": "retract",
-          "policyDecisionId": "decision-abort"
+          "durableResult": "none",
+          "policyDecisionId": "decision-abort",
+          "occurredAt": "1970-01-01T00:00:01.100Z",
+          "occurredAtUnixMs": 1100
         }
       },
       {

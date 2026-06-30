@@ -8222,7 +8222,19 @@ class TckRunner:
                         elif not isinstance(evaluated_at, str):
                             raise ValueError("invalid_evaluated_at_unix_ms")
                         decision = decision.evaluated_at_time(evaluated_at)
-                    update = gate.apply_decision(decision, occurred_at=str(operation.get("occurredAt", "")))
+                    occurred_at = operation.get("occurredAt", "")
+                    if isinstance(occurred_at, bool):
+                        raise ValueError("missing_occurred_at_unix_ms")
+                    if isinstance(occurred_at, int):
+                        if occurred_at <= 0:
+                            raise ValueError("missing_occurred_at_unix_ms")
+                        occurred_at = datetime.fromtimestamp(
+                            occurred_at / 1000,
+                            tz=timezone.utc,
+                        ).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+                    elif not isinstance(occurred_at, str):
+                        raise ValueError("missing_occurred_at_unix_ms")
+                    update = gate.apply_decision(decision, occurred_at=occurred_at)
                     actual_deliver = [(chunk.sequence, chunk.text) for chunk in update.deliverable]
                     if isinstance(expected_cutoff, Mapping):
                         if update.cutoff is None:
@@ -8238,8 +8250,11 @@ class TckRunner:
                                 "lastGeneratedSequence": update.cutoff.last_generated_sequence,
                                 "lastPolicyAcceptedSequence": update.cutoff.last_policy_accepted_sequence,
                                 "lastClientDeliveredSequence": update.cutoff.last_client_delivered_sequence,
+                                "terminalReason": update.cutoff.terminal_reason,
                                 "draftDisposition": update.cutoff.draft_disposition,
+                                "durableResult": update.cutoff.durable_result,
                                 "policyDecisionId": update.cutoff.policy_decision_id,
+                                "occurredAt": update.cutoff.occurred_at,
                             }
                             for field_name, actual_value in cutoff_fields.items():
                                 if field_name in expected_cutoff and expected_cutoff[field_name] != actual_value:
@@ -8256,6 +8271,11 @@ class TckRunner:
                     actual_error = "policy_stopped"
                 elif message == "invalid_evaluated_at_unix_ms":
                     actual_error = "invalid_evaluated_at_unix_ms"
+                elif (
+                    message == "missing_occurred_at_unix_ms"
+                    or message == "output gate occurred_at must not be empty"
+                ):
+                    actual_error = "missing_occurred_at_unix_ms"
                 elif "exceeds" in message and "bytes" in message:
                     actual_error = "bounded_holdback_bytes"
                 elif "exceeds" in message and "tokens" in message:

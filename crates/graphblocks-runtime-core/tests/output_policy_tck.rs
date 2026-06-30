@@ -1,7 +1,8 @@
 use graphblocks_runtime_core::output_policy::{
-    DraftDisposition, FlushBoundary, GenerationChunk, OutputDeliveryGate, OutputDeliveryPolicy,
-    OutputGateError, OutputGateUpdate, OutputPolicyDecision, PendingToolCallsDisposition,
-    ProviderCancellation, RedactionInstruction, ViolationAction,
+    DraftDisposition, DurableResult, FlushBoundary, GenerationChunk, OutputDeliveryGate,
+    OutputDeliveryPolicy, OutputGateError, OutputGateUpdate, OutputPolicyDecision,
+    PendingToolCallsDisposition, ProviderCancellation, RedactionInstruction, TerminalReason,
+    ViolationAction,
 };
 use serde_json::Value;
 
@@ -334,10 +335,24 @@ fn assert_update_result(
         if let Some(sequence) = optional_u64(expected_cutoff, "lastClientDeliveredSequence") {
             assert_eq!(cutoff.last_client_delivered_sequence, sequence, "{name}");
         }
+        if let Some(reason) = optional_str(expected_cutoff, "terminalReason") {
+            assert_eq!(
+                terminal_reason_name(&cutoff.terminal_reason),
+                reason,
+                "{name}"
+            );
+        }
         if let Some(disposition) = optional_str(expected_cutoff, "draftDisposition") {
             assert_eq!(
                 draft_disposition_name(&cutoff.draft_disposition),
                 disposition,
+                "{name}"
+            );
+        }
+        if let Some(result) = optional_str(expected_cutoff, "durableResult") {
+            assert_eq!(
+                durable_result_name(&cutoff.durable_result),
+                result,
                 "{name}"
             );
         }
@@ -347,6 +362,9 @@ fn assert_update_result(
                 Some(decision_id),
                 "{name}"
             );
+        }
+        if let Some(occurred_at_unix_ms) = optional_u64(expected_cutoff, "occurredAtUnixMs") {
+            assert_eq!(cutoff.occurred_at_unix_ms, occurred_at_unix_ms, "{name}");
         }
     } else {
         assert_eq!(update.cutoff, None, "{name}");
@@ -456,6 +474,23 @@ fn draft_disposition_name(disposition: &DraftDisposition) -> &'static str {
         DraftDisposition::Keep => "keep",
         DraftDisposition::MarkIncomplete => "mark_incomplete",
         DraftDisposition::Retract => "retract",
+    }
+}
+
+fn terminal_reason_name(reason: &TerminalReason) -> &'static str {
+    match reason {
+        TerminalReason::PolicyDenied => "policy_denied",
+        TerminalReason::BudgetExhausted => "budget_exhausted",
+        TerminalReason::Cancelled => "cancelled",
+        TerminalReason::ClientDisconnected => "client_disconnected",
+    }
+}
+
+fn durable_result_name(result: &DurableResult) -> &'static str {
+    match result {
+        DurableResult::None => "none",
+        DurableResult::Incomplete => "incomplete",
+        DurableResult::Partial => "partial",
     }
 }
 
