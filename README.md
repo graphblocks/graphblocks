@@ -82,6 +82,7 @@ Shared TCK fixtures live under `tck/`:
 - `sequence`
 - `tool-execution`
 - `tool-lifecycle`
+- `tool-result`
 - `usage`
 - `voice`
 
