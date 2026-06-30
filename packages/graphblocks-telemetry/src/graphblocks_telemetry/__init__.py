@@ -4,6 +4,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 
+from graphblocks.diagnostics import Diagnostic, Severity
+
 
 DEFAULT_BLOCKED_METRIC_LABELS = (
     "attempt_id",
@@ -36,6 +38,13 @@ DEFAULT_CONTENT_TELEMETRY_ATTRIBUTE_KEYS = (
 
 class TelemetryProjectionError(RuntimeError):
     pass
+
+
+def _diagnostic_summary(diagnostics: Iterable[Diagnostic]) -> dict[Severity, int]:
+    summary: dict[Severity, int] = {"error": 0, "warning": 0, "info": 0}
+    for diagnostic in diagnostics:
+        summary[diagnostic.severity] += 1
+    return summary
 
 
 @dataclass(frozen=True, slots=True)
@@ -278,6 +287,22 @@ class TelemetryExportResult:
             raise TelemetryProjectionError("telemetry export result must not affect run correctness")
 
     @classmethod
+    def completed(
+        cls,
+        *,
+        exporter: str,
+        record_ids: tuple[str, ...],
+    ) -> TelemetryExportResult:
+        return cls(
+            exporter=exporter,
+            status="completed",
+            record_ids=record_ids,
+            error_type=None,
+            retryable=False,
+            run_impact="none",
+        )
+
+    @classmethod
     def failed(
         cls,
         *,
@@ -304,6 +329,120 @@ class TelemetryExportResult:
             "retryable": self.retryable,
             "run_impact": self.run_impact,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class TelemetryDiagnosticBundleSection:
+    name: str
+    diagnostics: tuple[Diagnostic, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.name, str) or not self.name.strip():
+            raise TelemetryProjectionError("telemetry diagnostic section name must be a non-empty string")
+        if isinstance(self.diagnostics, Diagnostic):
+            raise TelemetryProjectionError("telemetry diagnostic section diagnostics must be a collection")
+        try:
+            diagnostics = tuple(self.diagnostics)
+        except TypeError as error:
+            raise TelemetryProjectionError("telemetry diagnostic section diagnostics must be a collection") from error
+        if any(not isinstance(diagnostic, Diagnostic) for diagnostic in diagnostics):
+            raise TelemetryProjectionError("telemetry diagnostic section diagnostics must be Diagnostic entries")
+        object.__setattr__(
+            self,
+            "diagnostics",
+            tuple(
+                sorted(
+                    diagnostics,
+                    key=lambda diagnostic: (
+                        diagnostic.severity,
+                        diagnostic.code,
+                        diagnostic.path,
+                        diagnostic.message,
+                    ),
+                )
+            ),
+        )
+
+    @property
+    def ok(self) -> bool:
+        return not any(diagnostic.severity == "error" for diagnostic in self.diagnostics)
+
+    def summary(self) -> dict[Severity, int]:
+        return _diagnostic_summary(self.diagnostics)
+
+    def section_contract(self) -> dict[str, object]:
+        return {
+            "name": self.name,
+            "ok": self.ok,
+            "summary": self.summary(),
+            "diagnostics": [diagnostic.to_dict() for diagnostic in self.diagnostics],
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class TelemetryDiagnosticBundle:
+    bundle_id: str
+    sections: tuple[TelemetryDiagnosticBundleSection, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.bundle_id, str) or not self.bundle_id.strip():
+            raise TelemetryProjectionError("telemetry diagnostic bundle_id must be a non-empty string")
+        if isinstance(self.sections, TelemetryDiagnosticBundleSection):
+            raise TelemetryProjectionError("telemetry diagnostic bundle sections must be a collection")
+        try:
+            sections = tuple(self.sections)
+        except TypeError as error:
+            raise TelemetryProjectionError("telemetry diagnostic bundle sections must be a collection") from error
+        if any(not isinstance(section, TelemetryDiagnosticBundleSection) for section in sections):
+            raise TelemetryProjectionError("telemetry diagnostic bundle sections must be section entries")
+        object.__setattr__(self, "sections", tuple(sorted(sections, key=lambda section: section.name)))
+
+    @property
+    def ok(self) -> bool:
+        return all(section.ok for section in self.sections)
+
+    def summary(self) -> dict[Severity, int]:
+        summary: dict[Severity, int] = {"error": 0, "warning": 0, "info": 0}
+        for section in self.sections:
+            for severity, count in section.summary().items():
+                summary[severity] += count
+        return summary
+
+    def bundle_contract(self) -> dict[str, object]:
+        return {
+            "bundle_id": self.bundle_id,
+            "ok": self.ok,
+            "summary": self.summary(),
+            "sections": [section.section_contract() for section in self.sections],
+        }
+
+
+def telemetry_diagnostic_bundle(
+    bundle_id: str,
+    *,
+    capture_policy_result: TelemetryCapturePolicyLintResult | None = None,
+    metric_cardinality_result: MetricCardinalityLintResult | None = None,
+    export_results: Iterable[TelemetryExportResult] = (),
+) -> TelemetryDiagnosticBundle:
+    sections: list[TelemetryDiagnosticBundleSection] = []
+    if capture_policy_result is not None:
+        sections.append(
+            TelemetryDiagnosticBundleSection(
+                "capture_policy",
+                tuple(_capture_policy_diagnostics(capture_policy_result)),
+            )
+        )
+    if metric_cardinality_result is not None:
+        sections.append(
+            TelemetryDiagnosticBundleSection(
+                "metric_cardinality",
+                tuple(_metric_cardinality_diagnostics(metric_cardinality_result)),
+            )
+        )
+    export_diagnostics = tuple(_export_result_diagnostics(export_results))
+    if export_diagnostics:
+        sections.append(TelemetryDiagnosticBundleSection("exporters", export_diagnostics))
+    return TelemetryDiagnosticBundle(bundle_id, tuple(sections))
 
 
 @dataclass(frozen=True, slots=True)
@@ -396,6 +535,48 @@ class MetricCardinalityLinter:
         return MetricCardinalityLintResult(tuple(issues))
 
 
+def _capture_policy_diagnostics(result: TelemetryCapturePolicyLintResult) -> Iterable[Diagnostic]:
+    for issue in result.issues:
+        yield Diagnostic(
+            code=f"TelemetryCapturePolicy.{issue.reason}",
+            severity="error",
+            path=f"$.capturePolicy.attributes.{issue.attribute_key}",
+            message=(
+                f"Telemetry attribute {issue.attribute_key!r} failed capture-policy lint; "
+                f"required action: {issue.required_action}"
+            ),
+        )
+
+
+def _metric_cardinality_diagnostics(result: MetricCardinalityLintResult) -> Iterable[Diagnostic]:
+    for issue in result.issues:
+        yield Diagnostic(
+            code=f"TelemetryMetricCardinality.{issue.reason}",
+            severity="warning",
+            path=f"$.metrics.{issue.metric_name}.labels.{issue.label}",
+            message=(
+                f"Telemetry metric {issue.metric_name!r} label {issue.label!r} observed "
+                f"{issue.distinct_values} distinct value(s); limit: {issue.limit}"
+            ),
+        )
+
+
+def _export_result_diagnostics(results: Iterable[TelemetryExportResult]) -> Iterable[Diagnostic]:
+    for result in results:
+        if result.status == "completed":
+            continue
+        yield Diagnostic(
+            code=f"TelemetryExport.{result.status}",
+            severity="warning",
+            path=f"$.exporters.{result.exporter}",
+            message=(
+                f"Telemetry exporter {result.exporter!r} reported status {result.status!r} "
+                f"for {len(result.record_ids)} record(s); retryable: {result.retryable}; "
+                f"error_type: {result.error_type or 'none'}"
+            ),
+        )
+
+
 __all__ = [
     "DEFAULT_BLOCKED_METRIC_LABELS",
     "DEFAULT_CONTENT_TELEMETRY_ATTRIBUTE_KEYS",
@@ -409,7 +590,10 @@ __all__ = [
     "TelemetryCapturePolicyIssue",
     "TelemetryCapturePolicyLintResult",
     "TelemetryCapturePolicyLinter",
+    "TelemetryDiagnosticBundle",
+    "TelemetryDiagnosticBundleSection",
     "TelemetryExportResult",
     "TelemetryProjectionError",
     "ToolExecutionTelemetryRecord",
+    "telemetry_diagnostic_bundle",
 ]

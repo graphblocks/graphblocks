@@ -258,6 +258,126 @@ def test_telemetry_export_failure_is_non_fatal_to_run(monkeypatch) -> None:
     }
 
 
+def test_telemetry_diagnostic_bundle_combines_observability_health(monkeypatch) -> None:
+    _add_observability_package_paths(monkeypatch)
+    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
+    capture_lint = graphblocks_telemetry.TelemetryCapturePolicyLinter(
+        sensitive_attribute_keys=("api_key",),
+        content_attribute_keys=("prompt",),
+    ).lint_policy(graphblocks_telemetry.TelemetryCapturePolicy())
+    cardinality_lint = graphblocks_telemetry.MetricCardinalityLinter(
+        max_distinct_values_per_label=1,
+    ).lint_samples(
+        (
+            {
+                "name": "graphblocks_tool_executions_total",
+                "labels": {"tool_name": "ticket.create", "run_id": "run-1"},
+                "value": 1,
+            },
+            {
+                "name": "graphblocks_tool_executions_total",
+                "labels": {"tool_name": "ticket.update"},
+                "value": 1,
+            },
+        )
+    )
+    exporter_failure = graphblocks_telemetry.TelemetryExportResult.failed(
+        exporter="otlp",
+        record_ids=("policy-1", "tool-1"),
+        error_type="TimeoutError",
+        retryable=True,
+    )
+    exporter_success = graphblocks_telemetry.TelemetryExportResult.completed(
+        exporter="langfuse",
+        record_ids=("gen-1",),
+    )
+
+    bundle = graphblocks_telemetry.telemetry_diagnostic_bundle(
+        "observability-health",
+        capture_policy_result=capture_lint,
+        metric_cardinality_result=cardinality_lint,
+        export_results=(exporter_success, exporter_failure),
+    )
+
+    assert bundle.ok is False
+    assert bundle.summary() == {"error": 2, "warning": 3, "info": 0}
+    assert bundle.bundle_contract() == {
+        "bundle_id": "observability-health",
+        "ok": False,
+        "summary": {"error": 2, "warning": 3, "info": 0},
+        "sections": [
+            {
+                "name": "capture_policy",
+                "ok": False,
+                "summary": {"error": 2, "warning": 0, "info": 0},
+                "diagnostics": [
+                    {
+                        "code": "TelemetryCapturePolicy.content_attribute_not_protected",
+                        "severity": "error",
+                        "path": "$.capturePolicy.attributes.prompt",
+                        "message": (
+                            "Telemetry attribute 'prompt' failed capture-policy lint; "
+                            "required action: redact_or_drop"
+                        ),
+                    },
+                    {
+                        "code": "TelemetryCapturePolicy.sensitive_attribute_not_protected",
+                        "severity": "error",
+                        "path": "$.capturePolicy.attributes.api_key",
+                        "message": (
+                            "Telemetry attribute 'api_key' failed capture-policy lint; "
+                            "required action: redact_or_drop"
+                        ),
+                    },
+                ],
+            },
+            {
+                "name": "exporters",
+                "ok": True,
+                "summary": {"error": 0, "warning": 1, "info": 0},
+                "diagnostics": [
+                    {
+                        "code": "TelemetryExport.failed",
+                        "severity": "warning",
+                        "path": "$.exporters.otlp",
+                        "message": (
+                            "Telemetry exporter 'otlp' reported status 'failed' for 2 record(s); "
+                            "retryable: True; error_type: TimeoutError"
+                        ),
+                    }
+                ],
+            },
+            {
+                "name": "metric_cardinality",
+                "ok": True,
+                "summary": {"error": 0, "warning": 2, "info": 0},
+                "diagnostics": [
+                    {
+                        "code": "TelemetryMetricCardinality.blocked_label",
+                        "severity": "warning",
+                        "path": "$.metrics.graphblocks_tool_executions_total.labels.run_id",
+                        "message": (
+                            "Telemetry metric 'graphblocks_tool_executions_total' label 'run_id' "
+                            "observed 1 distinct value(s); limit: 0"
+                        ),
+                    },
+                    {
+                        "code": "TelemetryMetricCardinality.too_many_values",
+                        "severity": "warning",
+                        "path": "$.metrics.graphblocks_tool_executions_total.labels.tool_name",
+                        "message": (
+                            "Telemetry metric 'graphblocks_tool_executions_total' label 'tool_name' "
+                            "observed 2 distinct value(s); limit: 1"
+                        ),
+                    },
+                ],
+            },
+        ],
+    }
+    assert "TelemetryDiagnosticBundle" in graphblocks_telemetry.__all__
+    assert "telemetry_diagnostic_bundle" in graphblocks_telemetry.__all__
+
+
 def test_metric_cardinality_linter_flags_unbounded_labels(monkeypatch) -> None:
     _add_observability_package_paths(monkeypatch)
     graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
