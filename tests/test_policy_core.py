@@ -128,6 +128,10 @@ def test_policy_models_reject_unknown_typed_values() -> None:
 
 
 def test_policy_models_reject_empty_identity_fields() -> None:
+    with pytest.raises(ValueError, match="policy obligation obligation_id must not be empty"):
+        PolicyObligation(" ", "capture_audit")
+    with pytest.raises(ValueError, match="policy obligation obligation_type must not be empty"):
+        PolicyObligation("obl-1", "")
     with pytest.raises(ValueError, match="principal principal_id must not be empty"):
         PrincipalRef(" ")
     with pytest.raises(ValueError, match="principal tenant_id must not be empty"):
@@ -178,6 +182,59 @@ def test_policy_models_reject_empty_identity_fields() -> None:
             resource=ResourceRef("tool:search"),
             occurred_at="2026-06-23T00:00:00Z",
             data_labels=("restricted", ""),
+        )
+    with pytest.raises(ValueError, match="policy decision decision_id must not be empty"):
+        PolicyDecision(
+            decision_id=" ",
+            effect="allow",
+            reason_codes=(),
+            policy_refs=(),
+            input_digest="sha256:input",
+        )
+
+
+def test_policy_decision_rejects_malformed_collections() -> None:
+    with pytest.raises(ValueError, match="policy decision reason_codes must be a collection of strings"):
+        PolicyDecision(
+            decision_id="decision-1",
+            effect="allow",
+            reason_codes="allow-all",  # type: ignore[arg-type]
+            policy_refs=(),
+            input_digest="sha256:input",
+        )
+    with pytest.raises(ValueError, match="policy decision reason_codes item must not be empty"):
+        PolicyDecision(
+            decision_id="decision-1",
+            effect="allow",
+            reason_codes=("allow-all", " "),
+            policy_refs=(),
+            input_digest="sha256:input",
+        )
+    with pytest.raises(ValueError, match="policy decision policy_refs items must be strings"):
+        PolicyDecision(
+            decision_id="decision-1",
+            effect="allow",
+            reason_codes=(),
+            policy_refs=("policy-1", 2),  # type: ignore[arg-type]
+            input_digest="sha256:input",
+        )
+    with pytest.raises(ValueError, match="policy decision obligations must be PolicyObligation"):
+        PolicyDecision(
+            decision_id="decision-1",
+            effect="allow",
+            reason_codes=(),
+            policy_refs=(),
+            obligations=(object(),),  # type: ignore[arg-type]
+            input_digest="sha256:input",
+        )
+    with pytest.raises(ValueError, match="policy decision advice must contain mappings"):
+        PolicyDecision(
+            decision_id="decision-1",
+            effect="allow",
+            reason_codes=(),
+            policy_refs=(),
+            advice=(object(),),  # type: ignore[arg-type]
+            input_digest="sha256:input",
         )
 
 

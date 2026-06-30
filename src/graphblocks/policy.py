@@ -125,6 +125,16 @@ class PolicyObligation:
     parameters: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "obligation_id",
+            _validate_non_empty_string("policy obligation", "obligation_id", self.obligation_id),
+        )
+        object.__setattr__(
+            self,
+            "obligation_type",
+            _validate_non_empty_string("policy obligation", "obligation_type", self.obligation_type),
+        )
         object.__setattr__(self, "parameters", MappingProxyType(dict(self.parameters)))
 
 
@@ -349,12 +359,37 @@ class PolicyDecision:
     input_digest: str = ""
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "decision_id",
+            _validate_non_empty_string("policy decision", "decision_id", self.decision_id),
+        )
         if self.effect not in VALID_POLICY_EFFECTS:
             raise ValueError(f"unknown policy effect {self.effect!r}")
-        object.__setattr__(self, "reason_codes", tuple(self.reason_codes))
-        object.__setattr__(self, "policy_refs", tuple(self.policy_refs))
-        object.__setattr__(self, "obligations", tuple(self.obligations))
-        object.__setattr__(self, "advice", tuple(MappingProxyType(dict(item)) for item in self.advice))
+        object.__setattr__(
+            self,
+            "reason_codes",
+            _validate_string_tuple("policy decision", "reason_codes", self.reason_codes),
+        )
+        object.__setattr__(
+            self,
+            "policy_refs",
+            _validate_string_tuple("policy decision", "policy_refs", self.policy_refs),
+        )
+        try:
+            obligations = tuple(self.obligations)
+        except TypeError as error:
+            raise ValueError("policy decision obligations must be PolicyObligation") from error
+        if any(not isinstance(obligation, PolicyObligation) for obligation in obligations):
+            raise ValueError("policy decision obligations must be PolicyObligation")
+        try:
+            advice_items = tuple(self.advice)
+        except TypeError as error:
+            raise ValueError("policy decision advice must contain mappings") from error
+        if any(not isinstance(item, Mapping) for item in advice_items):
+            raise ValueError("policy decision advice must contain mappings")
+        object.__setattr__(self, "obligations", obligations)
+        object.__setattr__(self, "advice", tuple(MappingProxyType(dict(item)) for item in advice_items))
 
 
 @dataclass(frozen=True, slots=True)
