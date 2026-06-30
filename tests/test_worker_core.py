@@ -938,6 +938,42 @@ def test_run_ownership_lease_round_trips_with_fencing_epoch() -> None:
     assert RunOwnershipLease.from_wire(encoded) == lease
 
 
+def test_run_ownership_lease_rejects_invalid_wire_payloads() -> None:
+    base = RunOwnershipLease(
+        run_id="run-000001",
+        owner_instance_id="control-plane-a",
+        lease_epoch=42,
+        expires_at_unix_ms=1_820_000_000_000,
+        last_checkpoint="checkpoint-000004",
+    ).to_wire()
+    invalid_leases = (
+        (
+            {**base, "runId": object()},
+            "run ownership lease run_id must be a string",
+        ),
+        (
+            {**base, "ownerInstanceId": " "},
+            "run ownership lease owner_instance_id must not be empty",
+        ),
+        (
+            {**base, "leaseEpoch": False},
+            "run ownership lease lease_epoch must be an integer",
+        ),
+        (
+            {**base, "expiresAtUnixMs": -1},
+            "run ownership lease expires_at_unix_ms must not be negative",
+        ),
+        (
+            {**base, "lastCheckpoint": ""},
+            "run ownership lease last_checkpoint must not be empty",
+        ),
+    )
+
+    for payload, message in invalid_leases:
+        with pytest.raises(WorkerProtocolError, match=message):
+            RunOwnershipLease.from_wire(payload)
+
+
 def test_worker_result_validation_rejects_mismatched_attempt_or_lease_epoch() -> None:
     request = WorkerInvokeRequest(
         invocation_id="invoke-000001",

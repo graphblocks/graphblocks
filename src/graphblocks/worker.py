@@ -453,6 +453,49 @@ class RunOwnershipLease:
     expires_at_unix_ms: int
     last_checkpoint: str | None = None
 
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "run_id",
+            _validate_worker_non_empty_string("run ownership lease", "run_id", self.run_id),
+        )
+        object.__setattr__(
+            self,
+            "owner_instance_id",
+            _validate_worker_non_empty_string(
+                "run ownership lease",
+                "owner_instance_id",
+                self.owner_instance_id,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "lease_epoch",
+            _validate_worker_non_negative_integer(
+                "run ownership lease",
+                "lease_epoch",
+                self.lease_epoch,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "expires_at_unix_ms",
+            _validate_worker_non_negative_integer(
+                "run ownership lease",
+                "expires_at_unix_ms",
+                self.expires_at_unix_ms,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "last_checkpoint",
+            _validate_worker_optional_non_empty_string(
+                "run ownership lease",
+                "last_checkpoint",
+                self.last_checkpoint,
+            ),
+        )
+
     def to_wire(self) -> dict[str, object]:
         return {
             "runId": self.run_id,
@@ -466,11 +509,11 @@ class RunOwnershipLease:
     def from_wire(cls, payload: dict[str, object]) -> RunOwnershipLease:
         last_checkpoint = payload.get("lastCheckpoint")
         return cls(
-            run_id=str(payload["runId"]),
-            owner_instance_id=str(payload["ownerInstanceId"]),
-            lease_epoch=int(payload["leaseEpoch"]),
-            expires_at_unix_ms=int(payload["expiresAtUnixMs"]),
-            last_checkpoint=None if last_checkpoint is None else str(last_checkpoint),
+            run_id=payload["runId"],
+            owner_instance_id=payload["ownerInstanceId"],
+            lease_epoch=payload["leaseEpoch"],
+            expires_at_unix_ms=payload["expiresAtUnixMs"],
+            last_checkpoint=last_checkpoint,
         )
 
 
