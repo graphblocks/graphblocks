@@ -550,6 +550,17 @@ class ToolBinding:
     def __post_init__(self) -> None:
         for field_name in ("binding_id", "tool_name"):
             _validate_non_empty_string("tool binding", field_name, getattr(self, field_name))
+        if not isinstance(
+            self.implementation,
+            (
+                BlockToolImplementation,
+                GraphToolImplementation,
+                RemoteToolImplementation,
+                McpToolImplementation,
+                OpenApiToolImplementation,
+            ),
+        ):
+            raise ValueError("tool binding implementation must be a ToolImplementation")
         effects = _validate_string_collection("tool binding", "effects", self.effects)
         invalid_effects = sorted(effect for effect in effects if effect not in VALID_TOOL_EFFECTS)
         if invalid_effects:
