@@ -743,16 +743,14 @@ class HttpGraphBlocksClient:
         )
         response = (self.transport or urlopen)(request, timeout=self.timeout)
         payload = _read_json_response(response, "GraphBlocks run stream response")
-        stream_payload = payload.get("stream", {}) or {}
-        if not isinstance(stream_payload, dict):
-            raise ValueError("GraphBlocks run stream metadata must be a JSON object")
+        stream_payload = _payload_object(payload, "GraphBlocks run stream response", "stream", "stream")
         events = _application_events_from_payloads(payload.get("events", ()) or ())
         stream_state = ApplicationEventStreamState()
         for event in events:
             stream_state.accept(event)
         return RunStreamSnapshot(
-            run_id=str(payload.get("runId", payload.get("run_id", ""))),
-            stream=dict(stream_payload),
+            run_id=_payload_string(payload, "GraphBlocks run stream response", "run_id", "runId", "run_id"),
+            stream=stream_payload,
             events=events,
             event_stream=stream_state,
         )
@@ -793,9 +791,9 @@ class HttpGraphBlocksClient:
         for event in events:
             stream_state.accept(event)
         return RunGraphResponse(
-            run_id=str(payload.get("runId", payload.get("run_id", ""))),
-            status=str(payload.get("status", "")),
-            outputs=dict(payload.get("outputs", {}) or {}),
+            run_id=_payload_string(payload, "GraphBlocks HTTP response", "run_id", "runId", "run_id"),
+            status=_payload_string(payload, "GraphBlocks HTTP response", "status", "status"),
+            outputs=_payload_object(payload, "GraphBlocks HTTP response", "outputs", "outputs"),
             events=tuple(events),
             event_stream=stream_state,
         )
@@ -809,6 +807,28 @@ def _read_json_response(response: object, label: str) -> dict[str, object]:
     if status_code is not None and int(status_code) >= 400:
         raise GraphBlocksHttpError(int(status_code), payload)
     return payload
+
+
+def _payload_string(payload: Mapping[str, object], label: str, field_name: str, *keys: str) -> str:
+    value: object = None
+    for key in keys:
+        if key in payload:
+            value = payload[key]
+            break
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{label} {field_name} must be a non-empty string")
+    return value
+
+
+def _payload_object(payload: Mapping[str, object], label: str, field_name: str, *keys: str) -> dict[str, object]:
+    value: object = {}
+    for key in keys:
+        if key in payload:
+            value = payload[key]
+            break
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{label} {field_name} must be a JSON object")
+    return dict(value)
 
 
 def _validate_resolved_tool_capability(

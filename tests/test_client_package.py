@@ -707,6 +707,69 @@ def test_client_package_rejects_malformed_http_event_metadata(
         )
 
 
+@pytest.mark.parametrize(
+    ("payload_override", "message"),
+    (
+        ({"runId": True}, "GraphBlocks HTTP response run_id must be a non-empty string"),
+        ({"status": None}, "GraphBlocks HTTP response status must be a non-empty string"),
+        ({"outputs": []}, "GraphBlocks HTTP response outputs must be a JSON object"),
+    ),
+)
+def test_client_package_rejects_malformed_http_run_response(
+    monkeypatch,
+    payload_override: dict[str, object],
+    message: str,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+
+    class FakeResponse:
+        def read(self) -> bytes:
+            payload: dict[str, object] = {
+                "runId": "run-http-1",
+                "status": "succeeded",
+                "outputs": {},
+                "events": [],
+            }
+            payload.update(payload_override)
+            return json.dumps(payload).encode("utf-8")
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        transport=lambda request, *, timeout: FakeResponse(),
+    )
+
+    with pytest.raises(ValueError, match=message):
+        client.run_graph(
+            graphblocks_client.RunGraphCommand(
+                graph={"kind": "Graph", "metadata": {"name": "remote-run"}},
+            )
+        )
+
+
+def test_client_package_rejects_malformed_http_stream_response(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+
+    class FakeResponse:
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "runId": True,
+                    "stream": {"status": "accepted"},
+                    "events": [],
+                }
+            ).encode("utf-8")
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        transport=lambda request, *, timeout: FakeResponse(),
+    )
+
+    with pytest.raises(ValueError, match="GraphBlocks run stream response run_id must be a non-empty string"):
+        client.run_stream("run-http-1")
+
+
 def test_client_package_reads_server_health_over_http_transport(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
     graphblocks_client = importlib.import_module("graphblocks_client")
