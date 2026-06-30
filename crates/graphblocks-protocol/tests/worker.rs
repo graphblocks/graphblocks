@@ -79,6 +79,58 @@ fn worker_admission_rejects_incompatible_package_lock() {
 }
 
 #[test]
+fn worker_admission_rejects_whitespace_advertisement_identity_fields() {
+    let mut advertisement = WorkerAdvertisement::new(
+        " ",
+        "doc-cpu",
+        "sha256:package-lock",
+        "sha256:image",
+        [BlockCapability::new("prompt.render@1")],
+    );
+    assert_eq!(
+        admit_worker(&advertisement),
+        Err(WorkerProtocolError::EmptyWorkerId),
+    );
+
+    advertisement.worker_id = "worker-local-1".to_owned();
+    advertisement.target_id = " ".to_owned();
+    assert_eq!(
+        admit_worker(&advertisement),
+        Err(WorkerProtocolError::EmptyTargetId),
+    );
+
+    advertisement.target_id = "doc-cpu".to_owned();
+    advertisement.package_lock_hash = " ".to_owned();
+    assert_eq!(
+        admit_worker(&advertisement),
+        Err(WorkerProtocolError::EmptyPackageLockHash),
+    );
+
+    advertisement.package_lock_hash = "sha256:package-lock".to_owned();
+    advertisement.image_digest = " ".to_owned();
+    assert_eq!(
+        admit_worker(&advertisement),
+        Err(WorkerProtocolError::EmptyImageDigest),
+    );
+}
+
+#[test]
+fn worker_admission_rejects_blank_block_capability() {
+    let advertisement = WorkerAdvertisement::new(
+        "worker-local-1",
+        "doc-cpu",
+        "sha256:package-lock",
+        "sha256:image",
+        [BlockCapability::new(" ")],
+    );
+
+    assert_eq!(
+        admit_worker(&advertisement),
+        Err(WorkerProtocolError::EmptyBlockCapability),
+    );
+}
+
+#[test]
 fn worker_admission_decision_reports_drain_and_missing_capability() -> Result<(), serde_json::Error>
 {
     let advertisement = WorkerAdvertisement::new(
@@ -116,6 +168,25 @@ fn worker_admission_decision_reports_drain_and_missing_capability() -> Result<()
         decision,
     );
     Ok(())
+}
+
+#[test]
+fn worker_admission_decision_reports_blank_capabilities_and_trimmed_identity_fields() {
+    let advertisement = WorkerAdvertisement::new(" ", " ", " ", " ", [BlockCapability::new(" ")]);
+
+    let decision = evaluate_worker_admission(&WorkerAdmissionPolicy::current(), &advertisement);
+
+    assert!(!decision.admitted);
+    assert_eq!(
+        decision.reason_codes,
+        vec![
+            "worker.empty_worker_id".to_owned(),
+            "worker.empty_target_id".to_owned(),
+            "worker.empty_package_lock_hash".to_owned(),
+            "worker.empty_image_digest".to_owned(),
+            "worker.empty_block_capability".to_owned(),
+        ],
+    );
 }
 
 #[test]
@@ -173,6 +244,37 @@ fn worker_selection_skips_draining_and_saturated_workers() {
         .expect("a ready worker should be eligible");
 
     assert_eq!(selected.worker_id, "worker-c");
+}
+
+#[test]
+fn worker_selection_skips_invalid_advertisements() {
+    let blank_worker_id = WorkerAdvertisement::new(
+        " ",
+        "model-cpu",
+        "sha256:package-lock",
+        "sha256:image-a",
+        [BlockCapability::new("model.generate@1")],
+    );
+    let blank_capability = WorkerAdvertisement::new(
+        "worker-a",
+        "model-cpu",
+        "sha256:package-lock",
+        "sha256:image-b",
+        [BlockCapability::new(" ")],
+    );
+    let valid = WorkerAdvertisement::new(
+        "worker-b",
+        "model-cpu",
+        "sha256:package-lock",
+        "sha256:image-c",
+        [BlockCapability::new("model.generate@1")],
+    );
+    let workers = [blank_worker_id, blank_capability, valid];
+
+    let selected = select_worker_for_block(workers.iter(), "model.generate@1")
+        .expect("the valid worker should be eligible");
+
+    assert_eq!(selected.worker_id, "worker-b");
 }
 
 #[test]

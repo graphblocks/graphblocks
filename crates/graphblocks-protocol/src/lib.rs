@@ -135,6 +135,7 @@ pub enum WorkerProtocolError {
     EmptyPackageLockHash,
     EmptyImageDigest,
     EmptySupportedBlocks,
+    EmptyBlockCapability,
     MissingRequiredBlock { required_block: String },
 }
 
@@ -152,16 +153,16 @@ pub fn admit_worker_with_policy(
             actual: advertisement.protocol_version,
         });
     }
-    if advertisement.worker_id.is_empty() {
+    if advertisement.worker_id.trim().is_empty() {
         return Err(WorkerProtocolError::EmptyWorkerId);
     }
-    if advertisement.target_id.is_empty() {
+    if advertisement.target_id.trim().is_empty() {
         return Err(WorkerProtocolError::EmptyTargetId);
     }
-    if advertisement.package_lock_hash.is_empty() {
+    if advertisement.package_lock_hash.trim().is_empty() {
         return Err(WorkerProtocolError::EmptyPackageLockHash);
     }
-    if advertisement.image_digest.is_empty() {
+    if advertisement.image_digest.trim().is_empty() {
         return Err(WorkerProtocolError::EmptyImageDigest);
     }
     if let Some(expected_package_lock_hash) = &policy.package_lock_hash
@@ -174,6 +175,13 @@ pub fn admit_worker_with_policy(
     }
     if advertisement.supported_blocks.is_empty() {
         return Err(WorkerProtocolError::EmptySupportedBlocks);
+    }
+    if advertisement
+        .supported_blocks
+        .iter()
+        .any(|capability| capability.block.trim().is_empty())
+    {
+        return Err(WorkerProtocolError::EmptyBlockCapability);
     }
     if let Some(required_block) = &policy.required_block
         && !advertisement
@@ -196,16 +204,16 @@ pub fn evaluate_worker_admission(
     if advertisement.protocol_version != policy.protocol_version {
         reason_codes.push("worker.incompatible_protocol_version".to_owned());
     }
-    if advertisement.worker_id.is_empty() {
+    if advertisement.worker_id.trim().is_empty() {
         reason_codes.push("worker.empty_worker_id".to_owned());
     }
-    if advertisement.target_id.is_empty() {
+    if advertisement.target_id.trim().is_empty() {
         reason_codes.push("worker.empty_target_id".to_owned());
     }
-    if advertisement.package_lock_hash.is_empty() {
+    if advertisement.package_lock_hash.trim().is_empty() {
         reason_codes.push("worker.empty_package_lock_hash".to_owned());
     }
-    if advertisement.image_digest.is_empty() {
+    if advertisement.image_digest.trim().is_empty() {
         reason_codes.push("worker.empty_image_digest".to_owned());
     }
     if let Some(expected_package_lock_hash) = &policy.package_lock_hash
@@ -215,6 +223,13 @@ pub fn evaluate_worker_admission(
     }
     if advertisement.supported_blocks.is_empty() {
         reason_codes.push("worker.empty_supported_blocks".to_owned());
+    }
+    if advertisement
+        .supported_blocks
+        .iter()
+        .any(|capability| capability.block.trim().is_empty())
+    {
+        reason_codes.push("worker.empty_block_capability".to_owned());
     }
     if advertisement.state != WorkerState::Ready {
         reason_codes.push("worker.not_ready".to_owned());
@@ -254,6 +269,18 @@ where
     let mut selected: Option<&WorkerAdvertisement> = None;
     for worker in workers {
         if worker.state != WorkerState::Ready {
+            continue;
+        }
+        if worker.worker_id.trim().is_empty()
+            || worker.target_id.trim().is_empty()
+            || worker.package_lock_hash.trim().is_empty()
+            || worker.image_digest.trim().is_empty()
+            || worker.supported_blocks.is_empty()
+            || worker
+                .supported_blocks
+                .iter()
+                .any(|capability| capability.block.trim().is_empty())
+        {
             continue;
         }
         if !worker

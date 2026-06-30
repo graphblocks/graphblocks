@@ -213,6 +213,9 @@ fn validate_worker_advertisement_json(
                 WorkerProtocolError::EmptySupportedBlocks => {
                     json!({"code": "worker.empty_supported_blocks"})
                 }
+                WorkerProtocolError::EmptyBlockCapability => {
+                    json!({"code": "worker.empty_block_capability"})
+                }
                 WorkerProtocolError::MissingRequiredBlock { required_block } => json!({
                     "code": "worker.missing_required_block",
                     "requiredBlock": required_block,
@@ -2147,6 +2150,32 @@ mod tests {
         assert_eq!(
             result.pointer("/error/expected").and_then(Value::as_str),
             Some("sha256:expected"),
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn validate_worker_advertisement_json_reports_blank_block_capability() -> Result<(), String> {
+        let advertisement = json!({
+            "protocolVersion": 1,
+            "workerId": "worker-local-1",
+            "targetId": "doc-cpu",
+            "packageLockHash": "sha256:package-lock",
+            "imageDigest": "sha256:image",
+            "supportedBlocks": [{"block": " "}],
+            "state": "ready"
+        });
+        let advertisement_json =
+            serde_json::to_string(&advertisement).map_err(|error| error.to_string())?;
+        let result_json = validate_worker_advertisement_json(&advertisement_json, None)
+            .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(result.get("ok"), Some(&json!(false)));
+        assert_eq!(
+            result.pointer("/error/code").and_then(Value::as_str),
+            Some("worker.empty_block_capability"),
         );
         Ok(())
     }
