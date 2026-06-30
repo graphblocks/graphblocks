@@ -133,7 +133,7 @@ pub enum ToolApproval {
 }
 
 impl ToolApproval {
-    fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::Never => "never",
             Self::Policy => "policy",
@@ -150,7 +150,7 @@ pub enum ToolIdempotency {
 }
 
 impl ToolIdempotency {
-    fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::NotApplicable => "not_applicable",
             Self::Optional => "optional",
@@ -167,7 +167,7 @@ pub enum ToolCancellation {
 }
 
 impl ToolCancellation {
-    fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::Unsupported => "unsupported",
             Self::Cooperative => "cooperative",
@@ -185,7 +185,7 @@ pub enum ToolResultMode {
 }
 
 impl ToolResultMode {
-    fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::Value => "value",
             Self::Incremental => "incremental",

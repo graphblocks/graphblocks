@@ -404,7 +404,7 @@ impl OutputPolicyTelemetryRecord {
             OUTPUT_DISPOSITIONS
                 .iter()
                 .copied()
-                .map(output_disposition_name),
+                .map(OutputDisposition::as_str),
         )?;
         for (field, value) in [
             ("release_id", self.release_id.as_deref()),
@@ -415,7 +415,7 @@ impl OutputPolicyTelemetryRecord {
         require_optional_one_of(
             "terminal_reason",
             self.terminal_reason.as_deref(),
-            TERMINAL_REASONS.iter().copied().map(terminal_reason_name),
+            TERMINAL_REASONS.iter().copied().map(TerminalReason::as_str),
         )?;
         require_optional_one_of(
             "draft_disposition",
@@ -423,7 +423,7 @@ impl OutputPolicyTelemetryRecord {
             DRAFT_DISPOSITIONS
                 .iter()
                 .copied()
-                .map(draft_disposition_name),
+                .map(DraftDisposition::as_str),
         )?;
         require_optional_one_of(
             "pending_tool_calls",
@@ -431,12 +431,12 @@ impl OutputPolicyTelemetryRecord {
             PENDING_TOOL_CALLS_DISPOSITIONS
                 .iter()
                 .copied()
-                .map(pending_tool_calls_disposition_name),
+                .map(PendingToolCallsDisposition::as_str),
         )?;
         require_optional_one_of(
             "durable_result",
             self.durable_result.as_deref(),
-            DURABLE_RESULTS.iter().copied().map(durable_result_name),
+            DURABLE_RESULTS.iter().copied().map(DurableResult::as_str),
         )?;
         Ok(())
     }
@@ -544,7 +544,10 @@ impl ToolExecutionTelemetryRecord {
         require_optional_one_of(
             "result_mode",
             self.result_mode.as_deref(),
-            TOOL_RESULT_MODES.iter().copied().map(tool_result_mode_name),
+            TOOL_RESULT_MODES
+                .iter()
+                .copied()
+                .map(ToolResultMode::as_str),
         )?;
         require_optional_one_of(
             "effect_outcome",
@@ -552,7 +555,7 @@ impl ToolExecutionTelemetryRecord {
             TOOL_EFFECT_OUTCOMES
                 .iter()
                 .copied()
-                .map(tool_effect_outcome_name),
+                .map(ToolEffectOutcome::as_str),
         )?;
         for effect in &self.effects {
             require_one_of(
@@ -1404,12 +1407,12 @@ fn require_tool_status(value: &str) -> Result<(), TelemetryProjectionError> {
     if TOOL_CALL_STATUSES
         .iter()
         .copied()
-        .map(tool_call_status_name)
+        .map(ToolCallStatus::as_str)
         .chain(
             TOOL_RESULT_STATUSES
                 .iter()
                 .copied()
-                .map(tool_result_status_name),
+                .map(ToolResultStatus::as_str),
         )
         .any(|valid| valid == value)
     {
@@ -1419,94 +1422,4 @@ fn require_tool_status(value: &str) -> Result<(), TelemetryProjectionError> {
         field: "status",
         value: value.to_owned(),
     })
-}
-
-fn output_disposition_name(disposition: OutputDisposition) -> &'static str {
-    match disposition {
-        OutputDisposition::Allow => "allow",
-        OutputDisposition::Hold => "hold",
-        OutputDisposition::Redact => "redact",
-        OutputDisposition::Replace => "replace",
-        OutputDisposition::AbortResponse => "abort_response",
-        OutputDisposition::AbortTurn => "abort_turn",
-        OutputDisposition::DenyCommit => "deny_commit",
-    }
-}
-
-fn terminal_reason_name(reason: TerminalReason) -> &'static str {
-    match reason {
-        TerminalReason::PolicyDenied => "policy_denied",
-        TerminalReason::BudgetExhausted => "budget_exhausted",
-        TerminalReason::Cancelled => "cancelled",
-        TerminalReason::ClientDisconnected => "client_disconnected",
-    }
-}
-
-fn draft_disposition_name(disposition: DraftDisposition) -> &'static str {
-    match disposition {
-        DraftDisposition::Keep => "keep",
-        DraftDisposition::MarkIncomplete => "mark_incomplete",
-        DraftDisposition::Retract => "retract",
-    }
-}
-
-fn pending_tool_calls_disposition_name(disposition: PendingToolCallsDisposition) -> &'static str {
-    match disposition {
-        PendingToolCallsDisposition::Keep => "keep",
-        PendingToolCallsDisposition::Deny => "deny",
-        PendingToolCallsDisposition::CancelAdmitted => "cancel_admitted",
-    }
-}
-
-fn durable_result_name(result: DurableResult) -> &'static str {
-    match result {
-        DurableResult::None => "none",
-        DurableResult::Incomplete => "incomplete",
-        DurableResult::Partial => "partial",
-    }
-}
-
-fn tool_call_status_name(status: ToolCallStatus) -> &'static str {
-    match status {
-        ToolCallStatus::Validated => "validated",
-        ToolCallStatus::PolicyPending => "policy_pending",
-        ToolCallStatus::ApprovalPending => "approval_pending",
-        ToolCallStatus::Admitted => "admitted",
-        ToolCallStatus::Running => "running",
-        ToolCallStatus::Completed => "completed",
-        ToolCallStatus::Failed => "failed",
-        ToolCallStatus::Denied => "denied",
-        ToolCallStatus::Cancelled => "cancelled",
-        ToolCallStatus::PolicyStopped => "policy_stopped",
-        ToolCallStatus::Expired => "expired",
-    }
-}
-
-fn tool_result_status_name(status: ToolResultStatus) -> &'static str {
-    match status {
-        ToolResultStatus::Completed => "completed",
-        ToolResultStatus::Failed => "failed",
-        ToolResultStatus::Denied => "denied",
-        ToolResultStatus::Cancelled => "cancelled",
-        ToolResultStatus::PolicyStopped => "policy_stopped",
-        ToolResultStatus::Incomplete => "incomplete",
-    }
-}
-
-fn tool_result_mode_name(mode: ToolResultMode) -> &'static str {
-    match mode {
-        ToolResultMode::Value => "value",
-        ToolResultMode::Incremental => "incremental",
-        ToolResultMode::BoundedSequence => "bounded_sequence",
-        ToolResultMode::ArtifactReference => "artifact_reference",
-    }
-}
-
-fn tool_effect_outcome_name(outcome: ToolEffectOutcome) -> &'static str {
-    match outcome {
-        ToolEffectOutcome::NoExternalEffect => "no_external_effect",
-        ToolEffectOutcome::Committed => "committed",
-        ToolEffectOutcome::NotCommitted => "not_committed",
-        ToolEffectOutcome::Unknown => "unknown",
-    }
 }

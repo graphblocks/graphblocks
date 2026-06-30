@@ -217,12 +217,36 @@ pub enum ToolResultStatus {
     Incomplete,
 }
 
+impl ToolResultStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Denied => "denied",
+            Self::Cancelled => "cancelled",
+            Self::PolicyStopped => "policy_stopped",
+            Self::Incomplete => "incomplete",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ToolEffectOutcome {
     NoExternalEffect,
     Committed,
     NotCommitted,
     Unknown,
+}
+
+impl ToolEffectOutcome {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NoExternalEffect => "no_external_effect",
+            Self::Committed => "committed",
+            Self::NotCommitted => "not_committed",
+            Self::Unknown => "unknown",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

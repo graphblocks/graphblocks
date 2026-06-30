@@ -55,11 +55,35 @@ pub enum OutputDisposition {
     DenyCommit,
 }
 
+impl OutputDisposition {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Allow => "allow",
+            Self::Hold => "hold",
+            Self::Redact => "redact",
+            Self::Replace => "replace",
+            Self::AbortResponse => "abort_response",
+            Self::AbortTurn => "abort_turn",
+            Self::DenyCommit => "deny_commit",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProviderCancellation {
     None,
     Request,
     RequiredIfSupported,
+}
+
+impl ProviderCancellation {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Request => "request",
+            Self::RequiredIfSupported => "required_if_supported",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -69,6 +93,16 @@ pub enum DraftDisposition {
     Retract,
 }
 
+impl DraftDisposition {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Keep => "keep",
+            Self::MarkIncomplete => "mark_incomplete",
+            Self::Retract => "retract",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PendingToolCallsDisposition {
     Keep,
@@ -76,11 +110,31 @@ pub enum PendingToolCallsDisposition {
     CancelAdmitted,
 }
 
+impl PendingToolCallsDisposition {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Keep => "keep",
+            Self::Deny => "deny",
+            Self::CancelAdmitted => "cancel_admitted",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DeliveryMode {
     BufferUntilCommit,
     BoundedHoldback,
     ImmediateDraft,
+}
+
+impl DeliveryMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::BufferUntilCommit => "buffer_until_commit",
+            Self::BoundedHoldback => "bounded_holdback",
+            Self::ImmediateDraft => "immediate_draft",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -93,12 +147,36 @@ pub enum FlushBoundary {
     Response,
 }
 
+impl FlushBoundary {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Token => "token",
+            Self::Sentence => "sentence",
+            Self::Paragraph => "paragraph",
+            Self::ContentPart => "content_part",
+            Self::ToolCall => "tool_call",
+            Self::Response => "response",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ViolationAction {
     AbortResponse,
     AbortTurn,
     Redact,
     Replace,
+}
+
+impl ViolationAction {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::AbortResponse => "abort_response",
+            Self::AbortTurn => "abort_turn",
+            Self::Redact => "redact",
+            Self::Replace => "replace",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -792,15 +870,7 @@ impl DeclarativeOutputPolicyEvaluator {
 }
 
 fn disposition_name(disposition: OutputDisposition) -> &'static str {
-    match disposition {
-        OutputDisposition::Allow => "allow",
-        OutputDisposition::Hold => "hold",
-        OutputDisposition::Redact => "redact",
-        OutputDisposition::Replace => "replace",
-        OutputDisposition::AbortResponse => "abort_response",
-        OutputDisposition::AbortTurn => "abort_turn",
-        OutputDisposition::DenyCommit => "deny_commit",
-    }
+    disposition.as_str()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -811,11 +881,32 @@ pub enum TerminalReason {
     ClientDisconnected,
 }
 
+impl TerminalReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::PolicyDenied => "policy_denied",
+            Self::BudgetExhausted => "budget_exhausted",
+            Self::Cancelled => "cancelled",
+            Self::ClientDisconnected => "client_disconnected",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DurableResult {
     None,
     Incomplete,
     Partial,
+}
+
+impl DurableResult {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Incomplete => "incomplete",
+            Self::Partial => "partial",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

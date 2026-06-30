@@ -8,6 +8,16 @@ pub enum ToolCallDraftStatus {
     ArgumentsComplete,
 }
 
+impl ToolCallDraftStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Proposed => "proposed",
+            Self::ArgumentsStreaming => "arguments_streaming",
+            Self::ArgumentsComplete => "arguments_complete",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ToolCallStatus {
     Validated,
@@ -21,6 +31,24 @@ pub enum ToolCallStatus {
     Cancelled,
     PolicyStopped,
     Expired,
+}
+
+impl ToolCallStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Validated => "validated",
+            Self::PolicyPending => "policy_pending",
+            Self::ApprovalPending => "approval_pending",
+            Self::Admitted => "admitted",
+            Self::Running => "running",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Denied => "denied",
+            Self::Cancelled => "cancelled",
+            Self::PolicyStopped => "policy_stopped",
+            Self::Expired => "expired",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
