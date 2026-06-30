@@ -35,6 +35,11 @@ impl GenerationChunk {
                 return Err(GenerationChunkError::EmptyIdentityField { field });
             }
         }
+        if self.sequence == 0 {
+            return Err(GenerationChunkError::InvalidSequence {
+                sequence: self.sequence,
+            });
+        }
         Ok(())
     }
 }
@@ -42,6 +47,7 @@ impl GenerationChunk {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GenerationChunkError {
     EmptyIdentityField { field: &'static str },
+    InvalidSequence { sequence: u64 },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

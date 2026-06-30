@@ -333,6 +333,11 @@ fn generation_chunk_requires_stream_and_response_ids() {
             field: "response_id",
         })
     );
+
+    assert_eq!(
+        GenerationChunk::text("stream-1", "response-1", 0, "late").validate(),
+        Err(GenerationChunkError::InvalidSequence { sequence: 0 })
+    );
 }
 
 #[test]
@@ -1388,6 +1393,37 @@ fn replace_decision_rejects_non_contiguous_replacement_chunks() -> Result<(), Ou
             .collect::<Vec<_>>(),
         vec![(1, "blocked draft")]
     );
+    Ok(())
+}
+
+#[test]
+fn replace_decision_rejects_zero_sequence_replacement_chunk() -> Result<(), OutputGateError> {
+    let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
+
+    assert_eq!(
+        gate.apply_decision(
+            OutputPolicyDecision::replace(
+                "decision-replace",
+                Some(0),
+                [GenerationChunk::text(
+                    "stream-1",
+                    "response-1",
+                    0,
+                    "replacement",
+                )],
+                "sha256:replace",
+            ),
+            1_000,
+        ),
+        Err(OutputGateError::InvalidGenerationChunk {
+            source: GenerationChunkError::InvalidSequence { sequence: 0 },
+        }),
+    );
+
+    assert_eq!(gate.last_generated_sequence(), 0);
+    assert_eq!(gate.last_policy_accepted_sequence(), 0);
+    assert_eq!(gate.last_client_delivered_sequence(), 0);
+    assert!(gate.pending_chunks().next().is_none());
     Ok(())
 }
 
