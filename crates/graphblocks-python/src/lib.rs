@@ -12380,6 +12380,67 @@ mod tests {
     }
 
     #[test]
+    fn evaluate_output_gate_json_rejects_non_contiguous_replacement_chunks() -> Result<(), String> {
+        pyo3::Python::initialize();
+        let gate = json!({
+            "streamId": "stream-1",
+            "responseId": "response-1",
+            "deliveryPolicy": {
+                "mode": "bounded_holdback",
+                "holdbackMaxTokens": 8,
+                "onViolation": "abort_response"
+            }
+        });
+        let operations = json!([
+            {
+                "kind": "chunk",
+                "sequence": 1,
+                "text": "blocked draft"
+            },
+            {
+                "kind": "decision",
+                "decisionId": "decision-replace",
+                "disposition": "replace",
+                "acceptedThroughSequence": 1,
+                "inputDigest": "sha256:replace",
+                "replacementChunks": [
+                    {
+                        "streamId": "stream-1",
+                        "responseId": "response-1",
+                        "sequence": 1,
+                        "text": "policy-approved "
+                    },
+                    {
+                        "streamId": "stream-1",
+                        "responseId": "response-1",
+                        "sequence": 3,
+                        "text": "replacement"
+                    }
+                ],
+                "occurredAtUnixMs": 1_000
+            }
+        ]);
+        let gate_json = serde_json::to_string(&gate).map_err(|error| error.to_string())?;
+        let operations_json =
+            serde_json::to_string(&operations).map_err(|error| error.to_string())?;
+
+        let error = evaluate_output_gate_json(&gate_json, &operations_json)
+            .expect_err("non-contiguous replacement chunks must be rejected")
+            .to_string();
+
+        assert!(
+            error.contains("NonContiguousSequence"),
+            "unexpected error: {error}"
+        );
+        assert!(
+            error.contains("attempted_sequence: 3"),
+            "unexpected error: {error}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn evaluate_output_gate_json_preserves_pending_prefix_on_replacement_parts()
     -> Result<(), String> {
         let gate = json!({
