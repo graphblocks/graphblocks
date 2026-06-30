@@ -22,6 +22,13 @@ class CedarAuthorizationRequest:
     authorization_json: str
     schema_ref: str | None = None
 
+    def __post_init__(self) -> None:
+        if self.schema_ref is not None:
+            schema_ref = self.schema_ref.strip()
+            if not schema_ref:
+                raise CedarPolicyAdapterError("schema_ref must not be empty")
+            object.__setattr__(self, "schema_ref", schema_ref)
+
     def authorization_contract(self) -> dict[str, object]:
         contract = json.loads(self.authorization_json)
         contract["schema_ref"] = self.schema_ref

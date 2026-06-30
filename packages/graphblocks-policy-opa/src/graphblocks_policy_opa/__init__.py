@@ -30,6 +30,13 @@ class OpaPolicyInput:
     input_json: str
     package_ref: str | None = None
 
+    def __post_init__(self) -> None:
+        if self.package_ref is not None:
+            package_ref = self.package_ref.strip()
+            if not package_ref:
+                raise OpaPolicyAdapterError("package_ref must not be empty")
+            object.__setattr__(self, "package_ref", package_ref)
+
     def input_contract(self) -> dict[str, object]:
         return {
             "package_ref": self.package_ref,

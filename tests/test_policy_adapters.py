@@ -144,6 +144,24 @@ def test_opa_adapter_prepares_canonical_policy_input(monkeypatch) -> None:
     }
 
 
+def test_opa_adapter_rejects_blank_package_ref(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-opa" / "src"))
+    graphblocks_policy_opa = importlib.import_module("graphblocks_policy_opa")
+
+    with pytest.raises(graphblocks_policy_opa.OpaPolicyAdapterError, match="package_ref"):
+        graphblocks_policy_opa.prepare_opa_policy_input(
+            _policy_request(),
+            package_ref=" ",
+        )
+
+    opa_input = graphblocks_policy_opa.prepare_opa_policy_input(
+        _policy_request(),
+        package_ref=" policies/support.rego@sha256:abc ",
+    )
+
+    assert opa_input.package_ref == "policies/support.rego@sha256:abc"
+
+
 def test_opa_adapter_maps_result_to_policy_decision(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-opa" / "src"))
     graphblocks_policy_opa = importlib.import_module("graphblocks_policy_opa")
@@ -332,6 +350,24 @@ def test_cedar_adapter_prepares_authorization_request(monkeypatch) -> None:
             "input_digest": request.input_digest,
         },
     }
+
+
+def test_cedar_adapter_rejects_blank_schema_ref(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-cedar" / "src"))
+    graphblocks_policy_cedar = importlib.import_module("graphblocks_policy_cedar")
+
+    with pytest.raises(graphblocks_policy_cedar.CedarPolicyAdapterError, match="schema_ref"):
+        graphblocks_policy_cedar.prepare_cedar_authorization_request(
+            _policy_request(),
+            schema_ref=" ",
+        )
+
+    authorization = graphblocks_policy_cedar.prepare_cedar_authorization_request(
+        _policy_request(),
+        schema_ref=" cedar/support-schema@1 ",
+    )
+
+    assert authorization.schema_ref == "cedar/support-schema@1"
 
 
 def test_cedar_adapter_maps_result_to_policy_decision(monkeypatch) -> None:
