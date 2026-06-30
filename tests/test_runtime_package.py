@@ -135,6 +135,10 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             }
         )
 
+    def evaluate_durable_tool_terminal_store_json(operations_json: str) -> str:
+        calls.append(("durable_tool_terminal", (operations_json,)))
+        return json.dumps({"operations": json.loads(operations_json)})
+
     def evaluate_tool_execution_plan_json(plan_json: str, operations_json: str) -> str:
         calls.append(("tool_execution_plan", (plan_json, operations_json)))
         return json.dumps({"plan": json.loads(plan_json), "operations": json.loads(operations_json)})
@@ -197,6 +201,7 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         compile_graph_json=compile_graph_json,
         decide_agent_step_json=decide_agent_step_json,
         evaluate_declarative_output_policy_json=evaluate_declarative_output_policy_json,
+        evaluate_durable_tool_terminal_store_json=evaluate_durable_tool_terminal_store_json,
         evaluate_output_gate_json=evaluate_output_gate_json,
         evaluate_sequential_tool_queue_json=evaluate_sequential_tool_queue_json,
         evaluate_tool_execution_plan_json=evaluate_tool_execution_plan_json,
@@ -240,6 +245,9 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         [{"ruleId": "allow"}],
         {"streamId": "stream-1", "sequence": 1},
         evaluated_at_unix_ms=1_010,
+    )
+    durable_terminal = runtime.evaluate_durable_tool_terminal_store(
+        [{"op": "tool_terminal_count"}],
     )
     tool_execution = runtime.evaluate_tool_execution_plan(
         {"planId": "plan-1", "maximumParallelism": 2},
@@ -305,6 +313,7 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         "chunk": {"streamId": "stream-1", "sequence": 1},
         "evaluatedAtUnixMs": 1_010,
     }
+    assert durable_terminal == {"operations": [{"op": "tool_terminal_count"}]}
     assert tool_execution == {
         "plan": {"maximumParallelism": 2, "planId": "plan-1"},
         "operations": [{"op": "ready"}],
@@ -375,6 +384,10 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             ('[{"ruleId":"allow"}]', '{"sequence":1,"streamId":"stream-1"}', 1_010),
         ),
         (
+            "durable_tool_terminal",
+            ('[{"op":"tool_terminal_count"}]',),
+        ),
+        (
             "tool_execution_plan",
             ('{"maximumParallelism":2,"planId":"plan-1"}', '[{"op":"ready"}]'),
         ),
@@ -427,6 +440,8 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     assert "prepare_tool_result_for_model_json" in runtime.__all__
     assert "evaluate_output_gate" in runtime.__all__
     assert "evaluate_declarative_output_policy" in runtime.__all__
+    assert "evaluate_durable_tool_terminal_store" in runtime.__all__
+    assert "evaluate_durable_tool_terminal_store_json" in runtime.__all__
     assert "evaluate_tool_execution_plan" in runtime.__all__
     assert "evaluate_tool_execution_plan_json" in runtime.__all__
     assert "evaluate_sequential_tool_queue" in runtime.__all__

@@ -14,6 +14,7 @@ try:
         compile_graph_json,
         decide_agent_step_json,
         evaluate_declarative_output_policy_json,
+        evaluate_durable_tool_terminal_store_json,
         evaluate_output_gate_json,
         evaluate_sequential_tool_queue_json,
         evaluate_tool_execution_plan_json,
@@ -96,6 +97,9 @@ except ImportError as error:
         chunk_json: str,
         evaluated_at_unix_ms: int,
     ) -> str:
+        require_native_extension()
+
+    def evaluate_durable_tool_terminal_store_json(operations_json: str) -> str:
         require_native_extension()
 
     def evaluate_tool_execution_plan_json(plan_json: str, operations_json: str) -> str:
@@ -272,6 +276,13 @@ def evaluate_declarative_output_policy(
     )
 
 
+def evaluate_durable_tool_terminal_store(operations: object) -> dict[str, object]:
+    return _json_object_result(
+        evaluate_durable_tool_terminal_store_json(_canonical_json(operations)),
+        "native durable tool terminal store result",
+    )
+
+
 def evaluate_tool_execution_plan(
     plan: dict[str, object],
     operations: object,
@@ -330,6 +341,8 @@ __all__ = [
     "decide_agent_step_json",
     "evaluate_declarative_output_policy",
     "evaluate_declarative_output_policy_json",
+    "evaluate_durable_tool_terminal_store",
+    "evaluate_durable_tool_terminal_store_json",
     "evaluate_output_gate",
     "evaluate_output_gate_json",
     "evaluate_sequential_tool_queue",

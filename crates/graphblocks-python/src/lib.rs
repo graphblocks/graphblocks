@@ -43,6 +43,11 @@ use graphblocks_runtime_core::tool_result::{
     ToolResultValidationRequest,
 };
 use graphblocks_runtime_core::tool_schema::{JsonSchema, JsonSchemaNode, ToolSchemaRegistry};
+use graphblocks_runtime_durable::{
+    DurableOutputCutoffDraftDisposition, DurableOutputCutoffDurableResult,
+    DurableOutputCutoffTerminalReason, DurableResponsePolicyStopRecord, DurableToolTerminalRecord,
+    DurableToolTerminalState, InMemoryDurableToolTerminalStore, ToolTerminalStoreError,
+};
 use graphblocks_runtime_seq::tool_queue::{SequentialToolQueue, SequentialToolQueueError};
 use graphblocksd::{DaemonConfig, DaemonStatus, WorkerRegistry, WorkerRegistryError};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
@@ -3720,6 +3725,407 @@ fn evaluate_sequential_tool_queue_json(
     })
 }
 
+#[pyfunction]
+fn evaluate_durable_tool_terminal_store_json(operations_json: &str) -> PyResult<String> {
+    let terminal_state_name = |state: DurableToolTerminalState| -> &'static str {
+        match state {
+            DurableToolTerminalState::Completed => "completed",
+            DurableToolTerminalState::Failed => "failed",
+            DurableToolTerminalState::Denied => "denied",
+            DurableToolTerminalState::Cancelled => "cancelled",
+            DurableToolTerminalState::PolicyStopped => "policy_stopped",
+            DurableToolTerminalState::Incomplete => "incomplete",
+            DurableToolTerminalState::Expired => "expired",
+        }
+    };
+    let terminal_reason_name = |reason: DurableOutputCutoffTerminalReason| -> &'static str {
+        match reason {
+            DurableOutputCutoffTerminalReason::PolicyDenied => "policy_denied",
+            DurableOutputCutoffTerminalReason::BudgetExhausted => "budget_exhausted",
+            DurableOutputCutoffTerminalReason::Cancelled => "cancelled",
+            DurableOutputCutoffTerminalReason::ClientDisconnected => "client_disconnected",
+        }
+    };
+    let draft_disposition_name =
+        |disposition: DurableOutputCutoffDraftDisposition| -> &'static str {
+            match disposition {
+                DurableOutputCutoffDraftDisposition::Keep => "keep",
+                DurableOutputCutoffDraftDisposition::MarkIncomplete => "mark_incomplete",
+                DurableOutputCutoffDraftDisposition::Retract => "retract",
+            }
+        };
+    let durable_result_name = |result: DurableOutputCutoffDurableResult| -> &'static str {
+        match result {
+            DurableOutputCutoffDurableResult::None => "none",
+            DurableOutputCutoffDurableResult::Incomplete => "incomplete",
+            DurableOutputCutoffDurableResult::Partial => "partial",
+        }
+    };
+    let store_error_code = |error: &ToolTerminalStoreError| -> &'static str {
+        match error {
+            ToolTerminalStoreError::MissingRunId => "missing_run_id",
+            ToolTerminalStoreError::MissingResponseId => "missing_response_id",
+            ToolTerminalStoreError::MissingToolCallId => "missing_tool_call_id",
+            ToolTerminalStoreError::MissingArgumentsDigest => "missing_arguments_digest",
+            ToolTerminalStoreError::MissingOutputDigest => "missing_output_digest",
+            ToolTerminalStoreError::MissingIdempotencyKey => "missing_idempotency_key",
+            ToolTerminalStoreError::MissingPolicyDecisionId => "missing_policy_decision_id",
+            ToolTerminalStoreError::MissingStreamId => "missing_stream_id",
+            ToolTerminalStoreError::MissingTurnId => "missing_turn_id",
+            ToolTerminalStoreError::InvalidRevision => "invalid_revision",
+            ToolTerminalStoreError::InvalidCompletedAt => "invalid_completed_at",
+            ToolTerminalStoreError::PolicyAcceptedSequenceBeyondGenerated { .. } => {
+                "policy_accepted_sequence_beyond_generated"
+            }
+            ToolTerminalStoreError::ClientDeliveredSequenceBeyondGenerated { .. } => {
+                "client_delivered_sequence_beyond_generated"
+            }
+            ToolTerminalStoreError::TerminalStateConflict { .. } => "terminal_state_conflict",
+            ToolTerminalStoreError::ResponsePolicyStopConflict { .. } => {
+                "response_policy_stop_conflict"
+            }
+            ToolTerminalStoreError::DurableResultAlreadyCommitted { .. } => {
+                "durable_result_already_committed"
+            }
+            ToolTerminalStoreError::ResponsePolicyStopped { .. } => "response_policy_stopped",
+        }
+    };
+    let terminal_record_json = |record: &DurableToolTerminalRecord| {
+        json!({
+            "runId": record.run_id,
+            "responseId": record.response_id,
+            "toolCallId": record.tool_call_id,
+            "revision": record.revision,
+            "terminalState": terminal_state_name(record.terminal_state),
+            "argumentsDigest": record.arguments_digest,
+            "outputDigest": record.output_digest,
+            "idempotencyKey": record.idempotency_key,
+            "effectCommitted": record.effect_committed,
+            "durableResultCommitted": record.durable_result_committed,
+            "completedAtUnixMs": record.completed_at_unix_ms,
+        })
+    };
+    let policy_stop_record_json = |record: &DurableResponsePolicyStopRecord| {
+        json!({
+            "responseId": record.response_id,
+            "streamId": record.stream_id,
+            "turnId": record.turn_id,
+            "policyDecisionId": record.policy_decision_id,
+            "lastGeneratedSequence": record.last_generated_sequence,
+            "lastPolicyAcceptedSequence": record.last_policy_accepted_sequence,
+            "lastClientDeliveredSequence": record.last_client_delivered_sequence,
+            "terminalReason": terminal_reason_name(record.terminal_reason),
+            "draftDisposition": draft_disposition_name(record.draft_disposition),
+            "durableResult": durable_result_name(record.durable_result),
+            "occurredAtUnixMs": record.occurred_at_unix_ms,
+        })
+    };
+    let store_error_json = |index: usize, op: &str, error: ToolTerminalStoreError| {
+        json!({
+            "index": index,
+            "op": op,
+            "error": store_error_code(&error),
+            "errorDebug": format!("{error:?}"),
+        })
+    };
+
+    let operations_value =
+        parse_json_argument(operations_json, "durable tool terminal store operations")?;
+    let operations = operations_value.as_array().ok_or_else(|| {
+        PyValueError::new_err("durable tool terminal store operations must be an array")
+    })?;
+    let mut store = InMemoryDurableToolTerminalStore::new();
+    let mut operation_results = Vec::new();
+    for (index, operation) in operations.iter().enumerate() {
+        let label = format!("operations[{index}]");
+        let operation = json_object(operation, &label)?;
+        let op = required_string(operation, "op", &label)?;
+        let result = match op {
+            "record_tool_terminal" => {
+                let record_value = operation
+                    .get("record")
+                    .ok_or_else(|| PyValueError::new_err(format!("{label}.record is required")))?;
+                let record_label = format!("{label}.record");
+                let record_object = json_object(record_value, &record_label)?;
+                let terminal_state = match required_alias_string(
+                    record_object,
+                    "terminalState",
+                    "terminal_state",
+                    &record_label,
+                )? {
+                    "completed" => DurableToolTerminalState::Completed,
+                    "failed" => DurableToolTerminalState::Failed,
+                    "denied" => DurableToolTerminalState::Denied,
+                    "cancelled" => DurableToolTerminalState::Cancelled,
+                    "policy_stopped" => DurableToolTerminalState::PolicyStopped,
+                    "incomplete" => DurableToolTerminalState::Incomplete,
+                    "expired" => DurableToolTerminalState::Expired,
+                    value => {
+                        return Err(PyValueError::new_err(format!(
+                            "{record_label}.terminalState has unknown terminal state {value:?}"
+                        )));
+                    }
+                };
+                let mut record = DurableToolTerminalRecord::new(
+                    required_alias_string(record_object, "runId", "run_id", &record_label)?,
+                    required_alias_string(
+                        record_object,
+                        "responseId",
+                        "response_id",
+                        &record_label,
+                    )?,
+                    required_alias_string(
+                        record_object,
+                        "toolCallId",
+                        "tool_call_id",
+                        &record_label,
+                    )?,
+                    u64_to_u32(
+                        required_alias_u64(record_object, "revision", "revision", &record_label)?,
+                        &format!("{record_label}.revision"),
+                    )?,
+                    terminal_state,
+                    required_alias_string(
+                        record_object,
+                        "argumentsDigest",
+                        "arguments_digest",
+                        &record_label,
+                    )?,
+                    required_alias_u64(
+                        record_object,
+                        "completedAtUnixMs",
+                        "completed_at_unix_ms",
+                        &record_label,
+                    )?,
+                );
+                if let Some(output_digest) = optional_nullable_alias_string(
+                    record_object,
+                    "outputDigest",
+                    "output_digest",
+                    &record_label,
+                )? {
+                    record = record.with_output_digest(output_digest);
+                }
+                if let Some(idempotency_key) = optional_nullable_alias_string(
+                    record_object,
+                    "idempotencyKey",
+                    "idempotency_key",
+                    &record_label,
+                )? {
+                    record = record.with_idempotency_key(idempotency_key);
+                }
+                if optional_nullable_alias_bool(
+                    record_object,
+                    "effectCommitted",
+                    "effect_committed",
+                    &record_label,
+                )?
+                .unwrap_or(false)
+                {
+                    record = record.with_effect_committed();
+                }
+                if optional_nullable_alias_bool(
+                    record_object,
+                    "durableResultCommitted",
+                    "durable_result_committed",
+                    &record_label,
+                )?
+                .unwrap_or(false)
+                {
+                    record = record.with_durable_result_committed();
+                }
+                match store.record_tool_terminal(record) {
+                    Ok(commit) => json!({
+                        "index": index,
+                        "op": op,
+                        "error": Value::Null,
+                        "commit": {
+                            "sequence": commit.sequence,
+                            "replayed": commit.replayed,
+                            "record": terminal_record_json(&commit.record),
+                        },
+                    }),
+                    Err(error) => store_error_json(index, op, error),
+                }
+            }
+            "record_response_policy_stop" => {
+                let record_value = operation
+                    .get("record")
+                    .ok_or_else(|| PyValueError::new_err(format!("{label}.record is required")))?;
+                let record_label = format!("{label}.record");
+                let record_object = json_object(record_value, &record_label)?;
+                let mut record = DurableResponsePolicyStopRecord::new(
+                    required_alias_string(
+                        record_object,
+                        "responseId",
+                        "response_id",
+                        &record_label,
+                    )?,
+                    required_alias_string(
+                        record_object,
+                        "policyDecisionId",
+                        "policy_decision_id",
+                        &record_label,
+                    )?,
+                    required_alias_u64(
+                        record_object,
+                        "lastPolicyAcceptedSequence",
+                        "last_policy_accepted_sequence",
+                        &record_label,
+                    )?,
+                    required_alias_u64(
+                        record_object,
+                        "occurredAtUnixMs",
+                        "occurred_at_unix_ms",
+                        &record_label,
+                    )?,
+                );
+                if let Some(stream_id) = optional_nullable_alias_string(
+                    record_object,
+                    "streamId",
+                    "stream_id",
+                    &record_label,
+                )? {
+                    record = record.with_stream_id(stream_id);
+                }
+                if let Some(turn_id) = optional_nullable_alias_string(
+                    record_object,
+                    "turnId",
+                    "turn_id",
+                    &record_label,
+                )? {
+                    record = record.with_turn_id(turn_id);
+                }
+                if let Some(sequence) = optional_nullable_alias_u64(
+                    record_object,
+                    "lastGeneratedSequence",
+                    "last_generated_sequence",
+                    &record_label,
+                )? {
+                    record = record.with_last_generated_sequence(sequence);
+                }
+                if let Some(sequence) = optional_nullable_alias_u64(
+                    record_object,
+                    "lastClientDeliveredSequence",
+                    "last_client_delivered_sequence",
+                    &record_label,
+                )? {
+                    record = record.with_last_client_delivered_sequence(sequence);
+                }
+                if let Some(reason) = optional_nullable_alias_string(
+                    record_object,
+                    "terminalReason",
+                    "terminal_reason",
+                    &record_label,
+                )? {
+                    record = record.with_terminal_reason(match reason {
+                        "policy_denied" => DurableOutputCutoffTerminalReason::PolicyDenied,
+                        "budget_exhausted" => DurableOutputCutoffTerminalReason::BudgetExhausted,
+                        "cancelled" => DurableOutputCutoffTerminalReason::Cancelled,
+                        "client_disconnected" => {
+                            DurableOutputCutoffTerminalReason::ClientDisconnected
+                        }
+                        value => {
+                            return Err(PyValueError::new_err(format!(
+                                "{record_label}.terminalReason has unknown terminal reason {value:?}"
+                            )));
+                        }
+                    });
+                }
+                if let Some(disposition) = optional_nullable_alias_string(
+                    record_object,
+                    "draftDisposition",
+                    "draft_disposition",
+                    &record_label,
+                )? {
+                    record = record.with_draft_disposition(match disposition {
+                        "keep" => DurableOutputCutoffDraftDisposition::Keep,
+                        "mark_incomplete" => DurableOutputCutoffDraftDisposition::MarkIncomplete,
+                        "retract" => DurableOutputCutoffDraftDisposition::Retract,
+                        value => {
+                            return Err(PyValueError::new_err(format!(
+                                "{record_label}.draftDisposition has unknown draft disposition {value:?}"
+                            )));
+                        }
+                    });
+                }
+                if let Some(durable_result) = optional_nullable_alias_string(
+                    record_object,
+                    "durableResult",
+                    "durable_result",
+                    &record_label,
+                )? {
+                    record = record.with_durable_result(match durable_result {
+                        "none" => DurableOutputCutoffDurableResult::None,
+                        "incomplete" => DurableOutputCutoffDurableResult::Incomplete,
+                        "partial" => DurableOutputCutoffDurableResult::Partial,
+                        value => {
+                            return Err(PyValueError::new_err(format!(
+                                "{record_label}.durableResult has unknown durable result {value:?}"
+                            )));
+                        }
+                    });
+                }
+                match store.record_response_policy_stop(record) {
+                    Ok(commit) => {
+                        let cutoff = commit.record.to_output_cutoff().map_err(|error| {
+                            PyRuntimeError::new_err(format!(
+                                "committed response policy stop did not convert to output cutoff: {error:?}"
+                            ))
+                        })?;
+                        json!({
+                            "index": index,
+                            "op": op,
+                            "error": Value::Null,
+                            "commit": {
+                                "sequence": commit.sequence,
+                                "replayed": commit.replayed,
+                                "record": policy_stop_record_json(&commit.record),
+                                "outputCutoff": {
+                                    "streamId": cutoff.stream_id,
+                                    "responseId": cutoff.response_id,
+                                    "turnId": cutoff.turn_id,
+                                    "lastGeneratedSequence": cutoff.last_generated_sequence,
+                                    "lastPolicyAcceptedSequence": cutoff.last_policy_accepted_sequence,
+                                    "lastClientDeliveredSequence": cutoff.last_client_delivered_sequence,
+                                    "terminalReason": terminal_reason_name(commit.record.terminal_reason),
+                                    "draftDisposition": draft_disposition_name(commit.record.draft_disposition),
+                                    "durableResult": durable_result_name(commit.record.durable_result),
+                                    "policyDecisionId": cutoff.policy_decision_id,
+                                    "occurredAtUnixMs": cutoff.occurred_at_unix_ms,
+                                },
+                            },
+                        })
+                    }
+                    Err(error) => store_error_json(index, op, error),
+                }
+            }
+            "tool_terminal_count" => json!({
+                "index": index,
+                "op": op,
+                "count": store.tool_terminal_count(),
+                "error": Value::Null,
+            }),
+            value => {
+                return Err(PyValueError::new_err(format!(
+                    "{label}.op has unknown durable tool terminal store operation {value:?}"
+                )));
+            }
+        };
+        operation_results.push(result);
+    }
+
+    serde_json::to_string(&json!({
+        "operations": operation_results,
+        "toolTerminalCount": store.tool_terminal_count(),
+    }))
+    .map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize durable tool terminal store evaluation: {error}"
+        ))
+    })
+}
+
 fn parse_tool_cancellation(value: &str, label: &str) -> PyResult<ToolCancellation> {
     match value {
         "unsupported" => Ok(ToolCancellation::Unsupported),
@@ -3765,6 +4171,10 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
         evaluate_sequential_tool_queue_json,
         module
     )?)?;
+    module.add_function(wrap_pyfunction!(
+        evaluate_durable_tool_terminal_store_json,
+        module
+    )?)?;
     Ok(())
 }
 
@@ -3775,7 +4185,8 @@ mod tests {
 
     use super::{
         admit_exhaustion_work_json, admit_worker_message_json, compile_graph_json,
-        decide_agent_step_json, evaluate_declarative_output_policy_json, evaluate_output_gate_json,
+        decide_agent_step_json, evaluate_declarative_output_policy_json,
+        evaluate_durable_tool_terminal_store_json, evaluate_output_gate_json,
         evaluate_sequential_tool_queue_json, evaluate_tool_execution_plan_json,
         finalize_tool_call_json, prepare_tool_result_for_model_json, run_stdlib_graph_json,
         run_test_graph_json, validate_remote_payload_json, validate_worker_advertisement_json,
@@ -5775,6 +6186,117 @@ mod tests {
             .to_string();
 
         assert!(error.contains("tool_call_not_admitted"), "{error}");
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_durable_tool_terminal_store_json_replays_terminal_records() -> Result<(), String> {
+        let record = json!({
+            "runId": "run-000001",
+            "responseId": "response-1",
+            "toolCallId": "call-1",
+            "revision": 1,
+            "terminalState": "completed",
+            "argumentsDigest": "sha256:arguments",
+            "outputDigest": "sha256:output",
+            "idempotencyKey": "ticket-create:call-1",
+            "effectCommitted": true,
+            "durableResultCommitted": true,
+            "completedAtUnixMs": 1_820_000_000_000_u64
+        });
+        let operations_json = json!([
+            {"op": "record_tool_terminal", "record": record},
+            {"op": "record_tool_terminal", "record": record},
+            {"op": "tool_terminal_count"}
+        ])
+        .to_string();
+
+        let payload = evaluate_durable_tool_terminal_store_json(&operations_json)
+            .map_err(|error| error.to_string())?;
+        let payload = serde_json::from_str::<Value>(&payload).map_err(|error| error.to_string())?;
+
+        assert_eq!(payload["operations"][0]["commit"]["sequence"], json!(1));
+        assert_eq!(payload["operations"][0]["commit"]["replayed"], json!(false));
+        assert_eq!(payload["operations"][1]["commit"]["sequence"], json!(1));
+        assert_eq!(payload["operations"][1]["commit"]["replayed"], json!(true));
+        assert_eq!(payload["operations"][2]["count"], json!(1));
+        assert_eq!(payload["toolTerminalCount"], json!(1));
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_durable_tool_terminal_store_json_blocks_late_result_after_policy_stop()
+    -> Result<(), String> {
+        let operations_json = json!([
+            {
+                "op": "record_response_policy_stop",
+                "record": {
+                    "responseId": "response-1",
+                    "policyDecisionId": "decision-abort",
+                    "streamId": "stream-1",
+                    "turnId": "turn-1",
+                    "lastGeneratedSequence": 9,
+                    "lastPolicyAcceptedSequence": 7,
+                    "lastClientDeliveredSequence": 6,
+                    "terminalReason": "policy_denied",
+                    "draftDisposition": "retract",
+                    "durableResult": "none",
+                    "occurredAtUnixMs": 1_820_000_000_000_u64
+                }
+            },
+            {
+                "op": "record_tool_terminal",
+                "record": {
+                    "runId": "run-000001",
+                    "responseId": "response-1",
+                    "toolCallId": "call-1",
+                    "revision": 1,
+                    "terminalState": "completed",
+                    "argumentsDigest": "sha256:arguments",
+                    "outputDigest": "sha256:output",
+                    "durableResultCommitted": true,
+                    "completedAtUnixMs": 1_820_000_000_100_u64
+                }
+            },
+            {
+                "op": "record_tool_terminal",
+                "record": {
+                    "runId": "run-000001",
+                    "responseId": "response-1",
+                    "toolCallId": "call-2",
+                    "revision": 1,
+                    "terminalState": "cancelled",
+                    "argumentsDigest": "sha256:arguments-late",
+                    "effectCommitted": true,
+                    "completedAtUnixMs": 1_820_000_000_200_u64
+                }
+            }
+        ])
+        .to_string();
+
+        let payload = evaluate_durable_tool_terminal_store_json(&operations_json)
+            .map_err(|error| error.to_string())?;
+        let payload = serde_json::from_str::<Value>(&payload).map_err(|error| error.to_string())?;
+
+        assert_eq!(payload["operations"][0]["commit"]["sequence"], json!(1));
+        assert_eq!(
+            payload["operations"][0]["commit"]["outputCutoff"]["lastClientDeliveredSequence"],
+            json!(6)
+        );
+        assert_eq!(
+            payload["operations"][1]["error"],
+            json!("response_policy_stopped")
+        );
+        assert_eq!(payload["operations"][2]["commit"]["sequence"], json!(2));
+        assert_eq!(
+            payload["operations"][2]["commit"]["record"]["terminalState"],
+            json!("cancelled")
+        );
+        assert_eq!(
+            payload["operations"][2]["commit"]["record"]["effectCommitted"],
+            json!(true)
+        );
+        assert_eq!(payload["toolTerminalCount"], json!(1));
         Ok(())
     }
 
