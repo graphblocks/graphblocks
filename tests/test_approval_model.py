@@ -71,6 +71,36 @@ def test_approval_request_rejects_invalid_identity_fields() -> None:
         )
 
 
+def test_approval_request_metadata_is_copied_and_read_only() -> None:
+    metadata = {"ticket": "T-1"}
+    request = ApprovalRequest.from_arguments(
+        "approval-1",
+        run_id="run-1",
+        subject=ResourceSnapshotRef("tool-call-1", "sha256:subject"),
+        action="process.execute",
+        arguments={"cmd": ["echo", "hello"]},
+        risk="external_process",
+        summary="Run a process",
+        metadata=metadata,
+    )
+    metadata["ticket"] = "mutated"
+
+    assert request.metadata == {"ticket": "T-1"}
+    with pytest.raises(TypeError):
+        request.metadata["ticket"] = "direct"
+    with pytest.raises(ValueError, match="approval request metadata must be a mapping"):
+        ApprovalRequest.from_arguments(
+            "approval-1",
+            run_id="run-1",
+            subject=ResourceSnapshotRef("tool-call-1", "sha256:subject"),
+            action="process.execute",
+            arguments={"cmd": ["echo", "hello"]},
+            risk="external_process",
+            summary="Run a process",
+            metadata=object(),  # type: ignore[arg-type]
+        )
+
+
 def test_approved_record_is_valid_only_for_same_subject_and_arguments() -> None:
     subject = ResourceSnapshotRef("tool-call-1", "sha256:subject")
     request = ApprovalRequest.from_arguments(
@@ -122,6 +152,8 @@ def test_approval_record_rejects_invalid_state() -> None:
         ApprovalRecord("approval-1", request, "invalidated")
     with pytest.raises(ValueError, match="approval credential_refs item must not be empty"):
         ApprovalRecord("approval-1", request, "requested", credential_refs=("cred-1", " "))
+    with pytest.raises(ValueError, match="approval record metadata must be a mapping"):
+        ApprovalRecord("approval-1", request, "requested", metadata=object())  # type: ignore[arg-type]
 
 
 def test_denied_approval_record_never_authorizes_action() -> None:

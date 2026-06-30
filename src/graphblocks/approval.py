@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Literal
@@ -27,6 +28,12 @@ def _validate_optional_non_empty_string(owner: str, field_name: str, value: obje
     return _validate_non_empty_string(owner, field_name, value)
 
 
+def _freeze_metadata(owner: str, metadata: object) -> MappingProxyType[str, object]:
+    if not isinstance(metadata, Mapping):
+        raise ValueError(f"{owner} metadata must be a mapping")
+    return MappingProxyType(dict(metadata))
+
+
 @dataclass(frozen=True, slots=True)
 class ApprovalRequest:
     approval_id: str
@@ -45,7 +52,7 @@ class ApprovalRequest:
         if not isinstance(self.subject, ResourceSnapshotRef):
             raise ValueError("approval request subject must be a ResourceSnapshotRef")
         _validate_optional_non_empty_string("approval request", "expires_at", self.expires_at)
-        object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
+        object.__setattr__(self, "metadata", _freeze_metadata("approval request", self.metadata))
 
     @classmethod
     def from_arguments(
@@ -70,7 +77,7 @@ class ApprovalRequest:
             risk=risk,
             summary=summary,
             expires_at=expires_at,
-            metadata=dict(metadata or {}),
+            metadata={} if metadata is None else metadata,
         )
 
 
@@ -122,7 +129,7 @@ class ApprovalRecord:
             if not credential_ref.strip():
                 raise ValueError("approval credential_refs item must not be empty")
         object.__setattr__(self, "credential_refs", credential_refs)
-        object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
+        object.__setattr__(self, "metadata", _freeze_metadata("approval record", self.metadata))
 
     @classmethod
     def requested(cls, request: ApprovalRequest) -> ApprovalRecord:
