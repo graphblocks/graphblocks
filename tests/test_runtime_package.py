@@ -135,6 +135,10 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             }
         )
 
+    def evaluate_application_event_stream_json(state_json: str, operations_json: str) -> str:
+        calls.append(("application_event_stream", (state_json, operations_json)))
+        return json.dumps({"state": json.loads(state_json), "updates": json.loads(operations_json)})
+
     def evaluate_durable_tool_terminal_store_json(operations_json: str) -> str:
         calls.append(("durable_tool_terminal", (operations_json,)))
         return json.dumps({"operations": json.loads(operations_json)})
@@ -204,6 +208,7 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         binding_version=lambda: "0.1.0",
         compile_graph_json=compile_graph_json,
         decide_agent_step_json=decide_agent_step_json,
+        evaluate_application_event_stream_json=evaluate_application_event_stream_json,
         evaluate_declarative_output_policy_json=evaluate_declarative_output_policy_json,
         evaluate_durable_tool_terminal_store_json=evaluate_durable_tool_terminal_store_json,
         evaluate_output_gate_json=evaluate_output_gate_json,
@@ -250,6 +255,10 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         [{"ruleId": "allow"}],
         {"streamId": "stream-1", "sequence": 1},
         evaluated_at_unix_ms=1_010,
+    )
+    application_event_stream = runtime.evaluate_application_event_stream(
+        {"acceptedEvents": []},
+        [{"kind": "event", "event": {"kind": "RunStarted", "metadata": {"eventId": "event-1"}}}],
     )
     durable_terminal = runtime.evaluate_durable_tool_terminal_store(
         [{"op": "tool_terminal_count"}],
@@ -321,6 +330,10 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         "rules": [{"ruleId": "allow"}],
         "chunk": {"streamId": "stream-1", "sequence": 1},
         "evaluatedAtUnixMs": 1_010,
+    }
+    assert application_event_stream == {
+        "state": {"acceptedEvents": []},
+        "updates": [{"event": {"kind": "RunStarted", "metadata": {"eventId": "event-1"}}, "kind": "event"}],
     }
     assert durable_terminal == {"operations": [{"op": "tool_terminal_count"}]}
     assert tool_execution == {
@@ -397,6 +410,13 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             ('[{"ruleId":"allow"}]', '{"sequence":1,"streamId":"stream-1"}', 1_010),
         ),
         (
+            "application_event_stream",
+            (
+                '{"acceptedEvents":[]}',
+                '[{"event":{"kind":"RunStarted","metadata":{"eventId":"event-1"}},"kind":"event"}]',
+            ),
+        ),
+        (
             "durable_tool_terminal",
             ('[{"op":"tool_terminal_count"}]',),
         ),
@@ -460,6 +480,8 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     assert "prepare_tool_result_for_model_json" in runtime.__all__
     assert "evaluate_output_gate" in runtime.__all__
     assert "evaluate_declarative_output_policy" in runtime.__all__
+    assert "evaluate_application_event_stream" in runtime.__all__
+    assert "evaluate_application_event_stream_json" in runtime.__all__
     assert "evaluate_durable_tool_terminal_store" in runtime.__all__
     assert "evaluate_durable_tool_terminal_store_json" in runtime.__all__
     assert "evaluate_tool_execution_plan" in runtime.__all__

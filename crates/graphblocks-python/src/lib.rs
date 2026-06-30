@@ -8,6 +8,9 @@ use graphblocks_protocol::{
     admit_worker_with_policy, validate_remote_payload,
 };
 use graphblocks_runtime_core::agent::{AgentLoopController, AgentLoopDecision, AgentSpec};
+use graphblocks_runtime_core::application_event::{
+    ApplicationEvent, ApplicationEventKind, ApplicationEventMetadata, ApplicationEventStreamState,
+};
 use graphblocks_runtime_core::budget::{BudgetPermit, UsageAmount};
 use graphblocks_runtime_core::exhaustion::{
     ContinuationEnvelope, ExhaustionController, ExhaustionPolicy, ExhaustionPreset, ExhaustionUnit,
@@ -531,6 +534,107 @@ fn evaluate_tool_result_stream_json(state_json: &str, operations_json: &str) -> 
     serde_json::to_string(&payload).map_err(|error| {
         PyRuntimeError::new_err(format!(
             "failed to serialize tool result stream evaluation: {error}"
+        ))
+    })
+}
+
+#[pyfunction]
+fn evaluate_application_event_stream_json(
+    state_json: &str,
+    operations_json: &str,
+) -> PyResult<String> {
+    let state_value = parse_json_argument(state_json, "application event stream state")?;
+    let operations_value =
+        parse_json_argument(operations_json, "application event stream operations")?;
+    let state_object = json_object(&state_value, "application event stream state")?;
+    let mut stream = ApplicationEventStreamState::default();
+    if let Some(events) = state_object
+        .get("acceptedEvents")
+        .or_else(|| state_object.get("accepted_events"))
+    {
+        let Some(events) = events.as_array() else {
+            return Err(PyValueError::new_err(
+                "application event stream state.acceptedEvents must be an array",
+            ));
+        };
+        for (event_index, event) in events.iter().enumerate() {
+            let event = parse_application_event(
+                event,
+                &format!("application event stream state.acceptedEvents[{event_index}]"),
+            )?;
+            stream.accept(event).ok_or_else(|| {
+                PyValueError::new_err(format!(
+                    "invalid application event stream state event {event_index}"
+                ))
+            })?;
+        }
+    }
+
+    let operations = operations_value.as_array().ok_or_else(|| {
+        PyValueError::new_err("application event stream operations JSON must be an array")
+    })?;
+    let mut updates = Vec::new();
+    for (operation_index, operation) in operations.iter().enumerate() {
+        let label = format!("operations[{operation_index}]");
+        let operation = json_object(operation, &label)?;
+        match required_string(operation, "kind", &label)? {
+            "event" => {
+                let event_value = operation
+                    .get("event")
+                    .ok_or_else(|| PyValueError::new_err(format!("{label}.event is required")))?;
+                let event = parse_application_event(event_value, &format!("{label}.event"))?;
+                let event_payload = serialize_application_event(&event);
+                if let Some(accepted) = stream.accept(event) {
+                    updates.push(json!({
+                        "operationIndex": operation_index,
+                        "kind": "accepted",
+                        "event": serialize_application_event(&accepted),
+                    }));
+                } else {
+                    updates.push(json!({
+                        "operationIndex": operation_index,
+                        "kind": "dropped",
+                        "event": event_payload,
+                    }));
+                }
+            }
+            value => {
+                return Err(PyValueError::new_err(format!(
+                    "{label}.kind has unknown kind {value:?}"
+                )));
+            }
+        }
+    }
+
+    let accepted_events = stream
+        .accepted_events()
+        .iter()
+        .map(serialize_application_event)
+        .collect::<Vec<_>>();
+    let cutoff_responses = stream
+        .accepted_events()
+        .iter()
+        .filter(|event| event.kind == ApplicationEventKind::OutputCutoff)
+        .map(|event| {
+            event
+                .payload
+                .get("response_id")
+                .and_then(Value::as_str)
+                .unwrap_or(&event.metadata.response_id)
+                .to_owned()
+        })
+        .collect::<BTreeSet<_>>();
+    let payload = json!({
+        "ok": true,
+        "updates": updates,
+        "state": {
+            "acceptedEvents": accepted_events,
+            "cutoffResponses": cutoff_responses,
+        },
+    });
+    serde_json::to_string(&payload).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize application event stream evaluation: {error}"
         ))
     })
 }
@@ -2040,6 +2144,125 @@ fn serialize_tool_result_stream_error(error: &ToolResultStreamError) -> Value {
             "finalStatus": serialize_tool_result_status(*final_status),
         }),
     }
+}
+
+fn parse_application_event_kind(value: &str, label: &str) -> PyResult<ApplicationEventKind> {
+    match value {
+        "RunStarted" => Ok(ApplicationEventKind::RunStarted),
+        "RunSucceeded" => Ok(ApplicationEventKind::RunSucceeded),
+        "RunFailed" => Ok(ApplicationEventKind::RunFailed),
+        "RunCancelled" => Ok(ApplicationEventKind::RunCancelled),
+        "ToolCallProposed" => Ok(ApplicationEventKind::ToolCallProposed),
+        "ToolCallArgumentsDelta" => Ok(ApplicationEventKind::ToolCallArgumentsDelta),
+        "ToolCallArgumentsCompleted" => Ok(ApplicationEventKind::ToolCallArgumentsCompleted),
+        "ToolCallValidated" => Ok(ApplicationEventKind::ToolCallValidated),
+        "ToolCallPolicyEvaluated" => Ok(ApplicationEventKind::ToolCallPolicyEvaluated),
+        "ToolCallApprovalRequested" => Ok(ApplicationEventKind::ToolCallApprovalRequested),
+        "ToolCallAdmitted" => Ok(ApplicationEventKind::ToolCallAdmitted),
+        "ToolCallStarted" => Ok(ApplicationEventKind::ToolCallStarted),
+        "ToolCallCompleted" => Ok(ApplicationEventKind::ToolCallCompleted),
+        "ToolCallFailed" => Ok(ApplicationEventKind::ToolCallFailed),
+        "ToolCallDenied" => Ok(ApplicationEventKind::ToolCallDenied),
+        "ToolCallCancelled" => Ok(ApplicationEventKind::ToolCallCancelled),
+        "ToolCallPolicyStopped" => Ok(ApplicationEventKind::ToolCallPolicyStopped),
+        "ToolCallIncomplete" => Ok(ApplicationEventKind::ToolCallIncomplete),
+        "ToolResultStarted" => Ok(ApplicationEventKind::ToolResultStarted),
+        "ToolResultDelta" => Ok(ApplicationEventKind::ToolResultDelta),
+        "ToolResultArtifactReady" => Ok(ApplicationEventKind::ToolResultArtifactReady),
+        "ToolResultCompleted" => Ok(ApplicationEventKind::ToolResultCompleted),
+        "ToolResultFailed" => Ok(ApplicationEventKind::ToolResultFailed),
+        "ToolResultDenied" => Ok(ApplicationEventKind::ToolResultDenied),
+        "ToolResultCancelled" => Ok(ApplicationEventKind::ToolResultCancelled),
+        "ToolResultPolicyStopped" => Ok(ApplicationEventKind::ToolResultPolicyStopped),
+        "ToolResultIncomplete" => Ok(ApplicationEventKind::ToolResultIncomplete),
+        "OutputPolicyEvaluationStarted" => Ok(ApplicationEventKind::OutputPolicyEvaluationStarted),
+        "OutputPolicyAllowed" => Ok(ApplicationEventKind::OutputPolicyAllowed),
+        "OutputPolicyHeld" => Ok(ApplicationEventKind::OutputPolicyHeld),
+        "OutputPolicyRedacted" => Ok(ApplicationEventKind::OutputPolicyRedacted),
+        "OutputPolicyReplaced" => Ok(ApplicationEventKind::OutputPolicyReplaced),
+        "OutputPolicyViolationDetected" => Ok(ApplicationEventKind::OutputPolicyViolationDetected),
+        "OutputCutoff" => Ok(ApplicationEventKind::OutputCutoff),
+        "AssistantIncomplete" => Ok(ApplicationEventKind::AssistantIncomplete),
+        "AssistantRetracted" => Ok(ApplicationEventKind::AssistantRetracted),
+        value => Err(PyValueError::new_err(format!(
+            "{label} has unknown application event kind {value:?}"
+        ))),
+    }
+}
+
+fn parse_application_event_metadata(
+    value: &Value,
+    label: &str,
+) -> PyResult<ApplicationEventMetadata> {
+    let object = json_object(value, label)?;
+    Ok(ApplicationEventMetadata {
+        event_id: required_alias_string(object, "eventId", "event_id", label)?.to_owned(),
+        run_id: required_alias_string(object, "runId", "run_id", label)?.to_owned(),
+        response_id: required_alias_string(object, "responseId", "response_id", label)?.to_owned(),
+        turn_id: optional_nullable_alias_string(object, "turnId", "turn_id", label)?
+            .map(str::to_owned),
+        sequence: required_u64(object, "sequence", label)?,
+        release_id: required_alias_string(object, "releaseId", "release_id", label)?.to_owned(),
+        policy_snapshot_id: required_alias_string(
+            object,
+            "policySnapshotId",
+            "policy_snapshot_id",
+            label,
+        )?
+        .to_owned(),
+        occurred_at_unix_ms: required_alias_u64(
+            object,
+            "occurredAtUnixMs",
+            "occurred_at_unix_ms",
+            label,
+        )?,
+    })
+}
+
+fn parse_application_event(value: &Value, label: &str) -> PyResult<ApplicationEvent> {
+    let object = json_object(value, label)?;
+    let kind = parse_application_event_kind(required_string(object, "kind", label)?, label)?;
+    let metadata = parse_application_event_metadata(
+        object
+            .get("metadata")
+            .ok_or_else(|| PyValueError::new_err(format!("{label}.metadata is required")))?,
+        &format!("{label}.metadata"),
+    )?;
+    let payload = object.get("payload").cloned().unwrap_or_else(|| json!({}));
+    let event = if kind.is_tool_event() {
+        ApplicationEvent::tool(
+            kind,
+            metadata,
+            required_alias_string(object, "toolCallId", "tool_call_id", label)?,
+            payload,
+        )
+    } else {
+        ApplicationEvent::new(kind, metadata, payload)
+    }
+    .map_err(|error| PyValueError::new_err(format!("invalid {label}: {error:?}")))?;
+    Ok(event)
+}
+
+fn serialize_application_event_metadata(metadata: &ApplicationEventMetadata) -> Value {
+    json!({
+        "eventId": metadata.event_id.as_str(),
+        "runId": metadata.run_id.as_str(),
+        "responseId": metadata.response_id.as_str(),
+        "turnId": metadata.turn_id.as_deref(),
+        "sequence": metadata.sequence,
+        "releaseId": metadata.release_id.as_str(),
+        "policySnapshotId": metadata.policy_snapshot_id.as_str(),
+        "occurredAtUnixMs": metadata.occurred_at_unix_ms,
+    })
+}
+
+fn serialize_application_event(event: &ApplicationEvent) -> Value {
+    json!({
+        "kind": event.kind.as_str(),
+        "metadata": serialize_application_event_metadata(&event.metadata),
+        "toolCallId": event.tool_call_id.as_deref(),
+        "payload": &event.payload,
+    })
 }
 
 fn parse_work_kind(value: &Value, label: &str) -> PyResult<WorkKind> {
@@ -4588,6 +4811,10 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(run_stdlib_graph_json, module)?)?;
     module.add_function(wrap_pyfunction!(decide_agent_step_json, module)?)?;
     module.add_function(wrap_pyfunction!(admit_exhaustion_work_json, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        evaluate_application_event_stream_json,
+        module
+    )?)?;
     module.add_function(wrap_pyfunction!(evaluate_output_gate_json, module)?)?;
     module.add_function(wrap_pyfunction!(
         evaluate_declarative_output_policy_json,
@@ -4612,12 +4839,12 @@ mod tests {
 
     use super::{
         admit_exhaustion_work_json, admit_worker_message_json, compile_graph_json,
-        decide_agent_step_json, evaluate_declarative_output_policy_json,
-        evaluate_durable_tool_terminal_store_json, evaluate_output_gate_json,
-        evaluate_sequential_tool_queue_json, evaluate_tool_execution_plan_json,
-        evaluate_tool_result_stream_json, finalize_tool_call_json,
-        prepare_tool_result_for_model_json, run_stdlib_graph_json, run_test_graph_json,
-        validate_remote_payload_json, validate_worker_advertisement_json,
+        decide_agent_step_json, evaluate_application_event_stream_json,
+        evaluate_declarative_output_policy_json, evaluate_durable_tool_terminal_store_json,
+        evaluate_output_gate_json, evaluate_sequential_tool_queue_json,
+        evaluate_tool_execution_plan_json, evaluate_tool_result_stream_json,
+        finalize_tool_call_json, prepare_tool_result_for_model_json, run_stdlib_graph_json,
+        run_test_graph_json, validate_remote_payload_json, validate_worker_advertisement_json,
         validate_worker_protocol_message_json,
     };
 
@@ -5573,6 +5800,94 @@ mod tests {
                 .and_then(Value::as_array)
                 .map(Vec::len),
             Some(3)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_application_event_stream_json_drops_late_events_after_cutoff() -> Result<(), String>
+    {
+        let metadata = |event_id: &str, sequence: u64| {
+            json!({
+                "eventId": event_id,
+                "runId": "run-1",
+                "responseId": "response-1",
+                "turnId": "turn-1",
+                "sequence": sequence,
+                "releaseId": "release-1",
+                "policySnapshotId": "policy-1",
+                "occurredAtUnixMs": 1_000 + sequence,
+            })
+        };
+        let operations = json!([
+            {
+                "kind": "event",
+                "event": {
+                    "kind": "OutputCutoff",
+                    "metadata": metadata("event-cutoff", 1),
+                    "payload": {
+                        "stream_id": "stream-1",
+                        "response_id": "response-1",
+                        "turn_id": "turn-1",
+                        "last_generated_sequence": 4,
+                        "last_policy_accepted_sequence": 2,
+                        "last_client_delivered_sequence": 2,
+                        "terminal_reason": "policy_denied",
+                        "draft_disposition": "retract",
+                        "durable_result": "none",
+                        "policy_decision_id": "decision-1",
+                        "occurred_at_unix_ms": 1_010
+                    }
+                }
+            },
+            {
+                "kind": "event",
+                "event": {
+                    "kind": "OutputPolicyEvaluationStarted",
+                    "metadata": metadata("event-late", 2),
+                    "payload": {
+                        "response_id": "response-1",
+                        "chunk_sequence": 3,
+                        "input_digest": "sha256:late"
+                    }
+                }
+            },
+            {
+                "kind": "event",
+                "event": {
+                    "kind": "AssistantRetracted",
+                    "metadata": metadata("event-retract", 3),
+                    "payload": {
+                        "response_id": "response-1",
+                        "last_client_delivered_sequence": 2,
+                        "terminal_reason": "policy_denied"
+                    }
+                }
+            }
+        ]);
+
+        let output_json = evaluate_application_event_stream_json(
+            "{}",
+            &serde_json::to_string(&operations).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let output =
+            serde_json::from_str::<Value>(&output_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(output.get("ok"), Some(&json!(true)));
+        assert_eq!(output.pointer("/updates/0/kind"), Some(&json!("accepted")));
+        assert_eq!(output.pointer("/updates/1/kind"), Some(&json!("dropped")));
+        assert_eq!(output.pointer("/updates/2/kind"), Some(&json!("accepted")));
+        assert_eq!(
+            output.pointer("/state/cutoffResponses/0"),
+            Some(&json!("response-1"))
+        );
+        assert_eq!(
+            output
+                .pointer("/state/acceptedEvents")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(2)
         );
         Ok(())
     }

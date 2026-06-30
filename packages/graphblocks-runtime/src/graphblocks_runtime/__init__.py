@@ -13,6 +13,7 @@ try:
         binding_version,
         compile_graph_json,
         decide_agent_step_json,
+        evaluate_application_event_stream_json,
         evaluate_declarative_output_policy_json,
         evaluate_durable_tool_terminal_store_json,
         evaluate_output_gate_json,
@@ -98,6 +99,9 @@ except ImportError as error:
         chunk_json: str,
         evaluated_at_unix_ms: int,
     ) -> str:
+        require_native_extension()
+
+    def evaluate_application_event_stream_json(state_json: str, operations_json: str) -> str:
         require_native_extension()
 
     def evaluate_durable_tool_terminal_store_json(operations_json: str) -> str:
@@ -280,6 +284,16 @@ def evaluate_declarative_output_policy(
     )
 
 
+def evaluate_application_event_stream(
+    state: dict[str, object],
+    operations: object,
+) -> dict[str, object]:
+    return _json_object_result(
+        evaluate_application_event_stream_json(_canonical_json(state), _canonical_json(operations)),
+        "native application event stream result",
+    )
+
+
 def evaluate_durable_tool_terminal_store(operations: object) -> dict[str, object]:
     return _json_object_result(
         evaluate_durable_tool_terminal_store_json(_canonical_json(operations)),
@@ -355,6 +369,8 @@ __all__ = [
     "decide_agent_step_json",
     "evaluate_declarative_output_policy",
     "evaluate_declarative_output_policy_json",
+    "evaluate_application_event_stream",
+    "evaluate_application_event_stream_json",
     "evaluate_durable_tool_terminal_store",
     "evaluate_durable_tool_terminal_store_json",
     "evaluate_output_gate",
