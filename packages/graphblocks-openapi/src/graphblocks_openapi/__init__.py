@@ -399,6 +399,48 @@ def openapi_tool_result_completed(
         raise OpenApiToolAdapterError("OpenAPI completed event is invalid") from error
 
 
+def openapi_tool_result_terminal_event(
+    admitted: AdmittedToolCall,
+    resolved_tool: ResolvedTool,
+    schema_registry: ToolSchemaRegistry,
+    *,
+    sequence: int,
+    result: ToolResult,
+    max_output_bytes: int | None = None,
+    redactions: Iterable[Mapping[str, object]] = (),
+    capture_policy: Mapping[str, object] | None = None,
+) -> ToolResultEvent:
+    if result.status == "completed":
+        return openapi_tool_result_completed(
+            admitted,
+            resolved_tool,
+            schema_registry,
+            sequence=sequence,
+            result=result,
+            max_output_bytes=max_output_bytes,
+            redactions=redactions,
+            capture_policy=capture_policy,
+        )
+
+    prepare_openapi_operation_invocation(admitted, resolved_tool)
+    constructors = {
+        "failed": ToolResultEvent.failed,
+        "denied": ToolResultEvent.denied,
+        "cancelled": ToolResultEvent.cancelled,
+        "policy_stopped": ToolResultEvent.policy_stopped,
+        "incomplete": ToolResultEvent.incomplete,
+    }
+    constructor = constructors.get(result.status)
+    if constructor is None:
+        raise OpenApiToolAdapterError(
+            f"OpenAPI terminal event does not support result status {result.status}"
+        )
+    try:
+        return constructor(admitted.call.tool_call_id, sequence, result)
+    except ValueError as error:
+        raise OpenApiToolAdapterError("OpenAPI terminal event is invalid") from error
+
+
 def prepare_openapi_tool_result_for_model(
     admitted: AdmittedToolCall,
     resolved_tool: ResolvedTool,
@@ -826,6 +868,7 @@ __all__ = [
     "openapi_tool_result_incomplete",
     "openapi_tool_result_policy_stopped",
     "openapi_tool_result_started",
+    "openapi_tool_result_terminal_event",
     "prepare_openapi_operation_invocation",
     "prepare_openapi_tool_result_for_model",
 ]

@@ -692,6 +692,61 @@ def test_mcp_adapter_completed_tool_result_event_requires_result_validation(monk
         )
 
 
+def test_mcp_adapter_builds_terminal_tool_result_events(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
+    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    admitted, resolved = _admitted_call_for(
+        McpToolImplementation(server="support-mcp", remote_name="search"),
+        tool_name="knowledge.search",
+        binding_id="binding-mcp-search",
+        arguments={"query": "billing"},
+    )
+    policy_stopped = ToolResult.policy_stopped(
+        "call-1",
+        error={"code": "policy.denied", "message": "tool output was stopped"},
+        started_at="2026-06-23T00:00:01Z",
+        completed_at="2026-06-23T00:00:02Z",
+    ).with_effect_outcome("committed")
+
+    event = graphblocks_mcp.mcp_tool_result_terminal_event(
+        admitted,
+        resolved,
+        _tool_output_registry(),
+        sequence=6,
+        result=policy_stopped,
+    )
+
+    assert event.kind == "policy_stopped"
+    assert event.into_result() == policy_stopped
+    assert event.is_final_durable_result() is True
+    assert "mcp_tool_result_terminal_event" in graphblocks_mcp.__all__
+
+
+def test_mcp_adapter_terminal_event_rejects_mismatched_result(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
+    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    admitted, resolved = _admitted_call_for(
+        McpToolImplementation(server="support-mcp", remote_name="search"),
+        tool_name="knowledge.search",
+        binding_id="binding-mcp-search",
+        arguments={"query": "billing"},
+    )
+    denied = ToolResult.denied(
+        "call-other",
+        error={"code": "mcp.denied", "message": "denied"},
+        completed_at="2026-06-23T00:00:02Z",
+    )
+
+    with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="terminal event is invalid"):
+        graphblocks_mcp.mcp_tool_result_terminal_event(
+            admitted,
+            resolved,
+            _tool_output_registry(),
+            sequence=6,
+            result=denied,
+        )
+
+
 def test_mcp_adapter_rejects_invalid_streaming_tool_result_events(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
     graphblocks_mcp = importlib.import_module("graphblocks_mcp")
@@ -1278,6 +1333,62 @@ def test_openapi_adapter_completed_tool_result_event_requires_result_validation(
             _tool_output_registry(),
             sequence=5,
             result=denied,
+        )
+
+
+def test_openapi_adapter_builds_terminal_tool_result_events(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
+    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    admitted, resolved = _admitted_call_for(
+        OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
+        tool_name="ticket.create",
+        binding_id="binding-ticket-create",
+        arguments={"title": "Need help"},
+    )
+    cancelled = ToolResult.cancelled(
+        "call-1",
+        started_at="2026-06-23T00:00:01Z",
+        completed_at="2026-06-23T00:00:02Z",
+    ).with_effect_outcome("not_committed")
+
+    event = graphblocks_openapi.openapi_tool_result_terminal_event(
+        admitted,
+        resolved,
+        _tool_output_registry(),
+        sequence=6,
+        result=cancelled,
+    )
+
+    assert event.kind == "cancelled"
+    assert event.into_result() == cancelled
+    assert event.is_final_durable_result() is True
+    assert "openapi_tool_result_terminal_event" in graphblocks_openapi.__all__
+
+
+def test_openapi_adapter_terminal_event_routes_completed_results_through_validation(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
+    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    admitted, resolved = _admitted_call_for(
+        OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
+        tool_name="ticket.create",
+        binding_id="binding-ticket-create",
+        arguments={"title": "Need help"},
+        output_schema="schemas/Ticket@1",
+    )
+    result = ToolResult.completed(
+        "call-1",
+        (ContentPart(kind="json", data={"id": "ticket-1"}),),
+        started_at="2026-06-23T00:00:01Z",
+        completed_at="2026-06-23T00:00:02Z",
+    )
+
+    with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="failed validation"):
+        graphblocks_openapi.openapi_tool_result_terminal_event(
+            admitted,
+            resolved,
+            _tool_output_registry(),
+            sequence=6,
+            result=result,
         )
 
 

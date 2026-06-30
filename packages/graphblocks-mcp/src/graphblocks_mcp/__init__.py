@@ -374,6 +374,46 @@ def mcp_tool_result_completed(
         raise McpToolAdapterError("MCP completed event is invalid") from error
 
 
+def mcp_tool_result_terminal_event(
+    admitted: AdmittedToolCall,
+    resolved_tool: ResolvedTool,
+    schema_registry: ToolSchemaRegistry,
+    *,
+    sequence: int,
+    result: ToolResult,
+    max_output_bytes: int | None = None,
+    redactions: Iterable[Mapping[str, object]] = (),
+    capture_policy: Mapping[str, object] | None = None,
+) -> ToolResultEvent:
+    if result.status == "completed":
+        return mcp_tool_result_completed(
+            admitted,
+            resolved_tool,
+            schema_registry,
+            sequence=sequence,
+            result=result,
+            max_output_bytes=max_output_bytes,
+            redactions=redactions,
+            capture_policy=capture_policy,
+        )
+
+    prepare_mcp_tool_invocation(admitted, resolved_tool)
+    constructors = {
+        "failed": ToolResultEvent.failed,
+        "denied": ToolResultEvent.denied,
+        "cancelled": ToolResultEvent.cancelled,
+        "policy_stopped": ToolResultEvent.policy_stopped,
+        "incomplete": ToolResultEvent.incomplete,
+    }
+    constructor = constructors.get(result.status)
+    if constructor is None:
+        raise McpToolAdapterError(f"MCP terminal event does not support result status {result.status}")
+    try:
+        return constructor(admitted.call.tool_call_id, sequence, result)
+    except ValueError as error:
+        raise McpToolAdapterError("MCP terminal event is invalid") from error
+
+
 def prepare_mcp_tool_result_for_model(
     admitted: AdmittedToolCall,
     resolved_tool: ResolvedTool,
@@ -717,6 +757,7 @@ __all__ = [
     "mcp_tool_result_incomplete",
     "mcp_tool_result_policy_stopped",
     "mcp_tool_result_started",
+    "mcp_tool_result_terminal_event",
     "prepare_mcp_tool_invocation",
     "prepare_mcp_tool_result_for_model",
 ]
