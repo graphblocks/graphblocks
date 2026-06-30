@@ -21,12 +21,18 @@ class ArtifactRef:
     metadata: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.artifact_id, str):
+            raise ValueError("artifact artifact_id must be a string")
         if not self.artifact_id.strip():
             raise ValueError("artifact artifact_id must not be empty")
+        if not isinstance(self.uri, str):
+            raise ValueError("artifact uri must be a string")
         if not self.uri.strip():
             raise ValueError("artifact uri must not be empty")
         for field_name in ("media_type", "checksum", "etag", "version", "filename"):
             value = getattr(self, field_name)
+            if value is not None and not isinstance(value, str):
+                raise ValueError(f"artifact {field_name} must be a string")
             if value is not None and not value.strip():
                 raise ValueError(f"artifact {field_name} must not be empty")
 

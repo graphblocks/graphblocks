@@ -23,6 +23,17 @@ def test_artifact_ref_rejects_empty_identity_fields() -> None:
         ArtifactRef("artifact-1", "")
 
 
+def test_artifact_ref_rejects_invalid_string_fields() -> None:
+    with pytest.raises(ValueError, match="artifact artifact_id must be a string"):
+        ArtifactRef(1, "file:///tmp/example.txt")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="artifact uri must be a string"):
+        ArtifactRef("artifact-1", object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="artifact media_type must be a string"):
+        ArtifactRef("artifact-1", "file:///tmp/example.txt", media_type=object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="artifact checksum must not be empty"):
+        ArtifactRef("artifact-1", "file:///tmp/example.txt", checksum=" ")
+
+
 def test_create_local_text_revision_preserves_content_hash_and_artifact_metadata() -> None:
     asset, revision = create_local_text_revision(
         source_uri="file:///tmp/example.txt",
