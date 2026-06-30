@@ -1,7 +1,10 @@
 use graphblocks_protocol::{
-    BlockCapability, WORKER_PROTOCOL_VERSION, WorkerAdvertisement, WorkerState,
+    BlockCapability, WORKER_PROTOCOL_VERSION, WorkerAdvertisement, WorkerDrainDisposition,
+    WorkerDrainPlan, WorkerDrainPolicy, WorkerDrainTask, WorkerDrainWorkloadKind,
+    WorkerInvocationContext, WorkerInvokeRequest, WorkerState,
 };
-use graphblocksd::{DaemonConfig, DaemonConfigError, WorkerRegistry};
+use graphblocksd::{DaemonConfig, DaemonConfigError, WorkerRegistry, WorkerRegistryError};
+use serde_json::json;
 
 #[test]
 fn daemon_config_validates_identity_protocol_and_capacity() {
@@ -92,5 +95,86 @@ fn worker_registry_rejects_unready_or_mismatched_workers() -> Result<(), DaemonC
     assert!(registry.ready_worker_ids().is_empty());
     assert_eq!(status.admitted_workers, 0);
     assert_eq!(status.rejected_workers, 2);
+    Ok(())
+}
+
+#[test]
+fn worker_registry_drains_admitted_worker_and_removes_it_from_ready_pool() {
+    let mut registry =
+        WorkerRegistry::new(DaemonConfig::new("daemon-1", "127.0.0.1:8080").with_max_workers(4))
+            .expect("daemon config should be valid");
+    let advertisement = WorkerAdvertisement::new(
+        "worker-1",
+        "model-cpu",
+        "sha256:package-lock",
+        "sha256:image",
+        [BlockCapability::new("model.generate@1")],
+    );
+    let decision = registry.admit_worker(advertisement);
+    assert!(decision.admitted);
+    assert_eq!(registry.ready_worker_ids(), vec!["worker-1"]);
+
+    let request = WorkerInvokeRequest {
+        invocation_id: "invoke-1".to_owned(),
+        run_id: "run-1".to_owned(),
+        node_id: "model".to_owned(),
+        node_attempt_id: "model-attempt-1".to_owned(),
+        lease_epoch: 3,
+        block: "model.generate@1".to_owned(),
+        context: WorkerInvocationContext::new("release-1", "rev-old"),
+        inputs: json!({"prompt": "hello"}),
+        config: json!({}),
+    };
+    let plan = registry
+        .drain_worker(
+            "worker-1",
+            &WorkerDrainPolicy::default(),
+            [WorkerDrainTask {
+                workload: WorkerDrainWorkloadKind::OnlineRequest,
+                request,
+                started_at_unix_ms: 1_000,
+                checkpointable: false,
+            }],
+            2_000,
+            2_100,
+        )
+        .expect("admitted worker should drain");
+    let status = registry.status();
+
+    assert_eq!(plan.worker_id, "worker-1");
+    assert_eq!(plan.target_id, "model-cpu");
+    assert_eq!(plan.decisions[0].run_id, "run-1");
+    assert_eq!(
+        plan.decisions[0].disposition,
+        WorkerDrainDisposition::FinishInPlace
+    );
+    assert!(registry.ready_worker_ids().is_empty());
+    assert_eq!(status.ready_workers, 0);
+    assert_eq!(status.admitted_workers, 1);
+    assert_eq!(
+        serde_json::from_value::<WorkerDrainPlan>(
+            serde_json::to_value(&plan).expect("plan should serialize")
+        )
+        .expect("plan should deserialize"),
+        plan,
+    );
+}
+
+#[test]
+fn worker_registry_reports_unknown_worker_for_drain() -> Result<(), DaemonConfigError> {
+    let mut registry = WorkerRegistry::new(DaemonConfig::new("daemon-1", "127.0.0.1:8080"))?;
+
+    assert_eq!(
+        registry.drain_worker(
+            "worker-missing",
+            &WorkerDrainPolicy::default(),
+            Vec::<WorkerDrainTask>::new(),
+            2_000,
+            2_100,
+        ),
+        Err(WorkerRegistryError::UnknownWorker {
+            worker_id: "worker-missing".to_owned(),
+        }),
+    );
     Ok(())
 }
