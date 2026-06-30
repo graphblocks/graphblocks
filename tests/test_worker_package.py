@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import importlib
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).parents[1]
@@ -68,3 +70,39 @@ def test_worker_package_reexports_worker_protocol_contracts(monkeypatch) -> None
     assert "RemoteEdgePayload" in graphblocks_worker.__all__
     assert "WorkerDrainPlan" in graphblocks_worker.__all__
     assert "WorkerProtocolMessage" in graphblocks_worker.__all__
+
+
+def test_worker_package_native_message_helper_delegates_to_runtime(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-worker" / "src"))
+    graphblocks_worker = importlib.import_module("graphblocks_worker")
+    calls: list[dict[str, object]] = []
+
+    def validate_worker_protocol_message(message: dict[str, object]) -> dict[str, object]:
+        calls.append(message)
+        return {"ok": True, "contentDigest": "sha256:message", "message": message}
+
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(validate_worker_protocol_message=validate_worker_protocol_message),
+    )
+    request = graphblocks_worker.WorkerInvokeRequest(
+        invocation_id="invoke-1",
+        run_id="run-1",
+        node_id="render",
+        node_attempt_id="render-attempt-1",
+        lease_epoch=3,
+        block="prompt.render@1",
+        context=graphblocks_worker.WorkerInvocationContext("release-1", "rev-old"),
+        inputs={"message": {"text": "hi"}},
+        config={},
+    )
+    message = graphblocks_worker.WorkerProtocolMessage.invoke_request("msg-1", 1, request)
+
+    result = graphblocks_worker.validate_worker_protocol_message_native(message)
+    mapping_result = graphblocks_worker.validate_worker_protocol_message_native(message.to_wire())
+
+    assert result["contentDigest"] == "sha256:message"
+    assert mapping_result["contentDigest"] == "sha256:message"
+    assert calls == [message.to_wire(), message.to_wire()]
+    assert "validate_worker_protocol_message_native" in graphblocks_worker.__all__
