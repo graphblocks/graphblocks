@@ -73,6 +73,12 @@ def test_usage_amount_rejects_negative_amounts_and_freezes_dimensions() -> None:
         UsageAmount(1, Decimal("1"), "tokens")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="usage amount unit must be a string"):
         UsageAmount("model_total_tokens", Decimal("1"), object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="usage amount dimensions must be a mapping"):
+        UsageAmount("model_total_tokens", Decimal("1"), "tokens", dimensions=object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="usage amount dimensions must be string keys and values"):
+        UsageAmount("model_total_tokens", Decimal("1"), "tokens", dimensions={" ": "support"})
+    with pytest.raises(ValueError, match="usage amount dimensions must be string keys and values"):
+        UsageAmount("model_total_tokens", Decimal("1"), "tokens", dimensions={"model": object()})  # type: ignore[dict-item]
 
 
 def test_budget_models_reject_unknown_typed_values() -> None:

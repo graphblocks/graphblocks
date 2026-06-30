@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
 import json
@@ -117,13 +117,23 @@ class UsageAmount:
             raise ValueError("usage amount unit must be a string")
         if not self.unit.strip():
             raise ValueError("usage amount unit must not be empty")
+        if not isinstance(self.dimensions, Mapping):
+            raise ValueError("usage amount dimensions must be a mapping")
+        dimensions = dict(self.dimensions)
+        if any(
+            not isinstance(key, str)
+            or not key.strip()
+            or not isinstance(value, str)
+            for key, value in dimensions.items()
+        ):
+            raise ValueError("usage amount dimensions must be string keys and values")
         amount = self.amount
         if not isinstance(self.amount, Decimal):
             amount = Decimal(str(self.amount))
             object.__setattr__(self, "amount", amount)
         if amount < 0:
             raise ValueError("usage amount must be non-negative")
-        object.__setattr__(self, "dimensions", MappingProxyType(dict(self.dimensions)))
+        object.__setattr__(self, "dimensions", MappingProxyType(dimensions))
 
 
 @dataclass(frozen=True, slots=True)
