@@ -5,6 +5,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+from graphblocks.worker import VALID_WORKER_PROTOCOL_MESSAGE_KINDS, VALID_WORKER_STATES
+
 
 ROOT = Path(__file__).parents[1]
 
@@ -70,6 +72,10 @@ def test_worker_package_reexports_worker_protocol_contracts(monkeypatch) -> None
     assert "RemoteEdgePayload" in graphblocks_worker.__all__
     assert "WorkerDrainPlan" in graphblocks_worker.__all__
     assert "WorkerProtocolMessage" in graphblocks_worker.__all__
+    assert graphblocks_worker.VALID_WORKER_PROTOCOL_MESSAGE_KINDS is VALID_WORKER_PROTOCOL_MESSAGE_KINDS
+    assert graphblocks_worker.VALID_WORKER_STATES is VALID_WORKER_STATES
+    assert "VALID_WORKER_PROTOCOL_MESSAGE_KINDS" in graphblocks_worker.__all__
+    assert "VALID_WORKER_STATES" in graphblocks_worker.__all__
 
 
 def test_worker_package_native_message_helper_delegates_to_runtime(monkeypatch) -> None:

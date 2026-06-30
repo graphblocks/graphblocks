@@ -495,6 +495,8 @@ from .usage import (
     UsageRecordNotFoundError,
 )
 from .worker import (
+    VALID_WORKER_PROTOCOL_MESSAGE_KINDS,
+    VALID_WORKER_STATES,
     WORKER_PROTOCOL_VERSION,
     BlockCapability,
     RemoteEdgePayload,
@@ -982,6 +984,8 @@ __all__ = [
     "VALID_TOOL_RESULT_MODES",
     "VALID_TOOL_RESULT_STATUSES",
     "VALID_VIOLATION_ACTIONS",
+    "VALID_WORKER_PROTOCOL_MESSAGE_KINDS",
+    "VALID_WORKER_STATES",
     "WORKER_PROTOCOL_VERSION",
     "WorkerAdmissionDecision",
     "WorkerAdmissionPolicy",

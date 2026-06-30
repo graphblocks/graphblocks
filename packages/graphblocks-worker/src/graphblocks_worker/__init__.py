@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from graphblocks.worker import (
+    VALID_WORKER_PROTOCOL_MESSAGE_KINDS,
+    VALID_WORKER_STATES,
     WORKER_PROTOCOL_VERSION,
     BlockCapability,
     RemoteEdgePayload,
@@ -131,6 +133,8 @@ def admit_worker_message_native(
 
 
 __all__ = [
+    "VALID_WORKER_PROTOCOL_MESSAGE_KINDS",
+    "VALID_WORKER_STATES",
     "WORKER_PROTOCOL_VERSION",
     "BlockCapability",
     "RemoteEdgePayload",
