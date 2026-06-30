@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from graphblocks.evaluation import ModelVisibleToolRef
 from graphblocks.run_store import (
     InMemoryRunStore,
     RunDeploymentProvenance,
@@ -42,6 +43,24 @@ def test_run_store_records_deployment_provenance_and_preserves_it_across_mutatio
     }
     assert patched.deployment_provenance == provenance
     assert running.deployment_provenance == provenance
+
+
+def test_run_store_records_model_visible_tools_and_preserves_them_across_mutations() -> None:
+    store = InMemoryRunStore()
+    ticket_tool = _model_visible_tool("ticket.create", "resolved-ticket", False)
+    search_tool = _model_visible_tool("knowledge.search", "resolved-search", True)
+
+    record = store.create_run(
+        "sha256:test",
+        {},
+        model_visible_tools=(ticket_tool, search_tool),
+    )
+    patched = store.patch_state(record.run_id, {"step": 1}, expected_revision=0)
+    running = store.set_status(record.run_id, "running")
+
+    assert record.model_visible_tools == (search_tool, ticket_tool)
+    assert patched.model_visible_tools == record.model_visible_tools
+    assert running.model_visible_tools == record.model_visible_tools
 
 
 def test_run_store_rejects_stale_state_patch() -> None:
@@ -119,6 +138,10 @@ def test_sqlite_run_store_persists_records_across_instances(tmp_path) -> None:
         "sha256:test",
         {"message": {"text": "hello"}},
         deployment_provenance=provenance,
+        model_visible_tools=(
+            _model_visible_tool("ticket.create", "resolved-ticket", False),
+            _model_visible_tool("knowledge.search", "resolved-search", True),
+        ),
     )
     first.patch_state(record.run_id, {"conversation": {"turns": 1}}, expected_revision=0)
     first.set_status(record.run_id, "succeeded")
@@ -133,6 +156,10 @@ def test_sqlite_run_store_persists_records_across_instances(tmp_path) -> None:
     assert loaded.state == {"conversation": {"turns": 1}}
     assert loaded.state_revision == 1
     assert loaded.deployment_provenance == provenance
+    assert loaded.model_visible_tools == (
+        _model_visible_tool("knowledge.search", "resolved-search", True),
+        _model_visible_tool("ticket.create", "resolved-ticket", False),
+    )
 
 
 def test_sqlite_run_store_enforces_state_revision_cas(tmp_path) -> None:
@@ -163,6 +190,22 @@ def test_sqlite_run_store_rejects_state_and_status_mutation_after_terminal_statu
         store.set_status(record.run_id, "running")
 
     assert store.get_run(record.run_id).status == "cancelled"
+
+
+def _model_visible_tool(
+    tool_name: str,
+    resolved_tool_id: str,
+    allowed_for_principal: bool,
+) -> ModelVisibleToolRef:
+    return ModelVisibleToolRef(
+        tool_name=tool_name,
+        resolved_tool_id=resolved_tool_id,
+        definition_digest="sha256:definition",
+        binding_digest="sha256:binding",
+        effective_policy_snapshot_id="policy-snapshot-1",
+        allowed_for_principal=allowed_for_principal,
+        valid_until="2026-06-30T00:00:00Z",
+    )
 
 
 def test_sqlite_run_store_treats_policy_stopped_as_terminal_status(tmp_path) -> None:

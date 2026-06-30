@@ -1,6 +1,9 @@
-use graphblocks_runtime_core::run_store::{
-    InMemoryRunStore, PatchOperation, RunDeploymentProvenance, RunStatus, RunStoreError,
-    SqliteRunStore, StatePatch,
+use graphblocks_runtime_core::{
+    evaluation::ModelVisibleToolRef,
+    run_store::{
+        InMemoryRunStore, PatchOperation, RunDeploymentProvenance, RunStatus, RunStoreError,
+        SqliteRunStore, StatePatch,
+    },
 };
 use serde_json::json;
 
@@ -52,6 +55,31 @@ fn run_store_records_deployment_provenance_and_preserves_it_across_mutations()
     );
     assert_eq!(patched.deployment_provenance, provenance);
     assert_eq!(running.deployment_provenance, provenance);
+    Ok(())
+}
+
+#[test]
+fn run_store_records_model_visible_tools_and_preserves_them_across_mutations()
+-> Result<(), RunStoreError> {
+    let mut store = InMemoryRunStore::new();
+    let ticket_tool = model_visible_tool("ticket.create", "resolved-ticket", false);
+    let search_tool = model_visible_tool("knowledge.search", "resolved-search", true);
+
+    let record = store.create_run_with_invocation_provenance(
+        "sha256:test",
+        json!({}),
+        RunDeploymentProvenance::new(),
+        vec![ticket_tool.clone(), search_tool.clone()],
+    );
+    let patched = store.patch_state(
+        &record.run_id,
+        StatePatch::new(Some(0)).with(PatchOperation::set(["step"], json!(1))),
+    )?;
+    let running = store.set_status(&record.run_id, RunStatus::Running)?;
+
+    assert_eq!(record.model_visible_tools, vec![search_tool, ticket_tool]);
+    assert_eq!(patched.model_visible_tools, record.model_visible_tools);
+    assert_eq!(running.model_visible_tools, record.model_visible_tools);
     Ok(())
 }
 
@@ -156,7 +184,15 @@ fn sqlite_run_store_persists_runs_across_reopen() -> Result<(), String> {
             .with_physical_plan_hash("sha256:physical")
             .with_release_signature_digest("sha256:signature");
         let first = store
-            .create_run_with_provenance("sha256:one", json!({"message": "hello"}), provenance)
+            .create_run_with_invocation_provenance(
+                "sha256:one",
+                json!({"message": "hello"}),
+                provenance,
+                vec![
+                    model_visible_tool("ticket.create", "resolved-ticket", false),
+                    model_visible_tool("knowledge.search", "resolved-search", true),
+                ],
+            )
             .map_err(|error| format!("{error:?}"))?;
         let second = store
             .create_run("sha256:two", json!({}))
@@ -188,9 +224,32 @@ fn sqlite_run_store_persists_runs_across_reopen() -> Result<(), String> {
             "release_signature_digest": "sha256:signature",
         })
     );
+    assert_eq!(
+        first.model_visible_tools,
+        vec![
+            model_visible_tool("knowledge.search", "resolved-search", true),
+            model_visible_tool("ticket.create", "resolved-ticket", false),
+        ]
+    );
 
     let _ = std::fs::remove_file(&path);
     Ok(())
+}
+
+fn model_visible_tool(
+    tool_name: impl Into<String>,
+    resolved_tool_id: impl Into<String>,
+    allowed_for_principal: bool,
+) -> ModelVisibleToolRef {
+    ModelVisibleToolRef {
+        tool_name: tool_name.into(),
+        resolved_tool_id: resolved_tool_id.into(),
+        definition_digest: "sha256:definition".to_owned(),
+        binding_digest: "sha256:binding".to_owned(),
+        effective_policy_snapshot_id: "policy-snapshot-1".to_owned(),
+        allowed_for_principal,
+        valid_until_unix_ms: Some(1_783_036_800_000),
+    }
 }
 
 #[test]

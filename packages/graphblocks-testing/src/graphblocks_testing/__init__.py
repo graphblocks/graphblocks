@@ -57,7 +57,7 @@ from graphblocks.documents import (
     create_local_text_revision,
     parse_plain_text_document,
 )
-from graphblocks.evaluation import ResourceSnapshotRef, SloReport
+from graphblocks.evaluation import ModelVisibleToolRef, ResourceSnapshotRef, SloReport
 from graphblocks.budget import (
     BudgetCompletionReserveStateError,
     BudgetExceededError,
@@ -8076,6 +8076,7 @@ __all__ = [
     "MigrationCompatibilityReport",
     "MigrationCompatibilityResult",
     "MigrationCompatibilityRunner",
+    "ModelVisibleToolRef",
     "PerformanceBenchmarkIssue",
     "PerformanceBenchmarkReport",
     "PerformanceThreshold",

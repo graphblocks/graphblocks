@@ -1254,7 +1254,21 @@ def test_testing_package_exposes_terminal_run_store_error(monkeypatch) -> None:
         release_digest="sha256:release",
         physical_plan_hash="sha256:physical",
     )
-    record = store.create_run("sha256:test", {}, deployment_provenance=provenance)
+    tool_ref = graphblocks_testing.ModelVisibleToolRef(
+        tool_name="knowledge.search",
+        resolved_tool_id="resolved-search",
+        definition_digest="sha256:definition",
+        binding_digest="sha256:binding",
+        effective_policy_snapshot_id="policy-snapshot-1",
+        allowed_for_principal=True,
+        valid_until="2026-06-30T00:00:00Z",
+    )
+    record = store.create_run(
+        "sha256:test",
+        {},
+        deployment_provenance=provenance,
+        model_visible_tools=(tool_ref,),
+    )
     store.set_status(record.run_id, "succeeded")
 
     try:
@@ -1262,6 +1276,8 @@ def test_testing_package_exposes_terminal_run_store_error(monkeypatch) -> None:
     except graphblocks_testing.RunTerminalStateError as error:
         assert error.status == "succeeded"
         assert "RunDeploymentProvenance" in graphblocks_testing.__all__
+        assert "ModelVisibleToolRef" in graphblocks_testing.__all__
+        assert record.model_visible_tools == (tool_ref,)
     else:  # pragma: no cover - test should fail before this branch.
         raise AssertionError("terminal run state mutation was allowed")
 

@@ -3,6 +3,8 @@ use std::{collections::BTreeMap, path::Path};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Map, Number, Value, json};
 
+use crate::evaluation::ModelVisibleToolRef;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RunStatus {
     Created,
@@ -127,6 +129,7 @@ pub struct RunRecord {
     pub graph_hash: String,
     pub inputs: Value,
     pub deployment_provenance: RunDeploymentProvenance,
+    pub model_visible_tools: Vec<ModelVisibleToolRef>,
     pub status: RunStatus,
     pub state: Value,
     pub state_revision: u64,
@@ -478,6 +481,21 @@ impl InMemoryRunStore {
         inputs: Value,
         deployment_provenance: RunDeploymentProvenance,
     ) -> RunRecord {
+        self.create_run_with_invocation_provenance(
+            graph_hash,
+            inputs,
+            deployment_provenance,
+            Vec::new(),
+        )
+    }
+
+    pub fn create_run_with_invocation_provenance(
+        &mut self,
+        graph_hash: impl Into<String>,
+        inputs: Value,
+        deployment_provenance: RunDeploymentProvenance,
+        model_visible_tools: Vec<ModelVisibleToolRef>,
+    ) -> RunRecord {
         let sequence = self.next_sequence;
         self.next_sequence += 1;
         let run_id = format!("run-{sequence:06}");
@@ -487,6 +505,7 @@ impl InMemoryRunStore {
             graph_hash: graph_hash.into(),
             inputs,
             deployment_provenance,
+            model_visible_tools: sorted_model_visible_tools(model_visible_tools),
             status: RunStatus::Created,
             state: Value::Object(Map::new()),
             state_revision: 0,
@@ -569,6 +588,7 @@ impl SqliteRunStore {
                     graph_hash TEXT NOT NULL,
                     inputs_json TEXT NOT NULL,
                     deployment_provenance_json TEXT NOT NULL,
+                    model_visible_tools_json TEXT NOT NULL,
                     status TEXT NOT NULL,
                     state_json TEXT NOT NULL,
                     state_revision INTEGER NOT NULL
@@ -576,17 +596,18 @@ impl SqliteRunStore {
                 ",
             )
             .map_err(storage_error)?;
-        let has_deployment_provenance = self
+        let columns = self
             .connection
             .prepare("PRAGMA table_info(runs)")
             .map_err(storage_error)?
             .query_map([], |row| row.get::<_, String>(1))
             .map_err(storage_error)?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(storage_error)?
-            .into_iter()
-            .any(|name| name == "deployment_provenance_json");
-        if !has_deployment_provenance {
+            .map_err(storage_error)?;
+        if !columns
+            .iter()
+            .any(|name| name == "deployment_provenance_json")
+        {
             self.connection
                 .execute(
                     "ALTER TABLE runs ADD COLUMN deployment_provenance_json TEXT",
@@ -597,6 +618,23 @@ impl SqliteRunStore {
                 .execute(
                     "UPDATE runs SET deployment_provenance_json = ? WHERE deployment_provenance_json IS NULL",
                     params![storage_json(&RunDeploymentProvenance::new().canonical_value())?],
+                )
+                .map_err(storage_error)?;
+        }
+        if !columns
+            .iter()
+            .any(|name| name == "model_visible_tools_json")
+        {
+            self.connection
+                .execute(
+                    "ALTER TABLE runs ADD COLUMN model_visible_tools_json TEXT",
+                    [],
+                )
+                .map_err(storage_error)?;
+            self.connection
+                .execute(
+                    "UPDATE runs SET model_visible_tools_json = ? WHERE model_visible_tools_json IS NULL",
+                    params![storage_json(&Value::Array(Vec::new()))?],
                 )
                 .map_err(storage_error)?;
         }
@@ -617,6 +655,21 @@ impl SqliteRunStore {
         inputs: Value,
         deployment_provenance: RunDeploymentProvenance,
     ) -> Result<RunRecord, RunStoreError> {
+        self.create_run_with_invocation_provenance(
+            graph_hash,
+            inputs,
+            deployment_provenance,
+            Vec::new(),
+        )
+    }
+
+    pub fn create_run_with_invocation_provenance(
+        &mut self,
+        graph_hash: impl Into<String>,
+        inputs: Value,
+        deployment_provenance: RunDeploymentProvenance,
+        model_visible_tools: Vec<ModelVisibleToolRef>,
+    ) -> Result<RunRecord, RunStoreError> {
         let transaction = self.connection.transaction().map_err(storage_error)?;
         let next_sequence = transaction
             .query_row(
@@ -633,6 +686,7 @@ impl SqliteRunStore {
             graph_hash: graph_hash.into(),
             inputs,
             deployment_provenance,
+            model_visible_tools: sorted_model_visible_tools(model_visible_tools),
             status: RunStatus::Created,
             state: Value::Object(Map::new()),
             state_revision: 0,
@@ -646,11 +700,12 @@ impl SqliteRunStore {
                     graph_hash,
                     inputs_json,
                     deployment_provenance_json,
+                    model_visible_tools_json,
                     status,
                     state_json,
                     state_revision
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ",
                 params![
                     sqlite_u64_to_i64(record.sequence, "run sequence")?,
@@ -658,6 +713,7 @@ impl SqliteRunStore {
                     &record.graph_hash,
                     storage_json(&record.inputs)?,
                     storage_json(&record.deployment_provenance.canonical_value())?,
+                    storage_json(&model_visible_tools_value(&record.model_visible_tools))?,
                     record.status.as_str(),
                     storage_json(&record.state)?,
                     sqlite_u64_to_i64(record.state_revision, "state revision")?,
@@ -680,6 +736,7 @@ impl SqliteRunStore {
                     graph_hash,
                     inputs_json,
                     deployment_provenance_json,
+                    model_visible_tools_json,
                     status,
                     state_json,
                     state_revision
@@ -696,7 +753,8 @@ impl SqliteRunStore {
                         row.get::<_, String>(4)?,
                         row.get::<_, String>(5)?,
                         row.get::<_, String>(6)?,
-                        row.get::<_, i64>(7)?,
+                        row.get::<_, String>(7)?,
+                        row.get::<_, i64>(8)?,
                     ))
                 },
             )
@@ -708,6 +766,7 @@ impl SqliteRunStore {
             graph_hash,
             inputs,
             deployment_provenance,
+            model_visible_tools,
             status,
             state,
             state_revision,
@@ -723,6 +782,7 @@ impl SqliteRunStore {
             graph_hash,
             inputs,
             deployment_provenance,
+            model_visible_tools,
             status,
             state,
             state_revision,
@@ -777,6 +837,7 @@ fn record_from_storage(
     graph_hash: String,
     inputs: String,
     deployment_provenance: String,
+    model_visible_tools: String,
     status: String,
     state: String,
     state_revision: i64,
@@ -790,6 +851,7 @@ fn record_from_storage(
         graph_hash,
         inputs: parse_storage_json(&inputs)?,
         deployment_provenance: deployment_provenance_from_storage(&deployment_provenance)?,
+        model_visible_tools: model_visible_tools_from_storage(&model_visible_tools)?,
         status,
         state: parse_storage_json(&state)?,
         state_revision: sqlite_i64_to_u64(state_revision, "state revision")?,
@@ -819,11 +881,88 @@ fn deployment_provenance_from_storage(
     })
 }
 
+fn model_visible_tools_value(tools: &[ModelVisibleToolRef]) -> Value {
+    Value::Array(
+        tools
+            .iter()
+            .map(|tool| {
+                json!({
+                    "tool_name": tool.tool_name,
+                    "resolved_tool_id": tool.resolved_tool_id,
+                    "definition_digest": tool.definition_digest,
+                    "binding_digest": tool.binding_digest,
+                    "effective_policy_snapshot_id": tool.effective_policy_snapshot_id,
+                    "allowed_for_principal": tool.allowed_for_principal,
+                    "valid_until_unix_ms": tool.valid_until_unix_ms,
+                })
+            })
+            .collect(),
+    )
+}
+
+fn model_visible_tools_from_storage(text: &str) -> Result<Vec<ModelVisibleToolRef>, RunStoreError> {
+    let value = parse_storage_json(text)?;
+    let Some(array) = value.as_array() else {
+        return Ok(Vec::new());
+    };
+    let mut tools = Vec::with_capacity(array.len());
+    for item in array {
+        let Some(object) = item.as_object() else {
+            return Err(RunStoreError::Storage {
+                message: "stored model-visible tool provenance must be an array of objects"
+                    .to_owned(),
+            });
+        };
+        let valid_until_unix_ms = match object.get("valid_until_unix_ms") {
+            Some(Value::Null) | None => None,
+            Some(value) => value.as_u64(),
+        };
+        tools.push(ModelVisibleToolRef {
+            tool_name: required_storage_string(object, "tool_name")?,
+            resolved_tool_id: required_storage_string(object, "resolved_tool_id")?,
+            definition_digest: required_storage_string(object, "definition_digest")?,
+            binding_digest: required_storage_string(object, "binding_digest")?,
+            effective_policy_snapshot_id: required_storage_string(
+                object,
+                "effective_policy_snapshot_id",
+            )?,
+            allowed_for_principal: object
+                .get("allowed_for_principal")
+                .and_then(Value::as_bool)
+                .ok_or_else(|| RunStoreError::Storage {
+                    message:
+                        "stored model-visible tool provenance is missing allowed_for_principal"
+                            .to_owned(),
+                })?,
+            valid_until_unix_ms,
+        });
+    }
+    Ok(sorted_model_visible_tools(tools))
+}
+
+fn sorted_model_visible_tools(mut tools: Vec<ModelVisibleToolRef>) -> Vec<ModelVisibleToolRef> {
+    tools.sort();
+    tools
+}
+
 fn optional_string(object: &Map<String, Value>, key: &str) -> Option<String> {
     object
         .get(key)
         .and_then(Value::as_str)
         .map(ToOwned::to_owned)
+}
+
+fn required_storage_string(
+    object: &Map<String, Value>,
+    key: &'static str,
+) -> Result<String, RunStoreError> {
+    object
+        .get(key)
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| RunStoreError::Storage {
+            message: format!("stored model-visible tool provenance is missing {key}"),
+        })
 }
 
 fn sqlite_u64_to_i64(value: u64, label: &'static str) -> Result<i64, RunStoreError> {

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from copy import deepcopy
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
 import sqlite3
 from typing import Any, Literal
+
+from .evaluation import ModelVisibleToolRef
 
 
 RunStatus = Literal["created", "running", "succeeded", "failed", "cancelled", "policy_stopped"]
@@ -78,6 +81,10 @@ class RunRecord:
     status: RunStatus = "created"
     state: dict[str, Any] = field(default_factory=dict)
     state_revision: int = 0
+    model_visible_tools: tuple[ModelVisibleToolRef, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "model_visible_tools", tuple(sorted(self.model_visible_tools)))
 
 
 @dataclass(slots=True)
@@ -91,6 +98,7 @@ class InMemoryRunStore:
         inputs: dict[str, Any],
         *,
         deployment_provenance: RunDeploymentProvenance | None = None,
+        model_visible_tools: Iterable[ModelVisibleToolRef] = (),
     ) -> RunRecord:
         run_id = f"run-{self.next_id:06d}"
         self.next_id += 1
@@ -99,6 +107,7 @@ class InMemoryRunStore:
             graph_hash=graph_hash,
             inputs=deepcopy(inputs),
             deployment_provenance=deployment_provenance or RunDeploymentProvenance(),
+            model_visible_tools=tuple(model_visible_tools),
         )
         self.runs[run_id] = record
         return deepcopy(record)
@@ -130,6 +139,7 @@ class InMemoryRunStore:
             graph_hash=current.graph_hash,
             inputs=deepcopy(current.inputs),
             deployment_provenance=current.deployment_provenance,
+            model_visible_tools=current.model_visible_tools,
             status=current.status,
             state=next_state,
             state_revision=current.state_revision + 1,
@@ -146,6 +156,7 @@ class InMemoryRunStore:
             graph_hash=current.graph_hash,
             inputs=deepcopy(current.inputs),
             deployment_provenance=current.deployment_provenance,
+            model_visible_tools=current.model_visible_tools,
             status=status,
             state=deepcopy(current.state),
             state_revision=current.state_revision,
@@ -171,6 +182,7 @@ class SQLiteRunStore:
               graph_hash TEXT NOT NULL,
               inputs_json TEXT NOT NULL,
               deployment_provenance_json TEXT NOT NULL,
+              model_visible_tools_json TEXT NOT NULL,
               status TEXT NOT NULL,
               state_json TEXT NOT NULL,
               state_revision INTEGER NOT NULL
@@ -191,6 +203,16 @@ class SQLiteRunStore:
                 """,
                 (_deployment_provenance_json(RunDeploymentProvenance()),),
             )
+        if "model_visible_tools_json" not in columns:
+            self.connection.execute("ALTER TABLE runs ADD COLUMN model_visible_tools_json TEXT")
+            self.connection.execute(
+                """
+                UPDATE runs
+                SET model_visible_tools_json = ?
+                WHERE model_visible_tools_json IS NULL
+                """,
+                (_model_visible_tools_json(()),),
+            )
         self.connection.commit()
 
     def close(self) -> None:
@@ -202,6 +224,7 @@ class SQLiteRunStore:
         inputs: dict[str, Any],
         *,
         deployment_provenance: RunDeploymentProvenance | None = None,
+        model_visible_tools: Iterable[ModelVisibleToolRef] = (),
     ) -> RunRecord:
         row = self.connection.execute("SELECT COALESCE(MAX(sequence), 0) + 1 FROM runs").fetchone()
         sequence = int(row[0])
@@ -211,6 +234,7 @@ class SQLiteRunStore:
             graph_hash=graph_hash,
             inputs=deepcopy(inputs),
             deployment_provenance=deployment_provenance or RunDeploymentProvenance(),
+            model_visible_tools=tuple(model_visible_tools),
         )
         self.connection.execute(
             """
@@ -220,11 +244,12 @@ class SQLiteRunStore:
               graph_hash,
               inputs_json,
               deployment_provenance_json,
+              model_visible_tools_json,
               status,
               state_json,
               state_revision
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record.run_id,
@@ -232,6 +257,7 @@ class SQLiteRunStore:
                 record.graph_hash,
                 json.dumps(record.inputs, sort_keys=True, separators=(",", ":")),
                 _deployment_provenance_json(record.deployment_provenance),
+                _model_visible_tools_json(record.model_visible_tools),
                 record.status,
                 json.dumps(record.state, sort_keys=True, separators=(",", ":")),
                 record.state_revision,
@@ -248,6 +274,7 @@ class SQLiteRunStore:
               graph_hash,
               inputs_json,
               deployment_provenance_json,
+              model_visible_tools_json,
               status,
               state_json,
               state_revision
@@ -264,6 +291,9 @@ class SQLiteRunStore:
             inputs=json.loads(str(row["inputs_json"])),
             deployment_provenance=_parse_deployment_provenance_json(
                 str(row["deployment_provenance_json"] or "{}")
+            ),
+            model_visible_tools=_parse_model_visible_tools_json(
+                str(row["model_visible_tools_json"] or "[]")
             ),
             status=row["status"],
             state=json.loads(str(row["state_json"])),
@@ -324,8 +354,51 @@ def _deployment_provenance_json(provenance: RunDeploymentProvenance) -> str:
     return json.dumps(provenance.canonical_value(), sort_keys=True, separators=(",", ":"))
 
 
+def _model_visible_tools_json(tools: Iterable[ModelVisibleToolRef]) -> str:
+    return json.dumps(
+        [
+            {
+                "tool_name": tool.tool_name,
+                "resolved_tool_id": tool.resolved_tool_id,
+                "definition_digest": tool.definition_digest,
+                "binding_digest": tool.binding_digest,
+                "effective_policy_snapshot_id": tool.effective_policy_snapshot_id,
+                "allowed_for_principal": tool.allowed_for_principal,
+                "valid_until": tool.valid_until,
+            }
+            for tool in sorted(tools)
+        ],
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
 def _parse_deployment_provenance_json(value: str) -> RunDeploymentProvenance:
     parsed = json.loads(value)
     if not isinstance(parsed, dict):
         return RunDeploymentProvenance()
     return RunDeploymentProvenance.from_mapping(parsed)
+
+
+def _parse_model_visible_tools_json(value: str) -> tuple[ModelVisibleToolRef, ...]:
+    parsed = json.loads(value)
+    if not isinstance(parsed, list):
+        return ()
+    tools: list[ModelVisibleToolRef] = []
+    for item in parsed:
+        if not isinstance(item, dict):
+            continue
+        tools.append(
+            ModelVisibleToolRef(
+                tool_name=str(item["tool_name"]),
+                resolved_tool_id=str(item["resolved_tool_id"]),
+                definition_digest=str(item["definition_digest"]),
+                binding_digest=str(item["binding_digest"]),
+                effective_policy_snapshot_id=str(item["effective_policy_snapshot_id"]),
+                allowed_for_principal=bool(item["allowed_for_principal"]),
+                valid_until=(
+                    str(item["valid_until"]) if item.get("valid_until") is not None else None
+                ),
+            )
+        )
+    return tuple(sorted(tools))
