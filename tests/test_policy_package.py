@@ -5,6 +5,18 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 
+import graphblocks
+from graphblocks.output_policy import (
+    VALID_DELIVERY_MODES,
+    VALID_DRAFT_DISPOSITIONS,
+    VALID_FLUSH_BOUNDARIES,
+    VALID_OUTPUT_DISPOSITIONS,
+    VALID_OUTPUT_DURABLE_RESULTS,
+    VALID_PENDING_TOOL_CALLS_DISPOSITIONS,
+    VALID_PROVIDER_CANCELLATIONS,
+    VALID_TERMINAL_REASONS,
+    VALID_VIOLATION_ACTIONS,
+)
 from graphblocks.policy import (
     VALID_ENFORCEMENT_POINTS,
     VALID_ENFORCEMENT_STATUSES,
@@ -119,6 +131,17 @@ def test_policy_package_exposes_policy_test_dsl(monkeypatch) -> None:
 def test_policy_package_exposes_canonical_literal_sets(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy" / "src"))
     graphblocks_policy = importlib.import_module("graphblocks_policy")
+    output_constants = {
+        "VALID_DELIVERY_MODES": VALID_DELIVERY_MODES,
+        "VALID_DRAFT_DISPOSITIONS": VALID_DRAFT_DISPOSITIONS,
+        "VALID_FLUSH_BOUNDARIES": VALID_FLUSH_BOUNDARIES,
+        "VALID_OUTPUT_DISPOSITIONS": VALID_OUTPUT_DISPOSITIONS,
+        "VALID_OUTPUT_DURABLE_RESULTS": VALID_OUTPUT_DURABLE_RESULTS,
+        "VALID_PENDING_TOOL_CALLS_DISPOSITIONS": VALID_PENDING_TOOL_CALLS_DISPOSITIONS,
+        "VALID_PROVIDER_CANCELLATIONS": VALID_PROVIDER_CANCELLATIONS,
+        "VALID_TERMINAL_REASONS": VALID_TERMINAL_REASONS,
+        "VALID_VIOLATION_ACTIONS": VALID_VIOLATION_ACTIONS,
+    }
 
     assert graphblocks_policy.VALID_ENFORCEMENT_POINTS is VALID_ENFORCEMENT_POINTS
     assert graphblocks_policy.VALID_ENFORCEMENT_STATUSES is VALID_ENFORCEMENT_STATUSES
@@ -132,6 +155,43 @@ def test_policy_package_exposes_canonical_literal_sets(monkeypatch) -> None:
         "before_tool_or_effect",
     }.issubset(graphblocks_policy.VALID_ENFORCEMENT_POINTS)
     assert "VALID_ENFORCEMENT_POINTS" in graphblocks_policy.__all__
+    for name, value in output_constants.items():
+        assert getattr(graphblocks_policy, name) is value
+        assert name in graphblocks_policy.__all__
+    assert {"allow", "hold", "deny_commit"}.issubset(graphblocks_policy.VALID_OUTPUT_DISPOSITIONS)
+    assert {"bounded_holdback", "immediate_draft"}.issubset(graphblocks_policy.VALID_DELIVERY_MODES)
+
+
+def test_root_facade_exports_output_policy_literal_contract() -> None:
+    expected_aliases = {
+        "DeliveryMode",
+        "DraftDisposition",
+        "FlushBoundary",
+        "OutputDisposition",
+        "OutputDurableResult",
+        "PendingToolCallsDisposition",
+        "ProviderCancellation",
+        "TerminalReason",
+        "ViolationAction",
+    }
+    expected_constants = {
+        "VALID_DELIVERY_MODES": VALID_DELIVERY_MODES,
+        "VALID_DRAFT_DISPOSITIONS": VALID_DRAFT_DISPOSITIONS,
+        "VALID_FLUSH_BOUNDARIES": VALID_FLUSH_BOUNDARIES,
+        "VALID_OUTPUT_DISPOSITIONS": VALID_OUTPUT_DISPOSITIONS,
+        "VALID_OUTPUT_DURABLE_RESULTS": VALID_OUTPUT_DURABLE_RESULTS,
+        "VALID_PENDING_TOOL_CALLS_DISPOSITIONS": VALID_PENDING_TOOL_CALLS_DISPOSITIONS,
+        "VALID_PROVIDER_CANCELLATIONS": VALID_PROVIDER_CANCELLATIONS,
+        "VALID_TERMINAL_REASONS": VALID_TERMINAL_REASONS,
+        "VALID_VIOLATION_ACTIONS": VALID_VIOLATION_ACTIONS,
+    }
+    expected_exports = expected_aliases | set(expected_constants)
+
+    assert sorted(name for name in expected_exports if name not in graphblocks.__all__) == []
+    for name in expected_aliases:
+        assert hasattr(graphblocks, name)
+    for name, value in expected_constants.items():
+        assert getattr(graphblocks, name) is value
 
 
 def test_policy_package_lazy_native_output_helpers_delegate_to_runtime(monkeypatch) -> None:
