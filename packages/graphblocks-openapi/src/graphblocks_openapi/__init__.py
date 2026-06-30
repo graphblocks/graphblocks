@@ -197,6 +197,8 @@ def define_openapi_tools_from_spec(
 def prepare_openapi_operation_invocation(
     admitted: AdmittedToolCall,
     resolved_tool: ResolvedTool,
+    *,
+    validation_time: str | None = None,
 ) -> OpenApiOperationInvocation:
     implementation = resolved_tool.binding.implementation
     if not isinstance(implementation, OpenApiToolImplementation):
@@ -207,6 +209,12 @@ def prepare_openapi_operation_invocation(
         raise OpenApiToolAdapterError("tool call references a different resolved tool")
     if admitted.call.name != resolved_tool.definition.name:
         raise OpenApiToolAdapterError("tool call name does not match resolved tool")
+    _validate_resolved_tool_capability(
+        admitted,
+        resolved_tool,
+        validation_time=validation_time,
+        owner="OpenAPI",
+    )
     try:
         actual_arguments_digest = canonical_hash(admitted.call.arguments)
     except (TypeError, ValueError) as error:
@@ -653,6 +661,26 @@ def _is_success_status_code(status_code: str) -> bool:
     if status_code.lower() == "default":
         return False
     return len(status_code) == 3 and status_code[0] == "2" and status_code[1:].isdigit()
+
+
+def _validate_resolved_tool_capability(
+    admitted: AdmittedToolCall,
+    resolved_tool: ResolvedTool,
+    *,
+    validation_time: str | None,
+    owner: str,
+) -> None:
+    if not resolved_tool.allowed_for_principal:
+        raise OpenApiToolAdapterError(
+            f"{owner} resolved tool {resolved_tool.definition.name} is not allowed for principal"
+        )
+    effective_time = validation_time if validation_time is not None else admitted.call.admitted_at
+    if not isinstance(effective_time, str) or not effective_time.strip():
+        raise OpenApiToolAdapterError(f"{owner} tool invocation validation_time must be a non-empty string")
+    if resolved_tool.valid_until is not None and effective_time > resolved_tool.valid_until:
+        raise OpenApiToolAdapterError(
+            f"{owner} resolved tool {resolved_tool.definition.name} expired at {resolved_tool.valid_until}"
+        )
 
 
 def _required_string(value: Mapping[str, object], name: str, *, owner: str) -> str:

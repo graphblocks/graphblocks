@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import importlib
 from pathlib import Path
 import sys
@@ -247,6 +248,30 @@ def test_mcp_adapter_rejects_stale_argument_digest(monkeypatch) -> None:
 
     with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="arguments digest does not match"):
         graphblocks_mcp.prepare_mcp_tool_invocation(stale, resolved)
+
+
+def test_mcp_adapter_rechecks_resolved_tool_capability_before_invocation(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
+    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    admitted, resolved = _admitted_call_for(
+        McpToolImplementation(server="support-mcp", remote_name="search"),
+        tool_name="knowledge.search",
+        binding_id="binding-mcp-search",
+        arguments={"query": "billing"},
+    )
+
+    with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="not allowed for principal"):
+        graphblocks_mcp.prepare_mcp_tool_invocation(
+            admitted,
+            replace(resolved, allowed_for_principal=False),
+        )
+
+    with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="expired at 2026-06-23T00:00:01Z"):
+        graphblocks_mcp.prepare_mcp_tool_invocation(
+            admitted,
+            replace(resolved, valid_until="2026-06-23T00:00:01Z"),
+            validation_time="2026-06-23T00:00:02Z",
+        )
 
 
 def test_mcp_adapter_rejects_non_mcp_binding(monkeypatch) -> None:
@@ -663,6 +688,30 @@ def test_openapi_adapter_rejects_stale_argument_digest(monkeypatch) -> None:
 
     with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="arguments digest does not match"):
         graphblocks_openapi.prepare_openapi_operation_invocation(stale, resolved)
+
+
+def test_openapi_adapter_rechecks_resolved_tool_capability_before_invocation(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
+    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    admitted, resolved = _admitted_call_for(
+        OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
+        tool_name="ticket.create",
+        binding_id="binding-ticket-create",
+        arguments={"title": "Need help"},
+    )
+
+    with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="not allowed for principal"):
+        graphblocks_openapi.prepare_openapi_operation_invocation(
+            admitted,
+            replace(resolved, allowed_for_principal=False),
+        )
+
+    with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="expired at 2026-06-23T00:00:01Z"):
+        graphblocks_openapi.prepare_openapi_operation_invocation(
+            admitted,
+            replace(resolved, valid_until="2026-06-23T00:00:01Z"),
+            validation_time="2026-06-23T00:00:02Z",
+        )
 
 
 def test_openapi_adapter_rejects_non_openapi_binding(monkeypatch) -> None:

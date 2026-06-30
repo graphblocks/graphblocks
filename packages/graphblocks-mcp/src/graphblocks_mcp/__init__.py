@@ -172,6 +172,8 @@ def discover_mcp_tool_definitions(
 def prepare_mcp_tool_invocation(
     admitted: AdmittedToolCall,
     resolved_tool: ResolvedTool,
+    *,
+    validation_time: str | None = None,
 ) -> McpToolInvocation:
     implementation = resolved_tool.binding.implementation
     if not isinstance(implementation, McpToolImplementation):
@@ -182,6 +184,12 @@ def prepare_mcp_tool_invocation(
         raise McpToolAdapterError("tool call references a different resolved tool")
     if admitted.call.name != resolved_tool.definition.name:
         raise McpToolAdapterError("tool call name does not match resolved tool")
+    _validate_resolved_tool_capability(
+        admitted,
+        resolved_tool,
+        validation_time=validation_time,
+        owner="MCP",
+    )
     try:
         actual_arguments_digest = canonical_hash(admitted.call.arguments)
     except (TypeError, ValueError) as error:
@@ -530,6 +538,26 @@ def _optional_integer(artifact: Mapping[str, object], *names: str, owner: str) -
                 return value
             raise McpToolAdapterError(f"{owner} tool result artifact {name} must be an integer")
     return None
+
+
+def _validate_resolved_tool_capability(
+    admitted: AdmittedToolCall,
+    resolved_tool: ResolvedTool,
+    *,
+    validation_time: str | None,
+    owner: str,
+) -> None:
+    if not resolved_tool.allowed_for_principal:
+        raise McpToolAdapterError(
+            f"{owner} resolved tool {resolved_tool.definition.name} is not allowed for principal"
+        )
+    effective_time = validation_time if validation_time is not None else admitted.call.admitted_at
+    if not isinstance(effective_time, str) or not effective_time.strip():
+        raise McpToolAdapterError(f"{owner} tool invocation validation_time must be a non-empty string")
+    if resolved_tool.valid_until is not None and effective_time > resolved_tool.valid_until:
+        raise McpToolAdapterError(
+            f"{owner} resolved tool {resolved_tool.definition.name} expired at {resolved_tool.valid_until}"
+        )
 
 
 def _required_string(value: Mapping[str, object], name: str, *, owner: str) -> str:

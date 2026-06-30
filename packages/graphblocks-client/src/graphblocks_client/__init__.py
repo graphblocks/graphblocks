@@ -224,6 +224,8 @@ def bind_remote_tool(
 def prepare_remote_tool_invocation(
     admitted: AdmittedToolCall,
     resolved_tool: ResolvedTool,
+    *,
+    validation_time: str | None = None,
 ) -> RemoteToolInvocation:
     implementation = resolved_tool.binding.implementation
     if not isinstance(implementation, RemoteToolImplementation):
@@ -234,6 +236,12 @@ def prepare_remote_tool_invocation(
         raise RemoteToolAdapterError("tool call references a different resolved tool")
     if admitted.call.name != resolved_tool.definition.name:
         raise RemoteToolAdapterError("tool call name does not match resolved tool")
+    _validate_resolved_tool_capability(
+        admitted,
+        resolved_tool,
+        validation_time=validation_time,
+        owner="remote",
+    )
     try:
         actual_arguments_digest = canonical_hash(admitted.call.arguments)
     except (TypeError, ValueError) as error:
@@ -763,6 +771,26 @@ def _read_json_response(response: object, label: str) -> dict[str, object]:
     if status_code is not None and int(status_code) >= 400:
         raise GraphBlocksHttpError(int(status_code), payload)
     return payload
+
+
+def _validate_resolved_tool_capability(
+    admitted: AdmittedToolCall,
+    resolved_tool: ResolvedTool,
+    *,
+    validation_time: str | None,
+    owner: str,
+) -> None:
+    if not resolved_tool.allowed_for_principal:
+        raise RemoteToolAdapterError(
+            f"{owner} resolved tool {resolved_tool.definition.name} is not allowed for principal"
+        )
+    effective_time = validation_time if validation_time is not None else admitted.call.admitted_at
+    if not isinstance(effective_time, str) or not effective_time.strip():
+        raise RemoteToolAdapterError(f"{owner} tool invocation validation_time must be a non-empty string")
+    if resolved_tool.valid_until is not None and effective_time > resolved_tool.valid_until:
+        raise RemoteToolAdapterError(
+            f"{owner} resolved tool {resolved_tool.definition.name} expired at {resolved_tool.valid_until}"
+        )
 
 
 def _application_events_from_payloads(event_payloads: object) -> tuple[ApplicationEvent, ...]:

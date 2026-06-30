@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import importlib
 import json
 from pathlib import Path
@@ -360,6 +361,25 @@ def test_client_package_remote_adapter_rejects_stale_argument_digest(monkeypatch
 
     with pytest.raises(graphblocks_client.RemoteToolAdapterError, match="arguments digest does not match"):
         graphblocks_client.prepare_remote_tool_invocation(admitted, resolved)
+
+
+def test_client_package_remote_adapter_rechecks_resolved_tool_capability(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+    admitted, resolved = _remote_admitted_call(arguments={"query": "billing"})
+
+    with pytest.raises(graphblocks_client.RemoteToolAdapterError, match="not allowed for principal"):
+        graphblocks_client.prepare_remote_tool_invocation(
+            admitted,
+            replace(resolved, allowed_for_principal=False),
+        )
+
+    with pytest.raises(graphblocks_client.RemoteToolAdapterError, match="expired at 2026-06-24T00:00:01Z"):
+        graphblocks_client.prepare_remote_tool_invocation(
+            admitted,
+            replace(resolved, valid_until="2026-06-24T00:00:01Z"),
+            validation_time="2026-06-24T00:00:02Z",
+        )
 
 
 def test_client_package_remote_adapter_validates_result_before_model_return(monkeypatch) -> None:
