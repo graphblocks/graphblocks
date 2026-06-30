@@ -385,6 +385,24 @@
     }
   },
   {
+    "name": "tool_terminal_rejects_expired_committed_effect",
+    "kind": "tool_terminal_effect_invariant",
+    "record": {
+      "runId": "run-000001",
+      "responseId": "response-1",
+      "toolCallId": "call-expired",
+      "revision": 1,
+      "terminalState": "expired",
+      "argumentsDigest": "sha256:arguments-expired",
+      "completedAtUnixMs": 1820000000000,
+      "effectCommitted": true
+    },
+    "expected": {
+      "recordError": "expired_effect_committed",
+      "toolTerminalCount": 0
+    }
+  },
+  {
     "name": "policy_stop_denies_late_durable_result_but_records_effect_outcome",
     "kind": "tool_terminal_policy_stop",
     "policyStop": {

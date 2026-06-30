@@ -433,6 +433,25 @@ fn run_case(case: &Value) -> Result<(), String> {
                 "toolTerminalCount": store.tool_terminal_count(),
             })
         }
+        "tool_terminal_effect_invariant" => {
+            let mut store = InMemoryDurableToolTerminalStore::new();
+            let record_error = match store
+                .record_tool_terminal(tool_terminal_from(required_object(case, "record", name)?)?)
+            {
+                Err(ToolTerminalStoreError::DeniedEffectCommitted { .. }) => {
+                    Some("denied_effect_committed")
+                }
+                Err(ToolTerminalStoreError::ExpiredEffectCommitted { .. }) => {
+                    Some("expired_effect_committed")
+                }
+                Err(other) => return Err(format!("{name} unexpected terminal error: {other:?}")),
+                Ok(_) => None,
+            };
+            json!({
+                "recordError": record_error,
+                "toolTerminalCount": store.tool_terminal_count(),
+            })
+        }
         other => return Err(format!("durable TCK case {name} has unknown kind {other}")),
     };
 

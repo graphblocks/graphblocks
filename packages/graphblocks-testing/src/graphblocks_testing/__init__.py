@@ -1683,6 +1683,7 @@ def load_durable_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
             "sink_idempotency",
             "checkpoint_replay",
             "tool_terminal_from_tool_result",
+            "tool_terminal_effect_invariant",
             "tool_terminal_policy_stop",
         }:
             raise ValueError(f"durable TCK case {case_id} has unsupported kind {case_kind!r}")
@@ -5744,6 +5745,42 @@ class TckRunner:
                     "auditedTerminalState": audited.record.terminal_state,
                     "auditedEffectCommitted": audited.record.effect_committed,
                     "auditedDurableResultCommitted": audited.record.durable_result_committed,
+                    "toolTerminalCount": store.tool_terminal_count(),
+                }
+            elif kind == "tool_terminal_effect_invariant":
+                store = durable.InMemoryDurableToolTerminalStore()
+                raw_record = fixture.get("record", {})
+                if not isinstance(raw_record, Mapping):
+                    raise ValueError("durable tool_terminal_effect_invariant case requires record")
+                record_error = None
+                try:
+                    record = durable.DurableToolTerminalRecord(
+                        run_id=str(raw_record.get("runId", raw_record.get("run_id", ""))),
+                        response_id=str(raw_record.get("responseId", raw_record.get("response_id", ""))),
+                        tool_call_id=str(raw_record.get("toolCallId", raw_record.get("tool_call_id", ""))),
+                        revision=int(raw_record.get("revision", 0)),
+                        terminal_state=str(raw_record.get("terminalState", raw_record.get("terminal_state", ""))),
+                        arguments_digest=str(raw_record.get("argumentsDigest", raw_record.get("arguments_digest", ""))),
+                        completed_at_unix_ms=int(raw_record.get("completedAtUnixMs", raw_record.get("completed_at_unix_ms", 0))),
+                        output_digest=(
+                            str(raw_record.get("outputDigest", raw_record.get("output_digest")))
+                            if raw_record.get("outputDigest", raw_record.get("output_digest")) is not None
+                            else None
+                        ),
+                        effect_committed=bool(raw_record.get("effectCommitted", raw_record.get("effect_committed", False))),
+                        durable_result_committed=bool(raw_record.get("durableResultCommitted", raw_record.get("durable_result_committed", False))),
+                    )
+                    store.record_tool_terminal(record)
+                except durable.ToolTerminalStoreError as error:
+                    message = str(error)
+                    if "denied terminal records cannot have committed effects" in message:
+                        record_error = "denied_effect_committed"
+                    elif "expired terminal records cannot have committed effects" in message:
+                        record_error = "expired_effect_committed"
+                    else:
+                        record_error = type(error).__name__
+                observed = {
+                    "recordError": record_error,
                     "toolTerminalCount": store.tool_terminal_count(),
                 }
             else:
