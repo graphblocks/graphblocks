@@ -3051,19 +3051,7 @@ fn parse_tool_effects(value: Option<&Value>, label: &str) -> PyResult<BTreeSet<T
 }
 
 fn tool_call_status_name(status: ToolCallStatus) -> &'static str {
-    match status {
-        ToolCallStatus::Validated => "validated",
-        ToolCallStatus::PolicyPending => "policy_pending",
-        ToolCallStatus::ApprovalPending => "approval_pending",
-        ToolCallStatus::Admitted => "admitted",
-        ToolCallStatus::Running => "running",
-        ToolCallStatus::Completed => "completed",
-        ToolCallStatus::Failed => "failed",
-        ToolCallStatus::Denied => "denied",
-        ToolCallStatus::Cancelled => "cancelled",
-        ToolCallStatus::PolicyStopped => "policy_stopped",
-        ToolCallStatus::Expired => "expired",
-    }
+    status.as_str()
 }
 
 fn parse_tool_status(value: &str, label: &str) -> PyResult<ToolCallStatus> {
@@ -4577,23 +4565,11 @@ fn serialize_cancel_reason(reason: &CancelReason) -> Value {
 }
 
 fn serialize_tool_result_status(status: ToolResultStatus) -> &'static str {
-    match status {
-        ToolResultStatus::Completed => "completed",
-        ToolResultStatus::Failed => "failed",
-        ToolResultStatus::Denied => "denied",
-        ToolResultStatus::Cancelled => "cancelled",
-        ToolResultStatus::PolicyStopped => "policy_stopped",
-        ToolResultStatus::Incomplete => "incomplete",
-    }
+    status.as_str()
 }
 
 fn serialize_tool_effect_outcome(outcome: ToolEffectOutcome) -> &'static str {
-    match outcome {
-        ToolEffectOutcome::NoExternalEffect => "no_external_effect",
-        ToolEffectOutcome::Committed => "committed",
-        ToolEffectOutcome::NotCommitted => "not_committed",
-        ToolEffectOutcome::Unknown => "unknown",
-    }
+    outcome.as_str()
 }
 
 fn serialize_artifact_ref(artifact: &ArtifactRef) -> Value {
@@ -4881,36 +4857,19 @@ fn serialize_tool_implementation(implementation: &ToolImplementation) -> Value {
 }
 
 fn serialize_tool_approval(value: ToolApproval) -> &'static str {
-    match value {
-        ToolApproval::Never => "never",
-        ToolApproval::Policy => "policy",
-        ToolApproval::Always => "always",
-    }
+    value.as_str()
 }
 
 fn serialize_tool_idempotency(value: ToolIdempotency) -> &'static str {
-    match value {
-        ToolIdempotency::NotApplicable => "not_applicable",
-        ToolIdempotency::Optional => "optional",
-        ToolIdempotency::Required => "required",
-    }
+    value.as_str()
 }
 
 fn serialize_tool_cancellation(value: ToolCancellation) -> &'static str {
-    match value {
-        ToolCancellation::Unsupported => "unsupported",
-        ToolCancellation::Cooperative => "cooperative",
-        ToolCancellation::ForceTerminable => "force_terminable",
-    }
+    value.as_str()
 }
 
 fn serialize_tool_result_mode(value: ToolResultMode) -> &'static str {
-    match value {
-        ToolResultMode::Value => "value",
-        ToolResultMode::Incremental => "incremental",
-        ToolResultMode::BoundedSequence => "bounded_sequence",
-        ToolResultMode::ArtifactReference => "artifact_reference",
-    }
+    value.as_str()
 }
 
 fn serialize_tool_binding(binding: &ToolBinding) -> Value {
@@ -7059,21 +7018,9 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
                     "acceptedThroughSequence": decision.accepted_through_sequence,
                     "reasonCodes": &decision.reason_codes,
                     "policyRefs": &decision.policy_refs,
-                    "providerCancellation": match decision.provider_cancellation {
-                        ProviderCancellation::None => "none",
-                        ProviderCancellation::Request => "request",
-                        ProviderCancellation::RequiredIfSupported => "required_if_supported",
-                    },
-                    "draftDisposition": match decision.draft_disposition {
-                        DraftDisposition::Keep => "keep",
-                        DraftDisposition::MarkIncomplete => "mark_incomplete",
-                        DraftDisposition::Retract => "retract",
-                    },
-                    "pendingToolCalls": match decision.pending_tool_calls {
-                        PendingToolCallsDisposition::Keep => "keep",
-                        PendingToolCallsDisposition::Deny => "deny",
-                        PendingToolCallsDisposition::CancelAdmitted => "cancel_admitted",
-                    },
+                    "providerCancellation": decision.provider_cancellation.as_str(),
+                    "draftDisposition": decision.draft_disposition.as_str(),
+                    "pendingToolCalls": decision.pending_tool_calls.as_str(),
                     "evaluatedAtUnixMs": decision.evaluated_at_unix_ms,
                     "occurredAtUnixMs": occurred_at_unix_ms,
                     "inputDigest": decision.input_digest.as_str(),
@@ -7095,22 +7042,9 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
                             "lastGeneratedSequence": cutoff.last_generated_sequence,
                             "lastPolicyAcceptedSequence": cutoff.last_policy_accepted_sequence,
                             "lastClientDeliveredSequence": cutoff.last_client_delivered_sequence,
-                            "terminalReason": match cutoff.terminal_reason {
-                                graphblocks_runtime_core::output_policy::TerminalReason::PolicyDenied => "policy_denied",
-                                graphblocks_runtime_core::output_policy::TerminalReason::BudgetExhausted => "budget_exhausted",
-                                graphblocks_runtime_core::output_policy::TerminalReason::Cancelled => "cancelled",
-                                graphblocks_runtime_core::output_policy::TerminalReason::ClientDisconnected => "client_disconnected",
-                            },
-                            "draftDisposition": match cutoff.draft_disposition {
-                                DraftDisposition::Keep => "keep",
-                                DraftDisposition::MarkIncomplete => "mark_incomplete",
-                                DraftDisposition::Retract => "retract",
-                            },
-                            "durableResult": match cutoff.durable_result {
-                                graphblocks_runtime_core::output_policy::DurableResult::None => "none",
-                                graphblocks_runtime_core::output_policy::DurableResult::Incomplete => "incomplete",
-                                graphblocks_runtime_core::output_policy::DurableResult::Partial => "partial",
-                            },
+                            "terminalReason": cutoff.terminal_reason.as_str(),
+                            "draftDisposition": cutoff.draft_disposition.as_str(),
+                            "durableResult": cutoff.durable_result.as_str(),
                             "policyDecisionId": cutoff.policy_decision_id,
                             "occurredAtUnixMs": cutoff.occurred_at_unix_ms,
                         })
@@ -7128,16 +7062,8 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
                             }))
                             .collect::<Vec<_>>(),
                         "cutoff": cutoff,
-                        "pendingToolCalls": update.pending_tool_calls.map(|disposition| match disposition {
-                            PendingToolCallsDisposition::Keep => "keep",
-                            PendingToolCallsDisposition::Deny => "deny",
-                            PendingToolCallsDisposition::CancelAdmitted => "cancel_admitted",
-                        }),
-                        "providerCancellation": update.provider_cancellation.map(|cancellation| match cancellation {
-                            ProviderCancellation::None => "none",
-                            ProviderCancellation::Request => "request",
-                            ProviderCancellation::RequiredIfSupported => "required_if_supported",
-                        }),
+                        "pendingToolCalls": update.pending_tool_calls.map(PendingToolCallsDisposition::as_str),
+                        "providerCancellation": update.provider_cancellation.map(ProviderCancellation::as_str),
                     }));
                 }
             }
@@ -7157,22 +7083,9 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
             "lastGeneratedSequence": cutoff.last_generated_sequence,
             "lastPolicyAcceptedSequence": cutoff.last_policy_accepted_sequence,
             "lastClientDeliveredSequence": cutoff.last_client_delivered_sequence,
-            "terminalReason": match cutoff.terminal_reason {
-                graphblocks_runtime_core::output_policy::TerminalReason::PolicyDenied => "policy_denied",
-                graphblocks_runtime_core::output_policy::TerminalReason::BudgetExhausted => "budget_exhausted",
-                graphblocks_runtime_core::output_policy::TerminalReason::Cancelled => "cancelled",
-                graphblocks_runtime_core::output_policy::TerminalReason::ClientDisconnected => "client_disconnected",
-            },
-            "draftDisposition": match cutoff.draft_disposition {
-                DraftDisposition::Keep => "keep",
-                DraftDisposition::MarkIncomplete => "mark_incomplete",
-                DraftDisposition::Retract => "retract",
-            },
-            "durableResult": match cutoff.durable_result {
-                graphblocks_runtime_core::output_policy::DurableResult::None => "none",
-                graphblocks_runtime_core::output_policy::DurableResult::Incomplete => "incomplete",
-                graphblocks_runtime_core::output_policy::DurableResult::Partial => "partial",
-            },
+            "terminalReason": cutoff.terminal_reason.as_str(),
+            "draftDisposition": cutoff.draft_disposition.as_str(),
+            "durableResult": cutoff.durable_result.as_str(),
             "policyDecisionId": cutoff.policy_decision_id,
             "occurredAtUnixMs": cutoff.occurred_at_unix_ms,
         })
@@ -7289,30 +7202,10 @@ fn evaluate_declarative_output_policy_json(
     );
     let decision =
         DeclarativeOutputPolicyEvaluator::new(rules).evaluate_chunk(&chunk, evaluated_at_unix_ms);
-    let disposition = match decision.disposition {
-        OutputDisposition::Allow => "allow",
-        OutputDisposition::Hold => "hold",
-        OutputDisposition::Redact => "redact",
-        OutputDisposition::Replace => "replace",
-        OutputDisposition::AbortResponse => "abort_response",
-        OutputDisposition::AbortTurn => "abort_turn",
-        OutputDisposition::DenyCommit => "deny_commit",
-    };
-    let provider_cancellation = match decision.provider_cancellation {
-        ProviderCancellation::None => "none",
-        ProviderCancellation::Request => "request",
-        ProviderCancellation::RequiredIfSupported => "required_if_supported",
-    };
-    let draft_disposition = match decision.draft_disposition {
-        DraftDisposition::Keep => "keep",
-        DraftDisposition::MarkIncomplete => "mark_incomplete",
-        DraftDisposition::Retract => "retract",
-    };
-    let pending_tool_calls = match decision.pending_tool_calls {
-        PendingToolCallsDisposition::Keep => "keep",
-        PendingToolCallsDisposition::Deny => "deny",
-        PendingToolCallsDisposition::CancelAdmitted => "cancel_admitted",
-    };
+    let disposition = decision.disposition.as_str();
+    let provider_cancellation = decision.provider_cancellation.as_str();
+    let draft_disposition = decision.draft_disposition.as_str();
+    let pending_tool_calls = decision.pending_tool_calls.as_str();
     let payload = json!({
         "decisionId": decision.decision_id,
         "disposition": disposition,
