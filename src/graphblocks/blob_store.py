@@ -44,7 +44,17 @@ class PutOptions:
     metadata: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
+        if not isinstance(self.metadata, Mapping):
+            raise ValueError("put metadata must be a mapping")
+        metadata = dict(self.metadata)
+        if any(
+            not isinstance(name, str)
+            or not name.strip()
+            or not isinstance(value, str)
+            for name, value in metadata.items()
+        ):
+            raise ValueError("put metadata keys and values must be strings")
+        object.__setattr__(self, "metadata", MappingProxyType(metadata))
 
 
 @dataclass(frozen=True, slots=True)

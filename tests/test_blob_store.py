@@ -41,6 +41,15 @@ def test_local_blob_store_put_head_and_get_round_trip(tmp_path) -> None:
     assert store.get(BlobKey("docs/policy.txt")) == b"alpha policy"
 
 
+def test_put_options_rejects_invalid_metadata() -> None:
+    with pytest.raises(ValueError, match="put metadata must be a mapping"):
+        PutOptions(metadata=object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="put metadata keys and values must be strings"):
+        PutOptions(metadata={" ": "acme"})
+    with pytest.raises(ValueError, match="put metadata keys and values must be strings"):
+        PutOptions(metadata={"tenant": object()})  # type: ignore[dict-item]
+
+
 def test_local_blob_store_supports_range_reads(tmp_path) -> None:
     store = LocalBlobStore(tmp_path)
     store.put(BlobKey("data.bin"), b"abcdef", PutOptions(media_type="application/octet-stream"))
