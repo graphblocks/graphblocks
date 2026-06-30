@@ -287,7 +287,12 @@ impl ToolCall {
         let mut revised = self.clone();
         revised.arguments_digest = canonical_hash(&arguments);
         revised.arguments = arguments;
-        revised.revision += 1;
+        revised.revision =
+            self.revision
+                .checked_add(1)
+                .ok_or(ToolCallError::InvalidRevision {
+                    revision: self.revision,
+                })?;
         revised.status = ToolCallStatus::Validated;
         revised.admitted_at_unix_ms = None;
         revised.completed_at_unix_ms = None;

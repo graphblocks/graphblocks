@@ -125,6 +125,20 @@ fn argument_revision_recomputes_digest_and_invalidates_admission_state() -> Resu
 }
 
 #[test]
+fn argument_revision_rejects_revision_overflow() -> Result<(), ToolCallError> {
+    let mut draft = ToolCallDraft::proposed("response-1", "call-1", "ticket.create");
+    draft.append_argument_fragment("{\"title\":\"old\"}")?;
+    let mut call = draft.into_completed_tool_call("resolved-tool-1", 1_000)?;
+    call.revision = u32::MAX;
+
+    assert_eq!(
+        call.revise_arguments(json!({"title": "new"})),
+        Err(ToolCallError::InvalidRevision { revision: u32::MAX }),
+    );
+    Ok(())
+}
+
+#[test]
 fn tool_call_status_transition_follows_lifecycle_and_sets_timestamps() -> Result<(), ToolCallError>
 {
     let mut draft = ToolCallDraft::proposed("response-1", "call-1", "ticket.create");
