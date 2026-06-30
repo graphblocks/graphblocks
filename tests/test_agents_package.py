@@ -7,6 +7,23 @@ from types import SimpleNamespace
 
 import pytest
 
+from graphblocks.tools import (
+    FINAL_TOOL_RESULT_EVENT_STATUSES,
+    VALID_TOOL_APPROVALS,
+    VALID_TOOL_APPROVAL_STATUSES,
+    VALID_TOOL_CALL_DRAFT_STATUSES,
+    VALID_TOOL_CALL_STATUSES,
+    VALID_TOOL_CANCELLATIONS,
+    VALID_TOOL_EFFECT_OUTCOMES,
+    VALID_TOOL_EFFECTS,
+    VALID_TOOL_EXECUTION_CANCELLATION_POLICIES,
+    VALID_TOOL_EXECUTION_FAILURE_POLICIES,
+    VALID_TOOL_IDEMPOTENCIES,
+    VALID_TOOL_RESULT_EVENT_KINDS,
+    VALID_TOOL_RESULT_MODES,
+    VALID_TOOL_RESULT_STATUSES,
+)
+
 
 ROOT = Path(__file__).parents[1]
 
@@ -64,6 +81,31 @@ def test_agents_package_exposes_tool_resolution_and_execution_plan_contracts(mon
     assert plan.ready_call_ids() == ["call-b"]
     assert "evaluate_native_tool_execution_plan" in graphblocks_agents.__all__
     assert "evaluate_native_sequential_tool_queue" in graphblocks_agents.__all__
+
+
+def test_agents_package_exposes_tool_literal_sets(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-agents" / "src"))
+    graphblocks_agents = importlib.import_module("graphblocks_agents")
+    expected_constants = {
+        "FINAL_TOOL_RESULT_EVENT_STATUSES": FINAL_TOOL_RESULT_EVENT_STATUSES,
+        "VALID_TOOL_APPROVALS": VALID_TOOL_APPROVALS,
+        "VALID_TOOL_APPROVAL_STATUSES": VALID_TOOL_APPROVAL_STATUSES,
+        "VALID_TOOL_CALL_DRAFT_STATUSES": VALID_TOOL_CALL_DRAFT_STATUSES,
+        "VALID_TOOL_CALL_STATUSES": VALID_TOOL_CALL_STATUSES,
+        "VALID_TOOL_CANCELLATIONS": VALID_TOOL_CANCELLATIONS,
+        "VALID_TOOL_EFFECT_OUTCOMES": VALID_TOOL_EFFECT_OUTCOMES,
+        "VALID_TOOL_EFFECTS": VALID_TOOL_EFFECTS,
+        "VALID_TOOL_EXECUTION_CANCELLATION_POLICIES": VALID_TOOL_EXECUTION_CANCELLATION_POLICIES,
+        "VALID_TOOL_EXECUTION_FAILURE_POLICIES": VALID_TOOL_EXECUTION_FAILURE_POLICIES,
+        "VALID_TOOL_IDEMPOTENCIES": VALID_TOOL_IDEMPOTENCIES,
+        "VALID_TOOL_RESULT_EVENT_KINDS": VALID_TOOL_RESULT_EVENT_KINDS,
+        "VALID_TOOL_RESULT_MODES": VALID_TOOL_RESULT_MODES,
+        "VALID_TOOL_RESULT_STATUSES": VALID_TOOL_RESULT_STATUSES,
+    }
+
+    assert sorted(name for name in expected_constants if name not in graphblocks_agents.__all__) == []
+    for name, value in expected_constants.items():
+        assert getattr(graphblocks_agents, name) is value
 
 
 def test_agents_package_lazy_native_helpers_delegate_to_runtime(monkeypatch) -> None:

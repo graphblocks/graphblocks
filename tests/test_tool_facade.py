@@ -8,6 +8,22 @@ import graphblocks
 import pytest
 
 from graphblocks.canonical import canonical_hash
+from graphblocks.tools import (
+    FINAL_TOOL_RESULT_EVENT_STATUSES,
+    VALID_TOOL_APPROVALS,
+    VALID_TOOL_APPROVAL_STATUSES,
+    VALID_TOOL_CALL_DRAFT_STATUSES,
+    VALID_TOOL_CALL_STATUSES,
+    VALID_TOOL_CANCELLATIONS,
+    VALID_TOOL_EFFECT_OUTCOMES,
+    VALID_TOOL_EFFECTS,
+    VALID_TOOL_EXECUTION_CANCELLATION_POLICIES,
+    VALID_TOOL_EXECUTION_FAILURE_POLICIES,
+    VALID_TOOL_IDEMPOTENCIES,
+    VALID_TOOL_RESULT_EVENT_KINDS,
+    VALID_TOOL_RESULT_MODES,
+    VALID_TOOL_RESULT_STATUSES,
+)
 from graphblocks import (
     ArtifactRef,
     AdmittedToolCall,
@@ -76,12 +92,31 @@ def test_root_facade_exports_tool_schema_aliases() -> None:
         "ToolResultStreamState",
         "ToolResultStatus",
     }
+    expected_constants = {
+        "FINAL_TOOL_RESULT_EVENT_STATUSES": FINAL_TOOL_RESULT_EVENT_STATUSES,
+        "VALID_TOOL_APPROVALS": VALID_TOOL_APPROVALS,
+        "VALID_TOOL_APPROVAL_STATUSES": VALID_TOOL_APPROVAL_STATUSES,
+        "VALID_TOOL_CALL_DRAFT_STATUSES": VALID_TOOL_CALL_DRAFT_STATUSES,
+        "VALID_TOOL_CALL_STATUSES": VALID_TOOL_CALL_STATUSES,
+        "VALID_TOOL_CANCELLATIONS": VALID_TOOL_CANCELLATIONS,
+        "VALID_TOOL_EFFECT_OUTCOMES": VALID_TOOL_EFFECT_OUTCOMES,
+        "VALID_TOOL_EFFECTS": VALID_TOOL_EFFECTS,
+        "VALID_TOOL_EXECUTION_CANCELLATION_POLICIES": VALID_TOOL_EXECUTION_CANCELLATION_POLICIES,
+        "VALID_TOOL_EXECUTION_FAILURE_POLICIES": VALID_TOOL_EXECUTION_FAILURE_POLICIES,
+        "VALID_TOOL_IDEMPOTENCIES": VALID_TOOL_IDEMPOTENCIES,
+        "VALID_TOOL_RESULT_EVENT_KINDS": VALID_TOOL_RESULT_EVENT_KINDS,
+        "VALID_TOOL_RESULT_MODES": VALID_TOOL_RESULT_MODES,
+        "VALID_TOOL_RESULT_STATUSES": VALID_TOOL_RESULT_STATUSES,
+    }
 
-    missing = sorted(name for name in expected_aliases if name not in graphblocks.__all__)
+    expected_exports = expected_aliases | set(expected_constants)
+    missing = sorted(name for name in expected_exports if name not in graphblocks.__all__)
 
     assert missing == []
-    for name in expected_aliases:
+    for name in expected_exports:
         assert hasattr(graphblocks, name)
+    for name, value in expected_constants.items():
+        assert getattr(graphblocks, name) is value
 
 
 def test_tool_definition_is_model_visible_contract_only() -> None:
