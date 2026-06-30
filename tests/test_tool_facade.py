@@ -3499,6 +3499,28 @@ def test_tool_execution_plan_policy_stop_preserves_unsafe_running_state_changing
     assert force_terminable.state("call-a") == "cancelled"
 
 
+def test_tool_execution_plan_policy_stop_respects_unsupported_cancellation() -> None:
+    plan = ToolExecutionPlan(
+        plan_id="plan-unsupported",
+        response_id="response-1",
+        calls=(
+            ToolPlanCall(
+                _tool_call("call-a", '{"resource_id":"doc-1"}'),
+                effects=frozenset({"external_read"}),
+                cancellation="unsupported",
+            ),
+            ToolPlanCall(_tool_call("call-b", '{"resource_id":"doc-2"}')),
+        ),
+        maximum_parallelism=2,
+    )
+
+    plan.record_started("call-a")
+
+    assert plan.apply_policy_stop("cancel_admitted") == ["call-b"]
+    assert plan.state("call-a") == "running"
+    assert plan.state("call-b") == "denied"
+
+
 def test_tool_execution_cancelled_call_cancels_dependents_by_default() -> None:
     dependent = replace(_tool_call("call-b", '{"resource_id":"b"}'), depends_on=("call-a",))
     plan = ToolExecutionPlan(

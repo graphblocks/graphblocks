@@ -1630,9 +1630,12 @@ class ToolExecutionPlan:
             for planned_call in self.calls:
                 tool_call_id = planned_call.call.tool_call_id
                 if self._states[tool_call_id] == "running":
-                    can_cancel_running = planned_call.cancellation == "force_terminable" or all(
-                        effect in {"none", "external_read", "filesystem_read", "network"}
-                        for effect in planned_call.effects
+                    can_cancel_running = planned_call.cancellation == "force_terminable" or (
+                        planned_call.cancellation == "cooperative"
+                        and all(
+                            effect in {"none", "external_read", "filesystem_read", "network"}
+                            for effect in planned_call.effects
+                        )
                     )
                     if can_cancel_running:
                         self._states[tool_call_id] = "cancelled"

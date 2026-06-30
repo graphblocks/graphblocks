@@ -560,15 +560,16 @@ impl ToolExecutionPlan {
                         let can_cancel_running =
                             self.calls.get(tool_call_id).is_some_and(|planned_call| {
                                 planned_call.cancellation == ToolCancellation::ForceTerminable
-                                    || planned_call.effects.iter().all(|effect| {
-                                        matches!(
-                                            effect,
-                                            ToolEffect::None
-                                                | ToolEffect::ExternalRead
-                                                | ToolEffect::FilesystemRead
-                                                | ToolEffect::Network
-                                        )
-                                    })
+                                    || (planned_call.cancellation == ToolCancellation::Cooperative
+                                        && planned_call.effects.iter().all(|effect| {
+                                            matches!(
+                                                effect,
+                                                ToolEffect::None
+                                                    | ToolEffect::ExternalRead
+                                                    | ToolEffect::FilesystemRead
+                                                    | ToolEffect::Network
+                                            )
+                                        }))
                             });
                         if can_cancel_running {
                             *state = ToolExecutionState::Cancelled;
