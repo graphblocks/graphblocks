@@ -253,6 +253,10 @@ def prepare_openapi_operation_invocation(
         validation_time=validation_time,
         owner="OpenAPI",
     )
+    if resolved_tool.binding.idempotency == "required" and admitted.idempotency_key is None:
+        raise OpenApiToolAdapterError(
+            f"OpenAPI tool call {admitted.call.tool_call_id} requires an idempotency key before execution"
+        )
     try:
         actual_arguments_digest = canonical_hash(admitted.call.arguments)
     except (TypeError, ValueError) as error:

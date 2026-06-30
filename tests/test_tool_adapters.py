@@ -83,6 +83,8 @@ def _admitted_call_for(
     tool_name: str,
     binding_id: str,
     arguments: dict[str, object],
+    idempotency: str = "optional",
+    idempotency_key: str | None = "idem-1",
     output_schema: str | None = None,
 ) -> tuple[AdmittedToolCall, ResolvedTool]:
     definition = ToolDefinition(
@@ -96,6 +98,7 @@ def _admitted_call_for(
         tool_name=tool_name,
         implementation=implementation,
         effects=frozenset({"network"}),
+        idempotency=idempotency,
     )
     resolved = ResolvedTool.from_definition_and_binding(
         resolved_tool_id="resolved-tool-1",
@@ -114,7 +117,7 @@ def _admitted_call_for(
         status="admitted",
         admitted_at="2026-06-23T00:00:00Z",
     )
-    return AdmittedToolCall(call=call, idempotency_key="idem-1"), resolved
+    return AdmittedToolCall(call=call, idempotency_key=idempotency_key), resolved
 
 
 def _tool_output_registry() -> ToolSchemaRegistry:
@@ -332,6 +335,22 @@ def test_mcp_adapter_rechecks_resolved_tool_capability_before_invocation(monkeyp
             replace(resolved, valid_until="2026-06-23T00:00:01Z"),
             validation_time="2026-06-23T00:00:02Z",
         )
+
+
+def test_mcp_adapter_requires_required_idempotency_key_before_execution(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
+    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+    admitted, resolved = _admitted_call_for(
+        McpToolImplementation(server="support-mcp", remote_name="search"),
+        tool_name="knowledge.search",
+        binding_id="binding-mcp-search",
+        arguments={"query": "billing"},
+        idempotency="required",
+        idempotency_key=None,
+    )
+
+    with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="requires an idempotency key"):
+        graphblocks_mcp.prepare_mcp_tool_invocation(admitted, resolved)
 
 
 def test_mcp_adapter_rejects_non_mcp_binding(monkeypatch) -> None:
@@ -843,6 +862,22 @@ def test_openapi_adapter_rechecks_resolved_tool_capability_before_invocation(mon
             replace(resolved, valid_until="2026-06-23T00:00:01Z"),
             validation_time="2026-06-23T00:00:02Z",
         )
+
+
+def test_openapi_adapter_requires_required_idempotency_key_before_execution(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
+    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+    admitted, resolved = _admitted_call_for(
+        OpenApiToolImplementation(connection="ticket-system", operation_id="createTicket"),
+        tool_name="ticket.create",
+        binding_id="binding-ticket-create",
+        arguments={"title": "Need help"},
+        idempotency="required",
+        idempotency_key=None,
+    )
+
+    with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="requires an idempotency key"):
+        graphblocks_openapi.prepare_openapi_operation_invocation(admitted, resolved)
 
 
 def test_openapi_adapter_rejects_non_openapi_binding(monkeypatch) -> None:

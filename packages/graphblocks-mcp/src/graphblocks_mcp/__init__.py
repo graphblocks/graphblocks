@@ -228,6 +228,10 @@ def prepare_mcp_tool_invocation(
         validation_time=validation_time,
         owner="MCP",
     )
+    if resolved_tool.binding.idempotency == "required" and admitted.idempotency_key is None:
+        raise McpToolAdapterError(
+            f"MCP tool call {admitted.call.tool_call_id} requires an idempotency key before execution"
+        )
     try:
         actual_arguments_digest = canonical_hash(admitted.call.arguments)
     except (TypeError, ValueError) as error:

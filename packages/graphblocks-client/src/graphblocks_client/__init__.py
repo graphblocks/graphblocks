@@ -303,6 +303,10 @@ def prepare_remote_tool_invocation(
         validation_time=validation_time,
         owner="remote",
     )
+    if resolved_tool.binding.idempotency == "required" and admitted.idempotency_key is None:
+        raise RemoteToolAdapterError(
+            f"remote tool call {admitted.call.tool_call_id} requires an idempotency key before execution"
+        )
     try:
         actual_arguments_digest = canonical_hash(admitted.call.arguments)
     except (TypeError, ValueError) as error:

@@ -30,6 +30,8 @@ ROOT = Path(__file__).parents[1]
 def _remote_admitted_call(
     *,
     arguments: dict[str, object],
+    idempotency: str = "not_applicable",
+    idempotency_key: str | None = "idem-1",
     output_schema: str | None = None,
 ) -> tuple[AdmittedToolCall, ResolvedTool]:
     definition = ToolDefinition(
@@ -44,7 +46,7 @@ def _remote_admitted_call(
         implementation=RemoteToolImplementation(connection="support-api", operation="search"),
         effects=frozenset({"external_read", "network"}),
         approval="never",
-        idempotency="not_applicable",
+        idempotency=idempotency,
     )
     resolved = ResolvedTool.from_definition_and_binding(
         resolved_tool_id="resolved-remote-search",
@@ -63,7 +65,7 @@ def _remote_admitted_call(
         status="admitted",
         admitted_at="2026-06-24T00:00:00Z",
     )
-    return AdmittedToolCall(call=call, idempotency_key="idem-1"), resolved
+    return AdmittedToolCall(call=call, idempotency_key=idempotency_key), resolved
 
 
 def _remote_output_registry() -> ToolSchemaRegistry:
@@ -403,6 +405,19 @@ def test_client_package_remote_adapter_rechecks_resolved_tool_capability(monkeyp
             replace(resolved, valid_until="2026-06-24T00:00:01Z"),
             validation_time="2026-06-24T00:00:02Z",
         )
+
+
+def test_client_package_remote_adapter_requires_required_idempotency_key(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+    admitted, resolved = _remote_admitted_call(
+        arguments={"query": "billing"},
+        idempotency="required",
+        idempotency_key=None,
+    )
+
+    with pytest.raises(graphblocks_client.RemoteToolAdapterError, match="requires an idempotency key"):
+        graphblocks_client.prepare_remote_tool_invocation(admitted, resolved)
 
 
 def test_client_package_remote_adapter_validates_result_before_model_return(monkeypatch) -> None:
