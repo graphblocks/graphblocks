@@ -878,6 +878,12 @@ class OutputDeliveryGate:
                     if not isinstance(path, str) or not path.startswith("/chunks/") or not path.endswith("/text"):
                         raise OutputGateError(f"invalid redaction path {path!r}")
                     sequence_text = path[len("/chunks/") : -len("/text")]
+                    if (
+                        not sequence_text
+                        or not sequence_text.isdecimal()
+                        or (sequence_text != "0" and sequence_text.startswith("0"))
+                    ):
+                        raise OutputGateError(f"invalid redaction path {path!r}")
                     try:
                         sequence = int(sequence_text)
                     except ValueError as error:

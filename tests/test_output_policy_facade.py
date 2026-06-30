@@ -791,6 +791,25 @@ def test_output_delivery_gate_rejects_negative_redaction_chunk_sequence() -> Non
     assert str(error.value) == "invalid redaction path '/chunks/-1/text'"
 
 
+@pytest.mark.parametrize("path", ("/chunks/+1/text", "/chunks/01/text"))
+def test_output_delivery_gate_rejects_noncanonical_redaction_chunk_sequence(path: str) -> None:
+    gate = OutputDeliveryGate("stream-1", "response-1")
+    gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "hello secret world"))
+
+    with pytest.raises(OutputGateError) as error:
+        gate.apply_decision(
+            OutputPolicyDecision.redact(
+                "decision-redact",
+                accepted_through_sequence=1,
+                redactions=({"path": path, "start": 6, "end": 12, "replacement": "[redacted]"},),
+                input_digest="sha256:redact",
+            ),
+            occurred_at="2026-06-23T00:00:01Z",
+        )
+
+    assert str(error.value) == f"invalid redaction path {path!r}"
+
+
 def test_output_delivery_gate_rejects_already_delivered_redaction_target() -> None:
     gate = OutputDeliveryGate("stream-1", "response-1")
     gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "hello secret world"))

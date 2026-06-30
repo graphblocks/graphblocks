@@ -1508,6 +1508,14 @@ impl OutputDeliveryGate {
                                 path: redaction.path,
                             });
                         };
+                        if sequence_text.is_empty()
+                            || !sequence_text.bytes().all(|byte| byte.is_ascii_digit())
+                            || (sequence_text != "0" && sequence_text.starts_with('0'))
+                        {
+                            return Err(OutputGateError::InvalidRedactionInstruction {
+                                path: redaction.path,
+                            });
+                        }
                         let Ok(sequence) = sequence_text.parse::<u64>() else {
                             return Err(OutputGateError::InvalidRedactionInstruction {
                                 path: redaction.path,

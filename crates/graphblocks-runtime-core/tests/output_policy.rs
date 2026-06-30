@@ -1479,6 +1479,41 @@ fn redact_decision_applies_typed_redaction_instruction_before_delivery()
 }
 
 #[test]
+fn redact_decision_rejects_noncanonical_redaction_target_sequence() -> Result<(), OutputGateError> {
+    for path in ["/chunks/+1/text", "/chunks/01/text"] {
+        let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
+        gate.record_chunk(GenerationChunk::text(
+            "stream-1",
+            "response-1",
+            1,
+            "hello secret world",
+        ))?;
+
+        assert_eq!(
+            gate.apply_decision(
+                OutputPolicyDecision::redact(
+                    "decision-redact",
+                    Some(1),
+                    Vec::<GenerationChunk>::new(),
+                    "sha256:redact",
+                )
+                .with_redactions([RedactionInstruction::text_range(
+                    path,
+                    6,
+                    12,
+                    "[redacted]",
+                )]),
+                1_000,
+            ),
+            Err(OutputGateError::InvalidRedactionInstruction {
+                path: path.to_owned(),
+            }),
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn redact_decision_rejects_already_delivered_redaction_target() -> Result<(), OutputGateError> {
     let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
     gate.record_chunk(GenerationChunk::text(
