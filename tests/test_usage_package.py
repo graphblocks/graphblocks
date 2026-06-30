@@ -4,6 +4,8 @@ from decimal import Decimal
 import importlib
 from pathlib import Path
 
+from graphblocks.usage import VALID_USAGE_CONFIDENCES, VALID_USAGE_SOURCES
+
 
 ROOT = Path(__file__).parents[1]
 
@@ -48,3 +50,14 @@ def test_usage_package_exposes_immutable_usage_reconciliation_contract(monkeypat
         graphblocks_usage.UsageAmount("model_output_tokens", Decimal("21"), "tokens")
     ]
     assert "SQLiteUsageLedger" in graphblocks_usage.__all__
+
+
+def test_usage_package_exposes_canonical_literal_sets(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-usage" / "src"))
+    graphblocks_usage = importlib.import_module("graphblocks_usage")
+
+    assert graphblocks_usage.VALID_USAGE_SOURCES is VALID_USAGE_SOURCES
+    assert graphblocks_usage.VALID_USAGE_CONFIDENCES is VALID_USAGE_CONFIDENCES
+    assert "reconciled" in graphblocks_usage.VALID_USAGE_SOURCES
+    assert "provider_exact" in graphblocks_usage.VALID_USAGE_CONFIDENCES
+    assert "VALID_USAGE_SOURCES" in graphblocks_usage.__all__

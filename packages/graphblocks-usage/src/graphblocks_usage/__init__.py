@@ -10,6 +10,8 @@ from graphblocks.usage import (
     UsageRecordConflictError,
     UsageRecordNotFoundError,
     UsageSource,
+    VALID_USAGE_CONFIDENCES,
+    VALID_USAGE_SOURCES,
 )
 
 
@@ -23,4 +25,6 @@ __all__ = [
     "UsageRecordConflictError",
     "UsageRecordNotFoundError",
     "UsageSource",
+    "VALID_USAGE_CONFIDENCES",
+    "VALID_USAGE_SOURCES",
 ]
