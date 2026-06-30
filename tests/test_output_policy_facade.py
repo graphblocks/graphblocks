@@ -507,6 +507,7 @@ def test_output_cutoff_discards_delayed_output_after_terminal_cutoff() -> None:
     assert cutoff.accepts(delayed) is False
     assert cutoff.accepts(other_response) is False
     assert cutoff.accepts_sequence(1) is True
+    assert cutoff.accepts_sequence(0) is False
     assert cutoff.accepts_sequence(-1) is False
     with pytest.raises(TypeError) as error:
         cutoff.accepts(1)  # type: ignore[arg-type]

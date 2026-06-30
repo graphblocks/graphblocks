@@ -997,7 +997,7 @@ impl OutputCutoff {
     }
 
     pub fn accepts_sequence(&self, sequence: u64) -> bool {
-        sequence <= self.last_client_delivered_sequence
+        sequence > 0 && sequence <= self.last_client_delivered_sequence
     }
 }
 

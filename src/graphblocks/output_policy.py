@@ -599,7 +599,7 @@ class OutputCutoff:
         )
 
     def accepts_sequence(self, sequence: int) -> bool:
-        return sequence >= 0 and sequence <= self.last_client_delivered_sequence
+        return sequence > 0 and sequence <= self.last_client_delivered_sequence
 
 
 @dataclass(frozen=True, slots=True)

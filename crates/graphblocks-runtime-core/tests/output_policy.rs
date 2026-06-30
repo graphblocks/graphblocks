@@ -1205,6 +1205,7 @@ fn output_cutoff_accepts_only_already_delivered_output_for_its_response() {
     assert!(cutoff.accepts(&accepted));
     assert!(!cutoff.accepts(&delayed));
     assert!(!cutoff.accepts(&other_response));
+    assert!(!cutoff.accepts_sequence(0));
 }
 
 #[test]
