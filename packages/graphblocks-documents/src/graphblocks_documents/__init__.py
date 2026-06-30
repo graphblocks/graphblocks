@@ -20,6 +20,14 @@ from graphblocks import (
     create_local_text_revision,
     parse_plain_text_document,
 )
+from graphblocks.document_parsers import (
+    DocumentParserError,
+    DocumentParserNotFoundError,
+    DocumentParserRegistry,
+    ParserDescriptor,
+    ParserSelectionLock,
+    plain_text_parser_descriptor,
+)
 
 
 __all__ = [
@@ -27,6 +35,9 @@ __all__ = [
     "AssetRevision",
     "DocumentChunk",
     "DocumentElement",
+    "DocumentParserError",
+    "DocumentParserNotFoundError",
+    "DocumentParserRegistry",
     "DocumentSpan",
     "InMemoryIngestionManifestStore",
     "IndexRecordRef",
@@ -34,6 +45,8 @@ __all__ = [
     "IngestionManifest",
     "IngestionStatus",
     "ParsedDocument",
+    "ParserDescriptor",
+    "ParserSelectionLock",
     "ProcessorRef",
     "SourceAsset",
     "SourceLocation",
@@ -41,4 +54,5 @@ __all__ = [
     "chunk_document_by_lines",
     "create_local_text_revision",
     "parse_plain_text_document",
+    "plain_text_parser_descriptor",
 ]

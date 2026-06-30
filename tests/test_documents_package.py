@@ -46,3 +46,47 @@ def test_documents_package_exposes_ingestion_manifest_facade(monkeypatch) -> Non
     ):
         assert name in graphblocks_documents.__all__
         assert hasattr(graphblocks_documents, name)
+
+
+def test_documents_package_exposes_parser_spi_and_ocr_fallback(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-documents" / "src"))
+    graphblocks_documents = importlib.import_module("graphblocks_documents")
+
+    registry = graphblocks_documents.DocumentParserRegistry()
+    registry.register(graphblocks_documents.plain_text_parser_descriptor())
+    registry.register(graphblocks_documents.ParserDescriptor("ocr-z", "1", supports_ocr=True, priority=10))
+    registry.register(graphblocks_documents.ParserDescriptor("ocr-a", "2", supports_ocr=True, priority=10))
+    text_lock = registry.select(
+        graphblocks_documents.ArtifactRef(
+            "artifact-text",
+            "file:///notes/support.txt",
+            media_type="text/plain",
+            filename="support.txt",
+            checksum="sha256:text",
+        )
+    )
+    ocr_lock = registry.select(
+        graphblocks_documents.ArtifactRef(
+            "artifact-scan",
+            "file:///notes/scan.bin",
+            media_type="application/octet-stream",
+            filename="scan.bin",
+            checksum="sha256:scan",
+        ),
+        allow_ocr_fallback=True,
+    )
+
+    assert text_lock.processor_id == "plain-text"
+    assert text_lock.reason == "media_type"
+    assert ocr_lock.processor_id == "ocr-a"
+    assert ocr_lock.reason == "ocr_fallback"
+    for name in (
+        "DocumentParserError",
+        "DocumentParserNotFoundError",
+        "DocumentParserRegistry",
+        "ParserDescriptor",
+        "ParserSelectionLock",
+        "plain_text_parser_descriptor",
+    ):
+        assert name in graphblocks_documents.__all__
+        assert hasattr(graphblocks_documents, name)
