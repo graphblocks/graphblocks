@@ -6,6 +6,13 @@ from pathlib import Path
 import pytest
 
 from graphblocks import PolicyRequest, PrincipalRef, ResourceRef
+from graphblocks.output_policy import (
+    VALID_DRAFT_DISPOSITIONS,
+    VALID_OUTPUT_DISPOSITIONS,
+    VALID_PENDING_TOOL_CALLS_DISPOSITIONS,
+    VALID_PROVIDER_CANCELLATIONS,
+)
+from graphblocks.policy import VALID_POLICY_EFFECTS
 
 
 ROOT = Path(__file__).parents[1]
@@ -59,6 +66,23 @@ def _output_policy_request() -> PolicyRequest:
         run_id="run-1",
         occurred_at="2026-06-23T00:00:00Z",
     ).with_input_digest()
+
+
+def test_policy_adapters_use_canonical_literal_sets(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-opa" / "src"))
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy-cedar" / "src"))
+    graphblocks_policy_opa = importlib.import_module("graphblocks_policy_opa")
+    graphblocks_policy_cedar = importlib.import_module("graphblocks_policy_cedar")
+
+    assert graphblocks_policy_opa.VALID_POLICY_EFFECTS is VALID_POLICY_EFFECTS
+    assert graphblocks_policy_opa.VALID_OUTPUT_DISPOSITIONS is VALID_OUTPUT_DISPOSITIONS
+    assert graphblocks_policy_opa.VALID_PROVIDER_CANCELLATIONS is VALID_PROVIDER_CANCELLATIONS
+    assert graphblocks_policy_opa.VALID_DRAFT_DISPOSITIONS is VALID_DRAFT_DISPOSITIONS
+    assert graphblocks_policy_opa.VALID_PENDING_TOOL_CALLS is VALID_PENDING_TOOL_CALLS_DISPOSITIONS
+    assert graphblocks_policy_cedar.VALID_OUTPUT_DISPOSITIONS is VALID_OUTPUT_DISPOSITIONS
+    assert graphblocks_policy_cedar.VALID_PROVIDER_CANCELLATIONS is VALID_PROVIDER_CANCELLATIONS
+    assert graphblocks_policy_cedar.VALID_DRAFT_DISPOSITIONS is VALID_DRAFT_DISPOSITIONS
+    assert graphblocks_policy_cedar.VALID_PENDING_TOOL_CALLS is VALID_PENDING_TOOL_CALLS_DISPOSITIONS
 
 
 def test_opa_adapter_prepares_canonical_policy_input(monkeypatch) -> None:

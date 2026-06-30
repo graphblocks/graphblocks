@@ -5,14 +5,12 @@ from dataclasses import dataclass
 import json
 
 from graphblocks import ContentPart, OutputPolicyDecision, PolicyDecision, PolicyRequest, canonical_dumps
-
-
-VALID_OUTPUT_DISPOSITIONS = frozenset(
-    {"allow", "hold", "redact", "replace", "abort_response", "abort_turn", "deny_commit"}
+from graphblocks.output_policy import (
+    VALID_DRAFT_DISPOSITIONS,
+    VALID_OUTPUT_DISPOSITIONS,
+    VALID_PENDING_TOOL_CALLS_DISPOSITIONS as VALID_PENDING_TOOL_CALLS,
+    VALID_PROVIDER_CANCELLATIONS,
 )
-VALID_PROVIDER_CANCELLATIONS = frozenset({"none", "request", "required_if_supported"})
-VALID_DRAFT_DISPOSITIONS = frozenset({"keep", "mark_incomplete", "retract"})
-VALID_PENDING_TOOL_CALLS = frozenset({"keep", "deny", "cancel_admitted"})
 
 
 class CedarPolicyAdapterError(RuntimeError):
