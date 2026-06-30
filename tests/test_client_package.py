@@ -186,15 +186,19 @@ def test_client_package_exposes_application_protocol_envelopes(monkeypatch) -> N
         payload={"response_id": "response-1", "chunk_sequence": 2, "delta": "blocked"},
     )
     state = graphblocks_client.ApplicationProtocolStreamState()
+    log = graphblocks_client.ApplicationProtocolLog()
 
     assert command.payload == {"graph": "support-agent-turn"}
     assert event.kind == "AssistantDraftDelta"
+    assert log.append(event) is True
+    assert log.replay_after(limit=1) == (event,)
     assert state.accept(cutoff) == cutoff
     assert state.accept(late) is None
     assert "RequestSnapshot" in graphblocks_client.APPLICATION_COMMAND_KINDS
     assert "AssistantDraftDelta" in graphblocks_client.APPLICATION_PROTOCOL_EVENT_KINDS
     assert "ApplicationCommand" in graphblocks_client.__all__
     assert "ApplicationProtocolEvent" in graphblocks_client.__all__
+    assert "ApplicationProtocolLog" in graphblocks_client.__all__
     assert "ApplicationProtocolStreamState" in graphblocks_client.__all__
 
 

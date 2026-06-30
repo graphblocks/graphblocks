@@ -39,11 +39,14 @@ def test_server_package_reexports_framework_neutral_contracts(monkeypatch) -> No
         ),
         payload={"run_id": "run-1"},
     )
+    log = graphblocks_server.ApplicationProtocolLog()
 
     assert manifest.lookup("GET", "/health").operation == "health"
     assert capabilities.protocol_version == "graphblocks.app.v1"
     assert command.payload["graph_id"] == "support-agent-turn"
     assert event.payload["run_id"] == "run-1"
+    assert log.append(event) is True
+    assert log.replay_after(limit=1) == (event,)
     assert "InvokeGraph" in graphblocks_server.APPLICATION_COMMAND_KINDS
     assert "RunStarted" in graphblocks_server.APPLICATION_PROTOCOL_EVENT_KINDS
     assert graphblocks_server.GraphBlocksServerApp().handle(
@@ -57,4 +60,5 @@ def test_server_package_reexports_framework_neutral_contracts(monkeypatch) -> No
     ).status_code == 200
     assert "ApplicationCommand" in graphblocks_server.__all__
     assert "ApplicationProtocolEvent" in graphblocks_server.__all__
+    assert "ApplicationProtocolLog" in graphblocks_server.__all__
     assert "ServerResponse" in graphblocks_server.__all__

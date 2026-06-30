@@ -19,6 +19,7 @@ from .application_event import (
     ApplicationProtocolEvent,
     ApplicationProtocolEventKind,
     ApplicationProtocolEventMetadata,
+    ApplicationProtocolLog,
     ApplicationProtocolStreamState,
 )
 from .agent import (
@@ -585,6 +586,7 @@ __all__ = [
     "ApplicationProtocolEvent",
     "ApplicationProtocolEventKind",
     "ApplicationProtocolEventMetadata",
+    "ApplicationProtocolLog",
     "ApplicationProtocolStreamState",
     "ApprovalRecord",
     "ApprovalRequest",

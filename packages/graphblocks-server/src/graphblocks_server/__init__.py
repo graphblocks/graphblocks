@@ -10,6 +10,7 @@ from graphblocks.application_event import (
     ApplicationProtocolEvent,
     ApplicationProtocolEventKind,
     ApplicationProtocolEventMetadata,
+    ApplicationProtocolLog,
 )
 from graphblocks.server import (
     ApplicationProtocolCapabilities,
@@ -43,6 +44,7 @@ __all__ = [
     "ApplicationProtocolEvent",
     "ApplicationProtocolEventKind",
     "ApplicationProtocolEventMetadata",
+    "ApplicationProtocolLog",
     "GraphBlocksServerApp",
     "ServerAuthDecision",
     "ServerAuthHook",

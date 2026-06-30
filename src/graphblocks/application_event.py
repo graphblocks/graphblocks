@@ -385,6 +385,53 @@ class ApplicationProtocolEvent:
 
 
 @dataclass(slots=True)
+class ApplicationProtocolLog:
+    events: list[ApplicationProtocolEvent] = field(default_factory=list)
+    _event_ids: set[str] = field(default_factory=set, init=False, repr=False)
+    _last_sequence: int | None = field(default=None, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        initial_events = tuple(self.events)
+        self.events = []
+        for event in initial_events:
+            self.append(event)
+
+    def append(self, event: ApplicationProtocolEvent) -> bool:
+        if event.metadata.event_id in self._event_ids:
+            return False
+        if self._last_sequence is not None and event.metadata.sequence <= self._last_sequence:
+            raise ApplicationProtocolError(
+                "application event sequence "
+                f"{event.metadata.sequence} must be greater than previous sequence {self._last_sequence}"
+            )
+        self._last_sequence = event.metadata.sequence
+        self._event_ids.add(event.metadata.event_id)
+        self.events.append(event)
+        return True
+
+    def replay_after(
+        self,
+        cursor: str | None = None,
+        limit: int = 100,
+    ) -> tuple[ApplicationProtocolEvent, ...]:
+        if limit < 0:
+            raise ApplicationProtocolError("application protocol replay limit must be non-negative")
+        start_index = 0
+        if cursor is not None:
+            for index, event in enumerate(self.events):
+                if event.metadata.cursor == cursor or str(event.metadata.sequence) == cursor:
+                    start_index = index + 1
+                    break
+        return tuple(self.events[start_index : start_index + limit])
+
+    def __len__(self) -> int:
+        return len(self.events)
+
+    def is_empty(self) -> bool:
+        return not self.events
+
+
+@dataclass(slots=True)
 class ApplicationProtocolStreamState:
     cutoffs: dict[str, int] = field(default_factory=dict)
     accepted_events: list[ApplicationProtocolEvent] = field(default_factory=list)

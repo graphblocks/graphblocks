@@ -42,6 +42,7 @@ from graphblocks.application_event import (
     ApplicationProtocolEvent,
     ApplicationProtocolEventKind,
     ApplicationProtocolEventMetadata,
+    ApplicationProtocolLog,
     ApplicationProtocolStreamState,
 )
 from graphblocks.runtime import InProcessRuntime, RuntimeRegistry, stdlib_registry
@@ -785,6 +786,7 @@ __all__ = [
     "ApplicationProtocolEvent",
     "ApplicationProtocolEventKind",
     "ApplicationProtocolEventMetadata",
+    "ApplicationProtocolLog",
     "ApplicationProtocolStreamState",
     "GraphBlocksHttpError",
     "HttpGraphBlocksClient",

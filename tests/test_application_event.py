@@ -19,6 +19,7 @@ from graphblocks import (
     ApplicationProtocolError,
     ApplicationProtocolEvent,
     ApplicationProtocolEventMetadata,
+    ApplicationProtocolLog,
     ApplicationProtocolStreamState,
     ArtifactRef,
     BlockToolImplementation,
@@ -333,6 +334,41 @@ def test_application_protocol_metadata_rejects_empty_required_fields() -> None:
             sequence=1,
             occurred_at_unix_ms=1_765_843_201_000,
         )
+
+
+def test_application_protocol_log_suppresses_duplicates_and_replays_after_cursor() -> None:
+    def protocol_event(event_id: str, sequence: int, cursor: str) -> ApplicationProtocolEvent:
+        return ApplicationProtocolEvent.new(
+            "JobProgress",
+            ApplicationProtocolEventMetadata(
+                event_id=event_id,
+                protocol_version="graphblocks.app.v1",
+                run_id="run-1",
+                turn_id="turn-1",
+                sequence=sequence,
+                cursor=cursor,
+                occurred_at_unix_ms=1_765_843_200_000 + sequence,
+            ),
+            payload={"done": sequence, "total": 2},
+        )
+
+    log = ApplicationProtocolLog()
+    first = protocol_event("event-1", 1, "cursor-1")
+    second = protocol_event("event-2", 2, "cursor-2")
+
+    assert log.is_empty()
+    assert log.append(first) is True
+    assert log.append(first) is False
+    assert log.append(second) is True
+    assert len(log) == 2
+    assert log.replay_after("cursor-1", limit=10) == (second,)
+    assert log.replay_after("1", limit=10) == (second,)
+    assert ApplicationProtocolLog([first, second]).replay_after(None, limit=1) == (first,)
+
+    with pytest.raises(ApplicationProtocolError, match="must be greater than previous sequence"):
+        log.append(protocol_event("event-0", 1, "cursor-0"))
+    with pytest.raises(ApplicationProtocolError, match="limit must be non-negative"):
+        log.replay_after(limit=-1)
 
 
 def test_application_protocol_stream_state_discards_deltas_after_cutoff() -> None:
