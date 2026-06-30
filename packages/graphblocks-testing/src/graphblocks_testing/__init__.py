@@ -6685,6 +6685,110 @@ class TckRunner:
                             "path": f"$.operations[{operation_index}]",
                         }
                     )
+            elif op == "fail":
+                tool_call_id = str(operation.get("toolCallId", operation.get("tool_call_id", "")))
+                expected_error = operation.get("expectError")
+                actual_error = None
+                try:
+                    plan.record_failed(tool_call_id)
+                except ToolExecutionPlanError as error:
+                    actual_error = _tool_execution_error_code(error)
+                operation_observations.append({"op": "fail", "toolCallId": tool_call_id, "error": actual_error})
+                if expected_error is not None:
+                    if actual_error != expected_error:
+                        diagnostics.append(
+                            {
+                                "code": "ToolExecutionOperationErrorMismatch",
+                                "message": "tool-execution operation error did not match expected result",
+                                "path": f"$.operations[{operation_index}].expectError",
+                            }
+                        )
+                elif actual_error is not None:
+                    diagnostics.append(
+                        {
+                            "code": "ToolExecutionOperationUnexpectedError",
+                            "message": "tool-execution fail operation failed unexpectedly",
+                            "path": f"$.operations[{operation_index}]",
+                        }
+                    )
+            elif op == "deny":
+                tool_call_id = str(operation.get("toolCallId", operation.get("tool_call_id", "")))
+                expected_error = operation.get("expectError")
+                actual_error = None
+                try:
+                    plan.record_denied(tool_call_id)
+                except ToolExecutionPlanError as error:
+                    actual_error = _tool_execution_error_code(error)
+                operation_observations.append({"op": "deny", "toolCallId": tool_call_id, "error": actual_error})
+                if expected_error is not None:
+                    if actual_error != expected_error:
+                        diagnostics.append(
+                            {
+                                "code": "ToolExecutionOperationErrorMismatch",
+                                "message": "tool-execution operation error did not match expected result",
+                                "path": f"$.operations[{operation_index}].expectError",
+                            }
+                        )
+                elif actual_error is not None:
+                    diagnostics.append(
+                        {
+                            "code": "ToolExecutionOperationUnexpectedError",
+                            "message": "tool-execution deny operation failed unexpectedly",
+                            "path": f"$.operations[{operation_index}]",
+                        }
+                    )
+            elif op == "expire":
+                tool_call_id = str(operation.get("toolCallId", operation.get("tool_call_id", "")))
+                expected_error = operation.get("expectError")
+                actual_error = None
+                try:
+                    plan.record_expired(tool_call_id)
+                except ToolExecutionPlanError as error:
+                    actual_error = _tool_execution_error_code(error)
+                operation_observations.append({"op": "expire", "toolCallId": tool_call_id, "error": actual_error})
+                if expected_error is not None:
+                    if actual_error != expected_error:
+                        diagnostics.append(
+                            {
+                                "code": "ToolExecutionOperationErrorMismatch",
+                                "message": "tool-execution operation error did not match expected result",
+                                "path": f"$.operations[{operation_index}].expectError",
+                            }
+                        )
+                elif actual_error is not None:
+                    diagnostics.append(
+                        {
+                            "code": "ToolExecutionOperationUnexpectedError",
+                            "message": "tool-execution expire operation failed unexpectedly",
+                            "path": f"$.operations[{operation_index}]",
+                        }
+                    )
+            elif op == "cancel":
+                tool_call_id = str(operation.get("toolCallId", operation.get("tool_call_id", "")))
+                expected_error = operation.get("expectError")
+                actual_error = None
+                try:
+                    plan.record_cancelled(tool_call_id)
+                except ToolExecutionPlanError as error:
+                    actual_error = _tool_execution_error_code(error)
+                operation_observations.append({"op": "cancel", "toolCallId": tool_call_id, "error": actual_error})
+                if expected_error is not None:
+                    if actual_error != expected_error:
+                        diagnostics.append(
+                            {
+                                "code": "ToolExecutionOperationErrorMismatch",
+                                "message": "tool-execution operation error did not match expected result",
+                                "path": f"$.operations[{operation_index}].expectError",
+                            }
+                        )
+                elif actual_error is not None:
+                    diagnostics.append(
+                        {
+                            "code": "ToolExecutionOperationUnexpectedError",
+                            "message": "tool-execution cancel operation failed unexpectedly",
+                            "path": f"$.operations[{operation_index}]",
+                        }
+                    )
             elif op == "policy_stop":
                 pending_tool_calls = str(operation.get("pendingToolCalls", "deny"))
                 affected = plan.apply_policy_stop(pending_tool_calls)

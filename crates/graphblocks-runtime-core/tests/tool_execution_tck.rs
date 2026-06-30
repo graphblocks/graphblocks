@@ -2,7 +2,8 @@ use graphblocks_runtime_core::output_policy::PendingToolCallsDisposition;
 use graphblocks_runtime_core::tool::{ToolCancellation, ToolEffect};
 use graphblocks_runtime_core::tool_call::{ToolCall, ToolCallDraft};
 use graphblocks_runtime_core::tool_execution::{
-    ToolExecutionPlan, ToolExecutionPlanError, ToolExecutionState, ToolPlanCall,
+    ToolExecutionCancellationPolicy, ToolExecutionFailurePolicy, ToolExecutionPlan,
+    ToolExecutionPlanError, ToolExecutionState, ToolPlanCall,
 };
 use serde_json::{Map, Value};
 
@@ -64,6 +65,12 @@ fn run_case(case: &Value) -> Result<(), String> {
             return Ok(());
         }
     };
+    if let Some(failure_policy) = optional_str(case, "failurePolicy") {
+        plan = plan.with_failure_policy(failure_policy_kind(failure_policy)?);
+    }
+    if let Some(cancellation_policy) = optional_str(case, "cancellationPolicy") {
+        plan = plan.with_cancellation_policy(cancellation_policy_kind(cancellation_policy)?);
+    }
 
     let operations = case
         .get("operations")
@@ -92,6 +99,34 @@ fn run_case(case: &Value) -> Result<(), String> {
             "complete" => {
                 let actual_error = plan
                     .record_completed(required_str(operation, "toolCallId")?)
+                    .err()
+                    .map(|error| execution_error_code(&error));
+                assert_operation_error(case_name, operation_index, operation, actual_error)?;
+            }
+            "fail" => {
+                let actual_error = plan
+                    .record_failed(required_str(operation, "toolCallId")?)
+                    .err()
+                    .map(|error| execution_error_code(&error));
+                assert_operation_error(case_name, operation_index, operation, actual_error)?;
+            }
+            "deny" => {
+                let actual_error = plan
+                    .record_denied(required_str(operation, "toolCallId")?)
+                    .err()
+                    .map(|error| execution_error_code(&error));
+                assert_operation_error(case_name, operation_index, operation, actual_error)?;
+            }
+            "expire" => {
+                let actual_error = plan
+                    .record_expired(required_str(operation, "toolCallId")?)
+                    .err()
+                    .map(|error| execution_error_code(&error));
+                assert_operation_error(case_name, operation_index, operation, actual_error)?;
+            }
+            "cancel" => {
+                let actual_error = plan
+                    .record_cancelled(required_str(operation, "toolCallId")?)
                     .err()
                     .map(|error| execution_error_code(&error));
                 assert_operation_error(case_name, operation_index, operation, actual_error)?;
@@ -230,6 +265,26 @@ fn cancellation_kind(cancellation: &str) -> Result<ToolCancellation, String> {
         "cooperative" => Ok(ToolCancellation::Cooperative),
         "force_terminable" => Ok(ToolCancellation::ForceTerminable),
         other => Err(format!("unknown tool cancellation {other}")),
+    }
+}
+
+fn failure_policy_kind(policy: &str) -> Result<ToolExecutionFailurePolicy, String> {
+    match policy {
+        "fail_fast" => Ok(ToolExecutionFailurePolicy::FailFast),
+        "collect" => Ok(ToolExecutionFailurePolicy::Collect),
+        "return_failures_to_model" => Ok(ToolExecutionFailurePolicy::ReturnFailuresToModel),
+        other => Err(format!("unknown tool execution failure policy {other}")),
+    }
+}
+
+fn cancellation_policy_kind(policy: &str) -> Result<ToolExecutionCancellationPolicy, String> {
+    match policy {
+        "cancel_dependents" => Ok(ToolExecutionCancellationPolicy::CancelDependents),
+        "cancel_all" => Ok(ToolExecutionCancellationPolicy::CancelAll),
+        "allow_independent_calls" => Ok(ToolExecutionCancellationPolicy::AllowIndependentCalls),
+        other => Err(format!(
+            "unknown tool execution cancellation policy {other}"
+        )),
     }
 }
 

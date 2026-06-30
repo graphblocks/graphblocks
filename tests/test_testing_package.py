@@ -458,7 +458,7 @@ def test_testing_package_loads_shared_tool_execution_tck_cases(monkeypatch) -> N
     )
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["tool-execution"] * 6
+    assert [case.kind for case in cases] == ["tool-execution"] * 13
     assert report.ok
     assert {case.case_id for case in cases} == {
         "independent_read_tools_execute_concurrently",
@@ -467,6 +467,13 @@ def test_testing_package_loads_shared_tool_execution_tck_cases(monkeypatch) -> N
         "policy_abort_denies_pending_tool_calls",
         "policy_abort_cancels_running_read_and_denies_pending",
         "policy_abort_preserves_running_state_changing_call_without_safe_cancellation",
+        "failed_dependency_skips_dependents",
+        "denied_dependency_skips_dependent_and_allows_independent",
+        "expired_dependency_skips_dependent",
+        "cancel_dependents_policy_cancels_dependents",
+        "allow_independent_cancellation_skips_dependents",
+        "cancel_all_policy_cancels_nonterminal_calls",
+        "fail_fast_policy_cancels_pending_calls_after_failure",
     }
     assert any(result.observed.get("creationError") == "unsafe_parallel_effects" for result in report.results)
     assert any(
@@ -648,6 +655,13 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "policy_abort_denies_pending_tool_calls",
         "policy_abort_cancels_running_read_and_denies_pending",
         "policy_abort_preserves_running_state_changing_call_without_safe_cancellation",
+        "failed_dependency_skips_dependents",
+        "denied_dependency_skips_dependent_and_allows_independent",
+        "expired_dependency_skips_dependent",
+        "cancel_dependents_policy_cancels_dependents",
+        "allow_independent_cancellation_skips_dependents",
+        "cancel_all_policy_cancels_nonterminal_calls",
+        "fail_fast_policy_cancels_pending_calls_after_failure",
     )
     assert by_suite["voice"].case_ids == (
         "duplex_session_request_contract_tracks_turn_and_tools",

@@ -313,5 +313,437 @@
       "call-a": "running",
       "call-b": "denied"
     }
+  },
+  {
+    "name": "failed_dependency_skips_dependents",
+    "kind": "execution_plan",
+    "planId": "plan-7",
+    "responseId": "response-1",
+    "maximumParallelism": 3,
+    "calls": [
+      {
+        "toolCallId": "call-a",
+        "toolName": "ticket.read",
+        "arguments": {
+          "resource_id": "ticket-1"
+        },
+        "effects": [
+          "external_read"
+        ]
+      },
+      {
+        "toolCallId": "call-b",
+        "toolName": "ticket.enrich",
+        "arguments": {
+          "resource_id": "ticket-1"
+        },
+        "dependsOn": [
+          "call-a"
+        ],
+        "effects": [
+          "external_read"
+        ]
+      },
+      {
+        "toolCallId": "call-c",
+        "toolName": "ticket.summarize",
+        "arguments": {
+          "resource_id": "ticket-1"
+        },
+        "dependsOn": [
+          "call-b"
+        ],
+        "effects": [
+          "none"
+        ]
+      }
+    ],
+    "operations": [
+      {
+        "op": "ready",
+        "expect": [
+          "call-a"
+        ]
+      },
+      {
+        "op": "start",
+        "toolCallId": "call-a"
+      },
+      {
+        "op": "fail",
+        "toolCallId": "call-a"
+      },
+      {
+        "op": "ready",
+        "expect": []
+      }
+    ],
+    "expectedStates": {
+      "call-a": "failed",
+      "call-b": "skipped",
+      "call-c": "skipped"
+    }
+  },
+  {
+    "name": "denied_dependency_skips_dependent_and_allows_independent",
+    "kind": "execution_plan",
+    "planId": "plan-8",
+    "responseId": "response-1",
+    "maximumParallelism": 3,
+    "calls": [
+      {
+        "toolCallId": "call-a",
+        "toolName": "ticket.read",
+        "arguments": {
+          "resource_id": "ticket-1"
+        },
+        "effects": [
+          "external_read"
+        ]
+      },
+      {
+        "toolCallId": "call-b",
+        "toolName": "ticket.enrich",
+        "arguments": {
+          "resource_id": "ticket-1"
+        },
+        "dependsOn": [
+          "call-a"
+        ],
+        "effects": [
+          "external_read"
+        ]
+      },
+      {
+        "toolCallId": "call-c",
+        "toolName": "knowledge.search",
+        "arguments": {
+          "query": "runtime"
+        },
+        "effects": [
+          "external_read"
+        ]
+      }
+    ],
+    "operations": [
+      {
+        "op": "deny",
+        "toolCallId": "call-a"
+      },
+      {
+        "op": "ready",
+        "expect": [
+          "call-c"
+        ]
+      }
+    ],
+    "expectedStates": {
+      "call-a": "denied",
+      "call-b": "skipped",
+      "call-c": "pending"
+    }
+  },
+  {
+    "name": "expired_dependency_skips_dependent",
+    "kind": "execution_plan",
+    "planId": "plan-9",
+    "responseId": "response-1",
+    "maximumParallelism": 2,
+    "calls": [
+      {
+        "toolCallId": "call-a",
+        "toolName": "ticket.read",
+        "arguments": {
+          "resource_id": "ticket-1"
+        },
+        "effects": [
+          "external_read"
+        ]
+      },
+      {
+        "toolCallId": "call-b",
+        "toolName": "ticket.enrich",
+        "arguments": {
+          "resource_id": "ticket-1"
+        },
+        "dependsOn": [
+          "call-a"
+        ],
+        "effects": [
+          "external_read"
+        ]
+      }
+    ],
+    "operations": [
+      {
+        "op": "expire",
+        "toolCallId": "call-a"
+      },
+      {
+        "op": "ready",
+        "expect": []
+      }
+    ],
+    "expectedStates": {
+      "call-a": "expired",
+      "call-b": "skipped"
+    }
+  },
+  {
+    "name": "cancel_dependents_policy_cancels_dependents",
+    "kind": "execution_plan",
+    "planId": "plan-10",
+    "responseId": "response-1",
+    "maximumParallelism": 3,
+    "calls": [
+      {
+        "toolCallId": "call-a",
+        "toolName": "ticket.read",
+        "arguments": {
+          "resource_id": "ticket-1"
+        },
+        "effects": [
+          "external_read"
+        ]
+      },
+      {
+        "toolCallId": "call-b",
+        "toolName": "ticket.enrich",
+        "arguments": {
+          "resource_id": "ticket-1"
+        },
+        "dependsOn": [
+          "call-a"
+        ],
+        "effects": [
+          "external_read"
+        ]
+      },
+      {
+        "toolCallId": "call-c",
+        "toolName": "knowledge.search",
+        "arguments": {
+          "query": "runtime"
+        },
+        "effects": [
+          "external_read"
+        ]
+      }
+    ],
+    "operations": [
+      {
+        "op": "start",
+        "toolCallId": "call-a"
+      },
+      {
+        "op": "cancel",
+        "toolCallId": "call-a"
+      },
+      {
+        "op": "ready",
+        "expect": [
+          "call-c"
+        ]
+      }
+    ],
+    "expectedStates": {
+      "call-a": "cancelled",
+      "call-b": "cancelled",
+      "call-c": "pending"
+    }
+  },
+  {
+    "name": "allow_independent_cancellation_skips_dependents",
+    "kind": "execution_plan",
+    "planId": "plan-11",
+    "responseId": "response-1",
+    "maximumParallelism": 3,
+    "cancellationPolicy": "allow_independent_calls",
+    "calls": [
+      {
+        "toolCallId": "call-a",
+        "toolName": "ticket.read",
+        "arguments": {
+          "resource_id": "ticket-1"
+        },
+        "effects": [
+          "external_read"
+        ]
+      },
+      {
+        "toolCallId": "call-b",
+        "toolName": "ticket.enrich",
+        "arguments": {
+          "resource_id": "ticket-1"
+        },
+        "dependsOn": [
+          "call-a"
+        ],
+        "effects": [
+          "external_read"
+        ]
+      },
+      {
+        "toolCallId": "call-c",
+        "toolName": "knowledge.search",
+        "arguments": {
+          "query": "runtime"
+        },
+        "effects": [
+          "external_read"
+        ]
+      }
+    ],
+    "operations": [
+      {
+        "op": "start",
+        "toolCallId": "call-a"
+      },
+      {
+        "op": "cancel",
+        "toolCallId": "call-a"
+      },
+      {
+        "op": "ready",
+        "expect": [
+          "call-c"
+        ]
+      }
+    ],
+    "expectedStates": {
+      "call-a": "cancelled",
+      "call-b": "skipped",
+      "call-c": "pending"
+    }
+  },
+  {
+    "name": "cancel_all_policy_cancels_nonterminal_calls",
+    "kind": "execution_plan",
+    "planId": "plan-12",
+    "responseId": "response-1",
+    "maximumParallelism": 3,
+    "cancellationPolicy": "cancel_all",
+    "calls": [
+      {
+        "toolCallId": "call-a",
+        "toolName": "ticket.read",
+        "arguments": {
+          "resource_id": "ticket-1"
+        },
+        "effects": [
+          "external_read"
+        ]
+      },
+      {
+        "toolCallId": "call-b",
+        "toolName": "ticket.read",
+        "arguments": {
+          "resource_id": "ticket-2"
+        },
+        "effects": [
+          "external_read"
+        ]
+      },
+      {
+        "toolCallId": "call-c",
+        "toolName": "ticket.read",
+        "arguments": {
+          "resource_id": "ticket-3"
+        },
+        "effects": [
+          "external_read"
+        ]
+      }
+    ],
+    "operations": [
+      {
+        "op": "start",
+        "toolCallId": "call-a"
+      },
+      {
+        "op": "start",
+        "toolCallId": "call-c"
+      },
+      {
+        "op": "complete",
+        "toolCallId": "call-c"
+      },
+      {
+        "op": "cancel",
+        "toolCallId": "call-a"
+      },
+      {
+        "op": "ready",
+        "expect": []
+      }
+    ],
+    "expectedStates": {
+      "call-a": "cancelled",
+      "call-b": "cancelled",
+      "call-c": "completed"
+    }
+  },
+  {
+    "name": "fail_fast_policy_cancels_pending_calls_after_failure",
+    "kind": "execution_plan",
+    "planId": "plan-13",
+    "responseId": "response-1",
+    "maximumParallelism": 3,
+    "failurePolicy": "fail_fast",
+    "calls": [
+      {
+        "toolCallId": "call-a",
+        "toolName": "ticket.read",
+        "arguments": {
+          "resource_id": "ticket-1"
+        },
+        "effects": [
+          "external_read"
+        ]
+      },
+      {
+        "toolCallId": "call-b",
+        "toolName": "ticket.read",
+        "arguments": {
+          "resource_id": "ticket-2"
+        },
+        "effects": [
+          "external_read"
+        ]
+      },
+      {
+        "toolCallId": "call-c",
+        "toolName": "ticket.read",
+        "arguments": {
+          "resource_id": "ticket-3"
+        },
+        "effects": [
+          "external_read"
+        ]
+      }
+    ],
+    "operations": [
+      {
+        "op": "start",
+        "toolCallId": "call-a"
+      },
+      {
+        "op": "start",
+        "toolCallId": "call-b"
+      },
+      {
+        "op": "fail",
+        "toolCallId": "call-a"
+      },
+      {
+        "op": "ready",
+        "expect": []
+      }
+    ],
+    "expectedStates": {
+      "call-a": "failed",
+      "call-b": "running",
+      "call-c": "cancelled"
+    }
   }
 ]
