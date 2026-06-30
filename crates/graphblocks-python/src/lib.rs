@@ -3569,6 +3569,14 @@ fn tool_approval_error_json(error: &ToolApprovalError) -> Value {
             "decidedAtUnixMs": decided_at_unix_ms,
             "expiresAtUnixMs": expires_at_unix_ms,
         }),
+        ToolApprovalError::InvalidInvalidationTime {
+            requested_at_unix_ms,
+            invalidated_at_unix_ms,
+        } => json!({
+            "code": "InvalidInvalidationTime",
+            "requestedAtUnixMs": requested_at_unix_ms,
+            "invalidatedAtUnixMs": invalidated_at_unix_ms,
+        }),
         ToolApprovalError::InvalidRevision { revision } => {
             json!({"code": "InvalidRevision", "revision": revision})
         }
@@ -9602,6 +9610,30 @@ mod tests {
                 .pointer("/validationError/code")
                 .and_then(Value::as_str),
             Some("ApprovalIdMismatch")
+        );
+
+        let mut invalidated_record = record_value;
+        let invalidated_object = invalidated_record
+            .as_object_mut()
+            .ok_or_else(|| "approval record must be an object".to_owned())?;
+        invalidated_object.insert("status".to_owned(), json!("invalidated"));
+        invalidated_object.insert("invalidatedAtUnixMs".to_owned(), json!(999));
+        let invalidated_json = evaluate_tool_approval_json(
+            &serde_json::to_string(&invalidated_record).map_err(|error| error.to_string())?,
+            &serde_json::to_string(&resolved_tool_value).map_err(|error| error.to_string())?,
+            &serde_json::to_string(&call_value).map_err(|error| error.to_string())?,
+            "user-1",
+            1_500,
+        )
+        .map_err(|error| error.to_string())?;
+        let invalidated =
+            serde_json::from_str::<Value>(&invalidated_json).map_err(|error| error.to_string())?;
+        assert_eq!(invalidated.get("recordValid"), Some(&json!(false)));
+        assert_eq!(
+            invalidated
+                .pointer("/validationError/code")
+                .and_then(Value::as_str),
+            Some("InvalidInvalidationTime")
         );
         Ok(())
     }

@@ -756,6 +756,8 @@ class ToolApprovalRecord:
                     raise ValueError("approval decided_at must not be after expires_at")
         if self.invalidated_at is not None:
             _validate_non_negative_integer("approval", "invalidated_at", self.invalidated_at)
+            if self.invalidated_at < self.request.requested_at:
+                raise ValueError("approval invalidated_at must not be before requested_at")
 
     @classmethod
     def requested(cls, request: ToolApprovalRequest) -> ToolApprovalRecord:

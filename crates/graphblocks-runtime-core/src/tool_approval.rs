@@ -30,6 +30,10 @@ pub enum ToolApprovalError {
         decided_at_unix_ms: u64,
         expires_at_unix_ms: u64,
     },
+    InvalidInvalidationTime {
+        requested_at_unix_ms: u64,
+        invalidated_at_unix_ms: u64,
+    },
     InvalidRevision {
         revision: u32,
     },
@@ -259,10 +263,18 @@ impl ToolApprovalRecord {
                 Some(_) => {}
             }
         }
-        if self.status == ToolApprovalStatus::Invalidated && self.invalidated_at_unix_ms.is_none() {
-            return Err(ToolApprovalError::MissingField {
-                field: "invalidated_at_unix_ms",
-            });
+        if self.status == ToolApprovalStatus::Invalidated {
+            let Some(invalidated_at_unix_ms) = self.invalidated_at_unix_ms else {
+                return Err(ToolApprovalError::MissingField {
+                    field: "invalidated_at_unix_ms",
+                });
+            };
+            if invalidated_at_unix_ms < self.request.requested_at_unix_ms {
+                return Err(ToolApprovalError::InvalidInvalidationTime {
+                    requested_at_unix_ms: self.request.requested_at_unix_ms,
+                    invalidated_at_unix_ms,
+                });
+            }
         }
         Ok(())
     }

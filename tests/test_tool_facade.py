@@ -831,6 +831,8 @@ def test_tool_lifecycle_records_reject_unknown_literals() -> None:
             request=request,
             status="invalidated",
         )
+    with pytest.raises(ValueError, match="approval invalidated_at must not be before requested_at"):
+        ToolApprovalRecord.requested(request).invalidate(999)
 
 
 def test_tool_approval_request_validates_revision_and_expiration() -> None:
