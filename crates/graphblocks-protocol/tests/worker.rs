@@ -2,10 +2,11 @@ use std::collections::BTreeMap;
 
 use graphblocks_protocol::{
     BlockCapability, RunOwnershipLease, RunOwnershipLeaseError, WORKER_PROTOCOL_VERSION,
-    WorkerAdmissionPolicy, WorkerAdvertisement, WorkerInvocationContext,
-    WorkerInvocationContextError, WorkerInvokeRequest, WorkerInvokeRequestError,
-    WorkerInvokeResult, WorkerInvokeResultError, WorkerProtocolError, WorkerResultError,
-    WorkerSelectionError, WorkerState, admit_worker, admit_worker_with_policy,
+    WorkerAdmissionPolicy, WorkerAdvertisement, WorkerDrainDecision, WorkerDrainDisposition,
+    WorkerDrainError, WorkerDrainPlan, WorkerDrainPolicy, WorkerDrainTask, WorkerDrainWorkloadKind,
+    WorkerInvocationContext, WorkerInvocationContextError, WorkerInvokeRequest,
+    WorkerInvokeRequestError, WorkerInvokeResult, WorkerInvokeResultError, WorkerProtocolError,
+    WorkerResultError, WorkerSelectionError, WorkerState, admit_worker, admit_worker_with_policy,
     evaluate_worker_admission, select_worker_for_block, validate_worker_result,
 };
 use serde_json::json;
@@ -545,6 +546,233 @@ fn worker_invoke_request_validation_rejects_invalid_context() {
                 field: "deployment_revision_id".to_owned(),
             },
         }),
+    );
+}
+
+#[test]
+fn worker_drain_policy_round_trips_default_deadline_contract() -> Result<(), serde_json::Error> {
+    let policy = WorkerDrainPolicy::default();
+
+    let encoded = serde_json::to_value(&policy)?;
+
+    assert_eq!(encoded["onlineRequestTimeoutMs"], json!(30_000u64));
+    assert_eq!(encoded["durableTaskTimeoutMs"], json!(300_000u64));
+    assert_eq!(encoded["onDeadline"]["onlineRequest"], json!("cancel"));
+    assert_eq!(encoded["onDeadline"]["durableTask"], json!("checkpoint"));
+    assert_eq!(
+        encoded["onDeadline"]["realtimeSession"],
+        json!("disconnect_with_resume_token")
+    );
+    assert_eq!(
+        serde_json::from_value::<WorkerDrainPolicy>(encoded)?,
+        policy
+    );
+    assert_eq!(policy.validate(), Ok(()));
+    Ok(())
+}
+
+#[test]
+fn worker_drain_plan_closes_admission_and_preserves_inflight_affinity()
+-> Result<(), serde_json::Error> {
+    let worker = WorkerAdvertisement::new(
+        "worker-a",
+        "model-cpu",
+        "sha256:package-lock",
+        "sha256:image-a",
+        [BlockCapability::new("model.generate@1")],
+    );
+    let online_request = WorkerInvokeRequest {
+        invocation_id: "invoke-online".to_owned(),
+        run_id: "run-online".to_owned(),
+        node_id: "model".to_owned(),
+        node_attempt_id: "model-attempt-1".to_owned(),
+        lease_epoch: 7,
+        block: "model.generate@1".to_owned(),
+        context: WorkerInvocationContext::new("release-1", "rev-old"),
+        inputs: json!({"prompt": "hello"}),
+        config: json!({}),
+    };
+    let durable_request = WorkerInvokeRequest {
+        invocation_id: "invoke-durable".to_owned(),
+        run_id: "run-durable".to_owned(),
+        node_id: "embed".to_owned(),
+        node_attempt_id: "embed-attempt-2".to_owned(),
+        lease_epoch: 13,
+        block: "embedding.generate@1".to_owned(),
+        context: WorkerInvocationContext::new("release-1", "rev-old"),
+        inputs: json!({"text": "hello"}),
+        config: json!({}),
+    };
+
+    let plan = WorkerDrainPlan::for_worker(
+        &worker,
+        &WorkerDrainPolicy::default(),
+        [
+            WorkerDrainTask {
+                workload: WorkerDrainWorkloadKind::OnlineRequest,
+                request: online_request,
+                started_at_unix_ms: 1_000,
+                checkpointable: false,
+            },
+            WorkerDrainTask {
+                workload: WorkerDrainWorkloadKind::DurableTask,
+                request: durable_request,
+                started_at_unix_ms: 1_000,
+                checkpointable: true,
+            },
+        ],
+        2_000,
+        302_000,
+    )
+    .expect("drain plan should be valid");
+
+    assert_eq!(plan.worker_id, "worker-a");
+    assert_eq!(plan.worker_state, WorkerState::Draining);
+    assert!(plan.admission_closed);
+    assert_eq!(plan.decisions[0].run_id, "run-online");
+    assert_eq!(plan.decisions[0].lease_epoch, 7);
+    assert_eq!(plan.decisions[0].deployment_revision_id, "rev-old");
+    assert_eq!(
+        plan.decisions[0].disposition,
+        WorkerDrainDisposition::Cancel
+    );
+    assert_eq!(plan.decisions[0].reason, "deadline_reached");
+    assert_eq!(plan.decisions[1].run_id, "run-durable");
+    assert_eq!(plan.decisions[1].lease_epoch, 13);
+    assert_eq!(
+        plan.decisions[1].disposition,
+        WorkerDrainDisposition::Checkpoint
+    );
+
+    let encoded = serde_json::to_value(&plan)?;
+    assert_eq!(encoded["workerState"], json!("draining"));
+    assert_eq!(encoded["admissionClosed"], json!(true));
+    assert_eq!(
+        encoded["decisions"][0]["nodeAttemptId"],
+        json!("model-attempt-1")
+    );
+    assert_eq!(serde_json::from_value::<WorkerDrainPlan>(encoded)?, plan);
+    assert_eq!(plan.validate(), Ok(()));
+    Ok(())
+}
+
+#[test]
+fn worker_drain_plan_cancels_uncheckpointable_tasks_after_checkpoint_deadline() {
+    let worker = WorkerAdvertisement::new(
+        "worker-a",
+        "model-cpu",
+        "sha256:package-lock",
+        "sha256:image-a",
+        [BlockCapability::new("embedding.generate@1")],
+    );
+    let durable_request = WorkerInvokeRequest {
+        invocation_id: "invoke-durable".to_owned(),
+        run_id: "run-durable".to_owned(),
+        node_id: "embed".to_owned(),
+        node_attempt_id: "embed-attempt-2".to_owned(),
+        lease_epoch: 13,
+        block: "embedding.generate@1".to_owned(),
+        context: WorkerInvocationContext::new("release-1", "rev-old"),
+        inputs: json!({"text": "hello"}),
+        config: json!({}),
+    };
+
+    let plan = WorkerDrainPlan::for_worker(
+        &worker,
+        &WorkerDrainPolicy::default(),
+        [WorkerDrainTask {
+            workload: WorkerDrainWorkloadKind::DurableTask,
+            request: durable_request,
+            started_at_unix_ms: 1_000,
+            checkpointable: false,
+        }],
+        2_000,
+        302_000,
+    )
+    .expect("drain plan should be valid");
+
+    assert_eq!(
+        plan.decisions[0].disposition,
+        WorkerDrainDisposition::Cancel
+    );
+    assert_eq!(plan.decisions[0].reason, "checkpoint_unavailable");
+}
+
+#[test]
+fn worker_drain_validation_rejects_invalid_wire_shapes() {
+    let mut policy = WorkerDrainPolicy::default();
+    policy.online_request_timeout_ms = 0;
+    assert_eq!(
+        policy.validate(),
+        Err(WorkerDrainError::NonPositiveTimeout {
+            field: "online_request_timeout_ms",
+        }),
+    );
+
+    let invalid_task = WorkerDrainTask {
+        workload: WorkerDrainWorkloadKind::OnlineRequest,
+        request: WorkerInvokeRequest {
+            invocation_id: "invoke-000001".to_owned(),
+            run_id: " ".to_owned(),
+            node_id: "render".to_owned(),
+            node_attempt_id: "render-attempt-1".to_owned(),
+            lease_epoch: 7,
+            block: "prompt.render@1".to_owned(),
+            context: WorkerInvocationContext::new("release-1", "rev-old"),
+            inputs: json!({}),
+            config: json!({}),
+        },
+        started_at_unix_ms: 0,
+        checkpointable: false,
+    };
+    assert_eq!(
+        invalid_task.validate(),
+        Err(WorkerDrainError::InvalidTaskRequest {
+            source: WorkerInvokeRequestError::EmptyField {
+                field: "run_id".to_owned(),
+            },
+        }),
+    );
+
+    let decision = WorkerDrainDecision {
+        workload: WorkerDrainWorkloadKind::OnlineRequest,
+        run_id: "run-000001".to_owned(),
+        invocation_id: "invoke-000001".to_owned(),
+        node_attempt_id: "render-attempt-1".to_owned(),
+        lease_epoch: 7,
+        release_id: "release-1".to_owned(),
+        deployment_revision_id: "rev-old".to_owned(),
+        disposition: WorkerDrainDisposition::Cancel,
+        deadline_unix_ms: 30_000,
+        reason: "deadline_reached".to_owned(),
+    };
+    let mut blank_decision = decision.clone();
+    blank_decision.run_id = " ".to_owned();
+    assert_eq!(
+        blank_decision.validate(),
+        Err(WorkerDrainError::EmptyDecisionField { field: "run_id" }),
+    );
+
+    let mut plan = WorkerDrainPlan {
+        worker_id: "worker-1".to_owned(),
+        target_id: "target-1".to_owned(),
+        worker_state: WorkerState::Ready,
+        admission_closed: true,
+        drain_started_at_unix_ms: 0,
+        decisions: vec![decision],
+    };
+    assert_eq!(
+        plan.validate(),
+        Err(WorkerDrainError::WorkerStateNotDraining {
+            state: WorkerState::Ready,
+        }),
+    );
+
+    plan.worker_state = WorkerState::Draining;
+    plan.worker_id = " ".to_owned();
+    assert_eq!(
+        plan.validate(),
+        Err(WorkerDrainError::EmptyPlanField { field: "worker_id" }),
     );
 }
 

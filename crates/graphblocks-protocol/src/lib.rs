@@ -609,6 +609,281 @@ impl WorkerInvokeRequest {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkerDrainWorkloadKind {
+    OnlineRequest,
+    DurableTask,
+    RealtimeSession,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkerDrainDisposition {
+    FinishInPlace,
+    Cancel,
+    Checkpoint,
+    DisconnectWithResumeToken,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkerDrainDeadlinePolicy {
+    pub online_request: WorkerDrainDisposition,
+    pub durable_task: WorkerDrainDisposition,
+    pub realtime_session: WorkerDrainDisposition,
+}
+
+impl Default for WorkerDrainDeadlinePolicy {
+    fn default() -> Self {
+        Self {
+            online_request: WorkerDrainDisposition::Cancel,
+            durable_task: WorkerDrainDisposition::Checkpoint,
+            realtime_session: WorkerDrainDisposition::DisconnectWithResumeToken,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkerDrainPolicy {
+    pub online_request_timeout_ms: u64,
+    pub durable_task_timeout_ms: u64,
+    pub realtime_session_timeout_ms: u64,
+    pub on_deadline: WorkerDrainDeadlinePolicy,
+}
+
+impl Default for WorkerDrainPolicy {
+    fn default() -> Self {
+        Self {
+            online_request_timeout_ms: 30_000,
+            durable_task_timeout_ms: 300_000,
+            realtime_session_timeout_ms: 600_000,
+            on_deadline: WorkerDrainDeadlinePolicy::default(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WorkerDrainError {
+    NonPositiveTimeout {
+        field: &'static str,
+    },
+    InvalidTaskRequest {
+        source: WorkerInvokeRequestError,
+    },
+    EmptyDecisionField {
+        field: &'static str,
+    },
+    EmptyPlanField {
+        field: &'static str,
+    },
+    WorkerStateNotDraining {
+        state: WorkerState,
+    },
+    InvalidPolicy {
+        source: Box<WorkerDrainError>,
+    },
+    InvalidTask {
+        source: Box<WorkerDrainError>,
+    },
+    InvalidDecision {
+        index: usize,
+        source: Box<WorkerDrainError>,
+    },
+}
+
+impl WorkerDrainPolicy {
+    pub fn validate(&self) -> Result<(), WorkerDrainError> {
+        if self.online_request_timeout_ms == 0 {
+            return Err(WorkerDrainError::NonPositiveTimeout {
+                field: "online_request_timeout_ms",
+            });
+        }
+        if self.durable_task_timeout_ms == 0 {
+            return Err(WorkerDrainError::NonPositiveTimeout {
+                field: "durable_task_timeout_ms",
+            });
+        }
+        if self.realtime_session_timeout_ms == 0 {
+            return Err(WorkerDrainError::NonPositiveTimeout {
+                field: "realtime_session_timeout_ms",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkerDrainTask {
+    pub workload: WorkerDrainWorkloadKind,
+    pub request: WorkerInvokeRequest,
+    pub started_at_unix_ms: u64,
+    pub checkpointable: bool,
+}
+
+impl WorkerDrainTask {
+    pub fn validate(&self) -> Result<(), WorkerDrainError> {
+        self.request
+            .validate()
+            .map_err(|source| WorkerDrainError::InvalidTaskRequest { source })?;
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkerDrainDecision {
+    pub workload: WorkerDrainWorkloadKind,
+    pub run_id: String,
+    pub invocation_id: String,
+    pub node_attempt_id: String,
+    pub lease_epoch: u64,
+    pub release_id: String,
+    pub deployment_revision_id: String,
+    pub disposition: WorkerDrainDisposition,
+    pub deadline_unix_ms: u64,
+    pub reason: String,
+}
+
+impl WorkerDrainDecision {
+    pub fn validate(&self) -> Result<(), WorkerDrainError> {
+        for (field, value) in [
+            ("run_id", self.run_id.as_str()),
+            ("invocation_id", self.invocation_id.as_str()),
+            ("node_attempt_id", self.node_attempt_id.as_str()),
+            ("release_id", self.release_id.as_str()),
+            (
+                "deployment_revision_id",
+                self.deployment_revision_id.as_str(),
+            ),
+            ("reason", self.reason.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(WorkerDrainError::EmptyDecisionField { field });
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkerDrainPlan {
+    pub worker_id: String,
+    pub target_id: String,
+    pub worker_state: WorkerState,
+    pub admission_closed: bool,
+    pub drain_started_at_unix_ms: u64,
+    pub decisions: Vec<WorkerDrainDecision>,
+}
+
+impl WorkerDrainPlan {
+    pub fn validate(&self) -> Result<(), WorkerDrainError> {
+        if self.worker_id.trim().is_empty() {
+            return Err(WorkerDrainError::EmptyPlanField { field: "worker_id" });
+        }
+        if self.target_id.trim().is_empty() {
+            return Err(WorkerDrainError::EmptyPlanField { field: "target_id" });
+        }
+        if self.worker_state != WorkerState::Draining {
+            return Err(WorkerDrainError::WorkerStateNotDraining {
+                state: self.worker_state,
+            });
+        }
+        for (index, decision) in self.decisions.iter().enumerate() {
+            decision
+                .validate()
+                .map_err(|source| WorkerDrainError::InvalidDecision {
+                    index,
+                    source: Box::new(source),
+                })?;
+        }
+        Ok(())
+    }
+
+    pub fn for_worker<I>(
+        worker: &WorkerAdvertisement,
+        policy: &WorkerDrainPolicy,
+        tasks: I,
+        drain_started_at_unix_ms: u64,
+        now_unix_ms: u64,
+    ) -> Result<Self, WorkerDrainError>
+    where
+        I: IntoIterator<Item = WorkerDrainTask>,
+    {
+        policy
+            .validate()
+            .map_err(|source| WorkerDrainError::InvalidPolicy {
+                source: Box::new(source),
+            })?;
+
+        let mut decisions = Vec::new();
+        for task in tasks {
+            task.validate()
+                .map_err(|source| WorkerDrainError::InvalidTask {
+                    source: Box::new(source),
+                })?;
+            let (timeout_ms, deadline_disposition) = match task.workload {
+                WorkerDrainWorkloadKind::OnlineRequest => (
+                    policy.online_request_timeout_ms,
+                    policy.on_deadline.online_request,
+                ),
+                WorkerDrainWorkloadKind::DurableTask => (
+                    policy.durable_task_timeout_ms,
+                    policy.on_deadline.durable_task,
+                ),
+                WorkerDrainWorkloadKind::RealtimeSession => (
+                    policy.realtime_session_timeout_ms,
+                    policy.on_deadline.realtime_session,
+                ),
+            };
+            let deadline_unix_ms = task.started_at_unix_ms.saturating_add(timeout_ms);
+            let (disposition, reason) = if now_unix_ms >= deadline_unix_ms {
+                if deadline_disposition == WorkerDrainDisposition::Checkpoint
+                    && !task.checkpointable
+                {
+                    (
+                        WorkerDrainDisposition::Cancel,
+                        "checkpoint_unavailable".to_owned(),
+                    )
+                } else {
+                    (deadline_disposition, "deadline_reached".to_owned())
+                }
+            } else {
+                (
+                    WorkerDrainDisposition::FinishInPlace,
+                    "within_drain_deadline".to_owned(),
+                )
+            };
+            decisions.push(WorkerDrainDecision {
+                workload: task.workload,
+                run_id: task.request.run_id,
+                invocation_id: task.request.invocation_id,
+                node_attempt_id: task.request.node_attempt_id,
+                lease_epoch: task.request.lease_epoch,
+                release_id: task.request.context.release_id,
+                deployment_revision_id: task.request.context.deployment_revision_id,
+                disposition,
+                deadline_unix_ms,
+                reason,
+            });
+        }
+
+        let plan = Self {
+            worker_id: worker.worker_id.clone(),
+            target_id: worker.target_id.clone(),
+            worker_state: WorkerState::Draining,
+            admission_closed: true,
+            drain_started_at_unix_ms,
+            decisions,
+        };
+        plan.validate()?;
+        Ok(plan)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkerInvokeResult {
