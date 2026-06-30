@@ -49,7 +49,14 @@ def scripted_model_generate(
     )
 
 
+def run_native_stdlib_graph(graph: dict[str, object], inputs: dict[str, object]) -> dict[str, object]:
+    from graphblocks_runtime import run_stdlib_graph
+
+    return run_stdlib_graph(graph, inputs)
+
+
 __all__ = [
     "ScriptedModelResponse",
+    "run_native_stdlib_graph",
     "scripted_model_generate",
 ]
