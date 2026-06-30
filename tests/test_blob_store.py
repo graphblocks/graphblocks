@@ -70,6 +70,15 @@ def test_local_blob_store_lists_sorted_prefix_with_cursor(tmp_path) -> None:
         first_page.items.append(second_page.items[0])
 
 
+@pytest.mark.parametrize("cursor", [True, "", "-1", "+1", "01", "1.0", "one"])
+def test_local_blob_store_rejects_non_canonical_list_cursors(tmp_path, cursor: object) -> None:
+    store = LocalBlobStore(tmp_path)
+    store.put(BlobKey("docs/a.txt"), b"a", PutOptions())
+
+    with pytest.raises(ValueError, match="cursor must be a canonical non-negative integer"):
+        store.list("docs/", cursor=cursor)
+
+
 def test_local_blob_store_delete_removes_blob(tmp_path) -> None:
     store = LocalBlobStore(tmp_path)
     key = BlobKey("docs/policy.txt")

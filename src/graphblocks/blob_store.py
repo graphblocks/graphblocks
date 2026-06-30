@@ -208,9 +208,18 @@ class LocalBlobStore:
     def list(self, prefix: str = "", cursor: str | None = None, limit: int = 100) -> ListPage:
         if limit < 1:
             raise ValueError("limit must be at least 1")
-        start = int(cursor) if cursor is not None else 0
-        if start < 0:
-            raise ValueError("cursor must be non-negative")
+        if cursor is None:
+            start = 0
+        else:
+            if (
+                not isinstance(cursor, str)
+                or not cursor
+                or not cursor.isascii()
+                or not cursor.isdecimal()
+                or (cursor != "0" and cursor.startswith("0"))
+            ):
+                raise ValueError("cursor must be a canonical non-negative integer")
+            start = int(cursor)
         keys: list[str] = []
         for path in self.root.rglob("*"):
             if not path.is_file():
