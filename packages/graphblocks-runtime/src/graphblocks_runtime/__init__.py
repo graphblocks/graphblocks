@@ -20,6 +20,7 @@ try:
         run_test_graph_json,
         validate_remote_payload_json,
         validate_worker_advertisement_json,
+        validate_worker_protocol_message_json,
     )
 
     _NATIVE_EXTENSION_AVAILABLE = True
@@ -90,6 +91,9 @@ except ImportError as error:
         advertisement_json: str,
         expected_package_lock_hash: str | None = None,
     ) -> str:
+        require_native_extension()
+
+    def validate_worker_protocol_message_json(message_json: str) -> str:
         require_native_extension()
 
     def validate_remote_payload_json(payload_json: str, max_inline_bytes: int) -> str:
@@ -243,6 +247,13 @@ def validate_worker_advertisement(
     )
 
 
+def validate_worker_protocol_message(message: dict[str, object]) -> dict[str, object]:
+    return _json_object_result(
+        validate_worker_protocol_message_json(_canonical_json(message)),
+        "native worker protocol message validation result",
+    )
+
+
 def validate_remote_payload(payload: dict[str, object], *, max_inline_bytes: int) -> dict[str, object]:
     return _json_object_result(
         validate_remote_payload_json(_canonical_json(payload), max_inline_bytes),
@@ -278,4 +289,6 @@ __all__ = [
     "validate_remote_payload_json",
     "validate_worker_advertisement",
     "validate_worker_advertisement_json",
+    "validate_worker_protocol_message",
+    "validate_worker_protocol_message_json",
 ]

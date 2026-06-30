@@ -4,7 +4,8 @@ use graphblocks_compiler::compiler::{BlockCatalog, compile_graph, compile_graph_
 use graphblocks_compiler::diagnostics::Severity;
 use graphblocks_protocol::{
     RemotePayload, RemotePayloadError, RemotePayloadLimits, WorkerAdmissionPolicy,
-    WorkerAdvertisement, WorkerProtocolError, admit_worker_with_policy, validate_remote_payload,
+    WorkerAdvertisement, WorkerProtocolError, WorkerProtocolMessage, admit_worker_with_policy,
+    validate_remote_payload,
 };
 use graphblocks_runtime_core::agent::{AgentLoopController, AgentLoopDecision, AgentSpec};
 use graphblocks_runtime_core::budget::{BudgetPermit, UsageAmount};
@@ -243,6 +244,49 @@ fn validate_worker_advertisement_json(
     serde_json::to_string(&payload).map_err(|error| {
         PyRuntimeError::new_err(format!(
             "failed to serialize worker protocol result: {error}"
+        ))
+    })
+}
+
+#[pyfunction]
+fn validate_worker_protocol_message_json(message_json: &str) -> PyResult<String> {
+    let message_value = serde_json::from_str::<Value>(message_json)
+        .map_err(|error| PyValueError::new_err(format!("invalid worker message JSON: {error}")))?;
+    let message = match serde_json::from_value::<WorkerProtocolMessage>(message_value) {
+        Ok(message) => message,
+        Err(error) => {
+            let payload = json!({
+                "ok": false,
+                "error": {
+                    "code": "worker_protocol_message.invalid",
+                    "message": error.to_string(),
+                },
+            });
+            return serde_json::to_string(&payload).map_err(|error| {
+                PyRuntimeError::new_err(format!(
+                    "failed to serialize worker protocol message result: {error}"
+                ))
+            });
+        }
+    };
+    let content_digest = message.content_digest().map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to compute worker protocol message digest: {error}"
+        ))
+    })?;
+    let payload = json!({
+        "ok": true,
+        "contentDigest": content_digest,
+        "kind": message.kind,
+        "messageId": message.message_id,
+        "sequence": message.sequence,
+        "correlationId": message.correlation_id,
+        "causationId": message.causation_id,
+    });
+
+    serde_json::to_string(&payload).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize worker protocol message result: {error}"
         ))
     })
 }
@@ -2956,6 +3000,10 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
         validate_worker_advertisement_json,
         module
     )?)?;
+    module.add_function(wrap_pyfunction!(
+        validate_worker_protocol_message_json,
+        module
+    )?)?;
     module.add_function(wrap_pyfunction!(validate_remote_payload_json, module)?)?;
     module.add_function(wrap_pyfunction!(
         prepare_tool_result_for_model_json,
@@ -2983,6 +3031,7 @@ mod tests {
         evaluate_declarative_output_policy_json, evaluate_output_gate_json,
         finalize_tool_call_json, prepare_tool_result_for_model_json, run_stdlib_graph_json,
         run_test_graph_json, validate_remote_payload_json, validate_worker_advertisement_json,
+        validate_worker_protocol_message_json,
     };
 
     #[test]
@@ -3330,6 +3379,101 @@ mod tests {
         assert_eq!(
             result.pointer("/error/code").and_then(Value::as_str),
             Some("worker.empty_block_capability"),
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn validate_worker_protocol_message_json_returns_digest_for_valid_envelope()
+    -> Result<(), String> {
+        let message = json!({
+            "protocolVersion": 1,
+            "messageId": "message-000001",
+            "kind": "invoke_request",
+            "sequence": 7,
+            "correlationId": null,
+            "causationId": null,
+            "payload": {
+                "invocationId": "invoke-000001",
+                "runId": "run-000001",
+                "nodeId": "render",
+                "nodeAttemptId": "render-attempt-1",
+                "leaseEpoch": 3,
+                "block": "prompt.render@1",
+                "context": {
+                    "releaseId": "release-1",
+                    "deploymentRevisionId": "rev-1",
+                    "attributes": {}
+                },
+                "inputs": {"message": {"text": "hi"}},
+                "config": {"template": "Echo {message.text}"}
+            }
+        });
+        let result_json = validate_worker_protocol_message_json(
+            &serde_json::to_string(&message).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(result.get("ok"), Some(&json!(true)));
+        assert_eq!(
+            result.pointer("/kind").and_then(Value::as_str),
+            Some("invoke_request")
+        );
+        assert_eq!(
+            result.pointer("/messageId").and_then(Value::as_str),
+            Some("message-000001"),
+        );
+        assert!(
+            result
+                .pointer("/contentDigest")
+                .and_then(Value::as_str)
+                .is_some_and(|digest| digest.starts_with("sha256:")),
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn validate_worker_protocol_message_json_reports_invalid_payload() -> Result<(), String> {
+        let message = json!({
+            "protocolVersion": 1,
+            "messageId": "message-000001",
+            "kind": "invoke_request",
+            "sequence": 7,
+            "payload": {
+                "invocationId": " ",
+                "runId": "run-000001",
+                "nodeId": "render",
+                "nodeAttemptId": "render-attempt-1",
+                "leaseEpoch": 3,
+                "block": "prompt.render@1",
+                "context": {
+                    "releaseId": "release-1",
+                    "deploymentRevisionId": "rev-1",
+                    "attributes": {}
+                },
+                "inputs": {},
+                "config": {}
+            }
+        });
+        let result_json = validate_worker_protocol_message_json(
+            &serde_json::to_string(&message).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(result.get("ok"), Some(&json!(false)));
+        assert_eq!(
+            result.pointer("/error/code").and_then(Value::as_str),
+            Some("worker_protocol_message.invalid"),
+        );
+        assert!(
+            result
+                .pointer("/error/message")
+                .and_then(Value::as_str)
+                .is_some_and(|message| message.contains("InvalidInvokeRequest")),
         );
         Ok(())
     }

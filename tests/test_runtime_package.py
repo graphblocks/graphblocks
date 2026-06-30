@@ -150,6 +150,16 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         calls.append(("worker_advertisement", (advertisement_json, expected_package_lock_hash)))
         return json.dumps({"ok": True, "advertisement": json.loads(advertisement_json)})
 
+    def validate_worker_protocol_message_json(message_json: str) -> str:
+        calls.append(("worker_message", (message_json,)))
+        return json.dumps(
+            {
+                "ok": True,
+                "message": json.loads(message_json),
+                "contentDigest": "sha256:message",
+            }
+        )
+
     def validate_remote_payload_json(payload_json: str, max_inline_bytes: int) -> str:
         calls.append(("remote_payload", (payload_json, max_inline_bytes)))
         return json.dumps({"ok": True, "payload": json.loads(payload_json)})
@@ -168,6 +178,7 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         run_test_graph_json=run_test_graph_json,
         validate_remote_payload_json=validate_remote_payload_json,
         validate_worker_advertisement_json=validate_worker_advertisement_json,
+        validate_worker_protocol_message_json=validate_worker_protocol_message_json,
     )
     runtime = load_runtime_wrapper(fake_native)
 
@@ -214,6 +225,12 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         {"workerId": "worker-1"},
         expected_package_lock_hash="sha256:lock",
     )
+    worker_message = runtime.validate_worker_protocol_message(
+        {
+            "messageId": "message-1",
+            "kind": "invoke_request",
+        },
+    )
     remote_payload = runtime.validate_remote_payload(
         {"kind": "inline_json", "value": {"ok": True}},
         max_inline_bytes=128,
@@ -257,6 +274,11 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         "request": {"workKind": "read_only_tool"},
     }
     assert worker == {"ok": True, "advertisement": {"workerId": "worker-1"}}
+    assert worker_message == {
+        "ok": True,
+        "message": {"kind": "invoke_request", "messageId": "message-1"},
+        "contentDigest": "sha256:message",
+    }
     assert remote_payload == {"ok": True, "payload": {"kind": "inline_json", "value": {"ok": True}}}
     assert calls == [
         (
@@ -308,6 +330,10 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             ('{"workerId":"worker-1"}', "sha256:lock"),
         ),
         (
+            "worker_message",
+            ('{"kind":"invoke_request","messageId":"message-1"}',),
+        ),
+        (
             "remote_payload",
             ('{"kind":"inline_json","value":{"ok":true}}', 128),
         ),
@@ -323,4 +349,5 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     assert "evaluate_output_gate" in runtime.__all__
     assert "evaluate_declarative_output_policy" in runtime.__all__
     assert "validate_worker_advertisement" in runtime.__all__
+    assert "validate_worker_protocol_message" in runtime.__all__
     assert "validate_remote_payload" in runtime.__all__

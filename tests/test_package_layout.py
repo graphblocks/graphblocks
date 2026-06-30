@@ -72,6 +72,7 @@ def test_graphblocks_runtime_package_delegates_to_workspace_binding() -> None:
     assert "evaluate_output_gate_json" in wrapper
     assert "finalize_tool_call_json" in wrapper
     assert "validate_worker_advertisement_json" in wrapper
+    assert "validate_worker_protocol_message_json" in wrapper
     assert "validate_remote_payload_json" in wrapper
 
 
