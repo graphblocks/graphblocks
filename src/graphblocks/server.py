@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 import json
 from types import MappingProxyType
@@ -13,6 +14,48 @@ from .runtime import InProcessRuntime, RuntimeRegistry, stdlib_registry
 
 ServerTransport = Literal["http", "sse", "websocket"]
 ServerHealthStatus = Literal["healthy", "degraded", "unhealthy"]
+VALID_SERVER_TRANSPORTS = frozenset({"http", "sse", "websocket"})
+
+
+def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{owner} {field_name} must be a string")
+    stripped = value.strip()
+    if not stripped:
+        raise ValueError(f"{owner} {field_name} must not be empty")
+    return stripped
+
+
+def _validate_route_path(owner: str, value: object) -> str:
+    path = _validate_non_empty_string(owner, "path", value)
+    if not path.startswith("/"):
+        raise ValueError(f"{owner} path must start with '/'")
+    return path
+
+
+def _validate_transport(value: object) -> ServerTransport:
+    transport = _validate_non_empty_string("server", "transport", value)
+    if transport not in VALID_SERVER_TRANSPORTS:
+        raise ValueError("server transport must be one of http, sse, or websocket")
+    return transport  # type: ignore[return-value]
+
+
+def _validate_string_mapping(
+    owner: str,
+    field_name: str,
+    value: object,
+    *,
+    lowercase_keys: bool = False,
+) -> MappingProxyType[str, str]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{owner} {field_name} must be a mapping")
+    normalized: dict[str, str] = {}
+    for key, item in value.items():
+        key_text = _validate_non_empty_string(owner, f"{field_name} key", key)
+        if not isinstance(item, str):
+            raise ValueError(f"{owner} {field_name} values must be strings")
+        normalized[key_text.lower() if lowercase_keys else key_text] = item
+    return MappingProxyType(normalized)
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,7 +67,20 @@ class ServerEndpoint:
     auth_required: bool = True
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "method", self.method.upper())
+        object.__setattr__(
+            self,
+            "method",
+            _validate_non_empty_string("server endpoint", "method", self.method).upper(),
+        )
+        object.__setattr__(self, "path", _validate_route_path("server endpoint", self.path))
+        object.__setattr__(self, "transport", _validate_transport(self.transport))
+        object.__setattr__(
+            self,
+            "operation",
+            _validate_non_empty_string("server endpoint", "operation", self.operation),
+        )
+        if not isinstance(self.auth_required, bool):
+            raise ValueError("server endpoint auth_required must be a boolean")
 
     def canonical_value(self) -> dict[str, object]:
         return {
@@ -57,7 +113,16 @@ class ServerRouteManifest:
     endpoints: tuple[ServerEndpoint, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "endpoints", tuple(self.endpoints))
+        endpoints = tuple(self.endpoints)
+        seen: set[tuple[str, str, ServerTransport]] = set()
+        for endpoint in endpoints:
+            if not isinstance(endpoint, ServerEndpoint):
+                raise ValueError("server route manifest endpoints must be ServerEndpoint instances")
+            key = (endpoint.method, endpoint.path, endpoint.transport)
+            if key in seen:
+                raise ValueError(f"duplicate server endpoint {endpoint.method} {endpoint.path} {endpoint.transport}")
+            seen.add(key)
+        object.__setattr__(self, "endpoints", endpoints)
 
     def with_endpoint(
         self,
@@ -74,10 +139,12 @@ class ServerRouteManifest:
         )
 
     def by_transport(self, transport: ServerTransport) -> tuple[ServerEndpoint, ...]:
+        transport = _validate_transport(transport)
         return tuple(endpoint for endpoint in self.endpoints if endpoint.transport == transport)
 
     def match(self, method: str, path: str) -> ServerRouteMatch:
-        normalized_method = method.upper()
+        normalized_method = _validate_non_empty_string("server route lookup", "method", method).upper()
+        path = _validate_route_path("server route lookup", path)
         path_parts = [part for part in path.strip("/").split("/") if part]
         for endpoint in self.endpoints:
             if endpoint.method != normalized_method:
@@ -133,13 +200,22 @@ class ServerAuthRequest:
     requested_at: str
 
     def __post_init__(self) -> None:
+        if not isinstance(self.route, ServerEndpoint):
+            raise ValueError("server auth request route must be a ServerEndpoint")
         object.__setattr__(
             self,
             "headers",
-            MappingProxyType({key.lower(): value for key, value in self.headers.items()}),
+            _validate_string_mapping("server auth request", "headers", self.headers, lowercase_keys=True),
         )
-        object.__setattr__(self, "query", MappingProxyType(dict(self.query)))
-        object.__setattr__(self, "cookies", MappingProxyType(dict(self.cookies)))
+        object.__setattr__(self, "query", _validate_string_mapping("server auth request", "query", self.query))
+        object.__setattr__(self, "cookies", _validate_string_mapping("server auth request", "cookies", self.cookies))
+        object.__setattr__(
+            self,
+            "requested_at",
+            ""
+            if self.requested_at == ""
+            else _validate_non_empty_string("server auth request", "requested_at", self.requested_at),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,15 +229,29 @@ class ServerRequest:
     requested_at: str = ""
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "method", self.method.upper())
+        object.__setattr__(
+            self,
+            "method",
+            _validate_non_empty_string("server request", "method", self.method).upper(),
+        )
+        object.__setattr__(self, "path", _validate_route_path("server request", self.path))
         object.__setattr__(
             self,
             "headers",
-            MappingProxyType({key.lower(): value for key, value in self.headers.items()}),
+            _validate_string_mapping("server request", "headers", self.headers, lowercase_keys=True),
         )
-        object.__setattr__(self, "query", MappingProxyType(dict(self.query)))
-        object.__setattr__(self, "cookies", MappingProxyType(dict(self.cookies)))
+        object.__setattr__(self, "query", _validate_string_mapping("server request", "query", self.query))
+        object.__setattr__(self, "cookies", _validate_string_mapping("server request", "cookies", self.cookies))
+        if not isinstance(self.body, (bytes, bytearray, memoryview)):
+            raise ValueError("server request body must be bytes")
         object.__setattr__(self, "body", bytes(self.body))
+        object.__setattr__(
+            self,
+            "requested_at",
+            ""
+            if self.requested_at == ""
+            else _validate_non_empty_string("server request", "requested_at", self.requested_at),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,7 +261,17 @@ class ServerResponse:
     body: bytes
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "headers", MappingProxyType(dict(self.headers)))
+        if isinstance(self.status_code, bool) or not isinstance(self.status_code, int):
+            raise ValueError("server response status_code must be an integer")
+        if self.status_code < 100 or self.status_code > 599:
+            raise ValueError("server response status_code must be a valid HTTP status")
+        object.__setattr__(
+            self,
+            "headers",
+            _validate_string_mapping("server response", "headers", self.headers, lowercase_keys=True),
+        )
+        if not isinstance(self.body, (bytes, bytearray, memoryview)):
+            raise ValueError("server response body must be bytes")
         object.__setattr__(self, "body", bytes(self.body))
 
     def read(self) -> bytes:
@@ -206,7 +306,15 @@ class StaticBearerAuthHook:
     principals_by_token: dict[str, PrincipalRef] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "principals_by_token", MappingProxyType(dict(self.principals_by_token)))
+        if not isinstance(self.principals_by_token, Mapping):
+            raise ValueError("static bearer auth principals_by_token must be a mapping")
+        principals_by_token: dict[str, PrincipalRef] = {}
+        for token, principal in self.principals_by_token.items():
+            token = _validate_non_empty_string("static bearer auth", "token", token)
+            if not isinstance(principal, PrincipalRef):
+                raise ValueError("static bearer auth principals must be PrincipalRef instances")
+            principals_by_token[token] = principal
+        object.__setattr__(self, "principals_by_token", MappingProxyType(principals_by_token))
 
     def authorize(self, request: ServerAuthRequest) -> ServerAuthDecision:
         if not request.route.auth_required:

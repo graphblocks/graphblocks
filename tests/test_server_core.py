@@ -10,6 +10,7 @@ from graphblocks.server import (
     ApplicationProtocolCapabilities,
     GraphBlocksServerApp,
     ServerAuthRequest,
+    ServerEndpoint,
     ServerHealth,
     ServerRequest,
     ServerResponse,
@@ -34,6 +35,30 @@ def test_server_route_manifest_groups_routes_and_hashes_stably() -> None:
     assert left.lookup("GET", "/health").operation == "health"
     assert left.lookup("GET", "/health").auth_required is False
     assert left.content_digest() == right.content_digest()
+
+
+def test_server_route_manifest_validates_endpoint_contracts() -> None:
+    with pytest.raises(ValueError, match="server endpoint method must not be empty"):
+        ServerEndpoint(" ", "/runs", "http", "invoke_graph")
+    with pytest.raises(ValueError, match="server endpoint path must start"):
+        ServerEndpoint("GET", "runs", "http", "invoke_graph")
+    with pytest.raises(ValueError, match="server transport must be one of"):
+        ServerEndpoint("GET", "/runs", "grpc", "invoke_graph")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="server endpoint operation must not be empty"):
+        ServerEndpoint("GET", "/runs", "http", " ")
+    with pytest.raises(ValueError, match="server endpoint auth_required must be a boolean"):
+        ServerEndpoint("GET", "/runs", "http", "invoke_graph", auth_required="yes")  # type: ignore[arg-type]
+
+    endpoint = ServerEndpoint("GET", "/runs", "http", "invoke_graph")
+
+    with pytest.raises(ValueError, match="endpoints must be ServerEndpoint"):
+        ServerRouteManifest((object(),))  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="duplicate server endpoint"):
+        ServerRouteManifest((endpoint, endpoint))
+    with pytest.raises(ValueError, match="server transport must be one of"):
+        default_server_route_manifest().by_transport("grpc")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="server route lookup path must start"):
+        default_server_route_manifest().match("GET", "health")
 
 
 def test_server_route_manifest_matches_templated_run_paths() -> None:
@@ -91,6 +116,15 @@ def test_static_bearer_auth_hook_authorizes_configured_principal() -> None:
     assert public.principal is None
 
 
+def test_static_bearer_auth_hook_validates_principal_map() -> None:
+    with pytest.raises(ValueError, match="principals_by_token must be a mapping"):
+        StaticBearerAuthHook([])  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="static bearer auth token must not be empty"):
+        StaticBearerAuthHook({" ": PrincipalRef("user-1")})
+    with pytest.raises(ValueError, match="principals must be PrincipalRef"):
+        StaticBearerAuthHook({"token-1": object()})  # type: ignore[arg-type]
+
+
 def test_server_health_aggregates_component_status() -> None:
     runtime_details = {"workers": 2}
     health = ServerHealth(
@@ -145,6 +179,49 @@ def test_server_request_and_response_maps_are_read_only_snapshots() -> None:
     assert response.headers == {"content-type": "application/json"}
     with pytest.raises(TypeError):
         response.headers["content-type"] = "text/plain"
+
+
+def test_server_request_auth_and_response_validate_contracts() -> None:
+    with pytest.raises(ValueError, match="server request method must not be empty"):
+        ServerRequest(method=" ", path="/health", headers={}, query={}, cookies={})
+    with pytest.raises(ValueError, match="server request path must start"):
+        ServerRequest(method="GET", path="health", headers={}, query={}, cookies={})
+    with pytest.raises(ValueError, match="server request headers key must not be empty"):
+        ServerRequest(method="GET", path="/health", headers={" ": "value"}, query={}, cookies={})
+    with pytest.raises(ValueError, match="server request headers values must be strings"):
+        ServerRequest(method="GET", path="/health", headers={"x": object()}, query={}, cookies={})  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="server request query values must be strings"):
+        ServerRequest(method="GET", path="/health", headers={}, query={"cursor": object()}, cookies={})  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="server request cookies values must be strings"):
+        ServerRequest(method="GET", path="/health", headers={}, query={}, cookies={"session": object()})  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="server request body must be bytes"):
+        ServerRequest(method="GET", path="/health", headers={}, query={}, cookies={}, body=1)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="server request requested_at must not be empty"):
+        ServerRequest(method="GET", path="/health", headers={}, query={}, cookies={}, requested_at=" ")
+
+    route = default_server_route_manifest().lookup("GET", "/health")
+
+    with pytest.raises(ValueError, match="server auth request route must be a ServerEndpoint"):
+        ServerAuthRequest(route=object(), headers={}, query={}, cookies={}, requested_at="")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="server auth request headers values must be strings"):
+        ServerAuthRequest(
+            route=route,
+            headers={"authorization": object()},  # type: ignore[arg-type]
+            query={},
+            cookies={},
+            requested_at="",
+        )
+    with pytest.raises(ValueError, match="server auth request requested_at must not be empty"):
+        ServerAuthRequest(route=route, headers={}, query={}, cookies={}, requested_at=" ")
+
+    with pytest.raises(ValueError, match="status_code must be an integer"):
+        ServerResponse(status_code=True, headers={}, body=b"")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="status_code must be a valid HTTP status"):
+        ServerResponse(status_code=99, headers={}, body=b"")
+    with pytest.raises(ValueError, match="server response headers values must be strings"):
+        ServerResponse(status_code=200, headers={"x": object()}, body=b"")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="server response body must be bytes"):
+        ServerResponse(status_code=200, headers={}, body=object())  # type: ignore[arg-type]
 
 
 def test_application_protocol_capabilities_negotiate_intersection() -> None:
