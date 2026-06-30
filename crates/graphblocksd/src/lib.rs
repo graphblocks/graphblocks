@@ -2,8 +2,9 @@ use std::collections::BTreeMap;
 
 use graphblocks_protocol::{
     WORKER_PROTOCOL_VERSION, WorkerAdmissionDecision, WorkerAdmissionPolicy, WorkerAdvertisement,
-    WorkerDrainError, WorkerDrainPlan, WorkerDrainPolicy, WorkerDrainTask, WorkerState,
-    evaluate_worker_admission,
+    WorkerDrainError, WorkerDrainPlan, WorkerDrainPolicy, WorkerDrainTask, WorkerProtocolMessage,
+    WorkerProtocolMessageError, WorkerProtocolMessageKind, WorkerProtocolMessagePayload,
+    WorkerState, evaluate_worker_admission,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -129,6 +130,33 @@ impl WorkerRegistry {
         decision
     }
 
+    pub fn admit_worker_message(
+        &mut self,
+        message: WorkerProtocolMessage,
+        response_message_id: impl Into<String>,
+        response_sequence: u64,
+    ) -> Result<WorkerProtocolMessage, WorkerRegistryError> {
+        message
+            .validate()
+            .map_err(|source| WorkerRegistryError::InvalidWorkerMessage { source })?;
+        let correlation_id = message.correlation_id.clone();
+        let causation_id = message.message_id.clone();
+        let WorkerProtocolMessagePayload::Advertisement(advertisement) = message.payload else {
+            return Err(WorkerRegistryError::UnexpectedWorkerMessageKind { kind: message.kind });
+        };
+        let decision = self.admit_worker(advertisement);
+        let mut response = WorkerProtocolMessage::admission_decision(
+            response_message_id,
+            response_sequence,
+            decision,
+        )
+        .with_causation_id(causation_id);
+        if let Some(correlation_id) = correlation_id {
+            response = response.with_correlation_id(correlation_id);
+        }
+        Ok(response)
+    }
+
     pub fn ready_worker_ids(&self) -> Vec<String> {
         self.worker_ids_by_state(WorkerState::Ready)
     }
@@ -196,4 +224,6 @@ impl WorkerRegistry {
 pub enum WorkerRegistryError {
     UnknownWorker { worker_id: String },
     DrainPlan { source: WorkerDrainError },
+    InvalidWorkerMessage { source: WorkerProtocolMessageError },
+    UnexpectedWorkerMessageKind { kind: WorkerProtocolMessageKind },
 }
