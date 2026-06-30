@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib
 from pathlib import Path
+import sys
+from types import SimpleNamespace
 
 from graphblocks.policy import (
     VALID_ENFORCEMENT_POINTS,
@@ -130,3 +132,74 @@ def test_policy_package_exposes_canonical_literal_sets(monkeypatch) -> None:
         "before_tool_or_effect",
     }.issubset(graphblocks_policy.VALID_ENFORCEMENT_POINTS)
     assert "VALID_ENFORCEMENT_POINTS" in graphblocks_policy.__all__
+
+
+def test_policy_package_lazy_native_output_helpers_delegate_to_runtime(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy" / "src"))
+    calls: list[tuple[str, object, object, int | None]] = []
+
+    def evaluate_output_gate(gate: dict[str, object], operations: object) -> dict[str, object]:
+        calls.append(("gate", gate, operations, None))
+        return {"ok": True, "gate": gate, "operations": operations}
+
+    def evaluate_declarative_output_policy(
+        rules: object,
+        chunk: dict[str, object],
+        *,
+        evaluated_at_unix_ms: int,
+    ) -> dict[str, object]:
+        calls.append(("policy", rules, chunk, evaluated_at_unix_ms))
+        return {
+            "disposition": "allow",
+            "rules": rules,
+            "chunk": chunk,
+            "evaluatedAtUnixMs": evaluated_at_unix_ms,
+        }
+
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(
+            evaluate_declarative_output_policy=evaluate_declarative_output_policy,
+            evaluate_output_gate=evaluate_output_gate,
+        ),
+    )
+    graphblocks_policy = importlib.import_module("graphblocks_policy")
+
+    gate_result = graphblocks_policy.evaluate_native_output_gate(
+        {"streamId": "stream-1", "responseId": "response-1"},
+        [{"op": "chunk", "sequence": 1}],
+    )
+    policy_result = graphblocks_policy.evaluate_native_declarative_output_policy(
+        [{"ruleId": "allow"}],
+        {"streamId": "stream-1", "responseId": "response-1", "sequence": 1},
+        evaluated_at_unix_ms=1_782_300_001_000,
+    )
+
+    assert gate_result == {
+        "ok": True,
+        "gate": {"streamId": "stream-1", "responseId": "response-1"},
+        "operations": [{"op": "chunk", "sequence": 1}],
+    }
+    assert policy_result == {
+        "disposition": "allow",
+        "rules": [{"ruleId": "allow"}],
+        "chunk": {"streamId": "stream-1", "responseId": "response-1", "sequence": 1},
+        "evaluatedAtUnixMs": 1_782_300_001_000,
+    }
+    assert calls == [
+        (
+            "gate",
+            {"streamId": "stream-1", "responseId": "response-1"},
+            [{"op": "chunk", "sequence": 1}],
+            None,
+        ),
+        (
+            "policy",
+            [{"ruleId": "allow"}],
+            {"streamId": "stream-1", "responseId": "response-1", "sequence": 1},
+            1_782_300_001_000,
+        ),
+    ]
+    assert "evaluate_native_output_gate" in graphblocks_policy.__all__
+    assert "evaluate_native_declarative_output_policy" in graphblocks_policy.__all__

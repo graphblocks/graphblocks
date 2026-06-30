@@ -57,6 +57,30 @@ from graphblocks.policy import (
 )
 
 
+def evaluate_native_output_gate(
+    gate: dict[str, object],
+    operations: object,
+) -> dict[str, object]:
+    from graphblocks_runtime import evaluate_output_gate
+
+    return evaluate_output_gate(gate, operations)
+
+
+def evaluate_native_declarative_output_policy(
+    rules: object,
+    chunk: dict[str, object],
+    *,
+    evaluated_at_unix_ms: int,
+) -> dict[str, object]:
+    from graphblocks_runtime import evaluate_declarative_output_policy
+
+    return evaluate_declarative_output_policy(
+        rules,
+        chunk,
+        evaluated_at_unix_ms=evaluated_at_unix_ms,
+    )
+
+
 __all__ = [
     "DeclarativeOutputPolicyEvaluator",
     "DeclarativeOutputPolicyRule",
@@ -106,6 +130,8 @@ __all__ = [
     "VALID_POLICY_FAIL_MODES",
     "VALID_RULE_EFFECTS",
     "ViolationAction",
+    "evaluate_native_declarative_output_policy",
+    "evaluate_native_output_gate",
     "resolve_policy_snapshot",
     "run_policy_tests",
     "unavailable_policy_decision",
