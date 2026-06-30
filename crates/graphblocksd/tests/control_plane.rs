@@ -54,6 +54,8 @@ fn worker_registry_admits_ready_workers_and_reports_status() -> Result<(), Daemo
     assert_eq!(registry.ready_worker_ids(), vec!["worker-1"]);
     assert_eq!(status.daemon_id, "daemon-1");
     assert_eq!(status.ready_workers, 1);
+    assert_eq!(status.saturated_workers, 0);
+    assert_eq!(status.draining_workers, 0);
     assert_eq!(status.admitted_workers, 1);
     assert_eq!(status.rejected_workers, 0);
     assert_eq!(status.protocol_version, WORKER_PROTOCOL_VERSION);
@@ -104,6 +106,8 @@ fn worker_registry_allows_admitted_worker_refresh_at_capacity() -> Result<(), Da
     );
     assert_eq!(registry.ready_worker_ids(), vec!["worker-1"]);
     assert_eq!(status.ready_workers, 1);
+    assert_eq!(status.saturated_workers, 0);
+    assert_eq!(status.draining_workers, 0);
     assert_eq!(status.admitted_workers, 1);
     assert_eq!(status.rejected_workers, 1);
     Ok(())
@@ -128,7 +132,13 @@ fn worker_registry_tracks_saturated_workers_without_ready_capacity() -> Result<(
     assert!(decision.admitted);
     assert_eq!(decision.state, WorkerState::Saturated);
     assert!(registry.ready_worker_ids().is_empty());
+    assert_eq!(
+        registry.worker_ids_by_state(WorkerState::Saturated),
+        vec!["worker-saturated"]
+    );
     assert_eq!(status.ready_workers, 0);
+    assert_eq!(status.saturated_workers, 1);
+    assert_eq!(status.draining_workers, 0);
     assert_eq!(status.admitted_workers, 1);
     assert_eq!(status.rejected_workers, 0);
     Ok(())
@@ -168,6 +178,8 @@ fn worker_registry_rejects_unready_or_mismatched_workers() -> Result<(), DaemonC
     assert_eq!(draining_decision.reason_codes, vec!["worker.not_ready"]);
     assert!(registry.ready_worker_ids().is_empty());
     assert_eq!(status.admitted_workers, 0);
+    assert_eq!(status.saturated_workers, 0);
+    assert_eq!(status.draining_workers, 0);
     assert_eq!(status.rejected_workers, 2);
     Ok(())
 }
@@ -223,7 +235,13 @@ fn worker_registry_drains_admitted_worker_and_removes_it_from_ready_pool() {
         WorkerDrainDisposition::FinishInPlace
     );
     assert!(registry.ready_worker_ids().is_empty());
+    assert_eq!(
+        registry.worker_ids_by_state(WorkerState::Draining),
+        vec!["worker-1"]
+    );
     assert_eq!(status.ready_workers, 0);
+    assert_eq!(status.saturated_workers, 0);
+    assert_eq!(status.draining_workers, 1);
     assert_eq!(status.admitted_workers, 1);
     assert_eq!(
         serde_json::from_value::<WorkerDrainPlan>(

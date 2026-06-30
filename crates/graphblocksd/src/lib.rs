@@ -75,6 +75,8 @@ pub struct DaemonStatus {
     pub bind_address: String,
     pub protocol_version: u16,
     pub ready_workers: usize,
+    pub saturated_workers: usize,
+    pub draining_workers: usize,
     pub admitted_workers: usize,
     pub rejected_workers: usize,
 }
@@ -128,19 +130,28 @@ impl WorkerRegistry {
     }
 
     pub fn ready_worker_ids(&self) -> Vec<String> {
+        self.worker_ids_by_state(WorkerState::Ready)
+    }
+
+    pub fn worker_ids_by_state(&self, state: WorkerState) -> Vec<String> {
         self.admitted_workers
             .values()
-            .filter(|decision| decision.state == WorkerState::Ready)
+            .filter(|decision| decision.state == state)
             .map(|decision| decision.worker_id.clone())
             .collect()
     }
 
     pub fn status(&self) -> DaemonStatus {
+        let ready_workers = self.worker_ids_by_state(WorkerState::Ready).len();
+        let saturated_workers = self.worker_ids_by_state(WorkerState::Saturated).len();
+        let draining_workers = self.worker_ids_by_state(WorkerState::Draining).len();
         DaemonStatus {
             daemon_id: self.config.daemon_id.clone(),
             bind_address: self.config.bind_address.clone(),
             protocol_version: self.config.protocol_version,
-            ready_workers: self.ready_worker_ids().len(),
+            ready_workers,
+            saturated_workers,
+            draining_workers,
             admitted_workers: self.admitted_workers.len(),
             rejected_workers: self.rejected_workers,
         }
