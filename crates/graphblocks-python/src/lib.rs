@@ -33,6 +33,10 @@ use graphblocks_runtime_core::tool::{
 use graphblocks_runtime_core::tool_call::{
     ToolCall, ToolCallDraft, ToolCallDraftStatus, ToolCallStatus,
 };
+use graphblocks_runtime_core::tool_execution::{
+    ToolExecutionCancellationPolicy, ToolExecutionFailurePolicy, ToolExecutionPlan,
+    ToolExecutionPlanError, ToolExecutionState, ToolPlanCall,
+};
 use graphblocks_runtime_core::tool_result::{
     ArtifactRef, ContentPart, ContentPartKind, Diagnostic, DiagnosticSeverity, ToolEffectOutcome,
     ToolResult, ToolResultContentPolicy, ToolResultStatus, ToolResultValidation,
@@ -1009,16 +1013,10 @@ fn parse_tool_binding(value: &Value, label: &str) -> PyResult<ToolBinding> {
     if let Some(cancellation) =
         optional_nullable_alias_string(object, "cancellation", "cancellation", label)?
     {
-        binding = binding.with_cancellation(match cancellation {
-            "unsupported" => ToolCancellation::Unsupported,
-            "cooperative" => ToolCancellation::Cooperative,
-            "force_terminable" => ToolCancellation::ForceTerminable,
-            value => {
-                return Err(PyValueError::new_err(format!(
-                    "{label}.cancellation has unknown cancellation {value:?}"
-                )));
-            }
-        });
+        binding = binding.with_cancellation(parse_tool_cancellation(
+            cancellation,
+            &format!("{label}.cancellation"),
+        )?);
     }
     if let Some(result_mode) =
         optional_nullable_alias_string(object, "resultMode", "result_mode", label)?
@@ -3130,6 +3128,340 @@ fn evaluate_declarative_output_policy_json(
     })
 }
 
+#[pyfunction]
+fn evaluate_tool_execution_plan_json(plan_json: &str, operations_json: &str) -> PyResult<String> {
+    let tool_execution_error_code = |error: &ToolExecutionPlanError| -> &'static str {
+        match error {
+            ToolExecutionPlanError::UnsafeParallelEffects { .. } => "unsafe_parallel_effects",
+            ToolExecutionPlanError::EffectConflict { .. } => "effect_conflict",
+            ToolExecutionPlanError::ParallelismExhausted => "parallelism_exhausted",
+            ToolExecutionPlanError::DependenciesNotReady { .. } => "dependencies_not_ready",
+            ToolExecutionPlanError::ToolCallNotPending { .. } => "tool_call_not_pending",
+            ToolExecutionPlanError::ToolCallNotRunning { .. } => "tool_call_not_running",
+            _ => "tool_execution_plan_error",
+        }
+    };
+    let tool_execution_plan_error = |error: ToolExecutionPlanError| {
+        PyValueError::new_err(format!(
+            "tool execution plan error {}: {error:?}",
+            tool_execution_error_code(&error)
+        ))
+    };
+    let operation_result =
+        |index: usize, op: &str, result: Result<(), ToolExecutionPlanError>| -> Value {
+            match result {
+                Ok(()) => json!({"index": index, "op": op, "error": Value::Null}),
+                Err(error) => json!({
+                    "index": index,
+                    "op": op,
+                    "error": tool_execution_error_code(&error),
+                    "errorDebug": format!("{error:?}"),
+                }),
+            }
+        };
+
+    let plan_value = parse_json_argument(plan_json, "tool execution plan")?;
+    let operations_value = parse_json_argument(operations_json, "tool execution operations")?;
+    let plan_object = json_object(&plan_value, "plan")?;
+    let plan_id = required_alias_string(plan_object, "planId", "plan_id", "plan")?;
+    let response_id = required_alias_string(plan_object, "responseId", "response_id", "plan")?;
+    let maximum_parallelism = u64_to_usize(
+        required_alias_u64(
+            plan_object,
+            "maximumParallelism",
+            "maximum_parallelism",
+            "plan",
+        )?,
+        "plan.maximumParallelism",
+    )?;
+    let effect_key_template = optional_nullable_alias_string(
+        plan_object,
+        "effectKeyTemplate",
+        "effect_key_template",
+        "plan",
+    )?;
+    let raw_calls = alias_value(plan_object, "calls", "calls")
+        .and_then(Value::as_array)
+        .ok_or_else(|| PyValueError::new_err("plan.calls must be an array"))?;
+    let planned_calls = raw_calls
+        .iter()
+        .enumerate()
+        .map(|(index, raw_call)| {
+            let label = format!("plan.calls[{index}]");
+            let object = json_object(raw_call, &label)?;
+            let arguments = object
+                .get("arguments")
+                .cloned()
+                .ok_or_else(|| PyValueError::new_err(format!("{label}.arguments is required")))?;
+            let mut draft = ToolCallDraft::proposed(
+                response_id,
+                required_alias_string(object, "toolCallId", "tool_call_id", &label)?,
+                required_alias_string(object, "toolName", "tool_name", &label)?,
+            );
+            draft
+                .append_argument_fragment(arguments.to_string())
+                .map_err(|error| {
+                    PyValueError::new_err(format!("{label}.arguments is invalid: {error:?}"))
+                })?;
+            let mut call = draft
+                .into_completed_tool_call("resolved-tool-1", 1_000)
+                .map_err(|error| {
+                    PyValueError::new_err(format!("{label} could not be finalized: {error:?}"))
+                })?;
+            if let Some(depends_on) = alias_value(object, "dependsOn", "depends_on") {
+                let Some(depends_on) = depends_on.as_array() else {
+                    return Err(PyValueError::new_err(format!(
+                        "{label}.dependsOn must be an array"
+                    )));
+                };
+                call.depends_on = depends_on
+                    .iter()
+                    .enumerate()
+                    .map(|(index, dependency)| {
+                        dependency.as_str().map(str::to_owned).ok_or_else(|| {
+                            PyValueError::new_err(format!(
+                                "{label}.dependsOn[{index}] must be a string"
+                            ))
+                        })
+                    })
+                    .collect::<PyResult<Vec<_>>>()?;
+            }
+
+            let mut planned_call = ToolPlanCall::new(call).with_effects(parse_tool_effects(
+                alias_value(object, "effects", "effects"),
+                &format!("{label}.effects"),
+            )?);
+            if let Some(cancellation) =
+                optional_nullable_alias_string(object, "cancellation", "cancellation", &label)?
+            {
+                planned_call = planned_call.with_cancellation(parse_tool_cancellation(
+                    cancellation,
+                    &format!("{label}.cancellation"),
+                )?);
+            }
+            if let Some(effect_key) =
+                optional_nullable_alias_string(object, "effectKey", "effect_key", &label)?
+            {
+                planned_call = planned_call.with_effect_key(effect_key);
+            } else if let Some(template) = effect_key_template {
+                planned_call = planned_call
+                    .with_effect_key_template(template)
+                    .map_err(&tool_execution_plan_error)?;
+            }
+            Ok(planned_call)
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    let mut plan = ToolExecutionPlan::new(plan_id, response_id, planned_calls, maximum_parallelism)
+        .map_err(&tool_execution_plan_error)?;
+    if let Some(failure_policy) =
+        optional_nullable_alias_string(plan_object, "failurePolicy", "failure_policy", "plan")?
+    {
+        plan = plan.with_failure_policy(match failure_policy {
+            "fail_fast" => ToolExecutionFailurePolicy::FailFast,
+            "collect" => ToolExecutionFailurePolicy::Collect,
+            "return_failures_to_model" => ToolExecutionFailurePolicy::ReturnFailuresToModel,
+            value => {
+                return Err(PyValueError::new_err(format!(
+                    "plan.failurePolicy has unknown failure policy {value:?}"
+                )));
+            }
+        });
+    }
+    if let Some(cancellation_policy) = optional_nullable_alias_string(
+        plan_object,
+        "cancellationPolicy",
+        "cancellation_policy",
+        "plan",
+    )? {
+        plan = plan.with_cancellation_policy(match cancellation_policy {
+            "cancel_dependents" => ToolExecutionCancellationPolicy::CancelDependents,
+            "cancel_all" => ToolExecutionCancellationPolicy::CancelAll,
+            "allow_independent_calls" => ToolExecutionCancellationPolicy::AllowIndependentCalls,
+            value => {
+                return Err(PyValueError::new_err(format!(
+                    "plan.cancellationPolicy has unknown cancellation policy {value:?}"
+                )));
+            }
+        });
+    }
+
+    let operations = operations_value
+        .as_array()
+        .ok_or_else(|| PyValueError::new_err("tool execution operations must be an array"))?;
+    let mut operation_results = Vec::new();
+    for (index, operation) in operations.iter().enumerate() {
+        let label = format!("operations[{index}]");
+        let operation = json_object(operation, &label)?;
+        let op = required_string(operation, "op", &label)?;
+        let result = match op {
+            "ready" => json!({
+                "index": index,
+                "op": op,
+                "ready": plan.ready_call_ids(),
+            }),
+            "start" => operation_result(
+                index,
+                op,
+                plan.record_started(required_alias_string(
+                    operation,
+                    "toolCallId",
+                    "tool_call_id",
+                    &label,
+                )?),
+            ),
+            "complete" => operation_result(
+                index,
+                op,
+                plan.record_completed(required_alias_string(
+                    operation,
+                    "toolCallId",
+                    "tool_call_id",
+                    &label,
+                )?),
+            ),
+            "fail" => operation_result(
+                index,
+                op,
+                plan.record_failed(required_alias_string(
+                    operation,
+                    "toolCallId",
+                    "tool_call_id",
+                    &label,
+                )?),
+            ),
+            "deny" => operation_result(
+                index,
+                op,
+                plan.record_denied(required_alias_string(
+                    operation,
+                    "toolCallId",
+                    "tool_call_id",
+                    &label,
+                )?),
+            ),
+            "expire" => operation_result(
+                index,
+                op,
+                plan.record_expired(required_alias_string(
+                    operation,
+                    "toolCallId",
+                    "tool_call_id",
+                    &label,
+                )?),
+            ),
+            "cancel" => operation_result(
+                index,
+                op,
+                plan.record_cancelled(required_alias_string(
+                    operation,
+                    "toolCallId",
+                    "tool_call_id",
+                    &label,
+                )?),
+            ),
+            "policy_stopped" => operation_result(
+                index,
+                op,
+                plan.record_policy_stopped(required_alias_string(
+                    operation,
+                    "toolCallId",
+                    "tool_call_id",
+                    &label,
+                )?),
+            ),
+            "policy_stop" => {
+                let pending_tool_calls = required_alias_string(
+                    operation,
+                    "pendingToolCalls",
+                    "pending_tool_calls",
+                    &label,
+                )?;
+                let affected = plan.apply_policy_stop(match pending_tool_calls {
+                    "keep" => PendingToolCallsDisposition::Keep,
+                    "deny" => PendingToolCallsDisposition::Deny,
+                    "cancel_admitted" => PendingToolCallsDisposition::CancelAdmitted,
+                    value => {
+                        return Err(PyValueError::new_err(format!(
+                            "{label}.pendingToolCalls has unknown pending tool calls disposition {value:?}"
+                        )));
+                    }
+                });
+                json!({
+                    "index": index,
+                    "op": op,
+                    "affected": affected,
+                })
+            }
+            value => {
+                return Err(PyValueError::new_err(format!(
+                    "{label}.op has unknown tool execution operation {value:?}"
+                )));
+            }
+        };
+        operation_results.push(result);
+    }
+
+    let states = raw_calls
+        .iter()
+        .enumerate()
+        .map(|(index, raw_call)| {
+            let label = format!("plan.calls[{index}]");
+            let call = json_object(raw_call, &label)?;
+            let tool_call_id = required_alias_string(call, "toolCallId", "tool_call_id", &label)?;
+            Ok((
+                tool_call_id.to_owned(),
+                plan.state(tool_call_id).map(|state| match state {
+                    ToolExecutionState::Pending => "pending",
+                    ToolExecutionState::Running => "running",
+                    ToolExecutionState::Completed => "completed",
+                    ToolExecutionState::Failed => "failed",
+                    ToolExecutionState::Denied => "denied",
+                    ToolExecutionState::Cancelled => "cancelled",
+                    ToolExecutionState::PolicyStopped => "policy_stopped",
+                    ToolExecutionState::Expired => "expired",
+                    ToolExecutionState::Skipped => "skipped",
+                }),
+            ))
+        })
+        .collect::<PyResult<BTreeMap<_, _>>>()?;
+    let failure_policy = match plan.failure_policy {
+        ToolExecutionFailurePolicy::FailFast => "fail_fast",
+        ToolExecutionFailurePolicy::Collect => "collect",
+        ToolExecutionFailurePolicy::ReturnFailuresToModel => "return_failures_to_model",
+    };
+    let cancellation_policy = match plan.cancellation_policy {
+        ToolExecutionCancellationPolicy::CancelDependents => "cancel_dependents",
+        ToolExecutionCancellationPolicy::CancelAll => "cancel_all",
+        ToolExecutionCancellationPolicy::AllowIndependentCalls => "allow_independent_calls",
+    };
+    serde_json::to_string(&json!({
+        "planId": plan.plan_id,
+        "responseId": plan.response_id,
+        "maximumParallelism": plan.maximum_parallelism,
+        "failurePolicy": failure_policy,
+        "cancellationPolicy": cancellation_policy,
+        "ready": plan.ready_call_ids(),
+        "operations": operation_results,
+        "states": states,
+    }))
+    .map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize tool execution plan evaluation: {error}"
+        ))
+    })
+}
+
+fn parse_tool_cancellation(value: &str, label: &str) -> PyResult<ToolCancellation> {
+    match value {
+        "unsupported" => Ok(ToolCancellation::Unsupported),
+        "cooperative" => Ok(ToolCancellation::Cooperative),
+        "force_terminable" => Ok(ToolCancellation::ForceTerminable),
+        value => Err(PyValueError::new_err(format!(
+            "{label} has unknown cancellation {value:?}"
+        ))),
+    }
+}
+
 #[pymodule]
 fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("__version__", env!("CARGO_PKG_VERSION"))?;
@@ -3159,6 +3491,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
         evaluate_declarative_output_policy_json,
         module
     )?)?;
+    module.add_function(wrap_pyfunction!(evaluate_tool_execution_plan_json, module)?)?;
     Ok(())
 }
 
@@ -3170,8 +3503,9 @@ mod tests {
     use super::{
         admit_exhaustion_work_json, admit_worker_message_json, compile_graph_json,
         decide_agent_step_json, evaluate_declarative_output_policy_json, evaluate_output_gate_json,
-        finalize_tool_call_json, prepare_tool_result_for_model_json, run_stdlib_graph_json,
-        run_test_graph_json, validate_remote_payload_json, validate_worker_advertisement_json,
+        evaluate_tool_execution_plan_json, finalize_tool_call_json,
+        prepare_tool_result_for_model_json, run_stdlib_graph_json, run_test_graph_json,
+        validate_remote_payload_json, validate_worker_advertisement_json,
         validate_worker_protocol_message_json,
     };
 
@@ -4989,6 +5323,97 @@ mod tests {
             Some("cancel_admitted")
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_tool_execution_plan_json_runs_native_plan_operations() -> Result<(), String> {
+        let plan_json = json!({
+            "planId": "plan-1",
+            "responseId": "response-1",
+            "maximumParallelism": 2,
+            "effectKeyTemplate": "{tool.name}:{arguments.resource_id}",
+            "calls": [
+                {
+                    "toolCallId": "call-a",
+                    "toolName": "ticket.create",
+                    "arguments": {"resource_id": "ticket-1"},
+                    "effects": ["external_write"],
+                    "cancellation": "force_terminable"
+                },
+                {
+                    "toolCallId": "call-b",
+                    "toolName": "ticket.create",
+                    "arguments": {"resource_id": "ticket-1"},
+                    "effects": ["external_write"],
+                    "cancellation": "force_terminable"
+                },
+                {
+                    "toolCallId": "call-c",
+                    "toolName": "knowledge.search",
+                    "arguments": {"resource_id": "docs"},
+                    "effects": ["external_read"]
+                }
+            ]
+        })
+        .to_string();
+        let operations_json = json!([
+            {"op": "ready"},
+            {"op": "start", "toolCallId": "call-a"},
+            {"op": "ready"},
+            {"op": "policy_stop", "pendingToolCalls": "cancel_admitted"}
+        ])
+        .to_string();
+
+        let payload = evaluate_tool_execution_plan_json(&plan_json, &operations_json)
+            .map_err(|error| error.to_string())?;
+        let payload = serde_json::from_str::<Value>(&payload).map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            payload["operations"][0]["ready"],
+            json!(["call-a", "call-c"])
+        );
+        assert_eq!(payload["operations"][1]["error"], Value::Null);
+        assert_eq!(payload["operations"][2]["ready"], json!(["call-c"]));
+        assert_eq!(
+            payload["operations"][3]["affected"],
+            json!(["call-a", "call-b", "call-c"])
+        );
+        assert_eq!(payload["states"]["call-a"], json!("cancelled"));
+        assert_eq!(payload["states"]["call-b"], json!("denied"));
+        assert_eq!(payload["states"]["call-c"], json!("denied"));
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_tool_execution_plan_json_reports_native_creation_errors() -> Result<(), String> {
+        pyo3::Python::initialize();
+        let plan_json = json!({
+            "planId": "plan-1",
+            "responseId": "response-1",
+            "maximumParallelism": 2,
+            "calls": [
+                {
+                    "toolCallId": "call-a",
+                    "toolName": "ticket.create",
+                    "arguments": {"resource_id": "ticket-1"},
+                    "effects": ["external_write"]
+                },
+                {
+                    "toolCallId": "call-b",
+                    "toolName": "ticket.create",
+                    "arguments": {"resource_id": "ticket-2"},
+                    "effects": ["external_write"]
+                }
+            ]
+        })
+        .to_string();
+
+        let error = evaluate_tool_execution_plan_json(&plan_json, "[]")
+            .expect_err("unsafe parallel effects should be rejected")
+            .to_string();
+
+        assert!(error.contains("unsafe_parallel_effects"), "{error}");
         Ok(())
     }
 

@@ -135,6 +135,10 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             }
         )
 
+    def evaluate_tool_execution_plan_json(plan_json: str, operations_json: str) -> str:
+        calls.append(("tool_execution_plan", (plan_json, operations_json)))
+        return json.dumps({"plan": json.loads(plan_json), "operations": json.loads(operations_json)})
+
     def decide_agent_step_json(spec_json: str, request_json: str) -> str:
         calls.append(("agent_step", (spec_json, request_json)))
         return json.dumps({"decision": "continue", "spec": json.loads(spec_json), "request": json.loads(request_json)})
@@ -190,6 +194,7 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         decide_agent_step_json=decide_agent_step_json,
         evaluate_declarative_output_policy_json=evaluate_declarative_output_policy_json,
         evaluate_output_gate_json=evaluate_output_gate_json,
+        evaluate_tool_execution_plan_json=evaluate_tool_execution_plan_json,
         finalize_tool_call_json=finalize_tool_call_json,
         prepare_tool_result_for_model_json=prepare_tool_result_for_model_json,
         run_stdlib_graph_json=run_stdlib_graph_json,
@@ -230,6 +235,10 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         [{"ruleId": "allow"}],
         {"streamId": "stream-1", "sequence": 1},
         evaluated_at_unix_ms=1_010,
+    )
+    tool_execution = runtime.evaluate_tool_execution_plan(
+        {"planId": "plan-1", "maximumParallelism": 2},
+        [{"op": "ready"}],
     )
     agent_decision = runtime.decide_agent_step(
         {"maxSteps": 4},
@@ -286,6 +295,10 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         "rules": [{"ruleId": "allow"}],
         "chunk": {"streamId": "stream-1", "sequence": 1},
         "evaluatedAtUnixMs": 1_010,
+    }
+    assert tool_execution == {
+        "plan": {"maximumParallelism": 2, "planId": "plan-1"},
+        "operations": [{"op": "ready"}],
     }
     assert agent_decision == {
         "decision": "continue",
@@ -349,6 +362,10 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             ('[{"ruleId":"allow"}]', '{"sequence":1,"streamId":"stream-1"}', 1_010),
         ),
         (
+            "tool_execution_plan",
+            ('{"maximumParallelism":2,"planId":"plan-1"}', '[{"op":"ready"}]'),
+        ),
+        (
             "agent_step",
             ('{"maxSteps":4}', '{"pendingToolCalls":0,"step":2}'),
         ),
@@ -390,6 +407,8 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     assert "prepare_tool_result_for_model_json" in runtime.__all__
     assert "evaluate_output_gate" in runtime.__all__
     assert "evaluate_declarative_output_policy" in runtime.__all__
+    assert "evaluate_tool_execution_plan" in runtime.__all__
+    assert "evaluate_tool_execution_plan_json" in runtime.__all__
     assert "validate_worker_advertisement" in runtime.__all__
     assert "validate_worker_protocol_message" in runtime.__all__
     assert "validate_remote_payload" in runtime.__all__

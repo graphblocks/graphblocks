@@ -15,6 +15,7 @@ try:
         decide_agent_step_json,
         evaluate_declarative_output_policy_json,
         evaluate_output_gate_json,
+        evaluate_tool_execution_plan_json,
         finalize_tool_call_json,
         prepare_tool_result_for_model_json,
         run_stdlib_graph_json,
@@ -94,6 +95,9 @@ except ImportError as error:
         chunk_json: str,
         evaluated_at_unix_ms: int,
     ) -> str:
+        require_native_extension()
+
+    def evaluate_tool_execution_plan_json(plan_json: str, operations_json: str) -> str:
         require_native_extension()
 
     def validate_worker_advertisement_json(
@@ -264,6 +268,16 @@ def evaluate_declarative_output_policy(
     )
 
 
+def evaluate_tool_execution_plan(
+    plan: dict[str, object],
+    operations: object,
+) -> dict[str, object]:
+    return _json_object_result(
+        evaluate_tool_execution_plan_json(_canonical_json(plan), _canonical_json(operations)),
+        "native tool execution plan result",
+    )
+
+
 def validate_worker_advertisement(
     advertisement: dict[str, object],
     *,
@@ -304,6 +318,8 @@ __all__ = [
     "evaluate_declarative_output_policy_json",
     "evaluate_output_gate",
     "evaluate_output_gate_json",
+    "evaluate_tool_execution_plan",
+    "evaluate_tool_execution_plan_json",
     "finalize_tool_call",
     "finalize_tool_call_json",
     "native_extension_available",
