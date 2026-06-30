@@ -30,6 +30,25 @@ def _is_direct_schema_type_ref(type_ref: str) -> bool:
     return ("@" in type_ref or "/" in type_ref) and "<" not in type_ref and ">" not in type_ref
 
 
+def _parse_block_version(value: Any) -> int:
+    if isinstance(value, bool):
+        raise ValueError("block descriptor version must be a positive integer")
+    if isinstance(value, int):
+        if value < 1:
+            raise ValueError("block descriptor version must be a positive integer")
+        return value
+    if isinstance(value, str):
+        if not value or not value.isascii() or not value.isdecimal():
+            raise ValueError("block descriptor version must be a positive integer")
+        if value != "0" and value.startswith("0"):
+            raise ValueError("block descriptor version must not use leading zeroes")
+        parsed = int(value)
+        if parsed < 1:
+            raise ValueError("block descriptor version must be a positive integer")
+        return parsed
+    raise ValueError("block descriptor version must be a positive integer")
+
+
 @dataclass(frozen=True, slots=True)
 class PluginManifest:
     plugin_id: str
@@ -96,6 +115,10 @@ class BlockCatalog:
                 block_type, version = block_type.rsplit("@", 1)
             if not isinstance(block_type, str) or version is None:
                 continue
+            try:
+                parsed_version = _parse_block_version(version)
+            except ValueError as error:
+                raise ValueError(f"block catalog entry {block_index} version is invalid: {error}") from error
             inputs: list[PortDescriptor] = []
             for port in block.get("inputs", []):
                 if isinstance(port, dict) and isinstance(port.get("name"), str):
@@ -161,7 +184,7 @@ class BlockCatalog:
                     )
             descriptor = BlockDescriptor(
                 str(block_type),
-                int(version),
+                parsed_version,
                 tuple(inputs),
                 tuple(outputs),
                 tuple(resource_slots),
@@ -253,12 +276,26 @@ def validate_plugin_manifest(document: Any) -> DiagnosticSet:
             continue
         block_type = block.get("typeId") or block.get("type_id") or block.get("block")
         version = block.get("version")
+        version_path = f"$.spec.blocks[{index}].version"
         if isinstance(block_type, str) and "@" in block_type and version is None:
             block_type, version = block_type.rsplit("@", 1)
+            version_path = f"$.spec.blocks[{index}].typeId"
         if not isinstance(block_type, str) or not block_type:
             diagnostics.append(Diagnostic("GB2009", "block descriptor requires typeId", f"$.spec.blocks[{index}].typeId"))
+        parsed_version: int | None = None
         if version is None:
             diagnostics.append(Diagnostic("GB2010", "block descriptor requires version", f"$.spec.blocks[{index}].version"))
+        else:
+            try:
+                parsed_version = _parse_block_version(version)
+            except ValueError as error:
+                diagnostics.append(
+                    Diagnostic(
+                        "GB2016",
+                        f"block descriptor version is invalid: {error}",
+                        version_path,
+                    )
+                )
         for direction in ("inputs", "outputs"):
             ports = block.get(direction, [])
             if not isinstance(ports, list):
@@ -322,7 +359,11 @@ def validate_plugin_manifest(document: Any) -> DiagnosticSet:
                             )
                         )
         implementation = str(block.get("implementation") or block.get("implementationId") or "")
-        key = (str(block_type), str(version), implementation)
+        key = (
+            str(block_type),
+            str(parsed_version) if parsed_version is not None else str(version),
+            implementation,
+        )
         if key in seen_blocks:
             diagnostics.append(
                 Diagnostic("GB2011", "duplicate block descriptor in plugin manifest", f"$.spec.blocks[{index}]")

@@ -37,6 +37,23 @@ def test_block_catalog_allows_port_type_expressions() -> None:
     assert catalog.get("control.map@1") is not None
 
 
+@pytest.mark.parametrize("version", [True, 0, 1.0, "", "+1", "01", "1.0", "one"])
+def test_block_catalog_rejects_non_canonical_block_versions(version: object) -> None:
+    with pytest.raises(
+        ValueError,
+        match="block catalog entry 0 version is invalid",
+    ):
+        BlockCatalog.from_blocks([{"typeId": "bad.version", "version": version}])
+
+
+def test_block_catalog_rejects_non_canonical_inline_block_version() -> None:
+    with pytest.raises(
+        ValueError,
+        match="block catalog entry 0 version is invalid",
+    ):
+        BlockCatalog.from_blocks([{"typeId": "bad.version@01"}])
+
+
 def test_compile_rejects_edge_to_unknown_input_port() -> None:
     catalog = BlockCatalog.from_blocks(
         [

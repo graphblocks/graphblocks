@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 import yaml
 
 from graphblocks import BlockCatalog, discover_plugins, validate_plugin_manifest
@@ -24,6 +25,43 @@ def test_plugin_manifest_validation_requires_plugin_id() -> None:
 
     assert not diagnostics.ok
     assert [item.code for item in diagnostics.diagnostics] == ["GB2006"]
+
+
+@pytest.mark.parametrize("version", [True, 0, 1.0, "", "+1", "01", "1.0", "one"])
+def test_plugin_manifest_validation_rejects_non_canonical_block_versions(version: object) -> None:
+    diagnostics = validate_plugin_manifest(
+        {
+            "apiVersion": "graphblocks.ai/v1alpha1",
+            "kind": "PluginManifest",
+            "metadata": {"name": "com.example.bad_version"},
+            "spec": {
+                "pluginId": "com.example.bad_version",
+                "blocks": [{"typeId": "bad.version", "version": version}],
+            },
+        }
+    )
+
+    assert not diagnostics.ok
+    assert [item.code for item in diagnostics.diagnostics] == ["GB2016"]
+    assert [item.path for item in diagnostics.diagnostics] == ["$.spec.blocks[0].version"]
+
+
+def test_plugin_manifest_validation_rejects_non_canonical_inline_block_version() -> None:
+    diagnostics = validate_plugin_manifest(
+        {
+            "apiVersion": "graphblocks.ai/v1alpha1",
+            "kind": "PluginManifest",
+            "metadata": {"name": "com.example.bad_inline_version"},
+            "spec": {
+                "pluginId": "com.example.bad_inline_version",
+                "blocks": [{"typeId": "bad.version@01"}],
+            },
+        }
+    )
+
+    assert not diagnostics.ok
+    assert [item.code for item in diagnostics.diagnostics] == ["GB2016"]
+    assert [item.path for item in diagnostics.diagnostics] == ["$.spec.blocks[0].typeId"]
 
 
 def test_duplicate_plugin_id_is_registry_error(tmp_path) -> None:
