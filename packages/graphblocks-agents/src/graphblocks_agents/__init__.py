@@ -87,6 +87,40 @@ def evaluate_native_tool_execution_plan(
     return evaluate_tool_execution_plan(plan, operations)
 
 
+def finalize_native_tool_call(
+    draft: dict[str, object],
+    *,
+    resolved_tool_id: str,
+    created_at_unix_ms: int,
+) -> dict[str, object]:
+    from graphblocks_runtime import finalize_tool_call
+
+    return finalize_tool_call(
+        draft,
+        resolved_tool_id=resolved_tool_id,
+        created_at_unix_ms=created_at_unix_ms,
+    )
+
+
+def prepare_native_tool_result_for_model(
+    call: dict[str, object],
+    result: dict[str, object],
+    resolved_tool: dict[str, object],
+    schema_registry: object,
+    *,
+    content_policy: dict[str, object] | None = None,
+) -> dict[str, object]:
+    from graphblocks_runtime import prepare_tool_result_for_model
+
+    return prepare_tool_result_for_model(
+        call,
+        result,
+        resolved_tool,
+        schema_registry,
+        content_policy=content_policy,
+    )
+
+
 def decide_native_agent_step(spec: dict[str, object], request: dict[str, object]) -> dict[str, object]:
     from graphblocks_runtime import decide_agent_step
 
@@ -185,5 +219,7 @@ __all__ = [
     "evaluate_native_sequential_tool_queue",
     "evaluate_native_tool_execution_plan",
     "evaluate_native_tool_result_stream",
+    "finalize_native_tool_call",
+    "prepare_native_tool_result_for_model",
     "validate_tool_result_for_model",
 ]

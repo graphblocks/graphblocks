@@ -74,6 +74,38 @@ def test_agents_package_lazy_native_helpers_delegate_to_runtime(monkeypatch) -> 
         calls.append(("plan", (plan, operations)))
         return {"kind": "plan", "plan": plan, "operations": operations}
 
+    def finalize_tool_call(
+        draft: dict[str, object],
+        *,
+        resolved_tool_id: str,
+        created_at_unix_ms: int,
+    ) -> dict[str, object]:
+        calls.append(("finalize", (draft, resolved_tool_id, created_at_unix_ms)))
+        return {
+            "kind": "finalized",
+            "draft": draft,
+            "resolvedToolId": resolved_tool_id,
+            "createdAtUnixMs": created_at_unix_ms,
+        }
+
+    def prepare_tool_result_for_model(
+        call: dict[str, object],
+        result: dict[str, object],
+        resolved_tool: dict[str, object],
+        schema_registry: object,
+        *,
+        content_policy: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        calls.append(("prepare_result", (call, result, resolved_tool, schema_registry, content_policy)))
+        return {
+            "kind": "prepared_result",
+            "call": call,
+            "result": result,
+            "resolvedTool": resolved_tool,
+            "schemaRegistry": schema_registry,
+            "contentPolicy": content_policy,
+        }
+
     def decide_agent_step(spec: dict[str, object], request: dict[str, object]) -> dict[str, object]:
         calls.append(("agent_step", (spec, request)))
         return {"kind": "agent_step", "spec": spec, "request": request}
@@ -94,6 +126,8 @@ def test_agents_package_lazy_native_helpers_delegate_to_runtime(monkeypatch) -> 
             evaluate_sequential_tool_queue=evaluate_sequential_tool_queue,
             evaluate_tool_execution_plan=evaluate_tool_execution_plan,
             evaluate_tool_result_stream=evaluate_tool_result_stream,
+            finalize_tool_call=finalize_tool_call,
+            prepare_tool_result_for_model=prepare_tool_result_for_model,
         ),
     )
     graphblocks_agents = importlib.import_module("graphblocks_agents")
@@ -101,6 +135,18 @@ def test_agents_package_lazy_native_helpers_delegate_to_runtime(monkeypatch) -> 
     plan = graphblocks_agents.evaluate_native_tool_execution_plan(
         {"planId": "plan-1"},
         [{"op": "ready"}],
+    )
+    finalized = graphblocks_agents.finalize_native_tool_call(
+        {"toolCallId": "call-1", "status": "arguments_complete"},
+        resolved_tool_id="resolved-tool-1",
+        created_at_unix_ms=1_782_300_001_000,
+    )
+    prepared_result = graphblocks_agents.prepare_native_tool_result_for_model(
+        {"toolCallId": "call-1"},
+        {"toolCallId": "call-1", "status": "completed"},
+        {"resolvedToolId": "resolved-tool-1"},
+        {"schemas": []},
+        content_policy={"maxOutputBytes": 1024},
     )
     decision = graphblocks_agents.decide_native_agent_step(
         {"maxSteps": 3},
@@ -116,6 +162,20 @@ def test_agents_package_lazy_native_helpers_delegate_to_runtime(monkeypatch) -> 
     )
 
     assert plan == {"kind": "plan", "plan": {"planId": "plan-1"}, "operations": [{"op": "ready"}]}
+    assert finalized == {
+        "kind": "finalized",
+        "draft": {"toolCallId": "call-1", "status": "arguments_complete"},
+        "resolvedToolId": "resolved-tool-1",
+        "createdAtUnixMs": 1_782_300_001_000,
+    }
+    assert prepared_result == {
+        "kind": "prepared_result",
+        "call": {"toolCallId": "call-1"},
+        "result": {"toolCallId": "call-1", "status": "completed"},
+        "resolvedTool": {"resolvedToolId": "resolved-tool-1"},
+        "schemaRegistry": {"schemas": []},
+        "contentPolicy": {"maxOutputBytes": 1024},
+    }
     assert decision == {
         "kind": "agent_step",
         "spec": {"maxSteps": 3},
@@ -133,6 +193,24 @@ def test_agents_package_lazy_native_helpers_delegate_to_runtime(monkeypatch) -> 
     }
     assert calls == [
         ("plan", ({"planId": "plan-1"}, [{"op": "ready"}])),
+        (
+            "finalize",
+            (
+                {"toolCallId": "call-1", "status": "arguments_complete"},
+                "resolved-tool-1",
+                1_782_300_001_000,
+            ),
+        ),
+        (
+            "prepare_result",
+            (
+                {"toolCallId": "call-1"},
+                {"toolCallId": "call-1", "status": "completed"},
+                {"resolvedToolId": "resolved-tool-1"},
+                {"schemas": []},
+                {"maxOutputBytes": 1024},
+            ),
+        ),
         ("agent_step", ({"maxSteps": 3}, {"step": 1, "toolResults": []})),
         (
             "queue",
@@ -145,6 +223,8 @@ def test_agents_package_lazy_native_helpers_delegate_to_runtime(monkeypatch) -> 
     ]
     assert "decide_native_agent_step" in graphblocks_agents.__all__
     assert "evaluate_native_tool_result_stream" in graphblocks_agents.__all__
+    assert "finalize_native_tool_call" in graphblocks_agents.__all__
+    assert "prepare_native_tool_result_for_model" in graphblocks_agents.__all__
 
 
 def test_agents_package_exposes_policy_obligated_tool_admission(monkeypatch) -> None:
