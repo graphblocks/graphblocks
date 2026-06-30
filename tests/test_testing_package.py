@@ -195,6 +195,39 @@ def test_testing_package_loads_shared_policy_tck_cases(monkeypatch) -> None:
     assert "load_policy_tck_cases" in graphblocks_testing.__all__
 
 
+def test_testing_package_policy_tck_maps_invalid_generation_sequence(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    case = graphblocks_testing.TckCase.policy(
+        case_id="policy/invalid-generation-sequence",
+        delivery={
+            "mode": "bounded_holdback",
+            "holdbackMaxTokens": 8,
+            "onViolation": "abort_response",
+        },
+        operations=(
+            {
+                "op": "chunk",
+                "sequence": 0,
+                "text": "invalid",
+                "expectError": "invalid_generation_sequence",
+            },
+        ),
+        expected={
+            "lastGeneratedSequence": 0,
+            "lastPolicyAcceptedSequence": 0,
+            "lastClientDeliveredSequence": 0,
+        },
+    )
+
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases((case,))
+
+    assert report.ok
+    assert report.results[0].diagnostics == ()
+    assert report.results[0].observed["lastGeneratedSequence"] == 0
+
+
 def test_testing_package_loads_shared_application_event_tck_cases(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")

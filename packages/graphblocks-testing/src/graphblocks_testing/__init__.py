@@ -8201,6 +8201,8 @@ class TckRunner:
                     actual_error = "non_contiguous_sequence"
                 elif "must be greater than" in message:
                     actual_error = "non_monotonic_sequence"
+                elif message == "generation chunk sequence must be positive":
+                    actual_error = "invalid_generation_sequence"
                 else:
                     actual_error = type(error).__name__
                 actual_deliver = []
