@@ -111,6 +111,80 @@ def bind_openapi_operation(
     )
 
 
+def define_openapi_tools_from_spec(
+    spec: Mapping[str, object],
+    *,
+    schema_prefix: str = "schemas/openapi",
+    tool_name_prefix: str | None = None,
+    tags: Iterable[str] = (),
+    version: str | None = None,
+) -> tuple[ToolDefinition, ...]:
+    raw_paths = spec.get("paths")
+    if not isinstance(raw_paths, Mapping):
+        raise OpenApiToolAdapterError("OpenAPI spec paths must be an object")
+
+    discovered: list[ToolDefinition] = []
+    seen: set[str] = set()
+    base_tags = _string_set(tags, owner="OpenAPI discovery tags")
+    for path in sorted(raw_paths):
+        path_item = raw_paths[path]
+        if not isinstance(path_item, Mapping):
+            continue
+        for method in _OPENAPI_HTTP_METHODS:
+            operation = path_item.get(method)
+            if operation is None:
+                continue
+            if not isinstance(operation, Mapping):
+                raise OpenApiToolAdapterError(
+                    f"OpenAPI operation {method.upper()} {path} must be an object"
+                )
+            operation_id = _required_string(
+                operation,
+                "operationId",
+                owner=f"OpenAPI operation {method.upper()} {path}",
+            )
+            tool_name = (
+                _optional_text(operation, "x-graphblocks-tool-name")
+                or (f"{tool_name_prefix}.{operation_id}" if tool_name_prefix else operation_id)
+            )
+            if tool_name in seen:
+                raise OpenApiToolAdapterError(f"OpenAPI spec produces duplicate tool {tool_name!r}")
+            seen.add(tool_name)
+
+            input_schema = _operation_schema_ref(
+                operation.get("x-graphblocks-input-schema"),
+                fallback=_request_schema_ref(operation, schema_prefix, operation_id),
+                owner=f"OpenAPI operation {operation_id} input schema",
+                schema_prefix=schema_prefix,
+            )
+            output_schema = _operation_schema_ref(
+                operation.get("x-graphblocks-output-schema"),
+                fallback=_response_schema_ref(operation, schema_prefix, operation_id),
+                owner=f"OpenAPI operation {operation_id} output schema",
+                schema_prefix=schema_prefix,
+            )
+            discovered.append(
+                define_openapi_tool(
+                    name=tool_name,
+                    description=(
+                        _optional_text(operation, "description")
+                        or _optional_text(operation, "summary")
+                        or f"OpenAPI operation {operation_id}."
+                    ),
+                    input_schema=input_schema,
+                    output_schema=output_schema,
+                    tags=base_tags
+                    | _string_set(
+                        operation.get("tags", ()),
+                        owner=f"OpenAPI operation {operation_id} tags",
+                    ),
+                    version=version,
+                )
+            )
+
+    return tuple(sorted(discovered, key=lambda definition: definition.name))
+
+
 def prepare_openapi_operation_invocation(
     admitted: AdmittedToolCall,
     resolved_tool: ResolvedTool,
@@ -474,11 +548,157 @@ def _optional_integer(artifact: Mapping[str, object], *names: str, owner: str) -
     return None
 
 
+_OPENAPI_HTTP_METHODS = ("delete", "get", "head", "options", "patch", "post", "put", "trace")
+
+
+def _request_schema_ref(operation: Mapping[str, object], schema_prefix: str, operation_id: str) -> str:
+    request_body = operation.get("requestBody")
+    if isinstance(request_body, Mapping):
+        schema = _json_content_schema(request_body)
+        if schema is not None:
+            return _schema_ref_from_openapi_schema(
+                schema,
+                fallback=_generated_schema_ref(schema_prefix, operation_id, "input"),
+                schema_prefix=schema_prefix,
+            )
+    return _generated_schema_ref(schema_prefix, operation_id, "input")
+
+
+def _response_schema_ref(
+    operation: Mapping[str, object],
+    schema_prefix: str,
+    operation_id: str,
+) -> str | None:
+    responses = operation.get("responses")
+    if not isinstance(responses, Mapping):
+        return None
+    for status_code in sorted(responses):
+        if not _is_success_status_code(str(status_code)):
+            continue
+        response = responses[status_code]
+        if not isinstance(response, Mapping):
+            continue
+        schema = _json_content_schema(response)
+        if schema is not None:
+            return _schema_ref_from_openapi_schema(
+                schema,
+                fallback=_generated_schema_ref(schema_prefix, operation_id, "output"),
+                schema_prefix=schema_prefix,
+            )
+    return None
+
+
+def _json_content_schema(container: Mapping[str, object]) -> Mapping[str, object] | None:
+    content = container.get("content")
+    if not isinstance(content, Mapping):
+        return None
+    media = content.get("application/json")
+    if not isinstance(media, Mapping):
+        for media_type in sorted(content):
+            candidate = content[media_type]
+            if isinstance(candidate, Mapping):
+                media = candidate
+                break
+    if not isinstance(media, Mapping):
+        return None
+    schema = media.get("schema")
+    return schema if isinstance(schema, Mapping) else None
+
+
+def _operation_schema_ref(
+    value: object,
+    *,
+    fallback: str | None,
+    owner: str,
+    schema_prefix: str,
+) -> str | None:
+    if value is None:
+        return fallback
+    if isinstance(value, str) and value:
+        return value
+    if isinstance(value, Mapping):
+        return _schema_ref_from_openapi_schema(value, fallback=fallback, schema_prefix=schema_prefix)
+    raise OpenApiToolAdapterError(f"{owner} must be a string or object")
+
+
+def _schema_ref_from_openapi_schema(
+    schema: Mapping[str, object],
+    *,
+    fallback: str | None,
+    schema_prefix: str,
+) -> str | None:
+    for key in ("x-graphblocks-schema-ref", "schemaId", "schema_id", "$id"):
+        schema_ref = schema.get(key)
+        if isinstance(schema_ref, str) and schema_ref:
+            return schema_ref
+    schema_ref = schema.get("$ref")
+    if isinstance(schema_ref, str) and schema_ref:
+        prefix = schema_prefix.strip().rstrip("/")
+        if not prefix:
+            raise OpenApiToolAdapterError("OpenAPI schema_prefix must not be empty")
+        return f"{prefix}/{_schema_slug(schema_ref.rsplit('/', 1)[-1])}@1"
+    return fallback
+
+
+def _is_success_status_code(status_code: str) -> bool:
+    if status_code.lower() == "default":
+        return False
+    return len(status_code) == 3 and status_code[0] == "2" and status_code[1:].isdigit()
+
+
+def _required_string(value: Mapping[str, object], name: str, *, owner: str) -> str:
+    item = value.get(name)
+    if not isinstance(item, str) or not item:
+        raise OpenApiToolAdapterError(f"{owner} requires non-empty string {name}")
+    return item
+
+
+def _optional_text(value: Mapping[str, object], name: str) -> str | None:
+    item = value.get(name)
+    return item if isinstance(item, str) and item else None
+
+
+def _string_set(value: Iterable[str] | object, *, owner: str) -> frozenset[str]:
+    if value is None:
+        return frozenset()
+    if isinstance(value, (str, bytes, Mapping)):
+        raise OpenApiToolAdapterError(f"{owner} must be a sequence of strings")
+    try:
+        values = tuple(value)  # type: ignore[arg-type]
+    except TypeError as error:
+        raise OpenApiToolAdapterError(f"{owner} must be a sequence of strings") from error
+    if any(not isinstance(item, str) or not item for item in values):
+        raise OpenApiToolAdapterError(f"{owner} must contain only non-empty strings")
+    return frozenset(values)
+
+
+def _generated_schema_ref(schema_prefix: str, operation_id: str, direction: str) -> str:
+    prefix = schema_prefix.strip().rstrip("/")
+    if not prefix:
+        raise OpenApiToolAdapterError("OpenAPI schema_prefix must not be empty")
+    return f"{prefix}/{_schema_slug(operation_id)}/{direction}@1"
+
+
+def _schema_slug(value: str) -> str:
+    parts: list[str] = []
+    previous_dash = False
+    for char in value.lower():
+        if char.isalnum():
+            parts.append(char)
+            previous_dash = False
+        elif not previous_dash:
+            parts.append("-")
+            previous_dash = True
+    slug = "".join(parts).strip("-")
+    return slug or "operation"
+
+
 __all__ = [
     "OpenApiOperationInvocation",
     "OpenApiToolAdapterError",
     "bind_openapi_operation",
     "define_openapi_tool",
+    "define_openapi_tools_from_spec",
     "openapi_tool_result_artifact_ready",
     "openapi_tool_result_cancelled",
     "openapi_tool_result_denied",

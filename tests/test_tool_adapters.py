@@ -115,6 +115,40 @@ def test_mcp_adapter_builds_tool_definition_and_binding(monkeypatch) -> None:
     assert binding.binding_contract()["effects"] == ["external_read", "network"]
 
 
+def test_mcp_adapter_discovers_tool_definitions_from_capabilities(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
+    graphblocks_mcp = importlib.import_module("graphblocks_mcp")
+
+    definitions = graphblocks_mcp.discover_mcp_tool_definitions(
+        {
+            "tools": [
+                {
+                    "name": "ticket.create",
+                    "description": "Create a ticket.",
+                    "inputSchema": {"type": "object"},
+                },
+                {
+                    "name": "knowledge.search",
+                    "description": "Search support documentation.",
+                    "inputSchema": {"$id": "schemas/KnowledgeSearchRequest@1"},
+                    "outputSchema": "schemas/KnowledgeSearchResult@1",
+                    "tags": ["search"],
+                },
+            ]
+        },
+        tags=("support",),
+        version="1.0.0",
+    )
+
+    assert [definition.name for definition in definitions] == ["knowledge.search", "ticket.create"]
+    assert definitions[0].input_schema == "schemas/KnowledgeSearchRequest@1"
+    assert definitions[0].output_schema == "schemas/KnowledgeSearchResult@1"
+    assert definitions[0].tags == frozenset({"search", "support"})
+    assert definitions[1].input_schema == "schemas/mcp/ticket-create/input@1"
+    assert definitions[1].output_schema is None
+    assert "discover_mcp_tool_definitions" in graphblocks_mcp.__all__
+
+
 def test_mcp_adapter_prepares_admitted_invocation_contract(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
     graphblocks_mcp = importlib.import_module("graphblocks_mcp")
@@ -480,6 +514,55 @@ def test_openapi_adapter_builds_tool_definition_and_binding(monkeypatch) -> None
         "operation_id": "createTicket",
     }
     assert binding.binding_contract()["idempotency"] == "required"
+
+
+def test_openapi_adapter_discovers_tool_definitions_from_operation_schemas(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-openapi" / "src"))
+    graphblocks_openapi = importlib.import_module("graphblocks_openapi")
+
+    definitions = graphblocks_openapi.define_openapi_tools_from_spec(
+        {
+            "openapi": "3.1.0",
+            "paths": {
+                "/tickets": {
+                    "post": {
+                        "operationId": "createTicket",
+                        "summary": "Create a support ticket.",
+                        "tags": ["tickets"],
+                        "x-graphblocks-tool-name": "ticket.create",
+                        "requestBody": {
+                            "content": {
+                                "application/json": {
+                                    "schema": {"$id": "schemas/TicketCreateRequest@1"}
+                                }
+                            }
+                        },
+                        "responses": {
+                            "201": {
+                                "description": "Created.",
+                                "content": {
+                                    "application/json": {
+                                        "schema": {"$ref": "#/components/schemas/Ticket"}
+                                    }
+                                },
+                            }
+                        },
+                    }
+                }
+            },
+        },
+        schema_prefix="schemas/openapi",
+        tags=("support",),
+        version="1.0.0",
+    )
+
+    assert len(definitions) == 1
+    assert definitions[0].name == "ticket.create"
+    assert definitions[0].description == "Create a support ticket."
+    assert definitions[0].input_schema == "schemas/TicketCreateRequest@1"
+    assert definitions[0].output_schema == "schemas/openapi/ticket@1"
+    assert definitions[0].tags == frozenset({"support", "tickets"})
+    assert "define_openapi_tools_from_spec" in graphblocks_openapi.__all__
 
 
 def test_openapi_adapter_prepares_admitted_invocation_contract(monkeypatch) -> None:

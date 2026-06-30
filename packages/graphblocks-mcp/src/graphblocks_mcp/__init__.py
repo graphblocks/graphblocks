@@ -111,6 +111,55 @@ def bind_mcp_tool(
     )
 
 
+def discover_mcp_tool_definitions(
+    capabilities: Mapping[str, object],
+    *,
+    schema_prefix: str = "schemas/mcp",
+    tags: Iterable[str] = (),
+    version: str | None = None,
+) -> tuple[ToolDefinition, ...]:
+    raw_tools = capabilities.get("tools")
+    if not isinstance(raw_tools, Iterable) or isinstance(raw_tools, (str, bytes, Mapping)):
+        raise McpToolAdapterError("MCP capabilities tools must be a sequence")
+
+    discovered: list[ToolDefinition] = []
+    seen: set[str] = set()
+    base_tags = _string_set(tags, owner="MCP discovery tags")
+    for index, raw_tool in enumerate(raw_tools):
+        if not isinstance(raw_tool, Mapping):
+            raise McpToolAdapterError(f"MCP capabilities tools[{index}] must be an object")
+        name = _required_string(raw_tool, "name", owner=f"MCP capabilities tools[{index}]")
+        if name in seen:
+            raise McpToolAdapterError(f"MCP capabilities contain duplicate tool {name!r}")
+        seen.add(name)
+
+        input_schema = _schema_ref(
+            raw_tool.get("inputSchema", raw_tool.get("input_schema")),
+            fallback=_generated_schema_ref(schema_prefix, name, "input"),
+            owner=f"MCP capabilities tool {name}",
+        )
+        output_schema = None
+        if "outputSchema" in raw_tool or "output_schema" in raw_tool:
+            output_schema = _schema_ref(
+                raw_tool.get("outputSchema", raw_tool.get("output_schema")),
+                fallback=_generated_schema_ref(schema_prefix, name, "output"),
+                owner=f"MCP capabilities tool {name}",
+            )
+        raw_tags = raw_tool.get("tags", ())
+        discovered.append(
+            define_mcp_tool(
+                name=name,
+                description=_optional_text(raw_tool, "description") or f"MCP tool {name}.",
+                input_schema=input_schema,
+                output_schema=output_schema,
+                tags=base_tags | _string_set(raw_tags, owner=f"MCP capabilities tool {name} tags"),
+                version=version,
+            )
+        )
+
+    return tuple(sorted(discovered, key=lambda definition: definition.name))
+
+
 def prepare_mcp_tool_invocation(
     admitted: AdmittedToolCall,
     resolved_tool: ResolvedTool,
@@ -474,11 +523,73 @@ def _optional_integer(artifact: Mapping[str, object], *names: str, owner: str) -
     return None
 
 
+def _required_string(value: Mapping[str, object], name: str, *, owner: str) -> str:
+    item = value.get(name)
+    if not isinstance(item, str) or not item:
+        raise McpToolAdapterError(f"{owner} requires non-empty string {name}")
+    return item
+
+
+def _optional_text(value: Mapping[str, object], name: str) -> str | None:
+    item = value.get(name)
+    return item if isinstance(item, str) and item else None
+
+
+def _string_set(value: Iterable[str] | object, *, owner: str) -> frozenset[str]:
+    if value is None:
+        return frozenset()
+    if isinstance(value, (str, bytes, Mapping)):
+        raise McpToolAdapterError(f"{owner} must be a sequence of strings")
+    try:
+        values = tuple(value)  # type: ignore[arg-type]
+    except TypeError as error:
+        raise McpToolAdapterError(f"{owner} must be a sequence of strings") from error
+    if any(not isinstance(item, str) or not item for item in values):
+        raise McpToolAdapterError(f"{owner} must contain only non-empty strings")
+    return frozenset(values)
+
+
+def _schema_ref(value: object, *, fallback: str, owner: str) -> str:
+    if isinstance(value, str) and value:
+        return value
+    if isinstance(value, Mapping):
+        for key in ("x-graphblocks-schema-ref", "schemaId", "schema_id", "$id"):
+            schema_ref = value.get(key)
+            if isinstance(schema_ref, str) and schema_ref:
+                return schema_ref
+        return fallback
+    if value is None:
+        return fallback
+    raise McpToolAdapterError(f"{owner} schema must be a string or object")
+
+
+def _generated_schema_ref(schema_prefix: str, tool_name: str, direction: str) -> str:
+    prefix = schema_prefix.strip().rstrip("/")
+    if not prefix:
+        raise McpToolAdapterError("MCP schema_prefix must not be empty")
+    return f"{prefix}/{_schema_slug(tool_name)}/{direction}@1"
+
+
+def _schema_slug(value: str) -> str:
+    parts: list[str] = []
+    previous_dash = False
+    for char in value.lower():
+        if char.isalnum():
+            parts.append(char)
+            previous_dash = False
+        elif not previous_dash:
+            parts.append("-")
+            previous_dash = True
+    slug = "".join(parts).strip("-")
+    return slug or "tool"
+
+
 __all__ = [
     "McpToolAdapterError",
     "McpToolInvocation",
     "bind_mcp_tool",
     "define_mcp_tool",
+    "discover_mcp_tool_definitions",
     "mcp_tool_result_artifact_ready",
     "mcp_tool_result_cancelled",
     "mcp_tool_result_denied",
