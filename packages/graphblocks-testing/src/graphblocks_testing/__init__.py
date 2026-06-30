@@ -159,6 +159,8 @@ from graphblocks.tools import (
     ToolPlanCall,
     ToolResult,
     ToolResultEvent,
+    ToolResultStreamError,
+    ToolResultStreamState,
     ToolResolutionScope,
     ToolSchemaRegistry,
     admit_tool_call,

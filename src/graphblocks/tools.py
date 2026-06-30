@@ -170,6 +170,23 @@ class ToolResultValidationError(RuntimeError):
     pass
 
 
+class ToolResultStreamError(RuntimeError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        tool_call_id: str | None = None,
+        sequence: int | None = None,
+        last_sequence: int | None = None,
+        final_status: ToolResultStatus | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.tool_call_id = tool_call_id
+        self.sequence = sequence
+        self.last_sequence = last_sequence
+        self.final_status = final_status
+
+
 class FrozenJsonDict(dict):
     def __readonly(self, *args: object, **kwargs: object) -> None:
         raise TypeError("tool call arguments are immutable")
@@ -2133,3 +2150,46 @@ class ToolResultEvent:
 
     def into_result(self) -> ToolResult | None:
         return self.result if self.is_final_durable_result() else None
+
+
+@dataclass(slots=True)
+class ToolResultStreamState:
+    last_sequences: dict[str, int] = field(default_factory=dict)
+    final_results: dict[str, ToolResult] = field(default_factory=dict)
+    accepted_events: list[ToolResultEvent] = field(default_factory=list)
+
+    def accept(self, event: ToolResultEvent) -> ToolResultEvent:
+        if not isinstance(event, ToolResultEvent):
+            raise ToolResultStreamError("tool result stream event must be ToolResultEvent")
+
+        final_result = self.final_results.get(event.tool_call_id)
+        if final_result is not None:
+            raise ToolResultStreamError(
+                f"tool result stream for {event.tool_call_id} is final with status {final_result.status}",
+                tool_call_id=event.tool_call_id,
+                sequence=event.sequence,
+                final_status=final_result.status,
+            )
+
+        last_sequence = self.last_sequences.get(event.tool_call_id)
+        if last_sequence is not None and event.sequence <= last_sequence:
+            raise ToolResultStreamError(
+                f"tool result stream for {event.tool_call_id} received non-monotonic sequence "
+                f"{event.sequence} after {last_sequence}",
+                tool_call_id=event.tool_call_id,
+                sequence=event.sequence,
+                last_sequence=last_sequence,
+            )
+
+        result = event.into_result()
+        if result is not None:
+            self.final_results[event.tool_call_id] = result
+        self.last_sequences[event.tool_call_id] = event.sequence
+        self.accepted_events.append(event)
+        return event
+
+    def final_result_for(self, tool_call_id: str) -> ToolResult | None:
+        return self.final_results.get(tool_call_id)
+
+    def last_sequence_for(self, tool_call_id: str) -> int | None:
+        return self.last_sequences.get(tool_call_id)

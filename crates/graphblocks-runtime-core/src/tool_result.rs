@@ -994,6 +994,22 @@ pub enum ToolResultEventError {
     },
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ToolResultStreamError {
+    InvalidEvent {
+        source: ToolResultEventError,
+    },
+    NonMonotonicSequence {
+        tool_call_id: String,
+        last_sequence: u64,
+        sequence: u64,
+    },
+    EventAfterFinalResult {
+        tool_call_id: String,
+        final_status: ToolResultStatus,
+    },
+}
+
 impl ToolResultEvent {
     pub fn started(
         tool_call_id: impl Into<String>,
@@ -1093,6 +1109,20 @@ impl ToolResultEvent {
             | Self::Cancelled { tool_call_id, .. }
             | Self::PolicyStopped { tool_call_id, .. }
             | Self::Incomplete { tool_call_id, .. } => tool_call_id,
+        }
+    }
+
+    pub fn sequence(&self) -> u64 {
+        match self {
+            Self::Started { sequence, .. }
+            | Self::Delta { sequence, .. }
+            | Self::ArtifactReady { sequence, .. }
+            | Self::Completed { sequence, .. }
+            | Self::Failed { sequence, .. }
+            | Self::Denied { sequence, .. }
+            | Self::Cancelled { sequence, .. }
+            | Self::PolicyStopped { sequence, .. }
+            | Self::Incomplete { sequence, .. } => *sequence,
         }
     }
 
@@ -1208,5 +1238,64 @@ impl ToolResultEvent {
             | Self::Incomplete { result, .. } => Some(result),
             Self::Started { .. } | Self::Delta { .. } | Self::ArtifactReady { .. } => None,
         }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ToolResultStreamState {
+    last_sequences: BTreeMap<String, u64>,
+    final_results: BTreeMap<String, ToolResult>,
+    accepted_events: Vec<ToolResultEvent>,
+}
+
+impl ToolResultStreamState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn accept(
+        &mut self,
+        event: ToolResultEvent,
+    ) -> Result<ToolResultEvent, ToolResultStreamError> {
+        event
+            .validate()
+            .map_err(|source| ToolResultStreamError::InvalidEvent { source })?;
+        let tool_call_id = event.tool_call_id().to_owned();
+        if let Some(final_result) = self.final_results.get(&tool_call_id) {
+            return Err(ToolResultStreamError::EventAfterFinalResult {
+                tool_call_id,
+                final_status: final_result.status,
+            });
+        }
+
+        let sequence = event.sequence();
+        if let Some(last_sequence) = self.last_sequences.get(&tool_call_id)
+            && sequence <= *last_sequence
+        {
+            return Err(ToolResultStreamError::NonMonotonicSequence {
+                tool_call_id,
+                last_sequence: *last_sequence,
+                sequence,
+            });
+        }
+
+        if let Some(result) = event.clone().into_result() {
+            self.final_results.insert(tool_call_id.clone(), result);
+        }
+        self.last_sequences.insert(tool_call_id, sequence);
+        self.accepted_events.push(event.clone());
+        Ok(event)
+    }
+
+    pub fn accepted_events(&self) -> &[ToolResultEvent] {
+        &self.accepted_events
+    }
+
+    pub fn final_result_for(&self, tool_call_id: &str) -> Option<&ToolResult> {
+        self.final_results.get(tool_call_id)
+    }
+
+    pub fn last_sequence_for(&self, tool_call_id: &str) -> Option<u64> {
+        self.last_sequences.get(tool_call_id).copied()
     }
 }

@@ -40,6 +40,8 @@ from graphblocks import (
     ToolResolutionError,
     ToolResolutionScope,
     ToolResultEvent,
+    ToolResultStreamError,
+    ToolResultStreamState,
     ToolResultValidationError,
     ToolSchemaRegistry,
     ToolSchemaRegistryError,
@@ -70,6 +72,8 @@ def test_root_facade_exports_tool_schema_aliases() -> None:
         "ToolImplementation",
         "ToolResultEventKind",
         "ToolResultMode",
+        "ToolResultStreamError",
+        "ToolResultStreamState",
         "ToolResultStatus",
     }
 
@@ -2557,6 +2561,54 @@ def test_streaming_tool_result_delta_is_not_a_durable_result() -> None:
     assert event.output == (ContentPart(kind="text", text="draft chunk"),)
     assert event.is_final_durable_result() is False
     assert event.into_result() is None
+
+
+def test_tool_result_stream_state_accepts_draft_projection_and_final_result() -> None:
+    stream = ToolResultStreamState()
+    started = ToolResultEvent.started("call-1", 1, started_at="2026-06-23T00:00:00Z")
+    delta = ToolResultEvent.delta("call-1", 2, (ContentPart(kind="text", text="draft"),))
+    result = ToolResult.completed(
+        "call-1",
+        (ContentPart(kind="text", text="done"),),
+        started_at="2026-06-23T00:00:00Z",
+        completed_at="2026-06-23T00:00:01Z",
+    )
+    completed = ToolResultEvent.completed("call-1", 3, result)
+
+    assert stream.accept(started) == started
+    assert stream.accept(delta) == delta
+    assert stream.accept(completed) == completed
+    assert stream.accepted_events == [started, delta, completed]
+    assert stream.last_sequence_for("call-1") == 3
+    assert stream.final_result_for("call-1") == result
+
+
+def test_tool_result_stream_state_rejects_stale_sequence_and_late_events_after_final() -> None:
+    stream = ToolResultStreamState()
+    result = ToolResult.policy_stopped(
+        "call-1",
+        error={"code": "policy.denied", "message": "stopped"},
+        started_at="2026-06-23T00:00:00Z",
+        completed_at="2026-06-23T00:00:01Z",
+    )
+
+    stream.accept(ToolResultEvent.started("call-1", 5, started_at="2026-06-23T00:00:00Z"))
+    with pytest.raises(ToolResultStreamError) as stale_error:
+        stream.accept(ToolResultEvent.delta("call-1", 5, (ContentPart(kind="text", text="stale"),)))
+    assert stale_error.value.tool_call_id == "call-1"
+    assert stale_error.value.sequence == 5
+    assert stale_error.value.last_sequence == 5
+
+    stream.accept(ToolResultEvent.policy_stopped("call-1", 6, result))
+    with pytest.raises(ToolResultStreamError) as late_error:
+        stream.accept(ToolResultEvent.delta("call-1", 7, (ContentPart(kind="text", text="late"),)))
+    assert late_error.value.tool_call_id == "call-1"
+    assert late_error.value.sequence == 7
+    assert late_error.value.final_status == "policy_stopped"
+    assert stream.accepted_events == [
+        ToolResultEvent.started("call-1", 5, started_at="2026-06-23T00:00:00Z"),
+        ToolResultEvent.policy_stopped("call-1", 6, result),
+    ]
 
 
 def test_tool_result_event_and_effect_outcome_reject_unknown_literals() -> None:

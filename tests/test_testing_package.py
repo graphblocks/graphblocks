@@ -1278,6 +1278,8 @@ def test_testing_package_exposes_terminal_run_store_error(monkeypatch) -> None:
         assert "RunDeploymentProvenance" in graphblocks_testing.__all__
         assert "ModelVisibleToolRef" in graphblocks_testing.__all__
         assert record.model_visible_tools == (tool_ref,)
+        assert hasattr(graphblocks_testing, "ToolResultStreamState")
+        assert hasattr(graphblocks_testing, "ToolResultStreamError")
     else:  # pragma: no cover - test should fail before this branch.
         raise AssertionError("terminal run state mutation was allowed")
 

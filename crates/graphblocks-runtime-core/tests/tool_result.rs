@@ -9,7 +9,8 @@ use graphblocks_runtime_core::tool_call::ToolCallDraft;
 use graphblocks_runtime_core::tool_result::{
     ArtifactRef, ContentPart, ContentPartError, ContentPartKind, Diagnostic, ToolEffectOutcome,
     ToolResult, ToolResultContentPolicy, ToolResultError, ToolResultEvent, ToolResultEventError,
-    ToolResultStatus, ToolResultValidation, ToolResultValidationError, ToolResultValidationRequest,
+    ToolResultStatus, ToolResultStreamError, ToolResultStreamState, ToolResultValidation,
+    ToolResultValidationError, ToolResultValidationRequest,
 };
 use graphblocks_runtime_core::tool_schema::{JsonSchema, JsonSchemaNode, ToolSchemaRegistry};
 use serde_json::{Value, json};
@@ -785,6 +786,64 @@ fn streaming_tool_result_delta_is_not_a_durable_result() {
     assert_eq!(delta.tool_call_id(), "call-1");
     assert!(!delta.is_final_durable_result());
     assert_eq!(delta.into_result(), None);
+}
+
+#[test]
+fn tool_result_stream_state_accepts_draft_projection_and_final_result() {
+    let mut stream = ToolResultStreamState::new();
+    let started = ToolResultEvent::started("call-1", 1, 1_000);
+    let delta = ToolResultEvent::delta("call-1", 2, [ContentPart::text("draft")]);
+    let result = ToolResult::completed("call-1", [ContentPart::text("done")], 1_000, 1_100);
+    let completed = ToolResultEvent::completed("call-1", 3, result.clone());
+
+    assert_eq!(stream.accept(started.clone()), Ok(started));
+    assert_eq!(stream.accept(delta.clone()), Ok(delta));
+    assert_eq!(stream.accept(completed.clone()), Ok(completed));
+    assert_eq!(stream.accepted_events().len(), 3);
+    assert_eq!(stream.last_sequence_for("call-1"), Some(3));
+    assert_eq!(stream.final_result_for("call-1"), Some(&result));
+}
+
+#[test]
+fn tool_result_stream_state_rejects_stale_sequence_and_late_events_after_final() {
+    let mut stream = ToolResultStreamState::new();
+    let result = ToolResult::policy_stopped(
+        "call-1",
+        BlockError::new("policy.denied", ErrorCategory::Policy, "stopped", false),
+        1_000,
+        1_050,
+    );
+
+    stream
+        .accept(ToolResultEvent::started("call-1", 5, 1_000))
+        .expect("started event should be accepted");
+    assert_eq!(
+        stream.accept(ToolResultEvent::delta(
+            "call-1",
+            5,
+            [ContentPart::text("duplicate")]
+        )),
+        Err(ToolResultStreamError::NonMonotonicSequence {
+            tool_call_id: "call-1".to_owned(),
+            last_sequence: 5,
+            sequence: 5,
+        })
+    );
+    stream
+        .accept(ToolResultEvent::policy_stopped("call-1", 6, result))
+        .expect("policy-stopped result should be accepted");
+    assert_eq!(
+        stream.accept(ToolResultEvent::delta(
+            "call-1",
+            7,
+            [ContentPart::text("late")]
+        )),
+        Err(ToolResultStreamError::EventAfterFinalResult {
+            tool_call_id: "call-1".to_owned(),
+            final_status: ToolResultStatus::PolicyStopped,
+        })
+    );
+    assert_eq!(stream.accepted_events().len(), 2);
 }
 
 #[test]
