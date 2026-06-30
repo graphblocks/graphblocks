@@ -731,6 +731,91 @@ def test_langfuse_projection_applies_capture_policy_before_export(monkeypatch) -
     assert "private" not in repr(generation.generation_contract())
 
 
+def test_langfuse_projects_policy_and_tool_events_with_capture_policy(monkeypatch) -> None:
+    _add_observability_package_paths(monkeypatch)
+    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
+    graphblocks_langfuse = importlib.import_module("graphblocks_langfuse")
+    output_record = graphblocks_telemetry.OutputPolicyTelemetryRecord(
+        record_id="policy-1",
+        run_id="run-1",
+        stream_id="stream-1",
+        response_id="response-1",
+        enforcement_point="before_client_delivery",
+        disposition="abort_response",
+        release_id="release-1",
+        policy_snapshot_id="policy-snapshot-1",
+        terminal_reason="policy_denied",
+        draft_disposition="retract",
+        pending_tool_calls="deny",
+        durable_result="none",
+        accepted_through_sequence=7,
+        last_client_delivered_sequence=5,
+        attributes={"tenant": "tenant-1", "api_key": "sk-test", "prompt": "secret prompt"},
+    )
+    tool_record = graphblocks_telemetry.ToolExecutionTelemetryRecord(
+        record_id="tool-1",
+        run_id="run-1",
+        tool_call_id="call-1",
+        tool_name="ticket.create",
+        status="completed",
+        release_id="release-1",
+        result_mode="value",
+        effect_outcome="committed",
+        effects=("network", "external_write"),
+        duration_ms=128,
+        attributes={"tenant": "tenant-1", "token": "secret-token", "tool_result": "secret result"},
+    )
+
+    output_event = graphblocks_langfuse.langfuse_event_from_output_policy(output_record, trace_id="trace-1")
+    tool_event = graphblocks_langfuse.langfuse_event_from_tool_execution(tool_record, trace_id="trace-1")
+
+    assert output_event.event_contract() == {
+        "trace_id": "trace-1",
+        "event_id": "policy-1",
+        "name": "graphblocks.output_policy",
+        "metadata": {
+            "accepted_through_sequence": 7,
+            "attributes": {"api_key": "[redacted]", "tenant": "tenant-1"},
+            "disposition": "abort_response",
+            "draft_disposition": "retract",
+            "durable_result": "none",
+            "enforcement_point": "before_client_delivery",
+            "last_client_delivered_sequence": 5,
+            "pending_tool_calls": "deny",
+            "policy_snapshot_id": "policy-snapshot-1",
+            "record_id": "policy-1",
+            "release_id": "release-1",
+            "response_id": "response-1",
+            "run_id": "run-1",
+            "stream_id": "stream-1",
+            "terminal_reason": "policy_denied",
+        },
+    }
+    assert tool_event.event_contract() == {
+        "trace_id": "trace-1",
+        "event_id": "tool-1",
+        "name": "graphblocks.tool_execution",
+        "metadata": {
+            "attributes": {"tenant": "tenant-1", "token": "[redacted]"},
+            "duration_ms": 128,
+            "effect_outcome": "committed",
+            "effects": ["external_write", "network"],
+            "record_id": "tool-1",
+            "release_id": "release-1",
+            "result_mode": "value",
+            "run_id": "run-1",
+            "status": "completed",
+            "tool_call_id": "call-1",
+            "tool_name": "ticket.create",
+        },
+    }
+    assert "secret prompt" not in repr(output_event.event_contract())
+    assert "secret result" not in repr(tool_event.event_contract())
+    assert "LangfuseEventProjection" in graphblocks_langfuse.__all__
+    assert "langfuse_event_from_output_policy" in graphblocks_langfuse.__all__
+    assert "langfuse_event_from_tool_execution" in graphblocks_langfuse.__all__
+
+
 def test_langfuse_prompt_score_and_dataset_projections_are_body_free(monkeypatch) -> None:
     _add_observability_package_paths(monkeypatch)
     graphblocks_langfuse = importlib.import_module("graphblocks_langfuse")

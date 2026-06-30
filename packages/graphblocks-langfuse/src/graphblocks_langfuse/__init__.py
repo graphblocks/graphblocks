@@ -10,7 +10,9 @@ from graphblocks_telemetry import (
     DEFAULT_CONTENT_TELEMETRY_ATTRIBUTE_KEYS,
     DEFAULT_SENSITIVE_TELEMETRY_ATTRIBUTE_KEYS,
     GenerationTelemetryRecord,
+    OutputPolicyTelemetryRecord,
     TelemetryCapturePolicy,
+    ToolExecutionTelemetryRecord,
 )
 
 
@@ -52,6 +54,14 @@ class LangfuseDatasetItemProjection:
         return json.loads(self.dataset_item_json)
 
 
+@dataclass(frozen=True, slots=True)
+class LangfuseEventProjection:
+    event_json: str
+
+    def event_contract(self) -> dict[str, object]:
+        return json.loads(self.event_json)
+
+
 def langfuse_generation_from_observation(
     observation: GenerationTelemetryRecord,
     *,
@@ -82,6 +92,79 @@ def langfuse_generation_from_observation(
         "usage": dict(sorted(observation.usage.items())),
     }
     return LangfuseGenerationProjection(generation_json=canonical_dumps(generation))
+
+
+def langfuse_event_from_output_policy(
+    observation: OutputPolicyTelemetryRecord,
+    *,
+    trace_id: str | None = None,
+    capture_policy: TelemetryCapturePolicy | None = None,
+) -> LangfuseEventProjection:
+    observation = (capture_policy or DEFAULT_LANGFUSE_CAPTURE_POLICY).apply_output_policy(observation)
+    metadata = {
+        "disposition": observation.disposition,
+        "enforcement_point": observation.enforcement_point,
+        "record_id": observation.record_id,
+        "response_id": observation.response_id,
+        "run_id": observation.run_id,
+        "stream_id": observation.stream_id,
+    }
+    for key, value in (
+        ("accepted_through_sequence", observation.accepted_through_sequence),
+        ("draft_disposition", observation.draft_disposition),
+        ("durable_result", observation.durable_result),
+        ("last_client_delivered_sequence", observation.last_client_delivered_sequence),
+        ("pending_tool_calls", observation.pending_tool_calls),
+        ("policy_snapshot_id", observation.policy_snapshot_id),
+        ("release_id", observation.release_id),
+        ("terminal_reason", observation.terminal_reason),
+    ):
+        if value is not None:
+            metadata[key] = value
+    if observation.attributes:
+        metadata["attributes"] = dict(sorted(observation.attributes.items()))
+    event = {
+        "trace_id": trace_id or observation.run_id,
+        "event_id": observation.record_id,
+        "name": "graphblocks.output_policy",
+        "metadata": dict(sorted(metadata.items())),
+    }
+    return LangfuseEventProjection(event_json=canonical_dumps(event))
+
+
+def langfuse_event_from_tool_execution(
+    observation: ToolExecutionTelemetryRecord,
+    *,
+    trace_id: str | None = None,
+    capture_policy: TelemetryCapturePolicy | None = None,
+) -> LangfuseEventProjection:
+    observation = (capture_policy or DEFAULT_LANGFUSE_CAPTURE_POLICY).apply_tool_execution(observation)
+    metadata = {
+        "record_id": observation.record_id,
+        "run_id": observation.run_id,
+        "status": observation.status,
+        "tool_call_id": observation.tool_call_id,
+        "tool_name": observation.tool_name,
+    }
+    for key, value in (
+        ("duration_ms", observation.duration_ms),
+        ("effect_outcome", observation.effect_outcome),
+        ("release_id", observation.release_id),
+        ("result_mode", observation.result_mode),
+    ):
+        if value is not None:
+            metadata[key] = value
+    if observation.effects:
+        metadata["effects"] = list(observation.effects)
+    if observation.attributes:
+        metadata["attributes"] = dict(sorted(observation.attributes.items()))
+    event = {
+        "trace_id": trace_id or observation.run_id,
+        "event_id": observation.record_id,
+        "name": "graphblocks.tool_execution",
+        "metadata": dict(sorted(metadata.items())),
+    }
+    return LangfuseEventProjection(event_json=canonical_dumps(event))
 
 
 def langfuse_prompt_from_reference(
@@ -210,10 +293,13 @@ def _require_non_empty(field_name: str, value: object) -> str:
 __all__ = [
     "DEFAULT_LANGFUSE_CAPTURE_POLICY",
     "LangfuseDatasetItemProjection",
+    "LangfuseEventProjection",
     "LangfuseGenerationProjection",
     "LangfusePromptProjection",
     "LangfuseScoreProjection",
     "langfuse_dataset_item_from_snapshots",
+    "langfuse_event_from_output_policy",
+    "langfuse_event_from_tool_execution",
     "langfuse_generation_from_observation",
     "langfuse_prompt_from_reference",
     "langfuse_score_from_metric",
