@@ -367,6 +367,10 @@ pub enum DocumentParserError {
     NotFound {
         message: String,
     },
+    InvalidDescriptor {
+        field: String,
+        message: String,
+    },
     LockMismatch {
         expected_checksum: String,
         actual_checksum: Option<String>,
@@ -381,6 +385,9 @@ impl fmt::Display for DocumentParserError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NotFound { message } => write!(formatter, "{message}"),
+            Self::InvalidDescriptor { field, message } => {
+                write!(formatter, "invalid parser descriptor {field}: {message}")
+            }
             Self::LockMismatch {
                 expected_checksum,
                 actual_checksum,
@@ -413,25 +420,59 @@ impl DocumentParserRegistry {
         }
     }
 
-    pub fn register(&mut self, descriptor: ParserDescriptor) {
-        let media_types = descriptor
-            .media_types
-            .into_iter()
-            .map(|media_type| media_type.to_ascii_lowercase())
-            .collect();
-        let extensions = descriptor
-            .extensions
-            .into_iter()
-            .map(|extension| {
-                let extension = extension.to_ascii_lowercase();
-                if extension.starts_with('.') {
-                    extension
-                } else {
-                    format!(".{extension}")
-                }
-            })
-            .collect();
+    pub fn register(&mut self, descriptor: ParserDescriptor) -> Result<(), DocumentParserError> {
+        let processor_id = descriptor.processor_id.trim().to_owned();
+        if processor_id.is_empty() {
+            return Err(DocumentParserError::InvalidDescriptor {
+                field: "processor_id".to_owned(),
+                message: "must not be empty".to_owned(),
+            });
+        }
+        let version = descriptor.version.trim().to_owned();
+        if version.is_empty() {
+            return Err(DocumentParserError::InvalidDescriptor {
+                field: "version".to_owned(),
+                message: "must not be empty".to_owned(),
+            });
+        }
+        let mut media_types = Vec::new();
+        for media_type in &descriptor.media_types {
+            let normalized_media_type = media_type.trim().to_ascii_lowercase();
+            if normalized_media_type.is_empty() {
+                return Err(DocumentParserError::InvalidDescriptor {
+                    field: "media_types".to_owned(),
+                    message: "must not contain empty values".to_owned(),
+                });
+            }
+            if !media_types.contains(&normalized_media_type) {
+                media_types.push(normalized_media_type);
+            }
+        }
+        let mut extensions = Vec::new();
+        for extension in &descriptor.extensions {
+            let mut normalized_extension = extension.trim().to_ascii_lowercase();
+            if normalized_extension.is_empty() {
+                return Err(DocumentParserError::InvalidDescriptor {
+                    field: "extensions".to_owned(),
+                    message: "must not contain empty values".to_owned(),
+                });
+            }
+            if !normalized_extension.starts_with('.') {
+                normalized_extension = format!(".{normalized_extension}");
+            }
+            if normalized_extension == "." {
+                return Err(DocumentParserError::InvalidDescriptor {
+                    field: "extensions".to_owned(),
+                    message: "must not contain empty values".to_owned(),
+                });
+            }
+            if !extensions.contains(&normalized_extension) {
+                extensions.push(normalized_extension);
+            }
+        }
         let descriptor = ParserDescriptor {
+            processor_id,
+            version,
             media_types,
             extensions,
             ..descriptor
@@ -440,6 +481,7 @@ impl DocumentParserRegistry {
             (descriptor.processor_id.clone(), descriptor.version.clone()),
             descriptor,
         );
+        Ok(())
     }
 
     pub fn select(
@@ -449,15 +491,22 @@ impl DocumentParserRegistry {
         let media_type = artifact
             .media_type
             .as_ref()
-            .map(|media_type| media_type.to_ascii_lowercase());
-        let filename = artifact.filename.clone().or_else(|| {
-            artifact
-                .uri
-                .rsplit('/')
-                .next()
-                .filter(|name| !name.is_empty())
-                .map(str::to_owned)
-        });
+            .map(|media_type| media_type.trim().to_ascii_lowercase())
+            .filter(|media_type| !media_type.is_empty());
+        let filename = artifact
+            .filename
+            .as_ref()
+            .map(|filename| filename.trim().to_owned())
+            .filter(|filename| !filename.is_empty())
+            .or_else(|| {
+                artifact
+                    .uri
+                    .rsplit('/')
+                    .next()
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                    .map(str::to_owned)
+            });
         let extension = filename.as_ref().and_then(|filename| {
             filename
                 .rfind('.')

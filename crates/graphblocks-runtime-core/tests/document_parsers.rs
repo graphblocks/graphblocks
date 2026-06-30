@@ -18,7 +18,7 @@ fn parser_registry_selects_by_media_type_and_records_lock_inputs()
     descriptor
         .metadata
         .insert("profile".to_owned(), json!("plain-text-default"));
-    registry.register(descriptor.clone());
+    registry.register(descriptor.clone())?;
     let mut artifact = ArtifactRef::new("artifact-1", "file:///tmp/policy.txt");
     artifact.media_type = Some("text/plain".to_owned());
     artifact.checksum = Some("sha256:content".to_owned());
@@ -47,10 +47,65 @@ fn parser_registry_selects_by_media_type_and_records_lock_inputs()
 }
 
 #[test]
+fn parser_registry_normalizes_registered_fields_and_selection_inputs()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut registry = DocumentParserRegistry::new();
+    registry.register(
+        ParserDescriptor::new(" plain-text ", " 1 ")
+            .with_media_types([" Text/Plain "])
+            .with_extensions([" TXT "]),
+    )?;
+
+    let mut media_artifact = ArtifactRef::new("artifact-1", "file:///tmp/POLICY.TXT");
+    media_artifact.media_type = Some(" TEXT/PLAIN ".to_owned());
+    media_artifact.filename = Some(" POLICY.TXT ".to_owned());
+    let media_lock = registry.select(&media_artifact)?;
+    let mut extension_artifact = ArtifactRef::new("artifact-2", "file:///tmp/POLICY.TXT");
+    extension_artifact.filename = Some(" POLICY.TXT ".to_owned());
+    let extension_lock = registry.select(&extension_artifact)?;
+
+    assert_eq!(media_lock.processor_id, "plain-text");
+    assert_eq!(media_lock.processor_version, "1");
+    assert_eq!(media_lock.reason, "media_type");
+    assert_eq!(media_lock.media_type.as_deref(), Some("text/plain"));
+    assert_eq!(media_lock.filename.as_deref(), Some("POLICY.TXT"));
+    assert_eq!(extension_lock.processor_id, "plain-text");
+    assert_eq!(extension_lock.reason, "extension");
+    assert_eq!(extension_lock.filename.as_deref(), Some("POLICY.TXT"));
+    Ok(())
+}
+
+#[test]
+fn parser_registry_rejects_invalid_registered_descriptor_fields() {
+    let mut registry = DocumentParserRegistry::new();
+
+    assert!(matches!(
+        registry.register(ParserDescriptor::new("", "1")),
+        Err(DocumentParserError::InvalidDescriptor { field, .. }) if field == "processor_id"
+    ));
+    assert!(matches!(
+        registry.register(ParserDescriptor::new("plain-text", "")),
+        Err(DocumentParserError::InvalidDescriptor { field, .. }) if field == "version"
+    ));
+    assert!(matches!(
+        registry.register(ParserDescriptor::new("plain-text", "1").with_media_types([" "])),
+        Err(DocumentParserError::InvalidDescriptor { field, .. }) if field == "media_types"
+    ));
+    assert!(matches!(
+        registry.register(ParserDescriptor::new("plain-text", "1").with_extensions([" "])),
+        Err(DocumentParserError::InvalidDescriptor { field, .. }) if field == "extensions"
+    ));
+    assert!(matches!(
+        registry.register(ParserDescriptor::new("plain-text", "1").with_extensions(["."])),
+        Err(DocumentParserError::InvalidDescriptor { field, .. }) if field == "extensions"
+    ));
+}
+
+#[test]
 fn parser_registry_uses_extension_when_media_type_is_missing()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut registry = DocumentParserRegistry::new();
-    registry.register(plain_text_parser_descriptor());
+    registry.register(plain_text_parser_descriptor())?;
     let mut artifact = ArtifactRef::new("artifact-1", "file:///tmp/policy.txt");
     artifact.filename = Some("policy.txt".to_owned());
 
@@ -69,12 +124,12 @@ fn parser_registry_selection_is_deterministic_for_equal_priority()
         ParserDescriptor::new("z-parser", "1")
             .with_media_types(["text/plain"])
             .with_priority(10),
-    );
+    )?;
     registry.register(
         ParserDescriptor::new("a-parser", "2")
             .with_media_types(["text/plain"])
             .with_priority(10),
-    );
+    )?;
     let mut artifact = ArtifactRef::new("artifact-1", "file:///tmp/policy.txt");
     artifact.media_type = Some("text/plain".to_owned());
 
@@ -89,7 +144,7 @@ fn parser_registry_selection_is_deterministic_for_equal_priority()
 fn parser_registry_parse_locked_uses_locked_parser_version()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut registry = DocumentParserRegistry::new();
-    registry.register(plain_text_parser_descriptor());
+    registry.register(plain_text_parser_descriptor())?;
     let asset = SourceAsset::new("asset-1", "file:///tmp/policy.txt", "local")
         .with_current_revision_id("rev-1");
     let mut artifact = ArtifactRef::new("artifact-1", "file:///tmp/policy.txt");
@@ -123,7 +178,7 @@ fn parser_registry_parse_locked_uses_locked_parser_version()
 fn parser_registry_rejects_lock_for_different_artifact_checksum()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut registry = DocumentParserRegistry::new();
-    registry.register(plain_text_parser_descriptor());
+    registry.register(plain_text_parser_descriptor())?;
     let asset = SourceAsset::new("asset-1", "file:///tmp/policy.txt", "local")
         .with_current_revision_id("rev-1");
     let mut selected_artifact = ArtifactRef::new("artifact-1", "file:///tmp/policy.txt");
