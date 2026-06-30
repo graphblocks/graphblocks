@@ -2126,6 +2126,10 @@ def test_tool_result_metadata_mappings_are_copied_and_read_only() -> None:
     assert result.error is not None
     with pytest.raises(TypeError):
         result.error["message"] = "direct mutation"
+    with pytest.raises(ValueError, match="tool result error must be a mapping"):
+        ToolResult(tool_call_id="call-1", status="failed", error=object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="tool result error keys must be non-empty strings"):
+        ToolResult(tool_call_id="call-1", status="failed", error={"": "tool.failed"})
 
 
 def test_tool_result_artifacts_accept_artifact_refs_and_camel_case_payloads() -> None:

@@ -1750,7 +1750,12 @@ class ToolResult:
             tuple(diagnostics),
         )
         if self.error is not None:
-            object.__setattr__(self, "error", MappingProxyType(dict(self.error)))
+            if not isinstance(self.error, Mapping):
+                raise ValueError("tool result error must be a mapping")
+            error = dict(self.error)
+            if any(not isinstance(key, str) or not key.strip() for key in error):
+                raise ValueError("tool result error keys must be non-empty strings")
+            object.__setattr__(self, "error", MappingProxyType(error))
 
     @classmethod
     def completed(
