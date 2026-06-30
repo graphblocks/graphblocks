@@ -61,8 +61,24 @@ class RunGraphCommand:
     occurred_at: str = ""
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "graph", deepcopy(self.graph))
-        object.__setattr__(self, "inputs", deepcopy(self.inputs))
+        if not isinstance(self.graph, Mapping):
+            raise ValueError("run graph command graph must be a JSON object")
+        if not isinstance(self.inputs, Mapping):
+            raise ValueError("run graph command inputs must be a JSON object")
+        for field_name, value in (
+            ("run_id", self.run_id),
+            ("response_id", self.response_id),
+            ("release_id", self.release_id),
+            ("policy_snapshot_id", self.policy_snapshot_id),
+        ):
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"run graph command {field_name} must be a non-empty string")
+        if self.turn_id is not None and (not isinstance(self.turn_id, str) or not self.turn_id.strip()):
+            raise ValueError("run graph command turn_id must be a non-empty string")
+        if not isinstance(self.occurred_at, str):
+            raise ValueError("run graph command occurred_at must be a string")
+        object.__setattr__(self, "graph", deepcopy(dict(self.graph)))
+        object.__setattr__(self, "inputs", deepcopy(dict(self.inputs)))
 
 
 @dataclass(frozen=True, slots=True)

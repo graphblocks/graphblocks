@@ -566,6 +566,33 @@ def test_client_package_runs_local_graph_command_and_emits_events(monkeypatch) -
     assert "LocalGraphBlocksClient" in graphblocks_client.__all__
 
 
+@pytest.mark.parametrize(
+    ("command_kwargs", "message"),
+    (
+        ({"graph": []}, "run graph command graph must be a JSON object"),
+        ({"inputs": []}, "run graph command inputs must be a JSON object"),
+        ({"run_id": True}, "run graph command run_id must be a non-empty string"),
+        ({"response_id": " "}, "run graph command response_id must be a non-empty string"),
+        ({"turn_id": ""}, "run graph command turn_id must be a non-empty string"),
+        ({"occurred_at": None}, "run graph command occurred_at must be a string"),
+    ),
+)
+def test_client_package_rejects_malformed_run_graph_command(
+    monkeypatch,
+    command_kwargs: dict[str, object],
+    message: str,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+    kwargs: dict[str, object] = {
+        "graph": {"kind": "Graph", "metadata": {"name": "remote-run"}},
+    }
+    kwargs.update(command_kwargs)
+
+    with pytest.raises(ValueError, match=message):
+        graphblocks_client.RunGraphCommand(**kwargs)
+
+
 def test_client_package_response_outputs_are_nested_snapshots(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
     graphblocks_client = importlib.import_module("graphblocks_client")
