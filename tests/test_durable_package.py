@@ -357,6 +357,25 @@ def test_durable_tool_terminal_store_replays_incomplete_terminal_record(monkeypa
     assert store.tool_terminal_count() == 1
 
 
+def test_durable_tool_terminal_record_rejects_committed_effect_for_denied_state(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+
+    with pytest.raises(
+        graphblocks_durable.ToolTerminalStoreError,
+        match="denied terminal records cannot have committed effects",
+    ):
+        graphblocks_durable.DurableToolTerminalRecord(
+            run_id="run-000001",
+            response_id="response-1",
+            tool_call_id="call-denied",
+            revision=1,
+            terminal_state="denied",
+            arguments_digest="sha256:arguments-denied",
+            completed_at_unix_ms=1_820_000_000_000,
+            effect_committed=True,
+        )
+
+
 def test_durable_tool_terminal_record_projects_completed_tool_result(monkeypatch) -> None:
     graphblocks_durable = _import_durable(monkeypatch)
     result = ToolResult.completed(

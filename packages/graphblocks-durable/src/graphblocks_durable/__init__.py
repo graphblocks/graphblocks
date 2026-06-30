@@ -514,6 +514,8 @@ class DurableToolTerminalRecord:
             raise ToolTerminalStoreError("output_digest must not be empty")
         if self.idempotency_key is not None and not self.idempotency_key.strip():
             raise ToolTerminalStoreError("idempotency_key must not be empty")
+        if self.terminal_state == "denied" and self.effect_committed:
+            raise ToolTerminalStoreError("denied terminal records cannot have committed effects")
 
 
 @dataclass(frozen=True, slots=True)

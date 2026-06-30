@@ -795,6 +795,11 @@ pub enum ToolTerminalStoreError {
     MissingTurnId,
     InvalidRevision,
     InvalidCompletedAt,
+    DeniedEffectCommitted {
+        response_id: String,
+        tool_call_id: String,
+        revision: u32,
+    },
     PolicyAcceptedSequenceBeyondGenerated {
         last_generated_sequence: u64,
         last_policy_accepted_sequence: u64,
@@ -870,6 +875,13 @@ impl InMemoryDurableToolTerminalStore {
         }
         if record.completed_at_unix_ms == 0 {
             return Err(ToolTerminalStoreError::InvalidCompletedAt);
+        }
+        if record.terminal_state == DurableToolTerminalState::Denied && record.effect_committed {
+            return Err(ToolTerminalStoreError::DeniedEffectCommitted {
+                response_id: record.response_id,
+                tool_call_id: record.tool_call_id,
+                revision: record.revision,
+            });
         }
 
         let key = (

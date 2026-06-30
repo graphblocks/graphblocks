@@ -197,6 +197,31 @@ fn tool_terminal_store_records_incomplete_terminal_result() {
 }
 
 #[test]
+fn tool_terminal_store_rejects_committed_effect_for_denied_record() {
+    let mut store = InMemoryDurableToolTerminalStore::new();
+    let record = DurableToolTerminalRecord::new(
+        "run-000001",
+        "response-1",
+        "call-denied",
+        1,
+        DurableToolTerminalState::Denied,
+        "sha256:arguments-denied",
+        1_820_000_000_000,
+    )
+    .with_effect_committed();
+
+    assert_eq!(
+        store.record_tool_terminal(record),
+        Err(ToolTerminalStoreError::DeniedEffectCommitted {
+            response_id: "response-1".to_owned(),
+            tool_call_id: "call-denied".to_owned(),
+            revision: 1,
+        }),
+    );
+    assert_eq!(store.tool_terminal_count(), 0);
+}
+
+#[test]
 fn tool_terminal_store_rejects_terminal_mutation_on_replay() {
     let mut store = InMemoryDurableToolTerminalStore::new();
     store
