@@ -7220,8 +7220,11 @@ fn evaluate_declarative_output_policy_json(
     chunk
         .validate()
         .map_err(|error| PyValueError::new_err(format!("invalid generation chunk: {error:?}")))?;
-    let decision =
-        DeclarativeOutputPolicyEvaluator::new(rules).evaluate_chunk(&chunk, evaluated_at_unix_ms);
+    let decision = DeclarativeOutputPolicyEvaluator::new(rules)
+        .evaluate_chunk_checked(&chunk, evaluated_at_unix_ms)
+        .map_err(|error| {
+            PyValueError::new_err(format!("invalid declarative output policy rule: {error:?}"))
+        })?;
     let disposition = decision.disposition.as_str();
     let provider_cancellation = decision.provider_cancellation.as_str();
     let draft_disposition = decision.draft_disposition.as_str();
@@ -13565,6 +13568,42 @@ mod tests {
             "unexpected error: {error}"
         );
         assert!(error.contains("sequence: 0"), "unexpected error: {error}");
+
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_declarative_output_policy_json_rejects_invalid_rule_contracts() -> Result<(), String>
+    {
+        pyo3::Python::initialize();
+        let rules = json!([
+            {
+                "ruleId": "replace-missing",
+                "literal": "blocked",
+                "disposition": "replace"
+            }
+        ]);
+        let chunk = json!({
+            "streamId": "stream-1",
+            "responseId": "response-1",
+            "sequence": 1,
+            "text": "blocked"
+        });
+        let rules_json = serde_json::to_string(&rules).map_err(|error| error.to_string())?;
+        let chunk_json = serde_json::to_string(&chunk).map_err(|error| error.to_string())?;
+
+        let error = evaluate_declarative_output_policy_json(&rules_json, &chunk_json, 1_000)
+            .expect_err("invalid output policy rules must be rejected")
+            .to_string();
+
+        assert!(
+            error.contains("ReplacementRequired"),
+            "unexpected error: {error}"
+        );
+        assert!(
+            error.contains("replace-missing"),
+            "unexpected error: {error}"
+        );
 
         Ok(())
     }
