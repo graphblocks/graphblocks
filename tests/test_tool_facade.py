@@ -618,6 +618,14 @@ def test_tool_resolution_scope_rejects_invalid_tool_collections() -> None:
             {"budget_tools": frozenset({"knowledge.search", 1})},
             "tool resolution scope budget_tools must be a collection of strings",
         ),
+        (
+            {"application_tools": frozenset({"knowledge.search", " "})},
+            "tool resolution scope application_tools item must not be empty",
+        ),
+        (
+            {"principal_tools": frozenset({""})},
+            "tool resolution scope principal_tools item must not be empty",
+        ),
     )
 
     for overrides, message in cases:
