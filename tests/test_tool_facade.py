@@ -2547,6 +2547,51 @@ def test_completed_tool_result_model_output_rejects_bool_redaction_offsets() -> 
     assert str(error.value) == "invalid tool result redaction range for '/parts/0/text'"
 
 
+@pytest.mark.parametrize("path", ("/parts/+0/text", "/parts/00/text"))
+def test_completed_tool_result_model_output_rejects_noncanonical_redaction_part_index(path: str) -> None:
+    catalog = ToolCatalog(
+        definitions=(
+            ToolDefinition(
+                name="knowledge.search",
+                description="Search documentation.",
+                input_schema="schemas/SearchRequest@1",
+            ),
+        ),
+        bindings=(
+            ToolBinding(
+                binding_id="binding-search",
+                tool_name="knowledge.search",
+                implementation=BlockToolImplementation(block="blocks.search"),
+            ),
+        ),
+    )
+    resolved = catalog.resolve(ToolResolutionScope(), effective_policy_snapshot_id="policy-snapshot-1")[0]
+    call = (
+        ToolCallDraft.proposed("response-1", "call-1", "knowledge.search")
+        .append_argument_fragment("{}")
+        .complete_arguments()
+        .into_tool_call(resolved.resolved_tool_id, created_at="2026-06-23T00:00:00Z")
+    )
+    registry = ToolSchemaRegistry(())
+    result = ToolResult.completed(
+        "call-1",
+        (ContentPart(kind="text", text="safe secret suffix"),),
+        started_at="2026-06-23T00:00:01Z",
+        completed_at="2026-06-23T00:00:02Z",
+    )
+
+    with pytest.raises(ToolResultValidationError) as error:
+        validate_tool_result_for_model(
+            call,
+            result,
+            resolved,
+            registry,
+            redactions=({"path": path, "start": 5, "end": 11, "replacement": "[redacted]"},),
+        )
+
+    assert str(error.value) == f"invalid tool result redaction path {path!r}"
+
+
 def test_artifact_reference_tool_result_mode_rejects_inline_model_output() -> None:
     catalog = ToolCatalog(
         definitions=(

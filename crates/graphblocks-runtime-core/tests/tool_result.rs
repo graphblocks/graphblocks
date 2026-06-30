@@ -585,6 +585,62 @@ fn completed_tool_result_model_output_applies_redactions_before_model_return() {
 }
 
 #[test]
+fn completed_tool_result_model_output_rejects_noncanonical_redaction_part_index() {
+    for path in ["/parts/+0/text", "/parts/00/text"] {
+        let catalog = ToolCatalog::new(
+            [ToolDefinition::new(
+                "knowledge.search",
+                "Search documentation.",
+                "schemas/SearchRequest@1",
+            )],
+            [ToolBinding::new(
+                "binding-search",
+                "knowledge.search",
+                ToolImplementation::Block(BlockToolImplementation::new("blocks.search")),
+            )],
+        )
+        .expect("catalog should be valid");
+        let resolved = catalog
+            .resolve(ToolResolutionScope::new(), "policy-snapshot-1")
+            .expect("tool should resolve")
+            .remove(0);
+        let mut draft = ToolCallDraft::proposed("response-1", "call-1", "knowledge.search");
+        draft
+            .append_argument_fragment("{}")
+            .expect("argument fragment should append");
+        let call = draft
+            .into_completed_tool_call(resolved.resolved_tool_id.clone(), 1_000)
+            .expect("arguments should parse");
+        let registry = ToolSchemaRegistry::new(Vec::<JsonSchema>::new())
+            .expect("schema registry should be valid");
+        let result = ToolResult::completed(
+            "call-1",
+            [ContentPart::text("safe secret suffix")],
+            1_100,
+            1_200,
+        );
+        let policy = ToolResultContentPolicy::new()
+            .with_redactions([RedactionInstruction::text_range(path, 5, 11, "[redacted]")]);
+
+        assert_eq!(
+            ToolResultValidation::prepare_for_model_with_content_policy(
+                ToolResultValidationRequest {
+                    call: &call,
+                    result: &result,
+                    resolved_tool: &resolved,
+                    schema_registry: &registry,
+                },
+                &policy,
+            ),
+            Err(ToolResultValidationError::ModelOutputRedactionInvalid {
+                tool_call_id: "call-1".to_owned(),
+                path: path.to_owned(),
+            }),
+        );
+    }
+}
+
+#[test]
 fn completed_tool_result_redaction_offsets_are_character_positions() {
     let catalog = ToolCatalog::new(
         [ToolDefinition::new(

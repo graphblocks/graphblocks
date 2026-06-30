@@ -796,6 +796,15 @@ impl ToolResultValidation {
                         path: redaction.path.clone(),
                     });
                 };
+                if part_index_text.is_empty()
+                    || !part_index_text.bytes().all(|byte| byte.is_ascii_digit())
+                    || (part_index_text != "0" && part_index_text.starts_with('0'))
+                {
+                    return Err(ToolResultValidationError::ModelOutputRedactionInvalid {
+                        tool_call_id: request.result.tool_call_id.clone(),
+                        path: redaction.path.clone(),
+                    });
+                }
                 let Ok(part_index) = part_index_text.parse::<usize>() else {
                     return Err(ToolResultValidationError::ModelOutputRedactionInvalid {
                         tool_call_id: request.result.tool_call_id.clone(),

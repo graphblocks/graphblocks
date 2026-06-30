@@ -1995,6 +1995,12 @@ def validate_tool_result_for_model(
             if not isinstance(path, str) or not path.startswith("/parts/") or not path.endswith("/text"):
                 raise ToolResultValidationError(f"invalid tool result redaction path {path!r}")
             part_index_text = path[len("/parts/") : -len("/text")]
+            if (
+                not part_index_text
+                or not part_index_text.isdecimal()
+                or (part_index_text != "0" and part_index_text.startswith("0"))
+            ):
+                raise ToolResultValidationError(f"invalid tool result redaction path {path!r}")
             try:
                 part_index = int(part_index_text)
             except ValueError as error:
