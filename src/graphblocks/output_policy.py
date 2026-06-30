@@ -900,19 +900,25 @@ class OutputDeliveryGate:
                     if sequence not in self.pending:
                         raise OutputGateError(f"missing pending chunk {sequence}")
                     text = self.pending[sequence].text
-                    for redaction in sorted(redactions, key=lambda item: int(item.get("start", -1)), reverse=True):
+                    for redaction in redactions:
                         start = redaction.get("start")
                         end = redaction.get("end")
                         replacement = redaction.get("replacement")
                         if (
                             not isinstance(start, int)
+                            or isinstance(start, bool)
                             or not isinstance(end, int)
+                            or isinstance(end, bool)
                             or not isinstance(replacement, str)
                             or start < 0
                             or end < start
                             or end > len(text)
                         ):
                             raise OutputGateError(f"invalid redaction range for {redaction.get('path')!r}")
+                    for redaction in sorted(redactions, key=lambda item: item["start"], reverse=True):
+                        start = redaction.get("start")
+                        end = redaction.get("end")
+                        replacement = redaction.get("replacement")
                         text = text[:start] + replacement + text[end:]
                     self.pending[sequence] = GenerationChunk.text(
                         self.stream_id,

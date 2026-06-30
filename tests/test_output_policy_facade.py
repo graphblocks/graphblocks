@@ -734,6 +734,45 @@ def test_output_delivery_gate_applies_typed_redaction_instruction_before_deliver
     assert gate.last_client_delivered_sequence == 1
 
 
+def test_output_delivery_gate_rejects_redaction_instruction_without_range() -> None:
+    gate = OutputDeliveryGate("stream-1", "response-1")
+    gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "hello secret world"))
+
+    with pytest.raises(OutputGateError) as error:
+        gate.apply_decision(
+            OutputPolicyDecision.redact(
+                "decision-redact",
+                accepted_through_sequence=1,
+                redactions=({"path": "/chunks/1/text", "replacement": "[redacted]"},),
+                input_digest="sha256:redact",
+            ),
+            occurred_at="2026-06-23T00:00:01Z",
+        )
+
+    assert str(error.value) == "invalid redaction range for '/chunks/1/text'"
+
+
+def test_output_delivery_gate_revalidates_redaction_range_types_at_delivery_boundary() -> None:
+    gate = OutputDeliveryGate("stream-1", "response-1")
+    gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "hello secret world"))
+    decision = OutputPolicyDecision.redact(
+        "decision-redact",
+        accepted_through_sequence=1,
+        redactions=({"path": "/chunks/1/text", "start": 6, "end": 12, "replacement": "[redacted]"},),
+        input_digest="sha256:redact",
+    )
+    object.__setattr__(
+        decision,
+        "redactions",
+        ({"path": "/chunks/1/text", "start": False, "end": 12, "replacement": "[redacted]"},),
+    )
+
+    with pytest.raises(OutputGateError) as error:
+        gate.apply_decision(decision, occurred_at="2026-06-23T00:00:01Z")
+
+    assert str(error.value) == "invalid redaction range for '/chunks/1/text'"
+
+
 def test_output_delivery_gate_rejects_negative_redaction_chunk_sequence() -> None:
     gate = OutputDeliveryGate("stream-1", "response-1")
     gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "hello secret world"))
