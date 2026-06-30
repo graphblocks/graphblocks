@@ -888,6 +888,28 @@ def test_client_package_rejects_malformed_http_status_code(monkeypatch, status_c
         client.health()
 
 
+@pytest.mark.parametrize("method_name", ("cancel_run", "run_events", "run_stream"))
+@pytest.mark.parametrize("run_id", (True, " "))
+def test_client_package_rejects_malformed_http_run_id_arguments(
+    monkeypatch,
+    method_name: str,
+    run_id: object,
+) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
+    graphblocks_client = importlib.import_module("graphblocks_client")
+
+    def transport(request: object, *, timeout: float) -> object:
+        raise AssertionError("transport should not be called for malformed run_id")
+
+    client = graphblocks_client.HttpGraphBlocksClient(
+        "https://graphblocks.example/api",
+        transport=transport,
+    )
+
+    with pytest.raises(ValueError, match="GraphBlocks HTTP run_id must be a non-empty string"):
+        getattr(client, method_name)(run_id)
+
+
 def test_client_package_reads_server_health_over_http_transport(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))
     graphblocks_client = importlib.import_module("graphblocks_client")

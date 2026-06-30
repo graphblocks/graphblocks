@@ -719,6 +719,7 @@ class HttpGraphBlocksClient:
         return _read_json_response(response, "GraphBlocks health response")
 
     def cancel_run(self, run_id: str) -> dict[str, object]:
+        run_id = _http_run_id(run_id)
         headers = {"Accept": "application/json"}
         if self.bearer_token is not None:
             headers["Authorization"] = f"Bearer {self.bearer_token}"
@@ -732,6 +733,7 @@ class HttpGraphBlocksClient:
         return _read_json_response(response, "GraphBlocks cancel response")
 
     def run_events(self, run_id: str) -> tuple[ApplicationEvent, ...]:
+        run_id = _http_run_id(run_id)
         headers = {"Accept": "application/json"}
         if self.bearer_token is not None:
             headers["Authorization"] = f"Bearer {self.bearer_token}"
@@ -745,6 +747,7 @@ class HttpGraphBlocksClient:
         return _events_from_payload(payload, "GraphBlocks run events response")
 
     def run_stream(self, run_id: str) -> RunStreamSnapshot:
+        run_id = _http_run_id(run_id)
         headers = {
             "Accept": "application/json",
             "Connection": "Upgrade",
@@ -813,6 +816,12 @@ class HttpGraphBlocksClient:
             events=tuple(events),
             event_stream=stream_state,
         )
+
+
+def _http_run_id(run_id: object) -> str:
+    if not isinstance(run_id, str) or not run_id.strip():
+        raise ValueError("GraphBlocks HTTP run_id must be a non-empty string")
+    return run_id
 
 
 def _read_json_response(response: object, label: str) -> dict[str, object]:
