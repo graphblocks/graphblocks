@@ -347,15 +347,38 @@ def test_client_package_remote_adapter_builds_streaming_and_terminal_results(mon
         started_at="2026-06-24T00:00:01Z",
         completed_at="2026-06-24T00:00:03Z",
     )
+    stream = graphblocks_client.ToolResultStreamState()
+    stopped_event = graphblocks_client.ToolResultEvent.policy_stopped(
+        admitted.call.tool_call_id,
+        4,
+        stopped,
+    )
 
     assert started.kind == "started"
     assert delta.output[0].metadata == {"adapter": "remote", "trust_designation": "untrusted_external"}
     assert delta.output[1].metadata == {"adapter": "remote", "trust_designation": "untrusted_external"}
     assert artifact.artifact is not None
     assert artifact.artifact.media_type == "application/json"
+    assert stream.accept(started) == started
+    assert stream.accept(delta).into_result() is None
+    assert stream.accept(artifact).is_final_durable_result() is False
+    assert stream.accept(stopped_event).into_result() == stopped
+    with pytest.raises(graphblocks_client.ToolResultStreamError) as error:
+        stream.accept(
+            graphblocks_client.remote_tool_result_delta(
+                admitted,
+                resolved,
+                sequence=5,
+                output=("late",),
+            )
+        )
+    assert error.value.final_status == "policy_stopped"
     assert stopped.status == "policy_stopped"
     assert stopped.effect_outcome == "unknown"
     assert incomplete.status == "incomplete"
+    assert "ToolResultEvent" in graphblocks_client.__all__
+    assert "ToolResultStreamState" in graphblocks_client.__all__
+    assert "ToolResultStreamError" in graphblocks_client.__all__
     assert "remote_tool_result_policy_stopped" in graphblocks_client.__all__
 
 
