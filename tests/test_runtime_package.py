@@ -143,6 +143,10 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         calls.append(("tool_execution_plan", (plan_json, operations_json)))
         return json.dumps({"plan": json.loads(plan_json), "operations": json.loads(operations_json)})
 
+    def evaluate_tool_result_stream_json(state_json: str, operations_json: str) -> str:
+        calls.append(("tool_result_stream", (state_json, operations_json)))
+        return json.dumps({"state": json.loads(state_json), "updates": json.loads(operations_json)})
+
     def evaluate_sequential_tool_queue_json(queue_json: str, operations_json: str) -> str:
         calls.append(("sequential_tool_queue", (queue_json, operations_json)))
         return json.dumps({"queue": json.loads(queue_json), "operations": json.loads(operations_json)})
@@ -205,6 +209,7 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         evaluate_output_gate_json=evaluate_output_gate_json,
         evaluate_sequential_tool_queue_json=evaluate_sequential_tool_queue_json,
         evaluate_tool_execution_plan_json=evaluate_tool_execution_plan_json,
+        evaluate_tool_result_stream_json=evaluate_tool_result_stream_json,
         finalize_tool_call_json=finalize_tool_call_json,
         prepare_tool_result_for_model_json=prepare_tool_result_for_model_json,
         run_stdlib_graph_json=run_stdlib_graph_json,
@@ -252,6 +257,10 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     tool_execution = runtime.evaluate_tool_execution_plan(
         {"planId": "plan-1", "maximumParallelism": 2},
         [{"op": "ready"}],
+    )
+    tool_result_stream = runtime.evaluate_tool_result_stream(
+        {"acceptedEvents": []},
+        [{"kind": "event", "event": {"kind": "started", "toolCallId": "call-1", "sequence": 1}}],
     )
     sequential_queue = runtime.evaluate_sequential_tool_queue(
         {"planId": "plan-1", "responseId": "response-1", "calls": []},
@@ -317,6 +326,10 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     assert tool_execution == {
         "plan": {"maximumParallelism": 2, "planId": "plan-1"},
         "operations": [{"op": "ready"}],
+    }
+    assert tool_result_stream == {
+        "state": {"acceptedEvents": []},
+        "updates": [{"event": {"kind": "started", "sequence": 1, "toolCallId": "call-1"}, "kind": "event"}],
     }
     assert sequential_queue == {
         "queue": {"calls": [], "planId": "plan-1", "responseId": "response-1"},
@@ -392,6 +405,13 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             ('{"maximumParallelism":2,"planId":"plan-1"}', '[{"op":"ready"}]'),
         ),
         (
+            "tool_result_stream",
+            (
+                '{"acceptedEvents":[]}',
+                '[{"event":{"kind":"started","sequence":1,"toolCallId":"call-1"},"kind":"event"}]',
+            ),
+        ),
+        (
             "sequential_tool_queue",
             (
                 '{"calls":[],"planId":"plan-1","responseId":"response-1"}',
@@ -444,6 +464,8 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     assert "evaluate_durable_tool_terminal_store_json" in runtime.__all__
     assert "evaluate_tool_execution_plan" in runtime.__all__
     assert "evaluate_tool_execution_plan_json" in runtime.__all__
+    assert "evaluate_tool_result_stream" in runtime.__all__
+    assert "evaluate_tool_result_stream_json" in runtime.__all__
     assert "evaluate_sequential_tool_queue" in runtime.__all__
     assert "evaluate_sequential_tool_queue_json" in runtime.__all__
     assert "validate_worker_advertisement" in runtime.__all__

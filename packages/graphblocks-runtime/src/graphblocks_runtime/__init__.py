@@ -18,6 +18,7 @@ try:
         evaluate_output_gate_json,
         evaluate_sequential_tool_queue_json,
         evaluate_tool_execution_plan_json,
+        evaluate_tool_result_stream_json,
         finalize_tool_call_json,
         prepare_tool_result_for_model_json,
         run_stdlib_graph_json,
@@ -103,6 +104,9 @@ except ImportError as error:
         require_native_extension()
 
     def evaluate_tool_execution_plan_json(plan_json: str, operations_json: str) -> str:
+        require_native_extension()
+
+    def evaluate_tool_result_stream_json(state_json: str, operations_json: str) -> str:
         require_native_extension()
 
     def evaluate_sequential_tool_queue_json(queue_json: str, operations_json: str) -> str:
@@ -293,6 +297,16 @@ def evaluate_tool_execution_plan(
     )
 
 
+def evaluate_tool_result_stream(
+    state: dict[str, object],
+    operations: object,
+) -> dict[str, object]:
+    return _json_object_result(
+        evaluate_tool_result_stream_json(_canonical_json(state), _canonical_json(operations)),
+        "native tool result stream result",
+    )
+
+
 def evaluate_sequential_tool_queue(
     queue: dict[str, object],
     operations: object,
@@ -349,6 +363,8 @@ __all__ = [
     "evaluate_sequential_tool_queue_json",
     "evaluate_tool_execution_plan",
     "evaluate_tool_execution_plan_json",
+    "evaluate_tool_result_stream",
+    "evaluate_tool_result_stream_json",
     "finalize_tool_call",
     "finalize_tool_call_json",
     "native_extension_available",

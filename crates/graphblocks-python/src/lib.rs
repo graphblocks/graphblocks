@@ -39,8 +39,8 @@ use graphblocks_runtime_core::tool_execution::{
 };
 use graphblocks_runtime_core::tool_result::{
     ArtifactRef, ContentPart, ContentPartKind, Diagnostic, DiagnosticSeverity, ToolEffectOutcome,
-    ToolResult, ToolResultContentPolicy, ToolResultStatus, ToolResultValidation,
-    ToolResultValidationRequest,
+    ToolResult, ToolResultContentPolicy, ToolResultEvent, ToolResultStatus, ToolResultStreamError,
+    ToolResultStreamState, ToolResultValidation, ToolResultValidationRequest,
 };
 use graphblocks_runtime_core::tool_schema::{JsonSchema, JsonSchemaNode, ToolSchemaRegistry};
 use graphblocks_runtime_durable::{
@@ -436,6 +436,101 @@ fn prepare_tool_result_for_model_json(
     serde_json::to_string(&payload).map_err(|error| {
         PyRuntimeError::new_err(format!(
             "failed to serialize prepared tool result output: {error}"
+        ))
+    })
+}
+
+#[pyfunction]
+fn evaluate_tool_result_stream_json(state_json: &str, operations_json: &str) -> PyResult<String> {
+    let state_value = parse_json_argument(state_json, "tool result stream state")?;
+    let operations_value = parse_json_argument(operations_json, "tool result stream operations")?;
+    let state_object = json_object(&state_value, "tool result stream state")?;
+    let mut stream = ToolResultStreamState::new();
+    if let Some(events) = state_object
+        .get("acceptedEvents")
+        .or_else(|| state_object.get("accepted_events"))
+    {
+        let Some(events) = events.as_array() else {
+            return Err(PyValueError::new_err(
+                "tool result stream state.acceptedEvents must be an array",
+            ));
+        };
+        for (event_index, event) in events.iter().enumerate() {
+            let event = parse_tool_result_event(
+                event,
+                &format!("tool result stream state.acceptedEvents[{event_index}]"),
+            )?;
+            stream.accept(event).map_err(|error| {
+                PyValueError::new_err(format!(
+                    "invalid tool result stream state event {event_index}: {error:?}"
+                ))
+            })?;
+        }
+    }
+
+    let operations = operations_value.as_array().ok_or_else(|| {
+        PyValueError::new_err("tool result stream operations JSON must be an array")
+    })?;
+    let mut updates = Vec::new();
+    for (operation_index, operation) in operations.iter().enumerate() {
+        let label = format!("operations[{operation_index}]");
+        let operation = json_object(operation, &label)?;
+        match required_string(operation, "kind", &label)? {
+            "event" => {
+                let event_value = operation
+                    .get("event")
+                    .ok_or_else(|| PyValueError::new_err(format!("{label}.event is required")))?;
+                let event = parse_tool_result_event(event_value, &format!("{label}.event"))?;
+                match stream.accept(event) {
+                    Ok(accepted) => updates.push(json!({
+                        "operationIndex": operation_index,
+                        "kind": "accepted",
+                        "event": serialize_tool_result_event(&accepted),
+                        "final": accepted.is_final_durable_result(),
+                    })),
+                    Err(error) => updates.push(json!({
+                        "operationIndex": operation_index,
+                        "kind": "error",
+                        "error": serialize_tool_result_stream_error(&error),
+                    })),
+                }
+            }
+            value => {
+                return Err(PyValueError::new_err(format!(
+                    "{label}.kind has unknown kind {value:?}"
+                )));
+            }
+        }
+    }
+
+    let accepted_events = stream
+        .accepted_events()
+        .iter()
+        .map(serialize_tool_result_event)
+        .collect::<Vec<_>>();
+    let mut last_sequences = BTreeMap::new();
+    let mut final_results = BTreeMap::new();
+    for event in stream.accepted_events() {
+        last_sequences.insert(event.tool_call_id().to_owned(), event.sequence());
+        if let Some(result) = event.clone().into_result() {
+            final_results.insert(
+                event.tool_call_id().to_owned(),
+                serialize_tool_result(&result),
+            );
+        }
+    }
+    let payload = json!({
+        "ok": updates.iter().all(|update| update.get("kind").and_then(Value::as_str) != Some("error")),
+        "updates": updates,
+        "state": {
+            "acceptedEvents": accepted_events,
+            "lastSequences": last_sequences,
+            "finalResults": final_results,
+        },
+    });
+    serde_json::to_string(&payload).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize tool result stream evaluation: {error}"
         ))
     })
 }
@@ -1504,6 +1599,121 @@ fn parse_tool_result(value: &Value, label: &str) -> PyResult<ToolResult> {
     Ok(result)
 }
 
+fn parse_tool_result_event(value: &Value, label: &str) -> PyResult<ToolResultEvent> {
+    let object = json_object(value, label)?;
+    let kind = required_string(object, "kind", label)?;
+    let tool_call_id = required_alias_string(object, "toolCallId", "tool_call_id", label)?;
+    let sequence = required_u64(object, "sequence", label)?;
+    match kind {
+        "started" => Ok(ToolResultEvent::started(
+            tool_call_id,
+            sequence,
+            required_alias_u64(object, "startedAtUnixMs", "started_at_unix_ms", label)?,
+        )),
+        "delta" => {
+            let output = object
+                .get("output")
+                .ok_or_else(|| PyValueError::new_err(format!("{label}.output is required")))?;
+            let Some(output) = output.as_array() else {
+                return Err(PyValueError::new_err(format!(
+                    "{label}.output must be an array"
+                )));
+            };
+            let output = output
+                .iter()
+                .enumerate()
+                .map(|(index, value)| {
+                    parse_content_part(value, &format!("{label}.output[{index}]"))
+                })
+                .collect::<PyResult<Vec<_>>>()?;
+            Ok(ToolResultEvent::delta(tool_call_id, sequence, output))
+        }
+        "artifact_ready" => Ok(ToolResultEvent::artifact_ready(
+            tool_call_id,
+            sequence,
+            parse_artifact_ref(
+                object.get("artifact").ok_or_else(|| {
+                    PyValueError::new_err(format!("{label}.artifact is required"))
+                })?,
+                &format!("{label}.artifact"),
+            )?,
+        )),
+        "completed" => parse_final_tool_result_event(
+            tool_call_id,
+            sequence,
+            object,
+            label,
+            |tool_call_id, sequence, result| {
+                ToolResultEvent::completed(tool_call_id, sequence, result)
+            },
+        ),
+        "failed" => parse_final_tool_result_event(
+            tool_call_id,
+            sequence,
+            object,
+            label,
+            |tool_call_id, sequence, result| {
+                ToolResultEvent::failed(tool_call_id, sequence, result)
+            },
+        ),
+        "denied" => parse_final_tool_result_event(
+            tool_call_id,
+            sequence,
+            object,
+            label,
+            |tool_call_id, sequence, result| {
+                ToolResultEvent::denied(tool_call_id, sequence, result)
+            },
+        ),
+        "cancelled" => parse_final_tool_result_event(
+            tool_call_id,
+            sequence,
+            object,
+            label,
+            |tool_call_id, sequence, result| {
+                ToolResultEvent::cancelled(tool_call_id, sequence, result)
+            },
+        ),
+        "policy_stopped" => parse_final_tool_result_event(
+            tool_call_id,
+            sequence,
+            object,
+            label,
+            |tool_call_id, sequence, result| {
+                ToolResultEvent::policy_stopped(tool_call_id, sequence, result)
+            },
+        ),
+        "incomplete" => parse_final_tool_result_event(
+            tool_call_id,
+            sequence,
+            object,
+            label,
+            |tool_call_id, sequence, result| {
+                ToolResultEvent::incomplete(tool_call_id, sequence, result)
+            },
+        ),
+        value => Err(PyValueError::new_err(format!(
+            "{label}.kind has unknown tool result event kind {value:?}"
+        ))),
+    }
+}
+
+fn parse_final_tool_result_event(
+    tool_call_id: &str,
+    sequence: u64,
+    object: &serde_json::Map<String, Value>,
+    label: &str,
+    build: impl FnOnce(String, u64, ToolResult) -> ToolResultEvent,
+) -> PyResult<ToolResultEvent> {
+    let result = parse_tool_result(
+        object
+            .get("result")
+            .ok_or_else(|| PyValueError::new_err(format!("{label}.result is required")))?,
+        &format!("{label}.result"),
+    )?;
+    Ok(build(tool_call_id.to_owned(), sequence, result))
+}
+
 fn parse_capture_decision(value: &Value, label: &str) -> PyResult<CaptureDecision> {
     let object = json_object(value, label)?;
     let retention_policy =
@@ -1614,6 +1824,222 @@ fn serialize_content_part(part: &ContentPart) -> Value {
         "data": part.data,
         "metadata": part.metadata,
     })
+}
+
+fn serialize_error_category(category: ErrorCategory) -> &'static str {
+    match category {
+        ErrorCategory::Validation => "validation",
+        ErrorCategory::Configuration => "configuration",
+        ErrorCategory::Authentication => "authentication",
+        ErrorCategory::Authorization => "authorization",
+        ErrorCategory::NotFound => "not_found",
+        ErrorCategory::RateLimit => "rate_limit",
+        ErrorCategory::Quota => "quota",
+        ErrorCategory::Budget => "budget",
+        ErrorCategory::Capacity => "capacity",
+        ErrorCategory::Timeout => "timeout",
+        ErrorCategory::Transient => "transient",
+        ErrorCategory::Permanent => "permanent",
+        ErrorCategory::Provider => "provider",
+        ErrorCategory::Policy => "policy",
+        ErrorCategory::Cancelled => "cancelled",
+        ErrorCategory::Conflict => "conflict",
+        ErrorCategory::Internal => "internal",
+    }
+}
+
+fn serialize_tool_result_status(status: ToolResultStatus) -> &'static str {
+    match status {
+        ToolResultStatus::Completed => "completed",
+        ToolResultStatus::Failed => "failed",
+        ToolResultStatus::Denied => "denied",
+        ToolResultStatus::Cancelled => "cancelled",
+        ToolResultStatus::PolicyStopped => "policy_stopped",
+        ToolResultStatus::Incomplete => "incomplete",
+    }
+}
+
+fn serialize_tool_effect_outcome(outcome: ToolEffectOutcome) -> &'static str {
+    match outcome {
+        ToolEffectOutcome::NoExternalEffect => "no_external_effect",
+        ToolEffectOutcome::Committed => "committed",
+        ToolEffectOutcome::NotCommitted => "not_committed",
+        ToolEffectOutcome::Unknown => "unknown",
+    }
+}
+
+fn serialize_artifact_ref(artifact: &ArtifactRef) -> Value {
+    json!({
+        "artifactId": artifact.artifact_id.as_str(),
+        "uri": artifact.uri.as_str(),
+        "checksum": artifact.checksum.as_deref(),
+        "mediaType": artifact.media_type.as_deref(),
+    })
+}
+
+fn serialize_diagnostic_severity(severity: DiagnosticSeverity) -> &'static str {
+    match severity {
+        DiagnosticSeverity::Info => "info",
+        DiagnosticSeverity::Warning => "warning",
+        DiagnosticSeverity::Error => "error",
+    }
+}
+
+fn serialize_diagnostic(diagnostic: &Diagnostic) -> Value {
+    json!({
+        "code": diagnostic.code.as_str(),
+        "message": diagnostic.message.as_str(),
+        "severity": serialize_diagnostic_severity(diagnostic.severity),
+        "path": diagnostic.path.as_deref(),
+    })
+}
+
+fn serialize_block_error(error: &BlockError) -> Value {
+    json!({
+        "code": error.code.as_str(),
+        "category": serialize_error_category(error.category),
+        "message": error.message.as_str(),
+        "retryable": error.retryable,
+        "details": &error.details,
+        "causeChain": &error.cause_chain,
+    })
+}
+
+fn serialize_tool_result(result: &ToolResult) -> Value {
+    json!({
+        "toolCallId": result.tool_call_id.as_str(),
+        "status": serialize_tool_result_status(result.status),
+        "output": result.output.iter().map(serialize_content_part).collect::<Vec<_>>(),
+        "outputDigest": result.output_digest.as_deref(),
+        "artifacts": result.artifacts.iter().map(serialize_artifact_ref).collect::<Vec<_>>(),
+        "diagnostics": result.diagnostics.iter().map(serialize_diagnostic).collect::<Vec<_>>(),
+        "error": result.error.as_ref().map(serialize_block_error),
+        "startedAtUnixMs": result.started_at_unix_ms,
+        "completedAtUnixMs": result.completed_at_unix_ms,
+        "effectOutcome": serialize_tool_effect_outcome(result.effect_outcome),
+    })
+}
+
+fn serialize_tool_result_event(event: &ToolResultEvent) -> Value {
+    match event {
+        ToolResultEvent::Started {
+            tool_call_id,
+            sequence,
+            started_at_unix_ms,
+        } => json!({
+            "kind": "started",
+            "toolCallId": tool_call_id,
+            "sequence": sequence,
+            "startedAtUnixMs": started_at_unix_ms,
+        }),
+        ToolResultEvent::Delta {
+            tool_call_id,
+            sequence,
+            output,
+        } => json!({
+            "kind": "delta",
+            "toolCallId": tool_call_id,
+            "sequence": sequence,
+            "output": output.iter().map(serialize_content_part).collect::<Vec<_>>(),
+        }),
+        ToolResultEvent::ArtifactReady {
+            tool_call_id,
+            sequence,
+            artifact,
+        } => json!({
+            "kind": "artifact_ready",
+            "toolCallId": tool_call_id,
+            "sequence": sequence,
+            "artifact": serialize_artifact_ref(artifact),
+        }),
+        ToolResultEvent::Completed {
+            tool_call_id,
+            sequence,
+            result,
+        } => json!({
+            "kind": "completed",
+            "toolCallId": tool_call_id,
+            "sequence": sequence,
+            "result": serialize_tool_result(result),
+        }),
+        ToolResultEvent::Failed {
+            tool_call_id,
+            sequence,
+            result,
+        } => json!({
+            "kind": "failed",
+            "toolCallId": tool_call_id,
+            "sequence": sequence,
+            "result": serialize_tool_result(result),
+        }),
+        ToolResultEvent::Denied {
+            tool_call_id,
+            sequence,
+            result,
+        } => json!({
+            "kind": "denied",
+            "toolCallId": tool_call_id,
+            "sequence": sequence,
+            "result": serialize_tool_result(result),
+        }),
+        ToolResultEvent::Cancelled {
+            tool_call_id,
+            sequence,
+            result,
+        } => json!({
+            "kind": "cancelled",
+            "toolCallId": tool_call_id,
+            "sequence": sequence,
+            "result": serialize_tool_result(result),
+        }),
+        ToolResultEvent::PolicyStopped {
+            tool_call_id,
+            sequence,
+            result,
+        } => json!({
+            "kind": "policy_stopped",
+            "toolCallId": tool_call_id,
+            "sequence": sequence,
+            "result": serialize_tool_result(result),
+        }),
+        ToolResultEvent::Incomplete {
+            tool_call_id,
+            sequence,
+            result,
+        } => json!({
+            "kind": "incomplete",
+            "toolCallId": tool_call_id,
+            "sequence": sequence,
+            "result": serialize_tool_result(result),
+        }),
+    }
+}
+
+fn serialize_tool_result_stream_error(error: &ToolResultStreamError) -> Value {
+    match error {
+        ToolResultStreamError::InvalidEvent { source } => json!({
+            "code": "invalid_event",
+            "source": format!("{source:?}"),
+        }),
+        ToolResultStreamError::NonMonotonicSequence {
+            tool_call_id,
+            last_sequence,
+            sequence,
+        } => json!({
+            "code": "non_monotonic_sequence",
+            "toolCallId": tool_call_id,
+            "lastSequence": last_sequence,
+            "sequence": sequence,
+        }),
+        ToolResultStreamError::EventAfterFinalResult {
+            tool_call_id,
+            final_status,
+        } => json!({
+            "code": "event_after_final_result",
+            "toolCallId": tool_call_id,
+            "finalStatus": serialize_tool_result_status(*final_status),
+        }),
+    }
 }
 
 fn parse_work_kind(value: &Value, label: &str) -> PyResult<WorkKind> {
@@ -4157,6 +4583,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
         prepare_tool_result_for_model_json,
         module
     )?)?;
+    module.add_function(wrap_pyfunction!(evaluate_tool_result_stream_json, module)?)?;
     module.add_function(wrap_pyfunction!(run_test_graph_json, module)?)?;
     module.add_function(wrap_pyfunction!(run_stdlib_graph_json, module)?)?;
     module.add_function(wrap_pyfunction!(decide_agent_step_json, module)?)?;
@@ -4188,8 +4615,9 @@ mod tests {
         decide_agent_step_json, evaluate_declarative_output_policy_json,
         evaluate_durable_tool_terminal_store_json, evaluate_output_gate_json,
         evaluate_sequential_tool_queue_json, evaluate_tool_execution_plan_json,
-        finalize_tool_call_json, prepare_tool_result_for_model_json, run_stdlib_graph_json,
-        run_test_graph_json, validate_remote_payload_json, validate_worker_advertisement_json,
+        evaluate_tool_result_stream_json, finalize_tool_call_json,
+        prepare_tool_result_for_model_json, run_stdlib_graph_json, run_test_graph_json,
+        validate_remote_payload_json, validate_worker_advertisement_json,
         validate_worker_protocol_message_json,
     };
 
@@ -5058,6 +5486,94 @@ mod tests {
         );
         assert_eq!(completed_nodes, vec!["render", "model"]);
 
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_tool_result_stream_json_rejects_late_delta_after_policy_stop() -> Result<(), String>
+    {
+        let operations = json!([
+            {
+                "kind": "event",
+                "event": {
+                    "kind": "started",
+                    "toolCallId": "call-1",
+                    "sequence": 1,
+                    "startedAtUnixMs": 1_000
+                }
+            },
+            {
+                "kind": "event",
+                "event": {
+                    "kind": "delta",
+                    "toolCallId": "call-1",
+                    "sequence": 2,
+                    "output": [{"kind": "text", "text": "draft"}]
+                }
+            },
+            {
+                "kind": "event",
+                "event": {
+                    "kind": "policy_stopped",
+                    "toolCallId": "call-1",
+                    "sequence": 3,
+                    "result": {
+                        "toolCallId": "call-1",
+                        "status": "policy_stopped",
+                        "error": {
+                            "code": "policy.denied",
+                            "category": "policy",
+                            "message": "blocked",
+                            "retryable": false
+                        },
+                        "startedAtUnixMs": 1_000,
+                        "completedAtUnixMs": 1_050
+                    }
+                }
+            },
+            {
+                "kind": "event",
+                "event": {
+                    "kind": "delta",
+                    "toolCallId": "call-1",
+                    "sequence": 4,
+                    "output": [{"kind": "text", "text": "late"}]
+                }
+            }
+        ]);
+
+        let output_json = evaluate_tool_result_stream_json(
+            "{}",
+            &serde_json::to_string(&operations).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let output =
+            serde_json::from_str::<Value>(&output_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(output.get("ok"), Some(&json!(false)));
+        assert_eq!(
+            output.pointer("/state/lastSequences/call-1"),
+            Some(&json!(3))
+        );
+        assert_eq!(
+            output.pointer("/state/finalResults/call-1/status"),
+            Some(&json!("policy_stopped"))
+        );
+        assert_eq!(
+            output.pointer("/updates/3/error/code"),
+            Some(&json!("event_after_final_result"))
+        );
+        assert_eq!(
+            output.pointer("/updates/3/error/finalStatus"),
+            Some(&json!("policy_stopped"))
+        );
+        assert_eq!(
+            output
+                .pointer("/state/acceptedEvents")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(3)
+        );
         Ok(())
     }
 
