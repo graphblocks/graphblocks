@@ -61,6 +61,55 @@ fn worker_registry_admits_ready_workers_and_reports_status() -> Result<(), Daemo
 }
 
 #[test]
+fn worker_registry_allows_admitted_worker_refresh_at_capacity() -> Result<(), DaemonConfigError> {
+    let mut registry =
+        WorkerRegistry::new(DaemonConfig::new("daemon-1", "127.0.0.1:8080").with_max_workers(1))?;
+    let initial = WorkerAdvertisement::new(
+        "worker-1",
+        "doc-cpu",
+        "sha256:package-lock",
+        "sha256:image-a",
+        [BlockCapability::new("document.parse@1")],
+    );
+    let refreshed = WorkerAdvertisement::new(
+        "worker-1",
+        "doc-cpu",
+        "sha256:package-lock",
+        "sha256:image-b",
+        [
+            BlockCapability::new("document.parse@1"),
+            BlockCapability::new("document.extract@1"),
+        ],
+    );
+    let overflow = WorkerAdvertisement::new(
+        "worker-2",
+        "doc-cpu",
+        "sha256:package-lock",
+        "sha256:image-c",
+        [BlockCapability::new("document.parse@1")],
+    );
+
+    let first_decision = registry.admit_worker(initial);
+    let refresh_decision = registry.admit_worker(refreshed);
+    let overflow_decision = registry.admit_worker(overflow);
+    let status = registry.status();
+
+    assert!(first_decision.admitted);
+    assert!(refresh_decision.admitted);
+    assert!(refresh_decision.reason_codes.is_empty());
+    assert!(!overflow_decision.admitted);
+    assert_eq!(
+        overflow_decision.reason_codes,
+        vec!["daemon.max_workers_exceeded"]
+    );
+    assert_eq!(registry.ready_worker_ids(), vec!["worker-1"]);
+    assert_eq!(status.ready_workers, 1);
+    assert_eq!(status.admitted_workers, 1);
+    assert_eq!(status.rejected_workers, 1);
+    Ok(())
+}
+
+#[test]
 fn worker_registry_rejects_unready_or_mismatched_workers() -> Result<(), DaemonConfigError> {
     let config = DaemonConfig::new("daemon-1", "127.0.0.1:8080")
         .require_package_lock_hash("sha256:package-lock");

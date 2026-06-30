@@ -105,7 +105,11 @@ impl WorkerRegistry {
             required_block: None,
         };
         let mut decision = evaluate_worker_admission(&policy, &advertisement);
-        if decision.admitted && self.admitted_workers.len() >= self.config.max_workers {
+        let is_known_worker = self.admitted_workers.contains_key(&decision.worker_id);
+        if decision.admitted
+            && !is_known_worker
+            && self.admitted_workers.len() >= self.config.max_workers
+        {
             decision.admitted = false;
             decision
                 .reason_codes
