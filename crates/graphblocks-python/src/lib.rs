@@ -43,6 +43,9 @@ use graphblocks_runtime_core::tool::{
     ToolCancellation, ToolDefinition, ToolEffect, ToolIdempotency, ToolImplementation,
     ToolResultMode,
 };
+use graphblocks_runtime_core::tool_approval::{
+    ToolApprovalError, ToolApprovalRecord, ToolApprovalRequest, ToolApprovalStatus,
+};
 use graphblocks_runtime_core::tool_call::{
     ToolCall, ToolCallDraft, ToolCallDraftStatus, ToolCallStatus,
 };
@@ -504,6 +507,48 @@ fn prepare_tool_result_for_model_json(
     serde_json::to_string(&payload).map_err(|error| {
         PyRuntimeError::new_err(format!(
             "failed to serialize prepared tool result output: {error}"
+        ))
+    })
+}
+
+#[pyfunction]
+fn evaluate_tool_approval_json(
+    record_json: &str,
+    resolved_tool_json: &str,
+    call_json: &str,
+    principal_id: &str,
+    now_unix_ms: u64,
+) -> PyResult<String> {
+    let record_value = parse_json_argument(record_json, "tool approval record")?;
+    let resolved_tool_value = parse_json_argument(resolved_tool_json, "resolved tool")?;
+    let call_value = parse_json_argument(call_json, "tool call")?;
+    let record = parse_tool_approval_record(&record_value, "tool approval record")?;
+    let resolved_tool = parse_resolved_tool(&resolved_tool_value, "resolved tool")?;
+    let call = parse_tool_call(&call_value, "tool call")?;
+    let validation_error = record.validate().err();
+    let payload = json!({
+        "ok": true,
+        "recordValid": validation_error.is_none(),
+        "validForCall": record.is_valid_for(&resolved_tool, &call, principal_id, now_unix_ms),
+        "approvalId": record.approval_id,
+        "toolCallId": record.request.tool_call_id,
+        "toolName": record.request.tool_name,
+        "revision": record.request.revision,
+        "status": tool_approval_status_name(record.status),
+        "definitionDigest": record.request.definition_digest,
+        "bindingDigest": record.request.binding_digest,
+        "argumentsDigest": record.request.arguments_digest,
+        "policySnapshotId": record.request.policy_snapshot_id,
+        "principalId": record.request.principal_id,
+        "expiresAtUnixMs": record.request.expires_at_unix_ms,
+        "validationError": validation_error
+            .as_ref()
+            .map(tool_approval_error_json)
+            .unwrap_or(Value::Null),
+    });
+    serde_json::to_string(&payload).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize tool approval evaluation: {error}"
         ))
     })
 }
@@ -1893,6 +1938,172 @@ fn parse_resolved_tool(value: &Value, label: &str) -> PyResult<ResolvedTool> {
     }
 
     Ok(resolved_tool)
+}
+
+fn parse_tool_approval_status(value: &str, label: &str) -> PyResult<ToolApprovalStatus> {
+    match value {
+        "requested" => Ok(ToolApprovalStatus::Requested),
+        "approved" => Ok(ToolApprovalStatus::Approved),
+        "denied" => Ok(ToolApprovalStatus::Denied),
+        "invalidated" => Ok(ToolApprovalStatus::Invalidated),
+        value => Err(PyValueError::new_err(format!(
+            "{label} has unknown tool approval status {value:?}"
+        ))),
+    }
+}
+
+fn parse_tool_approval_request(value: &Value, label: &str) -> PyResult<ToolApprovalRequest> {
+    let object = json_object(value, label)?;
+    let revision = u64_to_u32(
+        required_alias_u64(object, "revision", "revision", label)?,
+        &format!("{label}.revision"),
+    )?;
+    Ok(ToolApprovalRequest {
+        approval_id: required_alias_string(object, "approvalId", "approval_id", label)?.to_owned(),
+        tool_call_id: required_alias_string(object, "toolCallId", "tool_call_id", label)?
+            .to_owned(),
+        tool_name: required_alias_string(object, "toolName", "tool_name", label)?.to_owned(),
+        revision,
+        definition_digest: required_alias_string(
+            object,
+            "definitionDigest",
+            "definition_digest",
+            label,
+        )?
+        .to_owned(),
+        binding_digest: required_alias_string(object, "bindingDigest", "binding_digest", label)?
+            .to_owned(),
+        arguments_digest: required_alias_string(
+            object,
+            "argumentsDigest",
+            "arguments_digest",
+            label,
+        )?
+        .to_owned(),
+        policy_snapshot_id: required_alias_string(
+            object,
+            "policySnapshotId",
+            "policy_snapshot_id",
+            label,
+        )?
+        .to_owned(),
+        principal_id: required_alias_string(object, "principalId", "principal_id", label)?
+            .to_owned(),
+        requested_at_unix_ms: required_alias_u64(
+            object,
+            "requestedAtUnixMs",
+            "requested_at_unix_ms",
+            label,
+        )
+        .or_else(|_| required_alias_u64(object, "requestedAt", "requested_at", label))?,
+        expires_at_unix_ms: required_alias_u64(
+            object,
+            "expiresAtUnixMs",
+            "expires_at_unix_ms",
+            label,
+        )
+        .or_else(|_| required_alias_u64(object, "expiresAt", "expires_at", label))?,
+    })
+}
+
+fn parse_tool_approval_record(value: &Value, label: &str) -> PyResult<ToolApprovalRecord> {
+    let object = json_object(value, label)?;
+    let request_value = object
+        .get("request")
+        .ok_or_else(|| PyValueError::new_err(format!("{label}.request is required")))?;
+    Ok(ToolApprovalRecord {
+        approval_id: required_alias_string(object, "approvalId", "approval_id", label)?.to_owned(),
+        request: parse_tool_approval_request(request_value, &format!("{label}.request"))?,
+        status: parse_tool_approval_status(required_string(object, "status", label)?, label)?,
+        approver_id: optional_nullable_alias_string(object, "approverId", "approver_id", label)?
+            .map(str::to_owned),
+        decided_at_unix_ms: optional_nullable_alias_u64(
+            object,
+            "decidedAtUnixMs",
+            "decided_at_unix_ms",
+            label,
+        )?
+        .or(optional_nullable_alias_u64(
+            object,
+            "decidedAt",
+            "decided_at",
+            label,
+        )?),
+        invalidated_at_unix_ms: optional_nullable_alias_u64(
+            object,
+            "invalidatedAtUnixMs",
+            "invalidated_at_unix_ms",
+            label,
+        )?
+        .or(optional_nullable_alias_u64(
+            object,
+            "invalidatedAt",
+            "invalidated_at",
+            label,
+        )?),
+        reason: optional_nullable_alias_string(object, "reason", "reason", label)?
+            .map(str::to_owned),
+    })
+}
+
+fn tool_approval_status_name(status: ToolApprovalStatus) -> &'static str {
+    match status {
+        ToolApprovalStatus::Requested => "requested",
+        ToolApprovalStatus::Approved => "approved",
+        ToolApprovalStatus::Denied => "denied",
+        ToolApprovalStatus::Invalidated => "invalidated",
+    }
+}
+
+fn tool_approval_error_json(error: &ToolApprovalError) -> Value {
+    match error {
+        ToolApprovalError::EmptyField { field } => {
+            json!({"code": "EmptyField", "field": field})
+        }
+        ToolApprovalError::MissingField { field } => {
+            json!({"code": "MissingField", "field": field})
+        }
+        ToolApprovalError::ApprovalIdMismatch { expected, actual } => json!({
+            "code": "ApprovalIdMismatch",
+            "expected": expected,
+            "actual": actual,
+        }),
+        ToolApprovalError::ResolvedToolMismatch { expected, actual } => json!({
+            "code": "ResolvedToolMismatch",
+            "expected": expected,
+            "actual": actual,
+        }),
+        ToolApprovalError::ToolNameMismatch { expected, actual } => json!({
+            "code": "ToolNameMismatch",
+            "expected": expected,
+            "actual": actual,
+        }),
+        ToolApprovalError::InvalidExpiration {
+            requested_at_unix_ms,
+            expires_at_unix_ms,
+        } => json!({
+            "code": "InvalidExpiration",
+            "requestedAtUnixMs": requested_at_unix_ms,
+            "expiresAtUnixMs": expires_at_unix_ms,
+        }),
+        ToolApprovalError::InvalidDecisionTime {
+            requested_at_unix_ms,
+            decided_at_unix_ms,
+            expires_at_unix_ms,
+        } => json!({
+            "code": "InvalidDecisionTime",
+            "requestedAtUnixMs": requested_at_unix_ms,
+            "decidedAtUnixMs": decided_at_unix_ms,
+            "expiresAtUnixMs": expires_at_unix_ms,
+        }),
+        ToolApprovalError::InvalidRevision { revision } => {
+            json!({"code": "InvalidRevision", "revision": revision})
+        }
+        ToolApprovalError::InvalidToolCall { source } => json!({
+            "code": "InvalidToolCall",
+            "message": format!("{source:?}"),
+        }),
+    }
 }
 
 fn parse_json_schema_node(value: &Value, label: &str) -> PyResult<JsonSchemaNode> {
@@ -5946,6 +6157,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
         prepare_tool_result_for_model_json,
         module
     )?)?;
+    module.add_function(wrap_pyfunction!(evaluate_tool_approval_json, module)?)?;
     module.add_function(wrap_pyfunction!(
         record_tool_effect_precondition_json,
         module
@@ -5996,6 +6208,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
 
 #[cfg(test)]
 mod tests {
+    use graphblocks_runtime_core::tool_approval::{ToolApprovalRecord, ToolApprovalRequest};
     use graphblocks_runtime_core::tool_result::{ContentPart, ToolResult};
     use serde_json::{Value, json};
 
@@ -6005,12 +6218,14 @@ mod tests {
         evaluate_application_protocol_log_json, evaluate_application_protocol_stream_json,
         evaluate_connector_capabilities_json, evaluate_declarative_output_policy_json,
         evaluate_durable_tool_terminal_store_json, evaluate_output_gate_json,
-        evaluate_sequential_tool_queue_json, evaluate_tool_execution_plan_json,
-        evaluate_tool_result_stream_json, evaluate_usage_ledger_json, finalize_tool_call_json,
-        negotiate_application_protocol_capabilities_json, prepare_tool_result_for_model_json,
-        record_tool_effect_audit_event_json, record_tool_effect_precondition_json,
-        run_stdlib_graph_json, run_test_graph_json, validate_remote_payload_json,
-        validate_worker_advertisement_json, validate_worker_protocol_message_json,
+        evaluate_sequential_tool_queue_json, evaluate_tool_approval_json,
+        evaluate_tool_execution_plan_json, evaluate_tool_result_stream_json,
+        evaluate_usage_ledger_json, finalize_tool_call_json,
+        negotiate_application_protocol_capabilities_json, parse_resolved_tool, parse_tool_call,
+        prepare_tool_result_for_model_json, record_tool_effect_audit_event_json,
+        record_tool_effect_precondition_json, run_stdlib_graph_json, run_test_graph_json,
+        validate_remote_payload_json, validate_worker_advertisement_json,
+        validate_worker_protocol_message_json,
     };
 
     fn native_audit_fixture() -> Result<(Value, Value, Value), String> {
@@ -6558,6 +6773,124 @@ mod tests {
         assert_eq!(
             rejected.pointer("/error/code").and_then(Value::as_str),
             Some("ConnectorCapabilityMissing")
+        );
+        Ok(())
+    }
+
+    fn approval_record_json(record: &ToolApprovalRecord) -> Value {
+        json!({
+            "approvalId": &record.approval_id,
+            "request": {
+                "approvalId": &record.request.approval_id,
+                "toolCallId": &record.request.tool_call_id,
+                "toolName": &record.request.tool_name,
+                "revision": record.request.revision,
+                "definitionDigest": &record.request.definition_digest,
+                "bindingDigest": &record.request.binding_digest,
+                "argumentsDigest": &record.request.arguments_digest,
+                "policySnapshotId": &record.request.policy_snapshot_id,
+                "principalId": &record.request.principal_id,
+                "requestedAtUnixMs": record.request.requested_at_unix_ms,
+                "expiresAtUnixMs": record.request.expires_at_unix_ms,
+            },
+            "status": "approved",
+            "approverId": &record.approver_id,
+            "decidedAtUnixMs": record.decided_at_unix_ms,
+            "invalidatedAtUnixMs": record.invalidated_at_unix_ms,
+            "reason": &record.reason,
+        })
+    }
+
+    #[test]
+    fn evaluate_tool_approval_json_reports_validity_against_call_revision() -> Result<(), String> {
+        let (resolved_tool_value, mut call_value, _) = native_audit_fixture()?;
+        let call_object = call_value
+            .as_object_mut()
+            .ok_or_else(|| "call fixture must be an object".to_owned())?;
+        call_object.insert("status".to_owned(), json!("validated"));
+        call_object.insert("admittedAtUnixMs".to_owned(), Value::Null);
+
+        let resolved_tool =
+            parse_resolved_tool(&resolved_tool_value, "resolved tool").map_err(|error| {
+                format!("resolved tool fixture should parse for approval test: {error}")
+            })?;
+        let call = parse_tool_call(&call_value, "tool call").map_err(|error| {
+            format!("tool call fixture should parse for approval test: {error}")
+        })?;
+        let request = ToolApprovalRequest::for_call(
+            "approval-1",
+            &resolved_tool,
+            &call,
+            "user-1",
+            1_000,
+            2_000,
+        )
+        .map_err(|error| format!("approval request should be valid: {error:?}"))?;
+        let record = ToolApprovalRecord::approve(request, "admin-1", 1_100);
+        let record_value = approval_record_json(&record);
+
+        let accepted_json = evaluate_tool_approval_json(
+            &serde_json::to_string(&record_value).map_err(|error| error.to_string())?,
+            &serde_json::to_string(&resolved_tool_value).map_err(|error| error.to_string())?,
+            &serde_json::to_string(&call_value).map_err(|error| error.to_string())?,
+            "user-1",
+            1_500,
+        )
+        .map_err(|error| error.to_string())?;
+        let accepted =
+            serde_json::from_str::<Value>(&accepted_json).map_err(|error| error.to_string())?;
+        assert_eq!(accepted.get("recordValid"), Some(&json!(true)));
+        assert_eq!(accepted.get("validForCall"), Some(&json!(true)));
+        assert_eq!(accepted.get("validationError"), Some(&Value::Null));
+
+        let revised = call
+            .revise_arguments(json!({"customer_id": "cust-1", "title": "Changed"}))
+            .map_err(|error| format!("call revision should be valid: {error:?}"))?;
+        let mut revised_value = call_value.clone();
+        let revised_object = revised_value
+            .as_object_mut()
+            .ok_or_else(|| "revised call fixture must be an object".to_owned())?;
+        revised_object.insert("arguments".to_owned(), revised.arguments);
+        revised_object.insert(
+            "argumentsDigest".to_owned(),
+            json!(revised.arguments_digest),
+        );
+        revised_object.insert("revision".to_owned(), json!(revised.revision));
+        let revised_json = evaluate_tool_approval_json(
+            &serde_json::to_string(&record_value).map_err(|error| error.to_string())?,
+            &serde_json::to_string(&resolved_tool_value).map_err(|error| error.to_string())?,
+            &serde_json::to_string(&revised_value).map_err(|error| error.to_string())?,
+            "user-1",
+            1_500,
+        )
+        .map_err(|error| error.to_string())?;
+        let revised_result =
+            serde_json::from_str::<Value>(&revised_json).map_err(|error| error.to_string())?;
+        assert_eq!(revised_result.get("recordValid"), Some(&json!(true)));
+        assert_eq!(revised_result.get("validForCall"), Some(&json!(false)));
+
+        let mut mismatched_record = record_value.clone();
+        mismatched_record
+            .as_object_mut()
+            .ok_or_else(|| "approval record must be an object".to_owned())?
+            .insert("approvalId".to_owned(), json!("approval-other"));
+        let mismatched_json = evaluate_tool_approval_json(
+            &serde_json::to_string(&mismatched_record).map_err(|error| error.to_string())?,
+            &serde_json::to_string(&resolved_tool_value).map_err(|error| error.to_string())?,
+            &serde_json::to_string(&call_value).map_err(|error| error.to_string())?,
+            "user-1",
+            1_500,
+        )
+        .map_err(|error| error.to_string())?;
+        let mismatched =
+            serde_json::from_str::<Value>(&mismatched_json).map_err(|error| error.to_string())?;
+        assert_eq!(mismatched.get("recordValid"), Some(&json!(false)));
+        assert_eq!(mismatched.get("validForCall"), Some(&json!(false)));
+        assert_eq!(
+            mismatched
+                .pointer("/validationError/code")
+                .and_then(Value::as_str),
+            Some("ApprovalIdMismatch")
         );
         Ok(())
     }

@@ -118,12 +118,31 @@ def test_agents_package_lazy_native_helpers_delegate_to_runtime(monkeypatch) -> 
         calls.append(("tool_result_stream", (state, operations)))
         return {"kind": "tool_result_stream", "state": state, "operations": operations}
 
+    def evaluate_tool_approval(
+        record: dict[str, object],
+        resolved_tool: dict[str, object],
+        call: dict[str, object],
+        *,
+        principal_id: str,
+        now_unix_ms: int,
+    ) -> dict[str, object]:
+        calls.append(("tool_approval", (record, resolved_tool, call, principal_id, now_unix_ms)))
+        return {
+            "kind": "tool_approval",
+            "record": record,
+            "resolvedTool": resolved_tool,
+            "call": call,
+            "principalId": principal_id,
+            "nowUnixMs": now_unix_ms,
+        }
+
     monkeypatch.setitem(
         sys.modules,
         "graphblocks_runtime",
         SimpleNamespace(
             decide_agent_step=decide_agent_step,
             evaluate_sequential_tool_queue=evaluate_sequential_tool_queue,
+            evaluate_tool_approval=evaluate_tool_approval,
             evaluate_tool_execution_plan=evaluate_tool_execution_plan,
             evaluate_tool_result_stream=evaluate_tool_result_stream,
             finalize_tool_call=finalize_tool_call,
@@ -160,6 +179,13 @@ def test_agents_package_lazy_native_helpers_delegate_to_runtime(monkeypatch) -> 
         {"toolCallId": "call-1"},
         [{"op": "delta", "sequence": 2}],
     )
+    approval = graphblocks_agents.evaluate_native_tool_approval(
+        {"approvalId": "approval-1", "status": "approved"},
+        {"resolvedToolId": "resolved-tool-1"},
+        {"toolCallId": "call-1"},
+        principal_id="user-1",
+        now_unix_ms=1_500,
+    )
 
     assert plan == {"kind": "plan", "plan": {"planId": "plan-1"}, "operations": [{"op": "ready"}]}
     assert finalized == {
@@ -191,6 +217,14 @@ def test_agents_package_lazy_native_helpers_delegate_to_runtime(monkeypatch) -> 
         "state": {"toolCallId": "call-1"},
         "operations": [{"op": "delta", "sequence": 2}],
     }
+    assert approval == {
+        "kind": "tool_approval",
+        "record": {"approvalId": "approval-1", "status": "approved"},
+        "resolvedTool": {"resolvedToolId": "resolved-tool-1"},
+        "call": {"toolCallId": "call-1"},
+        "principalId": "user-1",
+        "nowUnixMs": 1_500,
+    }
     assert calls == [
         ("plan", ({"planId": "plan-1"}, [{"op": "ready"}])),
         (
@@ -220,8 +254,19 @@ def test_agents_package_lazy_native_helpers_delegate_to_runtime(monkeypatch) -> 
             ),
         ),
         ("tool_result_stream", ({"toolCallId": "call-1"}, [{"op": "delta", "sequence": 2}])),
+        (
+            "tool_approval",
+            (
+                {"approvalId": "approval-1", "status": "approved"},
+                {"resolvedToolId": "resolved-tool-1"},
+                {"toolCallId": "call-1"},
+                "user-1",
+                1_500,
+            ),
+        ),
     ]
     assert "decide_native_agent_step" in graphblocks_agents.__all__
+    assert "evaluate_native_tool_approval" in graphblocks_agents.__all__
     assert "evaluate_native_tool_result_stream" in graphblocks_agents.__all__
     assert "finalize_native_tool_call" in graphblocks_agents.__all__
     assert "prepare_native_tool_result_for_model" in graphblocks_agents.__all__

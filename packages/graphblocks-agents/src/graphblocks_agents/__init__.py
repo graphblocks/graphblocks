@@ -145,6 +145,25 @@ def evaluate_native_tool_result_stream(
     return evaluate_tool_result_stream(state, operations)
 
 
+def evaluate_native_tool_approval(
+    record: dict[str, object],
+    resolved_tool: dict[str, object],
+    call: dict[str, object],
+    *,
+    principal_id: str,
+    now_unix_ms: int,
+) -> dict[str, object]:
+    from graphblocks_runtime import evaluate_tool_approval
+
+    return evaluate_tool_approval(
+        record,
+        resolved_tool,
+        call,
+        principal_id=principal_id,
+        now_unix_ms=now_unix_ms,
+    )
+
+
 __all__ = [
     "AdmittedToolCall",
     "AgentLoopController",
@@ -217,6 +236,7 @@ __all__ = [
     "build_before_tool_or_effect_policy_request",
     "decide_native_agent_step",
     "evaluate_native_sequential_tool_queue",
+    "evaluate_native_tool_approval",
     "evaluate_native_tool_execution_plan",
     "evaluate_native_tool_result_stream",
     "finalize_native_tool_call",

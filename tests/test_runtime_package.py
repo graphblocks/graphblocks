@@ -88,6 +88,27 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             }
         )
 
+    def evaluate_tool_approval_json(
+        record_json: str,
+        resolved_tool_json: str,
+        call_json: str,
+        principal_id: str,
+        now_unix_ms: int,
+    ) -> str:
+        calls.append(("tool_approval", (record_json, resolved_tool_json, call_json, principal_id, now_unix_ms)))
+        return json.dumps(
+            {
+                "ok": True,
+                "record": json.loads(record_json),
+                "resolvedTool": json.loads(resolved_tool_json),
+                "call": json.loads(call_json),
+                "principalId": principal_id,
+                "nowUnixMs": now_unix_ms,
+                "recordValid": True,
+                "validForCall": True,
+            }
+        )
+
     def run_stdlib_graph_json(graph_json: str, inputs_json: str) -> str:
         calls.append(("run_stdlib", (graph_json, inputs_json)))
         return json.dumps(
@@ -349,6 +370,7 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         evaluate_durable_tool_terminal_store_json=evaluate_durable_tool_terminal_store_json,
         evaluate_output_gate_json=evaluate_output_gate_json,
         evaluate_sequential_tool_queue_json=evaluate_sequential_tool_queue_json,
+        evaluate_tool_approval_json=evaluate_tool_approval_json,
         evaluate_tool_execution_plan_json=evaluate_tool_execution_plan_json,
         evaluate_tool_result_stream_json=evaluate_tool_result_stream_json,
         evaluate_usage_ledger_json=evaluate_usage_ledger_json,
@@ -405,6 +427,20 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         {"resolvedToolId": "resolved-tool-1"},
         [{"schemaId": "schemas/SearchResult@1"}],
         content_policy={"maxOutputBytes": 128},
+    )
+    tool_approval = runtime.evaluate_tool_approval(
+        {
+            "approvalId": "approval-1",
+            "request": {
+                "approvalId": "approval-1",
+                "toolCallId": "call-1",
+            },
+            "status": "approved",
+        },
+        {"resolvedToolId": "resolved-tool-1"},
+        {"toolCallId": "call-1"},
+        principal_id="user-1",
+        now_unix_ms=1_500,
     )
     tool_effect_precondition = runtime.record_tool_effect_precondition(
         {"resolvedToolId": "resolved-tool-1"},
@@ -561,6 +597,23 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         "resolvedTool": {"resolvedToolId": "resolved-tool-1"},
         "schemaRegistry": [{"schemaId": "schemas/SearchResult@1"}],
         "contentPolicy": {"maxOutputBytes": 128},
+    }
+    assert tool_approval == {
+        "ok": True,
+        "record": {
+            "approvalId": "approval-1",
+            "request": {
+                "approvalId": "approval-1",
+                "toolCallId": "call-1",
+            },
+            "status": "approved",
+        },
+        "resolvedTool": {"resolvedToolId": "resolved-tool-1"},
+        "call": {"toolCallId": "call-1"},
+        "principalId": "user-1",
+        "nowUnixMs": 1_500,
+        "recordValid": True,
+        "validForCall": True,
     }
     assert tool_effect_precondition == {
         "digest": "sha256:precondition",
@@ -726,6 +779,19 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             ),
         ),
         (
+            "tool_approval",
+            (
+                (
+                    '{"approvalId":"approval-1","request":{"approvalId":"approval-1",'
+                    '"toolCallId":"call-1"},"status":"approved"}'
+                ),
+                '{"resolvedToolId":"resolved-tool-1"}',
+                '{"toolCallId":"call-1"}',
+                "user-1",
+                1_500,
+            ),
+        ),
+        (
             "tool_effect_precondition",
             (
                 '{"resolvedToolId":"resolved-tool-1"}',
@@ -882,6 +948,8 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     assert "evaluate_durable_tool_terminal_store_json" in runtime.__all__
     assert "evaluate_tool_execution_plan" in runtime.__all__
     assert "evaluate_tool_execution_plan_json" in runtime.__all__
+    assert "evaluate_tool_approval" in runtime.__all__
+    assert "evaluate_tool_approval_json" in runtime.__all__
     assert "evaluate_tool_result_stream" in runtime.__all__
     assert "evaluate_tool_result_stream_json" in runtime.__all__
     assert "evaluate_sequential_tool_queue" in runtime.__all__

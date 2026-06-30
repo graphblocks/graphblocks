@@ -22,6 +22,7 @@ try:
         evaluate_durable_tool_terminal_store_json,
         evaluate_output_gate_json,
         evaluate_sequential_tool_queue_json,
+        evaluate_tool_approval_json,
         evaluate_tool_execution_plan_json,
         evaluate_tool_result_stream_json,
         evaluate_usage_ledger_json,
@@ -168,6 +169,15 @@ except ImportError as error:
         require_native_extension()
 
     def evaluate_sequential_tool_queue_json(queue_json: str, operations_json: str) -> str:
+        require_native_extension()
+
+    def evaluate_tool_approval_json(
+        record_json: str,
+        resolved_tool_json: str,
+        call_json: str,
+        principal_id: str,
+        now_unix_ms: int,
+    ) -> str:
         require_native_extension()
 
     def evaluate_usage_ledger_json(operations_json: str, run_id: str | None = None) -> str:
@@ -485,6 +495,26 @@ def evaluate_tool_result_stream(
     )
 
 
+def evaluate_tool_approval(
+    record: dict[str, object],
+    resolved_tool: dict[str, object],
+    call: dict[str, object],
+    *,
+    principal_id: str,
+    now_unix_ms: int,
+) -> dict[str, object]:
+    return _json_object_result(
+        evaluate_tool_approval_json(
+            _canonical_json(record),
+            _canonical_json(resolved_tool),
+            _canonical_json(call),
+            principal_id,
+            now_unix_ms,
+        ),
+        "native tool approval evaluation result",
+    )
+
+
 def evaluate_sequential_tool_queue(
     queue: dict[str, object],
     operations: object,
@@ -556,6 +586,8 @@ __all__ = [
     "evaluate_output_gate_json",
     "evaluate_sequential_tool_queue",
     "evaluate_sequential_tool_queue_json",
+    "evaluate_tool_approval",
+    "evaluate_tool_approval_json",
     "evaluate_tool_execution_plan",
     "evaluate_tool_execution_plan_json",
     "evaluate_tool_result_stream",
