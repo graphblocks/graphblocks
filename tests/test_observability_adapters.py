@@ -9,6 +9,22 @@ from types import SimpleNamespace
 
 import pytest
 
+from graphblocks.output_policy import (
+    VALID_DRAFT_DISPOSITIONS,
+    VALID_OUTPUT_DISPOSITIONS,
+    VALID_OUTPUT_DURABLE_RESULTS,
+    VALID_PENDING_TOOL_CALLS_DISPOSITIONS,
+    VALID_TERMINAL_REASONS,
+)
+from graphblocks.policy import VALID_ENFORCEMENT_POINTS
+from graphblocks.tools import (
+    VALID_TOOL_CALL_STATUSES,
+    VALID_TOOL_EFFECT_OUTCOMES,
+    VALID_TOOL_EFFECTS,
+    VALID_TOOL_RESULT_MODES,
+    VALID_TOOL_RESULT_STATUSES,
+)
+
 
 ROOT = Path(__file__).parents[1]
 
@@ -180,6 +196,28 @@ def test_telemetry_policy_and_tool_records_apply_capture_policy(monkeypatch) -> 
     }
     assert "OutputPolicyTelemetryRecord" in graphblocks_telemetry.__all__
     assert "ToolExecutionTelemetryRecord" in graphblocks_telemetry.__all__
+
+
+def test_telemetry_package_exposes_canonical_literal_sets(monkeypatch) -> None:
+    _add_observability_package_paths(monkeypatch)
+    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
+    expected_constants = {
+        "VALID_DRAFT_DISPOSITIONS": VALID_DRAFT_DISPOSITIONS,
+        "VALID_ENFORCEMENT_POINTS": VALID_ENFORCEMENT_POINTS,
+        "VALID_OUTPUT_DISPOSITIONS": VALID_OUTPUT_DISPOSITIONS,
+        "VALID_OUTPUT_DURABLE_RESULTS": VALID_OUTPUT_DURABLE_RESULTS,
+        "VALID_PENDING_TOOL_CALLS_DISPOSITIONS": VALID_PENDING_TOOL_CALLS_DISPOSITIONS,
+        "VALID_TERMINAL_REASONS": VALID_TERMINAL_REASONS,
+        "VALID_TOOL_CALL_STATUSES": VALID_TOOL_CALL_STATUSES,
+        "VALID_TOOL_EFFECT_OUTCOMES": VALID_TOOL_EFFECT_OUTCOMES,
+        "VALID_TOOL_EFFECTS": VALID_TOOL_EFFECTS,
+        "VALID_TOOL_RESULT_MODES": VALID_TOOL_RESULT_MODES,
+        "VALID_TOOL_RESULT_STATUSES": VALID_TOOL_RESULT_STATUSES,
+    }
+
+    for name, value in expected_constants.items():
+        assert getattr(graphblocks_telemetry, name) is value
+        assert name in graphblocks_telemetry.__all__
 
 
 def test_telemetry_records_validate_policy_and_tool_literal_fields(monkeypatch) -> None:
