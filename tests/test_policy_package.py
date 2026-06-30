@@ -3,6 +3,14 @@ from __future__ import annotations
 import importlib
 from pathlib import Path
 
+from graphblocks.policy import (
+    VALID_ENFORCEMENT_POINTS,
+    VALID_ENFORCEMENT_STATUSES,
+    VALID_POLICY_EFFECTS,
+    VALID_POLICY_FAIL_MODES,
+    VALID_RULE_EFFECTS,
+)
+
 
 ROOT = Path(__file__).parents[1]
 
@@ -104,3 +112,21 @@ def test_policy_package_exposes_policy_test_dsl(monkeypatch) -> None:
     assert report.passed is True
     assert "PolicyEnforcer" in graphblocks_policy.__all__
     assert "run_policy_tests" in graphblocks_policy.__all__
+
+
+def test_policy_package_exposes_canonical_literal_sets(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-policy" / "src"))
+    graphblocks_policy = importlib.import_module("graphblocks_policy")
+
+    assert graphblocks_policy.VALID_ENFORCEMENT_POINTS is VALID_ENFORCEMENT_POINTS
+    assert graphblocks_policy.VALID_ENFORCEMENT_STATUSES is VALID_ENFORCEMENT_STATUSES
+    assert graphblocks_policy.VALID_POLICY_EFFECTS is VALID_POLICY_EFFECTS
+    assert graphblocks_policy.VALID_POLICY_FAIL_MODES is VALID_POLICY_FAIL_MODES
+    assert graphblocks_policy.VALID_RULE_EFFECTS is VALID_RULE_EFFECTS
+    assert {
+        "on_generation_chunk",
+        "before_client_delivery",
+        "before_output_commit",
+        "before_tool_or_effect",
+    }.issubset(graphblocks_policy.VALID_ENFORCEMENT_POINTS)
+    assert "VALID_ENFORCEMENT_POINTS" in graphblocks_policy.__all__
