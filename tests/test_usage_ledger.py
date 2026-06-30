@@ -136,6 +136,16 @@ def test_usage_record_rejects_invalid_identity_source_and_confidence() -> None:
                 **overrides,
             )
 
+    for amounts in (object(), [object()], "tokens"):
+        with pytest.raises(ValueError, match="usage amounts must be UsageAmount"):
+            UsageRecord(
+                record_id="usage-1",
+                source="runtime_measured",
+                confidence="estimated",
+                amounts=amounts,  # type: ignore[arg-type]
+                occurred_at="2026-06-22T00:00:00Z",
+            )
+
 
 def test_usage_ledger_replays_identical_records_without_double_counting() -> None:
     ledger = InMemoryUsageLedger()

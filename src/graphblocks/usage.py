@@ -88,6 +88,12 @@ class UsageRecord:
                 raise ValueError(f"usage {field_name} must be a string")
             if not value.strip():
                 raise ValueError(f"usage {field_name} must not be empty")
+        try:
+            raw_amounts = tuple(self.amounts)
+        except TypeError as error:
+            raise ValueError("usage amounts must be UsageAmount") from error
+        if any(not isinstance(amount, UsageAmount) for amount in raw_amounts):
+            raise ValueError("usage amounts must be UsageAmount")
         amounts = tuple(
             UsageAmount(
                 kind=amount.kind,
@@ -95,7 +101,7 @@ class UsageRecord:
                 unit=amount.unit,
                 dimensions=MappingProxyType(dict(amount.dimensions)),
             )
-            for amount in self.amounts
+            for amount in raw_amounts
         )
         object.__setattr__(self, "amounts", amounts)
         object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
