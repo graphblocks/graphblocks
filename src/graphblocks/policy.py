@@ -149,12 +149,39 @@ class PolicyRule:
     priority: int = 0
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "rule_id",
+            _validate_non_empty_string("policy rule", "rule_id", self.rule_id),
+        )
         if self.effect not in VALID_RULE_EFFECTS:
             raise ValueError(f"unknown policy rule effect {self.effect!r}")
-        object.__setattr__(self, "actions", tuple(self.actions))
-        object.__setattr__(self, "resource_selectors", tuple(self.resource_selectors))
-        object.__setattr__(self, "principal_selectors", tuple(self.principal_selectors))
-        object.__setattr__(self, "obligations", tuple(self.obligations))
+        actions = _validate_string_tuple("policy rule", "actions", self.actions)
+        if not actions:
+            raise ValueError("policy rule actions must not be empty")
+        resource_selectors = _validate_string_tuple(
+            "policy rule",
+            "resource_selectors",
+            self.resource_selectors,
+        )
+        if not resource_selectors:
+            raise ValueError("policy rule resource_selectors must not be empty")
+        object.__setattr__(self, "actions", actions)
+        object.__setattr__(self, "resource_selectors", resource_selectors)
+        object.__setattr__(
+            self,
+            "principal_selectors",
+            _validate_string_tuple("policy rule", "principal_selectors", self.principal_selectors),
+        )
+        try:
+            obligations = tuple(self.obligations)
+        except TypeError as error:
+            raise ValueError("policy rule obligations must be PolicyObligation") from error
+        if any(not isinstance(obligation, PolicyObligation) for obligation in obligations):
+            raise ValueError("policy rule obligations must be PolicyObligation")
+        if not isinstance(self.priority, int) or isinstance(self.priority, bool):
+            raise ValueError("policy rule priority must be an integer")
+        object.__setattr__(self, "obligations", obligations)
 
 
 @dataclass(frozen=True, slots=True)

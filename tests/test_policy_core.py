@@ -132,6 +132,8 @@ def test_policy_models_reject_empty_identity_fields() -> None:
         PolicyObligation(" ", "capture_audit")
     with pytest.raises(ValueError, match="policy obligation obligation_type must not be empty"):
         PolicyObligation("obl-1", "")
+    with pytest.raises(ValueError, match="policy rule rule_id must not be empty"):
+        PolicyRule(" ", "allow", actions=("tool.run",), resource_selectors=("tool",))
     with pytest.raises(ValueError, match="principal principal_id must not be empty"):
         PrincipalRef(" ")
     with pytest.raises(ValueError, match="principal tenant_id must not be empty"):
@@ -191,6 +193,37 @@ def test_policy_models_reject_empty_identity_fields() -> None:
             policy_refs=(),
             input_digest="sha256:input",
         )
+
+
+def test_policy_rule_rejects_malformed_collections() -> None:
+    with pytest.raises(ValueError, match="policy rule actions must be a collection of strings"):
+        PolicyRule("rule-1", "allow", actions="tool.run", resource_selectors=("tool",))  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="policy rule actions must not be empty"):
+        PolicyRule("rule-1", "allow", actions=(), resource_selectors=("tool",))
+    with pytest.raises(ValueError, match="policy rule actions item must not be empty"):
+        PolicyRule("rule-1", "allow", actions=("tool.run", " "), resource_selectors=("tool",))
+    with pytest.raises(ValueError, match="policy rule resource_selectors must not be empty"):
+        PolicyRule("rule-1", "allow", actions=("tool.run",), resource_selectors=())
+    with pytest.raises(ValueError, match="policy rule resource_selectors items must be strings"):
+        PolicyRule("rule-1", "allow", actions=("tool.run",), resource_selectors=("tool", 3))  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="policy rule principal_selectors item must not be empty"):
+        PolicyRule(
+            "rule-1",
+            "allow",
+            actions=("tool.run",),
+            resource_selectors=("tool",),
+            principal_selectors=("support", " "),
+        )
+    with pytest.raises(ValueError, match="policy rule obligations must be PolicyObligation"):
+        PolicyRule(
+            "rule-1",
+            "obligate",
+            actions=("tool.run",),
+            resource_selectors=("tool",),
+            obligations=(object(),),  # type: ignore[arg-type]
+        )
+    with pytest.raises(ValueError, match="policy rule priority must be an integer"):
+        PolicyRule("rule-1", "allow", actions=("tool.run",), resource_selectors=("tool",), priority=True)  # type: ignore[arg-type]
 
 
 def test_policy_decision_rejects_malformed_collections() -> None:
