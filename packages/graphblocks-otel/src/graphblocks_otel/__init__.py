@@ -9,7 +9,9 @@ from graphblocks_telemetry import (
     DEFAULT_CONTENT_TELEMETRY_ATTRIBUTE_KEYS,
     DEFAULT_SENSITIVE_TELEMETRY_ATTRIBUTE_KEYS,
     GenerationTelemetryRecord,
+    OutputPolicyTelemetryRecord,
     TelemetryCapturePolicy,
+    ToolExecutionTelemetryRecord,
 )
 
 
@@ -163,6 +165,86 @@ def otlp_span_from_generation(
     return OtlpSpanProjection(span_json=canonical_dumps(span))
 
 
+def otlp_span_from_output_policy(
+    observation: OutputPolicyTelemetryRecord,
+    *,
+    schema_url: str,
+    capture_policy: TelemetryCapturePolicy | None = None,
+) -> OtlpSpanProjection:
+    observation = (capture_policy or DEFAULT_OTLP_CAPTURE_POLICY).apply_output_policy(observation)
+    attributes: dict[str, object] = {
+        "graphblocks.disposition": observation.disposition,
+        "graphblocks.enforcement_point": observation.enforcement_point,
+        "graphblocks.record_id": observation.record_id,
+        "graphblocks.response_id": observation.response_id,
+        "graphblocks.run_id": observation.run_id,
+        "graphblocks.stream_id": observation.stream_id,
+    }
+    for key, value in (
+        ("graphblocks.release_id", observation.release_id),
+        ("graphblocks.policy_snapshot_id", observation.policy_snapshot_id),
+        ("graphblocks.terminal_reason", observation.terminal_reason),
+        ("graphblocks.draft_disposition", observation.draft_disposition),
+        ("graphblocks.pending_tool_calls", observation.pending_tool_calls),
+        ("graphblocks.durable_result", observation.durable_result),
+    ):
+        if value is not None:
+            attributes[key] = value
+    for key, value in observation.attributes.items():
+        attributes[f"graphblocks.attribute.{key}"] = value
+    metrics = {}
+    if observation.accepted_through_sequence is not None:
+        metrics["accepted_through_sequence"] = observation.accepted_through_sequence
+    if observation.last_client_delivered_sequence is not None:
+        metrics["last_client_delivered_sequence"] = observation.last_client_delivered_sequence
+    span = {
+        "schema_url": schema_url,
+        "name": "graphblocks.output_policy",
+        "span_id": observation.record_id,
+        "attributes": dict(sorted(attributes.items())),
+        "metrics": dict(sorted(metrics.items())),
+    }
+    return OtlpSpanProjection(span_json=canonical_dumps(span))
+
+
+def otlp_span_from_tool_execution(
+    observation: ToolExecutionTelemetryRecord,
+    *,
+    schema_url: str,
+    capture_policy: TelemetryCapturePolicy | None = None,
+) -> OtlpSpanProjection:
+    observation = (capture_policy or DEFAULT_OTLP_CAPTURE_POLICY).apply_tool_execution(observation)
+    attributes: dict[str, object] = {
+        "graphblocks.record_id": observation.record_id,
+        "graphblocks.run_id": observation.run_id,
+        "graphblocks.tool_call_id": observation.tool_call_id,
+        "graphblocks.tool_name": observation.tool_name,
+        "graphblocks.tool_status": observation.status,
+    }
+    for key, value in (
+        ("graphblocks.release_id", observation.release_id),
+        ("graphblocks.result_mode", observation.result_mode),
+        ("graphblocks.effect_outcome", observation.effect_outcome),
+    ):
+        if value is not None:
+            attributes[key] = value
+    if observation.effects:
+        attributes["graphblocks.effects"] = list(observation.effects)
+    for key, value in observation.attributes.items():
+        attributes[f"graphblocks.attribute.{key}"] = value
+    metrics = {}
+    if observation.duration_ms is not None:
+        metrics["duration_ms"] = observation.duration_ms
+    span = {
+        "schema_url": schema_url,
+        "name": "graphblocks.tool_execution",
+        "span_id": observation.record_id,
+        "attributes": dict(sorted(attributes.items())),
+        "metrics": dict(sorted(metrics.items())),
+    }
+    return OtlpSpanProjection(span_json=canonical_dumps(span))
+
+
 def _require_non_empty(field_name: str, value: object) -> str:
     if not isinstance(value, str) or not value.strip():
         raise OtelCollectorTemplateError(f"{field_name} must be a non-empty string")
@@ -177,4 +259,6 @@ __all__ = [
     "VALID_COLLECTOR_PIPELINES",
     "otlp_collector_template",
     "otlp_span_from_generation",
+    "otlp_span_from_output_policy",
+    "otlp_span_from_tool_execution",
 ]

@@ -371,6 +371,100 @@ def test_otel_projection_applies_capture_policy_before_export(monkeypatch) -> No
     assert "secret prompt" not in repr(span.span_contract())
 
 
+def test_otel_projects_policy_and_tool_spans_with_capture_policy(monkeypatch) -> None:
+    _add_observability_package_paths(monkeypatch)
+    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
+    graphblocks_otel = importlib.import_module("graphblocks_otel")
+    output_record = graphblocks_telemetry.OutputPolicyTelemetryRecord(
+        record_id="policy-1",
+        run_id="run-1",
+        stream_id="stream-1",
+        response_id="response-1",
+        enforcement_point="before_client_delivery",
+        disposition="abort_response",
+        release_id="release-1",
+        policy_snapshot_id="policy-snapshot-1",
+        terminal_reason="policy_denied",
+        draft_disposition="retract",
+        pending_tool_calls="deny",
+        durable_result="none",
+        accepted_through_sequence=7,
+        last_client_delivered_sequence=5,
+        attributes={"tenant": "tenant-1", "api_key": "sk-test", "prompt": "secret prompt"},
+    )
+    tool_record = graphblocks_telemetry.ToolExecutionTelemetryRecord(
+        record_id="tool-1",
+        run_id="run-1",
+        tool_call_id="call-1",
+        tool_name="ticket.create",
+        status="completed",
+        release_id="release-1",
+        result_mode="value",
+        effect_outcome="committed",
+        effects=("network", "external_write"),
+        duration_ms=128,
+        attributes={"tenant": "tenant-1", "token": "secret-token", "tool_result": "secret result"},
+    )
+
+    output_span = graphblocks_otel.otlp_span_from_output_policy(
+        output_record,
+        schema_url="https://opentelemetry.io/schemas/1.27.0",
+    )
+    tool_span = graphblocks_otel.otlp_span_from_tool_execution(
+        tool_record,
+        schema_url="https://opentelemetry.io/schemas/1.27.0",
+    )
+
+    assert output_span.span_contract() == {
+        "schema_url": "https://opentelemetry.io/schemas/1.27.0",
+        "name": "graphblocks.output_policy",
+        "span_id": "policy-1",
+        "attributes": {
+            "graphblocks.attribute.api_key": "[redacted]",
+            "graphblocks.attribute.tenant": "tenant-1",
+            "graphblocks.disposition": "abort_response",
+            "graphblocks.draft_disposition": "retract",
+            "graphblocks.durable_result": "none",
+            "graphblocks.enforcement_point": "before_client_delivery",
+            "graphblocks.pending_tool_calls": "deny",
+            "graphblocks.policy_snapshot_id": "policy-snapshot-1",
+            "graphblocks.record_id": "policy-1",
+            "graphblocks.release_id": "release-1",
+            "graphblocks.response_id": "response-1",
+            "graphblocks.run_id": "run-1",
+            "graphblocks.stream_id": "stream-1",
+            "graphblocks.terminal_reason": "policy_denied",
+        },
+        "metrics": {
+            "accepted_through_sequence": 7,
+            "last_client_delivered_sequence": 5,
+        },
+    }
+    assert tool_span.span_contract() == {
+        "schema_url": "https://opentelemetry.io/schemas/1.27.0",
+        "name": "graphblocks.tool_execution",
+        "span_id": "tool-1",
+        "attributes": {
+            "graphblocks.attribute.tenant": "tenant-1",
+            "graphblocks.attribute.token": "[redacted]",
+            "graphblocks.effect_outcome": "committed",
+            "graphblocks.effects": ["external_write", "network"],
+            "graphblocks.record_id": "tool-1",
+            "graphblocks.release_id": "release-1",
+            "graphblocks.result_mode": "value",
+            "graphblocks.run_id": "run-1",
+            "graphblocks.tool_call_id": "call-1",
+            "graphblocks.tool_name": "ticket.create",
+            "graphblocks.tool_status": "completed",
+        },
+        "metrics": {"duration_ms": 128},
+    }
+    assert "secret prompt" not in repr(output_span.span_contract())
+    assert "secret result" not in repr(tool_span.span_contract())
+    assert "otlp_span_from_output_policy" in graphblocks_otel.__all__
+    assert "otlp_span_from_tool_execution" in graphblocks_otel.__all__
+
+
 def test_otel_collector_template_renders_otlp_pipeline_without_sdk_import(monkeypatch) -> None:
     _add_observability_package_paths(monkeypatch)
     graphblocks_otel = importlib.import_module("graphblocks_otel")
