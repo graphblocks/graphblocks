@@ -1493,7 +1493,7 @@ impl OutputDeliveryGate {
                     });
                 }
 
-                if decision.disposition == OutputDisposition::Replace {
+                if !decision.replacement_chunks.is_empty() {
                     let mut expected_sequence = decision
                         .accepted_through_sequence
                         .unwrap_or(self.last_generated_sequence);
