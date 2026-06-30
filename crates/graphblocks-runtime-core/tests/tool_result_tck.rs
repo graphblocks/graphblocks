@@ -1,6 +1,7 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use graphblocks_runtime_core::observability::CaptureDecision;
+use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory};
 use graphblocks_runtime_core::output_policy::RedactionInstruction;
 use graphblocks_runtime_core::tool::{
     BlockToolImplementation, ToolApproval, ToolBinding, ToolCatalog, ToolDefinition, ToolEffect,
@@ -8,11 +9,12 @@ use graphblocks_runtime_core::tool::{
 };
 use graphblocks_runtime_core::tool_call::ToolCallDraft;
 use graphblocks_runtime_core::tool_result::{
-    ContentPart, ContentPartKind, ToolResult, ToolResultContentPolicy, ToolResultValidation,
-    ToolResultValidationError, ToolResultValidationRequest,
+    ContentPart, ContentPartKind, ToolResult, ToolResultContentPolicy, ToolResultEvent,
+    ToolResultStreamError, ToolResultStreamState, ToolResultValidation, ToolResultValidationError,
+    ToolResultValidationRequest,
 };
 use graphblocks_runtime_core::tool_schema::{JsonSchema, JsonSchemaNode, ToolSchemaRegistry};
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 
 #[test]
 fn rust_tool_result_validation_matches_shared_tck_cases() -> Result<(), String> {
@@ -33,6 +35,7 @@ fn run_case(case: &Value) -> Result<(), String> {
     let case_name = required_str(case, "name")?;
     match required_str(case, "kind")? {
         "prepare_for_model" => run_prepare_for_model_case(case_name, case),
+        "stream_state" => run_stream_state_case(case_name, case),
         other => Err(format!(
             "tool-result TCK case {case_name} has unknown kind {other}"
         )),
@@ -137,6 +140,81 @@ fn run_prepare_for_model_case(case_name: &str, case: &Value) -> Result<(), Strin
             observed.get("error").is_none(),
             "{case_name}: unexpected error {:?}",
             observed.get("error"),
+        );
+    }
+    Ok(())
+}
+
+fn run_stream_state_case(case_name: &str, case: &Value) -> Result<(), String> {
+    let operations = case
+        .get("operations")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("tool-result TCK case {case_name} operations must be an array"))?;
+    let mut stream = ToolResultStreamState::new();
+    let mut accepted = Vec::new();
+    let mut errors = Vec::new();
+    let mut tool_call_ids = BTreeSet::new();
+
+    for (operation_index, operation) in operations.iter().enumerate() {
+        let operation = operation.as_object().ok_or_else(|| {
+            format!(
+                "tool-result TCK case {case_name} operations[{operation_index}] must be an object"
+            )
+        })?;
+        let raw_event = operation
+            .get("event")
+            .and_then(Value::as_object)
+            .ok_or_else(|| {
+                format!(
+                    "tool-result TCK case {case_name} operations[{operation_index}] missing event"
+                )
+            })?;
+        let event = tool_result_event_from_fixture(raw_event)?;
+        tool_call_ids.insert(event.tool_call_id().to_owned());
+        match stream.accept(event) {
+            Ok(accepted_event) => accepted.push(json!({
+                "toolCallId": accepted_event.tool_call_id(),
+                "kind": tool_result_event_kind(&accepted_event),
+            })),
+            Err(error) => errors.push(json!({
+                "operation": operation_index,
+                "code": tool_result_stream_error_code(&error),
+            })),
+        }
+    }
+
+    let final_statuses = tool_call_ids
+        .iter()
+        .filter_map(|tool_call_id| {
+            stream.final_result_for(tool_call_id).map(|result| {
+                (
+                    tool_call_id.clone(),
+                    Value::String(tool_result_status(&result.status).to_owned()),
+                )
+            })
+        })
+        .collect::<Map<_, _>>();
+    let last_sequences = tool_call_ids
+        .iter()
+        .filter_map(|tool_call_id| {
+            stream
+                .last_sequence_for(tool_call_id)
+                .map(|sequence| (tool_call_id.clone(), Value::Number(sequence.into())))
+        })
+        .collect::<Map<_, _>>();
+    let observed = Value::Object(Map::from_iter([
+        ("accepted".to_owned(), Value::Array(accepted)),
+        ("errors".to_owned(), Value::Array(errors)),
+        ("finalStatuses".to_owned(), Value::Object(final_statuses)),
+        ("lastSequences".to_owned(), Value::Object(last_sequences)),
+    ]));
+    let expected = expected(case, case_name)?;
+
+    for (key, expected_value) in expected {
+        assert_eq!(
+            observed.get(key).unwrap_or(&Value::Null),
+            expected_value,
+            "{case_name}: observed {key} did not match",
         );
     }
     Ok(())
@@ -248,6 +326,89 @@ fn tool_result_from_fixture(case: &Value, case_name: &str) -> Result<ToolResult,
     }
 
     Ok(result)
+}
+
+fn tool_result_event_from_fixture(
+    raw_event: &Map<String, Value>,
+) -> Result<ToolResultEvent, String> {
+    let kind = required_map_str(raw_event, "kind")?;
+    let tool_call_id = optional_map_str(raw_event, "toolCallId")
+        .or_else(|| optional_map_str(raw_event, "tool_call_id"))
+        .ok_or_else(|| "tool-result event requires toolCallId".to_owned())?;
+    let sequence = required_map_u64(raw_event, "sequence")?;
+    match kind {
+        "started" => Ok(ToolResultEvent::started(
+            tool_call_id,
+            sequence,
+            optional_map_u64(raw_event, "startedAtUnixMs")
+                .or_else(|| optional_map_u64(raw_event, "started_at_unix_ms"))
+                .unwrap_or(1_000),
+        )),
+        "delta" => {
+            let output = raw_event
+                .get("output")
+                .and_then(Value::as_array)
+                .ok_or_else(|| "tool-result delta event output must be an array".to_owned())?
+                .iter()
+                .map(content_part_from_fixture)
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(ToolResultEvent::delta(tool_call_id, sequence, output))
+        }
+        "completed" => {
+            let raw_result = raw_event
+                .get("result")
+                .and_then(Value::as_object)
+                .ok_or_else(|| "tool-result completed event requires result".to_owned())?;
+            let output = raw_result
+                .get("output")
+                .and_then(Value::as_array)
+                .ok_or_else(|| "tool-result completed result output must be an array".to_owned())?
+                .iter()
+                .map(content_part_from_fixture)
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(ToolResultEvent::completed(
+                tool_call_id,
+                sequence,
+                ToolResult::completed(
+                    tool_call_id,
+                    output,
+                    optional_map_u64(raw_result, "startedAtUnixMs")
+                        .or_else(|| optional_map_u64(raw_result, "started_at_unix_ms"))
+                        .unwrap_or(1_100),
+                    optional_map_u64(raw_result, "completedAtUnixMs")
+                        .or_else(|| optional_map_u64(raw_result, "completed_at_unix_ms"))
+                        .unwrap_or(1_200),
+                ),
+            ))
+        }
+        "denied" => {
+            let raw_result = raw_event
+                .get("result")
+                .and_then(Value::as_object)
+                .ok_or_else(|| "tool-result denied event requires result".to_owned())?;
+            let raw_error = raw_result
+                .get("error")
+                .and_then(Value::as_object)
+                .ok_or_else(|| "tool-result denied result requires error".to_owned())?;
+            Ok(ToolResultEvent::denied(
+                tool_call_id,
+                sequence,
+                ToolResult::denied(
+                    tool_call_id,
+                    BlockError::new(
+                        optional_map_str(raw_error, "code").unwrap_or("tool.denied"),
+                        ErrorCategory::Policy,
+                        optional_map_str(raw_error, "message").unwrap_or("tool denied"),
+                        false,
+                    ),
+                    optional_map_u64(raw_result, "completedAtUnixMs")
+                        .or_else(|| optional_map_u64(raw_result, "completed_at_unix_ms"))
+                        .unwrap_or(1_200),
+                ),
+            ))
+        }
+        other => Err(format!("unsupported tool-result stream event kind {other}")),
+    }
 }
 
 fn content_part_from_fixture(raw_part: &Value) -> Result<ContentPart, String> {
@@ -581,6 +742,43 @@ fn content_part_kind_str(kind: ContentPartKind) -> &'static str {
     }
 }
 
+fn tool_result_event_kind(event: &ToolResultEvent) -> &'static str {
+    match event {
+        ToolResultEvent::Started { .. } => "started",
+        ToolResultEvent::Delta { .. } => "delta",
+        ToolResultEvent::ArtifactReady { .. } => "artifact_ready",
+        ToolResultEvent::Completed { .. } => "completed",
+        ToolResultEvent::Failed { .. } => "failed",
+        ToolResultEvent::Denied { .. } => "denied",
+        ToolResultEvent::Cancelled { .. } => "cancelled",
+        ToolResultEvent::PolicyStopped { .. } => "policy_stopped",
+        ToolResultEvent::Incomplete { .. } => "incomplete",
+    }
+}
+
+fn tool_result_status(
+    status: &graphblocks_runtime_core::tool_result::ToolResultStatus,
+) -> &'static str {
+    match status {
+        graphblocks_runtime_core::tool_result::ToolResultStatus::Completed => "completed",
+        graphblocks_runtime_core::tool_result::ToolResultStatus::Failed => "failed",
+        graphblocks_runtime_core::tool_result::ToolResultStatus::Denied => "denied",
+        graphblocks_runtime_core::tool_result::ToolResultStatus::Cancelled => "cancelled",
+        graphblocks_runtime_core::tool_result::ToolResultStatus::PolicyStopped => "policy_stopped",
+        graphblocks_runtime_core::tool_result::ToolResultStatus::Incomplete => "incomplete",
+    }
+}
+
+fn tool_result_stream_error_code(error: &ToolResultStreamError) -> &'static str {
+    match error {
+        ToolResultStreamError::InvalidEvent { .. } => "InvalidEvent",
+        ToolResultStreamError::NonMonotonicSequence { .. } => "NonMonotonicSequence",
+        ToolResultStreamError::EventAfterFinalResult { .. } => "EventAfterFinalResult",
+        ToolResultStreamError::DuplicateStarted { .. } => "DuplicateStarted",
+        ToolResultStreamError::EventBeforeStarted { .. } => "EventBeforeStarted",
+    }
+}
+
 trait ContentPartMetadataExt {
     fn with_metadata_map(self, metadata: BTreeMap<String, Value>) -> Self;
 }
@@ -625,6 +823,10 @@ fn required_map_str<'a>(value: &'a Map<String, Value>, key: &str) -> Result<&'a 
 
 fn optional_map_str<'a>(value: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
     value.get(key).and_then(Value::as_str)
+}
+
+fn optional_map_u64(value: &Map<String, Value>, key: &str) -> Option<u64> {
+    value.get(key).and_then(Value::as_u64)
 }
 
 fn required_map_u64(value: &Map<String, Value>, key: &str) -> Result<u64, String> {

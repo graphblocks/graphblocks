@@ -139,5 +139,111 @@
       "ok": false,
       "errorContains": "artifact_reference mode"
     }
+  },
+  {
+    "name": "stream_state_requires_started_before_incremental_output",
+    "kind": "stream_state",
+    "operations": [
+      {
+        "op": "accept",
+        "event": {
+          "kind": "delta",
+          "toolCallId": "call-1",
+          "sequence": 1,
+          "output": [
+            {
+              "kind": "text",
+              "text": "draft"
+            }
+          ]
+        }
+      },
+      {
+        "op": "accept",
+        "event": {
+          "kind": "completed",
+          "toolCallId": "call-1",
+          "sequence": 2,
+          "result": {
+            "status": "completed",
+            "output": [
+              {
+                "kind": "text",
+                "text": "done"
+              }
+            ],
+            "startedAt": "2026-06-23T00:00:00Z",
+            "completedAt": "2026-06-23T00:00:01Z"
+          }
+        }
+      },
+      {
+        "op": "accept",
+        "event": {
+          "kind": "denied",
+          "toolCallId": "call-2",
+          "sequence": 1,
+          "result": {
+            "status": "denied",
+            "error": {
+              "code": "tool.denied",
+              "message": "blocked before execution"
+            },
+            "completedAt": "2026-06-23T00:00:01Z"
+          }
+        }
+      },
+      {
+        "op": "accept",
+        "event": {
+          "kind": "started",
+          "toolCallId": "call-3",
+          "sequence": 1,
+          "startedAt": "2026-06-23T00:00:00Z"
+        }
+      },
+      {
+        "op": "accept",
+        "event": {
+          "kind": "started",
+          "toolCallId": "call-3",
+          "sequence": 2,
+          "startedAt": "2026-06-23T00:00:01Z"
+        }
+      }
+    ],
+    "expected": {
+      "accepted": [
+        {
+          "toolCallId": "call-2",
+          "kind": "denied"
+        },
+        {
+          "toolCallId": "call-3",
+          "kind": "started"
+        }
+      ],
+      "errors": [
+        {
+          "operation": 0,
+          "code": "EventBeforeStarted"
+        },
+        {
+          "operation": 1,
+          "code": "EventBeforeStarted"
+        },
+        {
+          "operation": 4,
+          "code": "DuplicateStarted"
+        }
+      ],
+      "finalStatuses": {
+        "call-2": "denied"
+      },
+      "lastSequences": {
+        "call-2": 1,
+        "call-3": 1
+      }
+    }
   }
 ]

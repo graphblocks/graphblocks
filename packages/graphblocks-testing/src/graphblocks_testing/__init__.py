@@ -1833,14 +1833,19 @@ def load_tool_result_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
         if not isinstance(case_id, str) or not case_id.strip():
             raise ValueError(f"tool-result TCK case {index} requires name")
         case_kind = raw_case.get("kind")
-        if case_kind != "prepare_for_model":
+        if case_kind not in {"prepare_for_model", "stream_state"}:
             raise ValueError(f"tool-result TCK case {case_id} has unsupported kind {case_kind!r}")
-        tool = raw_case.get("tool")
-        if not isinstance(tool, Mapping):
-            raise ValueError(f"tool-result TCK case {case_id} tool must be a mapping")
-        result = raw_case.get("result")
-        if not isinstance(result, Mapping):
-            raise ValueError(f"tool-result TCK case {case_id} result must be a mapping")
+        if case_kind == "prepare_for_model":
+            tool = raw_case.get("tool")
+            if not isinstance(tool, Mapping):
+                raise ValueError(f"tool-result TCK case {case_id} tool must be a mapping")
+            result = raw_case.get("result")
+            if not isinstance(result, Mapping):
+                raise ValueError(f"tool-result TCK case {case_id} result must be a mapping")
+        else:
+            operations = raw_case.get("operations")
+            if not isinstance(operations, list) or not all(isinstance(operation, Mapping) for operation in operations):
+                raise ValueError(f"tool-result TCK case {case_id} operations must be a list of mappings")
         expected = raw_case.get("expected")
         if not isinstance(expected, Mapping):
             raise ValueError(f"tool-result TCK case {case_id} requires expected result")
@@ -6746,6 +6751,138 @@ class TckRunner:
                     "message": "tool-result TCK expected result must be a mapping",
                     "path": "$.expected",
                 }
+            )
+
+        if fixture.get("kind") == "stream_state":
+            try:
+                stream = ToolResultStreamState()
+                accepted: list[dict[str, object]] = []
+                errors: list[dict[str, object]] = []
+                tool_call_ids: set[str] = set()
+                operations = fixture.get("operations", [])
+                if not isinstance(operations, list):
+                    raise ValueError("tool-result stream_state operations must be a list")
+                for operation_index, operation in enumerate(operations):
+                    if not isinstance(operation, Mapping):
+                        raise ValueError("tool-result stream_state operation must be a mapping")
+                    raw_event = operation.get("event")
+                    if not isinstance(raw_event, Mapping):
+                        raise ValueError("tool-result stream_state accept operation requires event")
+                    event_kind = str(raw_event.get("kind", ""))
+                    tool_call_id = str(raw_event.get("toolCallId", raw_event.get("tool_call_id", "")))
+                    sequence = int(raw_event.get("sequence", 0))
+                    tool_call_ids.add(tool_call_id)
+                    if event_kind == "started":
+                        result_event = ToolResultEvent.started(
+                            tool_call_id,
+                            sequence,
+                            started_at=str(raw_event.get("startedAt", raw_event.get("started_at", ""))),
+                        )
+                    elif event_kind == "delta":
+                        raw_output = raw_event.get("output", [])
+                        if not isinstance(raw_output, list):
+                            raise ValueError("tool-result stream_state delta output must be a list")
+                        result_event = ToolResultEvent.delta(
+                            tool_call_id,
+                            sequence,
+                            tuple(self._tool_result_content_part_from_fixture(part) for part in raw_output),
+                        )
+                    elif event_kind == "completed":
+                        raw_result = raw_event.get("result", {})
+                        if not isinstance(raw_result, Mapping):
+                            raise ValueError("tool-result stream_state completed event requires result")
+                        raw_output = raw_result.get("output", [])
+                        if not isinstance(raw_output, list):
+                            raise ValueError("tool-result stream_state completed output must be a list")
+                        result = ToolResult.completed(
+                            tool_call_id,
+                            tuple(self._tool_result_content_part_from_fixture(part) for part in raw_output),
+                            started_at=str(raw_result.get("startedAt", raw_result.get("started_at", ""))),
+                            completed_at=str(raw_result.get("completedAt", raw_result.get("completed_at", ""))),
+                        )
+                        result_event = ToolResultEvent.completed(tool_call_id, sequence, result)
+                    elif event_kind == "denied":
+                        raw_result = raw_event.get("result", {})
+                        if not isinstance(raw_result, Mapping):
+                            raise ValueError("tool-result stream_state denied event requires result")
+                        raw_error = raw_result.get("error", {})
+                        if not isinstance(raw_error, Mapping):
+                            raw_error = {"code": "tool.denied", "message": str(raw_error)}
+                        result = ToolResult.denied(
+                            tool_call_id,
+                            error=dict(raw_error),
+                            completed_at=str(raw_result.get("completedAt", raw_result.get("completed_at", ""))),
+                        )
+                        result_event = ToolResultEvent.denied(tool_call_id, sequence, result)
+                    else:
+                        raise ValueError(f"tool-result stream_state event kind {event_kind!r} is not supported")
+
+                    try:
+                        accepted_event = stream.accept(result_event)
+                        accepted.append(
+                            {
+                                "toolCallId": accepted_event.tool_call_id,
+                                "kind": accepted_event.kind,
+                            }
+                        )
+                    except ToolResultStreamError as error:
+                        message = str(error)
+                        if "before started" in message:
+                            code = "EventBeforeStarted"
+                        elif "already received started" in message:
+                            code = "DuplicateStarted"
+                        elif "non-monotonic sequence" in message:
+                            code = "NonMonotonicSequence"
+                        elif "is final" in message:
+                            code = "EventAfterFinalResult"
+                        else:
+                            code = type(error).__name__
+                        errors.append({"operation": operation_index, "code": code})
+
+                observed = {
+                    "accepted": accepted,
+                    "errors": errors,
+                    "finalStatuses": {
+                        tool_call_id: final_result.status
+                        for tool_call_id in sorted(tool_call_ids)
+                        if (final_result := stream.final_result_for(tool_call_id)) is not None
+                    },
+                    "lastSequences": {
+                        tool_call_id: last_sequence
+                        for tool_call_id in sorted(tool_call_ids)
+                        if (last_sequence := stream.last_sequence_for(tool_call_id)) is not None
+                    },
+                }
+            except Exception as error:
+                observed = {
+                    "ok": False,
+                    "error": str(error),
+                    "errorType": type(error).__name__,
+                }
+
+            for key, expected_value in expected.items():
+                if observed.get(str(key)) != expected_value:
+                    diagnostics.append(
+                        {
+                            "code": "ToolResultExpectedMismatch",
+                            "message": f"tool-result observed {key} did not match expected value",
+                            "path": f"$.expected.{key}",
+                        }
+                    )
+            if observed.get("error") is not None:
+                diagnostics.append(
+                    {
+                        "code": "ToolResultUnexpectedError",
+                        "message": "tool-result case produced an unexpected error",
+                        "path": "$.observed.error",
+                    }
+                )
+            return TckResult(
+                case_id=case.case_id,
+                kind=case.kind,
+                status="passed" if not diagnostics else "failed",
+                diagnostics=tuple(diagnostics),
+                observed=observed,
             )
 
         observed: dict[str, object]
