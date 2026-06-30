@@ -38,6 +38,24 @@ WorkerDrainDisposition = Literal[
     "checkpoint",
     "disconnect_with_resume_token",
 ]
+WorkerProtocolMessageKind = Literal[
+    "advertisement",
+    "admission_decision",
+    "invoke_request",
+    "invoke_result",
+    "drain_plan",
+    "error",
+]
+VALID_WORKER_PROTOCOL_MESSAGE_KINDS = frozenset(
+    {
+        "advertisement",
+        "admission_decision",
+        "invoke_request",
+        "invoke_result",
+        "drain_plan",
+        "error",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -269,6 +287,255 @@ class WorkerAdmissionDecision:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class WorkerProtocolMessage:
+    message_id: str
+    kind: WorkerProtocolMessageKind
+    sequence: int
+    payload: object
+    protocol_version: int = WORKER_PROTOCOL_VERSION
+    correlation_id: str | None = None
+    causation_id: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "message_id",
+            _validate_worker_non_empty_string("worker protocol message", "message_id", self.message_id),
+        )
+        if self.kind not in VALID_WORKER_PROTOCOL_MESSAGE_KINDS:
+            raise WorkerProtocolError(f"worker protocol message kind has invalid value {self.kind!r}")
+        if not isinstance(self.protocol_version, int) or isinstance(self.protocol_version, bool):
+            raise WorkerProtocolError("worker protocol message protocol_version must be an integer")
+        if self.protocol_version < 0:
+            raise WorkerProtocolError("worker protocol message protocol_version must not be negative")
+        object.__setattr__(
+            self,
+            "sequence",
+            _validate_worker_non_negative_integer(
+                "worker protocol message",
+                "sequence",
+                self.sequence,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "correlation_id",
+            _validate_worker_optional_non_empty_string(
+                "worker protocol message",
+                "correlation_id",
+                self.correlation_id,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "causation_id",
+            _validate_worker_optional_non_empty_string(
+                "worker protocol message",
+                "causation_id",
+                self.causation_id,
+            ),
+        )
+        if self.kind == "advertisement":
+            if not isinstance(self.payload, WorkerAdvertisement):
+                raise WorkerProtocolError("worker protocol message advertisement payload must be WorkerAdvertisement")
+            return
+        if self.kind == "admission_decision":
+            if not isinstance(self.payload, WorkerAdmissionDecision):
+                raise WorkerProtocolError(
+                    "worker protocol message admission_decision payload must be WorkerAdmissionDecision"
+                )
+            return
+        if self.kind == "invoke_request":
+            if not isinstance(self.payload, WorkerInvokeRequest):
+                raise WorkerProtocolError("worker protocol message invoke_request payload must be WorkerInvokeRequest")
+            return
+        if self.kind == "invoke_result":
+            if not isinstance(self.payload, WorkerInvokeResult):
+                raise WorkerProtocolError("worker protocol message invoke_result payload must be WorkerInvokeResult")
+            return
+        if self.kind == "drain_plan":
+            if not isinstance(self.payload, WorkerDrainPlan):
+                raise WorkerProtocolError("worker protocol message drain_plan payload must be WorkerDrainPlan")
+            return
+        if self.kind == "error":
+            object.__setattr__(
+                self,
+                "payload",
+                _validate_worker_error_payload(self.payload),
+            )
+
+    @classmethod
+    def advertisement(
+        cls,
+        message_id: str,
+        sequence: int,
+        advertisement: WorkerAdvertisement,
+        *,
+        correlation_id: str | None = None,
+    ) -> WorkerProtocolMessage:
+        return cls(
+            message_id=message_id,
+            kind="advertisement",
+            sequence=sequence,
+            payload=advertisement,
+            correlation_id=correlation_id,
+        )
+
+    @classmethod
+    def admission_decision(
+        cls,
+        message_id: str,
+        sequence: int,
+        decision: WorkerAdmissionDecision,
+        *,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> WorkerProtocolMessage:
+        return cls(
+            message_id=message_id,
+            kind="admission_decision",
+            sequence=sequence,
+            payload=decision,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+        )
+
+    @classmethod
+    def invoke_request(
+        cls,
+        message_id: str,
+        sequence: int,
+        request: WorkerInvokeRequest,
+        *,
+        correlation_id: str | None = None,
+    ) -> WorkerProtocolMessage:
+        return cls(
+            message_id=message_id,
+            kind="invoke_request",
+            sequence=sequence,
+            payload=request,
+            correlation_id=correlation_id or request.invocation_id,
+        )
+
+    @classmethod
+    def invoke_result(
+        cls,
+        message_id: str,
+        sequence: int,
+        result: WorkerInvokeResult,
+        *,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> WorkerProtocolMessage:
+        return cls(
+            message_id=message_id,
+            kind="invoke_result",
+            sequence=sequence,
+            payload=result,
+            correlation_id=correlation_id or result.invocation_id,
+            causation_id=causation_id,
+        )
+
+    @classmethod
+    def drain_plan(
+        cls,
+        message_id: str,
+        sequence: int,
+        plan: WorkerDrainPlan,
+        *,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> WorkerProtocolMessage:
+        return cls(
+            message_id=message_id,
+            kind="drain_plan",
+            sequence=sequence,
+            payload=plan,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+        )
+
+    @classmethod
+    def error(
+        cls,
+        message_id: str,
+        sequence: int,
+        *,
+        code: str,
+        message: str,
+        retryable: bool = False,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+    ) -> WorkerProtocolMessage:
+        return cls(
+            message_id=message_id,
+            kind="error",
+            sequence=sequence,
+            payload={"code": code, "message": message, "retryable": retryable},
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+        )
+
+    def to_wire(self) -> dict[str, object]:
+        return {
+            "protocolVersion": self.protocol_version,
+            "messageId": self.message_id,
+            "kind": self.kind,
+            "sequence": self.sequence,
+            "correlationId": self.correlation_id,
+            "causationId": self.causation_id,
+            "payload": self._payload_to_wire(),
+        }
+
+    @classmethod
+    def from_wire(cls, payload: dict[str, object]) -> WorkerProtocolMessage:
+        kind = payload.get("kind")
+        raw_payload = payload.get("payload")
+        if kind not in VALID_WORKER_PROTOCOL_MESSAGE_KINDS:
+            raise WorkerProtocolError(f"worker protocol message kind has invalid value {kind!r}")
+        if kind != "error" and not isinstance(raw_payload, Mapping):
+            raise WorkerProtocolError(f"worker protocol message {kind} payload must be a mapping")
+        if kind == "advertisement":
+            message_payload = WorkerAdvertisement.from_wire(dict(raw_payload))
+        elif kind == "admission_decision":
+            message_payload = WorkerAdmissionDecision.from_wire(dict(raw_payload))
+        elif kind == "invoke_request":
+            message_payload = WorkerInvokeRequest.from_wire(dict(raw_payload))
+        elif kind == "invoke_result":
+            message_payload = WorkerInvokeResult.from_wire(dict(raw_payload))
+        elif kind == "drain_plan":
+            message_payload = WorkerDrainPlan.from_wire(dict(raw_payload))
+        else:
+            message_payload = _validate_worker_error_payload(raw_payload)
+        return cls(
+            message_id=payload["messageId"],
+            kind=kind,
+            sequence=payload["sequence"],
+            payload=message_payload,
+            protocol_version=payload.get("protocolVersion", WORKER_PROTOCOL_VERSION),
+            correlation_id=payload.get("correlationId"),
+            causation_id=payload.get("causationId"),
+        )
+
+    def content_digest(self) -> str:
+        encoded = json.dumps(self.to_wire(), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        return "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    def _payload_to_wire(self) -> object:
+        if self.kind == "advertisement":
+            return self.payload.to_wire()
+        if self.kind == "admission_decision":
+            return self.payload.to_wire()
+        if self.kind == "invoke_request":
+            return self.payload.to_wire()
+        if self.kind == "invoke_result":
+            return self.payload.to_wire()
+        if self.kind == "drain_plan":
+            return self.payload.to_wire()
+        return dict(self.payload)
+
+
 class WorkerProtocolError(ValueError):
     """Base error for invalid worker protocol contracts."""
 
@@ -343,6 +610,36 @@ def _validate_worker_string_attributes(owner: str, value: object) -> dict[str, s
         if not isinstance(item, str):
             raise WorkerProtocolError(f"{owner} attribute values must be strings")
     return attributes
+
+
+def _validate_worker_error_payload(value: object) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        raise WorkerProtocolError("worker protocol message error payload must be a mapping")
+    payload = dict(value)
+    code = payload.get("code")
+    if not isinstance(code, str):
+        raise WorkerProtocolError("worker protocol message error code must be a string")
+    if not code.strip():
+        raise WorkerProtocolError("worker protocol message error code must not be empty")
+    message = payload.get("message")
+    if not isinstance(message, str):
+        raise WorkerProtocolError("worker protocol message error message must be a string")
+    if not message.strip():
+        raise WorkerProtocolError("worker protocol message error message must not be empty")
+    retryable = payload.get("retryable", False)
+    if not isinstance(retryable, bool):
+        raise WorkerProtocolError("worker protocol message error retryable must be a boolean")
+    normalized: dict[str, object] = {
+        "code": code,
+        "message": message,
+        "retryable": retryable,
+    }
+    details = payload.get("details")
+    if details is not None:
+        if not isinstance(details, Mapping):
+            raise WorkerProtocolError("worker protocol message error details must be a mapping")
+        normalized["details"] = {str(key): details[key] for key in sorted(details, key=str)}
+    return normalized
 
 
 def _validate_worker_non_negative_integer(owner: str, field_name: str, value: object) -> int:
@@ -1325,6 +1622,8 @@ __all__ = [
     "WorkerMissingRequiredBlockError",
     "WorkerNoEligibleWorkerError",
     "WorkerProtocolError",
+    "WorkerProtocolMessage",
+    "WorkerProtocolMessageKind",
     "WorkerResultError",
     "WorkerSelectionError",
     "WorkerStaleLeaseEpochError",

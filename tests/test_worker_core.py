@@ -27,6 +27,7 @@ from graphblocks.worker import (
     WorkerMismatchedNodeAttemptError,
     WorkerNoEligibleWorkerError,
     WorkerProtocolError,
+    WorkerProtocolMessage,
     WorkerStaleLeaseEpochError,
     admit_worker,
     admit_worker_with_policy,
@@ -375,6 +376,145 @@ def test_worker_invocation_envelopes_preserve_json_payloads_and_context() -> Non
     assert WorkerInvokeRequest.from_wire(encoded) == request
     assert WorkerInvokeResult.from_wire(result.to_wire()) == result
     assert validate_worker_result(request, result) is None
+
+
+def test_worker_protocol_message_envelopes_route_typed_payloads() -> None:
+    advertisement = WorkerAdvertisement.new(
+        "worker-local-1",
+        "doc-cpu",
+        "sha256:package-lock",
+        "sha256:image",
+        [BlockCapability("prompt.render@1")],
+    )
+    request = WorkerInvokeRequest(
+        invocation_id="invoke-000001",
+        run_id="run-000001",
+        node_id="render",
+        node_attempt_id="render-attempt-1",
+        lease_epoch=7,
+        block="prompt.render@1",
+        context=WorkerInvocationContext("release-1", "rev-1"),
+        inputs={"message": {"text": "Hello"}},
+        config={"template": "Echo {message.text}"},
+    )
+    result = WorkerInvokeResult(
+        invocation_id=request.invocation_id,
+        node_attempt_id=request.node_attempt_id,
+        lease_epoch=request.lease_epoch,
+        outputs={"prompt": "Echo Hello"},
+    )
+    decision = evaluate_worker_admission(
+        WorkerAdmissionPolicy.current().require_block("prompt.render@1"),
+        advertisement,
+    )
+    drain_plan = WorkerDrainPlan.for_worker(
+        advertisement,
+        WorkerDrainPolicy(),
+        (WorkerDrainTask("online_request", request, started_at_unix_ms=0),),
+        drain_started_at_unix_ms=1,
+        now_unix_ms=1,
+    )
+    messages = (
+        WorkerProtocolMessage.advertisement("msg-1", 1, advertisement, correlation_id="worker-local-1"),
+        WorkerProtocolMessage.admission_decision(
+            "msg-2",
+            2,
+            decision,
+            correlation_id="worker-local-1",
+            causation_id="msg-1",
+        ),
+        WorkerProtocolMessage.invoke_request("msg-3", 3, request),
+        WorkerProtocolMessage.invoke_result("msg-4", 4, result, causation_id="msg-3"),
+        WorkerProtocolMessage.drain_plan("msg-5", 5, drain_plan, causation_id="msg-1"),
+        WorkerProtocolMessage.error(
+            "msg-6",
+            6,
+            code="worker.timeout",
+            message="worker timed out",
+            retryable=True,
+            correlation_id=request.invocation_id,
+            causation_id="msg-3",
+        ),
+    )
+
+    encoded = [message.to_wire() for message in messages]
+
+    assert [item["kind"] for item in encoded] == [
+        "advertisement",
+        "admission_decision",
+        "invoke_request",
+        "invoke_result",
+        "drain_plan",
+        "error",
+    ]
+    assert encoded[2]["correlationId"] == "invoke-000001"
+    assert encoded[3]["correlationId"] == "invoke-000001"
+    assert encoded[5]["payload"] == {
+        "code": "worker.timeout",
+        "message": "worker timed out",
+        "retryable": True,
+    }
+    assert [WorkerProtocolMessage.from_wire(item) for item in encoded] == list(messages)
+    assert messages[0].content_digest().startswith("sha256:")
+    assert messages[0].content_digest() == WorkerProtocolMessage.from_wire(encoded[0]).content_digest()
+    assert isinstance(graphblocks.WorkerProtocolMessage.from_wire(encoded[2]), graphblocks.WorkerProtocolMessage)
+
+
+def test_worker_protocol_message_rejects_invalid_wire_shapes() -> None:
+    advertisement = WorkerAdvertisement.new(
+        "worker-local-1",
+        "doc-cpu",
+        "sha256:package-lock",
+        "sha256:image",
+        [BlockCapability("prompt.render@1")],
+    )
+    base = WorkerProtocolMessage.advertisement("msg-1", 1, advertisement).to_wire()
+    invalid_messages = (
+        (
+            {**base, "messageId": " "},
+            "worker protocol message message_id must not be empty",
+        ),
+        (
+            {**base, "protocolVersion": True},
+            "worker protocol message protocol_version must be an integer",
+        ),
+        (
+            {**base, "sequence": -1},
+            "worker protocol message sequence must not be negative",
+        ),
+        (
+            {**base, "kind": "heartbeat"},
+            "worker protocol message kind has invalid value",
+        ),
+        (
+            {**base, "payload": []},
+            "worker protocol message advertisement payload must be a mapping",
+        ),
+        (
+            {**base, "correlationId": ""},
+            "worker protocol message correlation_id must not be empty",
+        ),
+        (
+            WorkerProtocolMessage.error("msg-2", 2, code="worker.failed", message="failed").to_wire()
+            | {"payload": {"code": "worker.failed", "message": "failed", "retryable": "yes"}},
+            "worker protocol message error retryable must be a boolean",
+        ),
+        (
+            WorkerProtocolMessage.error("msg-3", 3, code="worker.failed", message="failed").to_wire()
+            | {"payload": {"code": " ", "message": "failed"}},
+            "worker protocol message error code must not be empty",
+        ),
+    )
+
+    for payload, message in invalid_messages:
+        with pytest.raises(WorkerProtocolError, match=message):
+            WorkerProtocolMessage.from_wire(payload)
+
+    with pytest.raises(
+        WorkerProtocolError,
+        match="worker protocol message invoke_request payload must be WorkerInvokeRequest",
+    ):
+        WorkerProtocolMessage("msg-4", "invoke_request", 4, advertisement)
 
 
 def test_worker_invocation_context_rejects_invalid_propagation_fields() -> None:
