@@ -139,6 +139,10 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         calls.append(("application_event_stream", (state_json, operations_json)))
         return json.dumps({"state": json.loads(state_json), "updates": json.loads(operations_json)})
 
+    def evaluate_application_protocol_stream_json(state_json: str, operations_json: str) -> str:
+        calls.append(("application_protocol_stream", (state_json, operations_json)))
+        return json.dumps({"state": json.loads(state_json), "updates": json.loads(operations_json)})
+
     def evaluate_durable_tool_terminal_store_json(operations_json: str) -> str:
         calls.append(("durable_tool_terminal", (operations_json,)))
         return json.dumps({"operations": json.loads(operations_json)})
@@ -209,6 +213,7 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         compile_graph_json=compile_graph_json,
         decide_agent_step_json=decide_agent_step_json,
         evaluate_application_event_stream_json=evaluate_application_event_stream_json,
+        evaluate_application_protocol_stream_json=evaluate_application_protocol_stream_json,
         evaluate_declarative_output_policy_json=evaluate_declarative_output_policy_json,
         evaluate_durable_tool_terminal_store_json=evaluate_durable_tool_terminal_store_json,
         evaluate_output_gate_json=evaluate_output_gate_json,
@@ -259,6 +264,25 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     application_event_stream = runtime.evaluate_application_event_stream(
         {"acceptedEvents": []},
         [{"kind": "event", "event": {"kind": "RunStarted", "metadata": {"eventId": "event-1"}}}],
+    )
+    application_protocol_stream = runtime.evaluate_application_protocol_stream(
+        {"acceptedEvents": []},
+        [
+            {
+                "kind": "event",
+                "event": {
+                    "kind": "AssistantDraftDelta",
+                    "metadata": {
+                        "eventId": "event-1",
+                        "protocolVersion": "graphblocks.app.v1",
+                        "runId": "run-1",
+                        "sequence": 1,
+                        "occurredAtUnixMs": 1_000,
+                    },
+                    "payload": {"response_id": "response-1", "delta": "hello"},
+                },
+            }
+        ],
     )
     durable_terminal = runtime.evaluate_durable_tool_terminal_store(
         [{"op": "tool_terminal_count"}],
@@ -334,6 +358,25 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     assert application_event_stream == {
         "state": {"acceptedEvents": []},
         "updates": [{"event": {"kind": "RunStarted", "metadata": {"eventId": "event-1"}}, "kind": "event"}],
+    }
+    assert application_protocol_stream == {
+        "state": {"acceptedEvents": []},
+        "updates": [
+            {
+                "event": {
+                    "kind": "AssistantDraftDelta",
+                    "metadata": {
+                        "eventId": "event-1",
+                        "occurredAtUnixMs": 1_000,
+                        "protocolVersion": "graphblocks.app.v1",
+                        "runId": "run-1",
+                        "sequence": 1,
+                    },
+                    "payload": {"delta": "hello", "response_id": "response-1"},
+                },
+                "kind": "event",
+            }
+        ],
     }
     assert durable_terminal == {"operations": [{"op": "tool_terminal_count"}]}
     assert tool_execution == {
@@ -417,6 +460,18 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             ),
         ),
         (
+            "application_protocol_stream",
+            (
+                '{"acceptedEvents":[]}',
+                (
+                    '[{"event":{"kind":"AssistantDraftDelta","metadata":'
+                    '{"eventId":"event-1","occurredAtUnixMs":1000,'
+                    '"protocolVersion":"graphblocks.app.v1","runId":"run-1","sequence":1},'
+                    '"payload":{"delta":"hello","response_id":"response-1"}},"kind":"event"}]'
+                ),
+            ),
+        ),
+        (
             "durable_tool_terminal",
             ('[{"op":"tool_terminal_count"}]',),
         ),
@@ -482,6 +537,8 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     assert "evaluate_declarative_output_policy" in runtime.__all__
     assert "evaluate_application_event_stream" in runtime.__all__
     assert "evaluate_application_event_stream_json" in runtime.__all__
+    assert "evaluate_application_protocol_stream" in runtime.__all__
+    assert "evaluate_application_protocol_stream_json" in runtime.__all__
     assert "evaluate_durable_tool_terminal_store" in runtime.__all__
     assert "evaluate_durable_tool_terminal_store_json" in runtime.__all__
     assert "evaluate_tool_execution_plan" in runtime.__all__

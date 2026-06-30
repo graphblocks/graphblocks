@@ -10,6 +10,8 @@ use graphblocks_protocol::{
 use graphblocks_runtime_core::agent::{AgentLoopController, AgentLoopDecision, AgentSpec};
 use graphblocks_runtime_core::application_event::{
     ApplicationEvent, ApplicationEventKind, ApplicationEventMetadata, ApplicationEventStreamState,
+    ApplicationProtocolEvent, ApplicationProtocolEventKind, ApplicationProtocolEventMetadata,
+    ApplicationProtocolStreamState,
 };
 use graphblocks_runtime_core::budget::{BudgetPermit, UsageAmount};
 use graphblocks_runtime_core::exhaustion::{
@@ -635,6 +637,107 @@ fn evaluate_application_event_stream_json(
     serde_json::to_string(&payload).map_err(|error| {
         PyRuntimeError::new_err(format!(
             "failed to serialize application event stream evaluation: {error}"
+        ))
+    })
+}
+
+#[pyfunction]
+fn evaluate_application_protocol_stream_json(
+    state_json: &str,
+    operations_json: &str,
+) -> PyResult<String> {
+    let state_value = parse_json_argument(state_json, "application protocol stream state")?;
+    let operations_value =
+        parse_json_argument(operations_json, "application protocol stream operations")?;
+    let state_object = json_object(&state_value, "application protocol stream state")?;
+    let mut stream = ApplicationProtocolStreamState::default();
+    if let Some(events) = state_object
+        .get("acceptedEvents")
+        .or_else(|| state_object.get("accepted_events"))
+    {
+        let Some(events) = events.as_array() else {
+            return Err(PyValueError::new_err(
+                "application protocol stream state.acceptedEvents must be an array",
+            ));
+        };
+        for (event_index, event) in events.iter().enumerate() {
+            let event = parse_application_protocol_event(
+                event,
+                &format!("application protocol stream state.acceptedEvents[{event_index}]"),
+            )?;
+            stream.accept(event).ok_or_else(|| {
+                PyValueError::new_err(format!(
+                    "invalid application protocol stream state event {event_index}"
+                ))
+            })?;
+        }
+    }
+
+    let operations = operations_value.as_array().ok_or_else(|| {
+        PyValueError::new_err("application protocol stream operations JSON must be an array")
+    })?;
+    let mut updates = Vec::new();
+    for (operation_index, operation) in operations.iter().enumerate() {
+        let label = format!("operations[{operation_index}]");
+        let operation = json_object(operation, &label)?;
+        match required_string(operation, "kind", &label)? {
+            "event" => {
+                let event_value = operation
+                    .get("event")
+                    .ok_or_else(|| PyValueError::new_err(format!("{label}.event is required")))?;
+                let event =
+                    parse_application_protocol_event(event_value, &format!("{label}.event"))?;
+                let event_payload = serialize_application_protocol_event(&event);
+                if let Some(accepted) = stream.accept(event) {
+                    updates.push(json!({
+                        "operationIndex": operation_index,
+                        "kind": "accepted",
+                        "event": serialize_application_protocol_event(&accepted),
+                    }));
+                } else {
+                    updates.push(json!({
+                        "operationIndex": operation_index,
+                        "kind": "dropped",
+                        "event": event_payload,
+                    }));
+                }
+            }
+            value => {
+                return Err(PyValueError::new_err(format!(
+                    "{label}.kind has unknown kind {value:?}"
+                )));
+            }
+        }
+    }
+
+    let accepted_events = stream
+        .accepted_events()
+        .iter()
+        .map(serialize_application_protocol_event)
+        .collect::<Vec<_>>();
+    let cutoff_responses = stream
+        .accepted_events()
+        .iter()
+        .filter(|event| event.kind == ApplicationProtocolEventKind::OutputCutoff)
+        .filter_map(|event| {
+            event
+                .payload
+                .get("response_id")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .collect::<BTreeSet<_>>();
+    let payload = json!({
+        "ok": true,
+        "updates": updates,
+        "state": {
+            "acceptedEvents": accepted_events,
+            "cutoffResponses": cutoff_responses,
+        },
+    });
+    serde_json::to_string(&payload).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize application protocol stream evaluation: {error}"
         ))
     })
 }
@@ -2261,6 +2364,118 @@ fn serialize_application_event(event: &ApplicationEvent) -> Value {
         "kind": event.kind.as_str(),
         "metadata": serialize_application_event_metadata(&event.metadata),
         "toolCallId": event.tool_call_id.as_deref(),
+        "payload": &event.payload,
+    })
+}
+
+fn parse_application_protocol_event_kind(
+    value: &str,
+    label: &str,
+) -> PyResult<ApplicationProtocolEventKind> {
+    match value {
+        "RunStarted" => Ok(ApplicationProtocolEventKind::RunStarted),
+        "TurnStarted" => Ok(ApplicationProtocolEventKind::TurnStarted),
+        "ContextReady" => Ok(ApplicationProtocolEventKind::ContextReady),
+        "AssistantDraftStarted" => Ok(ApplicationProtocolEventKind::AssistantDraftStarted),
+        "AssistantDraftDelta" => Ok(ApplicationProtocolEventKind::AssistantDraftDelta),
+        "AssistantCommitted" => Ok(ApplicationProtocolEventKind::AssistantCommitted),
+        "AssistantIncomplete" => Ok(ApplicationProtocolEventKind::AssistantIncomplete),
+        "AssistantRetracted" => Ok(ApplicationProtocolEventKind::AssistantRetracted),
+        "ToolStarted" => Ok(ApplicationProtocolEventKind::ToolStarted),
+        "ToolCompleted" => Ok(ApplicationProtocolEventKind::ToolCompleted),
+        "ToolCallApprovalRequested" => Ok(ApplicationProtocolEventKind::ToolCallApprovalRequested),
+        "ApprovalRequested" => Ok(ApplicationProtocolEventKind::ApprovalRequested),
+        "ReviewRequested" => Ok(ApplicationProtocolEventKind::ReviewRequested),
+        "BudgetConstrained" => Ok(ApplicationProtocolEventKind::BudgetConstrained),
+        "BudgetExhausted" => Ok(ApplicationProtocolEventKind::BudgetExhausted),
+        "BudgetExtensionRequested" => Ok(ApplicationProtocolEventKind::BudgetExtensionRequested),
+        "BudgetExtensionGranted" => Ok(ApplicationProtocolEventKind::BudgetExtensionGranted),
+        "PolicyDecisionRequired" => Ok(ApplicationProtocolEventKind::PolicyDecisionRequired),
+        "ExecutionDegraded" => Ok(ApplicationProtocolEventKind::ExecutionDegraded),
+        "OutputCutoff" => Ok(ApplicationProtocolEventKind::OutputCutoff),
+        "FilePatchPreview" => Ok(ApplicationProtocolEventKind::FilePatchPreview),
+        "JobProgress" => Ok(ApplicationProtocolEventKind::JobProgress),
+        "ArtifactReady" => Ok(ApplicationProtocolEventKind::ArtifactReady),
+        "StateSnapshot" => Ok(ApplicationProtocolEventKind::StateSnapshot),
+        "RunCompleted" => Ok(ApplicationProtocolEventKind::RunCompleted),
+        "RunFailed" => Ok(ApplicationProtocolEventKind::RunFailed),
+        "RunCancelled" => Ok(ApplicationProtocolEventKind::RunCancelled),
+        value => Err(PyValueError::new_err(format!(
+            "{label} has unknown application protocol event kind {value:?}"
+        ))),
+    }
+}
+
+fn parse_application_protocol_event_metadata(
+    value: &Value,
+    label: &str,
+) -> PyResult<ApplicationProtocolEventMetadata> {
+    let object = json_object(value, label)?;
+    Ok(ApplicationProtocolEventMetadata {
+        event_id: required_alias_string(object, "eventId", "event_id", label)?.to_owned(),
+        protocol_version: required_alias_string(
+            object,
+            "protocolVersion",
+            "protocol_version",
+            label,
+        )?
+        .to_owned(),
+        run_id: required_alias_string(object, "runId", "run_id", label)?.to_owned(),
+        turn_id: optional_nullable_alias_string(object, "turnId", "turn_id", label)?
+            .map(str::to_owned),
+        sequence: required_u64(object, "sequence", label)?,
+        cursor: optional_nullable_alias_string(object, "cursor", "cursor", label)?
+            .map(str::to_owned),
+        occurred_at_unix_ms: required_alias_u64(
+            object,
+            "occurredAtUnixMs",
+            "occurred_at_unix_ms",
+            label,
+        )?,
+    })
+}
+
+fn parse_application_protocol_event(
+    value: &Value,
+    label: &str,
+) -> PyResult<ApplicationProtocolEvent> {
+    let object = json_object(value, label)?;
+    let kind_value = object
+        .get("kind")
+        .or_else(|| object.get("eventKind"))
+        .or_else(|| object.get("event_kind"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| PyValueError::new_err(format!("{label}.kind must be a string")))?;
+    let kind = parse_application_protocol_event_kind(kind_value, label)?;
+    let metadata = parse_application_protocol_event_metadata(
+        object
+            .get("metadata")
+            .ok_or_else(|| PyValueError::new_err(format!("{label}.metadata is required")))?,
+        &format!("{label}.metadata"),
+    )?;
+    let payload = object.get("payload").cloned().unwrap_or_else(|| json!({}));
+    ApplicationProtocolEvent::new(kind, metadata, payload)
+        .map_err(|error| PyValueError::new_err(format!("invalid {label}: {error:?}")))
+}
+
+fn serialize_application_protocol_event_metadata(
+    metadata: &ApplicationProtocolEventMetadata,
+) -> Value {
+    json!({
+        "eventId": metadata.event_id.as_str(),
+        "protocolVersion": metadata.protocol_version.as_str(),
+        "runId": metadata.run_id.as_str(),
+        "turnId": metadata.turn_id.as_deref(),
+        "sequence": metadata.sequence,
+        "cursor": metadata.cursor.as_deref(),
+        "occurredAtUnixMs": metadata.occurred_at_unix_ms,
+    })
+}
+
+fn serialize_application_protocol_event(event: &ApplicationProtocolEvent) -> Value {
+    json!({
+        "kind": event.kind.as_str(),
+        "metadata": serialize_application_protocol_event_metadata(&event.metadata),
         "payload": &event.payload,
     })
 }
@@ -4815,6 +5030,10 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
         evaluate_application_event_stream_json,
         module
     )?)?;
+    module.add_function(wrap_pyfunction!(
+        evaluate_application_protocol_stream_json,
+        module
+    )?)?;
     module.add_function(wrap_pyfunction!(evaluate_output_gate_json, module)?)?;
     module.add_function(wrap_pyfunction!(
         evaluate_declarative_output_policy_json,
@@ -4840,11 +5059,12 @@ mod tests {
     use super::{
         admit_exhaustion_work_json, admit_worker_message_json, compile_graph_json,
         decide_agent_step_json, evaluate_application_event_stream_json,
-        evaluate_declarative_output_policy_json, evaluate_durable_tool_terminal_store_json,
-        evaluate_output_gate_json, evaluate_sequential_tool_queue_json,
-        evaluate_tool_execution_plan_json, evaluate_tool_result_stream_json,
-        finalize_tool_call_json, prepare_tool_result_for_model_json, run_stdlib_graph_json,
-        run_test_graph_json, validate_remote_payload_json, validate_worker_advertisement_json,
+        evaluate_application_protocol_stream_json, evaluate_declarative_output_policy_json,
+        evaluate_durable_tool_terminal_store_json, evaluate_output_gate_json,
+        evaluate_sequential_tool_queue_json, evaluate_tool_execution_plan_json,
+        evaluate_tool_result_stream_json, finalize_tool_call_json,
+        prepare_tool_result_for_model_json, run_stdlib_graph_json, run_test_graph_json,
+        validate_remote_payload_json, validate_worker_advertisement_json,
         validate_worker_protocol_message_json,
     };
 
@@ -5888,6 +6108,97 @@ mod tests {
                 .and_then(Value::as_array)
                 .map(Vec::len),
             Some(2)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_application_protocol_stream_json_drops_late_events_after_cutoff()
+    -> Result<(), String> {
+        let metadata = |event_id: &str, sequence: u64| {
+            json!({
+                "eventId": event_id,
+                "protocolVersion": "graphblocks.app.v1",
+                "runId": "run-1",
+                "turnId": "turn-1",
+                "sequence": sequence,
+                "cursor": format!("cursor-{sequence}"),
+                "occurredAtUnixMs": 1_000 + sequence,
+            })
+        };
+        let operations = json!([
+            {
+                "kind": "event",
+                "event": {
+                    "kind": "AssistantDraftDelta",
+                    "metadata": metadata("event-delta-1", 1),
+                    "payload": {
+                        "response_id": "response-1",
+                        "chunk_sequence": 1,
+                        "delta": "allowed"
+                    }
+                }
+            },
+            {
+                "kind": "event",
+                "event": {
+                    "kind": "OutputCutoff",
+                    "metadata": metadata("event-cutoff", 2),
+                    "payload": {
+                        "response_id": "response-1",
+                        "last_client_delivered_sequence": 1,
+                        "terminal_reason": "policy_denied"
+                    }
+                }
+            },
+            {
+                "kind": "event",
+                "event": {
+                    "kind": "AssistantDraftDelta",
+                    "metadata": metadata("event-delta-2", 3),
+                    "payload": {
+                        "response_id": "response-1",
+                        "chunk_sequence": 2,
+                        "delta": "blocked"
+                    }
+                }
+            },
+            {
+                "kind": "event",
+                "event": {
+                    "kind": "AssistantIncomplete",
+                    "metadata": metadata("event-incomplete", 4),
+                    "payload": {
+                        "response_id": "response-1",
+                        "terminal_reason": "policy_denied"
+                    }
+                }
+            }
+        ]);
+
+        let output_json = evaluate_application_protocol_stream_json(
+            "{}",
+            &serde_json::to_string(&operations).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let output =
+            serde_json::from_str::<Value>(&output_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(output.get("ok"), Some(&json!(true)));
+        assert_eq!(output.pointer("/updates/0/kind"), Some(&json!("accepted")));
+        assert_eq!(output.pointer("/updates/1/kind"), Some(&json!("accepted")));
+        assert_eq!(output.pointer("/updates/2/kind"), Some(&json!("dropped")));
+        assert_eq!(output.pointer("/updates/3/kind"), Some(&json!("accepted")));
+        assert_eq!(
+            output.pointer("/state/cutoffResponses/0"),
+            Some(&json!("response-1"))
+        );
+        assert_eq!(
+            output
+                .pointer("/state/acceptedEvents")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(3)
         );
         Ok(())
     }
