@@ -128,6 +128,9 @@ def qdrant_hits_from_points(
 ) -> list[SearchHit]:
     if not retriever_id.strip():
         raise QdrantAdapterError("retriever_id must not be empty")
+    score_kind = score_kind.strip()
+    if not score_kind:
+        raise QdrantAdapterError("score_kind must not be empty")
 
     hits: list[SearchHit] = []
     for rank, point in enumerate(points, start=1):

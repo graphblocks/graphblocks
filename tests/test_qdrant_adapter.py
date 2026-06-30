@@ -146,3 +146,15 @@ def test_qdrant_points_without_source_use_untrusted_point_reference(monkeypatch)
     assert hits[0].item.source.source_id == "qdrant:7"
     assert hits[0].item.source.source_kind == "vector_point"
     assert hits[0].item.source.trust == "retrieved_untrusted"
+
+
+def test_qdrant_hits_reject_blank_score_kind(monkeypatch) -> None:
+    _add_qdrant_package_paths(monkeypatch)
+    graphblocks_qdrant = importlib.import_module("graphblocks_qdrant")
+
+    with pytest.raises(graphblocks_qdrant.QdrantAdapterError, match="score_kind"):
+        graphblocks_qdrant.qdrant_hits_from_points(
+            [{"id": "chunk-1", "payload": {}}],
+            retriever_id="qdrant-support",
+            score_kind=" ",
+        )
