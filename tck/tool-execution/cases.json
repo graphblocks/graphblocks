@@ -165,6 +165,36 @@
     "expectedCreationError": "unsafe_parallel_effects"
   },
   {
+    "name": "parallel_filesystem_write_tools_require_effect_keys",
+    "kind": "execution_plan",
+    "planId": "plan-3b",
+    "responseId": "response-1",
+    "maximumParallelism": 2,
+    "calls": [
+      {
+        "toolCallId": "call-a",
+        "toolName": "file.write",
+        "arguments": {
+          "resource_id": "workspace/report.md"
+        },
+        "effects": [
+          "filesystem_write"
+        ]
+      },
+      {
+        "toolCallId": "call-b",
+        "toolName": "file.write",
+        "arguments": {
+          "resource_id": "workspace/summary.md"
+        },
+        "effects": [
+          "filesystem_write"
+        ]
+      }
+    ],
+    "expectedCreationError": "unsafe_parallel_effects"
+  },
+  {
     "name": "policy_abort_denies_pending_tool_calls",
     "kind": "execution_plan",
     "planId": "plan-4",
