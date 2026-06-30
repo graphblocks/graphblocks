@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use graphblocks_protocol::{
     WORKER_PROTOCOL_VERSION, WorkerAdmissionDecision, WorkerAdmissionPolicy, WorkerAdvertisement,
     WorkerDrainError, WorkerDrainPlan, WorkerDrainPolicy, WorkerDrainTask, WorkerProtocolMessage,
-    WorkerProtocolMessageError, WorkerProtocolMessageKind, WorkerProtocolMessagePayload,
-    WorkerState, evaluate_worker_admission,
+    WorkerProtocolMessageKind, WorkerProtocolMessagePayload, WorkerState,
+    evaluate_worker_admission,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -136,9 +136,36 @@ impl WorkerRegistry {
         response_message_id: impl Into<String>,
         response_sequence: u64,
     ) -> Result<WorkerProtocolMessage, WorkerRegistryError> {
-        message
-            .validate()
-            .map_err(|source| WorkerRegistryError::InvalidWorkerMessage { source })?;
+        if message.protocol_version != WORKER_PROTOCOL_VERSION {
+            return Err(WorkerRegistryError::IncompatibleMessageProtocolVersion {
+                expected: WORKER_PROTOCOL_VERSION,
+                actual: message.protocol_version,
+            });
+        }
+        if message.message_id.trim().is_empty() {
+            return Err(WorkerRegistryError::EmptyMessageId);
+        }
+        if message
+            .correlation_id
+            .as_ref()
+            .is_some_and(|correlation_id| correlation_id.trim().is_empty())
+        {
+            return Err(WorkerRegistryError::EmptyCorrelationId);
+        }
+        if message
+            .causation_id
+            .as_ref()
+            .is_some_and(|causation_id| causation_id.trim().is_empty())
+        {
+            return Err(WorkerRegistryError::EmptyCausationId);
+        }
+        let payload_kind = message.payload.kind();
+        if message.kind != payload_kind {
+            return Err(WorkerRegistryError::KindPayloadMismatch {
+                kind: message.kind,
+                payload_kind,
+            });
+        }
         let correlation_id = message.correlation_id.clone();
         let causation_id = message.message_id.clone();
         let WorkerProtocolMessagePayload::Advertisement(advertisement) = message.payload else {
@@ -222,8 +249,24 @@ impl WorkerRegistry {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum WorkerRegistryError {
-    UnknownWorker { worker_id: String },
-    DrainPlan { source: WorkerDrainError },
-    InvalidWorkerMessage { source: WorkerProtocolMessageError },
-    UnexpectedWorkerMessageKind { kind: WorkerProtocolMessageKind },
+    UnknownWorker {
+        worker_id: String,
+    },
+    DrainPlan {
+        source: WorkerDrainError,
+    },
+    IncompatibleMessageProtocolVersion {
+        expected: u16,
+        actual: u16,
+    },
+    EmptyMessageId,
+    EmptyCorrelationId,
+    EmptyCausationId,
+    KindPayloadMismatch {
+        kind: WorkerProtocolMessageKind,
+        payload_kind: WorkerProtocolMessageKind,
+    },
+    UnexpectedWorkerMessageKind {
+        kind: WorkerProtocolMessageKind,
+    },
 }

@@ -96,6 +96,43 @@ fn worker_registry_admits_worker_advertisement_messages() -> Result<(), WorkerRe
 }
 
 #[test]
+fn worker_registry_returns_denial_message_for_incompatible_worker_advertisement_protocol() {
+    let mut registry = WorkerRegistry::new(DaemonConfig::new("daemon-1", "127.0.0.1:8080"))
+        .expect("daemon config should be valid");
+    let mut advertisement = WorkerAdvertisement::new(
+        "worker-1",
+        "doc-cpu",
+        "sha256:package-lock",
+        "sha256:image",
+        [BlockCapability::new("document.parse@1")],
+    );
+    advertisement.protocol_version = WORKER_PROTOCOL_VERSION + 1;
+    let message = WorkerProtocolMessage::advertisement("message-worker-1", 1, advertisement)
+        .with_correlation_id("worker-1");
+
+    let response = registry
+        .admit_worker_message(message, "message-daemon-1", 2)
+        .expect("advertisement protocol mismatch should produce an admission denial");
+    let status = registry.status();
+
+    assert_eq!(response.kind, WorkerProtocolMessageKind::AdmissionDecision);
+    assert_eq!(response.causation_id.as_deref(), Some("message-worker-1"));
+    assert!(matches!(
+        response.payload,
+        WorkerProtocolMessagePayload::AdmissionDecision(_)
+    ));
+    if let WorkerProtocolMessagePayload::AdmissionDecision(decision) = response.payload {
+        assert!(!decision.admitted);
+        assert_eq!(
+            decision.reason_codes,
+            vec!["worker.incompatible_protocol_version"]
+        );
+    }
+    assert_eq!(status.admitted_workers, 0);
+    assert_eq!(status.rejected_workers, 1);
+}
+
+#[test]
 fn worker_registry_rejects_non_advertisement_worker_messages() {
     let mut registry = WorkerRegistry::new(DaemonConfig::new("daemon-1", "127.0.0.1:8080"))
         .expect("daemon config should be valid");
@@ -112,6 +149,29 @@ fn worker_registry_rejects_non_advertisement_worker_messages() {
         registry.admit_worker_message(message, "message-daemon-1", 2),
         Err(WorkerRegistryError::UnexpectedWorkerMessageKind {
             kind: WorkerProtocolMessageKind::Error,
+        }),
+    );
+}
+
+#[test]
+fn worker_registry_rejects_worker_message_kind_payload_mismatch() {
+    let mut registry = WorkerRegistry::new(DaemonConfig::new("daemon-1", "127.0.0.1:8080"))
+        .expect("daemon config should be valid");
+    let mut message = WorkerProtocolMessage::new(
+        "message-error",
+        1,
+        WorkerProtocolMessagePayload::Error(WorkerProtocolErrorPayload::new(
+            "worker.failed",
+            "worker failed",
+        )),
+    );
+    message.kind = WorkerProtocolMessageKind::Advertisement;
+
+    assert_eq!(
+        registry.admit_worker_message(message, "message-daemon-1", 2),
+        Err(WorkerRegistryError::KindPayloadMismatch {
+            kind: WorkerProtocolMessageKind::Advertisement,
+            payload_kind: WorkerProtocolMessageKind::Error,
         }),
     );
 }
