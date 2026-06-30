@@ -40,6 +40,15 @@ class TelemetryProjectionError(RuntimeError):
     pass
 
 
+def capture_native_telemetry_content(
+    decision: Mapping[str, object],
+    content: Mapping[str, object],
+) -> dict[str, object]:
+    from graphblocks_runtime import capture_telemetry_content
+
+    return capture_telemetry_content(dict(decision), dict(content))
+
+
 def _diagnostic_summary(diagnostics: Iterable[Diagnostic]) -> dict[Severity, int]:
     summary: dict[Severity, int] = {"error": 0, "warning": 0, "info": 0}
     for diagnostic in diagnostics:
@@ -595,5 +604,6 @@ __all__ = [
     "TelemetryExportResult",
     "TelemetryProjectionError",
     "ToolExecutionTelemetryRecord",
+    "capture_native_telemetry_content",
     "telemetry_diagnostic_bundle",
 ]

@@ -62,6 +62,16 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         calls.append(("compile", (document_json, block_catalog_json or "")))
         return json.dumps({"ok": True, "graph": json.loads(document_json), "diagnostics": []})
 
+    def capture_telemetry_content_json(decision_json: str, content_json: str) -> str:
+        calls.append(("telemetry_capture", (decision_json, content_json)))
+        return json.dumps(
+            {
+                "decision": json.loads(decision_json),
+                "content": json.loads(content_json),
+                "contentDigest": "sha256:content",
+            }
+        )
+
     def run_stdlib_graph_json(graph_json: str, inputs_json: str) -> str:
         calls.append(("run_stdlib", (graph_json, inputs_json)))
         return json.dumps(
@@ -312,6 +322,7 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         admit_exhaustion_work_json=admit_exhaustion_work_json,
         admit_worker_message_json=admit_worker_message_json,
         binding_version=lambda: "0.1.0",
+        capture_telemetry_content_json=capture_telemetry_content_json,
         compile_graph_json=compile_graph_json,
         decide_agent_step_json=decide_agent_step_json,
         evaluate_application_event_stream_json=evaluate_application_event_stream_json,
@@ -339,6 +350,14 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     )
     runtime = load_runtime_wrapper(fake_native)
 
+    captured_content = runtime.capture_telemetry_content(
+        {"mode": "redacted_preview", "retentionPolicy": "debug-7d"},
+        {
+            "contentKind": "tool_result",
+            "text": "safe prefix secret suffix",
+            "redactions": [{"pattern": "secret", "replacement": "[redacted]"}],
+        },
+    )
     compiled = runtime.compile_graph({"kind": "Graph"}, block_catalog=[{"typeId": "prompt.render"}])
     stdlib = runtime.run_stdlib_graph({"kind": "Graph"}, {"message": {"text": "hi"}})
     test_run = runtime.run_test_graph({"kind": "Graph"}, {"message": "hi"}, {"node": {"value": "ok"}})
@@ -479,6 +498,15 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     )
 
     assert runtime.native_extension_available() is True
+    assert captured_content == {
+        "decision": {"mode": "redacted_preview", "retentionPolicy": "debug-7d"},
+        "content": {
+            "contentKind": "tool_result",
+            "redactions": [{"pattern": "secret", "replacement": "[redacted]"}],
+            "text": "safe prefix secret suffix",
+        },
+        "contentDigest": "sha256:content",
+    }
     assert compiled["ok"] is True
     assert stdlib["outputs"] == {"answer": "ok"}
     assert test_run["outputs"] == {"fixture": True}
@@ -609,6 +637,17 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     }
     assert remote_payload == {"ok": True, "payload": {"kind": "inline_json", "value": {"ok": True}}}
     assert calls == [
+        (
+            "telemetry_capture",
+            (
+                '{"mode":"redacted_preview","retentionPolicy":"debug-7d"}',
+                (
+                    '{"contentKind":"tool_result","redactions":'
+                    '[{"pattern":"secret","replacement":"[redacted]"}],'
+                    '"text":"safe prefix secret suffix"}'
+                ),
+            ),
+        ),
         (
             "compile",
             (

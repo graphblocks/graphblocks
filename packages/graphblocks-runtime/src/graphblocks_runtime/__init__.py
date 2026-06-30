@@ -11,6 +11,7 @@ try:
         admit_exhaustion_work_json,
         admit_worker_message_json,
         binding_version,
+        capture_telemetry_content_json,
         compile_graph_json,
         decide_agent_step_json,
         evaluate_application_event_stream_json,
@@ -63,6 +64,9 @@ except ImportError as error:
 
     def binding_version() -> str:
         return __version__
+
+    def capture_telemetry_content_json(decision_json: str, content_json: str) -> str:
+        require_native_extension()
 
     def admit_exhaustion_work_json(policy_json: str, request_json: str) -> str:
         require_native_extension()
@@ -206,6 +210,13 @@ def _json_object_result(result_json: str, label: str) -> dict[str, object]:
     if not isinstance(payload, dict):
         raise ValueError(f"{label} must decode to a JSON object")
     return payload
+
+
+def capture_telemetry_content(decision: dict[str, object], content: dict[str, object]) -> dict[str, object]:
+    return _json_object_result(
+        capture_telemetry_content_json(_canonical_json(decision), _canonical_json(content)),
+        "native telemetry captured content",
+    )
 
 
 def compile_graph(document: dict[str, object], block_catalog: object | None = None) -> dict[str, object]:
@@ -503,6 +514,8 @@ __all__ = [
     "admit_worker_message",
     "admit_worker_message_json",
     "binding_version",
+    "capture_telemetry_content",
+    "capture_telemetry_content_json",
     "compile_graph",
     "compile_graph_json",
     "decide_agent_step",

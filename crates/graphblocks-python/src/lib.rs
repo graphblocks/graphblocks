@@ -22,7 +22,9 @@ use graphblocks_runtime_core::exhaustion::{
     ContinuationEnvelope, ExhaustionController, ExhaustionPolicy, ExhaustionPreset, ExhaustionUnit,
     WorkKind,
 };
-use graphblocks_runtime_core::observability::CaptureDecision;
+use graphblocks_runtime_core::observability::{
+    CaptureDecision, CaptureMode, CapturedContent, RedactionRule,
+};
 use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory, Outcome};
 use graphblocks_runtime_core::output_policy::{
     DeclarativeOutputPolicyEvaluator, DeclarativeOutputPolicyRule, DraftDisposition, DurableResult,
@@ -550,6 +552,55 @@ fn record_tool_effect_audit_event_json(
     serde_json::to_string(&payload).map_err(|error| {
         PyRuntimeError::new_err(format!(
             "failed to serialize tool effect audit event: {error}"
+        ))
+    })
+}
+
+#[pyfunction]
+fn capture_telemetry_content_json(decision_json: &str, content_json: &str) -> PyResult<String> {
+    let decision_value = parse_json_argument(decision_json, "telemetry capture decision")?;
+    let content_value = parse_json_argument(content_json, "telemetry captured content")?;
+    let decision = parse_capture_decision(&decision_value, "telemetry capture decision")?;
+    let content = json_object(&content_value, "telemetry captured content")?;
+    let content_kind = required_alias_string(
+        content,
+        "contentKind",
+        "content_kind",
+        "telemetry captured content",
+    )?;
+    let text = required_string(content, "text", "telemetry captured content")?;
+    let content_ref = optional_nullable_alias_string(
+        content,
+        "contentRef",
+        "content_ref",
+        "telemetry captured content",
+    )?;
+    let redactions = if let Some(redactions) = content.get("redactions") {
+        let Some(redactions) = redactions.as_array() else {
+            return Err(PyValueError::new_err(
+                "telemetry captured content.redactions must be an array",
+            ));
+        };
+        redactions
+            .iter()
+            .enumerate()
+            .map(|(index, redaction)| {
+                let label = format!("telemetry captured content.redactions[{index}]");
+                let redaction = json_object(redaction, &label)?;
+                Ok(RedactionRule::literal(
+                    required_string(redaction, "pattern", &label)?,
+                    required_string(redaction, "replacement", &label)?,
+                ))
+            })
+            .collect::<PyResult<Vec<_>>>()?
+    } else {
+        Vec::new()
+    };
+
+    let captured = decision.capture_text(content_kind, text, content_ref, redactions);
+    serde_json::to_string(&serialize_captured_content(&captured)).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize telemetry captured content: {error}"
         ))
     })
 }
@@ -2468,6 +2519,30 @@ fn serialize_audit_event(event: &AuditEvent) -> Value {
         "payload": &event.payload,
         "metadata": &event.metadata,
         "payloadDigest": event.payload_digest(),
+    })
+}
+
+fn serialize_capture_mode(mode: CaptureMode) -> &'static str {
+    match mode {
+        CaptureMode::None => "none",
+        CaptureMode::HashOnly => "hash_only",
+        CaptureMode::ReferenceOnly => "reference_only",
+        CaptureMode::RedactedPreview => "redacted_preview",
+        CaptureMode::Full => "full",
+    }
+}
+
+fn serialize_captured_content(captured: &CapturedContent) -> Value {
+    json!({
+        "mode": serialize_capture_mode(captured.mode),
+        "contentKind": captured.content_kind.as_str(),
+        "contentDigest": captured.content_digest.as_str(),
+        "preview": captured.preview.as_deref(),
+        "contentRef": captured.content_ref.as_deref(),
+        "retentionPolicy": captured.retention_policy.as_str(),
+        "consentRef": captured.consent_ref.as_deref(),
+        "redactionCount": captured.redaction_count,
+        "originalBytes": captured.original_bytes,
     })
 }
 
@@ -5750,6 +5825,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
         record_tool_effect_audit_event_json,
         module
     )?)?;
+    module.add_function(wrap_pyfunction!(capture_telemetry_content_json, module)?)?;
     module.add_function(wrap_pyfunction!(evaluate_tool_result_stream_json, module)?)?;
     module.add_function(wrap_pyfunction!(run_test_graph_json, module)?)?;
     module.add_function(wrap_pyfunction!(run_stdlib_graph_json, module)?)?;
@@ -5795,8 +5871,8 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{
-        admit_exhaustion_work_json, admit_worker_message_json, compile_graph_json,
-        decide_agent_step_json, evaluate_application_event_stream_json,
+        admit_exhaustion_work_json, admit_worker_message_json, capture_telemetry_content_json,
+        compile_graph_json, decide_agent_step_json, evaluate_application_event_stream_json,
         evaluate_application_protocol_log_json, evaluate_application_protocol_stream_json,
         evaluate_declarative_output_policy_json, evaluate_durable_tool_terminal_store_json,
         evaluate_output_gate_json, evaluate_sequential_tool_queue_json,
@@ -6214,6 +6290,84 @@ mod tests {
                 .and_then(Value::as_str)
                 .is_some_and(|digest| digest.starts_with("sha256:"))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn capture_telemetry_content_json_uses_runtime_capture_policy() -> Result<(), String> {
+        let captured_json = capture_telemetry_content_json(
+            &serde_json::to_string(&json!({
+                "mode": "redacted_preview",
+                "retentionPolicy": "debug-7d",
+                "consentRef": "consent-1"
+            }))
+            .map_err(|error| error.to_string())?,
+            &serde_json::to_string(&json!({
+                "contentKind": "tool_result",
+                "text": "safe prefix secret suffix",
+                "redactions": [
+                    {"pattern": "secret", "replacement": "[redacted]"}
+                ]
+            }))
+            .map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let captured =
+            serde_json::from_str::<Value>(&captured_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            captured.get("mode").and_then(Value::as_str),
+            Some("redacted_preview")
+        );
+        assert_eq!(
+            captured.get("preview").and_then(Value::as_str),
+            Some("safe prefix [redacted] suffix")
+        );
+        assert_eq!(
+            captured.get("retentionPolicy").and_then(Value::as_str),
+            Some("debug-7d")
+        );
+        assert_eq!(
+            captured.get("consentRef").and_then(Value::as_str),
+            Some("consent-1")
+        );
+        assert_eq!(
+            captured.get("redactionCount").and_then(Value::as_u64),
+            Some(1)
+        );
+        assert!(
+            captured
+                .get("contentDigest")
+                .and_then(Value::as_str)
+                .is_some_and(|digest| digest.starts_with("sha256:"))
+        );
+
+        let referenced_json = capture_telemetry_content_json(
+            &serde_json::to_string(&json!({
+                "mode": "reference_only",
+                "retentionPolicy": "records-90d"
+            }))
+            .map_err(|error| error.to_string())?,
+            &serde_json::to_string(&json!({
+                "contentKind": "document",
+                "text": "document body",
+                "contentRef": "artifact://doc-1"
+            }))
+            .map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let referenced =
+            serde_json::from_str::<Value>(&referenced_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            referenced.get("mode").and_then(Value::as_str),
+            Some("reference_only")
+        );
+        assert_eq!(
+            referenced.get("contentRef").and_then(Value::as_str),
+            Some("artifact://doc-1")
+        );
+        assert_eq!(referenced.get("preview"), Some(&Value::Null));
         Ok(())
     }
 

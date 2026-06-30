@@ -4,6 +4,8 @@ from decimal import Decimal
 import importlib
 import json
 from pathlib import Path
+import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -15,6 +17,47 @@ def _add_observability_package_paths(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-telemetry" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-otel" / "src"))
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-langfuse" / "src"))
+
+
+def test_telemetry_package_exposes_native_content_capture(monkeypatch) -> None:
+    _add_observability_package_paths(monkeypatch)
+    calls: list[tuple[dict[str, object], dict[str, object]]] = []
+
+    def capture_telemetry_content(
+        decision: dict[str, object],
+        content: dict[str, object],
+    ) -> dict[str, object]:
+        calls.append((decision, content))
+        return {"mode": decision["mode"], "preview": "safe [redacted] suffix"}
+
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(capture_telemetry_content=capture_telemetry_content),
+    )
+    graphblocks_telemetry = importlib.import_module("graphblocks_telemetry")
+
+    captured = graphblocks_telemetry.capture_native_telemetry_content(
+        {"mode": "redacted_preview", "retentionPolicy": "debug-7d"},
+        {
+            "contentKind": "tool_result",
+            "text": "safe secret suffix",
+            "redactions": [{"pattern": "secret", "replacement": "[redacted]"}],
+        },
+    )
+
+    assert captured == {"mode": "redacted_preview", "preview": "safe [redacted] suffix"}
+    assert calls == [
+        (
+            {"mode": "redacted_preview", "retentionPolicy": "debug-7d"},
+            {
+                "contentKind": "tool_result",
+                "text": "safe secret suffix",
+                "redactions": [{"pattern": "secret", "replacement": "[redacted]"}],
+            },
+        )
+    ]
+    assert "capture_native_telemetry_content" in graphblocks_telemetry.__all__
 
 
 def test_telemetry_observation_contract_detaches_mutable_inputs(monkeypatch) -> None:
