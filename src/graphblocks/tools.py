@@ -1101,6 +1101,71 @@ class ToolCall:
             completed_at=None,
         )
 
+    def transition_status(self, status: ToolCallStatus, *, at: str) -> ToolCall:
+        if status not in VALID_TOOL_CALL_STATUSES:
+            raise ToolCallError(f"invalid tool call status {status}")
+        _validate_non_empty_string("tool call transition", "at", at)
+        validated_targets = {
+            "policy_pending",
+            "approval_pending",
+            "admitted",
+            "denied",
+            "failed",
+            "cancelled",
+            "policy_stopped",
+            "expired",
+        }
+        policy_pending_targets = {
+            "approval_pending",
+            "admitted",
+            "denied",
+            "failed",
+            "cancelled",
+            "policy_stopped",
+            "expired",
+        }
+        approval_pending_targets = {
+            "admitted",
+            "denied",
+            "failed",
+            "cancelled",
+            "policy_stopped",
+            "expired",
+        }
+        admitted_targets = {
+            "running",
+            "denied",
+            "failed",
+            "cancelled",
+            "policy_stopped",
+            "expired",
+        }
+        running_targets = {
+            "completed",
+            "denied",
+            "failed",
+            "cancelled",
+            "policy_stopped",
+            "expired",
+        }
+        allowed = (
+            (self.status == "validated" and status in validated_targets)
+            or (self.status == "policy_pending" and status in policy_pending_targets)
+            or (self.status == "approval_pending" and status in approval_pending_targets)
+            or (self.status == "admitted" and status in admitted_targets)
+            or (self.status == "running" and status in running_targets)
+        )
+        if not allowed:
+            raise ToolCallError(f"invalid tool call status transition {self.status} -> {status}")
+
+        admitted_at = self.admitted_at
+        completed_at = self.completed_at
+        if status == "admitted":
+            admitted_at = at
+        elif status in {"completed", "failed", "denied", "cancelled", "policy_stopped", "expired"}:
+            completed_at = at
+        return replace(self, status=status, admitted_at=admitted_at, completed_at=completed_at)
+
     def with_status(
         self,
         status: ToolCallStatus,

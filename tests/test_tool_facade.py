@@ -1747,6 +1747,51 @@ def test_tool_call_argument_digest_is_stable_and_revision_resets_admission_state
     assert revised.arguments_digest != left.arguments_digest
 
 
+def test_tool_call_status_transition_follows_lifecycle_and_sets_timestamps() -> None:
+    call = (
+        ToolCallDraft.proposed("response-1", "call-1", "ticket.create")
+        .append_argument_fragment('{"title":"old"}')
+        .complete_arguments()
+        .into_tool_call("resolved-tool-1", created_at="2026-06-23T00:00:00Z")
+    )
+
+    policy_pending = call.transition_status("policy_pending", at="2026-06-23T00:00:01Z")
+    approval_pending = policy_pending.transition_status(
+        "approval_pending",
+        at="2026-06-23T00:00:02Z",
+    )
+    admitted = approval_pending.transition_status("admitted", at="2026-06-23T00:00:03Z")
+    running = admitted.transition_status("running", at="2026-06-23T00:00:04Z")
+    completed = running.transition_status("completed", at="2026-06-23T00:00:05Z")
+
+    assert policy_pending.status == "policy_pending"
+    assert policy_pending.admitted_at is None
+    assert admitted.status == "admitted"
+    assert admitted.admitted_at == "2026-06-23T00:00:03Z"
+    assert running.admitted_at == "2026-06-23T00:00:03Z"
+    assert completed.status == "completed"
+    assert completed.admitted_at == "2026-06-23T00:00:03Z"
+    assert completed.completed_at == "2026-06-23T00:00:05Z"
+
+
+def test_tool_call_status_transition_rejects_skipped_and_post_terminal_edges() -> None:
+    call = (
+        ToolCallDraft.proposed("response-1", "call-1", "ticket.create")
+        .append_argument_fragment('{"title":"old"}')
+        .complete_arguments()
+        .into_tool_call("resolved-tool-1", created_at="2026-06-23T00:00:00Z")
+    )
+
+    with pytest.raises(ToolCallError) as skipped:
+        call.transition_status("completed", at="2026-06-23T00:00:01Z")
+    assert str(skipped.value) == "invalid tool call status transition validated -> completed"
+
+    denied = call.transition_status("denied", at="2026-06-23T00:00:01Z")
+    with pytest.raises(ToolCallError) as terminal:
+        denied.transition_status("running", at="2026-06-23T00:00:02Z")
+    assert str(terminal.value) == "invalid tool call status transition denied -> running"
+
+
 def test_tool_call_arguments_are_immutable_after_digesting() -> None:
     call = (
         ToolCallDraft.proposed("response-1", "call-1", "process.run")

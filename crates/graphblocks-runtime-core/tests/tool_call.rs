@@ -125,6 +125,56 @@ fn argument_revision_recomputes_digest_and_invalidates_admission_state() -> Resu
 }
 
 #[test]
+fn tool_call_status_transition_follows_lifecycle_and_sets_timestamps() -> Result<(), ToolCallError>
+{
+    let mut draft = ToolCallDraft::proposed("response-1", "call-1", "ticket.create");
+    draft.append_argument_fragment("{\"title\":\"old\"}")?;
+    let call = draft.into_completed_tool_call("resolved-tool-1", 1_000)?;
+
+    let policy_pending = call.transition_status(ToolCallStatus::PolicyPending, 1_050)?;
+    let approval_pending =
+        policy_pending.transition_status(ToolCallStatus::ApprovalPending, 1_060)?;
+    let admitted = approval_pending.transition_status(ToolCallStatus::Admitted, 1_100)?;
+    let running = admitted.transition_status(ToolCallStatus::Running, 1_150)?;
+    let completed = running.transition_status(ToolCallStatus::Completed, 1_200)?;
+
+    assert_eq!(policy_pending.status, ToolCallStatus::PolicyPending);
+    assert_eq!(policy_pending.admitted_at_unix_ms, None);
+    assert_eq!(admitted.status, ToolCallStatus::Admitted);
+    assert_eq!(admitted.admitted_at_unix_ms, Some(1_100));
+    assert_eq!(running.admitted_at_unix_ms, Some(1_100));
+    assert_eq!(completed.status, ToolCallStatus::Completed);
+    assert_eq!(completed.admitted_at_unix_ms, Some(1_100));
+    assert_eq!(completed.completed_at_unix_ms, Some(1_200));
+    Ok(())
+}
+
+#[test]
+fn tool_call_status_transition_rejects_skipped_and_post_terminal_edges() -> Result<(), ToolCallError>
+{
+    let mut draft = ToolCallDraft::proposed("response-1", "call-1", "ticket.create");
+    draft.append_argument_fragment("{\"title\":\"old\"}")?;
+    let call = draft.into_completed_tool_call("resolved-tool-1", 1_000)?;
+
+    assert_eq!(
+        call.transition_status(ToolCallStatus::Completed, 1_100),
+        Err(ToolCallError::InvalidStatusTransition {
+            from: ToolCallStatus::Validated,
+            to: ToolCallStatus::Completed,
+        }),
+    );
+    let denied = call.transition_status(ToolCallStatus::Denied, 1_100)?;
+    assert_eq!(
+        denied.transition_status(ToolCallStatus::Running, 1_200),
+        Err(ToolCallError::InvalidStatusTransition {
+            from: ToolCallStatus::Denied,
+            to: ToolCallStatus::Running,
+        }),
+    );
+    Ok(())
+}
+
+#[test]
 fn admitted_tool_call_arguments_cannot_be_revised() -> Result<(), ToolCallError> {
     let mut draft = ToolCallDraft::proposed("response-1", "call-1", "ticket.create");
     draft.append_argument_fragment("{\"title\":\"old\"}")?;

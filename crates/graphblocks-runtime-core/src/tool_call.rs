@@ -33,6 +33,10 @@ pub enum ToolCallError {
     CannotReviseArguments {
         status: ToolCallStatus,
     },
+    InvalidStatusTransition {
+        from: ToolCallStatus,
+        to: ToolCallStatus,
+    },
     EmptyField {
         field: &'static str,
     },
@@ -261,5 +265,84 @@ impl ToolCall {
         revised.completed_at_unix_ms = None;
         revised.validate()?;
         Ok(revised)
+    }
+
+    pub fn transition_status(
+        &self,
+        status: ToolCallStatus,
+        at_unix_ms: u64,
+    ) -> Result<Self, ToolCallError> {
+        self.validate()?;
+        let allowed = matches!(
+            (self.status, status),
+            (
+                ToolCallStatus::Validated,
+                ToolCallStatus::PolicyPending
+                    | ToolCallStatus::ApprovalPending
+                    | ToolCallStatus::Admitted
+                    | ToolCallStatus::Denied
+                    | ToolCallStatus::Failed
+                    | ToolCallStatus::Cancelled
+                    | ToolCallStatus::PolicyStopped
+                    | ToolCallStatus::Expired
+            ) | (
+                ToolCallStatus::PolicyPending,
+                ToolCallStatus::ApprovalPending
+                    | ToolCallStatus::Admitted
+                    | ToolCallStatus::Denied
+                    | ToolCallStatus::Failed
+                    | ToolCallStatus::Cancelled
+                    | ToolCallStatus::PolicyStopped
+                    | ToolCallStatus::Expired
+            ) | (
+                ToolCallStatus::ApprovalPending,
+                ToolCallStatus::Admitted
+                    | ToolCallStatus::Denied
+                    | ToolCallStatus::Failed
+                    | ToolCallStatus::Cancelled
+                    | ToolCallStatus::PolicyStopped
+                    | ToolCallStatus::Expired
+            ) | (
+                ToolCallStatus::Admitted,
+                ToolCallStatus::Running
+                    | ToolCallStatus::Denied
+                    | ToolCallStatus::Failed
+                    | ToolCallStatus::Cancelled
+                    | ToolCallStatus::PolicyStopped
+                    | ToolCallStatus::Expired
+            ) | (
+                ToolCallStatus::Running,
+                ToolCallStatus::Completed
+                    | ToolCallStatus::Denied
+                    | ToolCallStatus::Failed
+                    | ToolCallStatus::Cancelled
+                    | ToolCallStatus::PolicyStopped
+                    | ToolCallStatus::Expired
+            )
+        );
+        if !allowed {
+            return Err(ToolCallError::InvalidStatusTransition {
+                from: self.status,
+                to: status,
+            });
+        }
+
+        let mut transitioned = self.clone();
+        transitioned.status = status;
+        match status {
+            ToolCallStatus::Admitted => transitioned.admitted_at_unix_ms = Some(at_unix_ms),
+            ToolCallStatus::Completed
+            | ToolCallStatus::Failed
+            | ToolCallStatus::Denied
+            | ToolCallStatus::Cancelled
+            | ToolCallStatus::PolicyStopped
+            | ToolCallStatus::Expired => transitioned.completed_at_unix_ms = Some(at_unix_ms),
+            ToolCallStatus::Validated
+            | ToolCallStatus::PolicyPending
+            | ToolCallStatus::ApprovalPending
+            | ToolCallStatus::Running => {}
+        }
+        transitioned.validate()?;
+        Ok(transitioned)
     }
 }
