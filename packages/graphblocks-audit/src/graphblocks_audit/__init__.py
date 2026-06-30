@@ -48,6 +48,58 @@ class AuditOutboxRecordNotFoundError(AuditOutboxError):
 AuditOutboxStatus = Literal["pending", "published", "failed"]
 
 
+def record_native_tool_effect_precondition(
+    resolved_tool: Mapping[str, object],
+    call: Mapping[str, object],
+    *,
+    effect_key: str | None = None,
+    idempotency_key: str | None = None,
+    policy_decision_id: str | None = None,
+    execution_target: str | None = None,
+    sandbox_id: str | None = None,
+) -> dict[str, object]:
+    from graphblocks_runtime import record_tool_effect_precondition
+
+    return record_tool_effect_precondition(
+        dict(resolved_tool),
+        dict(call),
+        effect_key=effect_key,
+        idempotency_key=idempotency_key,
+        policy_decision_id=policy_decision_id,
+        execution_target=execution_target,
+        sandbox_id=sandbox_id,
+    )
+
+
+def record_native_tool_effect_audit_event(
+    *,
+    event_id: str,
+    occurred_at: str,
+    actor: Mapping[str, object],
+    resolved_tool: Mapping[str, object],
+    call: Mapping[str, object],
+    result: Mapping[str, object],
+    effect_key: str | None = None,
+    precondition_digest: str | None = None,
+    idempotency_key: str | None = None,
+    policy_decision_id: str | None = None,
+) -> dict[str, object]:
+    from graphblocks_runtime import record_tool_effect_audit_event
+
+    return record_tool_effect_audit_event(
+        event_id=event_id,
+        occurred_at=occurred_at,
+        actor=dict(actor),
+        resolved_tool=dict(resolved_tool),
+        call=dict(call),
+        result=dict(result),
+        effect_key=effect_key,
+        precondition_digest=precondition_digest,
+        idempotency_key=idempotency_key,
+        policy_decision_id=policy_decision_id,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class AuditOutboxRecord:
     record_id: str
@@ -380,4 +432,6 @@ __all__ = [
     "ToolApprovalRecord",
     "ToolApprovalRequest",
     "ToolApprovalStatus",
+    "record_native_tool_effect_audit_event",
+    "record_native_tool_effect_precondition",
 ]

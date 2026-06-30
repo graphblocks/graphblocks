@@ -125,6 +125,85 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             }
         )
 
+    def record_tool_effect_precondition_json(
+        resolved_tool_json: str,
+        call_json: str,
+        effect_key: str | None = None,
+        idempotency_key: str | None = None,
+        policy_decision_id: str | None = None,
+        execution_target: str | None = None,
+        sandbox_id: str | None = None,
+    ) -> str:
+        calls.append(
+            (
+                "tool_effect_precondition",
+                (
+                    resolved_tool_json,
+                    call_json,
+                    effect_key,
+                    idempotency_key,
+                    policy_decision_id,
+                    execution_target,
+                    sandbox_id,
+                ),
+            )
+        )
+        return json.dumps(
+            {
+                "digest": "sha256:precondition",
+                "payload": {
+                    "resolvedTool": json.loads(resolved_tool_json),
+                    "call": json.loads(call_json),
+                    "effectKey": effect_key,
+                },
+            }
+        )
+
+    def record_tool_effect_audit_event_json(
+        event_id: str,
+        occurred_at: str,
+        actor_json: str,
+        resolved_tool_json: str,
+        call_json: str,
+        result_json: str,
+        effect_key: str | None = None,
+        precondition_digest: str | None = None,
+        idempotency_key: str | None = None,
+        policy_decision_id: str | None = None,
+    ) -> str:
+        calls.append(
+            (
+                "tool_effect_audit_event",
+                (
+                    event_id,
+                    occurred_at,
+                    actor_json,
+                    resolved_tool_json,
+                    call_json,
+                    result_json,
+                    effect_key,
+                    precondition_digest,
+                    idempotency_key,
+                    policy_decision_id,
+                ),
+            )
+        )
+        return json.dumps(
+            {
+                "eventId": event_id,
+                "occurredAt": occurred_at,
+                "actor": json.loads(actor_json),
+                "payload": {
+                    "resolvedTool": json.loads(resolved_tool_json),
+                    "call": json.loads(call_json),
+                    "result": json.loads(result_json),
+                    "effectKey": effect_key,
+                    "preconditionDigest": precondition_digest,
+                },
+                "payloadDigest": "sha256:audit-event",
+            }
+        )
+
     def evaluate_output_gate_json(gate_json: str, operations_json: str) -> str:
         calls.append(("output_gate", (gate_json, operations_json)))
         return json.dumps({"gate": json.loads(gate_json), "updates": json.loads(operations_json)})
@@ -250,6 +329,8 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             negotiate_application_protocol_capabilities_json
         ),
         prepare_tool_result_for_model_json=prepare_tool_result_for_model_json,
+        record_tool_effect_audit_event_json=record_tool_effect_audit_event_json,
+        record_tool_effect_precondition_json=record_tool_effect_precondition_json,
         run_stdlib_graph_json=run_stdlib_graph_json,
         run_test_graph_json=run_test_graph_json,
         validate_remote_payload_json=validate_remote_payload_json,
@@ -279,6 +360,27 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         {"resolvedToolId": "resolved-tool-1"},
         [{"schemaId": "schemas/SearchResult@1"}],
         content_policy={"maxOutputBytes": 128},
+    )
+    tool_effect_precondition = runtime.record_tool_effect_precondition(
+        {"resolvedToolId": "resolved-tool-1"},
+        {"toolCallId": "call-1", "status": "admitted"},
+        effect_key="ticket.create:cust-1",
+        idempotency_key="idem-ticket-1",
+        policy_decision_id="decision-tool-1",
+        execution_target="worker:local",
+        sandbox_id="sandbox-1",
+    )
+    tool_effect_audit_event = runtime.record_tool_effect_audit_event(
+        event_id="audit-effect-1",
+        occurred_at="2026-06-23T00:00:02Z",
+        actor={"principalId": "user-1"},
+        resolved_tool={"resolvedToolId": "resolved-tool-1"},
+        call={"toolCallId": "call-1"},
+        result={"toolCallId": "call-1", "status": "completed"},
+        effect_key="ticket.create:cust-1",
+        precondition_digest="sha256:precondition",
+        idempotency_key="idem-ticket-1",
+        policy_decision_id="decision-tool-1",
     )
     gate_result = runtime.evaluate_output_gate(
         {"streamId": "stream-1"},
@@ -392,6 +494,27 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         "resolvedTool": {"resolvedToolId": "resolved-tool-1"},
         "schemaRegistry": [{"schemaId": "schemas/SearchResult@1"}],
         "contentPolicy": {"maxOutputBytes": 128},
+    }
+    assert tool_effect_precondition == {
+        "digest": "sha256:precondition",
+        "payload": {
+            "resolvedTool": {"resolvedToolId": "resolved-tool-1"},
+            "call": {"status": "admitted", "toolCallId": "call-1"},
+            "effectKey": "ticket.create:cust-1",
+        },
+    }
+    assert tool_effect_audit_event == {
+        "eventId": "audit-effect-1",
+        "occurredAt": "2026-06-23T00:00:02Z",
+        "actor": {"principalId": "user-1"},
+        "payload": {
+            "resolvedTool": {"resolvedToolId": "resolved-tool-1"},
+            "call": {"toolCallId": "call-1"},
+            "result": {"status": "completed", "toolCallId": "call-1"},
+            "effectKey": "ticket.create:cust-1",
+            "preconditionDigest": "sha256:precondition",
+        },
+        "payloadDigest": "sha256:audit-event",
     }
     assert gate_result == {
         "gate": {"streamId": "stream-1"},
@@ -512,6 +635,33 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
                 '{"resolvedToolId":"resolved-tool-1"}',
                 '[{"schemaId":"schemas/SearchResult@1"}]',
                 '{"maxOutputBytes":128}',
+            ),
+        ),
+        (
+            "tool_effect_precondition",
+            (
+                '{"resolvedToolId":"resolved-tool-1"}',
+                '{"status":"admitted","toolCallId":"call-1"}',
+                "ticket.create:cust-1",
+                "idem-ticket-1",
+                "decision-tool-1",
+                "worker:local",
+                "sandbox-1",
+            ),
+        ),
+        (
+            "tool_effect_audit_event",
+            (
+                "audit-effect-1",
+                "2026-06-23T00:00:02Z",
+                '{"principalId":"user-1"}',
+                '{"resolvedToolId":"resolved-tool-1"}',
+                '{"toolCallId":"call-1"}',
+                '{"status":"completed","toolCallId":"call-1"}',
+                "ticket.create:cust-1",
+                "sha256:precondition",
+                "idem-ticket-1",
+                "decision-tool-1",
             ),
         ),
         (

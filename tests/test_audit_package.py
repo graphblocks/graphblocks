@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib
 from pathlib import Path
+import sys
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).parents[1]
@@ -44,6 +46,83 @@ def test_audit_package_exposes_append_only_event_and_enforcement_records(monkeyp
     assert enforcement.decision_id == "decision-1"
     assert enforcement.enforcement_point == "before_client_delivery"
     assert enforcement.status == "enforced"
+
+
+def test_audit_package_exposes_native_audit_helpers(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-audit" / "src"))
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def record_tool_effect_precondition(
+        resolved_tool: dict[str, object],
+        call: dict[str, object],
+        **kwargs: object,
+    ) -> dict[str, object]:
+        calls.append(("precondition", {"resolved_tool": resolved_tool, "call": call, **kwargs}))
+        return {"digest": "sha256:precondition", "payload": {"tool_call_id": call["toolCallId"]}}
+
+    def record_tool_effect_audit_event(**kwargs: object) -> dict[str, object]:
+        calls.append(("audit_event", dict(kwargs)))
+        return {"eventId": kwargs["event_id"], "payloadDigest": "sha256:audit-event"}
+
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(
+            record_tool_effect_audit_event=record_tool_effect_audit_event,
+            record_tool_effect_precondition=record_tool_effect_precondition,
+        ),
+    )
+    graphblocks_audit = importlib.import_module("graphblocks_audit")
+
+    precondition = graphblocks_audit.record_native_tool_effect_precondition(
+        {"resolvedToolId": "resolved-tool-1"},
+        {"toolCallId": "call-1"},
+        effect_key="ticket.create:cust-1",
+        idempotency_key="idem-ticket-1",
+    )
+    event = graphblocks_audit.record_native_tool_effect_audit_event(
+        event_id="audit-effect-1",
+        occurred_at="2026-06-23T00:00:02Z",
+        actor={"principalId": "user-1"},
+        resolved_tool={"resolvedToolId": "resolved-tool-1"},
+        call={"toolCallId": "call-1"},
+        result={"toolCallId": "call-1", "status": "completed"},
+        precondition_digest=precondition["digest"],
+    )
+
+    assert precondition == {"digest": "sha256:precondition", "payload": {"tool_call_id": "call-1"}}
+    assert event == {"eventId": "audit-effect-1", "payloadDigest": "sha256:audit-event"}
+    assert calls == [
+        (
+            "precondition",
+            {
+                "resolved_tool": {"resolvedToolId": "resolved-tool-1"},
+                "call": {"toolCallId": "call-1"},
+                "effect_key": "ticket.create:cust-1",
+                "idempotency_key": "idem-ticket-1",
+                "policy_decision_id": None,
+                "execution_target": None,
+                "sandbox_id": None,
+            },
+        ),
+        (
+            "audit_event",
+            {
+                "event_id": "audit-effect-1",
+                "occurred_at": "2026-06-23T00:00:02Z",
+                "actor": {"principalId": "user-1"},
+                "resolved_tool": {"resolvedToolId": "resolved-tool-1"},
+                "call": {"toolCallId": "call-1"},
+                "result": {"toolCallId": "call-1", "status": "completed"},
+                "effect_key": None,
+                "precondition_digest": "sha256:precondition",
+                "idempotency_key": None,
+                "policy_decision_id": None,
+            },
+        ),
+    ]
+    assert "record_native_tool_effect_precondition" in graphblocks_audit.__all__
+    assert "record_native_tool_effect_audit_event" in graphblocks_audit.__all__
 
 
 def test_audit_package_records_tool_effect_precondition_and_outcome(monkeypatch) -> None:

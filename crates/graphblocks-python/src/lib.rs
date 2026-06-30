@@ -14,6 +14,9 @@ use graphblocks_runtime_core::application_event::{
     ApplicationProtocolEvent, ApplicationProtocolEventKind, ApplicationProtocolEventMetadata,
     ApplicationProtocolLog, ApplicationProtocolStreamState,
 };
+use graphblocks_runtime_core::audit::{
+    AuditEvent, ToolEffectAuditContext, ToolEffectPrecondition, ToolEffectPreconditionContext,
+};
 use graphblocks_runtime_core::budget::{BudgetPermit, UsageAmount};
 use graphblocks_runtime_core::exhaustion::{
     ContinuationEnvelope, ExhaustionController, ExhaustionPolicy, ExhaustionPreset, ExhaustionUnit,
@@ -27,6 +30,7 @@ use graphblocks_runtime_core::output_policy::{
     OutputDisposition, OutputPolicyDecision, PendingToolCallsDisposition, ProviderCancellation,
     RedactionInstruction, TerminalReason, ViolationAction,
 };
+use graphblocks_runtime_core::policy::{PrincipalRef, ResourceRef};
 use graphblocks_runtime_core::readiness::{InputDependency, PortRef};
 use graphblocks_runtime_core::scheduler::{ScheduledNode, StartedNode};
 use graphblocks_runtime_core::test_runtime::{InProcessTestRuntime, NodeExecutor, TestRunStatus};
@@ -446,6 +450,106 @@ fn prepare_tool_result_for_model_json(
     serde_json::to_string(&payload).map_err(|error| {
         PyRuntimeError::new_err(format!(
             "failed to serialize prepared tool result output: {error}"
+        ))
+    })
+}
+
+#[pyfunction]
+#[pyo3(signature = (
+    resolved_tool_json,
+    call_json,
+    effect_key=None,
+    idempotency_key=None,
+    policy_decision_id=None,
+    execution_target=None,
+    sandbox_id=None
+))]
+fn record_tool_effect_precondition_json(
+    resolved_tool_json: &str,
+    call_json: &str,
+    effect_key: Option<&str>,
+    idempotency_key: Option<&str>,
+    policy_decision_id: Option<&str>,
+    execution_target: Option<&str>,
+    sandbox_id: Option<&str>,
+) -> PyResult<String> {
+    let resolved_tool_value = parse_json_argument(resolved_tool_json, "resolved tool")?;
+    let call_value = parse_json_argument(call_json, "tool call")?;
+    let resolved_tool = parse_resolved_tool(&resolved_tool_value, "resolved tool")?;
+    let call = parse_tool_call(&call_value, "tool call")?;
+
+    let precondition = ToolEffectPrecondition::from_admitted_call(ToolEffectPreconditionContext {
+        resolved_tool: &resolved_tool,
+        call: &call,
+        effect_key,
+        idempotency_key,
+        policy_decision_id,
+        execution_target,
+        sandbox_id,
+    })
+    .map_err(|error| PyValueError::new_err(format!("invalid tool effect precondition: {error}")))?;
+    let payload = json!({
+        "payload": precondition.payload,
+        "digest": precondition.digest,
+    });
+    serde_json::to_string(&payload).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize tool effect precondition: {error}"
+        ))
+    })
+}
+
+#[pyfunction]
+#[pyo3(signature = (
+    event_id,
+    occurred_at,
+    actor_json,
+    resolved_tool_json,
+    call_json,
+    result_json,
+    effect_key=None,
+    precondition_digest=None,
+    idempotency_key=None,
+    policy_decision_id=None
+))]
+fn record_tool_effect_audit_event_json(
+    event_id: &str,
+    occurred_at: &str,
+    actor_json: &str,
+    resolved_tool_json: &str,
+    call_json: &str,
+    result_json: &str,
+    effect_key: Option<&str>,
+    precondition_digest: Option<&str>,
+    idempotency_key: Option<&str>,
+    policy_decision_id: Option<&str>,
+) -> PyResult<String> {
+    let actor_value = parse_json_argument(actor_json, "actor")?;
+    let resolved_tool_value = parse_json_argument(resolved_tool_json, "resolved tool")?;
+    let call_value = parse_json_argument(call_json, "tool call")?;
+    let result_value = parse_json_argument(result_json, "tool result")?;
+    let actor = parse_principal_ref(&actor_value, "actor")?;
+    let resolved_tool = parse_resolved_tool(&resolved_tool_value, "resolved tool")?;
+    let call = parse_tool_call(&call_value, "tool call")?;
+    let result = parse_tool_result(&result_value, "tool result")?;
+
+    let event = AuditEvent::tool_effect_outcome(ToolEffectAuditContext {
+        event_id,
+        occurred_at,
+        actor,
+        resolved_tool: &resolved_tool,
+        call: &call,
+        result: &result,
+        effect_key,
+        precondition_digest,
+        idempotency_key,
+        policy_decision_id,
+    })
+    .map_err(|error| PyValueError::new_err(format!("invalid tool effect audit event: {error}")))?;
+    let payload = serialize_audit_event(&event);
+    serde_json::to_string(&payload).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize tool effect audit event: {error}"
         ))
     })
 }
@@ -1228,6 +1332,58 @@ fn parse_string_set(value: Option<&Value>, label: &str) -> PyResult<BTreeSet<Str
                 .ok_or_else(|| PyValueError::new_err(format!("{label}[{index}] must be a string")))
         })
         .collect()
+}
+
+fn parse_string_vec(value: Option<&Value>, label: &str) -> PyResult<Vec<String>> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let Some(values) = value.as_array() else {
+        return Err(PyValueError::new_err(format!("{label} must be an array")));
+    };
+    values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| {
+            value
+                .as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| PyValueError::new_err(format!("{label}[{index}] must be a string")))
+        })
+        .collect()
+}
+
+fn parse_principal_ref(value: &Value, label: &str) -> PyResult<PrincipalRef> {
+    let object = json_object(value, label)?;
+    let mut principal = PrincipalRef::new(required_alias_string(
+        object,
+        "principalId",
+        "principal_id",
+        label,
+    )?);
+    if let Some(tenant_id) = optional_nullable_alias_string(object, "tenantId", "tenant_id", label)?
+    {
+        principal = principal.with_tenant_id(tenant_id);
+    }
+    for group in parse_string_vec(
+        alias_value(object, "groups", "groups"),
+        &format!("{label}.groups"),
+    )? {
+        principal = principal.with_group(group);
+    }
+    for role in parse_string_vec(
+        alias_value(object, "roles", "roles"),
+        &format!("{label}.roles"),
+    )? {
+        principal = principal.with_role(role);
+    }
+    for (key, value) in parse_json_value_map(
+        alias_value(object, "attributes", "attributes"),
+        &format!("{label}.attributes"),
+    )? {
+        principal = principal.with_attribute(key, value);
+    }
+    Ok(principal)
 }
 
 fn parse_tool_effect(value: &Value, label: &str) -> PyResult<ToolEffect> {
@@ -2279,6 +2435,39 @@ fn serialize_tool_result(result: &ToolResult) -> Value {
         "startedAtUnixMs": result.started_at_unix_ms,
         "completedAtUnixMs": result.completed_at_unix_ms,
         "effectOutcome": serialize_tool_effect_outcome(result.effect_outcome),
+    })
+}
+
+fn serialize_principal_ref(principal: &PrincipalRef) -> Value {
+    json!({
+        "principalId": principal.principal_id.as_str(),
+        "tenantId": principal.tenant_id.as_deref(),
+        "groups": &principal.groups,
+        "roles": &principal.roles,
+        "attributes": &principal.attributes,
+    })
+}
+
+fn serialize_resource_ref(resource: &ResourceRef) -> Value {
+    json!({
+        "resourceId": resource.resource_id.as_str(),
+        "resourceKind": resource.resource_kind.as_deref(),
+        "tenantId": resource.tenant_id.as_deref(),
+        "attributes": &resource.attributes,
+    })
+}
+
+fn serialize_audit_event(event: &AuditEvent) -> Value {
+    json!({
+        "eventId": event.event_id.as_str(),
+        "targetKind": event.target_kind.as_str(),
+        "occurredAt": event.occurred_at.as_str(),
+        "actor": event.actor.as_ref().map(serialize_principal_ref),
+        "resource": event.resource.as_ref().map(serialize_resource_ref),
+        "reasonCodes": &event.reason_codes,
+        "payload": &event.payload,
+        "metadata": &event.metadata,
+        "payloadDigest": event.payload_digest(),
     })
 }
 
@@ -5553,6 +5742,14 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
         prepare_tool_result_for_model_json,
         module
     )?)?;
+    module.add_function(wrap_pyfunction!(
+        record_tool_effect_precondition_json,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        record_tool_effect_audit_event_json,
+        module
+    )?)?;
     module.add_function(wrap_pyfunction!(evaluate_tool_result_stream_json, module)?)?;
     module.add_function(wrap_pyfunction!(run_test_graph_json, module)?)?;
     module.add_function(wrap_pyfunction!(run_stdlib_graph_json, module)?)?;
@@ -5606,9 +5803,67 @@ mod tests {
         evaluate_tool_execution_plan_json, evaluate_tool_result_stream_json,
         evaluate_usage_ledger_json, finalize_tool_call_json,
         negotiate_application_protocol_capabilities_json, prepare_tool_result_for_model_json,
+        record_tool_effect_audit_event_json, record_tool_effect_precondition_json,
         run_stdlib_graph_json, run_test_graph_json, validate_remote_payload_json,
         validate_worker_advertisement_json, validate_worker_protocol_message_json,
     };
+
+    fn native_audit_fixture() -> Result<(Value, Value, Value), String> {
+        let resolved_tool = json!({
+            "resolvedToolId": "resolved-ticket-create",
+            "definition": {
+                "name": "ticket.create",
+                "description": "Create a support ticket.",
+                "inputSchema": "schemas/TicketCreate@1"
+            },
+            "binding": {
+                "bindingId": "binding-ticket-create",
+                "toolName": "ticket.create",
+                "implementation": {
+                    "kind": "block",
+                    "block": "blocks.ticket_create"
+                },
+                "effects": ["destructive", "external_write", "network"]
+            },
+            "effectivePolicySnapshotId": "policy-snapshot-1",
+            "allowedForPrincipal": true
+        });
+        let draft = json!({
+            "responseId": "response-1",
+            "toolCallId": "call-1",
+            "toolName": "ticket.create",
+            "argumentFragments": ["{\"customer_id\":\"cust-1\",\"title\":\"Help\"}"],
+            "sequence": 1,
+            "status": "arguments_complete"
+        });
+        let call_json = finalize_tool_call_json(
+            &serde_json::to_string(&draft).map_err(|error| error.to_string())?,
+            "resolved-ticket-create",
+            1_000,
+        )
+        .map_err(|error| error.to_string())?;
+        let mut call =
+            serde_json::from_str::<Value>(&call_json).map_err(|error| error.to_string())?;
+        let call_object = call
+            .as_object_mut()
+            .ok_or_else(|| "finalized call must be an object".to_owned())?;
+        call_object.insert("status".to_owned(), json!("admitted"));
+        call_object.insert("admittedAtUnixMs".to_owned(), json!(1_050));
+        let result = json!({
+            "toolCallId": "call-1",
+            "status": "completed",
+            "output": [
+                {
+                    "kind": "json",
+                    "data": {"ticket_id": "T-1"}
+                }
+            ],
+            "startedAtUnixMs": 1_100,
+            "completedAtUnixMs": 1_250,
+            "effectOutcome": "committed"
+        });
+        Ok((resolved_tool, call, result))
+    }
 
     #[test]
     fn finalize_tool_call_json_assembles_validated_call_with_canonical_digest() -> Result<(), String>
@@ -5818,6 +6073,146 @@ mod tests {
                 .pointer("/output/0/metadata/capture/redaction_count")
                 .and_then(Value::as_u64),
             Some(1)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn record_tool_effect_precondition_json_delegates_to_runtime_audit() -> Result<(), String> {
+        let (resolved_tool, call, _) = native_audit_fixture()?;
+        let precondition_json = record_tool_effect_precondition_json(
+            &serde_json::to_string(&resolved_tool).map_err(|error| error.to_string())?,
+            &serde_json::to_string(&call).map_err(|error| error.to_string())?,
+            Some("ticket.create:cust-1"),
+            Some("idem-ticket-1"),
+            Some("decision-tool-1"),
+            Some("worker:local"),
+            Some("sandbox-1"),
+        )
+        .map_err(|error| error.to_string())?;
+        let precondition =
+            serde_json::from_str::<Value>(&precondition_json).map_err(|error| error.to_string())?;
+
+        assert!(
+            precondition
+                .get("digest")
+                .and_then(Value::as_str)
+                .is_some_and(|digest| digest.starts_with("sha256:"))
+        );
+        assert_eq!(
+            precondition
+                .pointer("/payload/tool_name")
+                .and_then(Value::as_str),
+            Some("ticket.create")
+        );
+        assert_eq!(
+            precondition
+                .pointer("/payload/effects")
+                .and_then(Value::as_array),
+            Some(&vec![
+                json!("destructive"),
+                json!("external_write"),
+                json!("network")
+            ])
+        );
+        assert_eq!(
+            precondition
+                .pointer("/payload/admitted_at_unix_ms")
+                .and_then(Value::as_u64),
+            Some(1_050)
+        );
+        assert_eq!(
+            precondition
+                .pointer("/payload/idempotency_key")
+                .and_then(Value::as_str),
+            Some("idem-ticket-1")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn record_tool_effect_audit_event_json_returns_canonical_audit_event() -> Result<(), String> {
+        let (resolved_tool, call, result) = native_audit_fixture()?;
+        let precondition_json = record_tool_effect_precondition_json(
+            &serde_json::to_string(&resolved_tool).map_err(|error| error.to_string())?,
+            &serde_json::to_string(&call).map_err(|error| error.to_string())?,
+            Some("ticket.create:cust-1"),
+            Some("idem-ticket-1"),
+            Some("decision-tool-1"),
+            Some("worker:local"),
+            Some("sandbox-1"),
+        )
+        .map_err(|error| error.to_string())?;
+        let precondition =
+            serde_json::from_str::<Value>(&precondition_json).map_err(|error| error.to_string())?;
+        let precondition_digest = precondition
+            .get("digest")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "native precondition is missing digest".to_owned())?;
+        let event_json = record_tool_effect_audit_event_json(
+            "audit-effect-1",
+            "2026-06-23T00:00:02Z",
+            &serde_json::to_string(&json!({
+                "principalId": "user-1",
+                "tenantId": "tenant-a",
+                "roles": ["support"],
+                "groups": ["tier-2"],
+                "attributes": {"region": "us"}
+            }))
+            .map_err(|error| error.to_string())?,
+            &serde_json::to_string(&resolved_tool).map_err(|error| error.to_string())?,
+            &serde_json::to_string(&call).map_err(|error| error.to_string())?,
+            &serde_json::to_string(&result).map_err(|error| error.to_string())?,
+            Some("ticket.create:cust-1"),
+            Some(precondition_digest),
+            Some("idem-ticket-1"),
+            Some("decision-tool-1"),
+        )
+        .map_err(|error| error.to_string())?;
+        let event =
+            serde_json::from_str::<Value>(&event_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            event.get("eventId").and_then(Value::as_str),
+            Some("audit-effect-1")
+        );
+        assert_eq!(
+            event.get("targetKind").and_then(Value::as_str),
+            Some("destructive_effect")
+        );
+        assert_eq!(
+            event.pointer("/actor/principalId").and_then(Value::as_str),
+            Some("user-1")
+        );
+        assert_eq!(
+            event
+                .pointer("/resource/resourceId")
+                .and_then(Value::as_str),
+            Some("tool:ticket.create")
+        );
+        assert_eq!(
+            event
+                .pointer("/payload/result_status")
+                .and_then(Value::as_str),
+            Some("completed")
+        );
+        assert_eq!(
+            event
+                .pointer("/payload/effect_outcome")
+                .and_then(Value::as_str),
+            Some("committed")
+        );
+        assert_eq!(
+            event
+                .pointer("/payload/precondition_digest")
+                .and_then(Value::as_str),
+            Some(precondition_digest)
+        );
+        assert!(
+            event
+                .get("payloadDigest")
+                .and_then(Value::as_str)
+                .is_some_and(|digest| digest.starts_with("sha256:"))
         );
         Ok(())
     }

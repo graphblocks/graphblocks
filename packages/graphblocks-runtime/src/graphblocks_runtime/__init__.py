@@ -26,6 +26,8 @@ try:
         finalize_tool_call_json,
         negotiate_application_protocol_capabilities_json,
         prepare_tool_result_for_model_json,
+        record_tool_effect_audit_event_json,
+        record_tool_effect_precondition_json,
         run_stdlib_graph_json,
         run_test_graph_json,
         validate_remote_payload_json,
@@ -95,6 +97,31 @@ except ImportError as error:
         resolved_tool_json: str,
         schema_registry_json: str,
         content_policy_json: str | None = None,
+    ) -> str:
+        require_native_extension()
+
+    def record_tool_effect_precondition_json(
+        resolved_tool_json: str,
+        call_json: str,
+        effect_key: str | None = None,
+        idempotency_key: str | None = None,
+        policy_decision_id: str | None = None,
+        execution_target: str | None = None,
+        sandbox_id: str | None = None,
+    ) -> str:
+        require_native_extension()
+
+    def record_tool_effect_audit_event_json(
+        event_id: str,
+        occurred_at: str,
+        actor_json: str,
+        resolved_tool_json: str,
+        call_json: str,
+        result_json: str,
+        effect_key: str | None = None,
+        precondition_digest: str | None = None,
+        idempotency_key: str | None = None,
+        policy_decision_id: str | None = None,
     ) -> str:
         require_native_extension()
 
@@ -241,6 +268,60 @@ def prepare_tool_result_for_model(
             content_policy_json,
         ),
         "native prepared tool result",
+    )
+
+
+def record_tool_effect_precondition(
+    resolved_tool: dict[str, object],
+    call: dict[str, object],
+    *,
+    effect_key: str | None = None,
+    idempotency_key: str | None = None,
+    policy_decision_id: str | None = None,
+    execution_target: str | None = None,
+    sandbox_id: str | None = None,
+) -> dict[str, object]:
+    return _json_object_result(
+        record_tool_effect_precondition_json(
+            _canonical_json(resolved_tool),
+            _canonical_json(call),
+            effect_key,
+            idempotency_key,
+            policy_decision_id,
+            execution_target,
+            sandbox_id,
+        ),
+        "native tool effect precondition",
+    )
+
+
+def record_tool_effect_audit_event(
+    *,
+    event_id: str,
+    occurred_at: str,
+    actor: dict[str, object],
+    resolved_tool: dict[str, object],
+    call: dict[str, object],
+    result: dict[str, object],
+    effect_key: str | None = None,
+    precondition_digest: str | None = None,
+    idempotency_key: str | None = None,
+    policy_decision_id: str | None = None,
+) -> dict[str, object]:
+    return _json_object_result(
+        record_tool_effect_audit_event_json(
+            event_id,
+            occurred_at,
+            _canonical_json(actor),
+            _canonical_json(resolved_tool),
+            _canonical_json(call),
+            _canonical_json(result),
+            effect_key,
+            precondition_digest,
+            idempotency_key,
+            policy_decision_id,
+        ),
+        "native tool effect audit event",
     )
 
 
@@ -454,6 +535,10 @@ __all__ = [
     "negotiate_application_protocol_capabilities_json",
     "prepare_tool_result_for_model",
     "prepare_tool_result_for_model_json",
+    "record_tool_effect_audit_event",
+    "record_tool_effect_audit_event_json",
+    "record_tool_effect_precondition",
+    "record_tool_effect_precondition_json",
     "require_native_extension",
     "run_stdlib_graph",
     "run_stdlib_graph_json",
