@@ -523,4 +523,5 @@ def test_server_app_serves_application_stream_snapshot_for_existing_run() -> Non
         "eventCount": 2,
     }
     assert [event["kind"] for event in payload["events"]] == ["RunStarted", "RunSucceeded"]
+    assert all(event["metadata"]["occurredAt"] for event in payload["events"])
     assert payload["events"][1]["payload"]["outputs"] == {"prompt": "Stream ok"}

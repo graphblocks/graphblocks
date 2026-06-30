@@ -575,6 +575,7 @@ def test_client_package_runs_local_graph_command_and_emits_events(monkeypatch) -
         ({"response_id": " "}, "run graph command response_id must be a non-empty string"),
         ({"turn_id": ""}, "run graph command turn_id must be a non-empty string"),
         ({"occurred_at": None}, "run graph command occurred_at must be a string"),
+        ({"occurred_at": " "}, "run graph command occurred_at must be a non-empty string"),
     ),
 )
 def test_client_package_rejects_malformed_run_graph_command(
