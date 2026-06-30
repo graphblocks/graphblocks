@@ -119,6 +119,51 @@ fn rust_stdlib_runtime_preserves_tool_implementation_mappings() -> Result<(), St
 }
 
 #[test]
+fn rust_stdlib_agent_run_surfaces_output_policy_profile_ref() -> Result<(), String> {
+    let graph = json!({
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "runtime-agent-output-policy-profile"},
+        "spec": {
+            "interface": {
+                "inputs": {
+                    "messages": "graphblocks.ai/Messages@1",
+                    "tools": "graphblocks.ai/ResolvedTools@1"
+                },
+                "outputs": {"candidate": "graphblocks.ai/TurnCandidate@1"}
+            },
+            "nodes": {
+                "agent": {
+                    "block": "agent.run@1",
+                    "config": {
+                        "response": "Hello from the agent.",
+                        "outputPolicy": {"profileRef": "assistant-output-standard"}
+                    },
+                    "inputs": {
+                        "messages": "$input.messages",
+                        "tools": "$input.tools"
+                    },
+                    "outputs": {"candidate": "$output.candidate"}
+                }
+            }
+        }
+    });
+    let result = run_graph(
+        &graph,
+        &json!({
+            "messages": [{"role": "user", "content": "Hello"}],
+            "tools": []
+        }),
+    )?;
+
+    assert_eq!(
+        result["outputs"]["candidate"]["outputPolicyProfileRef"],
+        json!("assistant-output-standard")
+    );
+    Ok(())
+}
+
+#[test]
 fn rust_stdlib_runtime_matches_shared_runtime_tck_cases() -> Result<(), String> {
     let cases = serde_json::from_str::<Value>(include_str!("../../../tck/runtime/cases.json"))
         .map_err(|error| error.to_string())?;

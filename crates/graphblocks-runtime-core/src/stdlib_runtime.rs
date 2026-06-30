@@ -1017,15 +1017,34 @@ fn execute_scripted_agent_run(inputs: &Value, config: &Value) -> Result<Value, B
     } else {
         (String::new(), "empty")
     };
+    let output_policy_profile_ref = config
+        .get("outputPolicy")
+        .or_else(|| config.get("output_policy"))
+        .and_then(Value::as_object)
+        .and_then(|output_policy| {
+            output_policy
+                .get("profileRef")
+                .or_else(|| output_policy.get("profile_ref"))
+        })
+        .and_then(Value::as_str)
+        .filter(|profile_ref| !profile_ref.trim().is_empty());
 
-    Ok(json!({
-        "candidate": {
-            "text": text,
-            "finishReason": finish_reason,
-            "toolCount": tools.len(),
-            "modelVisibleTools": model_visible_tools,
-        }
-    }))
+    let mut candidate = json!({
+        "text": text,
+        "finishReason": finish_reason,
+        "toolCount": tools.len(),
+        "modelVisibleTools": model_visible_tools,
+    });
+    if let Some(output_policy_profile_ref) = output_policy_profile_ref
+        && let Some(candidate) = candidate.as_object_mut()
+    {
+        candidate.insert(
+            "outputPolicyProfileRef".to_owned(),
+            json!(output_policy_profile_ref),
+        );
+    }
+
+    Ok(json!({ "candidate": candidate }))
 }
 
 fn execute_control_map(inputs: &Value, config: &Value) -> Result<Value, BlockError> {

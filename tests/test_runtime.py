@@ -161,7 +161,10 @@ def test_stdlib_runtime_executes_tool_resolution_and_agent_run() -> None:
                 },
                 "agent": {
                     "block": "agent.run@1",
-                    "config": {"response": "Hello from the agent."},
+                    "config": {
+                        "response": "Hello from the agent.",
+                        "outputPolicy": {"profileRef": "assistant-output-standard"},
+                    },
                     "inputs": {
                         "messages": "$input.messages",
                         "tools": "resolve.tools",
@@ -183,6 +186,7 @@ def test_stdlib_runtime_executes_tool_resolution_and_agent_run() -> None:
     assert candidate["text"] == "Hello from the agent."
     assert candidate["finishReason"] == "scripted"
     assert candidate["toolCount"] == 1
+    assert candidate["outputPolicyProfileRef"] == "assistant-output-standard"
     assert candidate["modelVisibleTools"] == [
         {
             "toolName": "knowledge.search",

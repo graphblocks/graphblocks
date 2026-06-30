@@ -712,13 +712,21 @@ def stdlib_registry() -> RuntimeRegistry:
         else:
             text = ""
             finish_reason = "empty"
+        output_policy = config.get("outputPolicy", config.get("output_policy"))
+        output_policy = output_policy if isinstance(output_policy, dict) else {}
+        output_policy_profile_ref = output_policy.get("profileRef", output_policy.get("profile_ref"))
+        if not isinstance(output_policy_profile_ref, str) or not output_policy_profile_ref.strip():
+            output_policy_profile_ref = None
+        candidate = {
+            "text": text,
+            "finishReason": finish_reason,
+            "toolCount": len(tools),
+            "modelVisibleTools": model_visible_tools,
+        }
+        if output_policy_profile_ref is not None:
+            candidate["outputPolicyProfileRef"] = output_policy_profile_ref
         return {
-            "candidate": {
-                "text": text,
-                "finishReason": finish_reason,
-                "toolCount": len(tools),
-                "modelVisibleTools": model_visible_tools,
-            }
+            "candidate": candidate
         }
 
     def commit_turn(inputs: dict[str, Any], config: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
