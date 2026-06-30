@@ -16,6 +16,7 @@ pub struct ToolAdmissionRequest<'a> {
     pub schema_registry: &'a ToolSchemaRegistry,
     pub policy_decision: &'a PolicyDecision,
     pub expected_policy_input_digest: &'a str,
+    pub output_policy_state: Option<&'a Value>,
     pub approval: Option<&'a ToolApprovalRecord>,
     pub principal_id: &'a str,
     pub idempotency_key: Option<String>,
@@ -113,6 +114,9 @@ pub enum ToolAdmissionError {
         decision_id: String,
         reason_codes: Vec<String>,
     },
+    ResponsePolicyStopped {
+        response_id: String,
+    },
 }
 
 pub struct ToolAdmission;
@@ -182,6 +186,11 @@ impl ToolAdmission {
             return Err(ToolAdmissionError::ToolCallNotValidated {
                 tool_call_id: request.call.tool_call_id,
                 status: request.call.status,
+            });
+        }
+        if output_policy_state_is_stopped(request.output_policy_state) {
+            return Err(ToolAdmissionError::ResponsePolicyStopped {
+                response_id: request.call.response_id,
             });
         }
         if request.call.resolved_tool_id != request.resolved_tool.resolved_tool_id {
@@ -340,4 +349,13 @@ impl ToolAdmission {
             idempotency_key: request.idempotency_key,
         })
     }
+}
+
+fn output_policy_state_is_stopped(output_policy_state: Option<&Value>) -> bool {
+    let Some(Value::Object(state)) = output_policy_state else {
+        return false;
+    };
+    ["response_status", "status", "terminal_state"]
+        .iter()
+        .any(|field| state.get(*field).and_then(Value::as_str) == Some("policy_stopped"))
 }

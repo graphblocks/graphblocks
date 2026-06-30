@@ -42,6 +42,26 @@
     }
   },
   {
+    "name": "policy_stopped_response_denies_tool_admission",
+    "kind": "admission_policy_stopped_response",
+    "toolName": "process.run",
+    "schemaId": "schemas/ProcessRun@1",
+    "arguments": {
+      "cmd": [
+        "echo",
+        "hello"
+      ]
+    },
+    "outputPolicyState": {
+      "response_status": "policy_stopped"
+    },
+    "expected": {
+      "admitted": false,
+      "policyStoppedBeforeApproval": true,
+      "errorContains": "policy stopped"
+    }
+  },
+  {
     "name": "approval_invalid_after_argument_mutation",
     "kind": "approval_argument_mutation",
     "toolName": "process.run",

@@ -439,15 +439,17 @@ def test_testing_package_loads_shared_tool_lifecycle_tck_cases(monkeypatch) -> N
     )
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["tool-lifecycle"] * 3
+    assert [case.kind for case in cases] == ["tool-lifecycle"] * 4
     assert report.ok
     assert {case.case_id for case in cases} == {
         "incremental_arguments_do_not_finalize_call",
         "invalid_arguments_denied_before_policy_admission",
+        "policy_stopped_response_denies_tool_admission",
         "approval_invalid_after_argument_mutation",
     }
     assert any(not result.observed.get("finalizedBeforeComplete", True) for result in report.results)
     assert any(result.observed.get("schemaRejectedBeforeApproval") is True for result in report.results)
+    assert any(result.observed.get("policyStoppedBeforeApproval") is True for result in report.results)
     assert any(result.observed.get("mutatedApprovalValid") is False for result in report.results)
     assert "load_tool_lifecycle_tck_cases" in graphblocks_testing.__all__
 
@@ -666,6 +668,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
     assert by_suite["tool-lifecycle"].case_ids == (
         "incremental_arguments_do_not_finalize_call",
         "invalid_arguments_denied_before_policy_admission",
+        "policy_stopped_response_denies_tool_admission",
         "approval_invalid_after_argument_mutation",
     )
     assert by_suite["tool-result"].case_ids == (

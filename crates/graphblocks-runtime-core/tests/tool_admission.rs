@@ -144,6 +144,33 @@ fn before_tool_or_effect_policy_request_carries_tool_admission_context() {
 }
 
 #[test]
+fn admission_rejects_tool_call_after_response_policy_stop() {
+    let resolved_tool = resolved_process_tool();
+    let call = process_call(&resolved_tool);
+    let schemas = process_schema_registry();
+    let policy_decision = allow_tool_policy_decision();
+    let output_policy_state = json!({"response_status": "policy_stopped"});
+
+    assert_eq!(
+        ToolAdmission::admit(ToolAdmissionRequest {
+            call,
+            resolved_tool: &resolved_tool,
+            schema_registry: &schemas,
+            policy_decision: &policy_decision,
+            expected_policy_input_digest: &policy_decision.input_digest,
+            output_policy_state: Some(&output_policy_state),
+            approval: None,
+            principal_id: "user-1",
+            idempotency_key: Some("idem-1".to_owned()),
+            admitted_at_unix_ms: 1_200,
+        }),
+        Err(ToolAdmissionError::ResponsePolicyStopped {
+            response_id: "response-1".to_owned()
+        }),
+    );
+}
+
+#[test]
 fn admission_requires_valid_approval_when_binding_requires_it() {
     let resolved_tool = resolved_process_tool();
     let call = process_call(&resolved_tool);
@@ -157,6 +184,7 @@ fn admission_requires_valid_approval_when_binding_requires_it() {
             schema_registry: &schemas,
             policy_decision: &policy_decision,
             expected_policy_input_digest: &policy_decision.input_digest,
+            output_policy_state: None,
             approval: None,
             principal_id: "user-1",
             idempotency_key: Some("idem-1".to_owned()),
@@ -177,6 +205,7 @@ fn admission_requires_valid_approval_when_binding_requires_it() {
         schema_registry: &schemas,
         policy_decision: &policy_decision,
         expected_policy_input_digest: &policy_decision.input_digest,
+        output_policy_state: None,
         approval: Some(&approval),
         principal_id: "user-1",
         idempotency_key: Some("idem-1".to_owned()),
@@ -240,6 +269,7 @@ fn admission_rejects_invalid_tool_call_model() {
             schema_registry: &schemas,
             policy_decision: &policy_decision,
             expected_policy_input_digest: &policy_decision.input_digest,
+            output_policy_state: None,
             approval: None,
             principal_id: "user-1",
             idempotency_key: Some("idem-1".to_owned()),
@@ -270,6 +300,7 @@ fn admission_rejects_stale_argument_digest() {
             schema_registry: &schemas,
             policy_decision: &policy_decision,
             expected_policy_input_digest: &policy_decision.input_digest,
+            output_policy_state: None,
             approval: Some(&approval),
             principal_id: "user-1",
             idempotency_key: Some("idem-1".to_owned()),
@@ -303,6 +334,7 @@ fn admission_requires_approval_when_policy_obligates_it() {
             schema_registry: &schemas,
             policy_decision: &policy_decision,
             expected_policy_input_digest: &policy_decision.input_digest,
+            output_policy_state: None,
             approval: None,
             principal_id: "user-1",
             idempotency_key: Some("idem-1".to_owned()),
@@ -323,6 +355,7 @@ fn admission_requires_approval_when_policy_obligates_it() {
         schema_registry: &schemas,
         policy_decision: &policy_decision,
         expected_policy_input_digest: &policy_decision.input_digest,
+        output_policy_state: None,
         approval: Some(&approval),
         principal_id: "user-1",
         idempotency_key: Some("idem-1".to_owned()),
@@ -347,6 +380,7 @@ fn admission_denies_before_approval_when_policy_denies_tool_effect() {
             schema_registry: &schemas,
             policy_decision: &policy_decision,
             expected_policy_input_digest: &policy_decision.input_digest,
+            output_policy_state: None,
             approval: None,
             principal_id: "user-1",
             idempotency_key: Some("idem-1".to_owned()),
@@ -374,6 +408,7 @@ fn admission_rejects_policy_decision_without_input_digest() {
             schema_registry: &schemas,
             policy_decision: &policy_decision,
             expected_policy_input_digest: &policy_decision.input_digest,
+            output_policy_state: None,
             approval: None,
             principal_id: "user-1",
             idempotency_key: Some("idem-1".to_owned()),
@@ -411,6 +446,7 @@ fn admission_rejects_policy_decision_for_different_input_digest() {
             schema_registry: &schemas,
             policy_decision: &policy_decision,
             expected_policy_input_digest: &expected_request.input_digest,
+            output_policy_state: None,
             approval: None,
             principal_id: "user-1",
             idempotency_key: Some("idem-1".to_owned()),
@@ -440,6 +476,7 @@ fn admission_rejects_empty_principal_and_blank_policy_digest() {
             schema_registry: &schemas,
             policy_decision: &policy_decision,
             expected_policy_input_digest: &policy_decision.input_digest,
+            output_policy_state: None,
             approval: None,
             principal_id: " ",
             idempotency_key: None,
@@ -457,6 +494,7 @@ fn admission_rejects_empty_principal_and_blank_policy_digest() {
             schema_registry: &schemas,
             policy_decision: &blank_digest,
             expected_policy_input_digest: &blank_digest.input_digest,
+            output_policy_state: None,
             approval: None,
             principal_id: "user-1",
             idempotency_key: None,
@@ -485,6 +523,7 @@ fn admission_defers_before_approval_when_policy_defers_tool_effect() {
             schema_registry: &schemas,
             policy_decision: &policy_decision,
             expected_policy_input_digest: &policy_decision.input_digest,
+            output_policy_state: None,
             approval: None,
             principal_id: "user-1",
             idempotency_key: Some("idem-1".to_owned()),
@@ -515,6 +554,7 @@ fn admission_rejects_required_idempotency_without_key() {
             schema_registry: &schemas,
             policy_decision: &policy_decision,
             expected_policy_input_digest: &policy_decision.input_digest,
+            output_policy_state: None,
             approval: Some(&approval),
             principal_id: "user-1",
             idempotency_key: None,
@@ -532,6 +572,7 @@ fn admission_rejects_required_idempotency_without_key() {
             schema_registry: &schemas,
             policy_decision: &policy_decision,
             expected_policy_input_digest: &policy_decision.input_digest,
+            output_policy_state: None,
             approval: Some(&approval),
             principal_id: "user-1",
             idempotency_key: Some(" ".to_owned()),
@@ -559,6 +600,7 @@ fn admission_rejects_blank_provided_optional_idempotency_key() {
             schema_registry: &schemas,
             policy_decision: &policy_decision,
             expected_policy_input_digest: &policy_decision.input_digest,
+            output_policy_state: None,
             approval: None,
             principal_id: "user-1",
             idempotency_key: Some(" ".to_owned()),
@@ -585,6 +627,7 @@ fn admission_rejects_call_for_different_resolved_tool() {
             schema_registry: &schemas,
             policy_decision: &policy_decision,
             expected_policy_input_digest: &policy_decision.input_digest,
+            output_policy_state: None,
             approval: None,
             principal_id: "user-1",
             idempotency_key: Some("idem-1".to_owned()),
@@ -617,6 +660,7 @@ fn admission_rejects_arguments_that_do_not_match_input_schema_before_approval() 
             schema_registry: &schemas,
             policy_decision: &policy_decision,
             expected_policy_input_digest: &policy_decision.input_digest,
+            output_policy_state: None,
             approval: None,
             principal_id: "user-1",
             idempotency_key: Some("idem-1".to_owned()),
@@ -646,6 +690,7 @@ fn admission_denies_tool_no_longer_allowed_for_principal() {
             schema_registry: &schemas,
             policy_decision: &policy_decision,
             expected_policy_input_digest: &policy_decision.input_digest,
+            output_policy_state: None,
             approval: None,
             principal_id: "user-1",
             idempotency_key: Some("idem-1".to_owned()),
@@ -673,6 +718,7 @@ fn admission_denies_expired_resolved_tool() {
             schema_registry: &schemas,
             policy_decision: &policy_decision,
             expected_policy_input_digest: &policy_decision.input_digest,
+            output_policy_state: None,
             approval: None,
             principal_id: "user-1",
             idempotency_key: Some("idem-1".to_owned()),
@@ -700,6 +746,7 @@ fn admission_reports_missing_input_schema_before_effect_admission() {
             schema_registry: &schemas,
             policy_decision: &policy_decision,
             expected_policy_input_digest: &policy_decision.input_digest,
+            output_policy_state: None,
             approval: None,
             principal_id: "user-1",
             idempotency_key: Some("idem-1".to_owned()),

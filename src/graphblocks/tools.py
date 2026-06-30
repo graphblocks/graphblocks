@@ -1120,6 +1120,7 @@ def admit_tool_call(
     *,
     policy_decision: PolicyDecision,
     expected_policy_input_digest: str,
+    output_policy_state: Mapping[str, object] | None = None,
     approval: ToolApprovalRecord | None = None,
     principal_id: str,
     idempotency_key: str | None = None,
@@ -1132,6 +1133,11 @@ def admit_tool_call(
         raise ToolAdmissionError(str(error)) from error
     if call.status != "validated":
         raise ToolAdmissionError(f"tool call {call.tool_call_id} is {call.status}, not validated")
+    if _output_policy_state_is_stopped(output_policy_state):
+        raise ToolAdmissionError(
+            f"response {call.response_id} is policy stopped; "
+            f"tool call {call.tool_call_id} cannot be admitted"
+        )
     if call.resolved_tool_id != resolved_tool.resolved_tool_id:
         raise ToolAdmissionError("tool call references a different resolved tool")
     if call.name != resolved_tool.definition.name:
@@ -1202,6 +1208,15 @@ def admit_tool_call(
         call=call.with_status("admitted", admitted_at=admitted_at),
         idempotency_key=idempotency_key,
     )
+
+
+def _output_policy_state_is_stopped(output_policy_state: Mapping[str, object] | None) -> bool:
+    if output_policy_state is None:
+        return False
+    for field_name in ("response_status", "status", "terminal_state"):
+        if output_policy_state.get(field_name) == "policy_stopped":
+            return True
+    return False
 
 
 @dataclass(frozen=True, slots=True)

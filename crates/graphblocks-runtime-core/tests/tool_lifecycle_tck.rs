@@ -32,6 +32,7 @@ fn run_case(case: &Value) -> Result<(), String> {
     match required_str(case, "kind")? {
         "incremental_arguments" => run_incremental_arguments_case(case_name, case),
         "admission_invalid_arguments" => run_invalid_admission_case(case_name, case),
+        "admission_policy_stopped_response" => run_policy_stopped_admission_case(case_name, case),
         "approval_argument_mutation" => run_approval_mutation_case(case_name, case),
         other => Err(format!(
             "tool-lifecycle TCK case {case_name} has unknown kind {other}"
@@ -125,6 +126,7 @@ fn run_invalid_admission_case(case_name: &str, case: &Value) -> Result<(), Strin
         schema_registry: &schemas,
         policy_decision: &policy_decision,
         expected_policy_input_digest: &policy_decision.input_digest,
+        output_policy_state: None,
         approval: None,
         principal_id: "user-1",
         idempotency_key: Some("idem-1".to_owned()),
@@ -148,6 +150,61 @@ fn run_invalid_admission_case(case_name: &str, case: &Value) -> Result<(), Strin
                 | Err(ToolAdmissionError::RequiredArgumentMissing { .. })
         ),
         required_bool(expected, "schemaRejectedBeforeApproval")?,
+        "{case_name}",
+    );
+    assert!(
+        error_text.contains(required_map_str(expected, "errorContains")?),
+        "{case_name}: expected {error_text:?} to contain configured text",
+    );
+    Ok(())
+}
+
+fn run_policy_stopped_admission_case(case_name: &str, case: &Value) -> Result<(), String> {
+    let expected = expected(case, case_name)?;
+    let schema_id = required_str(case, "schemaId")?;
+    let tool_name = required_str(case, "toolName")?;
+    let resolved_tool = resolved_process_tool(tool_name, schema_id)?;
+    let schemas = process_schema_registry(schema_id)?;
+    let call = tool_call_from_arguments(
+        tool_name,
+        &resolved_tool.resolved_tool_id,
+        case.get("arguments")
+            .cloned()
+            .ok_or_else(|| format!("tool-lifecycle TCK case {case_name} missing arguments"))?,
+    )?;
+    let output_policy_state = case
+        .get("outputPolicyState")
+        .ok_or_else(|| format!("tool-lifecycle TCK case {case_name} missing outputPolicyState"))?;
+    let policy_decision = allow_tool_policy_decision();
+    let result = ToolAdmission::admit(ToolAdmissionRequest {
+        call,
+        resolved_tool: &resolved_tool,
+        schema_registry: &schemas,
+        policy_decision: &policy_decision,
+        expected_policy_input_digest: &policy_decision.input_digest,
+        output_policy_state: Some(output_policy_state),
+        approval: None,
+        principal_id: "user-1",
+        idempotency_key: Some("idem-1".to_owned()),
+        admitted_at_unix_ms: 1_200,
+    });
+    let error_text = result
+        .as_ref()
+        .err()
+        .map(admission_error_text)
+        .unwrap_or_default();
+
+    assert_eq!(
+        result.is_ok(),
+        required_bool(expected, "admitted")?,
+        "{case_name}",
+    );
+    assert_eq!(
+        matches!(
+            result,
+            Err(ToolAdmissionError::ResponsePolicyStopped { .. })
+        ),
+        required_bool(expected, "policyStoppedBeforeApproval")?,
         "{case_name}",
     );
     assert!(
@@ -188,6 +245,7 @@ fn run_approval_mutation_case(case_name: &str, case: &Value) -> Result<(), Strin
         schema_registry: &schemas,
         policy_decision: &policy_decision,
         expected_policy_input_digest: &policy_decision.input_digest,
+        output_policy_state: None,
         approval: Some(&approval),
         principal_id: "user-1",
         idempotency_key: Some("idem-1".to_owned()),
@@ -297,6 +355,7 @@ fn admission_error_text(error: &ToolAdmissionError) -> &'static str {
         | ToolAdmissionError::RequiredArgumentMissing { .. } => "arguments invalid",
         ToolAdmissionError::ApprovalInvalid { .. } => "not valid",
         ToolAdmissionError::ApprovalRequired { .. } => "requires approval",
+        ToolAdmissionError::ResponsePolicyStopped { .. } => "policy stopped",
         _ => "admission failed",
     }
 }

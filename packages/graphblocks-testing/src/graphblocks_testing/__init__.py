@@ -1779,6 +1779,7 @@ def load_tool_lifecycle_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
         if case_kind not in {
             "incremental_arguments",
             "admission_invalid_arguments",
+            "admission_policy_stopped_response",
             "approval_argument_mutation",
         }:
             raise ValueError(f"tool-lifecycle TCK case {case_id} has unsupported kind {case_kind!r}")
@@ -6339,7 +6340,7 @@ class TckRunner:
                 "callStatus": observed_status,
                 "arguments": observed_arguments,
             }
-        elif kind == "admission_invalid_arguments":
+        elif kind in {"admission_invalid_arguments", "admission_policy_stopped_response"}:
             schema_id = str(fixture.get("schemaId", "schemas/ProcessRun@1"))
             tool_name = str(fixture.get("toolName", "process.run"))
             catalog = ToolCatalog(
@@ -6386,6 +6387,9 @@ class TckRunner:
                 evaluated_at="2026-06-23T00:00:01Z",
                 input_digest="sha256:before-tool",
             )
+            output_policy_state = fixture.get("outputPolicyState")
+            if not isinstance(output_policy_state, Mapping):
+                output_policy_state = None
             try:
                 admit_tool_call(
                     call,
@@ -6393,6 +6397,7 @@ class TckRunner:
                     schemas,
                     policy_decision=policy_decision,
                     expected_policy_input_digest=policy_decision.input_digest,
+                    output_policy_state=output_policy_state,
                     approval=None,
                     principal_id="user-1",
                     idempotency_key="idem-1",
@@ -6403,6 +6408,7 @@ class TckRunner:
                     "admitted": True,
                     "error": None,
                     "schemaRejectedBeforeApproval": False,
+                    "policyStoppedBeforeApproval": False,
                 }
             except Exception as error:
                 message = str(error)
@@ -6411,6 +6417,9 @@ class TckRunner:
                     "error": message,
                     "schemaRejectedBeforeApproval": (
                         "arguments invalid" in message and "requires approval" not in message
+                    ),
+                    "policyStoppedBeforeApproval": (
+                        "policy stopped" in message and "requires approval" not in message
                     ),
                 }
         elif kind == "approval_argument_mutation":
