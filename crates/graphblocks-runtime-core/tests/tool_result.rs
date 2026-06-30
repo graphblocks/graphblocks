@@ -1170,6 +1170,27 @@ fn tool_result_events_require_tool_call_id_for_draft_and_final_events() {
 }
 
 #[test]
+fn tool_result_events_require_positive_sequence() {
+    assert_eq!(
+        ToolResultEvent::started("call-1", 0, 1_000).validate(),
+        Err(ToolResultEventError::InvalidSequence { sequence: 0 }),
+    );
+    assert_eq!(
+        ToolResultEvent::delta("call-1", 0, [ContentPart::text("draft")]).validate(),
+        Err(ToolResultEventError::InvalidSequence { sequence: 0 }),
+    );
+    assert_eq!(
+        ToolResultEvent::completed(
+            "call-1",
+            0,
+            ToolResult::completed("call-1", [ContentPart::text("done")], 1_000, 1_010)
+        )
+        .validate(),
+        Err(ToolResultEventError::InvalidSequence { sequence: 0 }),
+    );
+}
+
+#[test]
 fn policy_stopped_result_is_final_but_incomplete() {
     let result = ToolResult::policy_stopped(
         "call-1",

@@ -1007,6 +1007,9 @@ pub enum ToolResultEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ToolResultEventError {
     EmptyToolCallId,
+    InvalidSequence {
+        sequence: u64,
+    },
     InvalidOutput {
         source: ContentPartError,
     },
@@ -1184,6 +1187,9 @@ impl ToolResultEvent {
     pub fn validate(&self) -> Result<(), ToolResultEventError> {
         if self.tool_call_id().trim().is_empty() {
             return Err(ToolResultEventError::EmptyToolCallId);
+        }
+        if self.sequence() == 0 {
+            return Err(ToolResultEventError::InvalidSequence { sequence: 0 });
         }
         if let Self::Delta { output, .. } = self {
             for part in output {

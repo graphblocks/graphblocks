@@ -992,7 +992,9 @@ def test_tool_lifecycle_counters_are_non_negative_and_positive() -> None:
             completed_at="2026-06-23T00:00:02Z",
         )
 
-    with pytest.raises(ValueError, match="tool result event sequence must be non-negative"):
+    with pytest.raises(ValueError, match="tool result event sequence must be positive"):
+        ToolResultEvent.started("call-1", 0, started_at="2026-06-23T00:00:00Z")
+    with pytest.raises(ValueError, match="tool result event sequence must be positive"):
         ToolResultEvent.started("call-1", -1, started_at="2026-06-23T00:00:00Z")
     with pytest.raises(ValueError, match="tool result event sequence must be an integer"):
         ToolResultEvent.started("call-1", True, started_at="2026-06-23T00:00:00Z")  # type: ignore[arg-type]

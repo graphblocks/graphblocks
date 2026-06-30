@@ -2147,7 +2147,7 @@ class ToolResultEvent:
         _validate_non_empty_string("tool result event", "tool_call_id", self.tool_call_id)
         if self.kind not in VALID_TOOL_RESULT_EVENT_KINDS:
             raise ValueError(f"invalid tool result event kind {self.kind}")
-        _validate_non_negative_integer("tool result event", "sequence", self.sequence)
+        _validate_positive_integer("tool result event", "sequence", self.sequence)
         try:
             if isinstance(self.output, str):
                 raise TypeError
