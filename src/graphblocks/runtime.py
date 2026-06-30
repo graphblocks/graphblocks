@@ -558,14 +558,34 @@ def stdlib_registry() -> RuntimeRegistry:
             if kind == "block":
                 implementation = BlockToolImplementation(
                     block=str(implementation_config["block"]),
-                    input_mapping=dict(implementation_config.get("inputMapping", {})),
-                    output_mapping=dict(implementation_config.get("outputMapping", {})),
+                    input_mapping=dict(
+                        implementation_config.get(
+                            "inputMapping",
+                            implementation_config.get("input_mapping", {}),
+                        )
+                    ),
+                    output_mapping=dict(
+                        implementation_config.get(
+                            "outputMapping",
+                            implementation_config.get("output_mapping", {}),
+                        )
+                    ),
                 )
             elif kind == "graph":
                 implementation = GraphToolImplementation(
                     graph=str(implementation_config["graph"]),
-                    input_mapping=dict(implementation_config.get("inputMapping", {})),
-                    output_mapping=dict(implementation_config.get("outputMapping", {})),
+                    input_mapping=dict(
+                        implementation_config.get(
+                            "inputMapping",
+                            implementation_config.get("input_mapping", {}),
+                        )
+                    ),
+                    output_mapping=dict(
+                        implementation_config.get(
+                            "outputMapping",
+                            implementation_config.get("output_mapping", {}),
+                        )
+                    ),
                 )
             elif kind == "remote":
                 implementation = RemoteToolImplementation(

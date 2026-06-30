@@ -149,7 +149,12 @@ def test_stdlib_runtime_executes_tool_resolution_and_agent_run() -> None:
                             {
                                 "bindingId": "binding-search",
                                 "toolName": "knowledge.search",
-                                "implementation": {"kind": "block", "block": "knowledge.search@1"},
+                                "implementation": {
+                                    "kind": "block",
+                                    "block": "knowledge.search@1",
+                                    "input_mapping": {"query": "$arguments.query"},
+                                    "output_mapping": {"items": "$result.items"},
+                                },
                                 "effects": ["external_read"],
                                 "approval": "never",
                                 "timeoutMs": 250,
@@ -198,6 +203,8 @@ def test_stdlib_runtime_executes_tool_resolution_and_agent_run() -> None:
             "validUntil": None,
         }
     ]
+    assert resolved_tool["binding"]["implementation"]["input_mapping"] == {"query": "$arguments.query"}
+    assert resolved_tool["binding"]["implementation"]["output_mapping"] == {"items": "$result.items"}
     assert result.outputs["tools"][0]["definition"]["name"] == "knowledge.search"
     assert result.outputs["tools"][0]["allowed_for_principal"] is True
     assert result.outputs["tools"][0]["binding"]["timeout_ms"] == 250
