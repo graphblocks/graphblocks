@@ -4,6 +4,7 @@ import argparse
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from decimal import Decimal
 import importlib
 import json
@@ -8109,6 +8110,8 @@ class TckRunner:
             expected_error = operation.get("expectError")
             actual_error = None
             try:
+                decision: OutputPolicyDecision | None = None
+                expected_cutoff: object = None
                 if op == "chunk":
                     result = gate.record_chunk(
                         GenerationChunk.text(
@@ -8126,8 +8129,6 @@ class TckRunner:
                         accepted_through_sequence=int(accepted_through) if accepted_through is not None else None,
                         input_digest=str(operation.get("inputDigest", "")),
                     )
-                    update = gate.apply_decision(decision, occurred_at=str(operation.get("occurredAt", "")))
-                    actual_deliver = [(chunk.sequence, chunk.text) for chunk in update.deliverable]
                 elif op in {"redact", "replace"}:
                     accepted_through = operation.get("acceptedThrough")
                     accepted_sequence = int(accepted_through) if accepted_through is not None else None
@@ -8160,8 +8161,6 @@ class TckRunner:
                             replacement_parts=tuple(replacement_parts),
                             input_digest=str(operation.get("inputDigest", "")),
                         )
-                    update = gate.apply_decision(decision, occurred_at=str(operation.get("occurredAt", "")))
-                    actual_deliver = [(chunk.sequence, chunk.text) for chunk in update.deliverable]
                 elif op in {"abort_response", "abort_turn", "deny_commit"}:
                     if op == "abort_turn":
                         decision = OutputPolicyDecision.abort_turn(
@@ -8190,9 +8189,36 @@ class TckRunner:
                     pending_tool_calls = operation.get("pendingToolCalls")
                     if isinstance(pending_tool_calls, str):
                         decision = decision.with_pending_tool_calls(pending_tool_calls)
+                    expected_cutoff = operation.get("cutoff")
+                elif op == "commit":
+                    result = gate.commit_accepted_output()
+                    actual_deliver = [(chunk.sequence, chunk.text) for chunk in result]
+                else:
+                    diagnostics.append(
+                        {
+                            "code": "PolicyOperationUnknown",
+                            "message": f"policy TCK operation {op!r} is not supported",
+                            "path": f"$.operations[{operation_index}].op",
+                        }
+                    )
+                    continue
+                if decision is not None:
+                    evaluated_at = operation.get("evaluatedAt", operation.get("evaluated_at"))
+                    if evaluated_at is not None:
+                        if isinstance(evaluated_at, bool):
+                            raise ValueError("invalid_evaluated_at_unix_ms")
+                        if isinstance(evaluated_at, int):
+                            if evaluated_at <= 0:
+                                raise ValueError("invalid_evaluated_at_unix_ms")
+                            evaluated_at = datetime.fromtimestamp(
+                                evaluated_at / 1000,
+                                tz=timezone.utc,
+                            ).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+                        elif not isinstance(evaluated_at, str):
+                            raise ValueError("invalid_evaluated_at_unix_ms")
+                        decision = decision.evaluated_at_time(evaluated_at)
                     update = gate.apply_decision(decision, occurred_at=str(operation.get("occurredAt", "")))
                     actual_deliver = [(chunk.sequence, chunk.text) for chunk in update.deliverable]
-                    expected_cutoff = operation.get("cutoff")
                     if isinstance(expected_cutoff, Mapping):
                         if update.cutoff is None:
                             diagnostics.append(
@@ -8219,22 +8245,12 @@ class TckRunner:
                                             "path": f"$.operations[{operation_index}].cutoff.{field_name}",
                                         }
                                     )
-                elif op == "commit":
-                    result = gate.commit_accepted_output()
-                    actual_deliver = [(chunk.sequence, chunk.text) for chunk in result]
-                else:
-                    diagnostics.append(
-                        {
-                            "code": "PolicyOperationUnknown",
-                            "message": f"policy TCK operation {op!r} is not supported",
-                            "path": f"$.operations[{operation_index}].op",
-                        }
-                    )
-                    continue
             except (OutputGateError, ValueError) as error:
                 message = str(error)
                 if message == "output gate is policy stopped":
                     actual_error = "policy_stopped"
+                elif message == "invalid_evaluated_at_unix_ms":
+                    actual_error = "invalid_evaluated_at_unix_ms"
                 elif "exceeds" in message and "bytes" in message:
                     actual_error = "bounded_holdback_bytes"
                 elif "exceeds" in message and "tokens" in message:
