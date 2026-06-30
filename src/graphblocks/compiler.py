@@ -468,10 +468,14 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                 "maximumParallelism",
                 tool_execution.get("maximum_parallelism", 1),
             )
-            if isinstance(configured_parallelism, int):
+            if isinstance(configured_parallelism, int) and not isinstance(configured_parallelism, bool):
                 maximum_parallelism = configured_parallelism
-            parallel_tool_calls = bool(
-                tool_execution.get("parallelToolCalls", tool_execution.get("parallel_tool_calls", False))
+            configured_parallel_tool_calls = tool_execution.get(
+                "parallelToolCalls",
+                tool_execution.get("parallel_tool_calls", False),
+            )
+            parallel_tool_calls = (
+                configured_parallel_tool_calls if isinstance(configured_parallel_tool_calls, bool) else False
             )
             effect_serialization = tool_execution.get("effectSerialization") or tool_execution.get(
                 "effect_serialization"

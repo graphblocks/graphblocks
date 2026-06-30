@@ -892,6 +892,37 @@ def test_compile_rejects_parallel_state_changing_tools_without_effect_serializat
     assert _error_codes(graph) == ["UnsafeParallelEffects"]
 
 
+def test_compile_does_not_coerce_non_boolean_parallel_tool_calls() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "parallel-tools-string-flag"},
+        "spec": {
+            "nodes": {"agent": {"block": "agent.run@1"}},
+            "bindings": {
+                "tools": {
+                    "createTicket": {
+                        "definition": {
+                            "name": "ticket.create",
+                            "description": "Create a support ticket.",
+                            "inputSchema": "schemas/TicketCreateRequest@1",
+                        },
+                        "implementation": {
+                            "kind": "openapi",
+                            "connection": "ticket-system",
+                            "operationId": "createTicket",
+                        },
+                        "effects": ["external_write", "network"],
+                    }
+                }
+            },
+            "toolExecution": {"parallelToolCalls": "false"},
+        },
+    }
+
+    assert "UnsafeParallelEffects" not in _error_codes(graph)
+
+
 def test_compile_rejects_retried_write_tool_without_required_idempotency() -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
