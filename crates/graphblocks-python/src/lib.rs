@@ -13058,6 +13058,23 @@ mod tests {
                     "occurredAtUnixMs": 1_700_400,
                     "runId": "run-1"
                 }
+            },
+            {
+                "op": "append",
+                "record": {
+                    "recordId": "usage-zero-time",
+                    "source": "runtime_measured",
+                    "confidence": "exact",
+                    "amounts": [
+                        {
+                            "kind": "model_output_tokens",
+                            "amount": 1,
+                            "unit": "tokens"
+                        }
+                    ],
+                    "occurredAtUnixMs": 0,
+                    "runId": "run-1"
+                }
             }
         ])
         .to_string();
@@ -13092,6 +13109,11 @@ mod tests {
         assert_eq!(
             payload["operations"][2]["errorMessage"],
             json!("usage amount must be non-negative")
+        );
+        assert_eq!(payload["operations"][3]["error"], json!("invalid_record"));
+        assert_eq!(
+            payload["operations"][3]["errorMessage"],
+            json!("usage occurred_at_unix_ms must be positive")
         );
         Ok(())
     }

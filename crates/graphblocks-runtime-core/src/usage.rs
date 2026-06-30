@@ -604,6 +604,11 @@ fn validate_usage_record(record: &UsageRecord) -> Result<(), UsageLedgerError> {
             message: "usage record_id must not be empty".to_string(),
         });
     }
+    if record.occurred_at_unix_ms == 0 {
+        return Err(UsageLedgerError::InvalidRecord {
+            message: "usage occurred_at_unix_ms must be positive".to_string(),
+        });
+    }
     for (field, value) in [
         ("run_id", record.run_id.as_deref()),
         ("attempt_id", record.attempt_id.as_deref()),
