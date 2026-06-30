@@ -15,6 +15,7 @@ from graphblocks.server import (
     ServerRequest,
     ServerResponse,
     ServerProtocolVersionMismatchError,
+    ServerRouteMatch,
     ServerRouteManifest,
     StaticBearerAuthHook,
     default_server_route_manifest,
@@ -69,6 +70,14 @@ def test_server_route_manifest_matches_templated_run_paths() -> None:
     with pytest.raises(TypeError):
         match.path_params["run_id"] = "mutated"
     assert default_server_route_manifest().lookup("POST", "/runs/run-123/cancel").operation == "cancel_run"
+
+    endpoint = default_server_route_manifest().lookup("POST", "/runs/{run_id}/cancel")
+    with pytest.raises(ValueError, match="server route path_params must be a mapping"):
+        ServerRouteMatch(endpoint, path_params=object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="server route path_params keys and values must be strings"):
+        ServerRouteMatch(endpoint, path_params={" ": "run-123"})
+    with pytest.raises(ValueError, match="server route path_params keys and values must be strings"):
+        ServerRouteMatch(endpoint, path_params={"run_id": object()})  # type: ignore[dict-item]
 
 
 def test_static_bearer_auth_hook_authorizes_configured_principal() -> None:

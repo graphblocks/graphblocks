@@ -110,7 +110,17 @@ class ServerRouteMatch:
     path_params: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "path_params", MappingProxyType(dict(self.path_params)))
+        if not isinstance(self.path_params, Mapping):
+            raise ValueError("server route path_params must be a mapping")
+        path_params = dict(self.path_params)
+        if any(
+            not isinstance(name, str)
+            or not name.strip()
+            or not isinstance(value, str)
+            for name, value in path_params.items()
+        ):
+            raise ValueError("server route path_params keys and values must be strings")
+        object.__setattr__(self, "path_params", MappingProxyType(path_params))
 
 
 @dataclass(frozen=True, slots=True)
