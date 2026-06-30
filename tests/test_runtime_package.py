@@ -109,6 +109,17 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             }
         )
 
+    def evaluate_tool_admission_json(request_json: str) -> str:
+        calls.append(("tool_admission", (request_json,)))
+        return json.dumps(
+            {
+                "ok": True,
+                "request": json.loads(request_json),
+                "admitted": {"call": {"status": "admitted"}, "idempotencyKey": "idem-1"},
+                "error": None,
+            }
+        )
+
     def run_stdlib_graph_json(graph_json: str, inputs_json: str) -> str:
         calls.append(("run_stdlib", (graph_json, inputs_json)))
         return json.dumps(
@@ -466,6 +477,7 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         evaluate_sequential_tool_queue_json=evaluate_sequential_tool_queue_json,
         evaluate_task_group_json=evaluate_task_group_json,
         evaluate_timeout_deadline_json=evaluate_timeout_deadline_json,
+        evaluate_tool_admission_json=evaluate_tool_admission_json,
         evaluate_tool_approval_json=evaluate_tool_approval_json,
         evaluate_tool_execution_plan_json=evaluate_tool_execution_plan_json,
         evaluate_tool_result_stream_json=evaluate_tool_result_stream_json,
@@ -537,6 +549,16 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         {"toolCallId": "call-1"},
         principal_id="user-1",
         now_unix_ms=1_500,
+    )
+    tool_admission = runtime.evaluate_tool_admission(
+        {
+            "call": {"toolCallId": "call-1"},
+            "resolvedTool": {"resolvedToolId": "resolved-tool-1"},
+            "schemaRegistry": [],
+            "policyDecision": {"decisionId": "decision-1"},
+            "principalId": "user-1",
+            "admittedAtUnixMs": 1_200,
+        }
     )
     tool_effect_precondition = runtime.record_tool_effect_precondition(
         {"resolvedToolId": "resolved-tool-1"},
@@ -796,6 +818,19 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         "nowUnixMs": 1_500,
         "recordValid": True,
         "validForCall": True,
+    }
+    assert tool_admission == {
+        "ok": True,
+        "request": {
+            "admittedAtUnixMs": 1_200,
+            "call": {"toolCallId": "call-1"},
+            "policyDecision": {"decisionId": "decision-1"},
+            "principalId": "user-1",
+            "resolvedTool": {"resolvedToolId": "resolved-tool-1"},
+            "schemaRegistry": [],
+        },
+        "admitted": {"call": {"status": "admitted"}, "idempotencyKey": "idem-1"},
+        "error": None,
     }
     assert tool_effect_precondition == {
         "digest": "sha256:precondition",
@@ -1076,6 +1111,16 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             ),
         ),
         (
+            "tool_admission",
+            (
+                (
+                    '{"admittedAtUnixMs":1200,"call":{"toolCallId":"call-1"},'
+                    '"policyDecision":{"decisionId":"decision-1"},"principalId":"user-1",'
+                    '"resolvedTool":{"resolvedToolId":"resolved-tool-1"},"schemaRegistry":[]}'
+                ),
+            ),
+        ),
+        (
             "tool_effect_precondition",
             (
                 '{"resolvedToolId":"resolved-tool-1"}',
@@ -1324,6 +1369,8 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     assert "evaluate_durable_tool_terminal_store_json" in runtime.__all__
     assert "evaluate_tool_execution_plan" in runtime.__all__
     assert "evaluate_tool_execution_plan_json" in runtime.__all__
+    assert "evaluate_tool_admission" in runtime.__all__
+    assert "evaluate_tool_admission_json" in runtime.__all__
     assert "evaluate_tool_approval" in runtime.__all__
     assert "evaluate_tool_approval_json" in runtime.__all__
     assert "evaluate_tool_result_stream" in runtime.__all__

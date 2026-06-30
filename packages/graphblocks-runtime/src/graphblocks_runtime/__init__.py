@@ -30,6 +30,7 @@ try:
         evaluate_sequential_tool_queue_json,
         evaluate_task_group_json,
         evaluate_timeout_deadline_json,
+        evaluate_tool_admission_json,
         evaluate_tool_approval_json,
         evaluate_tool_execution_plan_json,
         evaluate_tool_result_stream_json,
@@ -210,6 +211,9 @@ except ImportError as error:
         principal_id: str,
         now_unix_ms: int,
     ) -> str:
+        require_native_extension()
+
+    def evaluate_tool_admission_json(request_json: str) -> str:
         require_native_extension()
 
     def evaluate_usage_ledger_json(operations_json: str, run_id: str | None = None) -> str:
@@ -606,6 +610,13 @@ def evaluate_tool_approval(
     )
 
 
+def evaluate_tool_admission(request: dict[str, object]) -> dict[str, object]:
+    return _json_object_result(
+        evaluate_tool_admission_json(_canonical_json(request)),
+        "native tool admission evaluation result",
+    )
+
+
 def evaluate_sequential_tool_queue(
     queue: dict[str, object],
     operations: object,
@@ -693,6 +704,8 @@ __all__ = [
     "evaluate_task_group_json",
     "evaluate_timeout_deadline",
     "evaluate_timeout_deadline_json",
+    "evaluate_tool_admission",
+    "evaluate_tool_admission_json",
     "evaluate_tool_approval",
     "evaluate_tool_approval_json",
     "evaluate_tool_execution_plan",

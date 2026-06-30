@@ -40,7 +40,9 @@ use graphblocks_runtime_core::output_policy::{
     OutputDisposition, OutputPolicyDecision, PendingToolCallsDisposition, ProviderCancellation,
     RedactionInstruction, TerminalReason, ViolationAction,
 };
-use graphblocks_runtime_core::policy::{PrincipalRef, ResourceRef};
+use graphblocks_runtime_core::policy::{
+    PolicyDecision, PolicyEffect, PolicyObligation, PrincipalRef, ResourceRef,
+};
 use graphblocks_runtime_core::readiness::{
     InputDependency, PortRef, Readiness, ReadinessTracker, ResolvedInput,
 };
@@ -62,6 +64,9 @@ use graphblocks_runtime_core::tool::{
     OpenApiToolImplementation, RemoteToolImplementation, ResolvedTool, ToolApproval, ToolBinding,
     ToolCancellation, ToolDefinition, ToolEffect, ToolIdempotency, ToolImplementation,
     ToolResultMode,
+};
+use graphblocks_runtime_core::tool_admission::{
+    ToolAdmission, ToolAdmissionError, ToolAdmissionRequest, ToolPolicyRequestContext,
 };
 use graphblocks_runtime_core::tool_approval::{
     ToolApprovalError, ToolApprovalRecord, ToolApprovalRequest, ToolApprovalStatus,
@@ -163,19 +168,6 @@ fn finalize_tool_call_json(
     let call = draft
         .into_tool_call(resolved_tool_id, created_at_unix_ms)
         .map_err(|error| PyValueError::new_err(format!("invalid tool call draft: {error:?}")))?;
-    let status = match call.status {
-        ToolCallStatus::Validated => "validated",
-        ToolCallStatus::PolicyPending => "policy_pending",
-        ToolCallStatus::ApprovalPending => "approval_pending",
-        ToolCallStatus::Admitted => "admitted",
-        ToolCallStatus::Running => "running",
-        ToolCallStatus::Completed => "completed",
-        ToolCallStatus::Failed => "failed",
-        ToolCallStatus::Denied => "denied",
-        ToolCallStatus::Cancelled => "cancelled",
-        ToolCallStatus::PolicyStopped => "policy_stopped",
-        ToolCallStatus::Expired => "expired",
-    };
     let payload = json!({
         "toolCallId": call.tool_call_id,
         "responseId": call.response_id,
@@ -184,7 +176,7 @@ fn finalize_tool_call_json(
         "arguments": call.arguments,
         "argumentsDigest": call.arguments_digest,
         "revision": call.revision,
-        "status": status,
+        "status": tool_call_status_name(call.status),
         "dependsOn": call.depends_on,
         "createdAtUnixMs": call.created_at_unix_ms,
         "admittedAtUnixMs": call.admitted_at_unix_ms,
@@ -569,6 +561,137 @@ fn evaluate_tool_approval_json(
     serde_json::to_string(&payload).map_err(|error| {
         PyRuntimeError::new_err(format!(
             "failed to serialize tool approval evaluation: {error}"
+        ))
+    })
+}
+
+#[pyfunction]
+fn evaluate_tool_admission_json(request_json: &str) -> PyResult<String> {
+    let request_value = parse_json_argument(request_json, "tool admission request")?;
+    let request = json_object(&request_value, "tool admission request")?;
+    let call_value = request
+        .get("call")
+        .ok_or_else(|| PyValueError::new_err("tool admission request.call is required"))?;
+    let resolved_tool_value = alias_value(request, "resolvedTool", "resolved_tool")
+        .ok_or_else(|| PyValueError::new_err("tool admission request.resolvedTool is required"))?;
+    let schema_registry_value = alias_value(request, "schemaRegistry", "schema_registry")
+        .or_else(|| request.get("schemas"))
+        .ok_or_else(|| {
+            PyValueError::new_err("tool admission request.schemaRegistry is required")
+        })?;
+    let policy_decision_value = alias_value(request, "policyDecision", "policy_decision")
+        .ok_or_else(|| {
+            PyValueError::new_err("tool admission request.policyDecision is required")
+        })?;
+
+    let call = parse_tool_call(call_value, "tool admission request.call")?;
+    let resolved_tool =
+        parse_resolved_tool(resolved_tool_value, "tool admission request.resolvedTool")?;
+    let schema_registry = parse_tool_schema_registry(
+        schema_registry_value,
+        "tool admission request.schemaRegistry",
+    )?;
+    let policy_decision = parse_policy_decision(
+        policy_decision_value,
+        "tool admission request.policyDecision",
+    )?;
+    let principal = if let Some(principal_value) = alias_value(request, "principal", "principal") {
+        parse_principal_ref(principal_value, "tool admission request.principal")?
+    } else {
+        PrincipalRef::new(required_alias_string(
+            request,
+            "principalId",
+            "principal_id",
+            "tool admission request",
+        )?)
+    };
+    let principal_id = principal.principal_id.clone();
+    let expected_policy_input_digest = optional_nullable_alias_string(
+        request,
+        "expectedPolicyInputDigest",
+        "expected_policy_input_digest",
+        "tool admission request",
+    )?
+    .unwrap_or(&policy_decision.input_digest);
+    let output_policy_state = alias_value(request, "outputPolicyState", "output_policy_state")
+        .filter(|value| !value.is_null());
+    let approval = alias_value(request, "approval", "approval")
+        .filter(|value| !value.is_null())
+        .map(|value| parse_tool_approval_record(value, "tool admission request.approval"))
+        .transpose()?;
+    let idempotency_key = optional_nullable_alias_string(
+        request,
+        "idempotencyKey",
+        "idempotency_key",
+        "tool admission request",
+    )?
+    .map(str::to_owned);
+    let admitted_at_unix_ms = required_alias_u64(
+        request,
+        "admittedAtUnixMs",
+        "admitted_at_unix_ms",
+        "tool admission request",
+    )?;
+    let policy_request_id = optional_nullable_alias_string(
+        request,
+        "policyRequestId",
+        "policy_request_id",
+        "tool admission request",
+    )?
+    .unwrap_or("policy-request-tool-1");
+    let policy_request_occurred_at = optional_nullable_alias_string(
+        request,
+        "policyRequestOccurredAt",
+        "policy_request_occurred_at",
+        "tool admission request",
+    )?
+    .unwrap_or(&policy_decision.evaluated_at);
+    let run_id =
+        optional_nullable_alias_string(request, "runId", "run_id", "tool admission request")?;
+    let policy_request =
+        ToolAdmission::before_tool_or_effect_policy_request(ToolPolicyRequestContext {
+            request_id: policy_request_id,
+            call: &call,
+            resolved_tool: &resolved_tool,
+            principal,
+            occurred_at: policy_request_occurred_at,
+            run_id,
+            output_policy_state: output_policy_state.cloned(),
+        })
+        .with_input_digest();
+
+    let admission = ToolAdmission::admit(ToolAdmissionRequest {
+        call,
+        resolved_tool: &resolved_tool,
+        schema_registry: &schema_registry,
+        policy_decision: &policy_decision,
+        expected_policy_input_digest,
+        output_policy_state,
+        approval: approval.as_ref(),
+        principal_id: &principal_id,
+        idempotency_key,
+        admitted_at_unix_ms,
+    });
+    let payload = match admission {
+        Ok(admitted) => json!({
+            "ok": true,
+            "policyRequest": serialize_policy_request(&policy_request),
+            "admitted": {
+                "call": serialize_tool_call(&admitted.call),
+                "idempotencyKey": admitted.idempotency_key.as_deref(),
+            },
+            "error": Value::Null,
+        }),
+        Err(error) => json!({
+            "ok": false,
+            "policyRequest": serialize_policy_request(&policy_request),
+            "admitted": Value::Null,
+            "error": serialize_tool_admission_error(&error),
+        }),
+    };
+    serde_json::to_string(&payload).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize tool admission evaluation: {error}"
         ))
     })
 }
@@ -2749,6 +2872,86 @@ fn parse_principal_ref(value: &Value, label: &str) -> PyResult<PrincipalRef> {
     Ok(principal)
 }
 
+fn parse_policy_effect(value: &str, label: &str) -> PyResult<PolicyEffect> {
+    match value {
+        "allow" => Ok(PolicyEffect::Allow),
+        "deny" => Ok(PolicyEffect::Deny),
+        "allow_with_obligations" | "allowWithObligations" => Ok(PolicyEffect::AllowWithObligations),
+        "defer" => Ok(PolicyEffect::Defer),
+        value => Err(PyValueError::new_err(format!(
+            "{label} has unknown policy effect {value:?}"
+        ))),
+    }
+}
+
+fn parse_policy_decision(value: &Value, label: &str) -> PyResult<PolicyDecision> {
+    let object = json_object(value, label)?;
+    let obligation_values = alias_value(object, "obligations", "obligations")
+        .map(|value| {
+            value.as_array().ok_or_else(|| {
+                PyValueError::new_err(format!("{label}.obligations must be an array"))
+            })
+        })
+        .transpose()?;
+    let mut obligations = Vec::new();
+    if let Some(obligation_values) = obligation_values {
+        for (index, obligation_value) in obligation_values.iter().enumerate() {
+            let obligation_label = format!("{label}.obligations[{index}]");
+            let obligation_object = json_object(obligation_value, &obligation_label)?;
+            let mut obligation = PolicyObligation::new(
+                required_alias_string(
+                    obligation_object,
+                    "obligationId",
+                    "obligation_id",
+                    &obligation_label,
+                )?,
+                required_alias_string(
+                    obligation_object,
+                    "obligationType",
+                    "obligation_type",
+                    &obligation_label,
+                )?,
+            );
+            for (key, value) in parse_json_value_map(
+                alias_value(obligation_object, "parameters", "parameters"),
+                &format!("{obligation_label}.parameters"),
+            )? {
+                obligation = obligation.with_parameter(key, value);
+            }
+            obligations.push(obligation);
+        }
+    }
+    let advice = alias_value(object, "advice", "advice")
+        .map(|value| {
+            value
+                .as_array()
+                .cloned()
+                .ok_or_else(|| PyValueError::new_err(format!("{label}.advice must be an array")))
+        })
+        .transpose()?
+        .unwrap_or_default();
+    Ok(PolicyDecision {
+        decision_id: required_alias_string(object, "decisionId", "decision_id", label)?.to_owned(),
+        effect: parse_policy_effect(required_string(object, "effect", label)?, label)?,
+        reason_codes: parse_string_vec(
+            alias_value(object, "reasonCodes", "reason_codes"),
+            &format!("{label}.reasonCodes"),
+        )?,
+        policy_refs: parse_string_vec(
+            alias_value(object, "policyRefs", "policy_refs"),
+            &format!("{label}.policyRefs"),
+        )?,
+        obligations,
+        advice,
+        evaluated_at: required_alias_string(object, "evaluatedAt", "evaluated_at", label)?
+            .to_owned(),
+        valid_until: optional_nullable_alias_string(object, "validUntil", "valid_until", label)?
+            .map(str::to_owned),
+        input_digest: required_alias_string(object, "inputDigest", "input_digest", label)?
+            .to_owned(),
+    })
+}
+
 fn parse_tool_effect(value: &Value, label: &str) -> PyResult<ToolEffect> {
     let Some(value) = value.as_str() else {
         return Err(PyValueError::new_err(format!("{label} must be a string")));
@@ -2780,6 +2983,22 @@ fn parse_tool_effects(value: Option<&Value>, label: &str) -> PyResult<BTreeSet<T
         .enumerate()
         .map(|(index, value)| parse_tool_effect(value, &format!("{label}[{index}]")))
         .collect()
+}
+
+fn tool_call_status_name(status: ToolCallStatus) -> &'static str {
+    match status {
+        ToolCallStatus::Validated => "validated",
+        ToolCallStatus::PolicyPending => "policy_pending",
+        ToolCallStatus::ApprovalPending => "approval_pending",
+        ToolCallStatus::Admitted => "admitted",
+        ToolCallStatus::Running => "running",
+        ToolCallStatus::Completed => "completed",
+        ToolCallStatus::Failed => "failed",
+        ToolCallStatus::Denied => "denied",
+        ToolCallStatus::Cancelled => "cancelled",
+        ToolCallStatus::PolicyStopped => "policy_stopped",
+        ToolCallStatus::Expired => "expired",
+    }
 }
 
 fn parse_tool_status(value: &str, label: &str) -> PyResult<ToolCallStatus> {
@@ -4322,6 +4541,176 @@ fn serialize_resource_ref(resource: &ResourceRef) -> Value {
         "tenantId": resource.tenant_id.as_deref(),
         "attributes": &resource.attributes,
     })
+}
+
+fn serialize_policy_request(request: &graphblocks_runtime_core::policy::PolicyRequest) -> Value {
+    json!({
+        "requestId": request.request_id.as_str(),
+        "enforcementPoint": request.enforcement_point.as_str(),
+        "action": request.action.as_str(),
+        "resource": serialize_resource_ref(&request.resource),
+        "occurredAt": request.occurred_at.as_str(),
+        "principal": request.principal.as_ref().map(serialize_principal_ref),
+        "tenant": request.tenant.as_ref().map(serialize_resource_ref),
+        "releaseId": request.release_id.as_deref(),
+        "deploymentRevisionId": request.deployment_revision_id.as_deref(),
+        "runId": request.run_id.as_deref(),
+        "atomicUnit": request.atomic_unit.as_ref().map(serialize_resource_ref),
+        "dataLabels": &request.data_labels,
+        "requestedUsage": &request.requested_usage,
+        "attributes": &request.attributes,
+        "policySnapshotId": request.policy_snapshot_id.as_deref(),
+        "inputDigest": request.input_digest.as_str(),
+    })
+}
+
+fn serialize_tool_call(call: &ToolCall) -> Value {
+    json!({
+        "toolCallId": call.tool_call_id.as_str(),
+        "responseId": call.response_id.as_str(),
+        "resolvedToolId": call.resolved_tool_id.as_str(),
+        "name": call.name.as_str(),
+        "arguments": &call.arguments,
+        "argumentsDigest": call.arguments_digest.as_str(),
+        "revision": call.revision,
+        "status": tool_call_status_name(call.status),
+        "dependsOn": &call.depends_on,
+        "createdAtUnixMs": call.created_at_unix_ms,
+        "admittedAtUnixMs": call.admitted_at_unix_ms,
+        "completedAtUnixMs": call.completed_at_unix_ms,
+    })
+}
+
+fn serialize_tool_admission_error(error: &ToolAdmissionError) -> Value {
+    match error {
+        ToolAdmissionError::InvalidToolCall { source } => json!({
+            "code": "invalid_tool_call",
+            "source": format!("{source:?}"),
+        }),
+        ToolAdmissionError::EmptyPrincipalId => json!({"code": "empty_principal_id"}),
+        ToolAdmissionError::ToolCallNotValidated {
+            tool_call_id,
+            status,
+        } => json!({
+            "code": "tool_call_not_validated",
+            "toolCallId": tool_call_id,
+            "status": tool_call_status_name(*status),
+        }),
+        ToolAdmissionError::ResolvedToolMismatch { expected, actual } => json!({
+            "code": "resolved_tool_mismatch",
+            "expected": expected,
+            "actual": actual,
+        }),
+        ToolAdmissionError::ToolNameMismatch { expected, actual } => json!({
+            "code": "tool_name_mismatch",
+            "expected": expected,
+            "actual": actual,
+        }),
+        ToolAdmissionError::ApprovalRequired { tool_call_id } => json!({
+            "code": "approval_required",
+            "toolCallId": tool_call_id,
+        }),
+        ToolAdmissionError::ApprovalInvalid {
+            approval_id,
+            tool_call_id,
+        } => json!({
+            "code": "approval_invalid",
+            "approvalId": approval_id,
+            "toolCallId": tool_call_id,
+        }),
+        ToolAdmissionError::IdempotencyKeyRequired { tool_call_id } => json!({
+            "code": "idempotency_key_required",
+            "toolCallId": tool_call_id,
+        }),
+        ToolAdmissionError::EmptyIdempotencyKey { tool_call_id } => json!({
+            "code": "empty_idempotency_key",
+            "toolCallId": tool_call_id,
+        }),
+        ToolAdmissionError::InputSchemaMissing { schema_id } => json!({
+            "code": "input_schema_missing",
+            "schemaId": schema_id,
+        }),
+        ToolAdmissionError::ArgumentsSchemaInvalid {
+            tool_call_id,
+            schema_id,
+            path,
+            expected,
+        } => json!({
+            "code": "arguments_schema_invalid",
+            "toolCallId": tool_call_id,
+            "schemaId": schema_id,
+            "path": path,
+            "expected": expected,
+        }),
+        ToolAdmissionError::RequiredArgumentMissing {
+            tool_call_id,
+            schema_id,
+            path,
+            property,
+        } => json!({
+            "code": "required_argument_missing",
+            "toolCallId": tool_call_id,
+            "schemaId": schema_id,
+            "path": path,
+            "property": property,
+        }),
+        ToolAdmissionError::ArgumentsDigestMismatch { tool_call_id } => json!({
+            "code": "arguments_digest_mismatch",
+            "toolCallId": tool_call_id,
+        }),
+        ToolAdmissionError::ResolvedToolNotAllowed {
+            resolved_tool_id,
+            principal_id,
+        } => json!({
+            "code": "resolved_tool_not_allowed",
+            "resolvedToolId": resolved_tool_id,
+            "principalId": principal_id,
+        }),
+        ToolAdmissionError::ResolvedToolExpired {
+            resolved_tool_id,
+            valid_until_unix_ms,
+            admitted_at_unix_ms,
+        } => json!({
+            "code": "resolved_tool_expired",
+            "resolvedToolId": resolved_tool_id,
+            "validUntilUnixMs": valid_until_unix_ms,
+            "admittedAtUnixMs": admitted_at_unix_ms,
+        }),
+        ToolAdmissionError::PolicyDecisionMissingInputDigest { decision_id } => json!({
+            "code": "policy_decision_missing_input_digest",
+            "decisionId": decision_id,
+        }),
+        ToolAdmissionError::PolicyInputDigestMismatch {
+            decision_id,
+            expected,
+            actual,
+        } => json!({
+            "code": "policy_input_digest_mismatch",
+            "decisionId": decision_id,
+            "expected": expected,
+            "actual": actual,
+        }),
+        ToolAdmissionError::PolicyDenied {
+            decision_id,
+            reason_codes,
+        } => json!({
+            "code": "policy_denied",
+            "decisionId": decision_id,
+            "reasonCodes": reason_codes,
+        }),
+        ToolAdmissionError::PolicyDeferred {
+            decision_id,
+            reason_codes,
+        } => json!({
+            "code": "policy_deferred",
+            "decisionId": decision_id,
+            "reasonCodes": reason_codes,
+        }),
+        ToolAdmissionError::ResponsePolicyStopped { response_id } => json!({
+            "code": "response_policy_stopped",
+            "responseId": response_id,
+        }),
+    }
 }
 
 fn serialize_audit_event(event: &AuditEvent) -> Value {
@@ -7638,6 +8027,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
         module
     )?)?;
     module.add_function(wrap_pyfunction!(evaluate_tool_approval_json, module)?)?;
+    module.add_function(wrap_pyfunction!(evaluate_tool_admission_json, module)?)?;
     module.add_function(wrap_pyfunction!(evaluate_retry_policy_json, module)?)?;
     module.add_function(wrap_pyfunction!(
         evaluate_provider_limit_policy_json,
@@ -7712,7 +8102,7 @@ mod tests {
         evaluate_node_lifecycle_json, evaluate_output_gate_json,
         evaluate_provider_limit_policy_json, evaluate_readiness_json, evaluate_retry_policy_json,
         evaluate_scheduler_json, evaluate_sequential_tool_queue_json, evaluate_task_group_json,
-        evaluate_timeout_deadline_json, evaluate_tool_approval_json,
+        evaluate_timeout_deadline_json, evaluate_tool_admission_json, evaluate_tool_approval_json,
         evaluate_tool_execution_plan_json, evaluate_tool_result_stream_json,
         evaluate_usage_ledger_json, finalize_tool_call_json,
         negotiate_application_protocol_capabilities_json, parse_resolved_tool, parse_tool_call,
@@ -8386,6 +8776,144 @@ mod tests {
                 .and_then(Value::as_str),
             Some("ApprovalIdMismatch")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_tool_admission_json_admits_or_blocks_after_policy_stop() -> Result<(), String> {
+        let resolved_tool = json!({
+            "resolvedToolId": "resolved-tool-1",
+            "definition": {
+                "name": "process.run",
+                "description": "Run an approved process.",
+                "inputSchema": "schemas/ProcessRun@1"
+            },
+            "binding": {
+                "bindingId": "binding-process",
+                "toolName": "process.run",
+                "implementation": {"kind": "block", "block": "blocks.process"},
+                "effects": ["process"],
+                "approval": "never",
+                "idempotency": "required"
+            },
+            "effectivePolicySnapshotId": "policy-snapshot-1",
+            "allowedForPrincipal": true
+        });
+        let draft = json!({
+            "toolCallId": "call-1",
+            "responseId": "response-1",
+            "toolName": "process.run",
+            "status": "arguments_complete",
+            "argumentFragments": ["{\"cmd\":[\"echo\",\"hello\"]}"],
+            "sequence": 1
+        });
+        let call_json = finalize_tool_call_json(
+            &serde_json::to_string(&draft).map_err(|error| error.to_string())?,
+            "resolved-tool-1",
+            1_000,
+        )
+        .map_err(|error| error.to_string())?;
+        let call = serde_json::from_str::<Value>(&call_json).map_err(|error| error.to_string())?;
+        let schema_registry = json!([
+            {
+                "schemaId": "schemas/ProcessRun@1",
+                "root": {
+                    "type": "object",
+                    "required": ["cmd"],
+                    "properties": {
+                        "cmd": {
+                            "type": "array",
+                            "items": {"type": "string"}
+                        }
+                    }
+                }
+            }
+        ]);
+        let policy_decision = json!({
+            "decisionId": "decision-allow-tool",
+            "effect": "allow",
+            "reasonCodes": ["allow-process"],
+            "policyRefs": ["allow-process"],
+            "evaluatedAt": "2026-06-23T00:00:01Z",
+            "inputDigest": "sha256:before-tool"
+        });
+        let request = json!({
+            "call": call,
+            "resolvedTool": resolved_tool,
+            "schemaRegistry": schema_registry,
+            "policyDecision": policy_decision,
+            "expectedPolicyInputDigest": "sha256:before-tool",
+            "principal": {
+                "principalId": "user-1",
+                "tenantId": "tenant-1",
+                "roles": ["operator"]
+            },
+            "runId": "run-1",
+            "policyRequestId": "policy-req-1",
+            "idempotencyKey": "idem-1",
+            "outputPolicyState": {"response_status": "generating"},
+            "admittedAtUnixMs": 1_200
+        });
+        let admitted_json = evaluate_tool_admission_json(
+            &serde_json::to_string(&request).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let admitted =
+            serde_json::from_str::<Value>(&admitted_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(admitted.get("ok").and_then(Value::as_bool), Some(true));
+        assert_eq!(
+            admitted
+                .pointer("/admitted/call/status")
+                .and_then(Value::as_str),
+            Some("admitted")
+        );
+        assert_eq!(
+            admitted
+                .pointer("/admitted/idempotencyKey")
+                .and_then(Value::as_str),
+            Some("idem-1")
+        );
+        assert_eq!(
+            admitted
+                .pointer("/policyRequest/enforcementPoint")
+                .and_then(Value::as_str),
+            Some("before_tool_or_effect")
+        );
+        assert_eq!(
+            admitted
+                .pointer("/policyRequest/principal/tenantId")
+                .and_then(Value::as_str),
+            Some("tenant-1")
+        );
+        assert_eq!(
+            admitted
+                .pointer("/policyRequest/attributes/effects/0")
+                .and_then(Value::as_str),
+            Some("process")
+        );
+        assert!(
+            admitted
+                .pointer("/policyRequest/inputDigest")
+                .and_then(Value::as_str)
+                .is_some_and(|digest| digest.starts_with("sha256:"))
+        );
+
+        let mut stopped_request = request;
+        stopped_request["outputPolicyState"] = json!({"response_status": "policy_stopped"});
+        let stopped_json = evaluate_tool_admission_json(
+            &serde_json::to_string(&stopped_request).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let stopped =
+            serde_json::from_str::<Value>(&stopped_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(stopped.get("ok").and_then(Value::as_bool), Some(false));
+        assert_eq!(
+            stopped.pointer("/error/code").and_then(Value::as_str),
+            Some("response_policy_stopped")
+        );
+        assert!(stopped.get("admitted").is_some_and(Value::is_null));
         Ok(())
     }
 
