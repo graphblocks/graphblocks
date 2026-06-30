@@ -1140,6 +1140,28 @@ def test_tool_approval_request_rejects_mismatch_and_invalid_expiration() -> None
         )
     assert str(expiration.value) == "approval expiration must be after request time"
 
+    with pytest.raises(ToolApprovalError) as approval_id:
+        ToolApprovalRequest.for_call(
+            " ",
+            resolved,
+            call,
+            principal_id="user-1",
+            requested_at=1_000,
+            expires_at=2_000,
+        )
+    assert str(approval_id.value) == "approval approval_id must not be empty"
+
+    with pytest.raises(ToolApprovalError) as principal_id:
+        ToolApprovalRequest.for_call(
+            "approval-1",
+            resolved,
+            call,
+            principal_id="",
+            requested_at=1_000,
+            expires_at=2_000,
+        )
+    assert str(principal_id.value) == "approval principal_id must not be empty"
+
     mismatched = call.__class__(
         tool_call_id=call.tool_call_id,
         response_id=call.response_id,

@@ -695,6 +695,8 @@ class ToolApprovalRequest:
         expires_at: int,
     ) -> ToolApprovalRequest:
         try:
+            _validate_non_empty_string("approval", "approval_id", approval_id)
+            _validate_non_empty_string("approval", "principal_id", principal_id)
             _validate_non_negative_integer("approval", "requested_at", requested_at)
             _validate_non_negative_integer("approval", "expires_at", expires_at)
         except ValueError as error:
