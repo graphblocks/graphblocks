@@ -65,6 +65,15 @@ def test_usage_record_deep_copies_mutable_amounts_and_metadata() -> None:
 
 
 def test_usage_record_rejects_invalid_identity_source_and_confidence() -> None:
+    with pytest.raises(ValueError, match="usage record_id must be a string"):
+        UsageRecord(
+            record_id=object(),  # type: ignore[arg-type]
+            source="runtime_measured",
+            confidence="estimated",
+            amounts=[_tokens("12")],
+            occurred_at="2026-06-22T00:00:00Z",
+        )
+
     with pytest.raises(ValueError, match="usage record_id must not be empty"):
         UsageRecord(
             record_id=" ",
@@ -99,6 +108,15 @@ def test_usage_record_rejects_invalid_identity_source_and_confidence() -> None:
             confidence="estimated",
             amounts=[_tokens("12")],
             occurred_at="",
+        )
+
+    with pytest.raises(ValueError, match="usage occurred_at must be a string"):
+        UsageRecord(
+            record_id="usage-1",
+            source="runtime_measured",
+            confidence="estimated",
+            amounts=[_tokens("12")],
+            occurred_at=object(),  # type: ignore[arg-type]
         )
 
     optional_identity_cases = (

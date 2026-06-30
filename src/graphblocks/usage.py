@@ -60,12 +60,16 @@ class UsageRecord:
     metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.record_id, str):
+            raise ValueError("usage record_id must be a string")
         if not self.record_id.strip():
             raise ValueError("usage record_id must not be empty")
         if self.source not in VALID_USAGE_SOURCES:
             raise ValueError(f"invalid usage source {self.source}")
         if self.confidence not in VALID_USAGE_CONFIDENCES:
             raise ValueError(f"invalid usage confidence {self.confidence}")
+        if not isinstance(self.occurred_at, str):
+            raise ValueError("usage occurred_at must be a string")
         if not self.occurred_at.strip():
             raise ValueError("usage occurred_at must not be empty")
         for field_name in (
