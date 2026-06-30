@@ -90,3 +90,36 @@ def test_documents_package_exposes_parser_spi_and_ocr_fallback(monkeypatch) -> N
     ):
         assert name in graphblocks_documents.__all__
         assert hasattr(graphblocks_documents, name)
+
+
+def test_documents_package_exposes_blob_store_adapters(monkeypatch, tmp_path) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-documents" / "src"))
+    graphblocks_documents = importlib.import_module("graphblocks_documents")
+
+    store = graphblocks_documents.LocalBlobStore(tmp_path)
+    artifact = store.put(
+        graphblocks_documents.BlobKey("docs/support.txt"),
+        b"alpha beta",
+        graphblocks_documents.PutOptions(media_type="text/plain", filename="support.txt"),
+    )
+    metadata = store.head(graphblocks_documents.BlobKey("docs/support.txt"))
+    page = store.list("docs/", limit=1)
+
+    assert artifact.artifact_id == "blob:docs/support.txt"
+    assert metadata.artifact == artifact
+    assert store.get(graphblocks_documents.BlobKey("docs/support.txt"), graphblocks_documents.ByteRange(6)) == b"beta"
+    assert [item.key.key for item in page.items] == ["docs/support.txt"]
+    for name in (
+        "BlobKey",
+        "BlobListItem",
+        "BlobMetadata",
+        "BlobNotFoundError",
+        "BlobStoreError",
+        "ByteRange",
+        "ListPage",
+        "LocalBlobStore",
+        "PutOptions",
+        "S3CompatibleBlobStore",
+    ):
+        assert name in graphblocks_documents.__all__
+        assert hasattr(graphblocks_documents, name)
