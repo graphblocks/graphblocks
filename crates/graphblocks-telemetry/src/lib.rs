@@ -162,6 +162,205 @@ impl GenerationTelemetryRecord {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct OutputPolicyTelemetryRecord {
+    pub record_id: String,
+    pub run_id: String,
+    pub stream_id: String,
+    pub response_id: String,
+    pub enforcement_point: String,
+    pub disposition: String,
+    pub release_id: Option<String>,
+    pub policy_snapshot_id: Option<String>,
+    pub terminal_reason: Option<String>,
+    pub draft_disposition: Option<String>,
+    pub pending_tool_calls: Option<String>,
+    pub durable_result: Option<String>,
+    pub accepted_through_sequence: Option<u64>,
+    pub last_client_delivered_sequence: Option<u64>,
+    pub attributes: BTreeMap<String, Value>,
+}
+
+impl OutputPolicyTelemetryRecord {
+    pub fn new(
+        record_id: impl Into<String>,
+        run_id: impl Into<String>,
+        stream_id: impl Into<String>,
+        response_id: impl Into<String>,
+        enforcement_point: impl Into<String>,
+        disposition: impl Into<String>,
+    ) -> Self {
+        Self {
+            record_id: record_id.into(),
+            run_id: run_id.into(),
+            stream_id: stream_id.into(),
+            response_id: response_id.into(),
+            enforcement_point: enforcement_point.into(),
+            disposition: disposition.into(),
+            release_id: None,
+            policy_snapshot_id: None,
+            terminal_reason: None,
+            draft_disposition: None,
+            pending_tool_calls: None,
+            durable_result: None,
+            accepted_through_sequence: None,
+            last_client_delivered_sequence: None,
+            attributes: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_release_id(mut self, release_id: impl Into<String>) -> Self {
+        self.release_id = Some(release_id.into());
+        self
+    }
+
+    pub fn with_policy_snapshot_id(mut self, policy_snapshot_id: impl Into<String>) -> Self {
+        self.policy_snapshot_id = Some(policy_snapshot_id.into());
+        self
+    }
+
+    pub fn with_terminal_reason(mut self, terminal_reason: impl Into<String>) -> Self {
+        self.terminal_reason = Some(terminal_reason.into());
+        self
+    }
+
+    pub fn with_draft_disposition(mut self, draft_disposition: impl Into<String>) -> Self {
+        self.draft_disposition = Some(draft_disposition.into());
+        self
+    }
+
+    pub fn with_pending_tool_calls(mut self, pending_tool_calls: impl Into<String>) -> Self {
+        self.pending_tool_calls = Some(pending_tool_calls.into());
+        self
+    }
+
+    pub fn with_durable_result(mut self, durable_result: impl Into<String>) -> Self {
+        self.durable_result = Some(durable_result.into());
+        self
+    }
+
+    pub fn with_accepted_through_sequence(mut self, sequence: u64) -> Self {
+        self.accepted_through_sequence = Some(sequence);
+        self
+    }
+
+    pub fn with_last_client_delivered_sequence(mut self, sequence: u64) -> Self {
+        self.last_client_delivered_sequence = Some(sequence);
+        self
+    }
+
+    pub fn with_attribute(mut self, key: impl Into<String>, value: impl Into<Value>) -> Self {
+        self.attributes.insert(key.into(), value.into());
+        self
+    }
+
+    pub fn observation_contract(&self) -> Value {
+        json!({
+            "record_id": self.record_id,
+            "run_id": self.run_id,
+            "stream_id": self.stream_id,
+            "response_id": self.response_id,
+            "enforcement_point": self.enforcement_point,
+            "disposition": self.disposition,
+            "release_id": self.release_id,
+            "policy_snapshot_id": self.policy_snapshot_id,
+            "terminal_reason": self.terminal_reason,
+            "draft_disposition": self.draft_disposition,
+            "pending_tool_calls": self.pending_tool_calls,
+            "durable_result": self.durable_result,
+            "accepted_through_sequence": self.accepted_through_sequence,
+            "last_client_delivered_sequence": self.last_client_delivered_sequence,
+            "attributes": self.attributes,
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ToolExecutionTelemetryRecord {
+    pub record_id: String,
+    pub run_id: String,
+    pub tool_call_id: String,
+    pub tool_name: String,
+    pub status: String,
+    pub release_id: Option<String>,
+    pub result_mode: Option<String>,
+    pub effect_outcome: Option<String>,
+    pub effects: BTreeSet<String>,
+    pub duration_ms: Option<u64>,
+    pub attributes: BTreeMap<String, Value>,
+}
+
+impl ToolExecutionTelemetryRecord {
+    pub fn new(
+        record_id: impl Into<String>,
+        run_id: impl Into<String>,
+        tool_call_id: impl Into<String>,
+        tool_name: impl Into<String>,
+        status: impl Into<String>,
+    ) -> Self {
+        Self {
+            record_id: record_id.into(),
+            run_id: run_id.into(),
+            tool_call_id: tool_call_id.into(),
+            tool_name: tool_name.into(),
+            status: status.into(),
+            release_id: None,
+            result_mode: None,
+            effect_outcome: None,
+            effects: BTreeSet::new(),
+            duration_ms: None,
+            attributes: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_release_id(mut self, release_id: impl Into<String>) -> Self {
+        self.release_id = Some(release_id.into());
+        self
+    }
+
+    pub fn with_result_mode(mut self, result_mode: impl Into<String>) -> Self {
+        self.result_mode = Some(result_mode.into());
+        self
+    }
+
+    pub fn with_effect_outcome(mut self, effect_outcome: impl Into<String>) -> Self {
+        self.effect_outcome = Some(effect_outcome.into());
+        self
+    }
+
+    pub fn with_effect(mut self, effect: impl Into<String>) -> Self {
+        self.effects.insert(effect.into());
+        self
+    }
+
+    pub fn with_duration_ms(mut self, duration_ms: u64) -> Self {
+        self.duration_ms = Some(duration_ms);
+        self
+    }
+
+    pub fn with_attribute(mut self, key: impl Into<String>, value: impl Into<Value>) -> Self {
+        self.attributes.insert(key.into(), value.into());
+        self
+    }
+
+    pub fn observation_contract(&self) -> Value {
+        let effects = self.effects.iter().cloned().collect::<Vec<_>>();
+        json!({
+            "record_id": self.record_id,
+            "run_id": self.run_id,
+            "tool_call_id": self.tool_call_id,
+            "tool_name": self.tool_name,
+            "status": self.status,
+            "release_id": self.release_id,
+            "result_mode": self.result_mode,
+            "effect_outcome": self.effect_outcome,
+            "effects": effects,
+            "duration_ms": self.duration_ms,
+            "attributes": self.attributes,
+        })
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TelemetryCapturePolicy {
     pub redacted_attribute_keys: BTreeSet<String>,
@@ -217,20 +416,6 @@ impl TelemetryCapturePolicy {
         &self,
         record: &GenerationTelemetryRecord,
     ) -> GenerationTelemetryRecord {
-        let attributes = record
-            .attributes
-            .iter()
-            .filter_map(|(key, value)| {
-                if self.dropped_attribute_keys.contains(key) {
-                    None
-                } else if self.redacted_attribute_keys.contains(key) {
-                    Some((key.clone(), Value::String(self.replacement.clone())))
-                } else {
-                    Some((key.clone(), value.clone()))
-                }
-            })
-            .collect::<BTreeMap<_, _>>();
-
         GenerationTelemetryRecord {
             input_digest: if self.capture_input_digest {
                 record.input_digest.clone()
@@ -242,9 +427,47 @@ impl TelemetryCapturePolicy {
             } else {
                 None
             },
-            attributes,
+            attributes: self.protected_attributes(&record.attributes),
             ..record.clone()
         }
+    }
+
+    pub fn apply_output_policy(
+        &self,
+        record: &OutputPolicyTelemetryRecord,
+    ) -> OutputPolicyTelemetryRecord {
+        OutputPolicyTelemetryRecord {
+            attributes: self.protected_attributes(&record.attributes),
+            ..record.clone()
+        }
+    }
+
+    pub fn apply_tool_execution(
+        &self,
+        record: &ToolExecutionTelemetryRecord,
+    ) -> ToolExecutionTelemetryRecord {
+        ToolExecutionTelemetryRecord {
+            attributes: self.protected_attributes(&record.attributes),
+            ..record.clone()
+        }
+    }
+
+    fn protected_attributes(
+        &self,
+        attributes: &BTreeMap<String, Value>,
+    ) -> BTreeMap<String, Value> {
+        attributes
+            .iter()
+            .filter_map(|(key, value)| {
+                if self.dropped_attribute_keys.contains(key) {
+                    None
+                } else if self.redacted_attribute_keys.contains(key) {
+                    Some((key.clone(), Value::String(self.replacement.clone())))
+                } else {
+                    Some((key.clone(), value.clone()))
+                }
+            })
+            .collect()
     }
 }
 

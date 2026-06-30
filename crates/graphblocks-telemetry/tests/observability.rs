@@ -1,9 +1,10 @@
 use graphblocks_telemetry::{
     GenerationObservation, GenerationTelemetryRecord, MetricCardinalityLinter, MetricLabelError,
-    MetricLabelSet, MetricSample, SpanTiming, TelemetryBuffer, TelemetryBufferError,
-    TelemetryCapturePolicy, TelemetryCapturePolicyLinter, TelemetryEnqueueOutcome,
-    TelemetryExportResult, TelemetryOnFull, TelemetryPriority, TelemetryProjectionError,
-    TelemetryQueuePolicy, TelemetryRecord, TelemetryRecordKind,
+    MetricLabelSet, MetricSample, OutputPolicyTelemetryRecord, SpanTiming, TelemetryBuffer,
+    TelemetryBufferError, TelemetryCapturePolicy, TelemetryCapturePolicyLinter,
+    TelemetryEnqueueOutcome, TelemetryExportResult, TelemetryOnFull, TelemetryPriority,
+    TelemetryProjectionError, TelemetryQueuePolicy, TelemetryRecord, TelemetryRecordKind,
+    ToolExecutionTelemetryRecord,
 };
 use serde_json::json;
 
@@ -117,6 +118,115 @@ fn generation_telemetry_record_projects_runtime_observation_contract() {
                 "tenant": "tenant-1",
             },
         })
+    );
+}
+
+#[test]
+fn policy_and_tool_telemetry_records_apply_capture_policy() {
+    let output_record = OutputPolicyTelemetryRecord::new(
+        "policy-1",
+        "run-1",
+        "stream-1",
+        "response-1",
+        "before_client_delivery",
+        "abort_response",
+    )
+    .with_release_id("release-1")
+    .with_policy_snapshot_id("policy-snapshot-1")
+    .with_terminal_reason("policy_denied")
+    .with_draft_disposition("retract")
+    .with_pending_tool_calls("deny")
+    .with_durable_result("none")
+    .with_accepted_through_sequence(7)
+    .with_last_client_delivered_sequence(5)
+    .with_attribute("tenant", json!("tenant-1"))
+    .with_attribute("prompt", json!("secret prompt"))
+    .with_attribute("debug", json!("drop me"));
+    let tool_record = ToolExecutionTelemetryRecord::new(
+        "tool-1",
+        "run-1",
+        "call-1",
+        "ticket.create",
+        "completed",
+    )
+    .with_release_id("release-1")
+    .with_result_mode("value")
+    .with_effect_outcome("committed")
+    .with_effect("network")
+    .with_effect("external_write")
+    .with_duration_ms(128)
+    .with_attribute("tenant", json!("tenant-1"))
+    .with_attribute("tool_result", json!("secret result"))
+    .with_attribute("debug", json!("drop me"));
+    let policy = TelemetryCapturePolicy::new()
+        .with_redacted_attribute_key("prompt")
+        .with_redacted_attribute_key("tool_result")
+        .with_dropped_attribute_key("debug");
+
+    let redacted_output = policy.apply_output_policy(&output_record);
+    let redacted_tool = policy.apply_tool_execution(&tool_record);
+
+    assert_eq!(
+        output_record.observation_contract(),
+        json!({
+            "record_id": "policy-1",
+            "run_id": "run-1",
+            "stream_id": "stream-1",
+            "response_id": "response-1",
+            "enforcement_point": "before_client_delivery",
+            "disposition": "abort_response",
+            "release_id": "release-1",
+            "policy_snapshot_id": "policy-snapshot-1",
+            "terminal_reason": "policy_denied",
+            "draft_disposition": "retract",
+            "pending_tool_calls": "deny",
+            "durable_result": "none",
+            "accepted_through_sequence": 7,
+            "last_client_delivered_sequence": 5,
+            "attributes": {
+                "debug": "drop me",
+                "prompt": "secret prompt",
+                "tenant": "tenant-1",
+            },
+        })
+    );
+    assert_eq!(
+        tool_record.observation_contract(),
+        json!({
+            "record_id": "tool-1",
+            "run_id": "run-1",
+            "tool_call_id": "call-1",
+            "tool_name": "ticket.create",
+            "status": "completed",
+            "release_id": "release-1",
+            "result_mode": "value",
+            "effect_outcome": "committed",
+            "effects": ["external_write", "network"],
+            "duration_ms": 128,
+            "attributes": {
+                "debug": "drop me",
+                "tenant": "tenant-1",
+                "tool_result": "secret result",
+            },
+        })
+    );
+    assert_eq!(
+        redacted_output.observation_contract()["attributes"],
+        json!({
+            "prompt": "[redacted]",
+            "tenant": "tenant-1",
+        })
+    );
+    assert_eq!(
+        redacted_tool.observation_contract()["attributes"],
+        json!({
+            "tenant": "tenant-1",
+            "tool_result": "[redacted]",
+        })
+    );
+    assert_eq!(
+        output_record.attributes.get("prompt"),
+        Some(&json!("secret prompt"))
     );
 }
 
