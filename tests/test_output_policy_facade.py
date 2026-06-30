@@ -264,6 +264,13 @@ def test_output_policy_contract_rejects_unknown_literals() -> None:
             input_digest="sha256:input",
         )
 
+    with pytest.raises(ValueError, match="accepted_through_sequence must be positive"):
+        OutputPolicyDecision.allow(
+            "decision-1",
+            accepted_through_sequence=0,
+            input_digest="sha256:input",
+        )
+
     with pytest.raises(ValueError, match="last_generated_sequence must be non-negative"):
         OutputCutoff(stream_id="stream-1", response_id="response-1", last_generated_sequence=-1)
 
@@ -1020,7 +1027,7 @@ def test_output_delivery_gate_rejects_zero_sequence_replacement_part() -> None:
         gate.apply_decision(
             OutputPolicyDecision.replace(
                 "decision-replace",
-                accepted_through_sequence=0,
+                accepted_through_sequence=None,
                 replacement_parts=(ContentPart(kind="text", text="replacement"),),
                 input_digest="sha256:replace",
             ),

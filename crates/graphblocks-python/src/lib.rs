@@ -6759,6 +6759,11 @@ fn evaluate_output_gate_json(gate_json: &str, operations_json: &str) -> PyResult
                     "accepted_through_sequence",
                     &label,
                 )?;
+                if accepted_through_sequence == Some(0) {
+                    return Err(PyValueError::new_err(format!(
+                        "{label}.acceptedThroughSequence must be positive"
+                    )));
+                }
                 let mut decision = match disposition {
                     "allow" => OutputPolicyDecision::allow(
                         decision_id,
@@ -12443,6 +12448,48 @@ mod tests {
             "unexpected error: {error}"
         );
         assert!(error.contains("sequence: 0"), "unexpected error: {error}");
+
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_output_gate_json_rejects_zero_accepted_sequence() -> Result<(), String> {
+        pyo3::Python::initialize();
+        let gate = json!({
+            "streamId": "stream-1",
+            "responseId": "response-1",
+            "deliveryPolicy": {
+                "mode": "bounded_holdback",
+                "holdbackMaxTokens": 8,
+                "onViolation": "abort_response"
+            }
+        });
+        let operations = json!([
+            {
+                "kind": "chunk",
+                "sequence": 1,
+                "text": "hello"
+            },
+            {
+                "kind": "decision",
+                "decisionId": "decision-1",
+                "inputDigest": "sha256:input",
+                "disposition": "allow",
+                "acceptedThroughSequence": 0
+            }
+        ]);
+        let gate_json = serde_json::to_string(&gate).map_err(|error| error.to_string())?;
+        let operations_json =
+            serde_json::to_string(&operations).map_err(|error| error.to_string())?;
+
+        let error = evaluate_output_gate_json(&gate_json, &operations_json)
+            .expect_err("zero accepted sequence must be rejected")
+            .to_string();
+
+        assert!(
+            error.contains("operations[1].acceptedThroughSequence must be positive"),
+            "unexpected error: {error}"
+        );
 
         Ok(())
     }

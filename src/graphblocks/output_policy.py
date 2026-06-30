@@ -305,6 +305,8 @@ class OutputPolicyDecision:
         )
         if self.accepted_through_sequence is not None:
             _validate_non_negative_integer("accepted_through_sequence", self.accepted_through_sequence)
+            if self.accepted_through_sequence == 0:
+                raise ValueError("accepted_through_sequence must be positive")
         try:
             if isinstance(self.replacement_parts, str):
                 raise TypeError

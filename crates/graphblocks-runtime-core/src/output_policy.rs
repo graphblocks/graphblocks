@@ -344,6 +344,7 @@ pub struct OutputPolicyDecision {
 pub enum OutputPolicyDecisionError {
     MissingDecisionId,
     MissingInputDigest { decision_id: String },
+    InvalidAcceptedThroughSequence { accepted_through_sequence: u64 },
     ReplacementContentMissing { decision_id: String },
     InvalidReplacementChunk { source: GenerationChunkError },
     InvalidRedactionInstruction { path: String },
@@ -359,6 +360,11 @@ impl OutputPolicyDecision {
         if self.input_digest.trim().is_empty() {
             return Err(OutputPolicyDecisionError::MissingInputDigest {
                 decision_id: self.decision_id.clone(),
+            });
+        }
+        if let Some(0) = self.accepted_through_sequence {
+            return Err(OutputPolicyDecisionError::InvalidAcceptedThroughSequence {
+                accepted_through_sequence: 0,
             });
         }
         if self.disposition == OutputDisposition::Replace && self.replacement_chunks.is_empty() {
@@ -1035,6 +1041,9 @@ pub enum OutputGateError {
         last_generated_sequence: u64,
         accepted_through_sequence: u64,
     },
+    InvalidAcceptedThroughSequence {
+        accepted_through_sequence: u64,
+    },
     ClientDeliveredSequenceBeyondGenerated {
         last_generated_sequence: u64,
         last_client_delivered_sequence: u64,
@@ -1425,6 +1434,11 @@ impl OutputDeliveryGate {
                 OutputPolicyDecisionError::MissingInputDigest { decision_id } => {
                     Err(OutputGateError::MissingInputDigest { decision_id })
                 }
+                OutputPolicyDecisionError::InvalidAcceptedThroughSequence {
+                    accepted_through_sequence,
+                } => Err(OutputGateError::InvalidAcceptedThroughSequence {
+                    accepted_through_sequence,
+                }),
                 OutputPolicyDecisionError::ReplacementContentMissing { decision_id } => {
                     Err(OutputGateError::ReplacementContentMissing { decision_id })
                 }

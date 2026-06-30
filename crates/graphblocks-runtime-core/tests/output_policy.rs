@@ -411,6 +411,30 @@ fn output_policy_decision_requires_a_decision_id() -> Result<(), OutputGateError
 }
 
 #[test]
+fn output_policy_decision_rejects_zero_accepted_sequence() -> Result<(), OutputGateError> {
+    let mut gate = OutputDeliveryGate::new("stream-1", "response-1");
+    let decision = OutputPolicyDecision::allow("decision-1", Some(0), "sha256:input");
+
+    gate.record_chunk(GenerationChunk::text("stream-1", "response-1", 1, "hello"))?;
+
+    assert_eq!(
+        decision.validate(),
+        Err(OutputPolicyDecisionError::InvalidAcceptedThroughSequence {
+            accepted_through_sequence: 0,
+        })
+    );
+    assert_eq!(
+        gate.apply_decision(decision, 1_000),
+        Err(OutputGateError::InvalidAcceptedThroughSequence {
+            accepted_through_sequence: 0,
+        })
+    );
+    assert_eq!(gate.last_policy_accepted_sequence(), 0);
+    assert_eq!(gate.last_client_delivered_sequence(), 0);
+    Ok(())
+}
+
+#[test]
 fn output_cutoff_rejects_sequences_beyond_generated() {
     let policy_accepted_after_generated = OutputCutoff {
         stream_id: "stream-1".to_owned(),
@@ -1405,7 +1429,7 @@ fn replace_decision_rejects_zero_sequence_replacement_chunk() -> Result<(), Outp
         gate.apply_decision(
             OutputPolicyDecision::replace(
                 "decision-replace",
-                Some(0),
+                None,
                 [GenerationChunk::text(
                     "stream-1",
                     "response-1",

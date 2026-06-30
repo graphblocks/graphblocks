@@ -459,6 +459,9 @@ fn gate_error_name(error: &OutputGateError) -> &'static str {
         OutputGateError::AcceptedSequenceBeyondGenerated { .. } => {
             "accepted_sequence_beyond_generated"
         }
+        OutputGateError::InvalidAcceptedThroughSequence { .. } => {
+            "invalid_accepted_through_sequence"
+        }
         OutputGateError::NonContiguousSequence { .. } => "non_contiguous_sequence",
         OutputGateError::NonMonotonicSequence { .. } => "non_monotonic_sequence",
         OutputGateError::StreamMismatch { .. } => "stream_mismatch",
