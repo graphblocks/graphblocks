@@ -2673,6 +2673,55 @@ def test_tool_result_stream_state_rejects_stale_sequence_and_late_events_after_f
     ]
 
 
+def test_tool_result_stream_state_requires_started_before_incremental_output() -> None:
+    stream = ToolResultStreamState()
+    completed_result = ToolResult.completed(
+        "call-1",
+        (ContentPart(kind="text", text="done"),),
+        started_at="2026-06-23T00:00:00Z",
+        completed_at="2026-06-23T00:00:01Z",
+    )
+
+    with pytest.raises(ToolResultStreamError) as delta_error:
+        stream.accept(ToolResultEvent.delta("call-1", 1, (ContentPart(kind="text", text="draft"),)))
+    assert str(delta_error.value) == "tool result stream for call-1 received delta before started"
+    assert delta_error.value.tool_call_id == "call-1"
+    assert delta_error.value.sequence == 1
+
+    with pytest.raises(ToolResultStreamError) as completed_error:
+        stream.accept(ToolResultEvent.completed("call-1", 2, completed_result))
+    assert str(completed_error.value) == "tool result stream for call-1 received completed before started"
+    assert completed_error.value.tool_call_id == "call-1"
+    assert completed_error.value.sequence == 2
+    assert stream.accepted_events == []
+
+
+def test_tool_result_stream_state_allows_pre_execution_denial_without_started() -> None:
+    stream = ToolResultStreamState()
+    denied = ToolResult.denied(
+        "call-1",
+        error={"code": "tool.denied", "message": "blocked before execution"},
+        completed_at="2026-06-23T00:00:01Z",
+    )
+    event = ToolResultEvent.denied("call-1", 1, denied)
+
+    assert stream.accept(event) == event
+    assert stream.final_result_for("call-1") == denied
+
+
+def test_tool_result_stream_state_rejects_duplicate_started_event() -> None:
+    stream = ToolResultStreamState()
+
+    stream.accept(ToolResultEvent.started("call-1", 1, started_at="2026-06-23T00:00:00Z"))
+    with pytest.raises(ToolResultStreamError) as error:
+        stream.accept(ToolResultEvent.started("call-1", 2, started_at="2026-06-23T00:00:01Z"))
+
+    assert str(error.value) == "tool result stream for call-1 already received started"
+    assert error.value.tool_call_id == "call-1"
+    assert error.value.sequence == 2
+    assert error.value.last_sequence == 1
+
+
 def test_tool_result_event_and_effect_outcome_reject_unknown_literals() -> None:
     with pytest.raises(ValueError, match="invalid tool result event kind progress"):
         ToolResultEvent(kind="progress", tool_call_id="call-1", sequence=1)

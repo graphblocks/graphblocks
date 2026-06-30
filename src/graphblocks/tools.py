@@ -2226,6 +2226,7 @@ class ToolResultEvent:
 @dataclass(slots=True)
 class ToolResultStreamState:
     last_sequences: dict[str, int] = field(default_factory=dict)
+    started_tool_calls: set[str] = field(default_factory=set)
     final_results: dict[str, ToolResult] = field(default_factory=dict)
     accepted_events: list[ToolResultEvent] = field(default_factory=list)
 
@@ -2252,9 +2253,30 @@ class ToolResultStreamState:
                 last_sequence=last_sequence,
             )
 
+        if event.kind == "started":
+            if event.tool_call_id in self.started_tool_calls:
+                raise ToolResultStreamError(
+                    f"tool result stream for {event.tool_call_id} already received started",
+                    tool_call_id=event.tool_call_id,
+                    sequence=event.sequence,
+                    last_sequence=last_sequence,
+                )
+        else:
+            requires_started = event.kind in {"delta", "artifact_ready"} or (
+                event.result is not None and event.result.started_at is not None
+            )
+            if requires_started and event.tool_call_id not in self.started_tool_calls:
+                raise ToolResultStreamError(
+                    f"tool result stream for {event.tool_call_id} received {event.kind} before started",
+                    tool_call_id=event.tool_call_id,
+                    sequence=event.sequence,
+                )
+
         result = event.into_result()
         if result is not None:
             self.final_results[event.tool_call_id] = result
+        if event.kind == "started":
+            self.started_tool_calls.add(event.tool_call_id)
         self.last_sequences[event.tool_call_id] = event.sequence
         self.accepted_events.append(event)
         return event
