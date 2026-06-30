@@ -222,6 +222,31 @@ fn tool_terminal_store_rejects_committed_effect_for_denied_record() {
 }
 
 #[test]
+fn tool_terminal_store_rejects_committed_effect_for_expired_record() {
+    let mut store = InMemoryDurableToolTerminalStore::new();
+    let record = DurableToolTerminalRecord::new(
+        "run-000001",
+        "response-1",
+        "call-expired",
+        1,
+        DurableToolTerminalState::Expired,
+        "sha256:arguments-expired",
+        1_820_000_000_000,
+    )
+    .with_effect_committed();
+
+    assert_eq!(
+        store.record_tool_terminal(record),
+        Err(ToolTerminalStoreError::ExpiredEffectCommitted {
+            response_id: "response-1".to_owned(),
+            tool_call_id: "call-expired".to_owned(),
+            revision: 1,
+        }),
+    );
+    assert_eq!(store.tool_terminal_count(), 0);
+}
+
+#[test]
 fn tool_terminal_store_rejects_terminal_mutation_on_replay() {
     let mut store = InMemoryDurableToolTerminalStore::new();
     store

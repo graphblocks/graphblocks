@@ -376,6 +376,25 @@ def test_durable_tool_terminal_record_rejects_committed_effect_for_denied_state(
         )
 
 
+def test_durable_tool_terminal_record_rejects_committed_effect_for_expired_state(monkeypatch) -> None:
+    graphblocks_durable = _import_durable(monkeypatch)
+
+    with pytest.raises(
+        graphblocks_durable.ToolTerminalStoreError,
+        match="expired terminal records cannot have committed effects",
+    ):
+        graphblocks_durable.DurableToolTerminalRecord(
+            run_id="run-000001",
+            response_id="response-1",
+            tool_call_id="call-expired",
+            revision=1,
+            terminal_state="expired",
+            arguments_digest="sha256:arguments-expired",
+            completed_at_unix_ms=1_820_000_000_000,
+            effect_committed=True,
+        )
+
+
 def test_durable_tool_terminal_record_projects_completed_tool_result(monkeypatch) -> None:
     graphblocks_durable = _import_durable(monkeypatch)
     result = ToolResult.completed(

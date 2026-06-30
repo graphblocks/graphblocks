@@ -516,6 +516,8 @@ class DurableToolTerminalRecord:
             raise ToolTerminalStoreError("idempotency_key must not be empty")
         if self.terminal_state == "denied" and self.effect_committed:
             raise ToolTerminalStoreError("denied terminal records cannot have committed effects")
+        if self.terminal_state == "expired" and self.effect_committed:
+            raise ToolTerminalStoreError("expired terminal records cannot have committed effects")
 
 
 @dataclass(frozen=True, slots=True)
