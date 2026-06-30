@@ -110,6 +110,31 @@ fn worker_registry_allows_admitted_worker_refresh_at_capacity() -> Result<(), Da
 }
 
 #[test]
+fn worker_registry_tracks_saturated_workers_without_ready_capacity() -> Result<(), DaemonConfigError>
+{
+    let mut registry = WorkerRegistry::new(DaemonConfig::new("daemon-1", "127.0.0.1:8080"))?;
+    let advertisement = WorkerAdvertisement::new(
+        "worker-saturated",
+        "model-cpu",
+        "sha256:package-lock",
+        "sha256:image",
+        [BlockCapability::new("model.generate@1")],
+    )
+    .with_state(WorkerState::Saturated);
+
+    let decision = registry.admit_worker(advertisement);
+    let status = registry.status();
+
+    assert!(decision.admitted);
+    assert_eq!(decision.state, WorkerState::Saturated);
+    assert!(registry.ready_worker_ids().is_empty());
+    assert_eq!(status.ready_workers, 0);
+    assert_eq!(status.admitted_workers, 1);
+    assert_eq!(status.rejected_workers, 0);
+    Ok(())
+}
+
+#[test]
 fn worker_registry_rejects_unready_or_mismatched_workers() -> Result<(), DaemonConfigError> {
     let config = DaemonConfig::new("daemon-1", "127.0.0.1:8080")
         .require_package_lock_hash("sha256:package-lock");

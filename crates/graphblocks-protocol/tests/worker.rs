@@ -191,6 +191,24 @@ fn worker_admission_decision_reports_blank_capabilities_and_trimmed_identity_fie
 }
 
 #[test]
+fn worker_admission_allows_saturated_workers_to_remain_registered() {
+    let advertisement = WorkerAdvertisement::new(
+        "worker-saturated",
+        "model-cpu",
+        "sha256:package-lock",
+        "sha256:image",
+        [BlockCapability::new("model.generate@1")],
+    )
+    .with_state(WorkerState::Saturated);
+
+    let decision = evaluate_worker_admission(&WorkerAdmissionPolicy::current(), &advertisement);
+
+    assert!(decision.admitted);
+    assert_eq!(decision.state, WorkerState::Saturated);
+    assert!(decision.reason_codes.is_empty());
+}
+
+#[test]
 fn worker_admission_decision_allows_ready_matching_worker() {
     let advertisement = WorkerAdvertisement::new(
         "worker-local-1",

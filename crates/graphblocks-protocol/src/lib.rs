@@ -231,7 +231,10 @@ pub fn evaluate_worker_admission(
     {
         reason_codes.push("worker.empty_block_capability".to_owned());
     }
-    if advertisement.state != WorkerState::Ready {
+    if !matches!(
+        advertisement.state,
+        WorkerState::Ready | WorkerState::Saturated
+    ) {
         reason_codes.push("worker.not_ready".to_owned());
     }
     if let Some(required_block) = &policy.required_block
