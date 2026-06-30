@@ -4,6 +4,14 @@ from decimal import Decimal
 import importlib
 from pathlib import Path
 
+from graphblocks.budget import (
+    VALID_BUDGET_STATUSES,
+    VALID_COMPLETION_RESERVE_PURPOSES,
+    VALID_COMPLETION_RESERVE_STATUSES,
+    VALID_RESERVATION_PURPOSES,
+    VALID_RESERVATION_STATUSES,
+)
+
 
 ROOT = Path(__file__).parents[1]
 
@@ -113,3 +121,17 @@ def test_budget_package_exposes_local_sqlite_ledger(monkeypatch) -> None:
     ]
     assert "SQLiteBudgetLedger" in graphblocks_budget.__all__
     ledger.close()
+
+
+def test_budget_package_exposes_canonical_literal_sets(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-budget" / "src"))
+    graphblocks_budget = importlib.import_module("graphblocks_budget")
+
+    assert graphblocks_budget.VALID_BUDGET_STATUSES is VALID_BUDGET_STATUSES
+    assert graphblocks_budget.VALID_RESERVATION_PURPOSES is VALID_RESERVATION_PURPOSES
+    assert graphblocks_budget.VALID_RESERVATION_STATUSES is VALID_RESERVATION_STATUSES
+    assert graphblocks_budget.VALID_COMPLETION_RESERVE_PURPOSES is VALID_COMPLETION_RESERVE_PURPOSES
+    assert graphblocks_budget.VALID_COMPLETION_RESERVE_STATUSES is VALID_COMPLETION_RESERVE_STATUSES
+    assert {"active", "exhausted", "paused", "closed"}.issubset(graphblocks_budget.VALID_BUDGET_STATUSES)
+    assert {"provider_call", "tool", "cleanup"}.issubset(graphblocks_budget.VALID_RESERVATION_PURPOSES)
+    assert "VALID_BUDGET_STATUSES" in graphblocks_budget.__all__
