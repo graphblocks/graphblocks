@@ -15,7 +15,14 @@ from graphblocks.usage import (
 )
 
 
+def evaluate_native_usage_ledger(operations: object, *, run_id: str | None = None) -> dict[str, object]:
+    from graphblocks_runtime import evaluate_usage_ledger
+
+    return evaluate_usage_ledger(operations, run_id=run_id)
+
+
 __all__ = [
+    "evaluate_native_usage_ledger",
     "InMemoryUsageLedger",
     "SQLiteUsageLedger",
     "UsageAmount",
