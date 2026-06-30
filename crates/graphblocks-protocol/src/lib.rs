@@ -626,20 +626,59 @@ pub enum WorkerDrainDisposition {
     DisconnectWithResumeToken,
 }
 
+const DEFAULT_WORKER_DRAIN_ONLINE_REQUEST_TIMEOUT_MS: u64 = 30_000;
+const DEFAULT_WORKER_DRAIN_DURABLE_TASK_TIMEOUT_MS: u64 = 300_000;
+const DEFAULT_WORKER_DRAIN_REALTIME_SESSION_TIMEOUT_MS: u64 = 600_000;
+
+fn default_worker_drain_online_request_timeout_ms() -> u64 {
+    DEFAULT_WORKER_DRAIN_ONLINE_REQUEST_TIMEOUT_MS
+}
+
+fn default_worker_drain_durable_task_timeout_ms() -> u64 {
+    DEFAULT_WORKER_DRAIN_DURABLE_TASK_TIMEOUT_MS
+}
+
+fn default_worker_drain_realtime_session_timeout_ms() -> u64 {
+    DEFAULT_WORKER_DRAIN_REALTIME_SESSION_TIMEOUT_MS
+}
+
+fn default_worker_drain_online_request_disposition() -> WorkerDrainDisposition {
+    WorkerDrainDisposition::Cancel
+}
+
+fn default_worker_drain_durable_task_disposition() -> WorkerDrainDisposition {
+    WorkerDrainDisposition::Checkpoint
+}
+
+fn default_worker_drain_realtime_session_disposition() -> WorkerDrainDisposition {
+    WorkerDrainDisposition::DisconnectWithResumeToken
+}
+
+fn default_worker_drain_plan_state() -> WorkerState {
+    WorkerState::Draining
+}
+
+fn default_worker_drain_admission_closed() -> bool {
+    true
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkerDrainDeadlinePolicy {
+    #[serde(default = "default_worker_drain_online_request_disposition")]
     pub online_request: WorkerDrainDisposition,
+    #[serde(default = "default_worker_drain_durable_task_disposition")]
     pub durable_task: WorkerDrainDisposition,
+    #[serde(default = "default_worker_drain_realtime_session_disposition")]
     pub realtime_session: WorkerDrainDisposition,
 }
 
 impl Default for WorkerDrainDeadlinePolicy {
     fn default() -> Self {
         Self {
-            online_request: WorkerDrainDisposition::Cancel,
-            durable_task: WorkerDrainDisposition::Checkpoint,
-            realtime_session: WorkerDrainDisposition::DisconnectWithResumeToken,
+            online_request: default_worker_drain_online_request_disposition(),
+            durable_task: default_worker_drain_durable_task_disposition(),
+            realtime_session: default_worker_drain_realtime_session_disposition(),
         }
     }
 }
@@ -647,18 +686,22 @@ impl Default for WorkerDrainDeadlinePolicy {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkerDrainPolicy {
+    #[serde(default = "default_worker_drain_online_request_timeout_ms")]
     pub online_request_timeout_ms: u64,
+    #[serde(default = "default_worker_drain_durable_task_timeout_ms")]
     pub durable_task_timeout_ms: u64,
+    #[serde(default = "default_worker_drain_realtime_session_timeout_ms")]
     pub realtime_session_timeout_ms: u64,
+    #[serde(default)]
     pub on_deadline: WorkerDrainDeadlinePolicy,
 }
 
 impl Default for WorkerDrainPolicy {
     fn default() -> Self {
         Self {
-            online_request_timeout_ms: 30_000,
-            durable_task_timeout_ms: 300_000,
-            realtime_session_timeout_ms: 600_000,
+            online_request_timeout_ms: default_worker_drain_online_request_timeout_ms(),
+            durable_task_timeout_ms: default_worker_drain_durable_task_timeout_ms(),
+            realtime_session_timeout_ms: default_worker_drain_realtime_session_timeout_ms(),
             on_deadline: WorkerDrainDeadlinePolicy::default(),
         }
     }
@@ -720,6 +763,7 @@ pub struct WorkerDrainTask {
     pub workload: WorkerDrainWorkloadKind,
     pub request: WorkerInvokeRequest,
     pub started_at_unix_ms: u64,
+    #[serde(default)]
     pub checkpointable: bool,
 }
 
@@ -773,9 +817,12 @@ impl WorkerDrainDecision {
 pub struct WorkerDrainPlan {
     pub worker_id: String,
     pub target_id: String,
+    #[serde(default = "default_worker_drain_plan_state")]
     pub worker_state: WorkerState,
+    #[serde(default = "default_worker_drain_admission_closed")]
     pub admission_closed: bool,
     pub drain_started_at_unix_ms: u64,
+    #[serde(default)]
     pub decisions: Vec<WorkerDrainDecision>,
 }
 

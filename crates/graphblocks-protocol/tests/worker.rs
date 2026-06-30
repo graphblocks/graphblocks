@@ -572,6 +572,70 @@ fn worker_drain_policy_round_trips_default_deadline_contract() -> Result<(), ser
 }
 
 #[test]
+fn worker_drain_policy_deserializes_missing_defaults() -> Result<(), serde_json::Error> {
+    let policy = serde_json::from_value::<WorkerDrainPolicy>(json!({
+        "onDeadline": {
+            "onlineRequest": "finish_in_place"
+        }
+    }))?;
+
+    assert_eq!(policy.online_request_timeout_ms, 30_000);
+    assert_eq!(policy.durable_task_timeout_ms, 300_000);
+    assert_eq!(policy.realtime_session_timeout_ms, 600_000);
+    assert_eq!(
+        policy.on_deadline.online_request,
+        WorkerDrainDisposition::FinishInPlace
+    );
+    assert_eq!(
+        policy.on_deadline.durable_task,
+        WorkerDrainDisposition::Checkpoint
+    );
+    assert_eq!(
+        policy.on_deadline.realtime_session,
+        WorkerDrainDisposition::DisconnectWithResumeToken
+    );
+    assert_eq!(policy.validate(), Ok(()));
+    Ok(())
+}
+
+#[test]
+fn worker_drain_task_and_plan_deserialize_missing_defaults() -> Result<(), serde_json::Error> {
+    let task = serde_json::from_value::<WorkerDrainTask>(json!({
+        "workload": "durable_task",
+        "request": {
+            "invocationId": "invoke-durable",
+            "runId": "run-durable",
+            "nodeId": "embed",
+            "nodeAttemptId": "embed-attempt-1",
+            "leaseEpoch": 13,
+            "block": "embedding.generate@1",
+            "context": {
+                "releaseId": "release-1",
+                "deploymentRevisionId": "rev-1",
+                "attributes": {}
+            },
+            "inputs": {"text": "hello"},
+            "config": {}
+        },
+        "startedAtUnixMs": 1_000
+    }))?;
+    let plan = serde_json::from_value::<WorkerDrainPlan>(json!({
+        "workerId": "worker-a",
+        "targetId": "model-cpu",
+        "drainStartedAtUnixMs": 2_000
+    }))?;
+
+    assert_eq!(task.workload, WorkerDrainWorkloadKind::DurableTask);
+    assert!(!task.checkpointable);
+    assert_eq!(task.validate(), Ok(()));
+    assert_eq!(plan.worker_state, WorkerState::Draining);
+    assert!(plan.admission_closed);
+    assert!(plan.decisions.is_empty());
+    assert_eq!(plan.validate(), Ok(()));
+    Ok(())
+}
+
+#[test]
 fn worker_drain_plan_closes_admission_and_preserves_inflight_affinity()
 -> Result<(), serde_json::Error> {
     let worker = WorkerAdvertisement::new(
