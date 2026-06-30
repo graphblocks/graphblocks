@@ -140,6 +140,31 @@ def test_ingestion_manifest_store_commit_is_idempotent_for_ready_manifest() -> N
     assert committed.updated_at == "2026-06-22T00:02:00Z"
 
 
+def test_ingestion_manifest_store_rejects_index_records_for_different_asset_or_revision() -> None:
+    store = InMemoryIngestionManifestStore()
+    store.create_processing(_manifest("manifest-1", "rev-1"), "2026-06-22T00:01:00Z")
+
+    with pytest.raises(IngestionError, match="asset_id"):
+        store.commit(
+            "manifest-1",
+            parsed_document_ref=None,
+            chunk_set_ref=None,
+            index_records=(replace(_index_record("rev-1"), asset_id="asset-2"),),
+            updated_at="2026-06-22T00:02:00Z",
+        )
+
+    with pytest.raises(IngestionError, match="revision_id"):
+        store.commit(
+            "manifest-1",
+            parsed_document_ref=None,
+            chunk_set_ref=None,
+            index_records=(_index_record("rev-2"),),
+            updated_at="2026-06-22T00:03:00Z",
+        )
+
+    assert store.get("manifest-1").status == "processing"
+
+
 def test_ingestion_manifest_store_copies_manifests_and_index_metadata_at_boundaries() -> None:
     store = InMemoryIngestionManifestStore()
     manifest = replace(

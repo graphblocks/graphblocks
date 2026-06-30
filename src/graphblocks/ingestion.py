@@ -209,6 +209,17 @@ class InMemoryIngestionManifestStore:
             raise IngestionError(
                 f"ingestion manifest {manifest_id!r} cannot transition from {manifest.status!r} to 'ready'"
             )
+        for record in index_records:
+            if record.asset_id != manifest.asset_id:
+                raise IngestionError(
+                    f"index record {record.record_id!r} asset_id {record.asset_id!r} "
+                    f"does not match ingestion manifest asset_id {manifest.asset_id!r}"
+                )
+            if record.revision_id != manifest.revision_id:
+                raise IngestionError(
+                    f"index record {record.record_id!r} revision_id {record.revision_id!r} "
+                    f"does not match ingestion manifest revision_id {manifest.revision_id!r}"
+                )
         ready = replace(
             manifest,
             parsed_document_ref=parsed_document_ref,
