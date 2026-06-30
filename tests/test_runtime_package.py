@@ -143,6 +143,23 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         calls.append(("exhaustion", (policy_json, request_json)))
         return json.dumps({"allowed": True, "policy": json.loads(policy_json), "request": json.loads(request_json)})
 
+    def admit_worker_message_json(
+        message_json: str,
+        daemon_config_json: str | None = None,
+        response_message_id: str = "message-daemon-1",
+        response_sequence: int = 1,
+    ) -> str:
+        calls.append(("worker_admission", (message_json, daemon_config_json, response_message_id, response_sequence)))
+        return json.dumps(
+            {
+                "ok": True,
+                "message": json.loads(message_json),
+                "daemonConfig": None if daemon_config_json is None else json.loads(daemon_config_json),
+                "responseMessageId": response_message_id,
+                "responseSequence": response_sequence,
+            }
+        )
+
     def validate_worker_advertisement_json(
         advertisement_json: str,
         expected_package_lock_hash: str | None = None,
@@ -167,6 +184,7 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
     fake_native = SimpleNamespace(
         __version__="0.1.0",
         admit_exhaustion_work_json=admit_exhaustion_work_json,
+        admit_worker_message_json=admit_worker_message_json,
         binding_version=lambda: "0.1.0",
         compile_graph_json=compile_graph_json,
         decide_agent_step_json=decide_agent_step_json,
@@ -221,6 +239,12 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         {"preset": "finish_current_turn"},
         {"workKind": "read_only_tool"},
     )
+    worker_admission = runtime.admit_worker_message(
+        {"messageId": "message-1", "kind": "advertisement"},
+        daemon_config={"daemonId": "daemon-1"},
+        response_message_id="message-daemon-1",
+        response_sequence=2,
+    )
     worker = runtime.validate_worker_advertisement(
         {"workerId": "worker-1"},
         expected_package_lock_hash="sha256:lock",
@@ -272,6 +296,13 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         "allowed": True,
         "policy": {"preset": "finish_current_turn"},
         "request": {"workKind": "read_only_tool"},
+    }
+    assert worker_admission == {
+        "ok": True,
+        "message": {"kind": "advertisement", "messageId": "message-1"},
+        "daemonConfig": {"daemonId": "daemon-1"},
+        "responseMessageId": "message-daemon-1",
+        "responseSequence": 2,
     }
     assert worker == {"ok": True, "advertisement": {"workerId": "worker-1"}}
     assert worker_message == {
@@ -326,6 +357,15 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
             ('{"preset":"finish_current_turn"}', '{"workKind":"read_only_tool"}'),
         ),
         (
+            "worker_admission",
+            (
+                '{"kind":"advertisement","messageId":"message-1"}',
+                '{"daemonId":"daemon-1"}',
+                "message-daemon-1",
+                2,
+            ),
+        ),
+        (
             "worker_advertisement",
             ('{"workerId":"worker-1"}', "sha256:lock"),
         ),
@@ -339,6 +379,8 @@ def test_runtime_wrapper_convenience_helpers_delegate_to_native_json() -> None:
         ),
     ]
     assert "admit_exhaustion_work" in runtime.__all__
+    assert "admit_worker_message" in runtime.__all__
+    assert "admit_worker_message_json" in runtime.__all__
     assert "compile_graph" in runtime.__all__
     assert "decide_agent_step" in runtime.__all__
     assert "run_stdlib_graph" in runtime.__all__

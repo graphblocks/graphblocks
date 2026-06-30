@@ -9,6 +9,7 @@ try:
     from ._native import (
         __version__,
         admit_exhaustion_work_json,
+        admit_worker_message_json,
         binding_version,
         compile_graph_json,
         decide_agent_step_json,
@@ -53,6 +54,14 @@ except ImportError as error:
         return __version__
 
     def admit_exhaustion_work_json(policy_json: str, request_json: str) -> str:
+        require_native_extension()
+
+    def admit_worker_message_json(
+        message_json: str,
+        daemon_config_json: str | None = None,
+        response_message_id: str = "message-daemon-1",
+        response_sequence: int = 1,
+    ) -> str:
         require_native_extension()
 
     def compile_graph_json(document_json: str, block_catalog_json: str | None = None) -> str:
@@ -210,6 +219,25 @@ def admit_exhaustion_work(policy: dict[str, object], request: dict[str, object])
     )
 
 
+def admit_worker_message(
+    message: dict[str, object],
+    *,
+    daemon_config: dict[str, object] | None = None,
+    response_message_id: str = "message-daemon-1",
+    response_sequence: int = 1,
+) -> dict[str, object]:
+    daemon_config_json = None if daemon_config is None else _canonical_json(daemon_config)
+    return _json_object_result(
+        admit_worker_message_json(
+            _canonical_json(message),
+            daemon_config_json,
+            response_message_id,
+            response_sequence,
+        ),
+        "native worker admission result",
+    )
+
+
 def evaluate_output_gate(
     gate: dict[str, object],
     operations: object,
@@ -265,6 +293,8 @@ __all__ = [
     "__version__",
     "admit_exhaustion_work",
     "admit_exhaustion_work_json",
+    "admit_worker_message",
+    "admit_worker_message_json",
     "binding_version",
     "compile_graph",
     "compile_graph_json",

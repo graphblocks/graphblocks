@@ -143,6 +143,7 @@ dependencies = [
  "graphblocks-compiler",
  "graphblocks-protocol",
  "graphblocks-runtime-core",
+ "graphblocksd",
  "pyo3",
  "serde_json",
 ]

@@ -4,8 +4,8 @@ use graphblocks_compiler::compiler::{BlockCatalog, compile_graph, compile_graph_
 use graphblocks_compiler::diagnostics::Severity;
 use graphblocks_protocol::{
     RemotePayload, RemotePayloadError, RemotePayloadLimits, WorkerAdmissionPolicy,
-    WorkerAdvertisement, WorkerProtocolError, WorkerProtocolMessage, admit_worker_with_policy,
-    validate_remote_payload,
+    WorkerAdvertisement, WorkerProtocolError, WorkerProtocolMessage, WorkerProtocolMessageKind,
+    admit_worker_with_policy, validate_remote_payload,
 };
 use graphblocks_runtime_core::agent::{AgentLoopController, AgentLoopDecision, AgentSpec};
 use graphblocks_runtime_core::budget::{BudgetPermit, UsageAmount};
@@ -39,6 +39,7 @@ use graphblocks_runtime_core::tool_result::{
     ToolResultValidationRequest,
 };
 use graphblocks_runtime_core::tool_schema::{JsonSchema, JsonSchemaNode, ToolSchemaRegistry};
+use graphblocksd::{DaemonConfig, DaemonStatus, WorkerRegistry, WorkerRegistryError};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use serde_json::{Value, json};
@@ -287,6 +288,54 @@ fn validate_worker_protocol_message_json(message_json: &str) -> PyResult<String>
     serde_json::to_string(&payload).map_err(|error| {
         PyRuntimeError::new_err(format!(
             "failed to serialize worker protocol message result: {error}"
+        ))
+    })
+}
+
+#[pyfunction]
+#[pyo3(signature = (
+    message_json,
+    daemon_config_json=None,
+    response_message_id="message-daemon-1",
+    response_sequence=1
+))]
+fn admit_worker_message_json(
+    message_json: &str,
+    daemon_config_json: Option<&str>,
+    response_message_id: &str,
+    response_sequence: u64,
+) -> PyResult<String> {
+    let message_value = parse_json_argument(message_json, "worker message")?;
+    let daemon_config_value = daemon_config_json
+        .map(|config_json| parse_json_argument(config_json, "daemon config"))
+        .transpose()?;
+    let daemon_config = parse_daemon_config(daemon_config_value.as_ref())?;
+    let mut registry = WorkerRegistry::new(daemon_config)
+        .map_err(|error| PyValueError::new_err(format!("invalid daemon config: {error:?}")))?;
+    let payload = match registry.admit_worker_message_wire_value(
+        &message_value,
+        response_message_id,
+        response_sequence,
+    ) {
+        Ok(response) => {
+            let status = registry.status();
+            json!({
+                "ok": true,
+                "response": response,
+                "status": daemon_status_json(&status),
+            })
+        }
+        Err(error) => {
+            json!({
+                "ok": false,
+                "error": worker_registry_error_json(&error),
+            })
+        }
+    };
+
+    serde_json::to_string(&payload).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "failed to serialize worker admission result: {error}"
         ))
     })
 }
@@ -574,6 +623,97 @@ fn u64_to_usize(value: u64, label: &str) -> PyResult<usize> {
 
 fn u64_to_u32(value: u64, label: &str) -> PyResult<u32> {
     u32::try_from(value).map_err(|_| PyValueError::new_err(format!("{label} exceeds u32")))
+}
+
+fn parse_daemon_config(value: Option<&Value>) -> PyResult<DaemonConfig> {
+    let mut config = DaemonConfig::new("daemon-1", "127.0.0.1:0");
+    let Some(value) = value else {
+        return Ok(config);
+    };
+    let object = json_object(value, "daemon config")?;
+    let daemon_id =
+        optional_nullable_alias_string(object, "daemonId", "daemon_id", "daemon config")?
+            .unwrap_or("daemon-1");
+    let bind_address =
+        optional_nullable_alias_string(object, "bindAddress", "bind_address", "daemon config")?
+            .unwrap_or("127.0.0.1:0");
+    config = DaemonConfig::new(daemon_id, bind_address);
+    if let Some(max_workers) =
+        optional_nullable_alias_u64(object, "maxWorkers", "max_workers", "daemon config")?
+    {
+        config = config.with_max_workers(u64_to_usize(max_workers, "daemon config.maxWorkers")?);
+    }
+    if let Some(package_lock_hash) = optional_nullable_alias_string(
+        object,
+        "packageLockHash",
+        "package_lock_hash",
+        "daemon config",
+    )? {
+        config = config.require_package_lock_hash(package_lock_hash);
+    }
+    Ok(config)
+}
+
+fn daemon_status_json(status: &DaemonStatus) -> Value {
+    json!({
+        "daemonId": status.daemon_id,
+        "bindAddress": status.bind_address,
+        "protocolVersion": status.protocol_version,
+        "readyWorkers": status.ready_workers,
+        "saturatedWorkers": status.saturated_workers,
+        "drainingWorkers": status.draining_workers,
+        "admittedWorkers": status.admitted_workers,
+        "rejectedWorkers": status.rejected_workers,
+    })
+}
+
+fn worker_registry_error_json(error: &WorkerRegistryError) -> Value {
+    match error {
+        WorkerRegistryError::UnknownWorker { worker_id } => {
+            json!({"code": "daemon.unknown_worker", "workerId": worker_id})
+        }
+        WorkerRegistryError::DrainPlan { source } => {
+            json!({"code": "daemon.invalid_drain_plan", "message": format!("{source:?}")})
+        }
+        WorkerRegistryError::IncompatibleMessageProtocolVersion { expected, actual } => json!({
+            "code": "daemon.incompatible_message_protocol_version",
+            "expected": expected,
+            "actual": actual,
+        }),
+        WorkerRegistryError::EmptyMessageId => json!({"code": "daemon.empty_message_id"}),
+        WorkerRegistryError::EmptyCorrelationId => json!({"code": "daemon.empty_correlation_id"}),
+        WorkerRegistryError::EmptyCausationId => json!({"code": "daemon.empty_causation_id"}),
+        WorkerRegistryError::KindPayloadMismatch { kind, payload_kind } => json!({
+            "code": "daemon.kind_payload_mismatch",
+            "kind": worker_message_kind_name(*kind),
+            "payloadKind": worker_message_kind_name(*payload_kind),
+        }),
+        WorkerRegistryError::UnexpectedWorkerMessageKind { kind } => json!({
+            "code": "daemon.unexpected_worker_message_kind",
+            "kind": worker_message_kind_name(*kind),
+        }),
+        WorkerRegistryError::InvalidWireMessage { field, expected } => json!({
+            "code": "daemon.invalid_wire_message",
+            "field": field,
+            "expected": expected,
+        }),
+        WorkerRegistryError::WirePayloadDecode { kind, source } => json!({
+            "code": "daemon.wire_payload_decode_failed",
+            "kind": worker_message_kind_name(*kind),
+            "message": source,
+        }),
+    }
+}
+
+fn worker_message_kind_name(kind: WorkerProtocolMessageKind) -> &'static str {
+    match kind {
+        WorkerProtocolMessageKind::Advertisement => "advertisement",
+        WorkerProtocolMessageKind::AdmissionDecision => "admission_decision",
+        WorkerProtocolMessageKind::InvokeRequest => "invoke_request",
+        WorkerProtocolMessageKind::InvokeResult => "invoke_result",
+        WorkerProtocolMessageKind::DrainPlan => "drain_plan",
+        WorkerProtocolMessageKind::Error => "error",
+    }
 }
 
 fn parse_json_value_map(value: Option<&Value>, label: &str) -> PyResult<BTreeMap<String, Value>> {
@@ -3004,6 +3144,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
         validate_worker_protocol_message_json,
         module
     )?)?;
+    module.add_function(wrap_pyfunction!(admit_worker_message_json, module)?)?;
     module.add_function(wrap_pyfunction!(validate_remote_payload_json, module)?)?;
     module.add_function(wrap_pyfunction!(
         prepare_tool_result_for_model_json,
@@ -3027,8 +3168,8 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{
-        admit_exhaustion_work_json, compile_graph_json, decide_agent_step_json,
-        evaluate_declarative_output_policy_json, evaluate_output_gate_json,
+        admit_exhaustion_work_json, admit_worker_message_json, compile_graph_json,
+        decide_agent_step_json, evaluate_declarative_output_policy_json, evaluate_output_gate_json,
         finalize_tool_call_json, prepare_tool_result_for_model_json, run_stdlib_graph_json,
         run_test_graph_json, validate_remote_payload_json, validate_worker_advertisement_json,
         validate_worker_protocol_message_json,
@@ -3475,6 +3616,57 @@ mod tests {
                 .and_then(Value::as_str)
                 .is_some_and(|message| message.contains("InvalidInvokeRequest")),
         );
+        Ok(())
+    }
+
+    #[test]
+    fn admit_worker_message_json_returns_daemon_admission_decision() -> Result<(), String> {
+        let message = json!({
+            "protocolVersion": 1,
+            "messageId": "message-worker-1",
+            "kind": "advertisement",
+            "sequence": 1,
+            "correlationId": "worker-1",
+            "payload": {
+                "protocolVersion": 2,
+                "workerId": "worker-1",
+                "targetId": "doc-cpu",
+                "packageLockHash": "sha256:package-lock",
+                "imageDigest": "sha256:image",
+                "supportedBlocks": [{"block": "document.parse@1"}],
+                "state": "ready"
+            }
+        });
+        let config = json!({
+            "daemonId": "daemon-1",
+            "bindAddress": "127.0.0.1:8080"
+        });
+        let result_json = admit_worker_message_json(
+            &serde_json::to_string(&message).map_err(|error| error.to_string())?,
+            Some(&serde_json::to_string(&config).map_err(|error| error.to_string())?),
+            "message-daemon-1",
+            2,
+        )
+        .map_err(|error| error.to_string())?;
+        let result =
+            serde_json::from_str::<Value>(&result_json).map_err(|error| error.to_string())?;
+
+        assert_eq!(result.get("ok"), Some(&json!(true)));
+        assert_eq!(
+            result.pointer("/response/kind").and_then(Value::as_str),
+            Some("admission_decision"),
+        );
+        assert_eq!(
+            result.pointer("/response/payload/admitted"),
+            Some(&json!(false)),
+        );
+        assert_eq!(
+            result
+                .pointer("/response/payload/reasonCodes/0")
+                .and_then(Value::as_str),
+            Some("worker.incompatible_protocol_version"),
+        );
+        assert_eq!(result.pointer("/status/rejectedWorkers"), Some(&json!(1)),);
         Ok(())
     }
 

@@ -106,3 +106,61 @@ def test_worker_package_native_message_helper_delegates_to_runtime(monkeypatch) 
     assert mapping_result["contentDigest"] == "sha256:message"
     assert calls == [message.to_wire(), message.to_wire()]
     assert "validate_worker_protocol_message_native" in graphblocks_worker.__all__
+
+
+def test_worker_package_native_admission_helper_delegates_to_runtime(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-worker" / "src"))
+    graphblocks_worker = importlib.import_module("graphblocks_worker")
+    calls: list[tuple[dict[str, object], dict[str, object] | None, str, int]] = []
+
+    def admit_worker_message(
+        message: dict[str, object],
+        *,
+        daemon_config: dict[str, object] | None = None,
+        response_message_id: str = "message-daemon-1",
+        response_sequence: int = 1,
+    ) -> dict[str, object]:
+        calls.append((message, daemon_config, response_message_id, response_sequence))
+        return {
+            "ok": True,
+            "response": {"kind": "admission_decision"},
+            "message": message,
+            "daemonConfig": daemon_config,
+            "responseMessageId": response_message_id,
+            "responseSequence": response_sequence,
+        }
+
+    monkeypatch.setitem(
+        sys.modules,
+        "graphblocks_runtime",
+        SimpleNamespace(admit_worker_message=admit_worker_message),
+    )
+    advertisement = graphblocks_worker.WorkerAdvertisement.new(
+        "worker-1",
+        "doc-cpu",
+        "sha256:package-lock",
+        "sha256:image",
+        [graphblocks_worker.BlockCapability("document.parse@1")],
+    )
+    message = graphblocks_worker.WorkerProtocolMessage.advertisement(
+        "message-worker-1",
+        1,
+        advertisement,
+        correlation_id="worker-1",
+    )
+
+    result = graphblocks_worker.admit_worker_message_native(
+        message,
+        daemon_config={"daemonId": "daemon-1"},
+        response_message_id="message-daemon-1",
+        response_sequence=2,
+    )
+    mapping_result = graphblocks_worker.admit_worker_message_native(message.to_wire())
+
+    assert result["response"] == {"kind": "admission_decision"}
+    assert mapping_result["response"] == {"kind": "admission_decision"}
+    assert calls == [
+        (message.to_wire(), {"daemonId": "daemon-1"}, "message-daemon-1", 2),
+        (message.to_wire(), None, "message-daemon-1", 1),
+    ]
+    assert "admit_worker_message_native" in graphblocks_worker.__all__
