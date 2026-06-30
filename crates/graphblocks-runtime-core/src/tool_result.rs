@@ -279,6 +279,10 @@ pub enum ToolResultError {
         started_at_unix_ms: u64,
         completed_at_unix_ms: u64,
     },
+    InvalidEffectOutcome {
+        status: ToolResultStatus,
+        effect_outcome: ToolEffectOutcome,
+    },
     OutputDigestMismatch {
         tool_call_id: String,
     },
@@ -442,6 +446,17 @@ impl ToolResult {
             return Err(ToolResultError::CompletedBeforeStarted {
                 started_at_unix_ms,
                 completed_at_unix_ms,
+            });
+        }
+        if self.status == ToolResultStatus::Denied
+            && matches!(
+                self.effect_outcome,
+                ToolEffectOutcome::Committed | ToolEffectOutcome::Unknown
+            )
+        {
+            return Err(ToolResultError::InvalidEffectOutcome {
+                status: self.status,
+                effect_outcome: self.effect_outcome,
             });
         }
         for artifact in &self.artifacts {

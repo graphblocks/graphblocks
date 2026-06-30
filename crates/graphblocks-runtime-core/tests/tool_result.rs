@@ -1238,6 +1238,60 @@ fn denied_tool_result_records_pre_execution_denial() {
 }
 
 #[test]
+fn denied_tool_result_rejects_committed_or_unknown_effect_outcome() {
+    let committed = ToolResult::denied(
+        "call-1",
+        BlockError::new(
+            "tool.denied",
+            ErrorCategory::Policy,
+            "tool was denied before execution",
+            false,
+        ),
+        1_000,
+    )
+    .with_effect_outcome(ToolEffectOutcome::Committed);
+    assert_eq!(
+        committed.validate(),
+        Err(ToolResultError::InvalidEffectOutcome {
+            status: ToolResultStatus::Denied,
+            effect_outcome: ToolEffectOutcome::Committed,
+        })
+    );
+
+    let mut unknown = ToolResult::denied(
+        "call-2",
+        BlockError::new(
+            "tool.denied",
+            ErrorCategory::Policy,
+            "tool was denied before execution",
+            false,
+        ),
+        1_100,
+    );
+    unknown.effect_outcome = ToolEffectOutcome::Unknown;
+    assert_eq!(
+        unknown.validate(),
+        Err(ToolResultError::InvalidEffectOutcome {
+            status: ToolResultStatus::Denied,
+            effect_outcome: ToolEffectOutcome::Unknown,
+        })
+    );
+
+    let no_external_effect = ToolResult::denied(
+        "call-3",
+        BlockError::new(
+            "tool.denied",
+            ErrorCategory::Policy,
+            "tool was denied before execution",
+            false,
+        ),
+        1_200,
+    )
+    .with_effect_outcome(ToolEffectOutcome::NoExternalEffect);
+    assert_eq!(no_external_effect.validate(), Ok(()));
+}
+
+#[test]
 fn policy_stopped_result_can_report_committed_effect_outcome() {
     let result = ToolResult::policy_stopped(
         "call-1",
