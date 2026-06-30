@@ -399,6 +399,57 @@
     }
   },
   {
+    "name": "buffer_until_commit_exposes_no_rejected_content",
+    "delivery": {
+      "mode": "buffer_until_commit"
+    },
+    "operations": [
+      {
+        "op": "chunk",
+        "sequence": 1,
+        "text": "safe draft"
+      },
+      {
+        "op": "allow",
+        "decisionId": "decision-1",
+        "acceptedThrough": 1,
+        "inputDigest": "sha256:accepted",
+        "occurredAt": 1000
+      },
+      {
+        "op": "chunk",
+        "sequence": 2,
+        "text": "blocked draft"
+      },
+      {
+        "op": "abort_response",
+        "decisionId": "decision-abort",
+        "inputDigest": "sha256:blocked",
+        "occurredAt": 1050,
+        "cutoff": {
+          "lastGeneratedSequence": 2,
+          "lastPolicyAcceptedSequence": 1,
+          "lastClientDeliveredSequence": 0,
+          "terminalReason": "policy_denied",
+          "draftDisposition": "retract",
+          "durableResult": "none",
+          "policyDecisionId": "decision-abort",
+          "occurredAt": "1970-01-01T00:00:01.050Z",
+          "occurredAtUnixMs": 1050
+        }
+      },
+      {
+        "op": "commit"
+      }
+    ],
+    "expected": {
+      "lastGeneratedSequence": 2,
+      "lastPolicyAcceptedSequence": 1,
+      "lastClientDeliveredSequence": 0,
+      "stopped": true
+    }
+  },
+  {
     "name": "redact_releases_sanitized_chunk",
     "delivery": {
       "mode": "bounded_holdback",
