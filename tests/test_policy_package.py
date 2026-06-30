@@ -155,6 +155,13 @@ def test_policy_package_exposes_canonical_literal_sets(monkeypatch) -> None:
         "before_tool_or_effect",
     }.issubset(graphblocks_policy.VALID_ENFORCEMENT_POINTS)
     assert "VALID_ENFORCEMENT_POINTS" in graphblocks_policy.__all__
+    assert graphblocks.VALID_ENFORCEMENT_POINTS is VALID_ENFORCEMENT_POINTS
+    assert graphblocks.VALID_ENFORCEMENT_STATUSES is VALID_ENFORCEMENT_STATUSES
+    assert graphblocks.VALID_POLICY_EFFECTS is VALID_POLICY_EFFECTS
+    assert graphblocks.VALID_POLICY_FAIL_MODES is VALID_POLICY_FAIL_MODES
+    assert graphblocks.VALID_RULE_EFFECTS is VALID_RULE_EFFECTS
+    assert "VALID_ENFORCEMENT_POINTS" in graphblocks.__all__
+    assert "VALID_POLICY_EFFECTS" in graphblocks.__all__
     for name, value in output_constants.items():
         assert getattr(graphblocks_policy, name) is value
         assert name in graphblocks_policy.__all__
