@@ -78,12 +78,17 @@ def test_agents_package_lazy_native_helpers_delegate_to_runtime(monkeypatch) -> 
         calls.append(("queue", (queue, operations)))
         return {"kind": "queue", "queue": queue, "operations": operations}
 
+    def evaluate_tool_result_stream(state: dict[str, object], operations: object) -> dict[str, object]:
+        calls.append(("tool_result_stream", (state, operations)))
+        return {"kind": "tool_result_stream", "state": state, "operations": operations}
+
     monkeypatch.setitem(
         sys.modules,
         "graphblocks_runtime",
         SimpleNamespace(
             evaluate_sequential_tool_queue=evaluate_sequential_tool_queue,
             evaluate_tool_execution_plan=evaluate_tool_execution_plan,
+            evaluate_tool_result_stream=evaluate_tool_result_stream,
         ),
     )
     graphblocks_agents = importlib.import_module("graphblocks_agents")
@@ -96,12 +101,21 @@ def test_agents_package_lazy_native_helpers_delegate_to_runtime(monkeypatch) -> 
         {"planId": "plan-1", "responseId": "response-1", "calls": []},
         [{"op": "start_next_ready"}],
     )
+    stream = graphblocks_agents.evaluate_native_tool_result_stream(
+        {"toolCallId": "call-1"},
+        [{"op": "delta", "sequence": 2}],
+    )
 
     assert plan == {"kind": "plan", "plan": {"planId": "plan-1"}, "operations": [{"op": "ready"}]}
     assert queue == {
         "kind": "queue",
         "queue": {"planId": "plan-1", "responseId": "response-1", "calls": []},
         "operations": [{"op": "start_next_ready"}],
+    }
+    assert stream == {
+        "kind": "tool_result_stream",
+        "state": {"toolCallId": "call-1"},
+        "operations": [{"op": "delta", "sequence": 2}],
     }
     assert calls == [
         ("plan", ({"planId": "plan-1"}, [{"op": "ready"}])),
@@ -112,7 +126,9 @@ def test_agents_package_lazy_native_helpers_delegate_to_runtime(monkeypatch) -> 
                 [{"op": "start_next_ready"}],
             ),
         ),
+        ("tool_result_stream", ({"toolCallId": "call-1"}, [{"op": "delta", "sequence": 2}])),
     ]
+    assert "evaluate_native_tool_result_stream" in graphblocks_agents.__all__
 
 
 def test_agents_package_exposes_policy_obligated_tool_admission(monkeypatch) -> None:

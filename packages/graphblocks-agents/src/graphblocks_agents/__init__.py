@@ -96,6 +96,15 @@ def evaluate_native_sequential_tool_queue(
     return evaluate_sequential_tool_queue(queue, operations)
 
 
+def evaluate_native_tool_result_stream(
+    state: dict[str, object],
+    operations: object,
+) -> dict[str, object]:
+    from graphblocks_runtime import evaluate_tool_result_stream
+
+    return evaluate_tool_result_stream(state, operations)
+
+
 __all__ = [
     "AdmittedToolCall",
     "AgentLoopController",
@@ -168,5 +177,6 @@ __all__ = [
     "build_before_tool_or_effect_policy_request",
     "evaluate_native_sequential_tool_queue",
     "evaluate_native_tool_execution_plan",
+    "evaluate_native_tool_result_stream",
     "validate_tool_result_for_model",
 ]
