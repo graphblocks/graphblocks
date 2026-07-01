@@ -2047,6 +2047,27 @@ def test_tool_result_rejects_empty_call_id_and_reversed_timestamps() -> None:
             started_at="2026-06-23T00:00:02Z",
             completed_at="2026-06-23T00:00:01Z",
         )
+    offset_ordered = ToolResult.completed(
+        "call-1",
+        (ContentPart(kind="text", text="ok"),),
+        started_at="2026-06-24T00:30:00+09:00",
+        completed_at="2026-06-23T16:00:00Z",
+    )
+    assert offset_ordered.completed_at == "2026-06-23T16:00:00Z"
+    with pytest.raises(ValueError, match="tool result completed_at must not be before started_at"):
+        ToolResult.completed(
+            "call-1",
+            (ContentPart(kind="text", text="ok"),),
+            started_at="2026-06-23T23:30:00-05:00",
+            completed_at="2026-06-24T04:00:00Z",
+        )
+    with pytest.raises(ValueError, match="tool result started_at must be an ISO datetime"):
+        ToolResult.completed(
+            "call-1",
+            (ContentPart(kind="text", text="ok"),),
+            started_at="not-a-date",
+            completed_at="2026-06-23T00:00:01Z",
+        )
 
 
 def test_tool_result_rejects_non_string_and_invalid_collection_fields() -> None:

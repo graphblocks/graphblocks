@@ -1757,10 +1757,20 @@ class ToolResult:
             raise ValueError(f"invalid tool effect outcome {self.effect_outcome}")
         if self.status == "denied" and self.effect_outcome in {"committed", "unknown"}:
             raise ValueError("denied tool result effect_outcome must be not_committed or no_external_effect")
+        started_at_time = (
+            _parse_iso_datetime(self.started_at, owner="tool result", field="started_at")
+            if self.started_at is not None
+            else None
+        )
+        completed_at_time = (
+            _parse_iso_datetime(self.completed_at, owner="tool result", field="completed_at")
+            if self.completed_at is not None
+            else None
+        )
         if (
-            self.started_at is not None
-            and self.completed_at is not None
-            and self.completed_at < self.started_at
+            started_at_time is not None
+            and completed_at_time is not None
+            and completed_at_time < started_at_time
         ):
             raise ValueError("tool result completed_at must not be before started_at")
         try:
