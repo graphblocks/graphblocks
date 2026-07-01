@@ -6,6 +6,7 @@ from graphblocks.evaluation import ModelVisibleToolRef
 from graphblocks.run_store import (
     InMemoryRunStore,
     RunDeploymentProvenance,
+    RunRecord,
     RunTerminalStateError,
     SQLiteRunStore,
     StateConflictError,
@@ -43,6 +44,43 @@ def test_run_store_records_deployment_provenance_and_preserves_it_across_mutatio
     }
     assert patched.deployment_provenance == provenance
     assert running.deployment_provenance == provenance
+
+
+def test_run_records_validate_identity_status_revision_and_payload_shapes() -> None:
+    with pytest.raises(ValueError, match="run deployment provenance release_digest must not be empty"):
+        RunDeploymentProvenance(release_digest=" ")
+    with pytest.raises(ValueError, match="run record run_id must not be empty"):
+        RunRecord(" ", "sha256:test", {})
+    with pytest.raises(ValueError, match="run record graph_hash must not be empty"):
+        RunRecord("run-1", " ", {})
+    with pytest.raises(ValueError, match="run record inputs must be an object"):
+        RunRecord("run-1", "sha256:test", [])  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="invalid run record status"):
+        RunRecord("run-1", "sha256:test", {}, status="paused")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="run record state_revision must be non-negative"):
+        RunRecord("run-1", "sha256:test", {}, state_revision=-1)
+    with pytest.raises(ValueError, match="run record model_visible_tools must be ModelVisibleToolRef"):
+        RunRecord("run-1", "sha256:test", {}, model_visible_tools=(object(),))  # type: ignore[arg-type]
+
+
+def test_run_store_validates_create_patch_status_and_copies_inputs() -> None:
+    store = InMemoryRunStore()
+    inputs = {"message": {"text": "hello"}}
+    record = store.create_run(" sha256:test ", inputs)
+    inputs["message"]["text"] = "mutated"
+
+    assert record.graph_hash == "sha256:test"
+    assert store.get_run(record.run_id).inputs == {"message": {"text": "hello"}}
+    with pytest.raises(ValueError, match="run store graph_hash must not be empty"):
+        store.create_run(" ", {})
+    with pytest.raises(ValueError, match="run store inputs must be an object"):
+        store.create_run("sha256:test", [])  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="run store patch must be an object"):
+        store.patch_state(record.run_id, [], expected_revision=0)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="run store expected_revision must be non-negative"):
+        store.patch_state(record.run_id, {}, expected_revision=-1)
+    with pytest.raises(ValueError, match="invalid mutable run status"):
+        store.set_status(record.run_id, "created")  # type: ignore[arg-type]
 
 
 def test_run_store_records_model_visible_tools_and_preserves_them_across_mutations() -> None:
@@ -198,6 +236,24 @@ def test_sqlite_run_store_records_model_visible_tools_after_run_creation(tmp_pat
     assert updated.model_visible_tools == (search_tool, ticket_tool)
     assert updated.state_revision == 0
     assert store.get_run(record.run_id).model_visible_tools == (search_tool, ticket_tool)
+
+
+def test_sqlite_run_store_validates_create_patch_and_status_arguments(tmp_path) -> None:
+    store = SQLiteRunStore(tmp_path / "runs.sqlite3")
+    record = store.create_run("sha256:test", {})
+
+    with pytest.raises(ValueError, match="run store graph_hash must not be empty"):
+        store.create_run(" ", {})
+    with pytest.raises(ValueError, match="run store inputs must be an object"):
+        store.create_run("sha256:test", [])  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="run store run_id must not be empty"):
+        store.get_run(" ")
+    with pytest.raises(ValueError, match="run store patch must be an object"):
+        store.patch_state(record.run_id, [], expected_revision=0)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="run store expected_revision must be an integer"):
+        store.patch_state(record.run_id, {}, expected_revision=True)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="invalid mutable run status"):
+        store.set_status(record.run_id, "created")  # type: ignore[arg-type]
 
 
 def test_sqlite_run_store_enforces_state_revision_cas(tmp_path) -> None:

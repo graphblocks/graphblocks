@@ -523,6 +523,12 @@ critical path
 release/target/image provenance
 ```
 
+`RunRecord`와 `RunDeploymentProvenance`는 construction 시 non-empty run/graph/provenance identity,
+valid run status, non-negative state revision, object-shaped inputs/state, and typed
+model-visible tool references를 검증해야 한다. In-memory와 durable run store는 create/patch/status
+mutation boundary에서 동일 contract를 적용하고 caller-owned input/state/tool collections를 defensive
+snapshot으로 보존해야 한다.
+
 ## 281. Diagnostic bundle와 replay
 
 Diagnostic bundle은 기본적으로 content-free 또는 redacted다.

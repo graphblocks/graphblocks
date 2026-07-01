@@ -14,6 +14,31 @@ from .evaluation import ModelVisibleToolRef
 RunStatus = Literal["created", "running", "succeeded", "failed", "cancelled", "policy_stopped"]
 MutableRunStatus = Literal["running", "succeeded", "failed", "cancelled", "policy_stopped"]
 TERMINAL_RUN_STATUSES = frozenset({"succeeded", "failed", "cancelled", "policy_stopped"})
+VALID_RUN_STATUSES = frozenset({"created", "running", "succeeded", "failed", "cancelled", "policy_stopped"})
+
+
+def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{owner} {field_name} must be a string")
+    if not value.strip():
+        raise ValueError(f"{owner} {field_name} must not be empty")
+    return value
+
+
+def _validate_optional_non_empty_string(owner: str, field_name: str, value: object | None) -> str | None:
+    if value is None:
+        return None
+    return _validate_non_empty_string(owner, field_name, value)
+
+
+def _validate_json_object(owner: str, field_name: str, value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{owner} {field_name} must be an object")
+    snapshot: dict[str, Any] = {}
+    for key, item in value.items():
+        key_text = _validate_non_empty_string(owner, f"{field_name} key", key)
+        snapshot[key_text] = deepcopy(item)
+    return snapshot
 
 
 class StateConflictError(RuntimeError):
@@ -40,6 +65,19 @@ class RunDeploymentProvenance:
     physical_plan_hash: str | None = None
     release_signature_digest: str | None = None
 
+    def __post_init__(self) -> None:
+        for field_name in (
+            "release_digest",
+            "deployment_revision_id",
+            "physical_plan_hash",
+            "release_signature_digest",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_optional_non_empty_string("run deployment provenance", field_name, getattr(self, field_name)),
+            )
+
     def canonical_value(self) -> dict[str, str | None]:
         return {
             "release_digest": self.release_digest,
@@ -50,6 +88,8 @@ class RunDeploymentProvenance:
 
     @classmethod
     def from_mapping(cls, value: dict[str, Any]) -> RunDeploymentProvenance:
+        if not isinstance(value, dict):
+            raise ValueError("run deployment provenance mapping must be an object")
         return cls(
             release_digest=(
                 str(value["release_digest"]) if value.get("release_digest") is not None else None
@@ -84,7 +124,22 @@ class RunRecord:
     model_visible_tools: tuple[ModelVisibleToolRef, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "model_visible_tools", tuple(sorted(self.model_visible_tools)))
+        object.__setattr__(self, "run_id", _validate_non_empty_string("run record", "run_id", self.run_id).strip())
+        object.__setattr__(self, "graph_hash", _validate_non_empty_string("run record", "graph_hash", self.graph_hash).strip())
+        object.__setattr__(self, "inputs", _validate_json_object("run record", "inputs", self.inputs))
+        if not isinstance(self.deployment_provenance, RunDeploymentProvenance):
+            raise ValueError("run record deployment_provenance must be RunDeploymentProvenance")
+        if self.status not in VALID_RUN_STATUSES:
+            raise ValueError(f"invalid run record status {self.status}")
+        object.__setattr__(self, "state", _validate_json_object("run record", "state", self.state))
+        if not isinstance(self.state_revision, int) or isinstance(self.state_revision, bool):
+            raise ValueError("run record state_revision must be an integer")
+        if self.state_revision < 0:
+            raise ValueError("run record state_revision must be non-negative")
+        tools = tuple(self.model_visible_tools)
+        if any(not isinstance(tool, ModelVisibleToolRef) for tool in tools):
+            raise ValueError("run record model_visible_tools must be ModelVisibleToolRef")
+        object.__setattr__(self, "model_visible_tools", tuple(sorted(tools)))
 
 
 @dataclass(slots=True)
@@ -100,6 +155,10 @@ class InMemoryRunStore:
         deployment_provenance: RunDeploymentProvenance | None = None,
         model_visible_tools: Iterable[ModelVisibleToolRef] = (),
     ) -> RunRecord:
+        _validate_non_empty_string("run store", "graph_hash", graph_hash)
+        inputs = _validate_json_object("run store", "inputs", inputs)
+        if deployment_provenance is not None and not isinstance(deployment_provenance, RunDeploymentProvenance):
+            raise ValueError("run store deployment_provenance must be RunDeploymentProvenance")
         run_id = f"run-{self.next_id:06d}"
         self.next_id += 1
         record = RunRecord(
@@ -116,6 +175,12 @@ class InMemoryRunStore:
         return deepcopy(self.runs[run_id])
 
     def patch_state(self, run_id: str, patch: dict[str, Any], expected_revision: int) -> RunRecord:
+        run_id = _validate_non_empty_string("run store", "run_id", run_id).strip()
+        patch = _validate_json_object("run store", "patch", patch)
+        if not isinstance(expected_revision, int) or isinstance(expected_revision, bool):
+            raise ValueError("run store expected_revision must be an integer")
+        if expected_revision < 0:
+            raise ValueError("run store expected_revision must be non-negative")
         current = self.runs[run_id]
         if current.status in TERMINAL_RUN_STATUSES:
             raise RunTerminalStateError(run_id, current.status)
@@ -152,6 +217,7 @@ class InMemoryRunStore:
         run_id: str,
         tools: Iterable[ModelVisibleToolRef],
     ) -> RunRecord:
+        run_id = _validate_non_empty_string("run store", "run_id", run_id).strip()
         current = self.runs[run_id]
         if current.status in TERMINAL_RUN_STATUSES:
             raise RunTerminalStateError(run_id, current.status)
@@ -169,6 +235,9 @@ class InMemoryRunStore:
         return deepcopy(updated)
 
     def set_status(self, run_id: str, status: MutableRunStatus) -> RunRecord:
+        run_id = _validate_non_empty_string("run store", "run_id", run_id).strip()
+        if status not in VALID_RUN_STATUSES or status == "created":
+            raise ValueError(f"invalid mutable run status {status}")
         current = self.runs[run_id]
         if current.status in TERMINAL_RUN_STATUSES:
             raise RunTerminalStateError(run_id, current.status)
@@ -247,6 +316,10 @@ class SQLiteRunStore:
         deployment_provenance: RunDeploymentProvenance | None = None,
         model_visible_tools: Iterable[ModelVisibleToolRef] = (),
     ) -> RunRecord:
+        _validate_non_empty_string("run store", "graph_hash", graph_hash)
+        inputs = _validate_json_object("run store", "inputs", inputs)
+        if deployment_provenance is not None and not isinstance(deployment_provenance, RunDeploymentProvenance):
+            raise ValueError("run store deployment_provenance must be RunDeploymentProvenance")
         row = self.connection.execute("SELECT COALESCE(MAX(sequence), 0) + 1 FROM runs").fetchone()
         sequence = int(row[0])
         run_id = f"run-{sequence:06d}"
@@ -288,6 +361,7 @@ class SQLiteRunStore:
         return deepcopy(record)
 
     def get_run(self, run_id: str) -> RunRecord:
+        run_id = _validate_non_empty_string("run store", "run_id", run_id).strip()
         row = self.connection.execute(
             """
             SELECT
@@ -322,6 +396,12 @@ class SQLiteRunStore:
         )
 
     def patch_state(self, run_id: str, patch: dict[str, Any], expected_revision: int) -> RunRecord:
+        run_id = _validate_non_empty_string("run store", "run_id", run_id).strip()
+        patch = _validate_json_object("run store", "patch", patch)
+        if not isinstance(expected_revision, int) or isinstance(expected_revision, bool):
+            raise ValueError("run store expected_revision must be an integer")
+        if expected_revision < 0:
+            raise ValueError("run store expected_revision must be non-negative")
         current = self.get_run(run_id)
         if current.status in TERMINAL_RUN_STATUSES:
             raise RunTerminalStateError(run_id, current.status)
@@ -365,6 +445,7 @@ class SQLiteRunStore:
         run_id: str,
         tools: Iterable[ModelVisibleToolRef],
     ) -> RunRecord:
+        run_id = _validate_non_empty_string("run store", "run_id", run_id).strip()
         current = self.get_run(run_id)
         if current.status in TERMINAL_RUN_STATUSES:
             raise RunTerminalStateError(run_id, current.status)
@@ -382,6 +463,9 @@ class SQLiteRunStore:
         return self.get_run(run_id)
 
     def set_status(self, run_id: str, status: MutableRunStatus) -> RunRecord:
+        run_id = _validate_non_empty_string("run store", "run_id", run_id).strip()
+        if status not in VALID_RUN_STATUSES or status == "created":
+            raise ValueError(f"invalid mutable run status {status}")
         current = self.get_run(run_id)
         if current.status in TERMINAL_RUN_STATUSES:
             raise RunTerminalStateError(run_id, current.status)
