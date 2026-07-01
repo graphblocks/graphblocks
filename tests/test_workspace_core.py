@@ -6,6 +6,7 @@ from graphblocks.evaluation import ChangeSet, ResourceSnapshotRef
 from graphblocks.policy import PrincipalRef
 from graphblocks.workspace import (
     InMemoryWorkspaceStore,
+    WorkspaceCommit,
     WorkspaceMutationDeniedError,
     WorkspaceMutationPolicy,
     WorkspaceSnapshot,
@@ -50,6 +51,19 @@ def test_workspace_snapshot_rejects_duplicate_resource_ids() -> None:
         )
 
 
+def test_workspace_snapshot_validates_identity_revision_resources_and_metadata() -> None:
+    with pytest.raises(ValueError, match="workspace snapshot workspace_id must not be empty"):
+        WorkspaceSnapshot(" ", "snapshot-1", 1)
+    with pytest.raises(ValueError, match="workspace snapshot revision must be positive"):
+        WorkspaceSnapshot("workspace-1", "snapshot-1", 0)
+    with pytest.raises(ValueError, match="workspace snapshot resources items must be ResourceSnapshotRef"):
+        WorkspaceSnapshot("workspace-1", "snapshot-1", 1, resources=(object(),))  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="workspace snapshot metadata must be a mapping"):
+        WorkspaceSnapshot("workspace-1", "snapshot-1", 1, metadata=object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="workspace snapshot metadata keys must be strings"):
+        WorkspaceSnapshot("workspace-1", "snapshot-1", 1, metadata={object(): "value"})  # type: ignore[dict-item]
+
+
 def test_workspace_fork_preserves_base_snapshot_digest() -> None:
     base = WorkspaceSnapshot(
         workspace_id="workspace-1",
@@ -65,6 +79,62 @@ def test_workspace_fork_preserves_base_snapshot_digest() -> None:
     assert fork.base_snapshot_id == "snapshot-1"
     assert fork.base_snapshot_digest == base.content_digest()
     assert fork.revision == 1
+
+
+def test_workspace_commit_validates_identity_links_and_copies_snapshot() -> None:
+    snapshot = WorkspaceSnapshot(
+        workspace_id="workspace-1",
+        snapshot_id="snapshot-2",
+        revision=2,
+        resources=(ResourceSnapshotRef("a.txt", "sha256:a2", resource_kind="file"),),
+        created_at="2026-06-24T00:05:00Z",
+        metadata={"phase": "candidate"},
+    )
+
+    commit = WorkspaceCommit(
+        "commit-1",
+        "workspace-1",
+        "snapshot-1",
+        snapshot,
+        PrincipalRef("author-1"),
+        "2026-06-24T00:05:00Z",
+        "change-1",
+    )
+    snapshot.metadata["phase"] = "mutated"
+    commit.snapshot.metadata["phase"] = "returned-mutated"
+
+    assert commit.snapshot.metadata == {"phase": "returned-mutated"}
+    assert snapshot.metadata == {"phase": "mutated"}
+    with pytest.raises(ValueError, match="workspace commit commit_id must not be empty"):
+        WorkspaceCommit(
+            " ",
+            "workspace-1",
+            "snapshot-1",
+            snapshot,
+            PrincipalRef("author-1"),
+            "2026-06-24T00:05:00Z",
+            "change-1",
+        )
+    with pytest.raises(ValueError, match="workspace commit snapshot workspace_id must match workspace_id"):
+        WorkspaceCommit(
+            "commit-1",
+            "workspace-2",
+            "snapshot-1",
+            snapshot,
+            PrincipalRef("author-1"),
+            "2026-06-24T00:05:00Z",
+            "change-1",
+        )
+    with pytest.raises(ValueError, match="workspace commit committed_by must be a PrincipalRef"):
+        WorkspaceCommit(
+            "commit-1",
+            "workspace-1",
+            "snapshot-1",
+            snapshot,
+            object(),  # type: ignore[arg-type]
+            "2026-06-24T00:05:00Z",
+            "change-1",
+        )
 
 
 def test_workspace_mutation_policy_requires_allowed_kind_and_reviewer() -> None:

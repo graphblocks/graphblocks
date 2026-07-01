@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from .canonical import canonical_hash
@@ -7,7 +8,23 @@ from .evaluation import ChangeSet, ResourceSnapshotRef
 from .policy import PrincipalRef
 
 
+def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{owner} {field_name} must be a string")
+    if not value.strip():
+        raise ValueError(f"{owner} {field_name} must not be empty")
+    return value
+
+
+def _validate_optional_non_empty_string(owner: str, field_name: str, value: object | None) -> str | None:
+    if value is None:
+        return None
+    return _validate_non_empty_string(owner, field_name, value)
+
+
 def _copy_resource_snapshot_ref(resource: ResourceSnapshotRef) -> ResourceSnapshotRef:
+    if not isinstance(resource, ResourceSnapshotRef):
+        raise ValueError("workspace snapshot resources items must be ResourceSnapshotRef")
     return ResourceSnapshotRef(
         resource_id=resource.resource_id,
         digest=resource.digest,
@@ -29,6 +46,24 @@ class WorkspaceSnapshot:
     metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        _validate_non_empty_string("workspace snapshot", "workspace_id", self.workspace_id)
+        _validate_non_empty_string("workspace snapshot", "snapshot_id", self.snapshot_id)
+        if not isinstance(self.revision, int) or isinstance(self.revision, bool):
+            raise ValueError("workspace snapshot revision must be an integer")
+        if self.revision <= 0:
+            raise ValueError("workspace snapshot revision must be positive")
+        if not isinstance(self.created_at, str):
+            raise ValueError("workspace snapshot created_at must be a string")
+        _validate_optional_non_empty_string("workspace snapshot", "base_snapshot_id", self.base_snapshot_id)
+        _validate_optional_non_empty_string("workspace snapshot", "base_snapshot_digest", self.base_snapshot_digest)
+        if not isinstance(self.metadata, Mapping):
+            raise ValueError("workspace snapshot metadata must be a mapping")
+        metadata = dict(self.metadata)
+        for key in metadata:
+            if not isinstance(key, str):
+                raise ValueError("workspace snapshot metadata keys must be strings")
+            if not key.strip():
+                raise ValueError("workspace snapshot metadata key must not be empty")
         resources = tuple(
             sorted(
                 (_copy_resource_snapshot_ref(resource) for resource in self.resources),
@@ -43,7 +78,7 @@ class WorkspaceSnapshot:
             "resources",
             resources,
         )
-        object.__setattr__(self, "metadata", dict(self.metadata))
+        object.__setattr__(self, "metadata", metadata)
 
     def content_digest(self) -> str:
         return canonical_hash(
@@ -201,6 +236,17 @@ class WorkspaceCommit:
     committed_by: PrincipalRef
     committed_at: str
     change_set_id: str
+
+    def __post_init__(self) -> None:
+        for field_name in ("commit_id", "workspace_id", "previous_snapshot_id", "committed_at", "change_set_id"):
+            _validate_non_empty_string("workspace commit", field_name, getattr(self, field_name))
+        if not isinstance(self.snapshot, WorkspaceSnapshot):
+            raise ValueError("workspace commit snapshot must be a WorkspaceSnapshot")
+        if self.snapshot.workspace_id != self.workspace_id:
+            raise ValueError("workspace commit snapshot workspace_id must match workspace_id")
+        if not isinstance(self.committed_by, PrincipalRef):
+            raise ValueError("workspace commit committed_by must be a PrincipalRef")
+        object.__setattr__(self, "snapshot", _copy_workspace_snapshot(self.snapshot))
 
 
 def _copy_workspace_commit(commit: WorkspaceCommit) -> WorkspaceCommit:

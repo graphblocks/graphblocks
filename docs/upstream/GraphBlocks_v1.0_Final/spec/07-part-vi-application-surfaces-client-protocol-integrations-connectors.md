@@ -169,7 +169,7 @@ snapshot
 
 `apply_changeset`, `process.execute`, external write는 approval, sandbox, audit, idempotency, budget, integrity policy를 가진다. Trusted tests, golden files, policy, acceptance gate는 mutation policy로 보호할 수 있어야 한다.
 
-`WorkspaceSnapshot` 안의 `ResourceSnapshotRef.resource_id`는 snapshot-local unique key다. 중복 resource id를 가진 snapshot이나 CAS commit candidate는 거부해야 하며, mutation policy와 read-only protection은 이 unique key를 기준으로 비교한다.
+`WorkspaceSnapshot` 안의 `ResourceSnapshotRef.resource_id`는 snapshot-local unique key다. 중복 resource id를 가진 snapshot이나 CAS commit candidate는 거부해야 하며, mutation policy와 read-only protection은 이 unique key를 기준으로 비교한다. Snapshot과 commit record는 workspace/snapshot/commit/change-set identity, positive revision, typed `ResourceSnapshotRef`, typed `PrincipalRef`, metadata mapping key를 검증해야 한다. `WorkspaceCommit.snapshot`은 construction 시 복사되어 원본 snapshot metadata mutation이 audit record를 바꾸지 않아야 한다.
 
 TUI/IDE는 BudgetConstrained, BudgetExhausted, ReviewRequested, TrialProgress event를 표시하고 top-up/override/resume command를 capability에 따라 제공할 수 있다.
 
