@@ -281,6 +281,66 @@ def test_application_protocol_command_and_event_envelopes_match_client_contract(
         )
 
 
+def test_application_protocol_payloads_deep_copy_nested_values() -> None:
+    command_payload = {
+        "approval": {
+            "tool_call_id": "tool-call-1",
+            "reason_codes": ["requires_review"],
+        }
+    }
+    command = ApplicationCommand.new(
+        "ApproveEffect",
+        ApplicationCommandMetadata(
+            command_id="command-1",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            sequence=1,
+            issued_at_unix_ms=1_765_843_200_000,
+        ),
+        payload=command_payload,
+    )
+    command_payload["approval"]["tool_call_id"] = "mutated"  # type: ignore[index]
+    command_payload["approval"]["reason_codes"].append("mutated")  # type: ignore[index, union-attr]
+
+    event_payload = {
+        "artifact": {
+            "artifact_id": "artifact-1",
+            "tags": ["preview"],
+        }
+    }
+    event = ApplicationProtocolEvent.new(
+        "ArtifactReady",
+        ApplicationProtocolEventMetadata(
+            event_id="event-1",
+            protocol_version="graphblocks.app.v1",
+            run_id="run-1",
+            sequence=1,
+            occurred_at_unix_ms=1_765_843_200_000,
+        ),
+        payload=event_payload,
+    )
+    event_payload["artifact"]["artifact_id"] = "mutated"  # type: ignore[index]
+    event_payload["artifact"]["tags"].append("mutated")  # type: ignore[index, union-attr]
+
+    assert command.payload == {
+        "approval": {
+            "tool_call_id": "tool-call-1",
+            "reason_codes": ["requires_review"],
+        }
+    }
+    assert event.payload == {
+        "artifact": {
+            "artifact_id": "artifact-1",
+            "tags": ["preview"],
+        }
+    }
+    with pytest.raises(
+        ApplicationProtocolError,
+        match="application command payload.invalid keys must be non-empty strings",
+    ):
+        ApplicationCommand.new("CancelRun", command.metadata, payload={"invalid": {" ": "bad"}})
+
+
 def test_application_protocol_metadata_rejects_empty_required_fields() -> None:
     with pytest.raises(
         ApplicationProtocolError,
@@ -769,6 +829,8 @@ def test_application_event_payloads_are_copied_and_read_only() -> None:
         ApplicationEvent.new("RunStarted", _metadata(), payload=object())  # type: ignore[arg-type]
     with pytest.raises(ApplicationEventError, match="application event payload keys must be non-empty strings"):
         ApplicationEvent.new("RunStarted", _metadata(), payload={"": "running"})
+    with pytest.raises(ApplicationEventError, match="application event payload.nested keys must be non-empty strings"):
+        ApplicationEvent.new("RunStarted", _metadata(), payload={"nested": {"": "running"}})
     with pytest.raises(ApplicationEventError, match="tool_call_id must be a string"):
         ApplicationEvent.tool(
             "ToolCallStarted",

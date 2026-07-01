@@ -111,6 +111,8 @@ class ApplicationProtocolEvent(BaseModel):
 
 Protocol은 cursor replay, duplicate suppression, event coalescing, capability negotiation을 정의해야 한다. 느린 client가 runtime scheduler를 block해서는 안 된다.
 
+Command/event envelope는 construction 시 payload mapping과 nested JSON-like collection을 복사해야 한다. Application callback이나 client code가 원본 payload object를 나중에 mutation해도 이미 생성된 command/event log record가 바뀌어서는 안 된다.
+
 ## 162. TUI와 workspace architecture
 
 TUI는 graph node가 아니라 client다.

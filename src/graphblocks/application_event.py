@@ -269,13 +269,31 @@ def _validate_non_negative_integer(error_type: type[RuntimeError], label: str, v
         raise error_type(f"{label} must be non-negative")
 
 
+def _copy_payload_value(error_type: type[RuntimeError], label: str, value: object) -> object:
+    if isinstance(value, Mapping):
+        copied = dict(value)
+        if any(not isinstance(key, str) or not key.strip() for key in copied):
+            raise error_type(f"{label} keys must be non-empty strings")
+        return {key: _copy_payload_value(error_type, f"{label}.{key}", item) for key, item in copied.items()}
+    if isinstance(value, list):
+        return [_copy_payload_value(error_type, label, item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_copy_payload_value(error_type, label, item) for item in value)
+    return value
+
+
 def _freeze_payload(error_type: type[RuntimeError], label: str, payload: object) -> MappingProxyType[str, object]:
     if not isinstance(payload, Mapping):
         raise error_type(f"{label} must be a mapping")
     normalized = dict(payload)
     if any(not isinstance(key, str) or not key.strip() for key in normalized):
         raise error_type(f"{label} keys must be non-empty strings")
-    return MappingProxyType(normalized)
+    return MappingProxyType(
+        {
+            key: _copy_payload_value(error_type, f"{label}.{key}", value)
+            for key, value in normalized.items()
+        }
+    )
 
 
 @dataclass(frozen=True, slots=True)
