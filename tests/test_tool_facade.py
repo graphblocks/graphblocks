@@ -2088,6 +2088,9 @@ def test_tool_result_rejects_non_string_and_invalid_collection_fields() -> None:
     )
     with pytest.raises(ValueError, match="tool result diagnostic code must be a string"):
         replace(result, diagnostics=({"code": object(), "message": "redacted"},))
+
+    with pytest.raises(ValueError, match="tool result diagnostics entries must be mappings"):
+        replace(result, diagnostics=(object(),))
     with pytest.raises(ValueError, match="tool result diagnostic message must be a string"):
         replace(result, diagnostics=({"code": "tool.redacted", "message": object()},))
     with pytest.raises(ValueError, match="tool result diagnostic path must be a string"):

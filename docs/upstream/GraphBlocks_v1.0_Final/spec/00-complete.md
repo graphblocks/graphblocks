@@ -564,6 +564,9 @@ class ToolResult(BaseModel):
     error: BlockError | None = None
 ```
 
+ToolResult diagnostics MUST be mapping records with non-empty string codes and messages; malformed
+diagnostic entries must fail as ToolResult validation errors before result delivery or persistence.
+
 Tool은 block, graph, remote service, MCP tool에서 생성할 수 있다.
 
 ## 18. Artifact와 FileAttachment

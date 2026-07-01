@@ -1796,6 +1796,8 @@ class ToolResult:
         )
         diagnostics: list[MappingProxyType[str, object]] = []
         for diagnostic in self.diagnostics:
+            if not isinstance(diagnostic, Mapping):
+                raise ValueError("tool result diagnostics entries must be mappings")
             diagnostic_copy = dict(diagnostic)
             code = diagnostic_copy.get("code")
             if not isinstance(code, str):
