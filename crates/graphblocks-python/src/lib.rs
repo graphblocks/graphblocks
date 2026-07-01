@@ -12130,6 +12130,73 @@ mod tests {
     }
 
     #[test]
+    fn evaluate_output_gate_json_rejects_restored_delivery_beyond_policy_acceptance()
+    -> Result<(), String> {
+        pyo3::Python::initialize();
+        let gate = json!({
+            "streamId": "stream-1",
+            "responseId": "response-1",
+            "lastGeneratedSequence": 3,
+            "lastPolicyAcceptedSequence": 1,
+            "lastClientDeliveredSequence": 2,
+            "pending": [
+                {
+                    "sequence": 3,
+                    "text": "held"
+                }
+            ]
+        });
+        let gate_json = serde_json::to_string(&gate).map_err(|error| error.to_string())?;
+        let operations_json =
+            serde_json::to_string(&json!([])).map_err(|error| error.to_string())?;
+
+        let error = evaluate_output_gate_json(&gate_json, &operations_json)
+            .expect_err("restored gated delivery cannot exceed policy acceptance");
+
+        assert!(
+            error
+                .to_string()
+                .contains("ClientDeliveredSequenceBeyondPolicyAccepted")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_output_gate_json_rejects_kept_cutoff_draft_beyond_policy_acceptance()
+    -> Result<(), String> {
+        pyo3::Python::initialize();
+        let gate = json!({
+            "streamId": "stream-1",
+            "responseId": "response-1",
+            "cutoff": {
+                "streamId": "stream-1",
+                "responseId": "response-1",
+                "lastGeneratedSequence": 3,
+                "lastPolicyAcceptedSequence": 1,
+                "lastClientDeliveredSequence": 2,
+                "terminalReason": "policy_denied",
+                "draftDisposition": "keep",
+                "durableResult": "none",
+                "policyDecisionId": "decision-abort",
+                "occurredAtUnixMs": 1_100
+            }
+        });
+        let gate_json = serde_json::to_string(&gate).map_err(|error| error.to_string())?;
+        let operations_json =
+            serde_json::to_string(&json!([])).map_err(|error| error.to_string())?;
+
+        let error = evaluate_output_gate_json(&gate_json, &operations_json)
+            .expect_err("kept over-accepted cutoff draft must be rejected");
+
+        assert!(
+            error
+                .to_string()
+                .contains("DeliveredDraftBeyondPolicyAcceptanceKept")
+        );
+        Ok(())
+    }
+
+    #[test]
     fn evaluate_output_gate_json_accepts_snake_case_decision_operation() -> Result<(), String> {
         pyo3::Python::initialize();
         let gate = json!({
