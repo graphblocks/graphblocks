@@ -383,6 +383,14 @@ answer.validate_grounding
 answer.abstain
 ```
 
+Answer, claim, citation, abstention, citation validation issue/result, citation source trace,
+and RAG result payload records MUST validate typed nested records and object-shaped metadata at
+construction boundaries. Citation IDs, claim IDs, answer IDs, abstention reasons, issue codes, and
+trace identities are non-empty strings; optional quoted citation text and claim links are non-empty
+when present; citation confidence is finite and between 0 and 1. Semantic citation validity, such as
+missing citation references or sources outside the current context, remains the responsibility of
+`answer.validate_citations` and related validation blocks.
+
 ## 116. Citation production mode
 
 지원 방식:

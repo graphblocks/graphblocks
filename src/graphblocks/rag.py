@@ -155,6 +155,21 @@ class QueryPlan:
     filters: dict[str, object] | None = None
     rationale_summary: str | None = None
 
+    def __post_init__(self) -> None:
+        _validate_string("query plan", "original", self.original)
+        object.__setattr__(self, "rewritten", _copy_string_list("query plan", "rewritten", self.rewritten))
+        object.__setattr__(self, "subqueries", _copy_string_list("query plan", "subqueries", self.subqueries))
+        object.__setattr__(
+            self,
+            "filters",
+            None if self.filters is None else _copy_metadata("query plan", self.filters, field_name="filters"),
+        )
+        object.__setattr__(
+            self,
+            "rationale_summary",
+            _validate_optional_non_empty_string("query plan", "rationale_summary", self.rationale_summary),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class AuthContext:
@@ -336,6 +351,26 @@ class Citation:
     confidence: float | None = None
     metadata: dict[str, object] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        _validate_non_empty_string("citation", "citation_id", self.citation_id)
+        if not isinstance(self.source, SourceRef):
+            raise ValueError("citation source must be a SourceRef")
+        object.__setattr__(
+            self,
+            "claim_id",
+            _validate_optional_non_empty_string("citation", "claim_id", self.claim_id),
+        )
+        object.__setattr__(
+            self,
+            "cited_text",
+            _validate_optional_non_empty_string("citation", "cited_text", self.cited_text),
+        )
+        confidence = _validate_optional_finite_float("citation", "confidence", self.confidence)
+        if confidence is not None and not 0 <= confidence <= 1:
+            raise ValueError("citation confidence must be between 0 and 1")
+        object.__setattr__(self, "confidence", confidence)
+        object.__setattr__(self, "metadata", _copy_metadata("citation", self.metadata))
+
 
 @dataclass(frozen=True, slots=True)
 class Claim:
@@ -344,12 +379,23 @@ class Claim:
     citation_ids: list[str] = field(default_factory=list)
     metadata: dict[str, object] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        _validate_non_empty_string("claim", "claim_id", self.claim_id)
+        _validate_string("claim", "text", self.text)
+        object.__setattr__(self, "citation_ids", _copy_string_list("claim", "citation_ids", self.citation_ids))
+        object.__setattr__(self, "metadata", _copy_metadata("claim", self.metadata))
+
 
 @dataclass(frozen=True, slots=True)
 class Abstention:
     reason: str
     user_message: str
     diagnostics: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        _validate_non_empty_string("abstention", "reason", self.reason)
+        _validate_non_empty_string("abstention", "user_message", self.user_message)
+        object.__setattr__(self, "diagnostics", _copy_metadata("abstention diagnostics", self.diagnostics))
 
 
 @dataclass(frozen=True, slots=True)
@@ -361,6 +407,19 @@ class Answer:
     abstention: Abstention | None = None
     metadata: dict[str, object] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        _validate_non_empty_string("answer", "answer_id", self.answer_id)
+        _validate_string("answer", "text", self.text)
+        object.__setattr__(self, "claims", _copy_typed_list("answer", "claims", self.claims, Claim))
+        object.__setattr__(
+            self,
+            "citations",
+            _copy_typed_list("answer", "citations", self.citations, Citation),
+        )
+        if self.abstention is not None and not isinstance(self.abstention, Abstention):
+            raise ValueError("answer abstention must be an Abstention")
+        object.__setattr__(self, "metadata", _copy_metadata("answer", self.metadata))
+
 
 @dataclass(frozen=True, slots=True)
 class RagResultPayload:
@@ -370,12 +429,38 @@ class RagResultPayload:
     model_response: dict[str, object]
     answer: Answer
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.query_plan, QueryPlan):
+            raise ValueError("rag result payload query_plan must be a QueryPlan")
+        object.__setattr__(
+            self,
+            "retrievals",
+            _copy_typed_list("rag result payload", "retrievals", self.retrievals, RetrievalResult),
+        )
+        if not isinstance(self.context, ContextPack):
+            raise ValueError("rag result payload context must be a ContextPack")
+        object.__setattr__(
+            self,
+            "model_response",
+            _copy_metadata("rag result payload", self.model_response, field_name="model_response"),
+        )
+        if not isinstance(self.answer, Answer):
+            raise ValueError("rag result payload answer must be an Answer")
+
 
 @dataclass(frozen=True, slots=True)
 class RagResultBundle:
     base: ResultBundle
     payload: RagResultPayload
     profile: Literal["rag"] = "rag"
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.base, ResultBundle):
+            raise ValueError("rag result bundle base must be a ResultBundle")
+        if not isinstance(self.payload, RagResultPayload):
+            raise ValueError("rag result bundle payload must be a RagResultPayload")
+        if self.profile != "rag":
+            raise ValueError("rag result bundle profile must be rag")
 
 
 @dataclass(frozen=True, slots=True)
@@ -387,6 +472,23 @@ class CitationValidationIssue:
     severity: Literal["warning", "error"] = "error"
     metadata: dict[str, object] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        _validate_non_empty_string("citation validation issue", "code", self.code)
+        _validate_non_empty_string("citation validation issue", "message", self.message)
+        object.__setattr__(
+            self,
+            "citation_id",
+            _validate_optional_non_empty_string("citation validation issue", "citation_id", self.citation_id),
+        )
+        object.__setattr__(
+            self,
+            "claim_id",
+            _validate_optional_non_empty_string("citation validation issue", "claim_id", self.claim_id),
+        )
+        if self.severity not in {"warning", "error"}:
+            raise ValueError("citation validation issue severity must be warning or error")
+        object.__setattr__(self, "metadata", _copy_metadata("citation validation issue", self.metadata))
+
 
 @dataclass(frozen=True, slots=True)
 class CitationValidationResult:
@@ -394,6 +496,19 @@ class CitationValidationResult:
     issues: list[CitationValidationIssue] = field(default_factory=list)
     abstention: Abstention | None = None
     repaired_answer: Answer | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.ok, bool):
+            raise ValueError("citation validation result ok must be a boolean")
+        object.__setattr__(
+            self,
+            "issues",
+            _copy_typed_list("citation validation result", "issues", self.issues, CitationValidationIssue),
+        )
+        if self.abstention is not None and not isinstance(self.abstention, Abstention):
+            raise ValueError("citation validation result abstention must be an Abstention")
+        if self.repaired_answer is not None and not isinstance(self.repaired_answer, Answer):
+            raise ValueError("citation validation result repaired_answer must be an Answer")
 
 
 @dataclass(frozen=True, slots=True)
@@ -409,6 +524,29 @@ class CitationSourceTrace:
     locator: DocumentSpan | None
     acl: dict[str, object] | None = None
     element_ids: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        for field_name in ("citation_id", "context_id", "hit_id", "retriever", "item_id", "item_kind"):
+            _validate_non_empty_string("citation source trace", field_name, getattr(self, field_name))
+        object.__setattr__(
+            self,
+            "claim_id",
+            _validate_optional_non_empty_string("citation source trace", "claim_id", self.claim_id),
+        )
+        if not isinstance(self.source, SourceRef):
+            raise ValueError("citation source trace source must be a SourceRef")
+        if self.locator is not None and not isinstance(self.locator, DocumentSpan):
+            raise ValueError("citation source trace locator must be a DocumentSpan")
+        object.__setattr__(
+            self,
+            "acl",
+            None if self.acl is None else _copy_metadata("citation source trace acl", self.acl),
+        )
+        object.__setattr__(
+            self,
+            "element_ids",
+            _copy_string_list("citation source trace", "element_ids", self.element_ids),
+        )
 
 
 @dataclass(frozen=True, slots=True)
