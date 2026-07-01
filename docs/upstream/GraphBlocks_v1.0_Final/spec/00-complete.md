@@ -5527,6 +5527,8 @@ Domain package는 provider SDK나 parser engine을 포함하지 않는다. Canon
 `graphblocks-server` health endpoints MUST validate service identifiers, check names, status
 literals, and details mappings before publication. Malformed health records MUST fail before
 client-visible health payload construction.
+Server JSON response builders MUST validate payloads as mapping records with non-empty string keys
+before serialization. Malformed response payloads MUST fail before a client-visible frame is built.
 
 `graphblocks-tui`가 parser, vector DB, provider SDK, native runtime을 직접 의존해서는 안 된다.
 

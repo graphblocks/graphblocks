@@ -252,6 +252,14 @@ def test_server_request_auth_and_response_validate_contracts() -> None:
         ServerResponse(status_code=200, headers={"x": object()}, body=b"")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="server response body must be bytes"):
         ServerResponse(status_code=200, headers={}, body=object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="server response JSON payload must be a mapping"):
+        ServerResponse.json(200, object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="server response JSON payload must be a mapping"):
+        ServerResponse.json(200, [("ok", True)])  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="server response JSON payload keys must be non-empty strings"):
+        ServerResponse.json(200, {object(): True})  # type: ignore[dict-item]
+    with pytest.raises(ValueError, match="server response JSON payload keys must be non-empty strings"):
+        ServerResponse.json(200, {" ": True})
 
 
 def test_application_protocol_capabilities_negotiate_intersection() -> None:
