@@ -2161,6 +2161,15 @@ def test_content_part_requires_payload_for_its_kind() -> None:
 
     with pytest.raises(ValueError, match="artifact_ref content part requires data"):
         ContentPart(kind="artifact_ref")
+    with pytest.raises(ValueError, match="artifact_ref content part artifact_id must be a string"):
+        ContentPart(kind="artifact_ref", data={"uri": "blob://artifact-1"})
+    with pytest.raises(ValueError, match="artifact_ref content part uri must not be empty"):
+        ContentPart(kind="artifact_ref", data={"artifact_id": "artifact-1", "uri": " "})
+    with pytest.raises(ValueError, match="artifact_ref content part checksum must not be empty"):
+        ContentPart(
+            kind="artifact_ref",
+            data={"artifact_id": "artifact-1", "uri": "blob://artifact-1", "checksum": " "},
+        )
 
     with pytest.raises(ValueError, match="text content part must not carry data"):
         ContentPart(kind="text", text="ok", data={"unexpected": True})

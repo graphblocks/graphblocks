@@ -121,6 +121,49 @@ fn tool_result_rejects_content_parts_without_required_payload() {
 }
 
 #[test]
+fn artifact_ref_content_parts_validate_artifact_payload_shape() {
+    let missing_artifact_id = ContentPart {
+        kind: ContentPartKind::ArtifactRef,
+        text: None,
+        data: Some(json!({"uri": "blob://artifact-1"})),
+        metadata: Default::default(),
+    };
+    let invalid_uri = ContentPart {
+        kind: ContentPartKind::ArtifactRef,
+        text: None,
+        data: Some(json!({"artifact_id": "artifact-1", "uri": true})),
+        metadata: Default::default(),
+    };
+    let empty_checksum = ContentPart {
+        kind: ContentPartKind::ArtifactRef,
+        text: None,
+        data: Some(json!({
+            "artifact_id": "artifact-1",
+            "uri": "blob://artifact-1",
+            "checksum": " ",
+        })),
+        metadata: Default::default(),
+    };
+
+    assert_eq!(
+        missing_artifact_id.validate(),
+        Err(ContentPartError::MissingArtifactRefField {
+            field: "artifact_id"
+        })
+    );
+    assert_eq!(
+        invalid_uri.validate(),
+        Err(ContentPartError::InvalidArtifactRefField { field: "uri" })
+    );
+    assert_eq!(
+        ToolResultEvent::delta("call-1", 2, [empty_checksum]).validate(),
+        Err(ToolResultEventError::InvalidOutput {
+            source: ContentPartError::EmptyArtifactRefField { field: "checksum" },
+        })
+    );
+}
+
+#[test]
 fn tool_result_rejects_content_part_empty_metadata_keys() {
     let empty_metadata_key = ContentPart::text("ok").with_metadata(" ", json!("bad"));
 

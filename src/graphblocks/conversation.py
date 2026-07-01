@@ -146,7 +146,27 @@ class ContentPart:
         elif self.kind == "artifact_ref":
             if self.data is None:
                 raise ValueError("artifact_ref content part requires data")
-            object.__setattr__(self, "data", _copy_mapping("artifact_ref content part", "data", self.data))
+            data = _copy_mapping("artifact_ref content part", "data", self.data)
+            for field_name in ("artifact_id", "uri"):
+                value = data.get(field_name)
+                if not isinstance(value, str):
+                    raise ValueError(f"artifact_ref content part {field_name} must be a string")
+                if not value.strip():
+                    raise ValueError(f"artifact_ref content part {field_name} must not be empty")
+            for field_name in ("media_type", "checksum", "etag", "version", "filename"):
+                value = data.get(field_name)
+                if value is not None:
+                    if not isinstance(value, str):
+                        raise ValueError(f"artifact_ref content part {field_name} must be a string")
+                    if not value.strip():
+                        raise ValueError(f"artifact_ref content part {field_name} must not be empty")
+            size_bytes = data.get("size_bytes")
+            if size_bytes is not None:
+                if not isinstance(size_bytes, int) or isinstance(size_bytes, bool):
+                    raise ValueError("artifact_ref content part size_bytes must be an integer")
+                if size_bytes < 0:
+                    raise ValueError("artifact_ref content part size_bytes must be non-negative")
+            object.__setattr__(self, "data", data)
             if self.text is not None:
                 raise ValueError("artifact_ref content part must not carry text")
         object.__setattr__(self, "metadata", _copy_mapping("content part", "metadata", self.metadata))

@@ -95,7 +95,37 @@ impl ContentPart {
                 }
             }
             ContentPartKind::ArtifactRef => {
-                if self.data.is_none() {
+                if let Some(data) = self.data.as_ref() {
+                    let Some(payload) = data.as_object() else {
+                        return Err(ContentPartError::ArtifactRefPayloadNotObject);
+                    };
+                    for field in ["artifact_id", "uri"] {
+                        match payload.get(field) {
+                            Some(Value::String(value)) if !value.trim().is_empty() => {}
+                            Some(Value::String(_)) => {
+                                return Err(ContentPartError::EmptyArtifactRefField { field });
+                            }
+                            Some(_) => {
+                                return Err(ContentPartError::InvalidArtifactRefField { field });
+                            }
+                            None => {
+                                return Err(ContentPartError::MissingArtifactRefField { field });
+                            }
+                        }
+                    }
+                    for field in ["checksum", "media_type"] {
+                        match payload.get(field) {
+                            Some(Value::Null) | None => {}
+                            Some(Value::String(value)) if !value.trim().is_empty() => {}
+                            Some(Value::String(_)) => {
+                                return Err(ContentPartError::EmptyArtifactRefField { field });
+                            }
+                            Some(_) => {
+                                return Err(ContentPartError::InvalidArtifactRefField { field });
+                            }
+                        }
+                    }
+                } else {
                     return Err(ContentPartError::MissingArtifactRefPayload);
                 }
                 if self.text.is_some() {
@@ -117,6 +147,10 @@ pub enum ContentPartError {
     UnexpectedTextPayload { kind: ContentPartKind },
     UnexpectedDataPayload { kind: ContentPartKind },
     EmptyMetadataKey,
+    ArtifactRefPayloadNotObject,
+    MissingArtifactRefField { field: &'static str },
+    InvalidArtifactRefField { field: &'static str },
+    EmptyArtifactRefField { field: &'static str },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
