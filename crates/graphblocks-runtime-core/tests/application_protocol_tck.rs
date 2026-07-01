@@ -85,6 +85,7 @@ fn run_case(case: &Value) -> Result<Value, String> {
     let kind = required_str(case, "kind")?;
     let protocol_error_code = |error: &ApplicationProtocolError| match error {
         ApplicationProtocolError::InvalidPayload { .. } => "invalid_payload",
+        ApplicationProtocolError::InvalidPayloadKey { .. } => "invalid_payload_key",
         ApplicationProtocolError::EmptyMetadataField {
             field: "protocol_version",
         } => "empty_protocol_version",

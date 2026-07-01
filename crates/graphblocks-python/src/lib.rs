@@ -5690,6 +5690,10 @@ fn serialize_application_protocol_log_error(error: &ApplicationProtocolError) ->
             "code": "invalid_payload",
             "field": field,
         }),
+        ApplicationProtocolError::InvalidPayloadKey { field } => json!({
+            "code": "invalid_payload_key",
+            "field": field,
+        }),
     }
 }
 

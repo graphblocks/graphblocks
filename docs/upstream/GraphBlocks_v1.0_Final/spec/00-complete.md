@@ -2266,6 +2266,9 @@ conversation.begin_turn
   MUST fail before event construction, delivery-gate mutation, or client delivery.
 - Output-delivery `flush_boundaries` MUST be a collection of recognized boundary names; scalar
   strings or non-iterable values MUST fail before output delivery policy construction completes.
+- Application event, application command, and application protocol event payloads MUST be mapping
+  records with non-empty string keys at every nested mapping boundary before client-visible event
+  construction completes.
 
 ## 68. Checkpoint
 

@@ -171,6 +171,7 @@ pub enum ApplicationEventError {
     EmptyMetadataField { field: &'static str },
     EmptyPayloadField { field: &'static str },
     InvalidPayload { field: &'static str },
+    InvalidPayloadKey { field: String },
     EmptyToolCallId,
     InvalidToolCall { source: ToolCallError },
     InvalidToolResultEvent { source: ToolResultEventError },
@@ -686,6 +687,9 @@ impl ApplicationEvent {
         if !payload.is_object() {
             return Err(ApplicationEventError::InvalidPayload { field: "payload" });
         }
+        if let Some(field) = invalid_payload_key_path(&payload, "payload") {
+            return Err(ApplicationEventError::InvalidPayloadKey { field });
+        }
 
         Ok(Self {
             kind,
@@ -712,6 +716,9 @@ impl ApplicationEvent {
         }
         if !payload.is_object() {
             return Err(ApplicationEventError::InvalidPayload { field: "payload" });
+        }
+        if let Some(field) = invalid_payload_key_path(&payload, "payload") {
+            return Err(ApplicationEventError::InvalidPayloadKey { field });
         }
 
         Ok(Self {
@@ -998,6 +1005,7 @@ pub enum ApplicationProtocolError {
     EmptyEventId,
     EmptyMetadataField { field: &'static str },
     InvalidPayload { field: &'static str },
+    InvalidPayloadKey { field: String },
     InvalidToolResultEvent { source: ToolResultEventError },
     NonMonotonicSequence { previous: u64, next: u64 },
     ProtocolVersionMismatch { left: String, right: String },
@@ -1018,6 +1026,12 @@ impl fmt::Display for ApplicationProtocolError {
                 write!(
                     formatter,
                     "application protocol {field} must be a JSON object"
+                )
+            }
+            Self::InvalidPayloadKey { field } => {
+                write!(
+                    formatter,
+                    "application protocol {field} keys must be non-empty strings"
                 )
             }
             Self::InvalidToolResultEvent { source } => {
@@ -1064,6 +1078,9 @@ impl ApplicationCommand {
         if !payload.is_object() {
             return Err(ApplicationProtocolError::InvalidPayload { field: "payload" });
         }
+        if let Some(field) = invalid_payload_key_path(&payload, "payload") {
+            return Err(ApplicationProtocolError::InvalidPayloadKey { field });
+        }
         Ok(Self {
             kind,
             metadata,
@@ -1099,6 +1116,9 @@ impl ApplicationProtocolEvent {
         }
         if !payload.is_object() {
             return Err(ApplicationProtocolError::InvalidPayload { field: "payload" });
+        }
+        if let Some(field) = invalid_payload_key_path(&payload, "payload") {
+            return Err(ApplicationProtocolError::InvalidPayloadKey { field });
         }
         Ok(Self {
             kind,
@@ -1172,6 +1192,32 @@ impl ApplicationProtocolEvent {
             | ToolResultEvent::PolicyStopped { .. }
             | ToolResultEvent::Incomplete { .. } => Ok(None),
         }
+    }
+}
+
+fn invalid_payload_key_path(value: &Value, field: &str) -> Option<String> {
+    match value {
+        Value::Object(object) => {
+            for (key, value) in object {
+                if key.trim().is_empty() {
+                    return Some(field.to_owned());
+                }
+                let nested_field = format!("{field}.{key}");
+                if let Some(invalid_field) = invalid_payload_key_path(value, &nested_field) {
+                    return Some(invalid_field);
+                }
+            }
+            None
+        }
+        Value::Array(items) => {
+            for item in items {
+                if let Some(invalid_field) = invalid_payload_key_path(item, field) {
+                    return Some(invalid_field);
+                }
+            }
+            None
+        }
+        _ => None,
     }
 }
 

@@ -155,6 +155,27 @@ fn application_events_reject_non_object_payloads() {
         ),
         Err(ApplicationEventError::InvalidPayload { field: "payload" })
     );
+    assert_eq!(
+        ApplicationEvent::new(
+            ApplicationEventKind::RunStarted,
+            metadata(),
+            json!({"": "running"}),
+        ),
+        Err(ApplicationEventError::InvalidPayloadKey {
+            field: "payload".to_owned(),
+        })
+    );
+    assert_eq!(
+        ApplicationEvent::tool(
+            ApplicationEventKind::ToolCallStarted,
+            metadata(),
+            "tool-call-1",
+            json!({"nested": [{" ": "running"}]}),
+        ),
+        Err(ApplicationEventError::InvalidPayloadKey {
+            field: "payload.nested".to_owned(),
+        })
+    );
 }
 
 #[test]
@@ -1344,6 +1365,16 @@ fn application_commands_reject_non_object_payloads() {
         ),
         Err(ApplicationProtocolError::InvalidPayload { field: "payload" })
     );
+    assert_eq!(
+        ApplicationCommand::new(
+            ApplicationCommandKind::ApproveEffect,
+            command_metadata(),
+            json!({"approval": {"": "tool-call-1"}}),
+        ),
+        Err(ApplicationProtocolError::InvalidPayloadKey {
+            field: "payload.approval".to_owned(),
+        })
+    );
 }
 
 #[test]
@@ -1465,6 +1496,16 @@ fn application_protocol_events_reject_non_object_payloads() {
             json!(null),
         ),
         Err(ApplicationProtocolError::InvalidPayload { field: "payload" })
+    );
+    assert_eq!(
+        ApplicationProtocolEvent::new(
+            ApplicationProtocolEventKind::RunStarted,
+            protocol_event_metadata("event-1", 5, "cursor-5"),
+            json!({"state": [{"": "snapshot"}]}),
+        ),
+        Err(ApplicationProtocolError::InvalidPayloadKey {
+            field: "payload.state".to_owned(),
+        })
     );
 }
 
