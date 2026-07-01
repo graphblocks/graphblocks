@@ -447,6 +447,10 @@ review status
 ```
 
 Context selection은 사용자 요구와 domain policy에 따라 freshness 또는 authority를 고려한다.
+Freshness 비교에 사용하는 `source_modified_at`, `indexed_at`, `valid_from`, `valid_to`,
+`minimum_source_modified_at` 값은 ISO 8601 datetime으로 해석한다. Runtime과
+평가 도구는 문자열 정렬이 아니라 timezone-normalized instant 비교를 사용해야 하며,
+offset 표기가 다른 동일 시각을 동일하게 처리해야 한다.
 
 ## 120. RAG graph 예
 
@@ -647,4 +651,3 @@ class RagResultBundle(BaseModel):
 ```
 
 이 bundle을 저장하면 evaluator를 바꿔도 원래 provider 호출을 재실행하지 않고 평가할 수 있다.
-

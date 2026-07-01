@@ -169,3 +169,25 @@ def test_build_context_pack_filters_hits_by_minimum_source_modified_at() -> None
         "hit-unknown": "freshness",
     }
     assert context.metadata["minimum_source_modified_at"] == "2026-06-21T00:00:00Z"
+
+
+def test_build_context_pack_compares_source_modified_at_as_datetime() -> None:
+    fresh = replace(
+        _hit("hit-fresh", "doc-1", "fresh", 1),
+        metadata={"source_modified_at": "2026-06-23T16:00:00Z"},
+    )
+    stale = replace(
+        _hit("hit-stale", "doc-2", "stale", 2),
+        metadata={"source_modified_at": "2026-06-23T15:00:00Z"},
+    )
+
+    context = build_context_pack(
+        "ctx-1",
+        [fresh, stale],
+        token_budget=10,
+        minimum_source_modified_at="2026-06-24T00:30:00+09:00",
+    )
+
+    assert [hit.hit_id for hit in context.hits] == ["hit-fresh"]
+    assert context.metadata["dropped_hit_ids"] == ["hit-stale"]
+    assert context.metadata["drop_reasons"] == {"hit-stale": "freshness"}

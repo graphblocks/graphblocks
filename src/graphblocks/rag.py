@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from decimal import Decimal
 import json
 import math
@@ -15,6 +16,35 @@ from .evaluation import MetricObservation, ResultBundle
 KnowledgeDeleteMode: TypeAlias = Literal["tombstone", "hard"]
 KnowledgeRecordStatus: TypeAlias = Literal["active", "tombstoned"]
 FederatedFailureMode: TypeAlias = Literal["fail", "partial"]
+
+
+def _parse_iso_datetime(value: str, *, field: str) -> datetime:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field} must be a non-empty ISO datetime")
+    normalized = value.strip()
+    if normalized.endswith("Z"):
+        normalized = f"{normalized[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as error:
+        raise ValueError(f"{field} must be an ISO datetime") from error
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _source_modified_at_satisfies(source_modified_at: object, minimum_source_modified_at: str) -> bool:
+    if not isinstance(source_modified_at, str):
+        return False
+    try:
+        source_modified_at_time = _parse_iso_datetime(source_modified_at, field="source_modified_at")
+    except ValueError:
+        return False
+    minimum_source_modified_at_time = _parse_iso_datetime(
+        minimum_source_modified_at,
+        field="minimum_source_modified_at",
+    )
+    return source_modified_at_time >= minimum_source_modified_at_time
 
 
 @dataclass(frozen=True, slots=True)
@@ -354,10 +384,7 @@ def build_context_pack(
             source_modified_at = hit.metadata.get("source_modified_at")
             if not isinstance(source_modified_at, str):
                 source_modified_at = hit.item.metadata.get("source_modified_at")
-            if (
-                not isinstance(source_modified_at, str)
-                or source_modified_at < minimum_source_modified_at
-            ):
+            if not _source_modified_at_satisfies(source_modified_at, minimum_source_modified_at):
                 dropped_hit_ids.append(hit.hit_id)
                 drop_reasons[hit.hit_id] = "freshness"
                 continue
@@ -1163,7 +1190,7 @@ def evaluate_retrieval_metrics(
             source_modified_at = hit.metadata.get("source_modified_at")
             if not isinstance(source_modified_at, str):
                 source_modified_at = hit.item.metadata.get("source_modified_at")
-            if isinstance(source_modified_at, str) and source_modified_at >= minimum_source_modified_at:
+            if _source_modified_at_satisfies(source_modified_at, minimum_source_modified_at):
                 fresh_hits += 1
         freshness_satisfaction = Decimal(fresh_hits) / Decimal(len(hits_at_k))
     else:

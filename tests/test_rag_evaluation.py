@@ -144,6 +144,25 @@ def test_evaluate_retrieval_metrics_reports_freshness_satisfaction() -> None:
     assert by_name["freshness_satisfaction"].evaluator == {"k": 3}
 
 
+def test_evaluate_retrieval_metrics_compares_freshness_as_datetime() -> None:
+    retrieval = RetrievalResult(
+        retrieval_id="retrieval-1",
+        request=SearchRequest("policy", top_k=2),
+        hits=[
+            _hit("doc-a", 1, metadata={"source_modified_at": "2026-06-23T16:00:00Z"}),
+            _hit("doc-b", 2, metadata={"source_modified_at": "2026-06-23T15:00:00Z"}),
+        ],
+        metadata={"minimum_source_modified_at": "2026-06-24T00:30:00+09:00"},
+    )
+
+    by_name = {
+        metric.name: metric
+        for metric in evaluate_retrieval_metrics(retrieval, {"doc-a"}, k=2)
+    }
+
+    assert by_name["freshness_satisfaction"].value == Decimal(1) / Decimal(2)
+
+
 def test_evaluate_context_metrics_reports_source_diversity_and_token_efficiency() -> None:
     context = ContextPack(
         context_id="ctx-1",
