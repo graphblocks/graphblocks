@@ -555,6 +555,10 @@ class RunOwnershipLease(BaseModel):
 - worker result는 lease epoch와 node attempt ID를 포함한다.
 - owner 장애 시 compatible checkpoint 이후부터 재개한다.
 
+Worker result validation MUST first require typed `WorkerInvokeRequest` and `WorkerInvokeResult`
+records, then compare invocation ID, node attempt ID, and lease epoch. Malformed validation inputs
+must fail as worker result validation errors rather than incidental attribute errors.
+
 Worker advertisement:
 
 ```python

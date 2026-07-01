@@ -31,6 +31,7 @@ from graphblocks.worker import (
     WorkerNoEligibleWorkerError,
     WorkerProtocolError,
     WorkerProtocolMessage,
+    WorkerResultError,
     WorkerStaleLeaseEpochError,
     admit_worker,
     admit_worker_with_policy,
@@ -1218,6 +1219,11 @@ def test_worker_result_validation_rejects_mismatched_attempt_or_lease_epoch() ->
         lease_epoch=request.lease_epoch,
         outputs={},
     )
+
+    with pytest.raises(WorkerResultError, match="worker result validation request must be a WorkerInvokeRequest"):
+        validate_worker_result(object(), mismatched_attempt)  # type: ignore[arg-type]
+    with pytest.raises(WorkerResultError, match="worker result validation result must be a WorkerInvokeResult"):
+        validate_worker_result(request, object())  # type: ignore[arg-type]
 
     with pytest.raises(WorkerMismatchedNodeAttemptError) as attempt_error:
         validate_worker_result(request, mismatched_attempt)

@@ -1637,6 +1637,10 @@ class WorkerStaleLeaseEpochError(WorkerResultError):
 
 
 def validate_worker_result(request: WorkerInvokeRequest, result: WorkerInvokeResult) -> None:
+    if not isinstance(request, WorkerInvokeRequest):
+        raise WorkerResultError("worker result validation request must be a WorkerInvokeRequest")
+    if not isinstance(result, WorkerInvokeResult):
+        raise WorkerResultError("worker result validation result must be a WorkerInvokeResult")
     if request.invocation_id != result.invocation_id:
         raise WorkerMismatchedInvocationIdError(request.invocation_id, result.invocation_id)
     if request.node_attempt_id != result.node_attempt_id:
