@@ -1,5 +1,5 @@
 use graphblocks_runtime_core::budget::{
-    BudgetError, BudgetStatus, CompletionReservePurpose, CompletionReserveStatus,
+    BudgetError, BudgetPermit, BudgetStatus, CompletionReservePurpose, CompletionReserveStatus,
     InMemoryBudgetLedger, ReservationPurpose, ReservationStatus, SqliteBudgetLedger, UsageAmount,
 };
 use std::{
@@ -14,6 +14,10 @@ fn tokens(amount: i64) -> UsageAmount {
     UsageAmount::new("model_total_tokens", amount, "tokens")
 }
 
+fn dimensioned_tokens(amount: i64, key: &str, value: &str) -> UsageAmount {
+    tokens(amount).with_dimension(key, value)
+}
+
 fn sqlite_budget_path(label: &str) -> PathBuf {
     let mut path = env::temp_dir();
     path.push(format!(
@@ -22,6 +26,183 @@ fn sqlite_budget_path(label: &str) -> PathBuf {
     ));
     fs::remove_file(&path).ok();
     path
+}
+
+#[test]
+fn budget_ledger_rejects_invalid_usage_amount_dimensions() -> Result<(), BudgetError> {
+    let mut ledger = InMemoryBudgetLedger::new();
+    let invalid_key = dimensioned_tokens(1, " ", "support-model");
+    let invalid_value = dimensioned_tokens(1, "model", " ");
+
+    assert_eq!(
+        ledger.allocate(
+            "budget-invalid",
+            "tenant:acme",
+            [invalid_key.clone()],
+            "policy-1",
+            None,
+        ),
+        Err(BudgetError::InvalidUsageAmount {
+            message: "budget usage amount dimension keys must not be empty".to_string(),
+        })
+    );
+
+    ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+    assert_eq!(
+        ledger.reserve(
+            "budget-1",
+            "run:invalid",
+            [invalid_key.clone()],
+            ReservationPurpose::ProviderCall,
+            "later",
+            None,
+        ),
+        Err(BudgetError::InvalidUsageAmount {
+            message: "budget usage amount dimension keys must not be empty".to_string(),
+        })
+    );
+
+    let reservation = ledger.reserve(
+        "budget-1",
+        "run:1",
+        [tokens(10)],
+        ReservationPurpose::ProviderCall,
+        "later",
+        None,
+    )?;
+    assert_eq!(
+        ledger.commit(&reservation.reservation_id, [invalid_value.clone()]),
+        Err(BudgetError::InvalidUsageAmount {
+            message: "budget usage amount dimension values must not be empty".to_string(),
+        })
+    );
+
+    let permit = ledger.issue_permit(
+        "permit-1",
+        vec![reservation.reservation_id.clone()],
+        "run:1",
+        "turn-1",
+        1,
+        "standard",
+        "policy-digest",
+        "2026-06-22T01:00:00Z",
+        Vec::new(),
+    )?;
+    assert!(!BudgetPermit {
+        authorized_amounts: vec![invalid_key.clone()],
+        ..permit
+    }
+    .allows([tokens(1)]));
+    assert_eq!(
+        ledger.issue_permit(
+            "permit-invalid",
+            vec![reservation.reservation_id],
+            "run:1",
+            "turn-1",
+            1,
+            "standard",
+            "policy-digest",
+            "2026-06-22T01:00:00Z",
+            vec![invalid_key],
+        ),
+        Err(BudgetError::InvalidUsageAmount {
+            message: "budget usage amount dimension keys must not be empty".to_string(),
+        })
+    );
+    assert_eq!(
+        ledger.create_completion_reserve(
+            "reserve-invalid",
+            "budget-1",
+            CompletionReservePurpose::Finalization,
+            [invalid_value],
+            ["finalizer"],
+            None,
+        ),
+        Err(BudgetError::InvalidUsageAmount {
+            message: "budget usage amount dimension values must not be empty".to_string(),
+        })
+    );
+    Ok(())
+}
+
+#[test]
+fn sqlite_budget_ledger_rejects_invalid_usage_amount_dimensions() -> Result<(), BudgetError> {
+    let mut ledger = SqliteBudgetLedger::open_in_memory()?;
+    let invalid_key = dimensioned_tokens(1, " ", "support-model");
+    let invalid_value = dimensioned_tokens(1, "model", " ");
+
+    assert_eq!(
+        ledger.allocate(
+            "budget-invalid",
+            "tenant:acme",
+            [invalid_key.clone()],
+            "policy-1",
+            None,
+        ),
+        Err(BudgetError::InvalidUsageAmount {
+            message: "budget usage amount dimension keys must not be empty".to_string(),
+        })
+    );
+
+    ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+    assert_eq!(
+        ledger.reserve(
+            "budget-1",
+            "run:invalid",
+            [invalid_key.clone()],
+            ReservationPurpose::ProviderCall,
+            "later",
+            None,
+        ),
+        Err(BudgetError::InvalidUsageAmount {
+            message: "budget usage amount dimension keys must not be empty".to_string(),
+        })
+    );
+
+    let reservation = ledger.reserve(
+        "budget-1",
+        "run:1",
+        [tokens(10)],
+        ReservationPurpose::ProviderCall,
+        "later",
+        None,
+    )?;
+    assert_eq!(
+        ledger.commit(&reservation.reservation_id, [invalid_value.clone()]),
+        Err(BudgetError::InvalidUsageAmount {
+            message: "budget usage amount dimension values must not be empty".to_string(),
+        })
+    );
+    assert_eq!(
+        ledger.issue_permit(
+            "permit-invalid",
+            vec![reservation.reservation_id.clone()],
+            "run:1",
+            "turn-1",
+            1,
+            "standard",
+            "policy-digest",
+            "2026-06-22T01:00:00Z",
+            vec![invalid_key],
+        ),
+        Err(BudgetError::InvalidUsageAmount {
+            message: "budget usage amount dimension keys must not be empty".to_string(),
+        })
+    );
+    assert_eq!(
+        ledger.create_completion_reserve(
+            "reserve-invalid",
+            "budget-1",
+            CompletionReservePurpose::Finalization,
+            [invalid_value],
+            ["finalizer"],
+            None,
+        ),
+        Err(BudgetError::InvalidUsageAmount {
+            message: "budget usage amount dimension values must not be empty".to_string(),
+        })
+    );
+    Ok(())
 }
 
 #[test]

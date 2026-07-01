@@ -5224,6 +5224,10 @@ fn serialize_budget_error(error: &BudgetError) -> Value {
             "kind": kind,
             "unit": unit,
         }),
+        BudgetError::InvalidUsageAmount { message } => json!({
+            "code": "invalid_usage_amount",
+            "message": message,
+        }),
         BudgetError::Storage { message } => json!({
             "code": "storage",
             "message": message,

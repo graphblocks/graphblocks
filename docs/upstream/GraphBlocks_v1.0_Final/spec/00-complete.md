@@ -8274,6 +8274,8 @@ NaN, positive infinity, negative infinity, and unparseable quantities MUST fail 
 reservation, settlement, serialization, or policy comparison.
 Usage amount dimensions and usage record metadata MUST use non-empty string keys and non-empty
 string values before ledger accounting, persistence, serialization, or policy comparison.
+Budget ledgers MUST enforce the same `UsageAmount` validation before allocation, reservation,
+settlement, permit issuance, completion-reserve creation, or permit usage comparison.
 
 ```python
 class BudgetLimit(BaseModel):

@@ -228,6 +228,9 @@ pub enum BudgetError {
         kind: String,
         unit: String,
     },
+    InvalidUsageAmount {
+        message: String,
+    },
     Storage {
         message: String,
     },
@@ -298,8 +301,16 @@ impl BudgetPermit {
     where
         I: IntoIterator<Item = UsageAmount>,
     {
-        let authorized = amounts_to_map(self.authorized_amounts.clone());
-        let requested = amounts_to_map(amounts);
+        let authorized_amounts = self.authorized_amounts.clone();
+        let requested_amounts = amounts.into_iter().collect::<Vec<_>>();
+        if validate_usage_amounts(&authorized_amounts).is_err()
+            || validate_usage_amounts(&requested_amounts).is_err()
+        {
+            return false;
+        }
+
+        let authorized = amounts_to_map(authorized_amounts);
+        let requested = amounts_to_map(requested_amounts);
         requested
             .iter()
             .all(|(key, amount)| *amount <= authorized.get(key).copied().unwrap_or(0))
@@ -371,6 +382,8 @@ impl InMemoryBudgetLedger {
             });
         }
 
+        let amounts = amounts.into_iter().collect::<Vec<_>>();
+        validate_usage_amounts(&amounts)?;
         let allocated = amounts_to_map(amounts);
         let account = BudgetAccount {
             budget_id: budget_id.clone(),
@@ -405,6 +418,8 @@ impl InMemoryBudgetLedger {
             });
         }
 
+        let amounts = amounts.into_iter().collect::<Vec<_>>();
+        validate_usage_amounts(&amounts)?;
         let requested = amounts_to_map(amounts);
         let held_budget_ids = self.budget_chain(budget_id)?;
         for held_budget_id in &held_budget_ids {
@@ -498,6 +513,11 @@ impl InMemoryBudgetLedger {
                 reservation_id: reservation_id.to_string(),
                 status: reservation.status,
             });
+        }
+
+        validate_usage_amounts(&actual_amounts)?;
+        if let Some(max_overdraft) = &max_overdraft {
+            validate_usage_amounts(max_overdraft)?;
         }
 
         let reserved = amounts_to_map(reservation.amounts.clone());
@@ -730,6 +750,7 @@ impl InMemoryBudgetLedger {
         }
         let reservation = self.validate_permit_for_reservation(permit_id, reservation_id)?;
         let actual_amounts = actual_amounts.into_iter().collect::<Vec<_>>();
+        validate_usage_amounts(&actual_amounts)?;
         let actual = amounts_to_map(actual_amounts.clone());
         self.ensure_permit_allows_additional(permit_id, &actual, &reservation.budget_id)?;
         let settlement = self.commit(reservation_id, actual_amounts)?;
@@ -812,6 +833,7 @@ impl InMemoryBudgetLedger {
         low_watermark: Vec<UsageAmount>,
     ) -> Result<BudgetPermit, BudgetError> {
         let permit_id = permit_id.into();
+        validate_usage_amounts(&low_watermark)?;
         if self.permits.contains_key(&permit_id) {
             return Err(BudgetError::PermitConflict { permit_id });
         }
@@ -890,6 +912,8 @@ impl InMemoryBudgetLedger {
             });
         }
 
+        let amounts = amounts.into_iter().collect::<Vec<_>>();
+        validate_usage_amounts(&amounts)?;
         let requested = amounts_to_map(amounts);
         let held_budget_ids = self.budget_chain(budget_id)?;
         for held_budget_id in &held_budget_ids {
@@ -1367,6 +1391,8 @@ impl SqliteBudgetLedger {
         parent_budget_id: Option<String>,
     ) -> Result<BudgetAccount, BudgetError> {
         let budget_id = budget_id.into();
+        let amounts = amounts.into_iter().collect::<Vec<_>>();
+        validate_usage_amounts(&amounts)?;
         let allocated = amounts_to_map(amounts);
         let transaction = self
             .connection
@@ -1437,6 +1463,8 @@ impl SqliteBudgetLedger {
         reservation_id: Option<String>,
     ) -> Result<BudgetReservation, BudgetError> {
         let budget_id = budget_id.as_ref();
+        let amounts = amounts.into_iter().collect::<Vec<_>>();
+        validate_usage_amounts(&amounts)?;
         let requested = amounts_to_map(amounts);
         let transaction = self
             .connection
@@ -1606,6 +1634,7 @@ impl SqliteBudgetLedger {
         low_watermark: Vec<UsageAmount>,
     ) -> Result<BudgetPermit, BudgetError> {
         let permit_id = permit_id.into();
+        validate_usage_amounts(&low_watermark)?;
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -1729,6 +1758,7 @@ impl SqliteBudgetLedger {
         now: Option<&str>,
     ) -> Result<BudgetSettlement, BudgetError> {
         let actual_amounts = actual_amounts.into_iter().collect::<Vec<_>>();
+        validate_usage_amounts(&actual_amounts)?;
         let actual = amounts_to_map(actual_amounts.clone());
         let transaction = self
             .connection
@@ -1806,6 +1836,8 @@ impl SqliteBudgetLedger {
     {
         let reserve_id = reserve_id.into();
         let budget_id = budget_id.as_ref();
+        let amounts = amounts.into_iter().collect::<Vec<_>>();
+        validate_usage_amounts(&amounts)?;
         let requested = amounts_to_map(amounts);
         let spendable_by = spendable_by
             .into_iter()
@@ -2036,6 +2068,39 @@ fn amount_key(amount: &UsageAmount) -> AmountKey {
             .map(|(key, value)| (key.clone(), value.clone()))
             .collect(),
     )
+}
+
+fn validate_usage_amounts(amounts: &[UsageAmount]) -> Result<(), BudgetError> {
+    for amount in amounts {
+        if amount.amount < 0 {
+            return Err(BudgetError::InvalidUsageAmount {
+                message: "budget usage amount must be non-negative".to_string(),
+            });
+        }
+        if amount.kind.trim().is_empty() {
+            return Err(BudgetError::InvalidUsageAmount {
+                message: "budget usage amount kind must not be empty".to_string(),
+            });
+        }
+        if amount.unit.trim().is_empty() {
+            return Err(BudgetError::InvalidUsageAmount {
+                message: "budget usage amount unit must not be empty".to_string(),
+            });
+        }
+        for (key, value) in &amount.dimensions {
+            if key.trim().is_empty() {
+                return Err(BudgetError::InvalidUsageAmount {
+                    message: "budget usage amount dimension keys must not be empty".to_string(),
+                });
+            }
+            if value.trim().is_empty() {
+                return Err(BudgetError::InvalidUsageAmount {
+                    message: "budget usage amount dimension values must not be empty".to_string(),
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 fn amounts_to_map(amounts: impl IntoIterator<Item = UsageAmount>) -> BTreeMap<AmountKey, i64> {
@@ -2403,6 +2468,11 @@ fn sqlite_commit_reserved(
             reservation_id: reservation_id.to_string(),
             status: reservation.status,
         });
+    }
+
+    validate_usage_amounts(&actual_amounts)?;
+    if let Some(max_overdraft) = &max_overdraft {
+        validate_usage_amounts(max_overdraft)?;
     }
 
     let reserved = amounts_to_map(reservation.amounts.clone());
@@ -2858,6 +2928,7 @@ fn sqlite_next_counter(connection: &Connection, counter_name: &str) -> Result<u6
 }
 
 fn usage_amounts_json(amounts: &[UsageAmount]) -> Result<String, BudgetError> {
+    validate_usage_amounts(amounts)?;
     let values = amounts
         .iter()
         .map(|amount| {
@@ -2926,6 +2997,7 @@ fn usage_amounts_from_json(value: &str) -> Result<Vec<UsageAmount>, BudgetError>
             dimensions,
         });
     }
+    validate_usage_amounts(&amounts)?;
     Ok(amounts)
 }
 
