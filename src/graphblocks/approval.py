@@ -39,10 +39,21 @@ def _parse_datetime(value: str) -> datetime:
     normalized = _validate_non_empty_string("approval datetime", "value", value).strip()
     if normalized.endswith(("Z", "z")):
         normalized = f"{normalized[:-1]}+00:00"
-    parsed = datetime.fromisoformat(normalized)
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as error:
+        raise ValueError("approval datetime value must be an ISO datetime") from error
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def _validate_optional_datetime(owner: str, field_name: str, value: str | None) -> None:
+    if value is not None:
+        try:
+            _parse_datetime(value)
+        except ValueError as error:
+            raise ValueError(f"{owner} {field_name} must be an ISO datetime") from error
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +74,7 @@ class ApprovalRequest:
         if not isinstance(self.subject, ResourceSnapshotRef):
             raise ValueError("approval request subject must be a ResourceSnapshotRef")
         _validate_optional_non_empty_string("approval request", "expires_at", self.expires_at)
+        _validate_optional_datetime("approval request", "expires_at", self.expires_at)
         object.__setattr__(self, "metadata", _freeze_metadata("approval request", self.metadata))
 
     @classmethod
@@ -117,6 +129,8 @@ class ApprovalRecord:
         _validate_optional_non_empty_string("approval record", "decided_at", self.decided_at)
         _validate_optional_non_empty_string("approval record", "reason", self.reason)
         _validate_optional_non_empty_string("approval record", "invalidated_at", self.invalidated_at)
+        _validate_optional_datetime("approval record", "decided_at", self.decided_at)
+        _validate_optional_datetime("approval record", "invalidated_at", self.invalidated_at)
 
         if self.status in {"approved", "denied"}:
             if self.approver is None:

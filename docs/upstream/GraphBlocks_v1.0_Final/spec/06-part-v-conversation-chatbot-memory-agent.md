@@ -364,7 +364,7 @@ cancelled
 invalidated
 ```
 
-승인 후 arguments 또는 subject digest 변경을 허용하지 않는다. 변경되면 새 approval을 요청해야 한다. 내용 검토는 `ReviewRecord`를 사용한다. `expires_at`이 있는 approval은 만료 시각 이후 action을 authorize하지 않는다. `approved`/`denied` terminal record의 `decided_at`은 request `expires_at` 이후가 아니어야 하며, 만료 후 재승인이 필요하면 새 approval request를 만들어야 한다.
+승인 후 arguments 또는 subject digest 변경을 허용하지 않는다. 변경되면 새 approval을 요청해야 한다. 내용 검토는 `ReviewRecord`를 사용한다. Approval timestamp field는 parse 가능한 ISO datetime이어야 한다. `expires_at`이 있는 approval은 만료 시각 이후 action을 authorize하지 않는다. `approved`/`denied` terminal record의 `decided_at`은 request `expires_at` 이후가 아니어야 하며, 만료 후 재승인이 필요하면 새 approval request를 만들어야 한다.
 
 ## 142. Tool execution
 

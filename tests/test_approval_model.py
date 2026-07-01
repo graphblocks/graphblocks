@@ -59,6 +59,9 @@ def test_approval_request_rejects_invalid_identity_fields() -> None:
         with pytest.raises(ValueError, match=message):
             ApprovalRequest(**(base_request | overrides))
 
+    with pytest.raises(ValueError, match="approval request expires_at must be an ISO datetime"):
+        ApprovalRequest(**(base_request | {"expires_at": "later"}))
+
     with pytest.raises(ValueError, match="approval request subject must be a ResourceSnapshotRef"):
         ApprovalRequest(
             approval_id="approval-1",
@@ -187,6 +190,10 @@ def test_approval_record_rejects_invalid_state() -> None:
         )
     with pytest.raises(ValueError, match="invalidated approval record requires invalidated_at"):
         ApprovalRecord("approval-1", request, "invalidated")
+    with pytest.raises(ValueError, match="approval record decided_at must be an ISO datetime"):
+        ApprovalRecord("approval-1", request, "approved", approver=PrincipalRef("admin-1"), decided_at="later")
+    with pytest.raises(ValueError, match="approval record invalidated_at must be an ISO datetime"):
+        ApprovalRecord("approval-1", request, "invalidated", invalidated_at="later")
     with pytest.raises(ValueError, match="approval credential_refs item must not be empty"):
         ApprovalRecord("approval-1", request, "requested", credential_refs=("cred-1", " "))
     with pytest.raises(ValueError, match="approval record metadata must be a mapping"):
