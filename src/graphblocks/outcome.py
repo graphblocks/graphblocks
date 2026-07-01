@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from types import MappingProxyType
+from collections.abc import Mapping
 from typing import Literal
 
 
@@ -17,12 +19,46 @@ OutcomeStatus = Literal[
 InputMode = Literal["value", "outcome"]
 ReadinessKind = Literal["ready", "waiting", "blocked"]
 ResolvedInputKind = Literal["value", "outcome"]
+VALID_OUTCOME_STATUSES = frozenset(
+    ("value", "absent", "skipped", "denied", "budget_exhausted", "paused", "failed", "cancelled")
+)
+VALID_INPUT_MODES = frozenset(("value", "outcome"))
+VALID_READINESS_KINDS = frozenset(("ready", "waiting", "blocked"))
+VALID_RESOLVED_INPUT_KINDS = frozenset(("value", "outcome"))
+
+
+def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{owner} {field_name} must be a string")
+    if not value.strip():
+        raise ValueError(f"{owner} {field_name} must not be empty")
+    return value
+
+
+def _validate_optional_non_empty_string(owner: str, field_name: str, value: object | None) -> str | None:
+    if value is None:
+        return None
+    return _validate_non_empty_string(owner, field_name, value)
+
+
+def _freeze_metadata(owner: str, metadata: object) -> Mapping[str, object]:
+    if not isinstance(metadata, Mapping):
+        raise ValueError(f"{owner} metadata must be a mapping")
+    snapshot: dict[str, object] = {}
+    for key, value in metadata.items():
+        key_text = _validate_non_empty_string(owner, "metadata key", key)
+        snapshot[key_text] = value
+    return MappingProxyType(snapshot)
 
 
 @dataclass(frozen=True, order=True, slots=True)
 class PortRef:
     node: str
     port: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "node", _validate_non_empty_string("port ref", "node", self.node).strip())
+        object.__setattr__(self, "port", _validate_non_empty_string("port ref", "port", self.port).strip())
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +69,19 @@ class Outcome:
     message: str | None = None
     retryable: bool = False
     metadata: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.status not in VALID_OUTCOME_STATUSES:
+            raise ValueError(f"invalid outcome status {self.status}")
+        object.__setattr__(self, "code", _validate_optional_non_empty_string("outcome", "code", self.code))
+        object.__setattr__(self, "message", _validate_optional_non_empty_string("outcome", "message", self.message))
+        if not isinstance(self.retryable, bool):
+            raise ValueError("outcome retryable must be a boolean")
+        if self.status in {"skipped", "denied", "budget_exhausted", "paused", "failed", "cancelled"} and self.code is None:
+            raise ValueError(f"outcome status {self.status} requires code")
+        if self.status not in {"failed"} and self.retryable:
+            raise ValueError("only failed outcomes may be retryable")
+        object.__setattr__(self, "metadata", _freeze_metadata("outcome", self.metadata))
 
     @classmethod
     def value(cls, value: object) -> Outcome:
@@ -73,6 +122,13 @@ class InputDependency:
     source: PortRef
     mode: InputMode = "value"
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "input", _validate_non_empty_string("input dependency", "input", self.input).strip())
+        if not isinstance(self.source, PortRef):
+            raise ValueError("input dependency source must be PortRef")
+        if self.mode not in VALID_INPUT_MODES:
+            raise ValueError(f"invalid input dependency mode {self.mode}")
+
     @classmethod
     def value(cls, input: str, source: PortRef) -> InputDependency:
         return cls(input=input, source=source, mode="value")
@@ -86,6 +142,12 @@ class InputDependency:
 class ResolvedInput:
     kind: ResolvedInputKind
     payload: object
+
+    def __post_init__(self) -> None:
+        if self.kind not in VALID_RESOLVED_INPUT_KINDS:
+            raise ValueError(f"invalid resolved input kind {self.kind}")
+        if self.kind == "outcome" and not isinstance(self.payload, Outcome):
+            raise ValueError("resolved input outcome payload must be Outcome")
 
     @classmethod
     def value(cls, value: object) -> ResolvedInput:
@@ -105,6 +167,39 @@ class Readiness:
     source: PortRef | None = None
     outcome: Outcome | None = None
 
+    def __post_init__(self) -> None:
+        if self.kind not in VALID_READINESS_KINDS:
+            raise ValueError(f"invalid readiness kind {self.kind}")
+        if not isinstance(self.inputs, Mapping):
+            raise ValueError("readiness inputs must be a mapping")
+        inputs: dict[str, ResolvedInput] = {}
+        for key, value in self.inputs.items():
+            inputs[_validate_non_empty_string("readiness", "inputs key", key).strip()] = _validate_resolved_input(value)
+        object.__setattr__(self, "inputs", MappingProxyType(inputs))
+        missing = tuple(self.missing)
+        if any(not isinstance(port, PortRef) for port in missing):
+            raise ValueError("readiness missing entries must be PortRef")
+        object.__setattr__(self, "missing", missing)
+
+        if self.input is not None:
+            object.__setattr__(self, "input", _validate_non_empty_string("readiness", "input", self.input).strip())
+        if self.source is not None and not isinstance(self.source, PortRef):
+            raise ValueError("readiness source must be PortRef")
+        if self.outcome is not None and not isinstance(self.outcome, Outcome):
+            raise ValueError("readiness outcome must be Outcome")
+
+        if self.kind == "ready":
+            if self.missing or self.input is not None or self.source is not None or self.outcome is not None:
+                raise ValueError("ready readiness must not carry missing or blocked fields")
+        elif self.kind == "waiting":
+            if not self.missing:
+                raise ValueError("waiting readiness requires missing dependencies")
+            if self.inputs or self.input is not None or self.source is not None or self.outcome is not None:
+                raise ValueError("waiting readiness must only carry missing dependencies")
+        else:
+            if self.inputs or self.missing or self.input is None or self.source is None or self.outcome is None:
+                raise ValueError("blocked readiness requires input, source, and outcome only")
+
     @classmethod
     def ready(cls, inputs: dict[str, ResolvedInput]) -> Readiness:
         return cls(kind="ready", inputs=dict(inputs))
@@ -123,11 +218,17 @@ class ReadinessTracker:
     signals: dict[PortRef, Outcome] = field(default_factory=dict)
 
     def publish(self, port: PortRef, outcome: Outcome) -> Outcome | None:
+        if not isinstance(port, PortRef):
+            raise ValueError("readiness signal port must be PortRef")
+        if not isinstance(outcome, Outcome):
+            raise ValueError("readiness signal outcome must be Outcome")
         previous = self.signals.get(port)
         self.signals[port] = outcome
         return previous
 
     def signal(self, port: PortRef) -> Outcome | None:
+        if not isinstance(port, PortRef):
+            raise ValueError("readiness signal port must be PortRef")
         return self.signals.get(port)
 
     def readiness(self, dependencies: list[InputDependency]) -> Readiness:
@@ -135,6 +236,8 @@ class ReadinessTracker:
         resolved: dict[str, ResolvedInput] = {}
 
         for dependency in dependencies:
+            if not isinstance(dependency, InputDependency):
+                raise ValueError("readiness dependencies must be InputDependency")
             outcome = self.signals.get(dependency.source)
             if outcome is None:
                 missing.append(dependency.source)
@@ -151,3 +254,9 @@ class ReadinessTracker:
         if missing:
             return Readiness.waiting(missing)
         return Readiness.ready(resolved)
+
+
+def _validate_resolved_input(value: object) -> ResolvedInput:
+    if not isinstance(value, ResolvedInput):
+        raise ValueError("readiness inputs values must be ResolvedInput")
+    return value

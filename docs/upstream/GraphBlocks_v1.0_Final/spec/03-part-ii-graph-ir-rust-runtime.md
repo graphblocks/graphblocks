@@ -652,6 +652,10 @@ pub enum Outcome<T> {
 - `control.select`, `control.fallback`, `outcome.require`, `outcome.collect`이 명시적으로 outcome을 해석한다.
 - `null`은 schema가 허용한 정상 값이며 branch absence의 sentinel로 사용하지 않는다.
 - `Denied`, `BudgetExhausted`, `Paused`를 일반 `Failed`로 축소하지 않는다.
+- `PortRef`, `Outcome`, `InputDependency`, `ResolvedInput`, `Readiness` record는 construction 시
+  non-empty node/port/input identity, valid literal status/mode/kind, terminal reason code,
+  retryability boolean, metadata keys, resolved outcome payload type, readiness state field
+  combination을 검증해야 한다. Tracker는 publish/readiness 입력에서 typed record만 수락해야 한다.
 
 ## 54. Structured cancellation
 
@@ -1190,4 +1194,3 @@ body
 ```
 
 Plan에는 secret 값이 들어가서는 안 된다.
-
