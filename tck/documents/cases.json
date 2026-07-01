@@ -140,6 +140,42 @@
     }
   },
   {
+    "name": "parser_selection_ocr_fallback_is_explicit_and_deterministic",
+    "kind": "parser_selection_lock",
+    "allowOcrFallback": true,
+    "artifact": {
+      "artifactId": "artifact-scan",
+      "uri": "file:///tmp/scan.bin",
+      "mediaType": "application/octet-stream",
+      "filename": "scan.bin",
+      "checksum": "sha256:scan"
+    },
+    "descriptors": [
+      {
+        "processorId": "ocr-z",
+        "version": "1",
+        "priority": 10,
+        "supportsOcr": true
+      },
+      {
+        "processorId": "ocr-a",
+        "version": "2",
+        "priority": 10,
+        "supportsOcr": true
+      }
+    ],
+    "expected": {
+      "processorId": "ocr-a",
+      "processorVersion": "2",
+      "reason": "ocr_fallback",
+      "mediaType": "application/octet-stream",
+      "filename": "scan.bin",
+      "artifactChecksum": "sha256:scan",
+      "metadata": {},
+      "resolvedMetadata": {}
+    }
+  },
+  {
     "name": "invalid_chunk_size_is_rejected",
     "kind": "invalid_chunk_size",
     "sourceUri": "file:///tmp/notes.txt",

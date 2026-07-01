@@ -488,6 +488,14 @@ impl DocumentParserRegistry {
         &self,
         artifact: &ArtifactRef,
     ) -> Result<ParserSelectionLock, DocumentParserError> {
+        self.select_with_ocr_fallback(artifact, false)
+    }
+
+    pub fn select_with_ocr_fallback(
+        &self,
+        artifact: &ArtifactRef,
+        allow_ocr_fallback: bool,
+    ) -> Result<ParserSelectionLock, DocumentParserError> {
         let media_type = artifact
             .media_type
             .as_ref()
@@ -525,6 +533,14 @@ impl DocumentParserRegistry {
             {
                 candidates.push(("extension", descriptor));
             }
+        }
+        if candidates.is_empty() && allow_ocr_fallback {
+            candidates = self
+                .descriptors
+                .values()
+                .filter(|descriptor| descriptor.supports_ocr)
+                .map(|descriptor| ("ocr_fallback", descriptor))
+                .collect();
         }
         if candidates.is_empty() {
             return Err(DocumentParserError::NotFound {

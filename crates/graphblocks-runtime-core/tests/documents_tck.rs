@@ -172,6 +172,11 @@ fn run_case(case: &Value) -> Result<Value, String> {
                     .and_then(Value::as_i64)
                     .map(|priority| priority as i32)
                     .unwrap_or(0);
+                descriptor.supports_ocr = mapping
+                    .get("supportsOcr")
+                    .or_else(|| mapping.get("supports_ocr"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
                 if let Some(metadata) = mapping.get("metadata").and_then(Value::as_object) {
                     descriptor.metadata = metadata
                         .iter()
@@ -182,8 +187,13 @@ fn run_case(case: &Value) -> Result<Value, String> {
                     .register(descriptor)
                     .map_err(|error| error.to_string())?;
             }
+            let allow_ocr_fallback = case
+                .get("allowOcrFallback")
+                .or_else(|| case.get("allow_ocr_fallback"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
             let lock = registry
-                .select(&artifact)
+                .select_with_ocr_fallback(&artifact, allow_ocr_fallback)
                 .map_err(|error| error.to_string())?;
             let resolved = registry
                 .resolve_locked(&lock)

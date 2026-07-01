@@ -4915,6 +4915,12 @@ class TckRunner:
                                 and not isinstance(raw_descriptor.get("priority"), bool)
                                 else 0
                             ),
+                            supports_ocr=bool(
+                                raw_descriptor.get(
+                                    "supportsOcr",
+                                    raw_descriptor.get("supports_ocr", False),
+                                )
+                            ),
                             metadata=(
                                 dict(raw_metadata)
                                 if isinstance(raw_metadata, Mapping)
@@ -4922,7 +4928,15 @@ class TckRunner:
                             ),
                         )
                     )
-                lock = registry.select(artifact)
+                lock = registry.select(
+                    artifact,
+                    allow_ocr_fallback=bool(
+                        fixture.get(
+                            "allowOcrFallback",
+                            fixture.get("allow_ocr_fallback", False),
+                        )
+                    ),
+                )
                 resolved = registry.resolve_locked(lock)
                 observed = {
                     "processorId": lock.processor_id,

@@ -148,6 +148,9 @@ Lock에는 processor id/version, 선택 이유, 정규화된 media type, filenam
 artifact checksum, parser metadata snapshot이 포함된다. 동일 priority 후보가 여러 개면
 processor id와 version의 안정 정렬로 deterministic하게 선택해야 하며, 공유 documents
 TCK는 이 lock 생성 규칙을 검증해야 한다.
+OCR fallback parser는 일반 media type/extension 후보가 없고 호출자가 fallback을 명시적으로
+허용한 경우에만 선택할 수 있으며, fallback 후보 간에도 같은 deterministic tie-break 규칙을
+적용해야 한다.
 
 ### Converter capability
 

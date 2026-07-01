@@ -141,6 +141,37 @@ fn parser_registry_selection_is_deterministic_for_equal_priority()
 }
 
 #[test]
+fn parser_registry_ocr_fallback_is_explicit_and_deterministic()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut registry = DocumentParserRegistry::new();
+    let mut ocr_z = ParserDescriptor::new("ocr-z", "1").with_priority(10);
+    ocr_z.supports_ocr = true;
+    registry.register(ocr_z)?;
+    let mut ocr_a = ParserDescriptor::new("ocr-a", "2").with_priority(10);
+    ocr_a.supports_ocr = true;
+    registry.register(ocr_a)?;
+    let mut artifact = ArtifactRef::new("artifact-scan", "file:///tmp/scan.bin");
+    artifact.media_type = Some("application/octet-stream".to_owned());
+    artifact.filename = Some("scan.bin".to_owned());
+    artifact.checksum = Some("sha256:scan".to_owned());
+
+    assert!(matches!(
+        registry.select(&artifact),
+        Err(DocumentParserError::NotFound { .. })
+    ));
+
+    let lock = registry.select_with_ocr_fallback(&artifact, true)?;
+
+    assert_eq!(lock.processor_id, "ocr-a");
+    assert_eq!(lock.processor_version, "2");
+    assert_eq!(lock.reason, "ocr_fallback");
+    assert_eq!(lock.media_type.as_deref(), Some("application/octet-stream"));
+    assert_eq!(lock.filename.as_deref(), Some("scan.bin"));
+    assert_eq!(lock.artifact_checksum.as_deref(), Some("sha256:scan"));
+    Ok(())
+}
+
+#[test]
 fn parser_registry_parse_locked_uses_locked_parser_version()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut registry = DocumentParserRegistry::new();

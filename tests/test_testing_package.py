@@ -413,16 +413,18 @@ def test_testing_package_loads_shared_documents_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_documents_tck_cases(ROOT / "tck" / "documents" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["documents"] * 4
+    assert [case.kind for case in cases] == ["documents"] * 5
     assert report.ok
     assert {case.case_id for case in cases} == {
         "plain_text_revision_parse_preserves_lineage",
         "line_chunks_preserve_source_spans_and_acl",
         "parser_selection_lock_is_deterministic_and_records_inputs",
+        "parser_selection_ocr_fallback_is_explicit_and_deterministic",
         "invalid_chunk_size_is_rejected",
     }
     assert any(result.observed.get("sourceRefDigestMatches") is True for result in report.results)
     assert any(result.observed.get("processorId") == "a-parser" for result in report.results)
+    assert any(result.observed.get("reason") == "ocr_fallback" for result in report.results)
     assert any(result.observed.get("error") == "invalid_max_elements" for result in report.results)
     assert "load_documents_tck_cases" in graphblocks_testing.__all__
 
@@ -817,6 +819,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "plain_text_revision_parse_preserves_lineage",
         "line_chunks_preserve_source_spans_and_acl",
         "parser_selection_lock_is_deterministic_and_records_inputs",
+        "parser_selection_ocr_fallback_is_explicit_and_deterministic",
         "invalid_chunk_size_is_rejected",
     )
     assert by_suite["durable"].case_ids == (
