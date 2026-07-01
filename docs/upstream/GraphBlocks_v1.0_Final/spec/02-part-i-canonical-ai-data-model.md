@@ -526,6 +526,8 @@ class ResourceSnapshotRef(BaseModel):
     metadata: dict[str, JsonValue] = Field(default_factory=dict)
 ```
 
+`ResourceSnapshotRef.resource_id`와 `digest`는 비어 있지 않은 문자열이어야 한다. `resource_kind`, `uri` 같은 선택 identity/context field가 제공되면 역시 비어 있지 않은 문자열이어야 하며, metadata는 생성 시 복사되어 caller-side mutation이 snapshot identity record에 소급 반영되지 않아야 한다.
+
 ```text
 SourceLocator =
     DocumentSpan
@@ -973,4 +975,3 @@ class MetricResult(BaseModel):
 ```
 
 Conversation/RAG convenience schema는 profile-specific wrapper로 제공한다. Evaluation은 deterministic verification, model-based quality evaluation, policy compliance를 구분해야 한다.
-

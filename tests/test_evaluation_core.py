@@ -138,6 +138,28 @@ def test_review_record_is_invalid_for_changed_subject_digest() -> None:
     assert not review.invalidate("2026-06-22T00:05:00Z").is_valid_for(subject)
 
 
+def test_resource_snapshot_ref_validates_identity_fields_and_copies_metadata() -> None:
+    metadata = {"path": "candidate/out.sv"}
+    snapshot = ResourceSnapshotRef(
+        "candidate-1",
+        "sha256:candidate",
+        resource_kind="file",
+        uri="file:///tmp/candidate",
+        metadata=metadata,
+    )
+    metadata["path"] = "mutated"
+
+    assert snapshot.metadata == {"path": "candidate/out.sv"}
+    with pytest.raises(ValueError, match="resource snapshot resource_id must not be empty"):
+        ResourceSnapshotRef(" ", "sha256:candidate")
+    with pytest.raises(ValueError, match="resource snapshot digest must be a string"):
+        ResourceSnapshotRef("candidate-1", object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="resource snapshot resource_kind must not be empty"):
+        ResourceSnapshotRef("candidate-1", "sha256:candidate", resource_kind=" ")
+    with pytest.raises(ValueError, match="resource snapshot metadata must be a mapping"):
+        ResourceSnapshotRef("candidate-1", "sha256:candidate", metadata=object())  # type: ignore[arg-type]
+
+
 def test_change_set_freezes_operation_mappings_at_construction() -> None:
     operation = {"op": "file.write", "resource_id": "a.txt"}
     operations = [operation]

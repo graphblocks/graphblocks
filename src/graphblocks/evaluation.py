@@ -29,6 +29,23 @@ class ResourceSnapshotRef:
     uri: str | None = None
     metadata: dict[str, object] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        for field_name in ("resource_id", "digest"):
+            value = getattr(self, field_name)
+            if not isinstance(value, str):
+                raise ValueError(f"resource snapshot {field_name} must be a string")
+            if not value.strip():
+                raise ValueError(f"resource snapshot {field_name} must not be empty")
+        for field_name in ("resource_kind", "uri"):
+            value = getattr(self, field_name)
+            if value is not None and not isinstance(value, str):
+                raise ValueError(f"resource snapshot {field_name} must be a string")
+            if value is not None and not value.strip():
+                raise ValueError(f"resource snapshot {field_name} must not be empty")
+        if not isinstance(self.metadata, Mapping):
+            raise ValueError("resource snapshot metadata must be a mapping")
+        object.__setattr__(self, "metadata", dict(self.metadata))
+
 
 @dataclass(frozen=True, slots=True)
 class EvidenceRef:
