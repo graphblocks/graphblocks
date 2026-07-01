@@ -164,6 +164,11 @@ attachments:
 ```
 
 한 attachment가 여러 turn에서 재사용될 때 parse/index 결과를 cache할 수 있다.
+`attachment.resolve`는 ready 상태의 attachment만 context로 반환해야 한다. Message-scoped
+attachment는 요청된 message id에 묶인 경우에만 포함하고, conversation-scoped attachment는
+호출자가 conversation scope 포함을 요청한 경우에만 포함한다. User/project/tenant-scoped
+attachment는 별도 capability resolution 없이 conversation context로 승격하지 않는다.
+공유 conversation TCK는 readiness와 scope filtering을 검증해야 한다.
 
 Compaction record는 source message id, output summary message id, method, model, token
 before/after를 보존해야 하며 conversation revision을 증가시킨다. 공유 conversation TCK는

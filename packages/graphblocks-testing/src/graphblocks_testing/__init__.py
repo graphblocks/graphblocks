@@ -1624,6 +1624,7 @@ def load_conversation_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
             "commit_conflict",
             "branch_regenerate",
             "branch_attachments",
+            "attachment_resolution",
             "compaction_record",
             "delete_retention",
         }:
@@ -4833,6 +4834,71 @@ class TckRunner:
                     "branchMessageIds": [message.message_id for message in branch.messages],
                     "sourceAttachmentIds": [
                         attachment.attachment_id for attachment in source.conversation.attachments
+                    ],
+                }
+            elif kind == "attachment_resolution":
+                raw_attachments = fixture.get("attachments", [])
+                if not isinstance(raw_attachments, list) or not all(isinstance(attachment, Mapping) for attachment in raw_attachments):
+                    raw_attachments = []
+                    diagnostics.append(
+                        {
+                            "code": "ConversationAttachmentsInvalid",
+                            "message": "conversation TCK attachments must be a list of mappings",
+                            "path": "$.attachments",
+                        }
+                    )
+                raw_message_ids = fixture.get("messageIds", fixture.get("message_ids", []))
+                if not isinstance(raw_message_ids, list):
+                    raw_message_ids = []
+                    diagnostics.append(
+                        {
+                            "code": "ConversationMessageIdsInvalid",
+                            "message": "conversation TCK messageIds must be a list",
+                            "path": "$.messageIds",
+                        }
+                    )
+                message_ids = [str(message_id) for message_id in raw_message_ids]
+                store.create(Conversation(conversation_id=conversation_id))
+                for raw_attachment in raw_attachments:
+                    store.add_attachment(
+                        conversation_id,
+                        FileAttachment(
+                            attachment_id=str(raw_attachment.get("attachmentId", raw_attachment.get("attachment_id", "att"))),
+                            asset=ArtifactRef(
+                                str(raw_attachment.get("artifactId", raw_attachment.get("artifact_id", "artifact"))),
+                                str(raw_attachment.get("uri", "blob://attachments/file")),
+                            ),
+                            scope=str(raw_attachment.get("scope", "message")),
+                            purpose=str(raw_attachment.get("purpose", "retrieval")),
+                            ingestion_status=str(
+                                raw_attachment.get(
+                                    "ingestionStatus",
+                                    raw_attachment.get("ingestion_status", "ready"),
+                                )
+                            ),
+                            message_id=(
+                                str(raw_attachment.get("messageId", raw_attachment.get("message_id")))
+                                if raw_attachment.get("messageId", raw_attachment.get("message_id")) is not None
+                                else None
+                            ),
+                        ),
+                    )
+                with_conversation_scope = store.resolve_attachments(
+                    conversation_id,
+                    message_ids,
+                    include_conversation_scope=True,
+                )
+                without_conversation_scope = store.resolve_attachments(
+                    conversation_id,
+                    message_ids,
+                    include_conversation_scope=False,
+                )
+                observed = {
+                    "withConversationScopeIds": [
+                        attachment.attachment_id for attachment in with_conversation_scope
+                    ],
+                    "withoutConversationScopeIds": [
+                        attachment.attachment_id for attachment in without_conversation_scope
                     ],
                 }
             elif kind == "compaction_record":

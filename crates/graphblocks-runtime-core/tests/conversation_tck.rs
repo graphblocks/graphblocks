@@ -439,6 +439,45 @@ fn run_case(case: &Value) -> Result<Value, String> {
                 "sourceAttachmentIds": source.conversation.attachments.iter().map(|attachment| attachment.attachment_id.as_str()).collect::<Vec<_>>(),
             }))
         }
+        "attachment_resolution" => {
+            let raw_attachments = case
+                .get("attachments")
+                .and_then(Value::as_array)
+                .ok_or_else(|| "attachment_resolution case requires attachments".to_owned())?;
+            let message_ids = case
+                .get("messageIds")
+                .or_else(|| case.get("message_ids"))
+                .and_then(Value::as_array)
+                .ok_or_else(|| "attachment_resolution case requires messageIds".to_owned())?
+                .iter()
+                .map(|value| {
+                    value
+                        .as_str()
+                        .ok_or_else(|| "messageIds entries must be strings".to_owned())
+                        .map(ToOwned::to_owned)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+
+            store
+                .create(Conversation::new(conversation_id))
+                .map_err(|error| error.to_string())?;
+            for raw_attachment in raw_attachments {
+                store
+                    .add_attachment(conversation_id, attachment_from(raw_attachment)?)
+                    .map_err(|error| error.to_string())?;
+            }
+            let with_conversation_scope = store
+                .resolve_attachments(conversation_id, &message_ids, true)
+                .map_err(|error| error.to_string())?;
+            let without_conversation_scope = store
+                .resolve_attachments(conversation_id, &message_ids, false)
+                .map_err(|error| error.to_string())?;
+
+            Ok(json!({
+                "withConversationScopeIds": with_conversation_scope.iter().map(|attachment| attachment.attachment_id.as_str()).collect::<Vec<_>>(),
+                "withoutConversationScopeIds": without_conversation_scope.iter().map(|attachment| attachment.attachment_id.as_str()).collect::<Vec<_>>(),
+            }))
+        }
         "compaction_record" => {
             let raw_messages = case
                 .get("messages")

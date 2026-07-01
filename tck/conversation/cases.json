@@ -301,5 +301,67 @@
       "tombstoneCompactionCount": 0,
       "hardDeleted": true
     }
+  },
+  {
+    "name": "attachment_resolution_filters_by_readiness_message_and_conversation_scope",
+    "kind": "attachment_resolution",
+    "conversationId": "conv-resolve-attachments",
+    "messageIds": [
+      "msg-user"
+    ],
+    "attachments": [
+      {
+        "attachmentId": "att-message",
+        "artifactId": "artifact-message",
+        "uri": "blob://attachments/message.pdf",
+        "scope": "message",
+        "purpose": "retrieval",
+        "messageId": "msg-user",
+        "ingestionStatus": "ready"
+      },
+      {
+        "attachmentId": "att-other-message",
+        "artifactId": "artifact-other-message",
+        "uri": "blob://attachments/other-message.pdf",
+        "scope": "message",
+        "purpose": "retrieval",
+        "messageId": "msg-other",
+        "ingestionStatus": "ready"
+      },
+      {
+        "attachmentId": "att-pending",
+        "artifactId": "artifact-pending",
+        "uri": "blob://attachments/pending.pdf",
+        "scope": "message",
+        "purpose": "retrieval",
+        "messageId": "msg-user",
+        "ingestionStatus": "pending"
+      },
+      {
+        "attachmentId": "att-conversation",
+        "artifactId": "artifact-conversation",
+        "uri": "blob://attachments/conversation.pdf",
+        "scope": "conversation",
+        "purpose": "direct_input",
+        "ingestionStatus": "ready"
+      },
+      {
+        "attachmentId": "att-user-scope",
+        "artifactId": "artifact-user-scope",
+        "uri": "blob://attachments/user-scope.pdf",
+        "scope": "user",
+        "purpose": "reference",
+        "ingestionStatus": "ready"
+      }
+    ],
+    "expected": {
+      "withConversationScopeIds": [
+        "att-message",
+        "att-conversation"
+      ],
+      "withoutConversationScopeIds": [
+        "att-message"
+      ]
+    }
   }
 ]
