@@ -6816,6 +6816,51 @@ class TckRunner:
                     release_error = "lease_epoch_mismatch"
                     expected_epoch = error.expected_epoch
                     actual_epoch = error.actual_epoch
+                after_expiry = str(fixture.get("afterExpiry", fixture.get("after_expiry", "")))
+                reaped_pool = lease_pool.reap_expired(after_expiry) if after_expiry else lease_pool
+                available_after_expiry = reaped_pool.available_units
+                raw_post_expiry_request = fixture.get(
+                    "postExpiryRequest", fixture.get("post_expiry_request", {})
+                )
+                post_expiry_grant = None
+                if isinstance(raw_post_expiry_request, Mapping):
+                    reaped_pool, post_expiry_grant = reaped_pool.acquire(
+                        LeaseRequest(
+                            request_id=str(
+                                raw_post_expiry_request.get(
+                                    "requestId", raw_post_expiry_request.get("request_id", "")
+                                )
+                            ),
+                            holder=PolicyResourceRef(str(raw_post_expiry_request.get("holder", ""))),
+                            resource_kind=str(
+                                raw_post_expiry_request.get(
+                                    "resourceKind", raw_post_expiry_request.get("resource_kind", "")
+                                )
+                            ),
+                            units=int(raw_post_expiry_request.get("units", 1)),
+                        ),
+                        lease_id=str(
+                            raw_post_expiry_request.get(
+                                "leaseId", raw_post_expiry_request.get("lease_id", "")
+                            )
+                        ),
+                        acquired_at=str(
+                            raw_post_expiry_request.get(
+                                "acquiredAt", raw_post_expiry_request.get("acquired_at", "")
+                            )
+                        ),
+                        expires_at=str(
+                            raw_post_expiry_request.get(
+                                "expiresAt", raw_post_expiry_request.get("expires_at", "")
+                            )
+                        ),
+                    )
+                released_pool = reaped_pool
+                if post_expiry_grant is not None:
+                    released_pool = reaped_pool.release(
+                        post_expiry_grant.lease_id,
+                        fencing_epoch=post_expiry_grant.fencing_epoch,
+                    )
                 observed = {
                     "firstLeaseEpoch": first_grant.fencing_epoch,
                     "secondError": second_error,
@@ -6823,6 +6868,12 @@ class TckRunner:
                     "releaseError": release_error,
                     "expectedEpoch": expected_epoch,
                     "actualEpoch": actual_epoch,
+                    "availableAfterExpiry": available_after_expiry,
+                    "postExpiryLeaseEpoch": post_expiry_grant.fencing_epoch
+                    if post_expiry_grant is not None
+                    else None,
+                    "availableAfterPostExpiryAcquire": reaped_pool.available_units,
+                    "availableAfterValidRelease": released_pool.available_units,
                 }
             elif kind == "child_budget_delegation":
                 raw_parent = fixture.get("parentPermit", fixture.get("parent_permit", {}))

@@ -1152,6 +1152,8 @@ pub trait LeasePool: Send + Sync {
 
 Lease 만료 후 stale holder가 artifact/effect를 commit하지 못하도록 fencing token을 commit path에서 검사한다.
 
+공유 orchestration TCK는 LeasePool이 capacity exhaustion, TTL 기반 만료 reap, fencing epoch mismatch 거부, 만료 후 재획득, 유효 fencing token release를 동일하게 처리하는지 검증한다.
+
 ## 304. Policy와 review/check/gate
 
 ```text
@@ -1347,4 +1349,3 @@ optional durable backends
 ```
 
 `graphblocks-policy`, `graphblocks-budget`, `graphblocks-usage`의 provider-neutral in-memory/SQLite 개발 구현은 standard metapackage에 포함한다. Production distributed ledger와 external PDP adapter는 선택 설치다.
-

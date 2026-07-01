@@ -507,7 +507,7 @@ def test_testing_package_loads_shared_orchestration_tck_cases(monkeypatch) -> No
         "task_plan_dependency_and_cycle_errors_are_explicit",
         "context_access_digest_is_order_stable_and_rejects_unknown_resource",
         "model_pool_selects_eligible_model_and_rejects_disallowed_tool",
-        "lease_pool_enforces_capacity_and_fencing_epoch",
+        "lease_pool_enforces_capacity_expiry_fencing_and_release",
         "child_budget_delegation_creates_scoped_permit",
     }
     assert any(result.observed.get("selectedModel") == "support-internal" for result in report.results)
@@ -855,7 +855,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "task_plan_dependency_and_cycle_errors_are_explicit",
         "context_access_digest_is_order_stable_and_rejects_unknown_resource",
         "model_pool_selects_eligible_model_and_rejects_disallowed_tool",
-        "lease_pool_enforces_capacity_and_fencing_epoch",
+        "lease_pool_enforces_capacity_expiry_fencing_and_release",
         "child_budget_delegation_creates_scoped_permit",
     )
     assert by_suite["tool-lifecycle"].case_ids == (

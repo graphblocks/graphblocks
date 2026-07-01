@@ -281,7 +281,7 @@
     }
   },
   {
-    "name": "lease_pool_enforces_capacity_and_fencing_epoch",
+    "name": "lease_pool_enforces_capacity_expiry_fencing_and_release",
     "kind": "lease_pool",
     "pool": {
       "poolId": "formal-license",
@@ -312,13 +312,27 @@
       "leaseId": "lease-1",
       "fencingEpoch": 99
     },
+    "afterExpiry": "2026-06-26T00:05:01Z",
+    "postExpiryRequest": {
+      "requestId": "formal-check-3",
+      "holder": "trial:formal-3",
+      "resourceKind": "eda.formal",
+      "units": 1,
+      "leaseId": "lease-3",
+      "acquiredAt": "2026-06-26T00:05:01Z",
+      "expiresAt": "2026-06-26T00:10:00Z"
+    },
     "expected": {
       "firstLeaseEpoch": 1,
       "secondError": "lease_pool_exhausted",
       "availableAfterFirst": 0,
       "releaseError": "lease_epoch_mismatch",
       "expectedEpoch": 1,
-      "actualEpoch": 99
+      "actualEpoch": 99,
+      "availableAfterExpiry": 1,
+      "postExpiryLeaseEpoch": 2,
+      "availableAfterPostExpiryAcquire": 0,
+      "availableAfterValidRelease": 1
     }
   },
   {

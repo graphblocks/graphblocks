@@ -10,7 +10,7 @@ use graphblocks_runtime_core::orchestration::{
     ModelSelectionError, ModelSelectionRequest, TaskContextAccess, TaskContextAccessErrorReason,
     TaskPlan, TaskPlanError, TaskPlanLimits, TaskPlanPatch, TaskStep, WorkerProfile,
 };
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 
 #[test]
 fn orchestration_tck_cases_match_runtime_core() {
@@ -204,6 +204,26 @@ fn orchestration_tck_cases_match_runtime_core() {
                     } => (*expected_epoch, *actual_epoch),
                     other => panic!("unexpected lease release error {other:?}"),
                 };
+                let reaped = leased
+                    .reap_expired(required_str(case, &["afterExpiry", "after_expiry"]))
+                    .expect("expired lease is reaped");
+                let available_after_expiry = reaped.available_units();
+                let post_expiry_request = case
+                    .get("postExpiryRequest")
+                    .or_else(|| case.get("post_expiry_request"))
+                    .and_then(Value::as_object)
+                    .expect("post-expiry lease request");
+                let (reacquired, post_expiry_grant) = reaped
+                    .acquire(
+                        &lease_request_from(post_expiry_request),
+                        required_str(post_expiry_request, &["leaseId", "lease_id"]),
+                        required_str(post_expiry_request, &["acquiredAt", "acquired_at"]),
+                        required_str(post_expiry_request, &["expiresAt", "expires_at"]),
+                    )
+                    .expect("post-expiry lease succeeds");
+                let released = reacquired
+                    .release(&post_expiry_grant.lease_id, post_expiry_grant.fencing_epoch)
+                    .expect("post-expiry lease release succeeds");
                 json!({
                     "firstLeaseEpoch": first_grant.fencing_epoch,
                     "secondError": lease_pool_error_code(&second_error),
@@ -211,6 +231,10 @@ fn orchestration_tck_cases_match_runtime_core() {
                     "releaseError": lease_pool_error_code(&release_error),
                     "expectedEpoch": expected_epoch,
                     "actualEpoch": actual_epoch,
+                    "availableAfterExpiry": available_after_expiry,
+                    "postExpiryLeaseEpoch": post_expiry_grant.fencing_epoch,
+                    "availableAfterPostExpiryAcquire": reacquired.available_units(),
+                    "availableAfterValidRelease": released.available_units(),
                 })
             }
             "child_budget_delegation" => {
