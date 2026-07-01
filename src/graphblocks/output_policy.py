@@ -128,7 +128,18 @@ class DeclarativeOutputPolicyEvaluator:
     rules: tuple[DeclarativeOutputPolicyRule, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "rules", tuple(self.rules))
+        try:
+            rules = tuple(self.rules)
+        except TypeError as error:
+            raise ValueError("output policy evaluator rules must be DeclarativeOutputPolicyRule") from error
+        rule_ids: set[str] = set()
+        for rule in rules:
+            if not isinstance(rule, DeclarativeOutputPolicyRule):
+                raise ValueError("output policy evaluator rules must be DeclarativeOutputPolicyRule")
+            if rule.rule_id in rule_ids:
+                raise ValueError(f"duplicate output policy rule {rule.rule_id}")
+            rule_ids.add(rule.rule_id)
+        object.__setattr__(self, "rules", rules)
 
     def evaluate_chunk(self, chunk: GenerationChunk, *, evaluated_at: str) -> OutputPolicyDecision:
         if not isinstance(chunk, GenerationChunk):

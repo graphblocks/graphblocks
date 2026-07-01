@@ -161,6 +161,44 @@ def test_declarative_output_policy_rule_rejects_invalid_field_types() -> None:
         )
 
 
+def test_declarative_output_policy_evaluator_validates_rule_collection() -> None:
+    rule = DeclarativeOutputPolicyRule(
+        rule_id="blocked-secret",
+        literal="secret",
+        disposition="abort_response",
+    )
+
+    with pytest.raises(ValueError, match="output policy evaluator rules must be DeclarativeOutputPolicyRule"):
+        DeclarativeOutputPolicyEvaluator(rules=object())  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="output policy evaluator rules must be DeclarativeOutputPolicyRule"):
+        DeclarativeOutputPolicyEvaluator(rules=(rule, object()))  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="duplicate output policy rule blocked-secret"):
+        DeclarativeOutputPolicyEvaluator(rules=(rule, rule))
+
+
+def test_declarative_output_policy_evaluator_snapshots_mutable_rule_sequences() -> None:
+    rules = [
+        DeclarativeOutputPolicyRule(
+            rule_id="blocked-secret",
+            literal="secret",
+            disposition="abort_response",
+        )
+    ]
+
+    evaluator = DeclarativeOutputPolicyEvaluator(rules=rules)  # type: ignore[arg-type]
+    rules.append(
+        DeclarativeOutputPolicyRule(
+            rule_id="blocked-token",
+            literal="token",
+            disposition="abort_response",
+        )
+    )
+
+    assert [rule.rule_id for rule in evaluator.rules] == ["blocked-secret"]
+
+
 def test_output_policy_contract_rejects_unknown_literals() -> None:
     with pytest.raises(ValueError, match="invalid output disposition stream"):
         OutputPolicyDecision("decision-1", disposition="stream")

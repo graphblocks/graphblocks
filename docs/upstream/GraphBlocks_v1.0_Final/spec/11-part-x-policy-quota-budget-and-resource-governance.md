@@ -94,7 +94,7 @@ class PolicyProfileSpec(BaseModel):
     required_gates: list[str] = Field(default_factory=list)
 ```
 
-Default declarative rule language는 versioned, deterministic, side-effect-free여야 한다. Arbitrary Python, Jinja evaluation, network lookup을 rule expression으로 실행해서는 안 된다. External facts는 PIP에서 typed attribute로 제공한다.
+Default declarative rule language는 versioned, deterministic, side-effect-free여야 한다. Arbitrary Python, Jinja evaluation, network lookup을 rule expression으로 실행해서는 안 된다. External facts는 PIP에서 typed attribute로 제공한다. Declarative output-policy evaluator rule set은 construction 또는 compile boundary에서 typed `PolicyRule` records로 snapshot되어야 하며, 각 rule은 non-empty stable `rule_id`를 가져야 한다. 동일 evaluator 안에서 duplicate `rule_id`는 policy authoring error다.
 
 ```python
 class BudgetGrant(BaseModel):
