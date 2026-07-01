@@ -64,6 +64,26 @@ def _validate_string_mapping(
     return MappingProxyType(normalized)
 
 
+def _validate_string_sequence(owner: str, field_name: str, value: object) -> tuple[str, ...]:
+    if isinstance(value, str):
+        raise ValueError(f"{owner} {field_name} must be a sequence")
+    try:
+        return tuple(
+            sorted(
+                {
+                    _validate_non_empty_string(
+                        owner,
+                        field_name,
+                        item,
+                    )
+                    for item in value  # type: ignore[union-attr]
+                }
+            )
+        )
+    except TypeError as error:
+        raise ValueError(f"{owner} {field_name} must be a sequence") from error
+
+
 @dataclass(frozen=True, slots=True)
 class ServerEndpoint:
     method: str
@@ -685,35 +705,31 @@ class ApplicationProtocolCapabilities:
             ),
         )
         for field_name in ("commands", "events"):
-            values = getattr(self, field_name)
-            if isinstance(values, str):
-                raise ValueError(f"application protocol capabilities {field_name} must be a sequence")
-            try:
-                normalized = tuple(
-                    sorted(
-                        {
-                            _validate_non_empty_string(
-                                "application protocol capabilities",
-                                field_name,
-                                value,
-                            )
-                            for value in values
-                        }
-                    )
-                )
-            except TypeError as error:
-                raise ValueError(
-                    f"application protocol capabilities {field_name} must be a sequence"
-                ) from error
-            object.__setattr__(self, field_name, normalized)
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_string_sequence(
+                    "application protocol capabilities",
+                    field_name,
+                    getattr(self, field_name),
+                ),
+            )
 
     def with_commands(self, commands: list[str] | tuple[str, ...]) -> ApplicationProtocolCapabilities:
-        return replace(self, commands=tuple(commands))
+        return replace(
+            self,
+            commands=_validate_string_sequence("application protocol capabilities", "commands", commands),
+        )
 
     def with_events(self, events: list[str] | tuple[str, ...]) -> ApplicationProtocolCapabilities:
-        return replace(self, events=tuple(events))
+        return replace(
+            self,
+            events=_validate_string_sequence("application protocol capabilities", "events", events),
+        )
 
     def negotiate(self, peer: ApplicationProtocolCapabilities) -> ApplicationProtocolCapabilities:
+        if not isinstance(peer, ApplicationProtocolCapabilities):
+            raise ValueError("application protocol negotiation peer must be ApplicationProtocolCapabilities")
         if self.protocol_version != peer.protocol_version:
             raise ServerProtocolVersionMismatchError(self.protocol_version, peer.protocol_version)
         return ApplicationProtocolCapabilities(

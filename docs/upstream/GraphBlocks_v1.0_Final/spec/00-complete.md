@@ -5529,6 +5529,9 @@ literals, and details mappings before publication. Malformed health records MUST
 client-visible health payload construction.
 Server JSON response builders MUST validate payloads as mapping records with non-empty string keys
 before serialization. Malformed response payloads MUST fail before a client-visible frame is built.
+Application protocol capability negotiation MUST validate protocol versions and command/event
+collections before intersection. Mutator helpers MUST reject scalar strings and non-iterable
+capability inputs rather than treating them as individual characters.
 
 `graphblocks-tui`가 parser, vector DB, provider SDK, native runtime을 직접 의존해서는 안 된다.
 
