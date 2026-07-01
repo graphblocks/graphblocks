@@ -194,6 +194,30 @@ class WorkerAdmissionPolicy:
     package_lock_hash: str | None = None
     required_block: str | None = None
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.protocol_version, int) or isinstance(self.protocol_version, bool):
+            raise WorkerProtocolError("worker admission policy protocol_version must be an integer")
+        if self.protocol_version < 0:
+            raise WorkerProtocolError("worker admission policy protocol_version must not be negative")
+        object.__setattr__(
+            self,
+            "package_lock_hash",
+            _validate_worker_optional_non_empty_string(
+                "worker admission policy",
+                "package_lock_hash",
+                self.package_lock_hash,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "required_block",
+            _validate_worker_optional_non_empty_string(
+                "worker admission policy",
+                "required_block",
+                self.required_block,
+            ),
+        )
+
     @classmethod
     def current(cls) -> WorkerAdmissionPolicy:
         return cls()
@@ -651,10 +675,16 @@ def _validate_worker_non_negative_integer(owner: str, field_name: str, value: ob
 
 
 def admit_worker(advertisement: WorkerAdvertisement) -> None:
+    if not isinstance(advertisement, WorkerAdvertisement):
+        raise WorkerProtocolError("worker admission advertisement must be WorkerAdvertisement")
     admit_worker_with_policy(WorkerAdmissionPolicy.current(), advertisement)
 
 
 def admit_worker_with_policy(policy: WorkerAdmissionPolicy, advertisement: WorkerAdvertisement) -> None:
+    if not isinstance(policy, WorkerAdmissionPolicy):
+        raise WorkerProtocolError("worker admission policy must be WorkerAdmissionPolicy")
+    if not isinstance(advertisement, WorkerAdvertisement):
+        raise WorkerProtocolError("worker admission advertisement must be WorkerAdvertisement")
     if advertisement.protocol_version != policy.protocol_version:
         raise WorkerIncompatibleVersionError(policy.protocol_version, advertisement.protocol_version)
     if advertisement.worker_id == "":
@@ -682,6 +712,10 @@ def evaluate_worker_admission(
     policy: WorkerAdmissionPolicy,
     advertisement: WorkerAdvertisement,
 ) -> WorkerAdmissionDecision:
+    if not isinstance(policy, WorkerAdmissionPolicy):
+        raise WorkerProtocolError("worker admission policy must be WorkerAdmissionPolicy")
+    if not isinstance(advertisement, WorkerAdvertisement):
+        raise WorkerProtocolError("worker admission advertisement must be WorkerAdvertisement")
     reason_codes: list[str] = []
     if advertisement.protocol_version != policy.protocol_version:
         reason_codes.append("worker.incompatible_protocol_version")
@@ -729,8 +763,18 @@ class WorkerNoEligibleWorkerError(WorkerSelectionError):
 
 
 def select_worker_for_block(workers: list[WorkerAdvertisement] | tuple[WorkerAdvertisement, ...], block: str) -> WorkerAdvertisement:
+    if isinstance(workers, str):
+        raise WorkerProtocolError("worker selection workers must be iterable")
+    try:
+        worker_candidates = tuple(workers)
+    except TypeError as error:
+        raise WorkerProtocolError("worker selection workers must be iterable") from error
+    for worker in worker_candidates:
+        if not isinstance(worker, WorkerAdvertisement):
+            raise WorkerProtocolError("worker selection workers must be WorkerAdvertisement")
+    block = _validate_worker_non_empty_string("worker selection", "block", block)
     selected: WorkerAdvertisement | None = None
-    for worker in workers:
+    for worker in worker_candidates:
         if worker.state != "ready":
             continue
         if block not in {capability.block for capability in worker.supported_blocks}:

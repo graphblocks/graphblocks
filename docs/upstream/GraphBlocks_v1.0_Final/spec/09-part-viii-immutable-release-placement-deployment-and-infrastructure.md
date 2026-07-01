@@ -455,6 +455,13 @@ admission:
     retryAfter: 2s
 ```
 
+Worker admission policy and selection helpers MUST validate their public input contracts before
+evaluating readiness. Admission policies require a non-negative integer protocol version and
+non-empty optional package-lock/block requirements. Admission and evaluation helpers require typed
+`WorkerAdmissionPolicy` and `WorkerAdvertisement` records. Worker selection requires an iterable of
+typed worker advertisements and a non-empty block identity, and must fail with a protocol error for
+malformed inputs instead of relying on incidental language exceptions.
+
 Scaling signal은 workload별로 다르다.
 
 ```text
@@ -723,4 +730,3 @@ graphblocks deploy doctor deployment.yaml
 graphblocks images build deployment.yaml
 graphblocks packages closure deployment.yaml
 ```
-

@@ -150,6 +150,38 @@ def test_worker_admission_rejects_version_and_package_lock_mismatch() -> None:
     assert package_error.value.actual == "sha256:actual-package-lock"
 
 
+def test_worker_admission_policy_and_helpers_validate_inputs() -> None:
+    advertisement = WorkerAdvertisement.new(
+        "worker-local-1",
+        "doc-cpu",
+        "sha256:package-lock",
+        "sha256:image",
+        [BlockCapability("prompt.render@1")],
+    )
+
+    with pytest.raises(WorkerProtocolError, match="worker admission policy protocol_version must be an integer"):
+        WorkerAdmissionPolicy(protocol_version=True)  # type: ignore[arg-type]
+    with pytest.raises(WorkerProtocolError, match="worker admission policy protocol_version must not be negative"):
+        WorkerAdmissionPolicy(protocol_version=-1)
+    with pytest.raises(WorkerProtocolError, match="worker admission policy package_lock_hash must not be empty"):
+        WorkerAdmissionPolicy(package_lock_hash=" ")
+    with pytest.raises(WorkerProtocolError, match="worker admission policy required_block must not be empty"):
+        WorkerAdmissionPolicy.current().require_block(" ")
+    with pytest.raises(WorkerProtocolError, match="worker admission policy package_lock_hash must be a string"):
+        WorkerAdmissionPolicy.current().require_package_lock_hash(object())  # type: ignore[arg-type]
+
+    with pytest.raises(WorkerProtocolError, match="worker admission advertisement must be WorkerAdvertisement"):
+        admit_worker(object())  # type: ignore[arg-type]
+    with pytest.raises(WorkerProtocolError, match="worker admission policy must be WorkerAdmissionPolicy"):
+        admit_worker_with_policy(object(), advertisement)  # type: ignore[arg-type]
+    with pytest.raises(WorkerProtocolError, match="worker admission advertisement must be WorkerAdvertisement"):
+        admit_worker_with_policy(WorkerAdmissionPolicy.current(), object())  # type: ignore[arg-type]
+    with pytest.raises(WorkerProtocolError, match="worker admission policy must be WorkerAdmissionPolicy"):
+        evaluate_worker_admission(object(), advertisement)  # type: ignore[arg-type]
+    with pytest.raises(WorkerProtocolError, match="worker admission advertisement must be WorkerAdvertisement"):
+        evaluate_worker_admission(WorkerAdmissionPolicy.current(), object())  # type: ignore[arg-type]
+
+
 def test_worker_admission_decision_reports_drain_and_missing_capability() -> None:
     advertisement = WorkerAdvertisement.new(
         "worker-local-1",
@@ -344,6 +376,25 @@ def test_worker_selection_reports_when_no_ready_worker_supports_block() -> None:
         select_worker_for_block(workers, "model.generate@1")
 
     assert error.value.block == "model.generate@1"
+
+
+def test_worker_selection_validates_inputs() -> None:
+    advertisement = WorkerAdvertisement.new(
+        "worker-local-1",
+        "doc-cpu",
+        "sha256:package-lock",
+        "sha256:image",
+        [BlockCapability("prompt.render@1")],
+    )
+
+    with pytest.raises(WorkerProtocolError, match="worker selection workers must be iterable"):
+        select_worker_for_block("worker-local-1", "prompt.render@1")  # type: ignore[arg-type]
+    with pytest.raises(WorkerProtocolError, match="worker selection workers must be WorkerAdvertisement"):
+        select_worker_for_block([object()], "prompt.render@1")  # type: ignore[list-item]
+    with pytest.raises(WorkerProtocolError, match="worker selection block must not be empty"):
+        select_worker_for_block([advertisement], " ")
+    with pytest.raises(WorkerProtocolError, match="worker selection block must be a string"):
+        select_worker_for_block([advertisement], object())  # type: ignore[arg-type]
 
 
 def test_worker_invocation_envelopes_preserve_json_payloads_and_context() -> None:
