@@ -728,6 +728,10 @@ class ToolApprovalRequest:
             _validate_non_negative_integer("approval", "expires_at", expires_at)
         except ValueError as error:
             raise ToolApprovalError(str(error)) from error
+        if not isinstance(resolved_tool, ResolvedTool):
+            raise ToolApprovalError("approval resolved_tool must be a ResolvedTool")
+        if not isinstance(call, ToolCall):
+            raise ToolApprovalError("approval call must be a ToolCall")
         if expires_at <= requested_at:
             raise ToolApprovalError("approval expiration must be after request time")
         if call.resolved_tool_id != resolved_tool.resolved_tool_id:
@@ -760,6 +764,8 @@ class ToolApprovalRecord:
     reason: str | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.request, ToolApprovalRequest):
+            raise ValueError("approval request must be a ToolApprovalRequest")
         if self.status not in VALID_TOOL_APPROVAL_STATUSES:
             raise ValueError(f"invalid tool approval status {self.status}")
         if self.approval_id != self.request.approval_id:
@@ -824,6 +830,8 @@ class ToolApprovalRecord:
         return replace(self, status="invalidated", invalidated_at=invalidated_at)
 
     def is_valid_for(self, resolved_tool: ResolvedTool, call: ToolCall, *, principal_id: str, now: int) -> bool:
+        if not isinstance(resolved_tool, ResolvedTool) or not isinstance(call, ToolCall):
+            return False
         try:
             self.__post_init__()
         except ValueError:

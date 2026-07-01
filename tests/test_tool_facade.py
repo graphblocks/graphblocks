@@ -1095,6 +1095,44 @@ def _search_call(resolved: ResolvedTool, query: str = "runtime"):
     )
 
 
+def test_tool_approval_apis_validate_typed_boundary_inputs() -> None:
+    resolved = _resolved_search_tool()
+    call = _search_call(resolved)
+    request = ToolApprovalRequest.for_call(
+        "approval-1",
+        resolved,
+        call,
+        principal_id="user-1",
+        requested_at=1_000,
+        expires_at=2_000,
+    )
+
+    with pytest.raises(ToolApprovalError, match="approval resolved_tool must be a ResolvedTool"):
+        ToolApprovalRequest.for_call(
+            "approval-2",
+            object(),  # type: ignore[arg-type]
+            call,
+            principal_id="user-1",
+            requested_at=1_000,
+            expires_at=2_000,
+        )
+    with pytest.raises(ToolApprovalError, match="approval call must be a ToolCall"):
+        ToolApprovalRequest.for_call(
+            "approval-2",
+            resolved,
+            object(),  # type: ignore[arg-type]
+            principal_id="user-1",
+            requested_at=1_000,
+            expires_at=2_000,
+        )
+    with pytest.raises(ValueError, match="approval request must be a ToolApprovalRequest"):
+        ToolApprovalRecord(approval_id="approval-1", request=object(), status="requested")  # type: ignore[arg-type]
+
+    record = ToolApprovalRecord.approve(request, approver_id="admin-1", decided_at=1_100)
+    assert record.is_valid_for(object(), call, principal_id="user-1", now=1_500) is False  # type: ignore[arg-type]
+    assert record.is_valid_for(resolved, object(), principal_id="user-1", now=1_500) is False  # type: ignore[arg-type]
+
+
 def test_tool_approval_record_is_valid_only_for_same_call_arguments_and_principal() -> None:
     resolved = _resolved_search_tool()
     call = _search_call(resolved)
