@@ -53,6 +53,38 @@ def test_review_request_rejects_invalid_created_at() -> None:
         )
 
 
+def test_review_request_rejects_invalid_identity_and_metadata_fields() -> None:
+    base = {
+        "request_id": "request-1",
+        "subject": ResourceSnapshotRef("candidate-1", "sha256:subject"),
+        "requested_by": PrincipalRef("author-1"),
+        "required_scopes": ("quality",),
+        "created_at": "2026-06-24T00:00:00Z",
+    }
+
+    cases = [
+        ({"request_id": " "}, "review request request_id must not be empty"),
+        ({"subject": object()}, "review request subject must be a ResourceSnapshotRef"),
+        ({"requested_by": object()}, "review request requested_by must be a PrincipalRef"),
+        ({"required_scopes": "quality"}, "review request required_scopes must be a collection of strings"),
+        ({"required_scopes": ("quality", object())}, "review request required_scopes items must be strings"),
+        ({"required_scopes": ("quality", " ")}, "review request required_scopes item must not be empty"),
+        ({"metadata": object()}, "review request metadata must be a mapping"),
+        ({"metadata": {object(): "value"}}, "review request metadata keys must be strings"),
+        ({"metadata": {" ": "value"}}, "review request metadata key must not be empty"),
+    ]
+
+    for overrides, message in cases:
+        with pytest.raises(ValueError, match=message):
+            ReviewRequest(**(base | overrides))  # type: ignore[arg-type]
+
+    metadata = {"purpose": "release"}
+    request = ReviewRequest(**(base | {"metadata": metadata}))
+    metadata["purpose"] = "mutated"
+
+    assert request.metadata == {"purpose": "release"}
+
+
 def test_review_workflow_records_review_with_credential_reference() -> None:
     request = ReviewRequest(
         request_id="request-1",
@@ -112,6 +144,38 @@ def test_reviewer_credential_rejects_invalid_timestamps() -> None:
             issued_at="2026-06-24T00:00:00Z",
             expires_at="2026-06-24T00:00:00Z",
         )
+
+
+def test_reviewer_credential_rejects_invalid_identity_and_metadata_fields() -> None:
+    reviewer = PrincipalRef("reviewer-1")
+    base = {
+        "credential_ref": "cred-quality",
+        "reviewer": reviewer,
+        "scopes": ("quality",),
+        "issued_at": "2026-06-24T00:00:00Z",
+    }
+
+    cases = [
+        ({"credential_ref": " "}, "reviewer credential credential_ref must not be empty"),
+        ({"reviewer": object()}, "reviewer credential reviewer must be a PrincipalRef"),
+        ({"scopes": "quality"}, "reviewer credential scopes must be a collection of strings"),
+        ({"scopes": ("quality", object())}, "reviewer credential scopes items must be strings"),
+        ({"scopes": ("quality", " ")}, "reviewer credential scopes item must not be empty"),
+        ({"metadata": object()}, "reviewer credential metadata must be a mapping"),
+        ({"metadata": {object(): "value"}}, "reviewer credential metadata keys must be strings"),
+        ({"metadata": {" ": "value"}}, "reviewer credential metadata key must not be empty"),
+    ]
+
+    for overrides, message in cases:
+        with pytest.raises(ValueError, match=message):
+            ReviewerCredential(**(base | overrides))  # type: ignore[arg-type]
+
+    metadata = {"source": "policy"}
+    credential = ReviewerCredential(**(base | {"metadata": metadata}))
+    metadata["source"] = "mutated"
+
+    assert credential.metadata == {"source": "policy"}
+    assert credential.scopes == ("quality",)
 
 
 def test_review_workflow_rejects_invalid_review_created_at() -> None:

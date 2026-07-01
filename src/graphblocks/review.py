@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Protocol
@@ -9,12 +10,43 @@ from .evaluation import ResourceSnapshotRef, ReviewDecision, ReviewRecord
 from .policy import PrincipalRef
 
 
-def _parse_review_datetime(value: object, *, owner: str, field_name: str) -> datetime:
+def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
     if not isinstance(value, str):
         raise ValueError(f"{owner} {field_name} must be a string")
-    normalized = value.strip()
-    if not normalized:
+    if not value.strip():
         raise ValueError(f"{owner} {field_name} must not be empty")
+    return value
+
+
+def _validate_string_tuple(owner: str, field_name: str, values: object) -> tuple[str, ...]:
+    if isinstance(values, str):
+        raise ValueError(f"{owner} {field_name} must be a collection of strings")
+    try:
+        normalized = tuple(values)  # type: ignore[arg-type]
+    except TypeError as error:
+        raise ValueError(f"{owner} {field_name} must be a collection of strings") from error
+    for item in normalized:
+        if not isinstance(item, str):
+            raise ValueError(f"{owner} {field_name} items must be strings")
+        if not item.strip():
+            raise ValueError(f"{owner} {field_name} item must not be empty")
+    return tuple(sorted(set(normalized)))
+
+
+def _freeze_metadata(owner: str, value: object) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{owner} metadata must be a mapping")
+    metadata = dict(value)
+    for key in metadata:
+        if not isinstance(key, str):
+            raise ValueError(f"{owner} metadata keys must be strings")
+        if not key.strip():
+            raise ValueError(f"{owner} metadata key must not be empty")
+    return metadata
+
+
+def _parse_review_datetime(value: object, *, owner: str, field_name: str) -> datetime:
+    normalized = _validate_non_empty_string(owner, field_name, value).strip()
     if normalized.endswith(("Z", "z")):
         normalized = f"{normalized[:-1]}+00:00"
     try:
@@ -41,9 +73,18 @@ class ReviewRequest:
     metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        _validate_non_empty_string("review request", "request_id", self.request_id)
+        if not isinstance(self.subject, ResourceSnapshotRef):
+            raise ValueError("review request subject must be a ResourceSnapshotRef")
+        if not isinstance(self.requested_by, PrincipalRef):
+            raise ValueError("review request requested_by must be a PrincipalRef")
         _parse_review_datetime(self.created_at, owner="review request", field_name="created_at")
-        object.__setattr__(self, "required_scopes", tuple(sorted(set(self.required_scopes))))
-        object.__setattr__(self, "metadata", dict(self.metadata))
+        object.__setattr__(
+            self,
+            "required_scopes",
+            _validate_string_tuple("review request", "required_scopes", self.required_scopes),
+        )
+        object.__setattr__(self, "metadata", _freeze_metadata("review request", self.metadata))
 
     def content_digest(self) -> str:
         return canonical_hash(
@@ -78,14 +119,17 @@ class ReviewerCredential:
     metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        _validate_non_empty_string("reviewer credential", "credential_ref", self.credential_ref)
+        if not isinstance(self.reviewer, PrincipalRef):
+            raise ValueError("reviewer credential reviewer must be a PrincipalRef")
         _parse_review_datetime(self.issued_at, owner="reviewer credential", field_name="issued_at")
         _validate_optional_review_datetime("reviewer credential", "expires_at", self.expires_at)
         if self.expires_at is not None and _parse_review_datetime(
             self.expires_at, owner="reviewer credential", field_name="expires_at"
         ) <= _parse_review_datetime(self.issued_at, owner="reviewer credential", field_name="issued_at"):
             raise ValueError("reviewer credential expires_at must be after issued_at")
-        object.__setattr__(self, "scopes", tuple(sorted(set(self.scopes))))
-        object.__setattr__(self, "metadata", dict(self.metadata))
+        object.__setattr__(self, "scopes", _validate_string_tuple("reviewer credential", "scopes", self.scopes))
+        object.__setattr__(self, "metadata", _freeze_metadata("reviewer credential", self.metadata))
 
     def allows(self, reviewer: PrincipalRef, scope: str) -> bool:
         return self.reviewer.principal_id == reviewer.principal_id and scope in self.scopes
