@@ -818,9 +818,19 @@ class RunOwnershipLease:
 class RemotePayloadLimits:
     max_inline_bytes: int
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.max_inline_bytes, int) or isinstance(self.max_inline_bytes, bool):
+            raise RemotePayloadInvalidLimitError("max_inline_bytes must be an integer")
+        if self.max_inline_bytes < 0:
+            raise RemotePayloadInvalidLimitError("max_inline_bytes must be non-negative")
+
 
 class RemotePayloadError(ValueError):
     """Base error for invalid remote payload contracts."""
+
+
+class RemotePayloadInvalidLimitError(RemotePayloadError):
+    pass
 
 
 class RemotePayloadOversizedInlineError(RemotePayloadError):
@@ -849,6 +859,10 @@ class RemotePayloadInvalidModeError(RemotePayloadError):
 
 
 def validate_remote_payload(payload: Mapping[str, object], limits: RemotePayloadLimits) -> None:
+    if not isinstance(payload, Mapping):
+        raise RemotePayloadInvalidModeError("payload")
+    if not isinstance(limits, RemotePayloadLimits):
+        raise RemotePayloadInvalidLimitError("limits must be RemotePayloadLimits")
     mode = payload.get("mode")
     if mode == "inline":
         try:
@@ -1594,6 +1608,7 @@ __all__ = [
     "RemotePayloadError",
     "RemotePayloadInlineJsonEncodingError",
     "RemotePayloadInvalidArtifactRefError",
+    "RemotePayloadInvalidLimitError",
     "RemotePayloadInvalidModeError",
     "RemotePayloadLimits",
     "RemotePayloadOversizedInlineError",

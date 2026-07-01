@@ -62,6 +62,10 @@ required store migration
 
 Ephemeral request는 full journal을 생략할 수 있지만 effect와 required audit는 별도 정책을 따른다.
 
+Remote worker edge payload는 worker protocol boundary에서 mapping-shaped payload와 non-negative
+inline byte limit을 검증해야 한다. Inline payload는 canonical JSON byte size가 limit 이하일 때만 허용하고,
+large or durable data는 `artifact_ref` payload로 전달해야 한다.
+
 ## 265. AuditLog
 
 ```python

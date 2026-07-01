@@ -10,6 +10,7 @@ from graphblocks.worker import (
     BlockCapability,
     RemoteEdgePayload,
     RemotePayloadInvalidArtifactRefError,
+    RemotePayloadInvalidLimitError,
     RemotePayloadInvalidModeError,
     RemotePayloadLimits,
     RemotePayloadOversizedInlineError,
@@ -1074,6 +1075,26 @@ def test_remote_payload_validator_rejects_invalid_artifact_reference() -> None:
         )
 
     assert error.value.field == "artifact_id"
+
+
+def test_remote_payload_limits_validate_non_negative_integer_bound() -> None:
+    assert RemotePayloadLimits(max_inline_bytes=0).max_inline_bytes == 0
+
+    with pytest.raises(RemotePayloadInvalidLimitError, match="max_inline_bytes must be an integer"):
+        RemotePayloadLimits(max_inline_bytes=True)  # type: ignore[arg-type]
+    with pytest.raises(RemotePayloadInvalidLimitError, match="max_inline_bytes must be an integer"):
+        RemotePayloadLimits(max_inline_bytes="8")  # type: ignore[arg-type]
+    with pytest.raises(RemotePayloadInvalidLimitError, match="max_inline_bytes must be non-negative"):
+        RemotePayloadLimits(max_inline_bytes=-1)
+
+
+def test_remote_payload_validator_rejects_non_mapping_payload_or_limits() -> None:
+    with pytest.raises(RemotePayloadInvalidModeError) as payload_error:
+        validate_remote_payload(["inline"], RemotePayloadLimits(max_inline_bytes=8))  # type: ignore[arg-type]
+    assert payload_error.value.mode == "payload"
+
+    with pytest.raises(RemotePayloadInvalidLimitError, match="limits must be RemotePayloadLimits"):
+        validate_remote_payload({"mode": "inline", "value": "ok"}, object())  # type: ignore[arg-type]
 
 
 def test_run_ownership_lease_round_trips_with_fencing_epoch() -> None:

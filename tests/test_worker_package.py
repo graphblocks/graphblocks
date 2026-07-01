@@ -70,6 +70,7 @@ def test_worker_package_reexports_worker_protocol_contracts(monkeypatch) -> None
         is None
     )
     assert "RemoteEdgePayload" in graphblocks_worker.__all__
+    assert "RemotePayloadInvalidLimitError" in graphblocks_worker.__all__
     assert "WorkerDrainPlan" in graphblocks_worker.__all__
     assert "WorkerProtocolMessage" in graphblocks_worker.__all__
     assert graphblocks_worker.VALID_WORKER_PROTOCOL_MESSAGE_KINDS is VALID_WORKER_PROTOCOL_MESSAGE_KINDS
