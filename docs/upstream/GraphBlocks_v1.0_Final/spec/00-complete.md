@@ -4124,6 +4124,11 @@ class ToolDependency(BaseModel):
 
 같은 resource를 write하는 tool은 keyed mutex 또는 transaction policy가 필요할 수 있다. 각 parallel call은 parent budget에서 atomic reservation을 가져야 한다.
 
+`toolExecution.maximumParallelism` MUST be a positive integer, `toolExecution.parallelToolCalls`
+MUST be a boolean, and `toolExecution.effectSerialization.keyTemplate` MUST be a non-empty
+string when supplied. The compiler MUST report malformed tool execution settings instead of
+silently treating them as disabled defaults.
+
 ## 144. Tool error semantics
 
 ```text

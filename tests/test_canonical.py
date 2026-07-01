@@ -892,11 +892,11 @@ def test_compile_rejects_parallel_state_changing_tools_without_effect_serializat
     assert _error_codes(graph) == ["UnsafeParallelEffects"]
 
 
-def test_compile_does_not_coerce_non_boolean_parallel_tool_calls() -> None:
+def test_compile_rejects_malformed_tool_execution_settings() -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
         "kind": "Graph",
-        "metadata": {"name": "parallel-tools-string-flag"},
+        "metadata": {"name": "malformed-tool-execution"},
         "spec": {
             "nodes": {"agent": {"block": "agent.run@1"}},
             "bindings": {
@@ -916,11 +916,38 @@ def test_compile_does_not_coerce_non_boolean_parallel_tool_calls() -> None:
                     }
                 }
             },
-            "toolExecution": {"parallelToolCalls": "false"},
+            "toolExecution": {
+                "maximumParallelism": 0,
+                "parallelToolCalls": "false",
+                "effectSerialization": {"keyTemplate": ""},
+            },
+        },
+    }
+    non_mapping = {
+        **graph,
+        "spec": {
+            **graph["spec"],
+            "toolExecution": "parallel",
+        },
+    }
+    non_mapping_effect_serialization = {
+        **graph,
+        "spec": {
+            **graph["spec"],
+            "toolExecution": {
+                "maximumParallelism": 1,
+                "effectSerialization": "resource",
+            },
         },
     }
 
-    assert "UnsafeParallelEffects" not in _error_codes(graph)
+    assert _error_codes(graph) == [
+        "InvalidToolExecution",
+        "InvalidToolExecution",
+        "InvalidToolExecution",
+    ]
+    assert _error_codes(non_mapping) == ["InvalidToolExecution"]
+    assert _error_codes(non_mapping_effect_serialization) == ["InvalidToolExecution"]
 
 
 def test_compile_rejects_retried_write_tool_without_required_idempotency() -> None:

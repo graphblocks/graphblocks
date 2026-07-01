@@ -458,31 +458,87 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
     tools = bindings.get("tools") if bindings is not None else None
     tools = tools if isinstance(tools, dict) else None
     if tools is not None:
-        tool_execution = spec.get("toolExecution") or spec.get("tool_execution")
-        tool_execution = tool_execution if isinstance(tool_execution, dict) else None
+        tool_execution_key = "toolExecution" if "toolExecution" in spec else "tool_execution"
+        tool_execution = spec.get(tool_execution_key)
+        if tool_execution is not None and not isinstance(tool_execution, dict):
+            diagnostics.append(
+                Diagnostic(
+                    "InvalidToolExecution",
+                    "toolExecution must be a mapping",
+                    f"$.spec.{tool_execution_key}",
+                )
+            )
+            tool_execution = None
         maximum_parallelism = 1
         parallel_tool_calls = False
         has_effect_serialization_key = False
         if tool_execution is not None:
+            maximum_parallelism_key = (
+                "maximumParallelism" if "maximumParallelism" in tool_execution else "maximum_parallelism"
+            )
             configured_parallelism = tool_execution.get(
-                "maximumParallelism",
-                tool_execution.get("maximum_parallelism", 1),
+                maximum_parallelism_key,
+                1,
             )
             if isinstance(configured_parallelism, int) and not isinstance(configured_parallelism, bool):
                 maximum_parallelism = configured_parallelism
+                if maximum_parallelism < 1:
+                    diagnostics.append(
+                        Diagnostic(
+                            "InvalidToolExecution",
+                            "toolExecution maximumParallelism must be a positive integer",
+                            f"$.spec.{tool_execution_key}.{maximum_parallelism_key}",
+                        )
+                    )
+            elif maximum_parallelism_key in tool_execution:
+                diagnostics.append(
+                    Diagnostic(
+                        "InvalidToolExecution",
+                        "toolExecution maximumParallelism must be a positive integer",
+                        f"$.spec.{tool_execution_key}.{maximum_parallelism_key}",
+                    )
+                )
+            parallel_tool_calls_key = (
+                "parallelToolCalls" if "parallelToolCalls" in tool_execution else "parallel_tool_calls"
+            )
             configured_parallel_tool_calls = tool_execution.get(
-                "parallelToolCalls",
-                tool_execution.get("parallel_tool_calls", False),
+                parallel_tool_calls_key,
+                False,
             )
-            parallel_tool_calls = (
-                configured_parallel_tool_calls if isinstance(configured_parallel_tool_calls, bool) else False
+            if isinstance(configured_parallel_tool_calls, bool):
+                parallel_tool_calls = configured_parallel_tool_calls
+            elif parallel_tool_calls_key in tool_execution:
+                diagnostics.append(
+                    Diagnostic(
+                        "InvalidToolExecution",
+                        "toolExecution parallelToolCalls must be a boolean",
+                        f"$.spec.{tool_execution_key}.{parallel_tool_calls_key}",
+                    )
+                )
+            effect_serialization_key = (
+                "effectSerialization" if "effectSerialization" in tool_execution else "effect_serialization"
             )
-            effect_serialization = tool_execution.get("effectSerialization") or tool_execution.get(
-                "effect_serialization"
-            )
+            effect_serialization = tool_execution.get(effect_serialization_key)
             if isinstance(effect_serialization, dict):
-                key_template = effect_serialization.get("keyTemplate") or effect_serialization.get("key_template")
+                key_template_key = "keyTemplate" if "keyTemplate" in effect_serialization else "key_template"
+                key_template = effect_serialization.get(key_template_key)
                 has_effect_serialization_key = isinstance(key_template, str) and bool(key_template.strip())
+                if key_template_key in effect_serialization and not has_effect_serialization_key:
+                    diagnostics.append(
+                        Diagnostic(
+                            "InvalidToolExecution",
+                            "toolExecution effectSerialization keyTemplate must be a non-empty string",
+                            f"$.spec.{tool_execution_key}.{effect_serialization_key}.{key_template_key}",
+                        )
+                    )
+            elif effect_serialization_key in tool_execution:
+                diagnostics.append(
+                    Diagnostic(
+                        "InvalidToolExecution",
+                        "toolExecution effectSerialization must be a mapping",
+                        f"$.spec.{tool_execution_key}.{effect_serialization_key}",
+                    )
+                )
 
         has_state_changing_tool = False
         for tool_key, tool in tools.items():
