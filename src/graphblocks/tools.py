@@ -1827,6 +1827,16 @@ class ToolResult:
             error = dict(self.error)
             if any(not isinstance(key, str) or not key.strip() for key in error):
                 raise ValueError("tool result error keys must be non-empty strings")
+            error_code = error.get("code")
+            if not isinstance(error_code, str):
+                raise ValueError("tool result error code must be a string")
+            if not error_code.strip():
+                raise ValueError("tool result error code must not be empty")
+            error_message = error.get("message")
+            if not isinstance(error_message, str):
+                raise ValueError("tool result error message must be a string")
+            if not error_message.strip():
+                raise ValueError("tool result error message must not be empty")
             object.__setattr__(self, "error", MappingProxyType(error))
 
     @classmethod

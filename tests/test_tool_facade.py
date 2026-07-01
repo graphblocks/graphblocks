@@ -2210,6 +2210,14 @@ def test_tool_result_metadata_mappings_are_copied_and_read_only() -> None:
         ToolResult(tool_call_id="call-1", status="failed", error=object())  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="tool result error keys must be non-empty strings"):
         ToolResult(tool_call_id="call-1", status="failed", error={"": "tool.failed"})
+    with pytest.raises(ValueError, match="tool result error code must be a string"):
+        ToolResult(tool_call_id="call-1", status="failed", error={"message": "failed"})
+    with pytest.raises(ValueError, match="tool result error code must not be empty"):
+        ToolResult(tool_call_id="call-1", status="failed", error={"code": " ", "message": "failed"})
+    with pytest.raises(ValueError, match="tool result error message must be a string"):
+        ToolResult(tool_call_id="call-1", status="failed", error={"code": "tool.failed"})
+    with pytest.raises(ValueError, match="tool result error message must not be empty"):
+        ToolResult(tool_call_id="call-1", status="failed", error={"code": "tool.failed", "message": " "})
 
 
 def test_tool_result_artifacts_accept_artifact_refs_and_camel_case_payloads() -> None:

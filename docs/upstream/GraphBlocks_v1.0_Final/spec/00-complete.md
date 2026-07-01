@@ -566,6 +566,8 @@ class ToolResult(BaseModel):
 
 ToolResult diagnostics MUST be mapping records with non-empty string codes and messages; malformed
 diagnostic entries must fail as ToolResult validation errors before result delivery or persistence.
+When present, `ToolResult.error` MUST be a BlockError mapping with non-empty string `code` and
+`message` fields.
 
 Tool은 block, graph, remote service, MCP tool에서 생성할 수 있다.
 
