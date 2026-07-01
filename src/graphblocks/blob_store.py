@@ -26,6 +26,11 @@ class InvalidBlobKeyError(BlobStoreError):
 class BlobKey:
     key: str
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.key, str):
+            raise InvalidBlobKeyError("blob key must be a string")
+        _validate_blob_key(self)
+
 
 @dataclass(frozen=True, slots=True)
 class ByteRange:
@@ -33,6 +38,12 @@ class ByteRange:
     length: int | None = None
 
     def __post_init__(self) -> None:
+        if (
+            isinstance(self.offset, bool)
+            or not isinstance(self.offset, int)
+            or (self.length is not None and (isinstance(self.length, bool) or not isinstance(self.length, int)))
+        ):
+            raise ValueError("byte range offset and length must be integers")
         if self.offset < 0 or (self.length is not None and self.length < 0):
             raise ValueError("byte range offset and length must be non-negative")
 
@@ -44,6 +55,12 @@ class PutOptions:
     metadata: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        for field_name in ("media_type", "filename"):
+            value = getattr(self, field_name)
+            if value is not None and not isinstance(value, str):
+                raise ValueError(f"put {field_name} must be a string")
+            if value is not None and not value.strip():
+                raise ValueError(f"put {field_name} must not be empty")
         if not isinstance(self.metadata, Mapping):
             raise ValueError("put metadata must be a mapping")
         metadata = dict(self.metadata)
@@ -63,11 +80,29 @@ class BlobMetadata:
     artifact: ArtifactRef
     etag: str | None = None
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.key, BlobKey):
+            raise ValueError("blob metadata key must be a BlobKey")
+        if not isinstance(self.artifact, ArtifactRef):
+            raise ValueError("blob metadata artifact must be an ArtifactRef")
+        if self.etag is not None and not isinstance(self.etag, str):
+            raise ValueError("blob metadata etag must be a string")
+        if self.etag is not None and not self.etag.strip():
+            raise ValueError("blob metadata etag must not be empty")
+
 
 @dataclass(frozen=True, slots=True)
 class BlobListItem:
     key: BlobKey
     metadata: BlobMetadata
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.key, BlobKey):
+            raise ValueError("blob list item key must be a BlobKey")
+        if not isinstance(self.metadata, BlobMetadata):
+            raise ValueError("blob list item metadata must be BlobMetadata")
+        if self.metadata.key != self.key:
+            raise ValueError("blob list item metadata key must match key")
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,7 +111,14 @@ class ListPage:
     next_cursor: str | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "items", tuple(self.items))
+        items = tuple(self.items)
+        if any(not isinstance(item, BlobListItem) for item in items):
+            raise ValueError("list page items must be BlobListItem")
+        if self.next_cursor is not None and not isinstance(self.next_cursor, str):
+            raise ValueError("list page next_cursor must be a string")
+        if self.next_cursor is not None and not self.next_cursor.strip():
+            raise ValueError("list page next_cursor must not be empty")
+        object.__setattr__(self, "items", items)
 
 
 _GRAPHBLOCKS_CHECKSUM_METADATA = "graphblocks-checksum"
@@ -88,18 +130,31 @@ _RESERVED_METADATA_KEYS = {
 
 
 def _validate_blob_key(key: BlobKey) -> None:
+    if not isinstance(key, BlobKey):
+        raise InvalidBlobKeyError("blob key must be a BlobKey")
+    parts = key.key.split("/")
     parsed = PurePosixPath(key.key)
-    if not key.key or parsed.is_absolute() or "\\" in key.key or any(part in {"", ".", ".."} for part in parsed.parts):
+    if (
+        not key.key
+        or parsed.is_absolute()
+        or "\\" in key.key
+        or any(part in {"", ".", ".."} for part in parts)
+    ):
         raise InvalidBlobKeyError(f"invalid blob key {key.key!r}")
 
 
 def _validate_blob_prefix(prefix: str) -> None:
+    if not isinstance(prefix, str):
+        raise InvalidBlobKeyError("blob prefix must be a string")
     if prefix == "":
         return
     if prefix.startswith("/") or "\\" in prefix:
         raise InvalidBlobKeyError(f"invalid blob prefix {prefix!r}")
-    parts = [part for part in prefix.split("/") if part]
+    normalized = prefix[:-1] if prefix.endswith("/") else prefix
+    parts = normalized.split("/")
     if any(part in {".", ".."} for part in parts):
+        raise InvalidBlobKeyError(f"invalid blob prefix {prefix!r}")
+    if any(part == "" for part in parts):
         raise InvalidBlobKeyError(f"invalid blob prefix {prefix!r}")
 
 

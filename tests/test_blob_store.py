@@ -4,13 +4,17 @@ import pytest
 
 from graphblocks.blob_store import (
     BlobKey,
+    BlobListItem,
+    BlobMetadata,
     BlobNotFoundError,
     ByteRange,
     InvalidBlobKeyError,
+    ListPage,
     LocalBlobStore,
     PutOptions,
     S3CompatibleBlobStore,
 )
+from graphblocks.documents import ArtifactRef
 
 
 def test_local_blob_store_put_head_and_get_round_trip(tmp_path) -> None:
@@ -42,6 +46,10 @@ def test_local_blob_store_put_head_and_get_round_trip(tmp_path) -> None:
 
 
 def test_put_options_rejects_invalid_metadata() -> None:
+    with pytest.raises(ValueError, match="put media_type must be a string"):
+        PutOptions(media_type=object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="put filename must not be empty"):
+        PutOptions(filename=" ")
     with pytest.raises(ValueError, match="put metadata must be a mapping"):
         PutOptions(metadata=object())  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="put metadata keys and values must be strings"):
@@ -56,6 +64,8 @@ def test_local_blob_store_supports_range_reads(tmp_path) -> None:
 
     assert store.get(BlobKey("data.bin"), ByteRange(offset=2, length=3)) == b"cde"
     assert store.get(BlobKey("data.bin"), ByteRange(offset=4)) == b"ef"
+    with pytest.raises(ValueError, match="byte range offset and length must be integers"):
+        ByteRange(offset=True)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="byte range offset and length must be non-negative"):
         ByteRange(offset=-1)
     with pytest.raises(ValueError, match="byte range offset and length must be non-negative"):
@@ -88,7 +98,7 @@ def test_local_blob_store_rejects_non_canonical_list_cursors(tmp_path, cursor: o
         store.list("docs/", cursor=cursor)
 
 
-@pytest.mark.parametrize("prefix", ["/absolute", "../escape", "docs/../escape", "docs\\escape"])
+@pytest.mark.parametrize("prefix", ["/absolute", "../escape", "docs/../escape", "docs//escape", "docs\\escape"])
 def test_local_blob_store_rejects_invalid_list_prefixes(tmp_path, prefix: str) -> None:
     store = LocalBlobStore(tmp_path)
     store.put(BlobKey("docs/a.txt"), b"a", PutOptions())
@@ -116,6 +126,31 @@ def test_local_blob_store_rejects_path_traversal(tmp_path) -> None:
 
     with pytest.raises(InvalidBlobKeyError):
         store.get(BlobKey("/absolute.txt"))
+
+    with pytest.raises(InvalidBlobKeyError):
+        BlobKey("docs//escape.txt")
+
+    with pytest.raises(InvalidBlobKeyError, match="blob key must be a string"):
+        BlobKey(object())  # type: ignore[arg-type]
+
+
+def test_blob_metadata_and_list_page_validate_record_types() -> None:
+    key = BlobKey("docs/policy.txt")
+    artifact = ArtifactRef("artifact-1", "file:///tmp/policy.txt")
+    metadata = BlobMetadata(key, artifact, etag="etag-1")
+    item = BlobListItem(key, metadata)
+
+    page = ListPage(items=[item], next_cursor="1")  # type: ignore[arg-type]
+
+    assert page.items == (item,)
+    with pytest.raises(ValueError, match="blob metadata key must be a BlobKey"):
+        BlobMetadata(object(), artifact)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="blob list item metadata key must match key"):
+        BlobListItem(BlobKey("docs/other.txt"), metadata)
+    with pytest.raises(ValueError, match="list page items must be BlobListItem"):
+        ListPage(items=[object()])  # type: ignore[list-item]
+    with pytest.raises(ValueError, match="list page next_cursor must not be empty"):
+        ListPage(items=[], next_cursor=" ")
 
 
 def test_s3_compatible_blob_store_uses_injected_client_without_sdk_dependency() -> None:
