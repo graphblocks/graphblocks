@@ -2233,7 +2233,7 @@ conversation.begin_turn
 - budget/policy stop 시 retract, incomplete commit, current-unit completion 중 하나를 명시한다.
 - `AssistantDraftDelta`가 전송된 뒤 hard-stop이면 `AssistantRetracted` 또는 `AssistantIncomplete`를 반드시 보낸다.
 - Output-policy application event builders MUST validate typed `GenerationChunk`,
-  `OutputPolicyDecision`, and digest inputs before constructing events.
+  `OutputPolicyDecision`, `OutputCutoff`, and digest inputs before constructing events.
 
 ## 68. Checkpoint
 

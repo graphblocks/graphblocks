@@ -1180,6 +1180,9 @@ def test_output_policy_decision_event_maps_disposition_and_metadata_payload() ->
 
 
 def test_output_cutoff_events_include_cutoff_and_retraction_semantics() -> None:
+    with pytest.raises(ApplicationEventError, match="output cutoff must be an OutputCutoff"):
+        ApplicationEvent.output_cutoff(_metadata(), object())  # type: ignore[arg-type]
+
     cutoff = OutputCutoff(
         stream_id="stream-1",
         response_id="response-1",

@@ -942,6 +942,8 @@ class ApplicationEvent:
         metadata: ApplicationEventMetadata,
         cutoff: OutputCutoff,
     ) -> list[ApplicationEvent]:
+        if not isinstance(cutoff, OutputCutoff):
+            raise ApplicationEventError("output cutoff must be an OutputCutoff")
         events = [
             cls.new(
                 "OutputCutoff",
