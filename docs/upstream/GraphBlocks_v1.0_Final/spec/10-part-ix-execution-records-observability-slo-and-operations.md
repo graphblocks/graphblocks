@@ -81,6 +81,8 @@ class AuditRecord(BaseModel):
 
 Audit는 sampling/drop 가능한 OTel exporter에만 기록해서는 안 된다. Required audit는 transaction/outbox 또는 동등한 durable path를 사용한다.
 
+Audit outbox record가 published terminal state에 도달하면 publish timestamp와 terminal metadata는 immutable하다. 동일 timestamp의 중복 publish 확인은 idempotent replay로 허용할 수 있지만, 다른 terminal timestamp로 덮어쓰면 안 된다.
+
 ## 266. UsageLedger와 BudgetLedger
 
 `UsageLedger`는 실제 사용량의 immutable source이고, `BudgetLedger`는 quota/budget의 allocation과 reservation source다.
@@ -566,4 +568,3 @@ graphblocks observe diagnostic-bundle run_123 --redacted
 graphblocks slo report deployment.yaml
 graphblocks telemetry doctor observability.yaml
 ```
-

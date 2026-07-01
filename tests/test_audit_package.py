@@ -457,7 +457,7 @@ def test_audit_outbox_treats_published_records_as_terminal(monkeypatch) -> None:
     graphblocks_audit = importlib.import_module("graphblocks_audit")
     outbox = graphblocks_audit.SQLiteAuditOutbox.in_memory()
     outbox.append("application_event", {"event_id": "event-1"}, occurred_at="2026-06-23T00:00:00Z", record_id="audit-1")
-    outbox.mark_published("audit-1", published_at="2026-06-23T00:00:01Z")
+    published = outbox.mark_published("audit-1", published_at="2026-06-23T00:00:01Z")
 
     try:
         outbox.mark_failed("audit-1", error="sink unavailable")
@@ -466,6 +466,15 @@ def test_audit_outbox_treats_published_records_as_terminal(monkeypatch) -> None:
     else:
         raise AssertionError("published audit records should not be marked failed")
 
+    assert outbox.mark_published("audit-1", published_at="2026-06-23T00:00:01Z") == published
+    try:
+        outbox.mark_published("audit-1", published_at="2026-06-23T00:00:02Z")
+    except graphblocks_audit.AuditOutboxError as error:
+        assert "already published" in str(error)
+    else:
+        raise AssertionError("published audit records should not change terminal timestamp")
+
     assert outbox.get("audit-1").status == "published"
+    assert outbox.get("audit-1").published_at == "2026-06-23T00:00:01Z"
     assert outbox.pending() == []
     outbox.close()

@@ -211,6 +211,11 @@ class SQLiteAuditOutbox:
         return [self._record_from_row(row) for row in rows]
 
     def mark_published(self, record_id: str, *, published_at: str) -> AuditOutboxRecord:
+        current = self.get(record_id)
+        if current.status == "published":
+            if current.published_at == published_at:
+                return current
+            raise AuditOutboxError(f"audit outbox record {record_id!r} is already published")
         if self._connection.execute(
             """
             UPDATE audit_outbox_records
