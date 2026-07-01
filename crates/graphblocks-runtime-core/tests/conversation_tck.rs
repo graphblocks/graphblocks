@@ -1,8 +1,10 @@
 use graphblocks_runtime_core::conversation::{
-    BranchRequest, ContentPart, Conversation, ConversationError, InMemoryConversationStore,
-    Message, MessageRole, MessageStatus, RegenerateRequest, TurnError, TurnStatus,
+    AttachmentIngestionStatus, AttachmentPurpose, AttachmentScope, BranchRequest, ContentPart,
+    Conversation, ConversationError, FileAttachment, InMemoryConversationStore, Message,
+    MessageRole, MessageStatus, RegenerateRequest, TurnError, TurnStatus,
 };
-use serde_json::{Value, json};
+use graphblocks_runtime_core::documents::ArtifactRef;
+use serde_json::{json, Value};
 
 fn required_str<'a>(value: &'a Value, key: &str) -> Result<&'a str, String> {
     value
@@ -74,6 +76,85 @@ fn turn_status_name(status: TurnStatus) -> &'static str {
         TurnStatus::Cancelled => "cancelled",
         TurnStatus::PolicyStopped => "policy_stopped",
     }
+}
+
+fn attachment_scope(raw: &Value) -> Result<AttachmentScope, String> {
+    match raw
+        .get("scope")
+        .and_then(Value::as_str)
+        .unwrap_or("message")
+    {
+        "message" => Ok(AttachmentScope::Message),
+        "conversation" => Ok(AttachmentScope::Conversation),
+        "user" => Ok(AttachmentScope::User),
+        "project" => Ok(AttachmentScope::Project),
+        "tenant" => Ok(AttachmentScope::Tenant),
+        other => Err(format!("unsupported attachment scope {other:?}")),
+    }
+}
+
+fn attachment_purpose(raw: &Value) -> Result<AttachmentPurpose, String> {
+    match raw
+        .get("purpose")
+        .and_then(Value::as_str)
+        .unwrap_or("retrieval")
+    {
+        "direct_input" => Ok(AttachmentPurpose::DirectInput),
+        "retrieval" => Ok(AttachmentPurpose::Retrieval),
+        "code_analysis" => Ok(AttachmentPurpose::CodeAnalysis),
+        "reference" => Ok(AttachmentPurpose::Reference),
+        "output" => Ok(AttachmentPurpose::Output),
+        other => Err(format!("unsupported attachment purpose {other:?}")),
+    }
+}
+
+fn attachment_status(raw: &Value) -> Result<AttachmentIngestionStatus, String> {
+    match raw
+        .get("ingestionStatus")
+        .or_else(|| raw.get("ingestion_status"))
+        .and_then(Value::as_str)
+        .unwrap_or("ready")
+    {
+        "pending" => Ok(AttachmentIngestionStatus::Pending),
+        "processing" => Ok(AttachmentIngestionStatus::Processing),
+        "ready" => Ok(AttachmentIngestionStatus::Ready),
+        "failed" => Ok(AttachmentIngestionStatus::Failed),
+        "expired" => Ok(AttachmentIngestionStatus::Expired),
+        "deleted" => Ok(AttachmentIngestionStatus::Deleted),
+        other => Err(format!("unsupported attachment ingestion status {other:?}")),
+    }
+}
+
+fn attachment_from(raw: &Value) -> Result<FileAttachment, String> {
+    let attachment_id = raw
+        .get("attachmentId")
+        .or_else(|| raw.get("attachment_id"))
+        .and_then(Value::as_str)
+        .unwrap_or("att");
+    let artifact_id = raw
+        .get("artifactId")
+        .or_else(|| raw.get("artifact_id"))
+        .and_then(Value::as_str)
+        .unwrap_or("artifact");
+    let uri = raw
+        .get("uri")
+        .and_then(Value::as_str)
+        .unwrap_or("blob://attachments/file");
+    let mut attachment = FileAttachment::new(
+        attachment_id,
+        ArtifactRef::new(artifact_id, uri),
+        attachment_scope(raw)?,
+        attachment_purpose(raw)?,
+    )
+    .with_ingestion_status(attachment_status(raw)?);
+    if let Some(message_id) = raw
+        .get("messageId")
+        .or_else(|| raw.get("message_id"))
+        .and_then(Value::as_str)
+    {
+        attachment = attachment.with_message_id(message_id);
+    }
+    Ok(attachment)
 }
 
 fn run_case(case: &Value) -> Result<Value, String> {
@@ -293,6 +374,68 @@ fn run_case(case: &Value) -> Result<Value, String> {
                 "regenerateSourceRevision": regenerated.metadata.get("source_revision").cloned().unwrap_or(Value::Null),
                 "sourceRevision": source.revision,
                 "sourceMessageStatuses": source.conversation.messages.iter().map(|message| message_status_name(message.status)).collect::<Vec<_>>(),
+            }))
+        }
+        "branch_attachments" => {
+            let raw_messages = case
+                .get("messages")
+                .and_then(Value::as_array)
+                .ok_or_else(|| "branch_attachments case requires messages".to_owned())?;
+            let mut messages = Vec::new();
+            for raw_message in raw_messages {
+                messages.push(message_from(raw_message, "msg", MessageRole::User)?);
+            }
+            let raw_attachments = case
+                .get("attachments")
+                .and_then(Value::as_array)
+                .ok_or_else(|| "branch_attachments case requires attachments".to_owned())?;
+            let branch_from_message_id = case
+                .get("branchFromMessageId")
+                .or_else(|| case.get("branch_from_message_id"))
+                .and_then(Value::as_str)
+                .unwrap_or("msg-1");
+            let branch_conversation_id = case
+                .get("branchConversationId")
+                .or_else(|| case.get("branch_conversation_id"))
+                .and_then(Value::as_str)
+                .unwrap_or("conv-branch");
+            let branch_without_attachments_id = case
+                .get("branchWithoutAttachmentsId")
+                .or_else(|| case.get("branch_without_attachments_id"))
+                .and_then(Value::as_str)
+                .unwrap_or("conv-branch-without-attachments");
+
+            store
+                .create(Conversation::new(conversation_id))
+                .map_err(|error| error.to_string())?;
+            store
+                .append_messages(conversation_id, 0, messages)
+                .map_err(|error| error.to_string())?;
+            for raw_attachment in raw_attachments {
+                store
+                    .add_attachment(conversation_id, attachment_from(raw_attachment)?)
+                    .map_err(|error| error.to_string())?;
+            }
+            let branch = store
+                .branch(
+                    BranchRequest::new(conversation_id, branch_from_message_id)
+                        .with_new_conversation_id(branch_conversation_id),
+                )
+                .map_err(|error| error.to_string())?;
+            let mut request = BranchRequest::new(conversation_id, branch_from_message_id)
+                .with_new_conversation_id(branch_without_attachments_id);
+            request.include_attachments = false;
+            let branch_without_attachments =
+                store.branch(request).map_err(|error| error.to_string())?;
+            let source = store
+                .get(conversation_id)
+                .map_err(|error| error.to_string())?;
+
+            Ok(json!({
+                "branchAttachmentIds": branch.attachments.iter().map(|attachment| attachment.attachment_id.as_str()).collect::<Vec<_>>(),
+                "branchWithoutAttachmentIds": branch_without_attachments.attachments.iter().map(|attachment| attachment.attachment_id.as_str()).collect::<Vec<_>>(),
+                "branchMessageIds": branch.messages.iter().map(|message| message.message_id.as_str()).collect::<Vec<_>>(),
+                "sourceAttachmentIds": source.conversation.attachments.iter().map(|attachment| attachment.attachment_id.as_str()).collect::<Vec<_>>(),
             }))
         }
         other => Err(format!("unsupported conversation TCK kind {other:?}")),

@@ -32,6 +32,7 @@ from graphblocks.conversation import (
     ContentPart,
     Conversation,
     ConversationConflictError,
+    FileAttachment,
     InMemoryConversationStore,
     Message,
     RegenerateRequest,
@@ -1620,6 +1621,7 @@ def load_conversation_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
             "policy_stop_turn",
             "commit_conflict",
             "branch_regenerate",
+            "branch_attachments",
         }:
             raise ValueError(f"conversation TCK case {case_id} has unsupported kind {case_kind!r}")
         expected = raw_case.get("expected")
@@ -4733,6 +4735,101 @@ class TckRunner:
                     "regenerateSourceRevision": regenerated.metadata.get("source_revision"),
                     "sourceRevision": source.revision,
                     "sourceMessageStatuses": [message.status for message in source.conversation.messages],
+                }
+            elif kind == "branch_attachments":
+                raw_messages = fixture.get("messages", [])
+                if not isinstance(raw_messages, list) or not all(isinstance(message, Mapping) for message in raw_messages):
+                    raw_messages = []
+                    diagnostics.append(
+                        {
+                            "code": "ConversationMessagesInvalid",
+                            "message": "conversation TCK messages must be a list of mappings",
+                            "path": "$.messages",
+                        }
+                    )
+                messages: list[Message] = []
+                for raw_message in raw_messages:
+                    parent_message_id = raw_message.get("parentMessageId", raw_message.get("parent_message_id"))
+                    messages.append(
+                        Message(
+                            message_id=str(raw_message.get("messageId", raw_message.get("message_id", "msg"))),
+                            role=str(raw_message.get("role", "user")),
+                            parts=(ContentPart(kind="text", text=str(raw_message.get("text", ""))),),
+                            parent_message_id=parent_message_id if isinstance(parent_message_id, str) else None,
+                        )
+                    )
+                raw_attachments = fixture.get("attachments", [])
+                if not isinstance(raw_attachments, list) or not all(isinstance(attachment, Mapping) for attachment in raw_attachments):
+                    raw_attachments = []
+                    diagnostics.append(
+                        {
+                            "code": "ConversationAttachmentsInvalid",
+                            "message": "conversation TCK attachments must be a list of mappings",
+                            "path": "$.attachments",
+                        }
+                    )
+                branch_from_message_id = str(
+                    fixture.get("branchFromMessageId", fixture.get("branch_from_message_id", "msg-1"))
+                )
+                branch_conversation_id = str(
+                    fixture.get("branchConversationId", fixture.get("branch_conversation_id", "conv-branch"))
+                )
+                branch_without_attachments_id = str(
+                    fixture.get(
+                        "branchWithoutAttachmentsId",
+                        fixture.get("branch_without_attachments_id", "conv-branch-without-attachments"),
+                    )
+                )
+                store.create(Conversation(conversation_id=conversation_id))
+                store.append_messages(conversation_id, expected_revision=0, messages=messages)
+                for raw_attachment in raw_attachments:
+                    store.add_attachment(
+                        conversation_id,
+                        FileAttachment(
+                            attachment_id=str(raw_attachment.get("attachmentId", raw_attachment.get("attachment_id", "att"))),
+                            asset=ArtifactRef(
+                                str(raw_attachment.get("artifactId", raw_attachment.get("artifact_id", "artifact"))),
+                                str(raw_attachment.get("uri", "blob://attachments/file")),
+                            ),
+                            scope=str(raw_attachment.get("scope", "message")),
+                            purpose=str(raw_attachment.get("purpose", "retrieval")),
+                            ingestion_status=str(
+                                raw_attachment.get(
+                                    "ingestionStatus",
+                                    raw_attachment.get("ingestion_status", "ready"),
+                                )
+                            ),
+                            message_id=(
+                                str(raw_attachment.get("messageId", raw_attachment.get("message_id")))
+                                if raw_attachment.get("messageId", raw_attachment.get("message_id")) is not None
+                                else None
+                            ),
+                        ),
+                    )
+                branch = store.branch(
+                    BranchRequest(
+                        conversation_id=conversation_id,
+                        from_message_id=branch_from_message_id,
+                        new_conversation_id=branch_conversation_id,
+                    )
+                )
+                request_without_attachments = BranchRequest(
+                    conversation_id=conversation_id,
+                    from_message_id=branch_from_message_id,
+                    new_conversation_id=branch_without_attachments_id,
+                    include_attachments=False,
+                )
+                branch_without_attachments = store.branch(request_without_attachments)
+                source = store.get(conversation_id)
+                observed = {
+                    "branchAttachmentIds": [attachment.attachment_id for attachment in branch.attachments],
+                    "branchWithoutAttachmentIds": [
+                        attachment.attachment_id for attachment in branch_without_attachments.attachments
+                    ],
+                    "branchMessageIds": [message.message_id for message in branch.messages],
+                    "sourceAttachmentIds": [
+                        attachment.attachment_id for attachment in source.conversation.attachments
+                    ],
                 }
             else:
                 diagnostics.append(

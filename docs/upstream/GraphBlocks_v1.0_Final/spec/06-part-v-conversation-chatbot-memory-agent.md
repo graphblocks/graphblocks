@@ -77,6 +77,10 @@ class BranchRequest(BaseModel):
 ```
 
 Branch lineage를 보존해야 평가와 audit가 가능하다.
+`include_attachments`가 true인 branch는 branch 범위 안의 message-scoped attachment와
+conversation-scoped attachment만 복사해야 한다. Branch 지점 이후 message에 묶인
+attachment는 새 branch에 포함하지 않으며, `include_attachments`가 false이면 attachment를
+복사하지 않는다. 공유 conversation TCK는 이 scoping 규칙을 검증해야 한다.
 
 ## 128. Chat input model
 
@@ -782,4 +786,3 @@ limits:
 ```
 
 Limit 초과는 canonical finish reason과 terminal state로 처리한다.
-

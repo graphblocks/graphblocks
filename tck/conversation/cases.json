@@ -141,5 +141,68 @@
         "committed"
       ]
     }
+  },
+  {
+    "name": "branch_respects_attachment_scope_and_include_flag",
+    "kind": "branch_attachments",
+    "conversationId": "conv-attachments",
+    "messages": [
+      {
+        "messageId": "msg-1",
+        "role": "user",
+        "text": "first"
+      },
+      {
+        "messageId": "msg-2",
+        "role": "user",
+        "text": "second"
+      }
+    ],
+    "attachments": [
+      {
+        "attachmentId": "att-1",
+        "artifactId": "artifact-1",
+        "uri": "blob://attachments/one.pdf",
+        "scope": "message",
+        "purpose": "retrieval",
+        "messageId": "msg-1",
+        "ingestionStatus": "ready"
+      },
+      {
+        "attachmentId": "att-2",
+        "artifactId": "artifact-2",
+        "uri": "blob://attachments/two.pdf",
+        "scope": "message",
+        "purpose": "retrieval",
+        "messageId": "msg-2",
+        "ingestionStatus": "ready"
+      },
+      {
+        "attachmentId": "att-conversation",
+        "artifactId": "artifact-conversation",
+        "uri": "blob://attachments/conversation.pdf",
+        "scope": "conversation",
+        "purpose": "reference",
+        "ingestionStatus": "ready"
+      }
+    ],
+    "branchFromMessageId": "msg-1",
+    "branchConversationId": "conv-branch-with-attachments",
+    "branchWithoutAttachmentsId": "conv-branch-without-attachments",
+    "expected": {
+      "branchAttachmentIds": [
+        "att-1",
+        "att-conversation"
+      ],
+      "branchWithoutAttachmentIds": [],
+      "branchMessageIds": [
+        "msg-1"
+      ],
+      "sourceAttachmentIds": [
+        "att-1",
+        "att-2",
+        "att-conversation"
+      ]
+    }
   }
 ]
