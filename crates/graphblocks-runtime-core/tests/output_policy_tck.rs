@@ -547,5 +547,8 @@ fn gate_error_name(error: &OutputGateError) -> &'static str {
         OutputGateError::ClientDeliveredSequenceBeyondGenerated { .. } => {
             "client_delivered_sequence_beyond_generated"
         }
+        OutputGateError::ClientDeliveredSequenceBeyondPolicyAccepted { .. } => {
+            "client_delivered_sequence_beyond_policy_accepted"
+        }
     }
 }

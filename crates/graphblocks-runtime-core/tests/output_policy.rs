@@ -180,6 +180,31 @@ fn output_gate_rejects_missing_pending_resume_chunk() {
 }
 
 #[test]
+fn output_gate_rejects_restored_delivery_beyond_policy_acceptance() {
+    assert_eq!(
+        OutputDeliveryGate::from_state(
+            "stream-1",
+            "response-1",
+            [GenerationChunk::text(
+                "stream-1",
+                "response-1",
+                3,
+                "pending"
+            )],
+            3,
+            1,
+            2,
+        ),
+        Err(
+            OutputGateError::ClientDeliveredSequenceBeyondPolicyAccepted {
+                last_policy_accepted_sequence: 1,
+                last_client_delivered_sequence: 2,
+            }
+        ),
+    );
+}
+
+#[test]
 fn output_gate_resumes_terminal_cutoff_state() -> Result<(), OutputGateError> {
     let cutoff = OutputCutoff {
         stream_id: "stream-1".to_owned(),
@@ -504,6 +529,39 @@ fn output_cutoff_rejects_sequences_beyond_generated() {
             last_client_delivered_sequence: 2,
         })
     );
+}
+
+#[test]
+fn output_cutoff_rejects_kept_draft_delivered_beyond_policy_acceptance() {
+    let cutoff = OutputCutoff {
+        stream_id: "stream-1".to_owned(),
+        response_id: "response-1".to_owned(),
+        turn_id: None,
+        last_generated_sequence: 3,
+        last_policy_accepted_sequence: 1,
+        last_client_delivered_sequence: 2,
+        terminal_reason: TerminalReason::PolicyDenied,
+        draft_disposition: DraftDisposition::Keep,
+        durable_result: DurableResult::None,
+        policy_decision_id: Some("decision-1".to_owned()),
+        occurred_at_unix_ms: 1_000,
+    };
+
+    assert_eq!(
+        cutoff.validate(),
+        Err(
+            OutputCutoffError::DeliveredDraftBeyondPolicyAcceptanceKept {
+                last_policy_accepted_sequence: 1,
+                last_client_delivered_sequence: 2,
+            }
+        )
+    );
+
+    let retract_cutoff = OutputCutoff {
+        draft_disposition: DraftDisposition::Retract,
+        ..cutoff
+    };
+    assert_eq!(retract_cutoff.validate(), Ok(()));
 }
 
 #[test]

@@ -956,6 +956,10 @@ pub enum OutputCutoffError {
         last_generated_sequence: u64,
         last_client_delivered_sequence: u64,
     },
+    DeliveredDraftBeyondPolicyAcceptanceKept {
+        last_policy_accepted_sequence: u64,
+        last_client_delivered_sequence: u64,
+    },
 }
 
 impl OutputCutoff {
@@ -995,6 +999,16 @@ impl OutputCutoff {
                 last_generated_sequence: self.last_generated_sequence,
                 last_client_delivered_sequence: self.last_client_delivered_sequence,
             });
+        }
+        if self.last_client_delivered_sequence > self.last_policy_accepted_sequence
+            && self.draft_disposition == DraftDisposition::Keep
+        {
+            return Err(
+                OutputCutoffError::DeliveredDraftBeyondPolicyAcceptanceKept {
+                    last_policy_accepted_sequence: self.last_policy_accepted_sequence,
+                    last_client_delivered_sequence: self.last_client_delivered_sequence,
+                },
+            );
         }
         if self.occurred_at_unix_ms == 0 {
             return Err(OutputCutoffError::MissingOccurredAtUnixMs);
@@ -1055,6 +1069,10 @@ pub enum OutputGateError {
     },
     ClientDeliveredSequenceBeyondGenerated {
         last_generated_sequence: u64,
+        last_client_delivered_sequence: u64,
+    },
+    ClientDeliveredSequenceBeyondPolicyAccepted {
+        last_policy_accepted_sequence: u64,
         last_client_delivered_sequence: u64,
     },
     PendingChunkAlreadyDelivered {
@@ -1167,6 +1185,14 @@ impl OutputDeliveryGate {
                 last_generated_sequence,
                 last_client_delivered_sequence,
             });
+        }
+        if last_client_delivered_sequence > last_policy_accepted_sequence {
+            return Err(
+                OutputGateError::ClientDeliveredSequenceBeyondPolicyAccepted {
+                    last_policy_accepted_sequence,
+                    last_client_delivered_sequence,
+                },
+            );
         }
 
         let mut pending_chunks = BTreeMap::new();
