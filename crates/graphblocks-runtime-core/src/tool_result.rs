@@ -627,6 +627,9 @@ pub enum ToolResultValidationError {
         tool_call_id: String,
         path: String,
     },
+    ModelOutputLabelInvalid {
+        field: String,
+    },
     InlineOutputForbiddenForArtifactReference {
         tool_call_id: String,
     },
@@ -772,6 +775,23 @@ impl ToolResultValidation {
         })?;
         if request.result.status != ToolResultStatus::Completed {
             return Ok(Vec::new());
+        }
+        for (field, value) in [
+            ("trust_designation", &content_policy.trust_designation),
+            (
+                "prompt_injection_label",
+                &content_policy.prompt_injection_label,
+            ),
+            (
+                "content_classification",
+                &content_policy.content_classification,
+            ),
+        ] {
+            if value.trim().is_empty() {
+                return Err(ToolResultValidationError::ModelOutputLabelInvalid {
+                    field: field.to_string(),
+                });
+            }
         }
 
         let mut model_output = request

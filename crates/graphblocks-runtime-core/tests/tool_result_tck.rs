@@ -670,6 +670,9 @@ fn validation_error_text(error: &ToolResultValidationError) -> String {
         ToolResultValidationError::ModelOutputRedactionInvalid { tool_call_id, path } => {
             format!("tool result {tool_call_id} has invalid redaction at {path}")
         }
+        ToolResultValidationError::ModelOutputLabelInvalid { field } => {
+            format!("tool result model output label {field} must not be empty")
+        }
         ToolResultValidationError::InlineOutputForbiddenForArtifactReference { tool_call_id } => {
             format!(
                 "tool result {tool_call_id} uses artifact_reference mode but contains inline output"

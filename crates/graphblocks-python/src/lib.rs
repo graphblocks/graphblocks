@@ -9230,6 +9230,78 @@ mod tests {
     }
 
     #[test]
+    fn prepare_tool_result_for_model_json_rejects_blank_policy_labels() -> Result<(), String> {
+        pyo3::Python::initialize();
+
+        let draft = json!({
+            "responseId": "response-1",
+            "toolCallId": "call-1",
+            "toolName": "knowledge.search",
+            "argumentFragments": ["{}"],
+            "sequence": 1,
+            "status": "arguments_complete"
+        });
+        let call_json = finalize_tool_call_json(
+            &serde_json::to_string(&draft).map_err(|error| error.to_string())?,
+            "resolved-tool-1",
+            1_000,
+        )
+        .map_err(|error| error.to_string())?;
+        let result =
+            ToolResult::completed("call-1", [ContentPart::text("safe output")], 1_001, 1_002);
+        let result_json = serde_json::to_string(&json!({
+            "toolCallId": "call-1",
+            "status": "completed",
+            "output": [
+                {"kind": "text", "text": "safe output", "metadata": {}}
+            ],
+            "outputDigest": result.output_digest,
+            "startedAtUnixMs": 1_001,
+            "completedAtUnixMs": 1_002
+        }))
+        .map_err(|error| error.to_string())?;
+        let resolved_tool_json = serde_json::to_string(&json!({
+            "resolvedToolId": "resolved-tool-1",
+            "definition": {
+                "name": "knowledge.search",
+                "description": "Search documentation.",
+                "inputSchema": "schemas/SearchRequest@1"
+            },
+            "binding": {
+                "bindingId": "binding-search",
+                "toolName": "knowledge.search",
+                "implementation": {"kind": "block", "block": "blocks.search"},
+                "effects": ["external_read"],
+                "approval": "never",
+                "idempotency": "not_applicable"
+            },
+            "effectivePolicySnapshotId": "policy-snapshot-1",
+            "allowedForPrincipal": true
+        }))
+        .map_err(|error| error.to_string())?;
+        let content_policy_json = serde_json::to_string(&json!({
+            "trustDesignation": "policy_quarantined",
+            "promptInjectionLabel": " ",
+            "contentClassification": "classified_external_tool_output"
+        }))
+        .map_err(|error| error.to_string())?;
+
+        let error = prepare_tool_result_for_model_json(
+            &call_json,
+            &result_json,
+            &resolved_tool_json,
+            "[]",
+            Some(&content_policy_json),
+        )
+        .expect_err("blank output policy labels must be rejected")
+        .to_string();
+
+        assert!(error.contains("ModelOutputLabelInvalid"));
+        assert!(error.contains("prompt_injection_label"));
+        Ok(())
+    }
+
+    #[test]
     fn record_tool_effect_precondition_json_delegates_to_runtime_audit() -> Result<(), String> {
         let (resolved_tool, call, _) = native_audit_fixture()?;
         let precondition_json = record_tool_effect_precondition_json(

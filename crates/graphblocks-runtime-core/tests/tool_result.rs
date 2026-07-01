@@ -461,6 +461,84 @@ fn completed_tool_result_model_output_accepts_runtime_configured_trust_labels() 
 }
 
 #[test]
+fn completed_tool_result_model_output_rejects_blank_policy_labels() {
+    let catalog = ToolCatalog::new(
+        [ToolDefinition::new(
+            "knowledge.search",
+            "Search documentation.",
+            "schemas/SearchRequest@1",
+        )],
+        [ToolBinding::new(
+            "binding-search",
+            "knowledge.search",
+            ToolImplementation::Block(BlockToolImplementation::new("blocks.search")),
+        )],
+    )
+    .expect("catalog should be valid");
+    let resolved = catalog
+        .resolve(ToolResolutionScope::new(), "policy-snapshot-1")
+        .expect("tool should resolve")
+        .remove(0);
+    let mut draft = ToolCallDraft::proposed("response-1", "call-1", "knowledge.search");
+    draft
+        .append_argument_fragment("{}")
+        .expect("argument fragment should append");
+    let call = draft
+        .into_completed_tool_call(resolved.resolved_tool_id.clone(), 1_000)
+        .expect("arguments should parse");
+    let registry =
+        ToolSchemaRegistry::new(Vec::<JsonSchema>::new()).expect("schema registry should be valid");
+    let result = ToolResult::completed(
+        "call-1",
+        [ContentPart::text("classified output")],
+        1_100,
+        1_200,
+    );
+
+    for (policy, field) in [
+        (
+            ToolResultContentPolicy::new().with_model_output_labels(
+                " ",
+                "classifier_flagged_tool_output",
+                "classified_external_tool_output",
+            ),
+            "trust_designation",
+        ),
+        (
+            ToolResultContentPolicy::new().with_model_output_labels(
+                "policy_quarantined",
+                "\t",
+                "classified_external_tool_output",
+            ),
+            "prompt_injection_label",
+        ),
+        (
+            ToolResultContentPolicy::new().with_model_output_labels(
+                "policy_quarantined",
+                "classifier_flagged_tool_output",
+                "",
+            ),
+            "content_classification",
+        ),
+    ] {
+        assert_eq!(
+            ToolResultValidation::prepare_for_model_with_content_policy(
+                ToolResultValidationRequest {
+                    call: &call,
+                    result: &result,
+                    resolved_tool: &resolved,
+                    schema_registry: &registry,
+                },
+                &policy,
+            ),
+            Err(ToolResultValidationError::ModelOutputLabelInvalid {
+                field: field.to_string(),
+            })
+        );
+    }
+}
+
+#[test]
 fn completed_tool_result_model_output_enforces_byte_limit_before_model_return() {
     let catalog = ToolCatalog::new(
         [ToolDefinition::new(

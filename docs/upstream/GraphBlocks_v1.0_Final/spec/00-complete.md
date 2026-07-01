@@ -572,6 +572,9 @@ Before tool output validation, policy processing, redaction, capture, or model r
 MUST validate that the boundary records are typed `ToolCall`, `ToolResult`, `ResolvedTool`, and
 schema registry instances. Malformed boundary records MUST fail as ToolResult validation errors
 before field dereference, schema lookup, or content-policy evaluation.
+Model-visible trust designation, prompt-injection label, and content-classification labels applied
+during tool-output preparation MUST be non-empty after trimming. Empty labels MUST fail before the
+tool result is returned to the model.
 
 Tool은 block, graph, remote service, MCP tool에서 생성할 수 있다.
 
