@@ -53,6 +53,8 @@ SourceAsset ACL
 
 어느 단계에서 ACL이 누락되면 compile 또는 ingestion validation을 실패시켜야 한다.
 
+Ingestion manifest를 ready 상태로 publish할 때 parsed document, chunk set, index record 중 하나라도 생성되면 `acl_revision`이 비어 있어서는 안 된다. ACL이 없는 dry-run/metadata-only manifest는 publish output을 만들기 전까지 ready commit으로 승격하지 않는다.
+
 ## 314. Tenant isolation
 
 - 모든 durable key는 tenant scope를 가진다.
@@ -630,4 +632,3 @@ ApplicationEventStream + OTel/Langfuse + Evaluation/SLO
 > **관측성 backend는 실행 source of truth가 아니며, durable correctness/audit/usage/budget 기록은 별도 plane에 둔다.**
 
 > **Quota 초과 동작은 제품별 암묵적 UX가 아니라, atomic unit·overdraft·partial output·effect safety를 포함한 ExhaustionPolicy로 정의한다.**
-

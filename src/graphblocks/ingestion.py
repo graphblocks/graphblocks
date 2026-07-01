@@ -209,6 +209,14 @@ class InMemoryIngestionManifestStore:
             raise IngestionError(
                 f"ingestion manifest {manifest_id!r} cannot transition from {manifest.status!r} to 'ready'"
             )
+        if (
+            parsed_document_ref is not None
+            or chunk_set_ref is not None
+            or index_records
+        ) and (manifest.acl_revision is None or not manifest.acl_revision.strip()):
+            raise IngestionError(
+                f"ingestion manifest {manifest_id!r} cannot publish outputs without acl_revision"
+            )
         for record in index_records:
             if record.asset_id != manifest.asset_id:
                 raise IngestionError(

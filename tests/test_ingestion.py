@@ -65,7 +65,7 @@ def _manifest(manifest_id: str, revision_id: str) -> IngestionManifest:
         ProcessorRef("line-chunker", "1", config_digest="sha256:chunker-config"),
         "sha256:pipeline",
         "2026-06-22T00:00:00Z",
-    )
+    ).with_acl_revision(f"acl-{revision_id}")
 
 
 def _index_record(revision_id: str) -> IndexRecordRef:
@@ -160,6 +160,23 @@ def test_ingestion_manifest_store_rejects_index_records_for_different_asset_or_r
             chunk_set_ref=None,
             index_records=(_index_record("rev-2"),),
             updated_at="2026-06-22T00:03:00Z",
+        )
+
+    assert store.get("manifest-1").status == "processing"
+
+
+def test_ingestion_manifest_store_rejects_publish_without_acl_revision() -> None:
+    store = InMemoryIngestionManifestStore()
+    manifest = replace(_manifest("manifest-1", "rev-1"), acl_revision=None)
+    store.create_processing(manifest, "2026-06-22T00:01:00Z")
+
+    with pytest.raises(IngestionError, match="acl_revision"):
+        store.commit(
+            "manifest-1",
+            parsed_document_ref=ArtifactRef("parsed-rev-1", "blob://parsed/rev-1.json"),
+            chunk_set_ref=ArtifactRef("chunks-rev-1", "blob://chunks/rev-1.json"),
+            index_records=(_index_record("rev-1"),),
+            updated_at="2026-06-22T00:02:00Z",
         )
 
     assert store.get("manifest-1").status == "processing"
