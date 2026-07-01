@@ -13,6 +13,7 @@ from graphblocks.evaluation import (
     GateConstraint,
     GateResult,
     MetricObservation,
+    ModelVisibleToolRef,
     ResourceSnapshotRef,
     ResultBundle,
     ReviewRecord,
@@ -532,6 +533,82 @@ def test_result_bundle_digest_records_model_visible_tool_set_deterministically()
             started_at="2026-06-22T00:00:00Z",
         ).with_model_visible_tools(resolved),
     ).content_digest()
+
+
+def test_model_visible_tool_ref_validates_identity_boolean_and_expiration() -> None:
+    tool_ref = ModelVisibleToolRef(
+        "knowledge.search",
+        "resolved-search",
+        "sha256:def",
+        "sha256:binding",
+        "policy-snapshot-1",
+        True,
+        valid_until="2026-06-22T00:00:00Z",
+    )
+
+    assert tool_ref.allowed_for_principal is True
+    base = {
+        "tool_name": "knowledge.search",
+        "resolved_tool_id": "resolved-search",
+        "definition_digest": "sha256:def",
+        "binding_digest": "sha256:binding",
+        "effective_policy_snapshot_id": "policy-snapshot-1",
+        "allowed_for_principal": True,
+    }
+    cases = [
+        ({"tool_name": " "}, "model visible tool ref tool_name must not be empty"),
+        ({"resolved_tool_id": " "}, "model visible tool ref resolved_tool_id must not be empty"),
+        ({"definition_digest": " "}, "model visible tool ref definition_digest must not be empty"),
+        ({"binding_digest": " "}, "model visible tool ref binding_digest must not be empty"),
+        (
+            {"effective_policy_snapshot_id": " "},
+            "model visible tool ref effective_policy_snapshot_id must not be empty",
+        ),
+        ({"allowed_for_principal": "yes"}, "model visible tool ref allowed_for_principal must be a boolean"),
+        ({"valid_until": "later"}, "model visible tool ref valid_until must be an ISO datetime"),
+    ]
+
+    for overrides, message in cases:
+        with pytest.raises(ValueError, match=message):
+            ModelVisibleToolRef(**(base | overrides))  # type: ignore[arg-type]
+
+
+def test_run_provenance_validates_model_visible_tools_and_copies_metadata() -> None:
+    tool_ref = ModelVisibleToolRef(
+        "knowledge.search",
+        "resolved-search",
+        "sha256:def",
+        "sha256:binding",
+        "policy-snapshot-1",
+        True,
+    )
+    runner = {"worker": "worker-1"}
+    metadata = {"trace": "trace-1"}
+    provenance = RunProvenance(
+        graph_hash="sha256:graph",
+        started_at="2026-06-22T00:00:00Z",
+        model_visible_tools=[tool_ref],  # type: ignore[arg-type]
+        runner=runner,
+        metadata=metadata,
+    )
+    runner["worker"] = "mutated"
+    metadata["trace"] = "mutated"
+
+    assert provenance.model_visible_tools == (tool_ref,)
+    assert provenance.runner == {"worker": "worker-1"}
+    assert provenance.metadata == {"trace": "trace-1"}
+    with pytest.raises(ValueError, match="run provenance model_visible_tools must be a collection"):
+        RunProvenance("sha256:graph", "2026-06-22T00:00:00Z", model_visible_tools=object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="run provenance model_visible_tools items must be ModelVisibleToolRef"):
+        RunProvenance("sha256:graph", "2026-06-22T00:00:00Z", model_visible_tools=[object()])  # type: ignore[list-item]
+    with pytest.raises(ValueError, match="run provenance runner must be a mapping"):
+        RunProvenance("sha256:graph", "2026-06-22T00:00:00Z", runner=object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="run provenance metadata keys must be strings"):
+        RunProvenance(
+            "sha256:graph",
+            "2026-06-22T00:00:00Z",
+            metadata={object(): "trace"},
+        )  # type: ignore[dict-item]
 
 
 def test_trial_result_carries_gate_and_outcome() -> None:

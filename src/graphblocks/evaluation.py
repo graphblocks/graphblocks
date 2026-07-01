@@ -163,6 +163,21 @@ class ModelVisibleToolRef:
     allowed_for_principal: bool
     valid_until: str | None = None
 
+    def __post_init__(self) -> None:
+        _validate_non_empty_string("model visible tool ref", "tool_name", self.tool_name)
+        _validate_non_empty_string("model visible tool ref", "resolved_tool_id", self.resolved_tool_id)
+        _validate_non_empty_string("model visible tool ref", "definition_digest", self.definition_digest)
+        _validate_non_empty_string("model visible tool ref", "binding_digest", self.binding_digest)
+        _validate_non_empty_string(
+            "model visible tool ref",
+            "effective_policy_snapshot_id",
+            self.effective_policy_snapshot_id,
+        )
+        if not isinstance(self.allowed_for_principal, bool):
+            raise ValueError("model visible tool ref allowed_for_principal must be a boolean")
+        if self.valid_until is not None:
+            _parse_datetime("model visible tool ref", "valid_until", self.valid_until)
+
 
 @dataclass(frozen=True, slots=True)
 class RunProvenance:
@@ -178,7 +193,15 @@ class RunProvenance:
     metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "model_visible_tools", tuple(sorted(self.model_visible_tools)))
+        try:
+            model_visible_tools = tuple(self.model_visible_tools)
+        except TypeError as error:
+            raise ValueError("run provenance model_visible_tools must be a collection") from error
+        if any(not isinstance(tool, ModelVisibleToolRef) for tool in model_visible_tools):
+            raise ValueError("run provenance model_visible_tools items must be ModelVisibleToolRef")
+        object.__setattr__(self, "model_visible_tools", tuple(sorted(model_visible_tools)))
+        object.__setattr__(self, "runner", _copy_mapping("run provenance", "runner", self.runner))
+        object.__setattr__(self, "metadata", _copy_mapping("run provenance", "metadata", self.metadata))
 
     def with_model_visible_tools(self, tools: Iterable[ResolvedTool]) -> RunProvenance:
         return replace(
