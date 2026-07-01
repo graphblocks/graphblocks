@@ -123,6 +123,13 @@ class EvidenceRef:
     evidence_kind: str
     metadata: dict[str, object] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        _validate_non_empty_string("evidence ref", "evidence_id", self.evidence_id)
+        if not isinstance(self.source, (ResourceSnapshotRef, ArtifactRef)):
+            raise ValueError("evidence ref source must be a ResourceSnapshotRef or ArtifactRef")
+        _validate_non_empty_string("evidence ref", "evidence_kind", self.evidence_kind)
+        object.__setattr__(self, "metadata", _copy_mapping("evidence ref", "metadata", self.metadata))
+
 
 @dataclass(frozen=True, slots=True)
 class TypedValueRef:
@@ -132,6 +139,18 @@ class TypedValueRef:
     digest: str
     encoding: str = "json"
     artifact: ArtifactRef | None = None
+
+    def __post_init__(self) -> None:
+        _validate_non_empty_string("typed value ref", "value_id", self.value_id)
+        _validate_non_empty_string("typed value ref", "schema_id", self.schema_id)
+        if not isinstance(self.schema_version, int) or isinstance(self.schema_version, bool):
+            raise ValueError("typed value ref schema_version must be an integer")
+        if self.schema_version <= 0:
+            raise ValueError("typed value ref schema_version must be positive")
+        _validate_non_empty_string("typed value ref", "digest", self.digest)
+        _validate_non_empty_string("typed value ref", "encoding", self.encoding)
+        if self.artifact is not None and not isinstance(self.artifact, ArtifactRef):
+            raise ValueError("typed value ref artifact must be an ArtifactRef")
 
 
 @dataclass(frozen=True, slots=True, order=True)

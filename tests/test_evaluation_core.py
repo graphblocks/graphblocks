@@ -19,6 +19,7 @@ from graphblocks.evaluation import (
     RunProvenance,
     SloMeasurement,
     SloObjective,
+    TypedValueRef,
     TrialResult,
     evaluate_gate,
 )
@@ -123,6 +124,46 @@ def test_check_result_validates_status_subject_and_copies_collections() -> None:
         CheckResult("lint", subject, "passed", tool=object())  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="check result environment must be a ResourceSnapshotRef"):
         CheckResult("lint", subject, "passed", environment=object())  # type: ignore[arg-type]
+
+
+def test_evidence_ref_validates_identity_source_kind_and_metadata() -> None:
+    subject = ResourceSnapshotRef("candidate-1", "sha256:candidate")
+    metadata = {"path": "logs/test.txt"}
+    evidence = EvidenceRef("evidence-1", subject, "log", metadata=metadata)
+    metadata["path"] = "mutated"
+
+    assert evidence.metadata == {"path": "logs/test.txt"}
+    with pytest.raises(ValueError, match="evidence ref evidence_id must not be empty"):
+        EvidenceRef(" ", subject, "log")
+    with pytest.raises(ValueError, match="evidence ref source must be a ResourceSnapshotRef or ArtifactRef"):
+        EvidenceRef("evidence-1", object(), "log")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="evidence ref evidence_kind must not be empty"):
+        EvidenceRef("evidence-1", subject, " ")
+    with pytest.raises(ValueError, match="evidence ref metadata must be a mapping"):
+        EvidenceRef("evidence-1", subject, "log", metadata=object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="evidence ref metadata keys must be strings"):
+        EvidenceRef("evidence-1", subject, "log", metadata={object(): "value"})  # type: ignore[dict-item]
+
+
+def test_typed_value_ref_validates_identity_schema_digest_and_artifact() -> None:
+    artifact = ArtifactRef("artifact-1", "file:///tmp/value.json", checksum="sha256:value")
+    value_ref = TypedValueRef("value-1", "schemas/Answer@1", 1, "sha256:value", artifact=artifact)
+
+    assert value_ref.artifact == artifact
+    with pytest.raises(ValueError, match="typed value ref value_id must not be empty"):
+        TypedValueRef(" ", "schemas/Answer@1", 1, "sha256:value")
+    with pytest.raises(ValueError, match="typed value ref schema_id must not be empty"):
+        TypedValueRef("value-1", " ", 1, "sha256:value")
+    with pytest.raises(ValueError, match="typed value ref schema_version must be an integer"):
+        TypedValueRef("value-1", "schemas/Answer@1", True, "sha256:value")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="typed value ref schema_version must be positive"):
+        TypedValueRef("value-1", "schemas/Answer@1", 0, "sha256:value")
+    with pytest.raises(ValueError, match="typed value ref digest must not be empty"):
+        TypedValueRef("value-1", "schemas/Answer@1", 1, " ")
+    with pytest.raises(ValueError, match="typed value ref encoding must not be empty"):
+        TypedValueRef("value-1", "schemas/Answer@1", 1, "sha256:value", encoding=" ")
+    with pytest.raises(ValueError, match="typed value ref artifact must be an ArtifactRef"):
+        TypedValueRef("value-1", "schemas/Answer@1", 1, "sha256:value", artifact=object())  # type: ignore[arg-type]
 
 
 def test_metric_observation_validates_identity_direction_and_copies_evaluator() -> None:

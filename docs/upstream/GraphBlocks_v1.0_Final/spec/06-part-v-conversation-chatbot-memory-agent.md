@@ -581,7 +581,7 @@ input ResourceSnapshot
 → ResultBundle
 ```
 
-Core는 domain-specific candidate를 정의하지 않는다. Trial executor와 typed result contract만 제공한다. `CheckResult`, `MetricObservation`, `GateConstraint`, `GateResult`는 identity, literal status/decision/operator, typed subject/evidence/artifact/metric reference, mutable collection copy를 검증해야 한다.
+Core는 domain-specific candidate를 정의하지 않는다. Trial executor와 typed result contract만 제공한다. `EvidenceRef`, `TypedValueRef`, `CheckResult`, `MetricObservation`, `GateConstraint`, `GateResult`는 identity, schema/version/digest, literal status/decision/operator, typed subject/evidence/artifact/metric reference, mutable mapping/collection copy를 검증해야 한다.
 
 ## 152. Human-in-the-loop
 
