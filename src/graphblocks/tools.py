@@ -2207,6 +2207,10 @@ def validate_tool_result_for_model(
             model_output[index] = replace(part, metadata=metadata)
 
     if max_output_bytes is not None:
+        if not isinstance(max_output_bytes, int) or isinstance(max_output_bytes, bool):
+            raise ToolResultValidationError("tool result max_output_bytes must be an integer")
+        if max_output_bytes < 0:
+            raise ToolResultValidationError("tool result max_output_bytes must be non-negative")
         actual_bytes = 0
         for part in model_output:
             if part.text is not None:

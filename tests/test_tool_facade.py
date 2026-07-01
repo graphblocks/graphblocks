@@ -2798,6 +2798,60 @@ def test_completed_tool_result_model_output_enforces_byte_limit_before_model_ret
     assert str(error.value) == "tool result call-1 model output exceeds 8 bytes (actual 9 bytes)"
 
 
+@pytest.mark.parametrize(
+    ("max_output_bytes", "message"),
+    (
+        (True, "tool result max_output_bytes must be an integer"),
+        ("8", "tool result max_output_bytes must be an integer"),
+        (-1, "tool result max_output_bytes must be non-negative"),
+    ),
+)
+def test_completed_tool_result_model_output_rejects_invalid_byte_limit(
+    max_output_bytes: object, message: str
+) -> None:
+    catalog = ToolCatalog(
+        definitions=(
+            ToolDefinition(
+                name="knowledge.search",
+                description="Search documentation.",
+                input_schema="schemas/SearchRequest@1",
+            ),
+        ),
+        bindings=(
+            ToolBinding(
+                binding_id="binding-search",
+                tool_name="knowledge.search",
+                implementation=BlockToolImplementation(block="blocks.search"),
+            ),
+        ),
+    )
+    resolved = catalog.resolve(ToolResolutionScope(), effective_policy_snapshot_id="policy-snapshot-1")[0]
+    call = (
+        ToolCallDraft.proposed("response-1", "call-1", "knowledge.search")
+        .append_argument_fragment("{}")
+        .complete_arguments()
+        .into_tool_call(resolved.resolved_tool_id, created_at="2026-06-23T00:00:00Z")
+    )
+    registry = ToolSchemaRegistry(())
+    result = ToolResult.completed(
+        "call-1",
+        (ContentPart(kind="text", text="ok"),),
+        started_at="2026-06-23T00:00:01Z",
+        completed_at="2026-06-23T00:00:02Z",
+    )
+
+    with pytest.raises(ToolResultValidationError) as error:
+        validate_tool_result_for_model(
+            call,
+            result,
+            resolved,
+            registry,
+            max_output_bytes=max_output_bytes,  # type: ignore[arg-type]
+        )
+
+    assert str(error.value) == message
+
+
 def test_completed_tool_result_model_output_applies_redactions_before_model_return() -> None:
     catalog = ToolCatalog(
         definitions=(

@@ -579,6 +579,8 @@ When capture metadata is applied during tool-output preparation, the capture pol
 mapping. `mode` MUST be a recognized string literal, `retention_policy` MUST be a non-empty string,
 and a supplied `consent_ref` MUST be a non-empty string. Malformed capture policy MUST fail before
 capture metadata is attached or returned to the model.
+Tool-output byte limits applied before model return MUST be non-negative integers; booleans and
+non-integer values MUST fail as ToolResult validation errors before size comparison or delivery.
 
 Tool은 block, graph, remote service, MCP tool에서 생성할 수 있다.
 
