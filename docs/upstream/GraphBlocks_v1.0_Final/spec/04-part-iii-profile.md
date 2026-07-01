@@ -148,6 +148,11 @@ Lock에는 processor id/version, 선택 이유, 정규화된 media type, filenam
 artifact checksum, parser metadata snapshot이 포함된다. 동일 priority 후보가 여러 개면
 processor id와 version의 안정 정렬로 deterministic하게 선택해야 하며, 공유 documents
 TCK는 이 lock 생성 규칙을 검증해야 한다.
+`ParserDescriptor`와 `ParserSelectionLock`은 construction 시 processor identity,
+version, reason, media type/extension collection, priority, OCR support flag, callable
+implementation, metadata key를 검증하고 mutable caller collection을 보존하지 않는
+immutable snapshot으로 투영해야 한다. Registry registration은 descriptor reference를
+그대로 보관하지 않고 normalized descriptor snapshot을 저장해야 한다.
 Locked parse는 lock에 기록된 artifact checksum과 현재 revision artifact checksum이
 다르면 실행을 거부해야 한다.
 OCR fallback parser는 일반 media type/extension 후보가 없고 호출자가 fallback을 명시적으로

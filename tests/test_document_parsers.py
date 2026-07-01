@@ -15,10 +15,23 @@ from graphblocks.documents import ArtifactRef, AssetRevision, SourceAsset
 
 def test_parser_registry_selects_by_media_type_and_records_lock_inputs() -> None:
     registry = DocumentParserRegistry()
-    descriptor = plain_text_parser_descriptor()
-    descriptor.metadata["config_digest"] = "sha256:parser-config"
-    descriptor.metadata["profile"] = "plain-text-default"
+    metadata = {
+        "config_digest": "sha256:parser-config",
+        "profile": "plain-text-default",
+    }
+    plain_descriptor = plain_text_parser_descriptor()
+    descriptor = ParserDescriptor(
+        processor_id=plain_descriptor.processor_id,
+        version=plain_descriptor.version,
+        media_types=plain_descriptor.media_types,
+        extensions=plain_descriptor.extensions,
+        priority=plain_descriptor.priority,
+        supports_ocr=plain_descriptor.supports_ocr,
+        parse=plain_descriptor.parse,
+        metadata=metadata,
+    )
     registry.register(descriptor)
+    metadata["profile"] = "mutated"
     artifact = ArtifactRef(
         artifact_id="artifact-1",
         uri="file:///tmp/policy.txt",
@@ -28,7 +41,6 @@ def test_parser_registry_selects_by_media_type_and_records_lock_inputs() -> None
     )
 
     lock = registry.select(artifact)
-    descriptor.metadata["profile"] = "mutated"
 
     assert lock.processor_id == "plain-text"
     assert lock.processor_version == "1"
@@ -52,7 +64,7 @@ def test_parser_registry_selects_by_media_type_and_records_lock_inputs() -> None
         resolved.metadata["profile"] = "changed"
     with pytest.raises(ValueError, match="parser selection lock metadata must be a mapping"):
         ParserSelectionLock("plain-text", "1", "media_type", metadata=object())  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="parser selection lock metadata keys must be non-empty strings"):
+    with pytest.raises(ValueError, match="parser selection lock metadata key must not be empty"):
         ParserSelectionLock("plain-text", "1", "media_type", metadata={" ": "value"})
 
 
@@ -91,23 +103,41 @@ def test_parser_registry_normalizes_registered_fields_and_selection_inputs() -> 
 
 
 @pytest.mark.parametrize(
-    ("descriptor", "match"),
+    ("kwargs", "match"),
     [
-        (ParserDescriptor("", "1"), "processor_id"),
-        (ParserDescriptor("plain-text", ""), "version"),
-        (ParserDescriptor("plain-text", "1", media_types=(" ",)), "media_types"),
-        (ParserDescriptor("plain-text", "1", extensions=(" ",)), "extensions"),
-        (ParserDescriptor("plain-text", "1", extensions=(".",)), "extensions"),
+        ({"processor_id": "", "version": "1"}, "processor_id"),
+        ({"processor_id": "plain-text", "version": ""}, "version"),
+        ({"processor_id": "plain-text", "version": "1", "media_types": (" ",)}, "media_types"),
+        ({"processor_id": "plain-text", "version": "1", "extensions": (" ",)}, "extensions"),
+        ({"processor_id": "plain-text", "version": "1", "extensions": (".",)}, "extensions"),
+        ({"processor_id": "plain-text", "version": "1", "priority": True}, "priority"),
+        ({"processor_id": "plain-text", "version": "1", "supports_ocr": "yes"}, "supports_ocr"),
+        ({"processor_id": "plain-text", "version": "1", "parse": object()}, "parse"),
     ],
 )
-def test_parser_registry_rejects_invalid_registered_descriptor_fields(
-    descriptor: ParserDescriptor,
+def test_parser_descriptor_rejects_invalid_contract_fields(
+    kwargs: dict[str, object],
     match: str,
 ) -> None:
+    with pytest.raises(ValueError, match=match):
+        ParserDescriptor(**kwargs)  # type: ignore[arg-type]
+
+
+def test_parser_registry_rejects_non_descriptor_registration() -> None:
     registry = DocumentParserRegistry()
 
-    with pytest.raises(DocumentParserError, match=match):
-        registry.register(descriptor)
+    with pytest.raises(DocumentParserError, match="ParserDescriptor"):
+        registry.register(object())  # type: ignore[arg-type]
+
+
+def test_parser_descriptor_freezes_metadata_snapshot() -> None:
+    metadata = {"nested": {"formats": ["txt", "text"]}}
+    descriptor = ParserDescriptor("plain-text", "1", metadata=metadata)
+    metadata["nested"]["formats"].append("md")  # type: ignore[index, union-attr]
+
+    assert descriptor.metadata["nested"]["formats"] == ("txt", "text")  # type: ignore[index]
+    with pytest.raises(TypeError):
+        descriptor.metadata["nested"]["formats"] += ("md",)  # type: ignore[index, operator]
 
 
 def test_parser_registry_uses_extension_when_media_type_is_missing() -> None:
