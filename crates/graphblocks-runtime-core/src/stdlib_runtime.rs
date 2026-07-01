@@ -966,37 +966,136 @@ fn execute_scripted_agent_run(inputs: &Value, config: &Value) -> Result<Value, B
                 false,
             ));
         };
-        let definition = tool.get("definition").and_then(Value::as_object);
+        let Some(definition) = tool.get("definition").and_then(Value::as_object) else {
+            return Err(BlockError::new(
+                "agent.run.invalid_tool",
+                ErrorCategory::Configuration,
+                format!("agent.run@1 input 'tools[{index}].definition' must be an object"),
+                false,
+            ));
+        };
+        let tool_name = required_object_str(definition, "name", "agent.run.invalid_tool")
+            .and_then(|value| {
+                if value.trim().is_empty() {
+                    Err(BlockError::new(
+                        "agent.run.invalid_tool",
+                        ErrorCategory::Configuration,
+                        format!(
+                            "agent.run@1 input 'tools[{index}].definition.name' must not be empty"
+                        ),
+                        false,
+                    ))
+                } else {
+                    Ok(value)
+                }
+            })?;
+        let resolved_tool_id = required_alias_object_str(
+            tool,
+            "resolved_tool_id",
+            "resolvedToolId",
+            "agent.run.invalid_tool",
+        )
+        .and_then(|value| {
+            if value.trim().is_empty() {
+                Err(BlockError::new(
+                    "agent.run.invalid_tool",
+                    ErrorCategory::Configuration,
+                    format!(
+                        "agent.run@1 input 'tools[{index}].resolved_tool_id' must not be empty"
+                    ),
+                    false,
+                ))
+            } else {
+                Ok(value)
+            }
+        })?;
+        let definition_digest = required_alias_object_str(
+            tool,
+            "definition_digest",
+            "definitionDigest",
+            "agent.run.invalid_tool",
+        )
+        .and_then(|value| {
+            if value.trim().is_empty() {
+                Err(BlockError::new(
+                    "agent.run.invalid_tool",
+                    ErrorCategory::Configuration,
+                    format!(
+                        "agent.run@1 input 'tools[{index}].definition_digest' must not be empty"
+                    ),
+                    false,
+                ))
+            } else {
+                Ok(value)
+            }
+        })?;
+        let binding_digest = required_alias_object_str(
+            tool,
+            "binding_digest",
+            "bindingDigest",
+            "agent.run.invalid_tool",
+        )
+        .and_then(|value| {
+            if value.trim().is_empty() {
+                Err(BlockError::new(
+                    "agent.run.invalid_tool",
+                    ErrorCategory::Configuration,
+                    format!("agent.run@1 input 'tools[{index}].binding_digest' must not be empty"),
+                    false,
+                ))
+            } else {
+                Ok(value)
+            }
+        })?;
+        let effective_policy_snapshot_id = required_alias_object_str(
+            tool,
+            "effective_policy_snapshot_id",
+            "effectivePolicySnapshotId",
+            "agent.run.invalid_tool",
+        )
+        .and_then(|value| {
+            if value.trim().is_empty() {
+                Err(BlockError::new(
+                    "agent.run.invalid_tool",
+                    ErrorCategory::Configuration,
+                    format!(
+                        "agent.run@1 input 'tools[{index}].effective_policy_snapshot_id' must not be empty"
+                    ),
+                    false,
+                ))
+            } else {
+                Ok(value)
+            }
+        })?;
+        let allowed_for_principal = tool
+            .get("allowed_for_principal")
+            .or_else(|| tool.get("allowedForPrincipal"))
+            .and_then(Value::as_bool)
+            .ok_or_else(|| {
+                BlockError::new(
+                    "agent.run.invalid_tool",
+                    ErrorCategory::Configuration,
+                    format!(
+                        "agent.run@1 input 'tools[{index}].allowed_for_principal' must be a boolean"
+                    ),
+                    false,
+                )
+            })?;
+        if !allowed_for_principal {
+            return Err(BlockError::new(
+                "agent.run.tool_not_allowed",
+                ErrorCategory::Policy,
+                format!("agent.run@1 input 'tools[{index}]' is not allowed for principal"),
+                false,
+            ));
+        }
         model_visible_tools.push(json!({
-            "toolName": definition
-                .and_then(|definition| definition.get("name"))
-                .and_then(Value::as_str)
-                .unwrap_or(""),
-            "resolvedToolId": tool
-                .get("resolved_tool_id")
-                .or_else(|| tool.get("resolvedToolId"))
-                .and_then(Value::as_str)
-                .unwrap_or(""),
-            "definitionDigest": tool
-                .get("definition_digest")
-                .or_else(|| tool.get("definitionDigest"))
-                .and_then(Value::as_str)
-                .unwrap_or(""),
-            "bindingDigest": tool
-                .get("binding_digest")
-                .or_else(|| tool.get("bindingDigest"))
-                .and_then(Value::as_str)
-                .unwrap_or(""),
-            "effectivePolicySnapshotId": tool
-                .get("effective_policy_snapshot_id")
-                .or_else(|| tool.get("effectivePolicySnapshotId"))
-                .and_then(Value::as_str)
-                .unwrap_or(""),
-            "allowedForPrincipal": tool
-                .get("allowed_for_principal")
-                .or_else(|| tool.get("allowedForPrincipal"))
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
+            "toolName": tool_name,
+            "resolvedToolId": resolved_tool_id,
+            "definitionDigest": definition_digest,
+            "bindingDigest": binding_digest,
+            "effectivePolicySnapshotId": effective_policy_snapshot_id,
+            "allowedForPrincipal": allowed_for_principal,
             "validUntil": tool
                 .get("valid_until")
                 .or_else(|| tool.get("validUntil"))

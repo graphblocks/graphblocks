@@ -804,20 +804,45 @@ def stdlib_registry() -> RuntimeRegistry:
             if not isinstance(tool, dict):
                 raise TypeError(f"agent.run@1 input 'tools[{index}]' must be a mapping")
             definition = tool.get("definition")
-            definition = definition if isinstance(definition, dict) else {}
-            tool_name = str(definition.get("name", ""))
-            resolved_tool_id = str(tool.get("resolved_tool_id", tool.get("resolvedToolId", "")))
-            definition_digest = str(tool.get("definition_digest", tool.get("definitionDigest", "")))
-            binding_digest = str(tool.get("binding_digest", tool.get("bindingDigest", "")))
-            effective_policy_snapshot_id = str(
-                tool.get(
-                    "effective_policy_snapshot_id",
-                    tool.get("effectivePolicySnapshotId", ""),
+            if not isinstance(definition, dict):
+                raise TypeError(f"agent.run@1 input 'tools[{index}].definition' must be a mapping")
+            tool_name = definition.get("name")
+            if not isinstance(tool_name, str):
+                raise TypeError(f"agent.run@1 input 'tools[{index}].definition.name' must be a string")
+            if not tool_name.strip():
+                raise TypeError(f"agent.run@1 input 'tools[{index}].definition.name' must not be empty")
+            resolved_tool_id = tool.get("resolved_tool_id", tool.get("resolvedToolId"))
+            if not isinstance(resolved_tool_id, str):
+                raise TypeError(f"agent.run@1 input 'tools[{index}].resolved_tool_id' must be a string")
+            if not resolved_tool_id.strip():
+                raise TypeError(f"agent.run@1 input 'tools[{index}].resolved_tool_id' must not be empty")
+            definition_digest = tool.get("definition_digest", tool.get("definitionDigest"))
+            if not isinstance(definition_digest, str):
+                raise TypeError(f"agent.run@1 input 'tools[{index}].definition_digest' must be a string")
+            if not definition_digest.strip():
+                raise TypeError(f"agent.run@1 input 'tools[{index}].definition_digest' must not be empty")
+            binding_digest = tool.get("binding_digest", tool.get("bindingDigest"))
+            if not isinstance(binding_digest, str):
+                raise TypeError(f"agent.run@1 input 'tools[{index}].binding_digest' must be a string")
+            if not binding_digest.strip():
+                raise TypeError(f"agent.run@1 input 'tools[{index}].binding_digest' must not be empty")
+            effective_policy_snapshot_id = tool.get(
+                "effective_policy_snapshot_id",
+                tool.get("effectivePolicySnapshotId"),
+            )
+            if not isinstance(effective_policy_snapshot_id, str):
+                raise TypeError(
+                    f"agent.run@1 input 'tools[{index}].effective_policy_snapshot_id' must be a string"
                 )
-            )
-            allowed_for_principal = bool(
-                tool.get("allowed_for_principal", tool.get("allowedForPrincipal", False))
-            )
+            if not effective_policy_snapshot_id.strip():
+                raise TypeError(
+                    f"agent.run@1 input 'tools[{index}].effective_policy_snapshot_id' must not be empty"
+                )
+            allowed_for_principal = tool.get("allowed_for_principal", tool.get("allowedForPrincipal"))
+            if not isinstance(allowed_for_principal, bool):
+                raise TypeError(f"agent.run@1 input 'tools[{index}].allowed_for_principal' must be a boolean")
+            if not allowed_for_principal:
+                raise PermissionError(f"agent.run@1 input 'tools[{index}]' is not allowed for principal")
             valid_until = tool.get("valid_until", tool.get("validUntil"))
             model_visible_tools.append(
                 {

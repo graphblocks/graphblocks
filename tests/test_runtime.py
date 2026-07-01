@@ -218,6 +218,39 @@ def test_stdlib_runtime_executes_tool_resolution_and_agent_run() -> None:
     assert stored.model_visible_tools[0].allowed_for_principal is True
 
 
+def test_stdlib_agent_run_rejects_unresolved_tool_entries() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "agent-rejects-unresolved-tool"},
+        "spec": {
+            "nodes": {
+                "agent": {
+                    "block": "agent.run@1",
+                    "config": {"response": "should not run"},
+                    "inputs": {
+                        "messages": "$input.messages",
+                        "tools": "$input.tools",
+                    },
+                    "outputs": {"candidate": "$output.candidate"},
+                }
+            }
+        },
+    }
+
+    result = InProcessRuntime(stdlib_registry()).run(
+        graph,
+        {
+            "messages": [{"role": "user", "content": "Hello"}],
+            "tools": [{"definition": {"name": "knowledge.search"}}],
+        },
+    )
+
+    assert result.status == "failed"
+    failed = [record for record in result.journal.records if record.kind == "node_failed"]
+    assert "agent.run@1 input 'tools[0].resolved_tool_id' must be a string" in failed[0].payload["error"]
+
+
 @pytest.mark.parametrize("timeout_ms", [True, "250", -1])
 def test_stdlib_tool_resolution_rejects_non_integer_timeout_ms(timeout_ms: object) -> None:
     graph = {

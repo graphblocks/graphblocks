@@ -307,6 +307,59 @@ fn rust_stdlib_agent_run_surfaces_output_policy_profile_ref() -> Result<(), Stri
 }
 
 #[test]
+fn rust_stdlib_agent_run_rejects_unresolved_tool_entries() -> Result<(), String> {
+    let graph = json!({
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "runtime-agent-rejects-unresolved-tool"},
+        "spec": {
+            "interface": {
+                "inputs": {
+                    "messages": "graphblocks.ai/Messages@1",
+                    "tools": "graphblocks.ai/ResolvedTools@1"
+                },
+                "outputs": {"candidate": "graphblocks.ai/TurnCandidate@1"}
+            },
+            "nodes": {
+                "agent": {
+                    "block": "agent.run@1",
+                    "config": {"response": "should not run"},
+                    "inputs": {
+                        "messages": "$input.messages",
+                        "tools": "$input.tools"
+                    },
+                    "outputs": {"candidate": "$output.candidate"}
+                }
+            }
+        }
+    });
+    let result = run_graph(
+        &graph,
+        &json!({
+            "messages": [{"role": "user", "content": "Hello"}],
+            "tools": [{"definition": {"name": "knowledge.search"}}]
+        }),
+    )?;
+
+    assert_eq!(result["status"], "failed");
+    let node_error = result["journal"]
+        .as_array()
+        .and_then(|journal| {
+            journal
+                .iter()
+                .find(|record| record["kind"].as_str() == Some("node_failed"))
+        })
+        .and_then(|record| record.pointer("/payload/message"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| "missing agent node failure".to_owned())?;
+    assert!(
+        node_error.contains("field resolved_tool_id must be a string"),
+        "unexpected node error: {node_error:?}",
+    );
+    Ok(())
+}
+
+#[test]
 fn rust_stdlib_runtime_matches_shared_runtime_tck_cases() -> Result<(), String> {
     let cases = serde_json::from_str::<Value>(include_str!("../../../tck/runtime/cases.json"))
         .map_err(|error| error.to_string())?;

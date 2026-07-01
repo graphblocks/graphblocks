@@ -13893,7 +13893,7 @@ mod tests {
         });
         let inputs = json!({
             "messages": [{"role": "user", "content": "Hello"}],
-            "tools": [{"definition": {"name": "knowledge.search"}}]
+            "tools": []
         });
         let graph_json = serde_json::to_string(&graph).map_err(|error| error.to_string())?;
         let inputs_json = serde_json::to_string(&inputs).map_err(|error| error.to_string())?;
@@ -13912,19 +13912,9 @@ mod tests {
                 .and_then(|outputs| outputs.get("candidate")),
             Some(&json!({
                 "finishReason": "scripted",
-                "modelVisibleTools": [
-                    {
-                        "allowedForPrincipal": false,
-                        "bindingDigest": "",
-                        "definitionDigest": "",
-                        "effectivePolicySnapshotId": "",
-                        "resolvedToolId": "",
-                        "toolName": "knowledge.search",
-                        "validUntil": null
-                    }
-                ],
+                "modelVisibleTools": [],
                 "text": "native scripted response",
-                "toolCount": 1
+                "toolCount": 0
             }))
         );
 
