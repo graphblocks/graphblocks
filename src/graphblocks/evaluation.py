@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field, replace, is_dataclass
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Literal
 
@@ -19,6 +20,45 @@ ReviewDecision = Literal["accept", "accept_with_conditions", "revise", "reject"]
 ConstraintOperator = Literal["at_least", "at_most", "equals"]
 SloComparison = Literal["at_least", "at_most"]
 SloReportStatus = Literal["pass", "fail", "no_data"]
+
+
+VALID_REVIEW_DECISIONS = frozenset(("accept", "accept_with_conditions", "revise", "reject"))
+
+
+def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{owner} {field_name} must be a string")
+    if not value.strip():
+        raise ValueError(f"{owner} {field_name} must not be empty")
+    return value
+
+
+def _parse_datetime(owner: str, field_name: str, value: object) -> datetime:
+    normalized = _validate_non_empty_string(owner, field_name, value).strip()
+    if normalized.endswith(("Z", "z")):
+        normalized = f"{normalized[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as error:
+        raise ValueError(f"{owner} {field_name} must be an ISO datetime") from error
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _validate_string_list(owner: str, field_name: str, values: object) -> list[str]:
+    if isinstance(values, str):
+        raise ValueError(f"{owner} {field_name} must be a collection of strings")
+    try:
+        normalized = list(values)  # type: ignore[arg-type]
+    except TypeError as error:
+        raise ValueError(f"{owner} {field_name} must be a collection of strings") from error
+    for item in normalized:
+        if not isinstance(item, str):
+            raise ValueError(f"{owner} {field_name} items must be strings")
+        if not item.strip():
+            raise ValueError(f"{owner} {field_name} item must not be empty")
+    return list(normalized)
 
 
 @dataclass(frozen=True, slots=True)
@@ -314,6 +354,28 @@ class ReviewRecord:
     credential_refs: list[str] = field(default_factory=list)
     created_at: str = ""
     invalidated_at: str | None = None
+
+    def __post_init__(self) -> None:
+        _validate_non_empty_string("review record", "review_id", self.review_id)
+        if not isinstance(self.subject, ResourceSnapshotRef):
+            raise ValueError("review record subject must be a ResourceSnapshotRef")
+        _validate_non_empty_string("review record", "subject_digest", self.subject_digest)
+        _validate_non_empty_string("review record", "scope", self.scope)
+        if not isinstance(self.reviewer, PrincipalRef):
+            raise ValueError("review record reviewer must be a PrincipalRef")
+        if self.decision not in VALID_REVIEW_DECISIONS:
+            raise ValueError(f"invalid review decision {self.decision}")
+        _parse_datetime("review record", "created_at", self.created_at)
+        if self.invalidated_at is not None:
+            invalidated_at = _parse_datetime("review record", "invalidated_at", self.invalidated_at)
+            if invalidated_at < _parse_datetime("review record", "created_at", self.created_at):
+                raise ValueError("review record invalidated_at must not be before created_at")
+        object.__setattr__(self, "comments", _validate_string_list("review record", "comments", self.comments))
+        object.__setattr__(
+            self,
+            "credential_refs",
+            _validate_string_list("review record", "credential_refs", self.credential_refs),
+        )
 
     def is_valid_for(self, subject: ResourceSnapshotRef) -> bool:
         return self.invalidated_at is None and self.subject.resource_id == subject.resource_id and self.subject_digest == subject.digest

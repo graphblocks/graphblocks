@@ -138,6 +138,52 @@ def test_review_record_is_invalid_for_changed_subject_digest() -> None:
     assert not review.invalidate("2026-06-22T00:05:00Z").is_valid_for(subject)
 
 
+def test_review_record_validates_identity_decision_timestamps_and_lists() -> None:
+    subject = ResourceSnapshotRef("candidate-1", "sha256:old")
+    base = {
+        "review_id": "review-1",
+        "subject": subject,
+        "subject_digest": "sha256:old",
+        "scope": "quality",
+        "reviewer": PrincipalRef("reviewer-1"),
+        "decision": "accept",
+        "created_at": "2026-06-22T00:00:00Z",
+    }
+    cases = [
+        ({"review_id": " "}, "review record review_id must not be empty"),
+        ({"subject": object()}, "review record subject must be a ResourceSnapshotRef"),
+        ({"subject_digest": " "}, "review record subject_digest must not be empty"),
+        ({"scope": " "}, "review record scope must not be empty"),
+        ({"reviewer": object()}, "review record reviewer must be a PrincipalRef"),
+        ({"decision": "maybe"}, "invalid review decision maybe"),
+        ({"created_at": "later"}, "review record created_at must be an ISO datetime"),
+        ({"invalidated_at": "later"}, "review record invalidated_at must be an ISO datetime"),
+        (
+            {"invalidated_at": "2026-06-21T23:59:59Z"},
+            "review record invalidated_at must not be before created_at",
+        ),
+        ({"comments": "comment"}, "review record comments must be a collection of strings"),
+        ({"comments": ["ok", object()]}, "review record comments items must be strings"),
+        ({"comments": ["ok", " "]}, "review record comments item must not be empty"),
+        ({"credential_refs": "cred"}, "review record credential_refs must be a collection of strings"),
+        ({"credential_refs": ["cred-1", object()]}, "review record credential_refs items must be strings"),
+        ({"credential_refs": ["cred-1", " "]}, "review record credential_refs item must not be empty"),
+    ]
+
+    for overrides, message in cases:
+        with pytest.raises(ValueError, match=message):
+            ReviewRecord(**(base | overrides))  # type: ignore[arg-type]
+
+    comments = ["looks good"]
+    credential_refs = ["cred-1"]
+    review = ReviewRecord(**(base | {"comments": comments, "credential_refs": credential_refs}))
+    comments.append("mutated")
+    credential_refs.append("cred-2")
+
+    assert review.comments == ["looks good"]
+    assert review.credential_refs == ["cred-1"]
+
+
 def test_resource_snapshot_ref_validates_identity_fields_and_copies_metadata() -> None:
     metadata = {"path": "candidate/out.sv"}
     snapshot = ResourceSnapshotRef(

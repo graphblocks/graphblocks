@@ -364,7 +364,7 @@ cancelled
 invalidated
 ```
 
-승인 후 arguments 또는 subject digest 변경을 허용하지 않는다. 변경되면 새 approval을 요청해야 한다. 내용 검토는 `ReviewRecord`를 사용한다. Approval과 review timestamp field는 parse 가능한 ISO datetime이어야 한다. `expires_at`이 있는 approval은 만료 시각 이후 action을 authorize하지 않는다. `approved`/`denied` terminal record의 `decided_at`은 request `expires_at` 이후가 아니어야 하며, 만료 후 재승인이 필요하면 새 approval request를 만들어야 한다. Reviewer credential의 `expires_at`은 `issued_at` 이후여야 하며, review 생성 시각이 credential expiry보다 앞선 경우에만 사용할 수 있다. Review request와 reviewer credential의 identity, scope, metadata key는 비어 있지 않은 typed 값으로 검증해야 한다.
+승인 후 arguments 또는 subject digest 변경을 허용하지 않는다. 변경되면 새 approval을 요청해야 한다. 내용 검토는 `ReviewRecord`를 사용한다. Approval과 review timestamp field는 parse 가능한 ISO datetime이어야 한다. `expires_at`이 있는 approval은 만료 시각 이후 action을 authorize하지 않는다. `approved`/`denied` terminal record의 `decided_at`은 request `expires_at` 이후가 아니어야 하며, 만료 후 재승인이 필요하면 새 approval request를 만들어야 한다. Reviewer credential의 `expires_at`은 `issued_at` 이후여야 하며, review 생성 시각이 credential expiry보다 앞선 경우에만 사용할 수 있다. Review request, reviewer credential, canonical `ReviewRecord`의 identity, scope, decision, metadata key, credential reference는 비어 있지 않은 typed 값으로 검증해야 한다.
 
 ## 142. Tool execution
 
