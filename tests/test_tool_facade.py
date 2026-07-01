@@ -2194,6 +2194,32 @@ def test_tool_result_rejects_non_string_and_invalid_collection_fields() -> None:
     with pytest.raises(ValueError, match="tool result output entries must be ContentPart"):
         ToolResult(tool_call_id="call-1", status="completed", output="draft")  # type: ignore[arg-type]
 
+    with pytest.raises(ValueError, match="tool result artifacts must be a collection of artifact references"):
+        ToolResult(tool_call_id="call-1", status="completed", artifacts=object())  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="tool result artifacts must be a collection of artifact references"):
+        ToolResult(tool_call_id="call-1", status="completed", artifacts="artifact-1")  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="tool result artifacts must be a collection of artifact references"):
+        ToolResult(
+            tool_call_id="call-1",
+            status="completed",
+            artifacts={"artifact_id": "artifact-1", "uri": "blob://artifact-1"},  # type: ignore[arg-type]
+        )
+
+    with pytest.raises(ValueError, match="tool result diagnostics must be a collection of mappings"):
+        ToolResult(tool_call_id="call-1", status="completed", diagnostics=object())  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="tool result diagnostics must be a collection of mappings"):
+        ToolResult(tool_call_id="call-1", status="completed", diagnostics="diag-1")  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="tool result diagnostics must be a collection of mappings"):
+        ToolResult(
+            tool_call_id="call-1",
+            status="completed",
+            diagnostics={"code": "tool.warning", "message": "partial data"},  # type: ignore[arg-type]
+        )
+
     result = ToolResult.completed(
         "call-1",
         (ContentPart(kind="text", text="done"),),

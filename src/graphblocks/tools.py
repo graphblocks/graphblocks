@@ -1805,13 +1805,25 @@ class ToolResult:
                 raise ValueError("tool result output is not canonical JSON") from error
             if actual_output_digest != self.output_digest:
                 raise ValueError("tool result output_digest does not match output")
+        try:
+            if isinstance(self.artifacts, (str, Mapping)):
+                raise TypeError
+            artifacts = tuple(self.artifacts)
+        except TypeError as error:
+            raise ValueError("tool result artifacts must be a collection of artifact references") from error
         object.__setattr__(
             self,
             "artifacts",
-            tuple(_tool_result_artifact_mapping(artifact) for artifact in self.artifacts),
+            tuple(_tool_result_artifact_mapping(artifact) for artifact in artifacts),
         )
         diagnostics: list[MappingProxyType[str, object]] = []
-        for diagnostic in self.diagnostics:
+        try:
+            if isinstance(self.diagnostics, (str, Mapping)):
+                raise TypeError
+            diagnostic_entries = tuple(self.diagnostics)
+        except TypeError as error:
+            raise ValueError("tool result diagnostics must be a collection of mappings") from error
+        for diagnostic in diagnostic_entries:
             if not isinstance(diagnostic, Mapping):
                 raise ValueError("tool result diagnostics entries must be mappings")
             diagnostic_copy = dict(diagnostic)
