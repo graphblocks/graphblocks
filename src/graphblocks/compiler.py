@@ -169,11 +169,28 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                 )
             )
 
-    output_policy = spec.get("outputPolicy") or spec.get("output_policy")
-    output_policy = output_policy if isinstance(output_policy, dict) else None
+    output_policy_key = "outputPolicy" if "outputPolicy" in spec else "output_policy"
+    output_policy = spec.get(output_policy_key)
+    if output_policy is not None and not isinstance(output_policy, dict):
+        diagnostics.append(
+            Diagnostic(
+                "InvalidOutputPolicy",
+                "outputPolicy must be a mapping",
+                f"$.spec.{output_policy_key}",
+            )
+        )
+        output_policy = None
     if output_policy is not None:
         delivery = output_policy.get("delivery")
-        delivery = delivery if isinstance(delivery, dict) else None
+        if delivery is not None and not isinstance(delivery, dict):
+            diagnostics.append(
+                Diagnostic(
+                    "InvalidOutputPolicy",
+                    "outputPolicy delivery must be a mapping",
+                    f"$.spec.{output_policy_key}.delivery",
+                )
+            )
+            delivery = None
         if delivery is not None:
             mode = delivery.get("mode")
             if mode is not None and (not isinstance(mode, str) or mode not in VALID_OUTPUT_DELIVERY_MODES):
@@ -286,7 +303,15 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
             or output_policy.get("outputEvaluation")
             or output_policy.get("output_evaluation")
         )
-        evaluation = evaluation if isinstance(evaluation, dict) else None
+        if evaluation is not None and not isinstance(evaluation, dict):
+            diagnostics.append(
+                Diagnostic(
+                    "InvalidOutputPolicy",
+                    "outputPolicy evaluation must be a mapping",
+                    f"$.spec.{output_policy_key}.evaluation",
+                )
+            )
+            evaluation = None
         enforcement_points = None
         if evaluation is not None:
             enforcement_points = evaluation.get("enforcementPoints") or evaluation.get("enforcement_points")
@@ -345,6 +370,21 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                         "$.spec.outputPolicy.evaluation.enforcementPoints",
                     )
                 )
+        elif enforcement_points is not None:
+            diagnostics.append(
+                Diagnostic(
+                    "InvalidOutputEnforcementPoint",
+                    "output policy enforcementPoints must be a list of strings",
+                    "$.spec.outputPolicy.evaluation.enforcementPoints",
+                )
+            )
+            diagnostics.append(
+                Diagnostic(
+                    "OutputPolicyBypass",
+                    "output policy enforcement must include the before_client_delivery gate",
+                    "$.spec.outputPolicy.evaluation.enforcementPoints",
+                )
+            )
         else:
             diagnostics.append(
                 Diagnostic(
@@ -355,7 +395,15 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
             )
 
         on_violation = output_policy.get("onViolation") or output_policy.get("on_violation")
-        on_violation = on_violation if isinstance(on_violation, dict) else None
+        if on_violation is not None and not isinstance(on_violation, dict):
+            diagnostics.append(
+                Diagnostic(
+                    "InvalidOutputPolicy",
+                    "outputPolicy onViolation must be a mapping",
+                    f"$.spec.{output_policy_key}.onViolation",
+                )
+            )
+            on_violation = None
         if on_violation is not None:
             disposition = on_violation.get("disposition", "abort_response")
             valid_disposition = isinstance(disposition, str) and disposition in VALID_OUTPUT_DISPOSITIONS

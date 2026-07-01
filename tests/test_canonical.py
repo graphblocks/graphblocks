@@ -375,6 +375,90 @@ def test_compile_rejects_output_policy_bypass_and_gate_after_delivery() -> None:
     assert _error_codes(late_gate) == ["PolicyGateAfterDelivery"]
 
 
+def test_compile_reports_malformed_output_policy_shapes() -> None:
+    base = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "malformed-output-policy"},
+        "spec": {
+            "nodes": {"model": {"block": "model.generate@1"}},
+            "outputPolicy": {
+                "delivery": {
+                    "mode": "bounded_holdback",
+                    "holdbackMaxTokens": 48,
+                    "onViolation": "abort_response",
+                },
+                "evaluation": {
+                    "enforcementPoints": [
+                        "on_generation_chunk",
+                        "before_client_delivery",
+                        "before_output_commit",
+                    ]
+                },
+                "onViolation": {
+                    "disposition": "abort_response",
+                    "pendingToolCalls": {"disposition": "deny"},
+                    "durableResult": {"disposition": "none"},
+                },
+            },
+        },
+    }
+    non_mapping_policy = {
+        **base,
+        "spec": {
+            **base["spec"],
+            "outputPolicy": "standard",
+        },
+    }
+    non_mapping_delivery = {
+        **base,
+        "spec": {
+            **base["spec"],
+            "outputPolicy": {
+                **base["spec"]["outputPolicy"],
+                "delivery": "bounded_holdback",
+            },
+        },
+    }
+    non_mapping_evaluation = {
+        **base,
+        "spec": {
+            **base["spec"],
+            "outputPolicy": {
+                **base["spec"]["outputPolicy"],
+                "evaluation": "runtime",
+            },
+        },
+    }
+    non_list_enforcement_points = {
+        **base,
+        "spec": {
+            **base["spec"],
+            "outputPolicy": {
+                **base["spec"]["outputPolicy"],
+                "evaluation": {"enforcementPoints": "before_client_delivery"},
+            },
+        },
+    }
+    non_mapping_on_violation = {
+        **base,
+        "spec": {
+            **base["spec"],
+            "outputPolicy": {
+                **base["spec"]["outputPolicy"],
+                "onViolation": "abort_response",
+            },
+        },
+    }
+
+    assert _error_codes(base) == []
+    assert _error_codes(non_mapping_policy) == ["InvalidOutputPolicy"]
+    assert _error_codes(non_mapping_delivery) == ["InvalidOutputPolicy"]
+    assert _error_codes(non_mapping_evaluation) == ["InvalidOutputPolicy", "OutputPolicyBypass"]
+    assert _error_codes(non_list_enforcement_points) == ["InvalidOutputEnforcementPoint", "OutputPolicyBypass"]
+    assert _error_codes(non_mapping_on_violation) == ["InvalidOutputPolicy"]
+
+
 def test_compile_rejects_policy_abort_that_keeps_tools_or_commits_result() -> None:
     base = {
         "apiVersion": "graphblocks.ai/v1alpha3",

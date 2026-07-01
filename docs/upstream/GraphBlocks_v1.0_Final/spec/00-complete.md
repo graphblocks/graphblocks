@@ -8567,6 +8567,11 @@ class ExhaustionPolicy(BaseModel):
 
 Preset은 authoring shorthand이며 compiler가 위의 explicit contract로 확장한다. Explicit override는 preset보다 더 엄격하게 만들 수 있다. 완화에는 `PolicyOverride` capability가 필요하다.
 
+When an output policy is supplied, the compiler MUST validate the shape of the policy contract
+before applying defaults. `outputPolicy`, `delivery`, `evaluation`, and `onViolation` MUST be
+mappings, and `evaluation.enforcementPoints` MUST be a list of enforcement point names. Malformed
+policy structure MUST produce explicit diagnostics rather than being treated as an omitted policy.
+
 | Preset | Crossing 후 의미 | 기본 output | 기본 금지 |
 |---|---|---|---|
 | `finish_current_turn` | 현재 turn에 이미 admission된 work와 finalization만 bounded envelope 안에서 완료 | boundary까지 delivery, 완료 또는 exhaustion notice commit | 새 turn, plan 확장, optional trial, 새 state-changing effect |
