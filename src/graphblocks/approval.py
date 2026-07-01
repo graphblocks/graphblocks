@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from types import MappingProxyType
 from typing import Literal
 
@@ -32,6 +33,16 @@ def _freeze_metadata(owner: str, metadata: object) -> MappingProxyType[str, obje
     if not isinstance(metadata, Mapping):
         raise ValueError(f"{owner} metadata must be a mapping")
     return MappingProxyType(dict(metadata))
+
+
+def _parse_datetime(value: str) -> datetime:
+    normalized = _validate_non_empty_string("approval datetime", "value", value).strip()
+    if normalized.endswith(("Z", "z")):
+        normalized = f"{normalized[:-1]}+00:00"
+    parsed = datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +123,10 @@ class ApprovalRecord:
                 raise ValueError(f"{self.status} approval record requires approver")
             if self.decided_at is None:
                 raise ValueError(f"{self.status} approval record requires decided_at")
+            if self.request.expires_at is not None and _parse_datetime(self.decided_at) > _parse_datetime(
+                self.request.expires_at
+            ):
+                raise ValueError(f"{self.status} approval record decided_at must not be after expires_at")
         if self.status == "denied" and self.reason is None:
             raise ValueError("denied approval record requires reason")
         if self.status == "invalidated" and self.invalidated_at is None:
@@ -175,7 +190,13 @@ class ApprovalRecord:
             credential_refs=credential_refs,
         )
 
-    def is_valid_for(self, subject: ResourceSnapshotRef, arguments_digest: str) -> bool:
+    def is_valid_for(self, subject: ResourceSnapshotRef, arguments_digest: str, *, now: str | None = None) -> bool:
+        if self.request.expires_at is not None and now is not None:
+            try:
+                if _parse_datetime(now) > _parse_datetime(self.request.expires_at):
+                    return False
+            except ValueError:
+                return False
         return (
             self.status == "approved"
             and self.invalidated_at is None

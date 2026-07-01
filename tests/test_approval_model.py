@@ -121,6 +121,43 @@ def test_approved_record_is_valid_only_for_same_subject_and_arguments() -> None:
     assert record.is_valid_for(subject, "sha256:changed") is False
 
 
+def test_approval_record_validity_honors_request_expiration() -> None:
+    subject = ResourceSnapshotRef("tool-call-1", "sha256:subject")
+    request = ApprovalRequest.from_arguments(
+        "approval-1",
+        run_id="run-1",
+        subject=subject,
+        action="process.execute",
+        arguments={"cmd": ["echo", "hello"]},
+        risk="external_process",
+        summary="Run a process",
+        expires_at="2026-06-22T00:10:00Z",
+    )
+    record = ApprovalRecord.approve(
+        request,
+        approver=PrincipalRef("admin-1"),
+        decided_at="2026-06-22T00:05:00Z",
+    )
+
+    assert record.is_valid_for(subject, request.arguments_digest, now="2026-06-21T19:09:59-05:00") is True
+    assert record.is_valid_for(subject, request.arguments_digest, now="2026-06-22T00:10:01Z") is False
+    assert record.is_valid_for(subject, request.arguments_digest, now="not-a-date") is False
+
+    with pytest.raises(ValueError, match="approved approval record decided_at must not be after expires_at"):
+        ApprovalRecord.approve(
+            request,
+            approver=PrincipalRef("admin-1"),
+            decided_at="2026-06-22T00:10:01Z",
+        )
+    with pytest.raises(ValueError, match="denied approval record decided_at must not be after expires_at"):
+        ApprovalRecord.deny(
+            request,
+            approver=PrincipalRef("admin-1"),
+            decided_at="2026-06-22T00:10:01Z",
+            reason="too late",
+        )
+
+
 def test_approval_record_rejects_invalid_state() -> None:
     request = ApprovalRequest.from_arguments(
         "approval-1",
