@@ -41,6 +41,13 @@ cancel_previous
 allow_branch
 ```
 
+`ContentPart`, `Message`, `FileAttachment`, `CompactionRecord`, `Conversation`,
+`ConversationSnapshot`, `BranchRequest`, `RegenerateRequest`, `Turn` record는 construction 시
+non-empty identity, valid role/status/scope/purpose/lifecycle literal, non-negative revisions/token
+counts, typed nested records, object-shaped content/metadata, unique message/attachment/compaction ids,
+and completed-turn commit fields를 검증해야 한다. ConversationStore boundary는 caller-owned message,
+attachment, compaction, and metadata collections를 defensive snapshot으로 보존해야 한다.
+
 ## 126. Turn lifecycle
 
 ```text

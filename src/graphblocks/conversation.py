@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
+from collections.abc import Mapping
 from typing import Literal
 
 from .documents import ArtifactRef
@@ -23,6 +25,71 @@ TurnStatus = Literal[
     "cancelled",
     "policy_stopped",
 ]
+VALID_MESSAGE_ROLES = frozenset(("system", "developer", "user", "assistant", "tool"))
+VALID_MESSAGE_STATUSES = frozenset(("draft", "committed", "superseded", "retracted"))
+VALID_DELETE_POLICIES = frozenset(("tombstone", "hard"))
+VALID_ATTACHMENT_SCOPES = frozenset(("message", "conversation", "user", "project", "tenant"))
+VALID_ATTACHMENT_PURPOSES = frozenset(("direct_input", "retrieval", "code_analysis", "reference", "output"))
+VALID_ATTACHMENT_INGESTION_STATUSES = frozenset(("pending", "processing", "ready", "failed", "expired", "deleted"))
+VALID_TURN_STATUSES = frozenset(
+    (
+        "created",
+        "context_building",
+        "model_running",
+        "tool_waiting",
+        "approval_waiting",
+        "finalizing",
+        "completed",
+        "failed",
+        "cancelled",
+        "policy_stopped",
+    )
+)
+TERMINAL_TURN_STATUSES = frozenset(("completed", "failed", "cancelled", "policy_stopped"))
+
+
+def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{owner} {field_name} must be a string")
+    if not value.strip():
+        raise ValueError(f"{owner} {field_name} must not be empty")
+    return value
+
+
+def _validate_optional_non_empty_string(owner: str, field_name: str, value: object | None) -> str | None:
+    if value is None:
+        return None
+    return _validate_non_empty_string(owner, field_name, value)
+
+
+def _validate_non_negative_int(owner: str, field_name: str, value: object) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ValueError(f"{owner} {field_name} must be an integer")
+    if value < 0:
+        raise ValueError(f"{owner} {field_name} must be non-negative")
+    return value
+
+
+def _copy_mapping(owner: str, field_name: str, value: object) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{owner} {field_name} must be a mapping")
+    copied: dict[str, object] = {}
+    for key, item in value.items():
+        key_text = _validate_non_empty_string(owner, f"{field_name} key", key)
+        copied[key_text] = deepcopy(item)
+    return copied
+
+
+def _validate_string_tuple(owner: str, field_name: str, value: object) -> tuple[str, ...]:
+    if isinstance(value, str):
+        raise ValueError(f"{owner} {field_name} must be a collection of strings")
+    try:
+        items = tuple(value)  # type: ignore[arg-type]
+    except TypeError as error:
+        raise ValueError(f"{owner} {field_name} must be a collection of strings") from error
+    for item in items:
+        _validate_non_empty_string(owner, f"{field_name} item", item)
+    return items
 
 
 class ConversationError(RuntimeError):
@@ -66,18 +133,23 @@ class ContentPart:
         if self.kind == "text":
             if self.text is None:
                 raise ValueError("text content part requires text")
+            if not isinstance(self.text, str):
+                raise ValueError("text content part text must be a string")
             if self.data is not None:
                 raise ValueError("text content part must not carry data")
         elif self.kind == "json":
             if self.data is None:
                 raise ValueError("json content part requires data")
+            object.__setattr__(self, "data", _copy_mapping("json content part", "data", self.data))
             if self.text is not None:
                 raise ValueError("json content part must not carry text")
         elif self.kind == "artifact_ref":
             if self.data is None:
                 raise ValueError("artifact_ref content part requires data")
+            object.__setattr__(self, "data", _copy_mapping("artifact_ref content part", "data", self.data))
             if self.text is not None:
                 raise ValueError("artifact_ref content part must not carry text")
+        object.__setattr__(self, "metadata", _copy_mapping("content part", "metadata", self.metadata))
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +162,21 @@ class Message:
     status: MessageStatus = "committed"
     created_at: str | None = None
     metadata: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "message_id", _validate_non_empty_string("message", "message_id", self.message_id).strip())
+        if self.role not in VALID_MESSAGE_ROLES:
+            raise ValueError(f"invalid message role {self.role}")
+        parts = tuple(self.parts)
+        if any(not isinstance(part, ContentPart) for part in parts):
+            raise ValueError("message parts must be ContentPart")
+        object.__setattr__(self, "parts", parts)
+        object.__setattr__(self, "parent_message_id", _validate_optional_non_empty_string("message", "parent_message_id", self.parent_message_id))
+        object.__setattr__(self, "revision", _validate_non_negative_int("message", "revision", self.revision))
+        if self.status not in VALID_MESSAGE_STATUSES:
+            raise ValueError(f"invalid message status {self.status}")
+        object.__setattr__(self, "created_at", _validate_optional_non_empty_string("message", "created_at", self.created_at))
+        object.__setattr__(self, "metadata", _copy_mapping("message", "metadata", self.metadata))
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +194,22 @@ class FileAttachment:
     def is_ready(self) -> bool:
         return self.ingestion_status == "ready"
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "attachment_id", _validate_non_empty_string("file attachment", "attachment_id", self.attachment_id).strip())
+        if not isinstance(self.asset, ArtifactRef):
+            raise ValueError("file attachment asset must be ArtifactRef")
+        if self.scope not in VALID_ATTACHMENT_SCOPES:
+            raise ValueError(f"invalid file attachment scope {self.scope}")
+        if self.purpose not in VALID_ATTACHMENT_PURPOSES:
+            raise ValueError(f"invalid file attachment purpose {self.purpose}")
+        if self.ingestion_status not in VALID_ATTACHMENT_INGESTION_STATUSES:
+            raise ValueError(f"invalid file attachment ingestion_status {self.ingestion_status}")
+        object.__setattr__(self, "retention_policy", _validate_optional_non_empty_string("file attachment", "retention_policy", self.retention_policy))
+        object.__setattr__(self, "message_id", _validate_optional_non_empty_string("file attachment", "message_id", self.message_id))
+        if self.scope == "message" and self.message_id is None:
+            raise ValueError("message-scoped file attachment requires message_id")
+        object.__setattr__(self, "metadata", _copy_mapping("file attachment", "metadata", self.metadata))
+
 
 @dataclass(frozen=True, slots=True)
 class CompactionRecord:
@@ -118,6 +221,20 @@ class CompactionRecord:
     token_after: int
     model: str | None = None
     metadata: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "compaction_id", _validate_non_empty_string("compaction record", "compaction_id", self.compaction_id).strip())
+        object.__setattr__(self, "source_message_ids", _validate_string_tuple("compaction record", "source_message_ids", self.source_message_ids))
+        if not self.source_message_ids:
+            raise ValueError("compaction record source_message_ids must not be empty")
+        object.__setattr__(self, "output_message_id", _validate_non_empty_string("compaction record", "output_message_id", self.output_message_id).strip())
+        object.__setattr__(self, "method", _validate_non_empty_string("compaction record", "method", self.method).strip())
+        object.__setattr__(self, "token_before", _validate_non_negative_int("compaction record", "token_before", self.token_before))
+        object.__setattr__(self, "token_after", _validate_non_negative_int("compaction record", "token_after", self.token_after))
+        if self.token_after > self.token_before:
+            raise ValueError("compaction record token_after must not exceed token_before")
+        object.__setattr__(self, "model", _validate_optional_non_empty_string("compaction record", "model", self.model))
+        object.__setattr__(self, "metadata", _copy_mapping("compaction record", "metadata", self.metadata))
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,11 +249,52 @@ class Conversation:
     branched_from_message_id: str | None = None
     metadata: dict[str, object] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "conversation_id", _validate_non_empty_string("conversation", "conversation_id", self.conversation_id).strip())
+        messages = tuple(self.messages)
+        if any(not isinstance(message, Message) for message in messages):
+            raise ValueError("conversation messages must be Message")
+        message_ids = [message.message_id for message in messages]
+        if len(set(message_ids)) != len(message_ids):
+            raise ValueError("conversation message_id values must be unique")
+        object.__setattr__(self, "messages", messages)
+        attachments = tuple(self.attachments)
+        if any(not isinstance(attachment, FileAttachment) for attachment in attachments):
+            raise ValueError("conversation attachments must be FileAttachment")
+        attachment_ids = [attachment.attachment_id for attachment in attachments]
+        if len(set(attachment_ids)) != len(attachment_ids):
+            raise ValueError("conversation attachment_id values must be unique")
+        object.__setattr__(self, "attachments", attachments)
+        compactions = tuple(self.compactions)
+        if any(not isinstance(record, CompactionRecord) for record in compactions):
+            raise ValueError("conversation compactions must be CompactionRecord")
+        compaction_ids = [record.compaction_id for record in compactions]
+        if len(set(compaction_ids)) != len(compaction_ids):
+            raise ValueError("conversation compaction_id values must be unique")
+        object.__setattr__(self, "compactions", compactions)
+        object.__setattr__(self, "revision", _validate_non_negative_int("conversation", "revision", self.revision))
+        if not isinstance(self.archived, bool):
+            raise ValueError("conversation archived must be a boolean")
+        object.__setattr__(self, "branch_of", _validate_optional_non_empty_string("conversation", "branch_of", self.branch_of))
+        object.__setattr__(
+            self,
+            "branched_from_message_id",
+            _validate_optional_non_empty_string("conversation", "branched_from_message_id", self.branched_from_message_id),
+        )
+        object.__setattr__(self, "metadata", _copy_mapping("conversation", "metadata", self.metadata))
+
 
 @dataclass(frozen=True, slots=True)
 class ConversationSnapshot:
     conversation: Conversation
     revision: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.conversation, Conversation):
+            raise ValueError("conversation snapshot conversation must be Conversation")
+        object.__setattr__(self, "revision", _validate_non_negative_int("conversation snapshot", "revision", self.revision))
+        if self.revision != self.conversation.revision:
+            raise ValueError("conversation snapshot revision must match conversation revision")
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,6 +305,15 @@ class BranchRequest:
     include_attachments: bool = True
     include_memory: bool = False
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "conversation_id", _validate_non_empty_string("branch request", "conversation_id", self.conversation_id).strip())
+        object.__setattr__(self, "from_message_id", _validate_non_empty_string("branch request", "from_message_id", self.from_message_id).strip())
+        object.__setattr__(self, "new_conversation_id", _validate_optional_non_empty_string("branch request", "new_conversation_id", self.new_conversation_id))
+        if not isinstance(self.include_attachments, bool):
+            raise ValueError("branch request include_attachments must be a boolean")
+        if not isinstance(self.include_memory, bool):
+            raise ValueError("branch request include_memory must be a boolean")
+
 
 @dataclass(frozen=True, slots=True)
 class RegenerateRequest:
@@ -155,6 +322,19 @@ class RegenerateRequest:
     new_conversation_id: str | None = None
     include_attachments: bool = True
     include_memory: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "conversation_id", _validate_non_empty_string("regenerate request", "conversation_id", self.conversation_id).strip())
+        object.__setattr__(self, "assistant_message_id", _validate_non_empty_string("regenerate request", "assistant_message_id", self.assistant_message_id).strip())
+        object.__setattr__(
+            self,
+            "new_conversation_id",
+            _validate_optional_non_empty_string("regenerate request", "new_conversation_id", self.new_conversation_id),
+        )
+        if not isinstance(self.include_attachments, bool):
+            raise ValueError("regenerate request include_attachments must be a boolean")
+        if not isinstance(self.include_memory, bool):
+            raise ValueError("regenerate request include_memory must be a boolean")
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,6 +347,28 @@ class Turn:
     committed_revision: int | None = None
     committed_message_ids: tuple[str, ...] = field(default_factory=tuple)
     metadata: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "turn_id", _validate_non_empty_string("turn", "turn_id", self.turn_id).strip())
+        object.__setattr__(self, "conversation_id", _validate_non_empty_string("turn", "conversation_id", self.conversation_id).strip())
+        object.__setattr__(self, "base_revision", _validate_non_negative_int("turn", "base_revision", self.base_revision))
+        if self.status not in VALID_TURN_STATUSES:
+            raise ValueError(f"invalid turn status {self.status}")
+        messages = tuple(self.messages)
+        if any(not isinstance(message, Message) for message in messages):
+            raise ValueError("turn messages must be Message")
+        object.__setattr__(self, "messages", messages)
+        if self.committed_revision is not None:
+            object.__setattr__(self, "committed_revision", _validate_non_negative_int("turn", "committed_revision", self.committed_revision))
+        object.__setattr__(self, "committed_message_ids", _validate_string_tuple("turn", "committed_message_ids", self.committed_message_ids))
+        if self.status == "completed":
+            if self.committed_revision is None:
+                raise ValueError("completed turn requires committed_revision")
+            if not self.committed_message_ids:
+                raise ValueError("completed turn requires committed_message_ids")
+        elif self.committed_revision is not None or self.committed_message_ids:
+            raise ValueError("non-completed turn must not carry committed revision data")
+        object.__setattr__(self, "metadata", _copy_mapping("turn", "metadata", self.metadata))
 
 
 def _copy_conversation(conversation: Conversation) -> Conversation:

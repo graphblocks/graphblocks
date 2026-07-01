@@ -11,11 +11,13 @@ from graphblocks.conversation import (
     ConversationArchivedError,
     ConversationConflictError,
     ConversationNotFoundError,
+    ConversationSnapshot,
     FileAttachment,
     InMemoryConversationStore,
     Message,
     MessageNotFoundError,
     RegenerateRequest,
+    Turn,
 )
 
 
@@ -65,6 +67,55 @@ def test_conversation_store_copies_message_payloads_at_boundaries() -> None:
     fresh = store.get("conv-1").conversation.messages[0]
     assert fresh.metadata == {"source": "initial"}
     assert fresh.parts[0].data == {"answer": "original"}
+
+
+def test_conversation_records_validate_identity_literals_and_nested_types() -> None:
+    with pytest.raises(ValueError, match="message message_id must not be empty"):
+        Message(message_id=" ", role="user")
+    with pytest.raises(ValueError, match="invalid message role"):
+        Message(message_id="msg-1", role="critic")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="message parts must be ContentPart"):
+        Message(message_id="msg-1", role="user", parts=(object(),))  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="message revision must be non-negative"):
+        Message(message_id="msg-1", role="user", revision=-1)
+    with pytest.raises(ValueError, match="content part metadata must be a mapping"):
+        ContentPart(kind="text", text="hello", metadata=None)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="json content part data must be a mapping"):
+        ContentPart(kind="json", data=[])  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="file attachment asset must be ArtifactRef"):
+        FileAttachment("att-1", object(), "message", "retrieval", message_id="msg-1")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="invalid file attachment scope"):
+        FileAttachment("att-1", ArtifactRef("artifact-1", "blob://a"), "workspace", "retrieval")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="message-scoped file attachment requires message_id"):
+        FileAttachment("att-1", ArtifactRef("artifact-1", "blob://a"), "message", "retrieval")
+
+    message = Message("msg-1", "user")
+    with pytest.raises(ValueError, match="conversation message_id values must be unique"):
+        Conversation("conv-1", messages=(message, message))
+    with pytest.raises(ValueError, match="conversation archived must be a boolean"):
+        Conversation("conv-1", archived="yes")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="conversation snapshot revision must match conversation revision"):
+        ConversationSnapshot(Conversation("conv-1", revision=1), revision=0)
+
+
+def test_conversation_request_compaction_and_turn_records_validate_contracts() -> None:
+    with pytest.raises(ValueError, match="branch request include_attachments must be a boolean"):
+        BranchRequest("conv-1", "msg-1", include_attachments="yes")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="regenerate request assistant_message_id must not be empty"):
+        RegenerateRequest("conv-1", " ")
+    with pytest.raises(ValueError, match="compaction record source_message_ids must not be empty"):
+        CompactionRecord("compact-1", (), "msg-summary", "summary", 10, 5)
+    with pytest.raises(ValueError, match="compaction record token_after must not exceed token_before"):
+        CompactionRecord("compact-1", ("msg-1",), "msg-summary", "summary", 10, 11)
+    with pytest.raises(ValueError, match="invalid turn status"):
+        Turn("turn-1", "conv-1", 0, status="paused")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="turn messages must be Message"):
+        Turn("turn-1", "conv-1", 0, messages=(object(),))  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="completed turn requires committed_revision"):
+        Turn("turn-1", "conv-1", 0, status="completed", committed_message_ids=("msg-1",))
+    with pytest.raises(ValueError, match="non-completed turn must not carry committed revision data"):
+        Turn("turn-1", "conv-1", 0, committed_revision=1)
 
 
 def test_branch_preserves_lineage_and_copies_messages_through_source_message() -> None:
