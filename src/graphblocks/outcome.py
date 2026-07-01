@@ -199,6 +199,8 @@ class Readiness:
         else:
             if self.inputs or self.missing or self.input is None or self.source is None or self.outcome is None:
                 raise ValueError("blocked readiness requires input, source, and outcome only")
+            if self.outcome.status == "value":
+                raise ValueError("blocked readiness outcome must not be a value outcome")
 
     @classmethod
     def ready(cls, inputs: dict[str, ResolvedInput]) -> Readiness:

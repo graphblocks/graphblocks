@@ -1843,6 +1843,9 @@ pub enum Outcome<T> {
 - `control.select`, `control.fallback`, `outcome.require`, `outcome.collect`이 명시적으로 outcome을 해석한다.
 - `null`은 schema가 허용한 정상 값이며 branch absence의 sentinel로 사용하지 않는다.
 - `Denied`, `BudgetExhausted`, `Paused`를 일반 `Failed`로 축소하지 않는다.
+- Readiness가 `blocked`이면 원인이 되는 `Outcome`은 value outcome이면 안 된다. Value outcome은
+  dependency를 ready로 해석하고, block 원인은 absence, skipped, denied, budget exhausted, paused,
+  failed, cancelled 같은 terminal/non-value outcome으로 표현한다.
 
 ## 54. Structured cancellation
 

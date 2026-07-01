@@ -116,6 +116,8 @@ def test_readiness_records_validate_shapes_and_copy_inputs() -> None:
         Readiness(kind="waiting")
     with pytest.raises(ValueError, match="blocked readiness requires input, source, and outcome only"):
         Readiness(kind="blocked", input="value", source=source)
+    with pytest.raises(ValueError, match="blocked readiness outcome must not be a value outcome"):
+        Readiness.blocked("value", source, Outcome.value("payload"))
     with pytest.raises(ValueError, match="ready readiness must not carry missing or blocked fields"):
         Readiness(kind="ready", inputs={"value": resolved}, missing=(source,))
 
