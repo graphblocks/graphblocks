@@ -66,6 +66,12 @@ class RetrievalResult(BaseModel):
     metadata: dict[str, JsonValue] = Field(default_factory=dict)
 ```
 
+RAG request, retrieval result, hit, knowledge item reference, federated source, and context pack records
+MUST validate their wire shape at construction boundaries. Identity fields are non-empty strings, scores
+and latency are finite numeric values, ranks are positive, token counts are non-negative and must not
+exceed declared context budgets, metadata is object-shaped with string keys, and nested references such
+as `SourceRef`, `KnowledgeItemRef`, `SearchHit`, and `SearchRequest` remain typed records.
+
 모든 hit는 rank, score semantics, source chunk, retriever ID를 가진다.
 
 ## 103. Retrieval strategy

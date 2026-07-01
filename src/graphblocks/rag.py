@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -16,6 +16,91 @@ from .evaluation import MetricObservation, ResultBundle
 KnowledgeDeleteMode: TypeAlias = Literal["tombstone", "hard"]
 KnowledgeRecordStatus: TypeAlias = Literal["active", "tombstoned"]
 FederatedFailureMode: TypeAlias = Literal["fail", "partial"]
+
+
+def _validate_string(owner: str, field_name: str, value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{owner} {field_name} must be a string")
+    return value
+
+
+def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
+    value = _validate_string(owner, field_name, value)
+    if not value.strip():
+        raise ValueError(f"{owner} {field_name} must not be empty")
+    return value
+
+
+def _validate_optional_non_empty_string(owner: str, field_name: str, value: object | None) -> str | None:
+    if value is None:
+        return None
+    return _validate_non_empty_string(owner, field_name, value)
+
+
+def _validate_non_negative_int(owner: str, field_name: str, value: object | None) -> int | None:
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ValueError(f"{owner} {field_name} must be an integer")
+    if value < 0:
+        raise ValueError(f"{owner} {field_name} must be non-negative")
+    return value
+
+
+def _validate_positive_int(owner: str, field_name: str, value: object) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ValueError(f"{owner} {field_name} must be an integer")
+    if value < 1:
+        raise ValueError(f"{owner} {field_name} must be positive")
+    return value
+
+
+def _validate_optional_finite_float(owner: str, field_name: str, value: object | None) -> float | None:
+    if value is None:
+        return None
+    if not isinstance(value, int | float) or isinstance(value, bool):
+        raise ValueError(f"{owner} {field_name} must be a number")
+    converted = float(value)
+    if not math.isfinite(converted):
+        raise ValueError(f"{owner} {field_name} must be finite")
+    return converted
+
+
+def _copy_metadata(owner: str, value: object, *, field_name: str = "metadata") -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{owner} {field_name} must be a mapping")
+    metadata = dict(value)
+    for key in metadata:
+        if not isinstance(key, str):
+            raise ValueError(f"{owner} {field_name} keys must be strings")
+        if not key.strip():
+            raise ValueError(f"{owner} {field_name} keys must not be empty")
+    return metadata
+
+
+def _copy_string_list(owner: str, field_name: str, value: object) -> list[str]:
+    if isinstance(value, str):
+        raise ValueError(f"{owner} {field_name} must be a list of strings")
+    try:
+        items = list(value)  # type: ignore[arg-type]
+    except TypeError as error:
+        raise ValueError(f"{owner} {field_name} must be a list of strings") from error
+    for item in items:
+        _validate_non_empty_string(owner, f"{field_name} item", item)
+    return items
+
+
+def _copy_typed_list(owner: str, field_name: str, value: object, item_type: type[object]) -> list[object]:
+    if isinstance(value, str):
+        raise ValueError(f"{owner} {field_name} must be a list of {item_type.__name__} records")
+    try:
+        items = list(value)  # type: ignore[arg-type]
+    except TypeError as error:
+        raise ValueError(f"{owner} {field_name} must be a list of {item_type.__name__} records") from error
+    for item in items:
+        if not isinstance(item, item_type):
+            raise ValueError(f"{owner} {field_name} must be a list of {item_type.__name__} records")
+    return items
 
 
 def _parse_iso_datetime(value: str, *, field: str) -> datetime:
@@ -55,8 +140,11 @@ class SearchRequest:
     metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        _validate_string("search request", "query_text", self.query_text)
         if not isinstance(self.top_k, int) or isinstance(self.top_k, bool) or self.top_k < 0:
             raise ValueError("search request top_k must be a non-negative integer")
+        object.__setattr__(self, "filters", _copy_metadata("search request", self.filters, field_name="filters"))
+        object.__setattr__(self, "metadata", _copy_metadata("search request", self.metadata))
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +164,13 @@ class AuthContext:
     roles: set[str] = field(default_factory=set)
     attributes: dict[str, object] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        _validate_non_empty_string("auth context", "tenant_id", self.tenant_id)
+        _validate_non_empty_string("auth context", "principal_id", self.principal_id)
+        object.__setattr__(self, "groups", set(_copy_string_list("auth context", "groups", self.groups)))
+        object.__setattr__(self, "roles", set(_copy_string_list("auth context", "roles", self.roles)))
+        object.__setattr__(self, "attributes", _copy_metadata("auth context attributes", self.attributes))
+
 
 @dataclass(frozen=True, slots=True)
 class RetrievalResult:
@@ -86,6 +181,27 @@ class RetrievalResult:
     latency_ms: float | None = None
     warnings: list[str] = field(default_factory=list)
     metadata: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        _validate_non_empty_string("retrieval result", "retrieval_id", self.retrieval_id)
+        if not isinstance(self.request, SearchRequest):
+            raise ValueError("retrieval result request must be a SearchRequest")
+        object.__setattr__(
+            self,
+            "hits",
+            _copy_typed_list("retrieval result", "hits", self.hits, SearchHit),
+        )
+        object.__setattr__(
+            self,
+            "total_candidates",
+            _validate_non_negative_int("retrieval result", "total_candidates", self.total_candidates),
+        )
+        latency_ms = _validate_optional_finite_float("retrieval result", "latency_ms", self.latency_ms)
+        if latency_ms is not None and latency_ms < 0:
+            raise ValueError("retrieval result latency_ms must be non-negative")
+        object.__setattr__(self, "latency_ms", latency_ms)
+        object.__setattr__(self, "warnings", _copy_string_list("retrieval result", "warnings", self.warnings))
+        object.__setattr__(self, "metadata", _copy_metadata("retrieval result", self.metadata))
 
 
 class FederatedRetrievalError(RuntimeError):
@@ -100,6 +216,17 @@ class FederatedRetrievalSource:
     weight: float = 1.0
     metadata: dict[str, object] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        _validate_non_empty_string("federated retrieval source", "source_id", self.source_id)
+        if self.result is not None and not isinstance(self.result, RetrievalResult):
+            raise ValueError("federated retrieval source result must be a RetrievalResult")
+        _validate_optional_non_empty_string("federated retrieval source", "error", self.error)
+        weight = _validate_optional_finite_float("federated retrieval source", "weight", self.weight)
+        if weight is None or weight <= 0:
+            raise ValueError("federated retrieval source weight must be positive")
+        object.__setattr__(self, "weight", weight)
+        object.__setattr__(self, "metadata", _copy_metadata("federated retrieval source", self.metadata))
+
 
 @dataclass(frozen=True, slots=True)
 class KnowledgeItemRef:
@@ -111,6 +238,29 @@ class KnowledgeItemRef:
     preview: list[str] = field(default_factory=list)
     acl: dict[str, object] | None = None
     metadata: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        _validate_non_empty_string("knowledge item ref", "item_id", self.item_id)
+        _validate_non_empty_string("knowledge item ref", "item_kind", self.item_kind)
+        if not isinstance(self.source, SourceRef):
+            raise ValueError("knowledge item ref source must be a SourceRef")
+        object.__setattr__(
+            self,
+            "schema_ref",
+            _validate_optional_non_empty_string("knowledge item ref", "schema_ref", self.schema_ref),
+        )
+        object.__setattr__(
+            self,
+            "payload_ref",
+            _validate_optional_non_empty_string("knowledge item ref", "payload_ref", self.payload_ref),
+        )
+        object.__setattr__(self, "preview", _copy_string_list("knowledge item ref", "preview", self.preview))
+        object.__setattr__(
+            self,
+            "acl",
+            None if self.acl is None else _copy_metadata("knowledge item ref acl", self.acl),
+        )
+        object.__setattr__(self, "metadata", _copy_metadata("knowledge item ref", self.metadata))
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,6 +275,33 @@ class SearchHit:
     highlights: list[SourceRef] = field(default_factory=list)
     metadata: dict[str, object] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        _validate_non_empty_string("search hit", "hit_id", self.hit_id)
+        if not isinstance(self.item, KnowledgeItemRef):
+            raise ValueError("search hit item must be a KnowledgeItemRef")
+        object.__setattr__(self, "rank", _validate_positive_int("search hit", "rank", self.rank))
+        _validate_non_empty_string("search hit", "retriever", self.retriever)
+        object.__setattr__(
+            self,
+            "raw_score",
+            _validate_optional_finite_float("search hit", "raw_score", self.raw_score),
+        )
+        normalized_score = _validate_optional_finite_float("search hit", "normalized_score", self.normalized_score)
+        if normalized_score is not None and not 0 <= normalized_score <= 1:
+            raise ValueError("search hit normalized_score must be between 0 and 1")
+        object.__setattr__(self, "normalized_score", normalized_score)
+        object.__setattr__(
+            self,
+            "score_kind",
+            _validate_optional_non_empty_string("search hit", "score_kind", self.score_kind),
+        )
+        object.__setattr__(
+            self,
+            "highlights",
+            _copy_typed_list("search hit", "highlights", self.highlights, SourceRef),
+        )
+        object.__setattr__(self, "metadata", _copy_metadata("search hit", self.metadata))
+
 
 @dataclass(frozen=True, slots=True)
 class ContextPack:
@@ -133,6 +310,21 @@ class ContextPack:
     token_budget: int | None = None
     token_count: int | None = None
     metadata: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        _validate_non_empty_string("context pack", "context_id", self.context_id)
+        object.__setattr__(
+            self,
+            "hits",
+            _copy_typed_list("context pack", "hits", self.hits, SearchHit),
+        )
+        token_budget = _validate_non_negative_int("context pack", "token_budget", self.token_budget)
+        token_count = _validate_non_negative_int("context pack", "token_count", self.token_count)
+        if token_budget is not None and token_count is not None and token_count > token_budget:
+            raise ValueError("context pack token_count must not exceed token_budget")
+        object.__setattr__(self, "token_budget", token_budget)
+        object.__setattr__(self, "token_count", token_count)
+        object.__setattr__(self, "metadata", _copy_metadata("context pack", self.metadata))
 
 
 @dataclass(frozen=True, slots=True)
