@@ -1354,6 +1354,46 @@ def test_tool_admission_validates_arguments_before_approval() -> None:
     assert str(error.value) == "tool call call-1 arguments invalid: schemas/ProcessRun@1 expected array at $.cmd"
 
 
+def test_tool_admission_validates_typed_boundary_inputs() -> None:
+    resolved = _resolved_process_tool()
+    call = _process_call(resolved)
+    registry = _process_schema_registry()
+    policy = _allow_tool_policy_decision()
+
+    cases = (
+        (
+            {"call": object()},
+            "tool admission call must be a ToolCall",
+        ),
+        (
+            {"resolved_tool": object()},
+            "tool admission resolved_tool must be a ResolvedTool",
+        ),
+        (
+            {"schema_registry": object()},
+            "tool admission schema_registry must be a ToolSchemaRegistry",
+        ),
+        (
+            {"policy_decision": object()},
+            "tool admission policy_decision must be a PolicyDecision",
+        ),
+    )
+
+    for overrides, message in cases:
+        with pytest.raises(ToolAdmissionError, match=message):
+            admit_tool_call(
+                overrides.get("call", call),  # type: ignore[arg-type]
+                overrides.get("resolved_tool", resolved),  # type: ignore[arg-type]
+                overrides.get("schema_registry", registry),  # type: ignore[arg-type]
+                policy_decision=overrides.get("policy_decision", policy),  # type: ignore[arg-type]
+                expected_policy_input_digest=policy.input_digest,
+                principal_id="user-1",
+                idempotency_key="idem-1",
+                admitted_at="2026-06-23T00:00:01Z",
+                now=1_200,
+            )
+
+
 def test_tool_admission_rejects_stale_argument_digest() -> None:
     resolved = _resolved_process_tool()
     call = _process_call(resolved, arguments='{"cmd":["echo"]}')

@@ -4118,6 +4118,9 @@ Tool은 다음을 가져야 한다.
 - cancellation capability
 - rollback/compensation capability
 
+Runtime tool admission MUST validate typed `ToolCall`, `ResolvedTool`, schema registry, and
+`PolicyDecision` records before comparing digests, evaluating policy outcomes, or admitting effects.
+
 Tool result가 너무 크면 ArtifactRef로 저장하고 summary/reference를 message에 넣는다.
 
 ## 143. Parallel tool calls

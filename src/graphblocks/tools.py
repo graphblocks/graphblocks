@@ -1268,6 +1268,14 @@ def admit_tool_call(
         _validate_non_empty_string("tool admission", "principal_id", principal_id)
     except ValueError as error:
         raise ToolAdmissionError(str(error)) from error
+    if not isinstance(call, ToolCall):
+        raise ToolAdmissionError("tool admission call must be a ToolCall")
+    if not isinstance(resolved_tool, ResolvedTool):
+        raise ToolAdmissionError("tool admission resolved_tool must be a ResolvedTool")
+    if not isinstance(schema_registry, ToolSchemaRegistry):
+        raise ToolAdmissionError("tool admission schema_registry must be a ToolSchemaRegistry")
+    if not isinstance(policy_decision, PolicyDecision):
+        raise ToolAdmissionError("tool admission policy_decision must be a PolicyDecision")
     if call.status != "validated":
         raise ToolAdmissionError(f"tool call {call.tool_call_id} is {call.status}, not validated")
     if _output_policy_state_is_stopped(output_policy_state):
