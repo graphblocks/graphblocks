@@ -130,6 +130,8 @@ PEP — Policy Enforcement Point
 
 PDP는 graph state나 external effect를 직접 변경해서는 안 된다. PEP는 `allow`를 받았다는 이유만으로 obligation을 무시해서는 안 된다. Policy decision과 enforcement result는 서로 다른 durable record로 남긴다.
 
+외부 PDP adapter는 decision TTL 또는 `valid_until`을 반환한 경우 이를 GraphBlocks `PolicyDecision.valid_until`으로 보존해야 한다. TTL을 drop하면 cached decision reuse, expiry check, stale entitlement handling이 부정확해진다.
+
 ```python
 class PolicyRequest(BaseModel):
     request_id: str

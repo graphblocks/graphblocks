@@ -147,6 +147,9 @@ def policy_decision_from_opa_result(
         advice.append(dict(item))
 
     digested_request = request if request.input_digest else request.with_input_digest()
+    valid_until = result_body.get("valid_until", result_body.get("validUntil"))
+    if valid_until is not None and (not isinstance(valid_until, str) or not valid_until.strip()):
+        raise OpaPolicyAdapterError("OPA policy decision valid_until must be a non-empty string")
     return PolicyDecision(
         decision_id=decision_id,
         effect=effect,
@@ -155,6 +158,7 @@ def policy_decision_from_opa_result(
         obligations=tuple(obligations),
         advice=tuple(advice),
         evaluated_at=evaluated_at,
+        valid_until=valid_until.strip() if isinstance(valid_until, str) else None,
         input_digest=digested_request.input_digest,
     )
 

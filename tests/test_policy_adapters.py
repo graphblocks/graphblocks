@@ -183,6 +183,7 @@ def test_opa_adapter_maps_result_to_policy_decision(monkeypatch) -> None:
                     }
                 ],
                 "advice": [{"message": "log policy match"}],
+                "validUntil": "2026-06-23T00:05:00Z",
             }
         },
         evaluated_at="2026-06-23T00:00:01Z",
@@ -194,6 +195,7 @@ def test_opa_adapter_maps_result_to_policy_decision(monkeypatch) -> None:
     assert decision.policy_refs == ("policies/support.rego#allow-support",)
     assert decision.obligations[0].obligation_id == "obl-audit"
     assert decision.advice == ({"message": "log policy match"},)
+    assert decision.valid_until == "2026-06-23T00:05:00Z"
     assert decision.input_digest == request.input_digest
 
 
@@ -228,6 +230,14 @@ def test_opa_adapter_rejects_blank_decision_metadata(monkeypatch) -> None:
             request=_policy_request(),
             result={"result": {"effect": "allow"}},
             evaluated_at=" ",
+        )
+
+    with pytest.raises(graphblocks_policy_opa.OpaPolicyAdapterError, match="valid_until"):
+        graphblocks_policy_opa.policy_decision_from_opa_result(
+            decision_id="decision-opa-1",
+            request=_policy_request(),
+            result={"result": {"effect": "allow", "valid_until": " "}},
+            evaluated_at="2026-06-23T00:00:01Z",
         )
 
 
@@ -380,6 +390,7 @@ def test_cedar_adapter_maps_result_to_policy_decision(monkeypatch) -> None:
         request=request,
         result={
             "decision": "deny",
+            "valid_until": "2026-06-23T00:05:00Z",
             "diagnostics": {
                 "reason": ["policy::support::deny_write"],
             },
@@ -391,6 +402,7 @@ def test_cedar_adapter_maps_result_to_policy_decision(monkeypatch) -> None:
     assert decision.effect == "deny"
     assert decision.reason_codes == ("policy::support::deny_write",)
     assert decision.policy_refs == ("policy::support::deny_write",)
+    assert decision.valid_until == "2026-06-23T00:05:00Z"
     assert decision.input_digest == request.input_digest
 
 
@@ -412,6 +424,14 @@ def test_cedar_adapter_rejects_blank_decision_metadata(monkeypatch) -> None:
             request=_policy_request(),
             result={"decision": "allow"},
             evaluated_at=" ",
+        )
+
+    with pytest.raises(graphblocks_policy_cedar.CedarPolicyAdapterError, match="valid_until"):
+        graphblocks_policy_cedar.policy_decision_from_cedar_result(
+            decision_id="decision-cedar-1",
+            request=_policy_request(),
+            result={"decision": "allow", "validUntil": " "},
+            evaluated_at="2026-06-23T00:00:01Z",
         )
 
 

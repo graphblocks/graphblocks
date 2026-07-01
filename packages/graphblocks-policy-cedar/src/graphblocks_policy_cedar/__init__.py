@@ -120,12 +120,16 @@ def policy_decision_from_cedar_result(
     reason_codes = _string_tuple(diagnostics.get("reason", diagnostics.get("reasons", ())))
     policy_refs = _string_tuple(diagnostics.get("policy_refs", diagnostics.get("policyRefs", reason_codes)))
     digested_request = request if request.input_digest else request.with_input_digest()
+    valid_until = result.get("valid_until", result.get("validUntil"))
+    if valid_until is not None and (not isinstance(valid_until, str) or not valid_until.strip()):
+        raise CedarPolicyAdapterError("Cedar policy decision valid_until must be a non-empty string")
     return PolicyDecision(
         decision_id=decision_id,
         effect=effect,
         reason_codes=reason_codes,
         policy_refs=policy_refs,
         evaluated_at=evaluated_at,
+        valid_until=valid_until.strip() if isinstance(valid_until, str) else None,
         input_digest=digested_request.input_digest,
     )
 
