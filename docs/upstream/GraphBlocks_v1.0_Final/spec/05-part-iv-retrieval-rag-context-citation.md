@@ -48,6 +48,11 @@ Retriever
 
 `DocumentStore`라는 이름은 일반 RecordStore와 retrieval knowledge store를 혼동하므로 사용하지 않는다.
 
+Ingestion manifest와 index record boundary는 non-empty manifest/asset/revision/processor/index identity,
+valid ingestion lifecycle status, processor reference records, object-shaped metadata, typed artifact references,
+and index record asset/revision consistency를 검증해야 한다. Failed manifest는 non-empty error를 가져야 하며
+non-failed manifest는 stale failure error를 보존해서는 안 된다.
+
 ## 102. RetrievalResult
 
 ```python

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from typing import Literal
 
@@ -8,10 +9,45 @@ from .documents import ArtifactRef, AssetRevision, SourceAsset
 
 IngestionStatus = Literal["discovered", "processing", "ready", "failed", "superseded", "deleted"]
 JsonObject = dict[str, object]
+VALID_INGESTION_STATUSES = frozenset(
+    {"discovered", "processing", "ready", "failed", "superseded", "deleted"}
+)
 
 
 class IngestionError(RuntimeError):
     pass
+
+
+def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{owner} {field_name} must be a string")
+    if not value.strip():
+        raise ValueError(f"{owner} {field_name} must not be empty")
+    return value
+
+
+def _validate_optional_non_empty_string(owner: str, field_name: str, value: object | None) -> str | None:
+    if value is None:
+        return None
+    return _validate_non_empty_string(owner, field_name, value)
+
+
+def _copy_metadata(owner: str, value: object) -> JsonObject:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{owner} metadata must be a mapping")
+    metadata = dict(value)
+    for key in metadata:
+        if not isinstance(key, str):
+            raise ValueError(f"{owner} metadata keys must be strings")
+        if not key.strip():
+            raise ValueError(f"{owner} metadata keys must not be empty")
+    return metadata
+
+
+def _validate_processor_ref(owner: str, value: object) -> ProcessorRef:
+    if not isinstance(value, ProcessorRef):
+        raise ValueError(f"ingestion manifest {owner} must be a ProcessorRef")
+    return value
 
 
 def _copy_artifact_ref(artifact: ArtifactRef | None) -> ArtifactRef | None:
@@ -38,7 +74,10 @@ class ProcessorRef:
     metadata: JsonObject = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "metadata", dict(self.metadata))
+        _validate_non_empty_string("processor ref", "processor_id", self.processor_id)
+        _validate_non_empty_string("processor ref", "version", self.version)
+        _validate_optional_non_empty_string("processor ref", "config_digest", self.config_digest)
+        object.__setattr__(self, "metadata", _copy_metadata("processor ref", self.metadata))
 
 
 def _copy_processor_ref(processor: ProcessorRef | None) -> ProcessorRef | None:
@@ -62,8 +101,18 @@ class IndexRecordRef:
     metadata: JsonObject = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "chunk_ids", tuple(self.chunk_ids))
-        object.__setattr__(self, "metadata", dict(self.metadata))
+        for field_name in ("index_id", "record_id", "asset_id", "revision_id"):
+            _validate_non_empty_string("index record ref", field_name, getattr(self, field_name))
+        if isinstance(self.chunk_ids, str):
+            raise ValueError("index record ref chunk_ids must be a collection of strings")
+        try:
+            chunk_ids = tuple(self.chunk_ids)
+        except TypeError as error:
+            raise ValueError("index record ref chunk_ids must be a collection of strings") from error
+        for chunk_id in chunk_ids:
+            _validate_non_empty_string("index record ref", "chunk_id", chunk_id)
+        object.__setattr__(self, "chunk_ids", chunk_ids)
+        object.__setattr__(self, "metadata", _copy_metadata("index record ref", self.metadata))
 
 
 def _copy_index_record_ref(record: IndexRecordRef) -> IndexRecordRef:
@@ -101,13 +150,63 @@ class IngestionManifest:
     metadata: JsonObject = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        for field_name in (
+            "manifest_id",
+            "asset_id",
+            "revision_id",
+            "source_uri",
+            "content_hash",
+            "pipeline_hash",
+            "created_at",
+            "updated_at",
+        ):
+            _validate_non_empty_string("ingestion manifest", field_name, getattr(self, field_name))
+        if self.status not in VALID_INGESTION_STATUSES:
+            raise ValueError(f"invalid ingestion status {self.status!r}")
+        _validate_optional_non_empty_string("ingestion manifest", "acl_revision", self.acl_revision)
+        _validate_optional_non_empty_string("ingestion manifest", "error", self.error)
+        if self.status == "failed" and self.error is None:
+            raise ValueError("failed ingestion manifest requires error")
+        if self.status != "failed" and self.error is not None:
+            raise ValueError("non-failed ingestion manifest must not include error")
+        _validate_processor_ref("parser", self.parser)
+        _validate_processor_ref("chunker", self.chunker)
+        if self.ocr is not None:
+            _validate_processor_ref("ocr", self.ocr)
+        if self.embedding is not None:
+            _validate_processor_ref("embedding", self.embedding)
+        if isinstance(self.normalizers, str):
+            raise ValueError("ingestion manifest normalizers must be ProcessorRef records")
+        try:
+            normalizers = tuple(self.normalizers)
+        except TypeError as error:
+            raise ValueError("ingestion manifest normalizers must be ProcessorRef records") from error
+        for normalizer in normalizers:
+            _validate_processor_ref("normalizer", normalizer)
+        if self.parsed_document_ref is not None and not isinstance(self.parsed_document_ref, ArtifactRef):
+            raise ValueError("ingestion manifest parsed_document_ref must be an ArtifactRef")
+        if self.chunk_set_ref is not None and not isinstance(self.chunk_set_ref, ArtifactRef):
+            raise ValueError("ingestion manifest chunk_set_ref must be an ArtifactRef")
+        if isinstance(self.index_records, str):
+            raise ValueError("ingestion manifest index_records must be IndexRecordRef records")
+        try:
+            index_records = tuple(self.index_records)
+        except TypeError as error:
+            raise ValueError("ingestion manifest index_records must be IndexRecordRef records") from error
+        for record in index_records:
+            if not isinstance(record, IndexRecordRef):
+                raise ValueError("ingestion manifest index_records must be IndexRecordRef records")
+            if record.asset_id != self.asset_id:
+                raise ValueError("ingestion manifest index record asset_id must match manifest asset_id")
+            if record.revision_id != self.revision_id:
+                raise ValueError("ingestion manifest index record revision_id must match manifest revision_id")
         object.__setattr__(self, "parser", _copy_processor_ref(self.parser))
         object.__setattr__(self, "chunker", _copy_processor_ref(self.chunker))
         object.__setattr__(self, "ocr", _copy_processor_ref(self.ocr))
         object.__setattr__(
             self,
             "normalizers",
-            tuple(_copy_processor_ref(processor) for processor in self.normalizers),
+            tuple(_copy_processor_ref(processor) for processor in normalizers),
         )
         object.__setattr__(self, "embedding", _copy_processor_ref(self.embedding))
         object.__setattr__(self, "parsed_document_ref", _copy_artifact_ref(self.parsed_document_ref))
@@ -115,9 +214,9 @@ class IngestionManifest:
         object.__setattr__(
             self,
             "index_records",
-            tuple(_copy_index_record_ref(record) for record in self.index_records),
+            tuple(_copy_index_record_ref(record) for record in index_records),
         )
-        object.__setattr__(self, "metadata", dict(self.metadata))
+        object.__setattr__(self, "metadata", _copy_metadata("ingestion manifest", self.metadata))
 
     @classmethod
     def new(
@@ -265,7 +364,7 @@ class InMemoryIngestionManifestStore:
         manifest = self._require_manifest(manifest_id)
         if manifest.status == "deleted":
             return _copy_ingestion_manifest(manifest)
-        deleted = _copy_ingestion_manifest(replace(manifest, status="deleted", updated_at=updated_at))
+        deleted = _copy_ingestion_manifest(replace(manifest, status="deleted", error=None, updated_at=updated_at))
         self._manifests[manifest_id] = deleted
         if self._current_by_asset.get(deleted.asset_id) == manifest_id:
             self._current_by_asset.pop(deleted.asset_id, None)

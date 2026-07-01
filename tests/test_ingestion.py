@@ -94,6 +94,46 @@ def test_ingestion_manifest_records_source_processors_and_status() -> None:
     assert manifest.updated_at == "2026-06-22T00:00:00Z"
 
 
+def test_ingestion_records_validate_identity_metadata_and_nested_types() -> None:
+    with pytest.raises(ValueError, match="processor ref processor_id must not be empty"):
+        ProcessorRef(" ", "1")
+    with pytest.raises(ValueError, match="processor ref version must be a string"):
+        ProcessorRef("plain-text", object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="processor ref metadata keys must not be empty"):
+        ProcessorRef("plain-text", "1", metadata={" ": "value"})
+    with pytest.raises(ValueError, match="processor ref metadata must be a mapping"):
+        ProcessorRef("plain-text", "1", metadata=object())  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="index record ref index_id must not be empty"):
+        IndexRecordRef("", "record-1", "asset-1", "rev-1")
+    with pytest.raises(ValueError, match="index record ref chunk_ids must be a collection of strings"):
+        IndexRecordRef("knowledge", "record-1", "asset-1", "rev-1", chunk_ids="chunk-1")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="index record ref chunk_id must not be empty"):
+        IndexRecordRef("knowledge", "record-1", "asset-1", "rev-1", chunk_ids=(" ",))
+    with pytest.raises(ValueError, match="index record ref metadata keys must be strings"):
+        IndexRecordRef("knowledge", "record-1", "asset-1", "rev-1", metadata={object(): "value"})  # type: ignore[dict-item]
+
+    manifest = _manifest("manifest-1", "rev-1")
+    with pytest.raises(ValueError, match="ingestion manifest manifest_id must not be empty"):
+        replace(manifest, manifest_id=" ")
+    with pytest.raises(ValueError, match="invalid ingestion status"):
+        replace(manifest, status="paused")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="ingestion manifest parser must be a ProcessorRef"):
+        replace(manifest, parser=object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="ingestion manifest normalizer must be a ProcessorRef"):
+        replace(manifest, normalizers=(object(),))  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="ingestion manifest parsed_document_ref must be an ArtifactRef"):
+        replace(manifest, parsed_document_ref=object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="ingestion manifest index_records must be IndexRecordRef records"):
+        replace(manifest, index_records=(object(),))  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="ingestion manifest index record asset_id must match"):
+        replace(manifest, index_records=(replace(_index_record("rev-1"), asset_id="asset-2"),))
+    with pytest.raises(ValueError, match="failed ingestion manifest requires error"):
+        replace(manifest, status="failed")
+    with pytest.raises(ValueError, match="non-failed ingestion manifest must not include error"):
+        replace(manifest, error="temporary failure")
+
+
 def test_ingestion_manifest_store_commit_supersedes_previous_revision() -> None:
     store = InMemoryIngestionManifestStore()
     store.create_processing(_manifest("manifest-1", "rev-1"), "2026-06-22T00:01:00Z")
@@ -235,6 +275,17 @@ def test_ingestion_manifest_store_rejects_commit_after_tombstone() -> None:
 
     with pytest.raises(IngestionError, match="cannot transition"):
         store.commit("manifest-1", None, None, (_index_record("rev-1"),), "2026-06-22T00:03:00Z")
+
+
+def test_ingestion_manifest_store_tombstone_failed_manifest_clears_error() -> None:
+    store = InMemoryIngestionManifestStore()
+    store.create_processing(_manifest("manifest-1", "rev-1"), "2026-06-22T00:01:00Z")
+    failed = store.fail("manifest-1", "parser failed", "2026-06-22T00:02:00Z")
+
+    deleted = store.tombstone(failed.manifest_id, "2026-06-22T00:03:00Z")
+
+    assert deleted.status == "deleted"
+    assert deleted.error is None
 
 
 def test_ingestion_manifest_status_listing_is_snapshot_ordered() -> None:
