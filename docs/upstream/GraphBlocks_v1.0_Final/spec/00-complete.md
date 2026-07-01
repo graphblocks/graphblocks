@@ -4118,6 +4118,9 @@ invalidated
 ```
 
 승인 후 arguments 또는 subject digest 변경을 허용하지 않는다. 변경되면 새 approval을 요청해야 한다. 내용 검토는 `ReviewRecord`를 사용한다.
+Approval request builders MUST validate tool-call arguments as mapping records before computing
+`arguments_digest`; scalar, sequence, or non-iterable argument inputs MUST fail at the approval
+boundary and MUST NOT produce an approval request.
 Tool approval APIs MUST validate typed resolved-tool, tool-call, and approval-request records before
 binding or checking approvals, so malformed approval inputs fail at the approval boundary.
 

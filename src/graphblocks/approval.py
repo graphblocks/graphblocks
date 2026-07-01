@@ -85,18 +85,20 @@ class ApprovalRequest:
         run_id: str,
         subject: ResourceSnapshotRef,
         action: str,
-        arguments: dict[str, object],
+        arguments: Mapping[str, object],
         risk: str,
         summary: str,
         expires_at: str | None = None,
         metadata: dict[str, object] | None = None,
     ) -> ApprovalRequest:
+        if not isinstance(arguments, Mapping):
+            raise ValueError("approval request arguments must be a mapping")
         return cls(
             approval_id=approval_id,
             run_id=run_id,
             subject=subject,
             action=action,
-            arguments_digest=canonical_hash(arguments),
+            arguments_digest=canonical_hash(dict(arguments)),
             risk=risk,
             summary=summary,
             expires_at=expires_at,

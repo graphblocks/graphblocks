@@ -34,6 +34,22 @@ def test_approval_request_hashes_arguments_without_storing_payload() -> None:
     assert not hasattr(request, "arguments")
 
 
+def test_approval_request_rejects_non_mapping_arguments_before_digesting() -> None:
+    subject = ResourceSnapshotRef("tool-call-1", "sha256:subject")
+
+    for arguments in (object(), ["echo", "hello"], "cmd=echo"):
+        with pytest.raises(ValueError, match="approval request arguments must be a mapping"):
+            ApprovalRequest.from_arguments(
+                approval_id="approval-1",
+                run_id="run-1",
+                subject=subject,
+                action="process.execute",
+                arguments=arguments,  # type: ignore[arg-type]
+                risk="external_process",
+                summary="Run a process",
+            )
+
+
 def test_approval_request_rejects_invalid_identity_fields() -> None:
     subject = ResourceSnapshotRef("tool-call-1", "sha256:subject")
     base_request = {
