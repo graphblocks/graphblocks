@@ -48,6 +48,12 @@ Retriever
 
 `DocumentStore`라는 이름은 일반 RecordStore와 retrieval knowledge store를 혼동하므로 사용하지 않는다.
 
+Knowledge index records, write reports, publish results, capabilities, and health summaries MUST
+validate their construction-time wire shape. Indexed chunks remain typed `DocumentChunk` records,
+record status is limited to active or tombstoned, write report affected counts match the chunk ID
+set, publish identities are non-empty, capability flags are booleans, and health counters are
+non-negative with active plus tombstoned chunks not exceeding total indexed chunks.
+
 Ingestion manifest와 index record boundary는 non-empty manifest/asset/revision/processor/index identity,
 valid ingestion lifecycle status, processor reference records, object-shaped metadata, typed artifact references,
 and index record asset/revision consistency를 검증해야 한다. Failed manifest는 non-empty error를 가져야 하며
@@ -264,6 +270,9 @@ class RankedHit(BaseModel):
 ```
 
 Reranker input limit과 truncation 정책을 기록한다.
+`RankedHit`와 `RerankResult` records는 typed `SearchHit`/`RankedHit` entries, finite rerank scores,
+non-empty reranker IDs when present, non-negative input/evaluated counts, and typed truncation IDs를
+검증해야 한다. Evaluated count는 input count를 초과할 수 없고 ranked hit 수는 evaluated count를 초과할 수 없다.
 
 ## 110. Diversity와 coverage
 

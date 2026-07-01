@@ -557,6 +557,26 @@ class RankedHit:
     explanation: str | None = None
     metadata: dict[str, object] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.hit, SearchHit):
+            raise ValueError("ranked hit hit must be a SearchHit")
+        object.__setattr__(
+            self,
+            "rerank_score",
+            _validate_optional_finite_float("ranked hit", "rerank_score", self.rerank_score),
+        )
+        object.__setattr__(
+            self,
+            "reranker",
+            _validate_optional_non_empty_string("ranked hit", "reranker", self.reranker),
+        )
+        object.__setattr__(
+            self,
+            "explanation",
+            _validate_optional_non_empty_string("ranked hit", "explanation", self.explanation),
+        )
+        object.__setattr__(self, "metadata", _copy_metadata("ranked hit", self.metadata))
+
 
 @dataclass(frozen=True, slots=True)
 class RerankResult:
@@ -566,6 +586,30 @@ class RerankResult:
     evaluated_count: int
     truncated_hit_ids: list[str] = field(default_factory=list)
     metadata: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "ranked_hits",
+            _copy_typed_list("rerank result", "ranked_hits", self.ranked_hits, RankedHit),
+        )
+        _validate_non_empty_string("rerank result", "reranker", self.reranker)
+        input_count = _validate_non_negative_int("rerank result", "input_count", self.input_count)
+        evaluated_count = _validate_non_negative_int("rerank result", "evaluated_count", self.evaluated_count)
+        assert input_count is not None
+        assert evaluated_count is not None
+        if evaluated_count > input_count:
+            raise ValueError("rerank result evaluated_count must not exceed input_count")
+        if len(self.ranked_hits) > evaluated_count:
+            raise ValueError("rerank result ranked_hits must not exceed evaluated_count")
+        object.__setattr__(self, "input_count", input_count)
+        object.__setattr__(self, "evaluated_count", evaluated_count)
+        object.__setattr__(
+            self,
+            "truncated_hit_ids",
+            _copy_string_list("rerank result", "truncated_hit_ids", self.truncated_hit_ids),
+        )
+        object.__setattr__(self, "metadata", _copy_metadata("rerank result", self.metadata))
 
 
 class KnowledgeIndexError(RuntimeError):
@@ -577,6 +621,12 @@ class KnowledgeIndexRecord:
     chunk: DocumentChunk
     status: KnowledgeRecordStatus
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.chunk, DocumentChunk):
+            raise ValueError("knowledge index record chunk must be a DocumentChunk")
+        if self.status not in {"active", "tombstoned"}:
+            raise ValueError("knowledge index record status must be active or tombstoned")
+
 
 @dataclass(frozen=True, slots=True)
 class KnowledgeWriteReport:
@@ -584,6 +634,17 @@ class KnowledgeWriteReport:
     affected_count: int
     chunk_ids: list[str]
     metadata: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        _validate_non_empty_string("knowledge write report", "operation", self.operation)
+        affected_count = _validate_non_negative_int("knowledge write report", "affected_count", self.affected_count)
+        assert affected_count is not None
+        object.__setattr__(self, "affected_count", affected_count)
+        chunk_ids = _copy_string_list("knowledge write report", "chunk_ids", self.chunk_ids)
+        if affected_count != len(chunk_ids):
+            raise ValueError("knowledge write report affected_count must match chunk_ids length")
+        object.__setattr__(self, "chunk_ids", chunk_ids)
+        object.__setattr__(self, "metadata", _copy_metadata("knowledge write report", self.metadata))
 
 
 @dataclass(frozen=True, slots=True)
@@ -593,6 +654,16 @@ class KnowledgePublishResult:
     revision_id: str
     published_chunk_ids: list[str]
     metadata: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        for field_name in ("index_id", "asset_id", "revision_id"):
+            _validate_non_empty_string("knowledge publish result", field_name, getattr(self, field_name))
+        object.__setattr__(
+            self,
+            "published_chunk_ids",
+            _copy_string_list("knowledge publish result", "published_chunk_ids", self.published_chunk_ids),
+        )
+        object.__setattr__(self, "metadata", _copy_metadata("knowledge publish result", self.metadata))
 
 
 @dataclass(frozen=True, slots=True)
@@ -606,6 +677,20 @@ class KnowledgeIndexCapabilities:
     tombstone: bool
     retriever_adapter: bool
 
+    def __post_init__(self) -> None:
+        for field_name in (
+            "upsert",
+            "delete",
+            "metadata_update",
+            "acl_update",
+            "publish",
+            "hard_delete",
+            "tombstone",
+            "retriever_adapter",
+        ):
+            if not isinstance(getattr(self, field_name), bool):
+                raise ValueError(f"knowledge index capabilities {field_name} must be a boolean")
+
 
 @dataclass(frozen=True, slots=True)
 class KnowledgeIndexHealth:
@@ -614,6 +699,16 @@ class KnowledgeIndexHealth:
     active_chunks: int
     tombstoned_chunks: int
     published_revisions: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.healthy, bool):
+            raise ValueError("knowledge index health healthy must be a boolean")
+        for field_name in ("indexed_chunks", "active_chunks", "tombstoned_chunks", "published_revisions"):
+            value = _validate_non_negative_int("knowledge index health", field_name, getattr(self, field_name))
+            assert value is not None
+            object.__setattr__(self, field_name, value)
+        if self.active_chunks + self.tombstoned_chunks > self.indexed_chunks:
+            raise ValueError("knowledge index health active and tombstoned chunks must not exceed indexed_chunks")
 
 
 def build_context_pack(

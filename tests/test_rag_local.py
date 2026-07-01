@@ -9,7 +9,12 @@ from graphblocks.rag import (
     AuthContext,
     InMemoryChunkRetriever,
     InMemoryKnowledgeIndex,
+    KnowledgeIndexCapabilities,
     KnowledgeIndexError,
+    KnowledgeIndexHealth,
+    KnowledgeIndexRecord,
+    KnowledgePublishResult,
+    KnowledgeWriteReport,
     authorize_search_hits,
     knowledge_item_from_chunk,
 )
@@ -161,6 +166,51 @@ def test_in_memory_knowledge_index_reports_not_found_for_missing_item() -> None:
         assert str(error) == "knowledge item 'missing' was not found"
     else:
         raise AssertionError("missing knowledge item should fail metadata update")
+
+
+def test_knowledge_index_records_validate_wire_shape() -> None:
+    asset, revision = create_local_text_revision(
+        "file:///tmp/shape.txt",
+        "alpha beta\n",
+        observed_at="2026-06-22T00:00:00Z",
+    )
+    document = parse_plain_text_document(asset, revision, "alpha beta\n")
+    chunk = chunk_document_by_lines(document, revision, max_elements=1)[0]
+
+    with pytest.raises(ValueError, match="knowledge index record chunk must be a DocumentChunk"):
+        KnowledgeIndexRecord(chunk=object(), status="active")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="knowledge index record status must be active or tombstoned"):
+        KnowledgeIndexRecord(chunk=chunk, status="paused")  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="knowledge write report operation must not be empty"):
+        KnowledgeWriteReport(operation="", affected_count=0, chunk_ids=[])
+    with pytest.raises(ValueError, match="knowledge write report affected_count must match chunk_ids length"):
+        KnowledgeWriteReport(operation="upsert", affected_count=2, chunk_ids=[chunk.chunk_id])
+    with pytest.raises(ValueError, match="knowledge write report chunk_ids must be a list of strings"):
+        KnowledgeWriteReport(operation="upsert", affected_count=1, chunk_ids=chunk.chunk_id)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="knowledge write report metadata keys must be strings"):
+        KnowledgeWriteReport(operation="upsert", affected_count=0, chunk_ids=[], metadata={object(): "value"})  # type: ignore[dict-item]
+
+    with pytest.raises(ValueError, match="knowledge publish result index_id must not be empty"):
+        KnowledgePublishResult(index_id=" ", asset_id=asset.asset_id, revision_id=revision.revision_id, published_chunk_ids=[])
+    with pytest.raises(ValueError, match="knowledge publish result published_chunk_ids must be a list of strings"):
+        KnowledgePublishResult(index_id="knowledge", asset_id=asset.asset_id, revision_id=revision.revision_id, published_chunk_ids=chunk.chunk_id)  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="knowledge index capabilities publish must be a boolean"):
+        KnowledgeIndexCapabilities(
+            upsert=True,
+            delete=True,
+            metadata_update=True,
+            acl_update=True,
+            publish=1,  # type: ignore[arg-type]
+            hard_delete=True,
+            tombstone=True,
+            retriever_adapter=True,
+        )
+    with pytest.raises(ValueError, match="knowledge index health healthy must be a boolean"):
+        KnowledgeIndexHealth(healthy=1, indexed_chunks=1, active_chunks=1, tombstoned_chunks=0, published_revisions=0)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="knowledge index health active and tombstoned chunks must not exceed indexed_chunks"):
+        KnowledgeIndexHealth(healthy=True, indexed_chunks=1, active_chunks=1, tombstoned_chunks=1, published_revisions=0)
 
 
 def test_authorize_search_hits_filters_protected_items_by_principal_group_role_and_tenant() -> None:
