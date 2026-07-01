@@ -4,6 +4,7 @@ from decimal import Decimal
 import math
 
 import graphblocks
+import pytest
 from graphblocks.documents import (
     SourceRef,
     chunk_document_by_lines,
@@ -122,6 +123,35 @@ def test_evaluate_retrieval_metrics_returns_no_data_without_relevant_items() -> 
     assert by_name["freshness_satisfaction"].value is None
 
 
+def test_evaluate_retrieval_metrics_validates_inputs_and_allows_zero_cutoff() -> None:
+    retrieval = RetrievalResult(
+        retrieval_id="retrieval-1",
+        request=SearchRequest("policy", top_k=3),
+        hits=[_hit("doc-a", 1)],
+        total_candidates=1,
+    )
+
+    by_name = {
+        metric.name: metric
+        for metric in evaluate_retrieval_metrics(retrieval, {"doc-a"}, k=0)
+    }
+
+    assert by_name["precision_at_k"].value is None
+    assert by_name["coverage_at_k"].value is None
+    with pytest.raises(ValueError, match="retrieval metrics retrieval must be a RetrievalResult"):
+        evaluate_retrieval_metrics(object(), {"doc-a"})  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="retrieval metrics relevant_item_ids must be a list of strings"):
+        evaluate_retrieval_metrics(retrieval, "doc-a")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="retrieval metrics relevant_item_ids item must not be empty"):
+        evaluate_retrieval_metrics(retrieval, {" "})
+    with pytest.raises(ValueError, match="retrieval metrics k must be non-negative"):
+        evaluate_retrieval_metrics(retrieval, {"doc-a"}, k=-1)
+    with pytest.raises(ValueError, match="retrieval metrics k must be an integer"):
+        evaluate_retrieval_metrics(retrieval, {"doc-a"}, k=True)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="retrieval metrics auth must be an AuthContext"):
+        evaluate_retrieval_metrics(retrieval, {"doc-a"}, auth=object())  # type: ignore[arg-type]
+
+
 def test_evaluate_retrieval_metrics_reports_freshness_satisfaction() -> None:
     retrieval = RetrievalResult(
         retrieval_id="retrieval-1",
@@ -220,6 +250,17 @@ def test_evaluate_context_metrics_returns_no_data_without_token_budget() -> None
     assert by_name["context_relevance"].value is None
     assert by_name["freshness_satisfaction"].value is None
     assert by_name["lost_in_the_middle_sensitivity"].value is None
+
+
+def test_evaluate_context_metrics_validates_inputs() -> None:
+    context = ContextPack(context_id="ctx-1", hits=[_hit("doc-a", 1)])
+
+    with pytest.raises(ValueError, match="context metrics context must be a ContextPack"):
+        evaluate_context_metrics(object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="context metrics relevant_item_ids must be a list of strings"):
+        evaluate_context_metrics(context, "doc-a")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="context metrics relevant_item_ids item must not be empty"):
+        evaluate_context_metrics(context, {" "})
 
 
 def test_evaluate_context_metrics_reports_freshness_satisfaction() -> None:
@@ -367,3 +408,13 @@ def test_evaluate_rag_answer_metrics_reports_abstention_precision_and_recall() -
 
     assert missed_metrics["abstention_precision"].value is None
     assert missed_metrics["abstention_recall"].value == Decimal("0")
+
+
+def test_evaluate_rag_answer_metrics_validates_inputs() -> None:
+    answer = Answer(answer_id="answer-1", text="A direct answer.")
+    validation = CitationValidationResult(ok=True)
+
+    with pytest.raises(ValueError, match="rag answer metrics answer must be an Answer"):
+        evaluate_rag_answer_metrics(object(), validation)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="rag answer metrics validation must be a CitationValidationResult"):
+        evaluate_rag_answer_metrics(answer, object())  # type: ignore[arg-type]

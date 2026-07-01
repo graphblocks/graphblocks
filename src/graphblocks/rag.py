@@ -1421,6 +1421,10 @@ def evaluate_rag_answer_metrics(
     answer: Answer,
     validation: CitationValidationResult,
 ) -> list[MetricObservation]:
+    if not isinstance(answer, Answer):
+        raise ValueError("rag answer metrics answer must be an Answer")
+    if not isinstance(validation, CitationValidationResult):
+        raise ValueError("rag answer metrics validation must be a CitationValidationResult")
     citation_ids = {citation.citation_id for citation in answer.citations}
     invalid_citation_ids = {
         issue.citation_id
@@ -1556,7 +1560,13 @@ def evaluate_retrieval_metrics(
     k: int | None = None,
     auth: AuthContext | None = None,
 ) -> list[MetricObservation]:
-    relevant = set(relevant_item_ids)
+    if not isinstance(retrieval, RetrievalResult):
+        raise ValueError("retrieval metrics retrieval must be a RetrievalResult")
+    relevant = set(_copy_string_list("retrieval metrics", "relevant_item_ids", relevant_item_ids))
+    if k is not None:
+        k = _validate_non_negative_int("retrieval metrics", "k", k)
+    if auth is not None and not isinstance(auth, AuthContext):
+        raise ValueError("retrieval metrics auth must be an AuthContext")
     cutoff = retrieval.request.top_k if k is None else k
     hits_at_k = retrieval.hits[:cutoff]
     relevant_hits_at_k = sum(1 for hit in hits_at_k if hit.item.item_id in relevant)
@@ -1678,6 +1688,8 @@ def evaluate_context_metrics(
     context: ContextPack,
     relevant_item_ids: Iterable[str] | None = None,
 ) -> list[MetricObservation]:
+    if not isinstance(context, ContextPack):
+        raise ValueError("context metrics context must be a ContextPack")
     source_diversity = len({hit.retriever for hit in context.hits})
     token_efficiency = (
         None
@@ -1689,7 +1701,7 @@ def evaluate_context_metrics(
     if relevant_item_ids is None:
         context_precision = None
     else:
-        relevant_item_id_set = set(relevant_item_ids)
+        relevant_item_id_set = set(_copy_string_list("context metrics", "relevant_item_ids", relevant_item_ids))
         if not relevant_item_id_set or not context.hits:
             context_precision = None
         else:

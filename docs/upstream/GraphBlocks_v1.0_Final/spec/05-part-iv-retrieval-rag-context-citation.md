@@ -653,6 +653,13 @@ abstention precision/recall
 unsupported claim rate
 ```
 
+RAG metric evaluators MUST validate their input records before computing scores. Retrieval
+evaluators require a typed `RetrievalResult`, string relevance item IDs, a non-negative integer K
+when supplied, and a typed `AuthContext` when ACL precision is evaluated. Context evaluators require
+a typed `ContextPack` and string relevance item IDs when supplied. Answer evaluators require typed
+`Answer` and `CitationValidationResult` records. K=0 is valid and produces no-data precision and
+coverage rather than using negative or language-specific slicing semantics.
+
 Evaluation pipeline은 production RAG 실행과 분리할 수 있어야 한다.
 
 ```text
