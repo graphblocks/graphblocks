@@ -36,6 +36,20 @@ def test_workspace_snapshot_digest_ignores_record_identity_and_sorts_resources()
     assert [resource.resource_id for resource in left.resources] == ["a.txt", "b.txt"]
 
 
+def test_workspace_snapshot_rejects_duplicate_resource_ids() -> None:
+    with pytest.raises(ValueError, match="workspace snapshot resource_id values must be unique"):
+        WorkspaceSnapshot(
+            workspace_id="workspace-1",
+            snapshot_id="snapshot-a",
+            revision=1,
+            resources=(
+                ResourceSnapshotRef("a.txt", "sha256:a1", resource_kind="file"),
+                ResourceSnapshotRef("a.txt", "sha256:a2", resource_kind="file"),
+            ),
+            created_at="2026-06-24T00:00:00Z",
+        )
+
+
 def test_workspace_fork_preserves_base_snapshot_digest() -> None:
     base = WorkspaceSnapshot(
         workspace_id="workspace-1",
@@ -197,6 +211,33 @@ def test_workspace_store_compare_and_swap_commit_updates_revision() -> None:
 
     assert error.value.expected_snapshot_id == "snapshot-1"
     assert error.value.actual_snapshot_id == "snapshot-2"
+
+
+def test_workspace_store_rejects_duplicate_resource_ids_in_commit_candidate() -> None:
+    base = WorkspaceSnapshot(
+        workspace_id="workspace-1",
+        snapshot_id="snapshot-1",
+        revision=1,
+        resources=(ResourceSnapshotRef("a.txt", "sha256:a", resource_kind="file"),),
+        created_at="2026-06-24T00:00:00Z",
+    )
+    store = InMemoryWorkspaceStore().put_snapshot(base)
+
+    with pytest.raises(ValueError, match="workspace snapshot resource_id values must be unique"):
+        store.compare_and_swap_commit(
+            workspace_id="workspace-1",
+            expected_snapshot_id="snapshot-1",
+            new_snapshot_id="snapshot-2",
+            resources=(
+                ResourceSnapshotRef("a.txt", "sha256:a2", resource_kind="file"),
+                ResourceSnapshotRef("a.txt", "sha256:a3", resource_kind="file"),
+            ),
+            committed_by=PrincipalRef("author-1"),
+            committed_at="2026-06-24T00:06:00Z",
+            change_set_id="change-1",
+        )
+
+    assert store.current("workspace-1").snapshot_id == "snapshot-1"
 
 
 def test_workspace_store_copies_snapshots_and_resource_metadata_at_boundaries() -> None:

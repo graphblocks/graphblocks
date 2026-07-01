@@ -29,15 +29,19 @@ class WorkspaceSnapshot:
     metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        resources = tuple(
+            sorted(
+                (_copy_resource_snapshot_ref(resource) for resource in self.resources),
+                key=lambda resource: resource.resource_id,
+            )
+        )
+        resource_ids = [resource.resource_id for resource in resources]
+        if len(set(resource_ids)) != len(resource_ids):
+            raise ValueError("workspace snapshot resource_id values must be unique")
         object.__setattr__(
             self,
             "resources",
-            tuple(
-                sorted(
-                    (_copy_resource_snapshot_ref(resource) for resource in self.resources),
-                    key=lambda resource: resource.resource_id,
-                )
-            ),
+            resources,
         )
         object.__setattr__(self, "metadata", dict(self.metadata))
 
