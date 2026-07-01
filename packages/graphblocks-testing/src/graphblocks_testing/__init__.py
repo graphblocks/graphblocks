@@ -56,6 +56,7 @@ from graphblocks.deployment import (
 from graphblocks.document_parsers import (
     DocumentParserRegistry,
     ParserDescriptor,
+    plain_text_parser_descriptor,
 )
 from graphblocks.documents import (
     ArtifactRef,
@@ -1645,6 +1646,7 @@ def load_documents_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
             "line_chunks",
             "invalid_chunk_size",
             "parser_selection_lock",
+            "parser_locked_parse",
         }:
             raise ValueError(f"documents TCK case {case_id} has unsupported kind {case_kind!r}")
         expected = raw_case.get("expected")
@@ -4948,6 +4950,52 @@ class TckRunner:
                     "metadata": dict(lock.metadata),
                     "resolvedMetadata": dict(resolved.metadata),
                 }
+            elif kind == "parser_locked_parse":
+                registry = DocumentParserRegistry()
+                registry.register(plain_text_parser_descriptor())
+                selected_revision = replace(
+                    revision,
+                    artifact=replace(
+                        revision.artifact,
+                        checksum=str(
+                            fixture.get(
+                                "selectedArtifactChecksum",
+                                fixture.get("selected_artifact_checksum", ""),
+                            )
+                        ),
+                    ),
+                )
+                current_revision = replace(
+                    revision,
+                    artifact=replace(
+                        revision.artifact,
+                        checksum=str(
+                            fixture.get(
+                                "revisionArtifactChecksum",
+                                fixture.get("revision_artifact_checksum", ""),
+                            )
+                        ),
+                    ),
+                )
+                lock = registry.select(selected_revision.artifact)
+                try:
+                    registry.parse_locked(
+                        asset,
+                        current_revision,
+                        text.encode("utf-8"),
+                        lock,
+                    )
+                    observed = {"parsed": True, "error": None}
+                except Exception as error:
+                    message = str(error)
+                    observed = {
+                        "parsed": False,
+                        "error": (
+                            "artifact_checksum_mismatch"
+                            if "artifact checksum" in message
+                            else message
+                        ),
+                    }
             else:
                 diagnostics.append(
                     {

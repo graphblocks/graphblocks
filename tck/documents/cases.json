@@ -176,6 +176,20 @@
     }
   },
   {
+    "name": "parser_locked_parse_rejects_artifact_checksum_mismatch",
+    "kind": "parser_locked_parse",
+    "sourceUri": "file:///tmp/policy.txt",
+    "filename": "policy.txt",
+    "observedAt": "2026-06-22T00:00:00Z",
+    "text": "Alpha\n",
+    "selectedArtifactChecksum": "sha256:selected",
+    "revisionArtifactChecksum": "sha256:current",
+    "expected": {
+      "parsed": false,
+      "error": "artifact_checksum_mismatch"
+    }
+  },
+  {
     "name": "invalid_chunk_size_is_rejected",
     "kind": "invalid_chunk_size",
     "sourceUri": "file:///tmp/notes.txt",

@@ -1,4 +1,6 @@
-use graphblocks_runtime_core::document_parsers::{DocumentParserRegistry, ParserDescriptor};
+use graphblocks_runtime_core::document_parsers::{
+    DocumentParserError, DocumentParserRegistry, ParserDescriptor, plain_text_parser_descriptor,
+};
 use graphblocks_runtime_core::documents::{
     chunk_document_by_lines, create_local_text_revision, parse_plain_text_document, ArtifactRef,
     DocumentError,
@@ -207,6 +209,39 @@ fn run_case(case: &Value) -> Result<Value, String> {
                 "artifactChecksum": lock.artifact_checksum,
                 "metadata": lock.metadata,
                 "resolvedMetadata": resolved.metadata,
+            }))
+        }
+        "parser_locked_parse" => {
+            let mut registry = DocumentParserRegistry::new();
+            registry
+                .register(plain_text_parser_descriptor())
+                .map_err(|error| error.to_string())?;
+            let mut selected_revision = revision.clone();
+            selected_revision.artifact.checksum = case
+                .get("selectedArtifactChecksum")
+                .or_else(|| case.get("selected_artifact_checksum"))
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            let mut current_revision = revision.clone();
+            current_revision.artifact.checksum = case
+                .get("revisionArtifactChecksum")
+                .or_else(|| case.get("revision_artifact_checksum"))
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            let lock = registry
+                .select(&selected_revision.artifact)
+                .map_err(|error| error.to_string())?;
+            let result = registry.parse_locked(&asset, &current_revision, text.as_bytes(), &lock);
+            let error = match result {
+                Ok(_) => Value::Null,
+                Err(DocumentParserError::LockMismatch { .. }) => {
+                    json!("artifact_checksum_mismatch")
+                }
+                Err(error) => json!(error.to_string()),
+            };
+            Ok(json!({
+                "parsed": error.is_null(),
+                "error": error,
             }))
         }
         other => Err(format!("unsupported documents TCK kind {other:?}")),
