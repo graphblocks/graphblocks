@@ -156,6 +156,27 @@ def test_server_health_aggregates_component_status() -> None:
     assert health.to_payload()["checks"]["event_stream"]["details"] == {"lag_ms": 250}
 
 
+def test_server_health_validates_check_records_before_publication() -> None:
+    with pytest.raises(ValueError, match="server health service must not be empty"):
+        ServerHealth(service=" ")
+    with pytest.raises(ValueError, match="server health observed_at must not be empty"):
+        ServerHealth(service="graphblocks-api", observed_at=" ")
+    with pytest.raises(ValueError, match="server health checks must be a collection of check records"):
+        ServerHealth(service="graphblocks-api", checks=object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="server health check records must contain name, status, and details"):
+        ServerHealth(service="graphblocks-api", checks=(("runtime", "healthy"),))  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="server health check name must not be empty"):
+        ServerHealth(service="graphblocks-api", checks=((" ", "healthy", {}),))
+    with pytest.raises(ValueError, match="invalid server health status offline"):
+        ServerHealth(service="graphblocks-api", checks=(("runtime", "offline", {}),))  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="server health check details must be a mapping"):
+        ServerHealth(service="graphblocks-api", checks=(("runtime", "healthy", object()),))  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="server health check detail keys must be non-empty strings"):
+        ServerHealth(service="graphblocks-api", checks=(("runtime", "healthy", {object(): 1}),))  # type: ignore[dict-item]
+    with pytest.raises(ValueError, match="server health check detail keys must be non-empty strings"):
+        ServerHealth(service="graphblocks-api", checks=(("runtime", "healthy", {" ": 1}),))
+
+
 def test_server_request_and_response_maps_are_read_only_snapshots() -> None:
     headers = {"Authorization": "Bearer token-1"}
     query = {"cursor": "1"}

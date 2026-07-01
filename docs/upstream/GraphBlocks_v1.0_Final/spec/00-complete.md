@@ -5524,6 +5524,10 @@ Domain package는 provider SDK나 parser engine을 포함하지 않는다. Canon
 | `graphblocks-testing` | deterministic runtime, test DSL, TCK clients |
 | `graphblocks-devtools` | graph visualization, migration, profiling, codegen |
 
+`graphblocks-server` health endpoints MUST validate service identifiers, check names, status
+literals, and details mappings before publication. Malformed health records MUST fail before
+client-visible health payload construction.
+
 `graphblocks-tui`가 parser, vector DB, provider SDK, native runtime을 직접 의존해서는 안 된다.
 
 ## 198. Deployment and operations distributions

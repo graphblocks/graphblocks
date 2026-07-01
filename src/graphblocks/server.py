@@ -16,6 +16,7 @@ from .runtime import InProcessRuntime, RuntimeRegistry, stdlib_registry
 ServerTransport = Literal["http", "sse", "websocket"]
 ServerHealthStatus = Literal["healthy", "degraded", "unhealthy"]
 VALID_SERVER_TRANSPORTS = frozenset({"http", "sse", "websocket"})
+VALID_SERVER_HEALTH_STATUSES = frozenset({"healthy", "degraded", "unhealthy"})
 
 
 def _utc_now_iso() -> str:
@@ -351,11 +352,33 @@ class ServerHealth:
     observed_at: str = ""
 
     def __post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "checks",
-            tuple((name, status, MappingProxyType(dict(details))) for name, status, details in self.checks),
-        )
+        object.__setattr__(self, "service", _validate_non_empty_string("server health", "service", self.service))
+        if self.observed_at != "":
+            object.__setattr__(
+                self,
+                "observed_at",
+                _validate_non_empty_string("server health", "observed_at", self.observed_at),
+            )
+        try:
+            checks = tuple(self.checks)
+        except TypeError as error:
+            raise ValueError("server health checks must be a collection of check records") from error
+        normalized_checks: list[tuple[str, ServerHealthStatus, MappingProxyType[str, object]]] = []
+        for check in checks:
+            try:
+                name, status, details = check
+            except (TypeError, ValueError) as error:
+                raise ValueError("server health check records must contain name, status, and details") from error
+            name = _validate_non_empty_string("server health check", "name", name)
+            if status not in VALID_SERVER_HEALTH_STATUSES:
+                raise ValueError(f"invalid server health status {status}")
+            if not isinstance(details, Mapping):
+                raise ValueError("server health check details must be a mapping")
+            details_copy = dict(details)
+            if any(not isinstance(key, str) or not key.strip() for key in details_copy):
+                raise ValueError("server health check detail keys must be non-empty strings")
+            normalized_checks.append((name, status, MappingProxyType(details_copy)))  # type: ignore[arg-type]
+        object.__setattr__(self, "checks", tuple(normalized_checks))
 
     def overall_status(self) -> ServerHealthStatus:
         statuses = {status for _, status, _ in self.checks}
