@@ -395,6 +395,8 @@ pub trait BlobStore: Send + Sync {
 }
 ```
 
+`list` prefix는 blob key와 같은 namespace segment rule을 따라야 하며 absolute path, backslash, empty/path traversal segment를 허용하지 않는다. Local filesystem과 S3-compatible 구현은 같은 invalid prefix를 거부해야 한다.
+
 Capability:
 
 ```text
@@ -775,4 +777,3 @@ HWP/HWPX
 ```
 
 각 provider는 별도 distribution이어야 한다.
-

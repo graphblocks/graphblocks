@@ -218,6 +218,7 @@ class LocalBlobStore:
     def list(self, prefix: str = "", cursor: str | None = None, limit: int = 100) -> ListPage:
         if limit < 1:
             raise ValueError("limit must be at least 1")
+        _validate_blob_prefix(prefix)
         if cursor is None:
             start = 0
         else:

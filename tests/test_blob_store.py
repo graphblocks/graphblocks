@@ -88,6 +88,15 @@ def test_local_blob_store_rejects_non_canonical_list_cursors(tmp_path, cursor: o
         store.list("docs/", cursor=cursor)
 
 
+@pytest.mark.parametrize("prefix", ["/absolute", "../escape", "docs/../escape", "docs\\escape"])
+def test_local_blob_store_rejects_invalid_list_prefixes(tmp_path, prefix: str) -> None:
+    store = LocalBlobStore(tmp_path)
+    store.put(BlobKey("docs/a.txt"), b"a", PutOptions())
+
+    with pytest.raises(InvalidBlobKeyError):
+        store.list(prefix)
+
+
 def test_local_blob_store_delete_removes_blob(tmp_path) -> None:
     store = LocalBlobStore(tmp_path)
     key = BlobKey("docs/policy.txt")
@@ -171,6 +180,9 @@ def test_s3_compatible_blob_store_maps_missing_keys_and_rejects_invalid_keys() -
 
     with pytest.raises(InvalidBlobKeyError):
         store.put(BlobKey("../escape.txt"), b"nope", PutOptions())
+
+    with pytest.raises(InvalidBlobKeyError):
+        store.list("../escape")
 
 
 class _FakeClientError(Exception):
