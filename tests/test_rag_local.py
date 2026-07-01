@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
+
 from graphblocks.documents import create_local_text_revision, parse_plain_text_document, chunk_document_by_lines
 from graphblocks.rag import (
     AuthContext,
@@ -146,6 +148,8 @@ def test_in_memory_knowledge_index_updates_metadata_acl_and_publishes_revision()
     assert index.health().published_revisions == 1
     assert hit.item.metadata["classification"] == "internal"
     assert hit.item.acl == {"tenant_id": "acme", "principals": ["user-1"]}
+    with pytest.raises(TypeError):
+        hit.item.acl["principals"].append("user-2")
 
 
 def test_in_memory_knowledge_index_reports_not_found_for_missing_item() -> None:

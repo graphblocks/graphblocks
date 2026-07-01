@@ -1651,16 +1651,16 @@ def _acl_allows(resource_id: str, acl: dict[str, object] | None, auth: AuthConte
     has_selector = False
     principals = acl.get("principals")
     if principals is not None:
-        if not isinstance(principals, list):
-            raise ValueError("principals must be a list")
+        if not isinstance(principals, (list, tuple)):
+            raise ValueError("principals must be a sequence")
         has_selector = True
         if auth.principal_id in principals:
             return True
 
     groups = acl.get("groups")
     if groups is not None:
-        if not isinstance(groups, list):
-            raise ValueError("groups must be a list")
+        if not isinstance(groups, (list, tuple)):
+            raise ValueError("groups must be a sequence")
         has_selector = True
         if any(isinstance(group, str) and group in auth.groups for group in groups):
             return True

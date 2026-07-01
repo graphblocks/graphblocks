@@ -426,6 +426,10 @@ class AssetRevision(BaseModel):
 ```
 
 `AssetRevision`이 동일하면 deterministic processing cache를 재사용할 수 있다.
+`ArtifactRef`, `SourceAsset`, `AssetRevision`은 construction 시 non-empty identity/URI/hash/timestamp
+field, valid `source_kind`, non-negative artifact size, typed `ArtifactRef`, metadata/ACL mapping key,
+string artifact metadata value를 검증해야 한다. Caller-provided metadata/ACL collection은 immutable
+snapshot으로 투영되어야 한다.
 
 ## 20. ParsedDocument와 DocumentElement
 
@@ -476,6 +480,9 @@ class SourceLocation(BaseModel):
 ```
 
 각 element는 `element_id`, `parent_id`, `order`, `location`, `content`, `metadata`를 가져야 한다.
+`SourceLocation`, `DocumentElement`, `ParsedDocument`는 construction 시 non-negative/positive page,
+slide, char offset ordering, non-empty element/document/parser identity, typed nested records, and
+metadata keys를 검증해야 한다. Element list와 section path는 immutable sequence projection이어야 한다.
 
 ## 21. DocumentChunk와 lineage
 
@@ -509,6 +516,9 @@ SourceAsset
 ```
 
 각 단계가 이전 단계의 ID, revision, digest를 잃으면 안 된다.
+`DocumentChunk`, `SourceRef`, `DocumentSpan`은 construction 시 lineage identity, valid trust level,
+typed locator/source refs, non-negative token counts and offsets, and metadata/ACL mappings를 검증해야 한다.
+Chunk element IDs and source refs must be immutable projections, not caller-owned mutable lists.
 
 ## 22. 범용 source, locator, snapshot
 

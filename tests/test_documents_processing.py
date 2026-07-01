@@ -44,7 +44,7 @@ def test_chunk_document_by_lines_preserves_lineage_and_source_spans() -> None:
     assert chunks[0].asset_id == asset.asset_id
     assert chunks[0].revision_id == revision.revision_id
     assert chunks[0].document_id == document.document_id
-    assert chunks[0].element_ids == [document.elements[0].element_id, document.elements[1].element_id]
+    assert chunks[0].element_ids == (document.elements[0].element_id, document.elements[1].element_id)
     assert chunks[0].source_refs[0].digest == revision.content_hash
     assert chunks[0].source_refs[0].locator.asset_id == asset.asset_id
     assert chunks[0].source_refs[0].locator.revision_id == revision.revision_id
@@ -52,4 +52,3 @@ def test_chunk_document_by_lines_preserves_lineage_and_source_spans() -> None:
     assert chunks[0].source_refs[0].locator.chunk_id == chunks[0].chunk_id
     assert chunks[0].source_refs[0].locator.char_start == 0
     assert chunks[0].source_refs[0].locator.char_end == 23
-

@@ -32,6 +32,32 @@ def test_artifact_ref_rejects_invalid_string_fields() -> None:
         ArtifactRef("artifact-1", "file:///tmp/example.txt", media_type=object())  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="artifact checksum must not be empty"):
         ArtifactRef("artifact-1", "file:///tmp/example.txt", checksum=" ")
+    with pytest.raises(ValueError, match="artifact size_bytes must be non-negative"):
+        ArtifactRef("artifact-1", "file:///tmp/example.txt", size_bytes=-1)
+    with pytest.raises(ValueError, match="artifact metadata values must be strings"):
+        ArtifactRef("artifact-1", "file:///tmp/example.txt", metadata={"owner": object()})  # type: ignore[dict-item]
+
+
+def test_document_lineage_records_validate_identity_types_and_snapshots() -> None:
+    artifact_metadata = {"owner": "docs"}
+    artifact = ArtifactRef(" artifact-1 ", " file:///tmp/example.txt ", metadata=artifact_metadata)
+    artifact_metadata["owner"] = "mutated"
+
+    assert artifact.artifact_id == "artifact-1"
+    assert artifact.uri == "file:///tmp/example.txt"
+    assert artifact.metadata == {"owner": "docs"}
+    with pytest.raises(TypeError):
+        artifact.metadata["owner"] = "changed"
+    with pytest.raises(ValueError, match="invalid source asset source_kind"):
+        SourceAsset("asset-1", "file:///tmp/example.txt", "ftp")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="asset revision artifact must be ArtifactRef"):
+        AssetRevision("rev-1", "asset-1", "sha256:content", "2026-06-22T00:00:00Z", object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="source location char_end must be greater than or equal to char_start"):
+        SourceLocation(char_start=10, char_end=2)
+    with pytest.raises(ValueError, match="source location page must be positive"):
+        SourceLocation(page=0)
+    with pytest.raises(ValueError, match="document element order must be non-negative"):
+        DocumentElement("el-1", "paragraph", -1, "hello", SourceLocation())
 
 
 def test_create_local_text_revision_preserves_content_hash_and_artifact_metadata() -> None:
@@ -116,3 +142,55 @@ def test_document_chunk_source_ref_contains_full_lineage_ids() -> None:
     assert chunk.source_refs[0].locator.document_id == document.document_id
     assert chunk.source_refs[0].locator.element_id == "el-1"
     assert chunk.source_refs[0].digest == revision.content_hash
+
+
+def test_document_payload_records_validate_nested_types_and_copy_collections() -> None:
+    element = DocumentElement(" el-1 ", " paragraph ", 0, "hello", SourceLocation(section_path=["body"]))
+    parser = {"processor_id": "plain-text", "version": "1", "config": {"enabled": True}}
+    document = ParsedDocument(
+        "doc-1",
+        "asset-1",
+        "rev-1",
+        parser,
+        elements=[element],  # type: ignore[arg-type]
+        metadata={"tags": ["policy"]},
+    )
+    parser["processor_id"] = "mutated"
+
+    assert element.element_id == "el-1"
+    assert element.kind == "paragraph"
+    assert element.location.section_path == ("body",)
+    assert document.parser["processor_id"] == "plain-text"
+    assert document.metadata["tags"] == ["policy"]
+    assert document.elements == (element,)
+    with pytest.raises(TypeError):
+        document.parser["processor_id"] = "changed"
+    with pytest.raises(TypeError):
+        document.metadata["tags"].append("mutated")
+    with pytest.raises(ValueError, match="parsed document elements must be DocumentElement"):
+        ParsedDocument("doc-1", "asset-1", "rev-1", {}, elements=(object(),))  # type: ignore[arg-type]
+
+    locator = DocumentSpan("asset-1", "rev-1", "doc-1", char_start=0, char_end=5)
+    source_ref = SourceRef("source-1", "document_chunk", locator=locator, metadata={"labels": ["safe"]})
+    chunk = DocumentChunk(
+        "chunk-1",
+        "doc-1",
+        "asset-1",
+        "rev-1",
+        "hello",
+        element_ids=["el-1"],  # type: ignore[arg-type]
+        source_refs=[source_ref],  # type: ignore[arg-type]
+        chunker={"processor_id": "line-chunker", "version": "1"},
+        token_count=1,
+        acl={"tenant": "tenant-1"},
+    )
+
+    assert chunk.element_ids == ("el-1",)
+    assert chunk.source_refs == (source_ref,)
+    assert chunk.acl == {"tenant": "tenant-1"}
+    with pytest.raises(ValueError, match="invalid source ref trust"):
+        SourceRef("source-1", "document_chunk", trust="private")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="document span char_end must be greater than or equal to char_start"):
+        DocumentSpan("asset-1", "rev-1", "doc-1", char_start=5, char_end=1)
+    with pytest.raises(ValueError, match="document chunk source_refs must be SourceRef"):
+        DocumentChunk("chunk-1", "doc-1", "asset-1", "rev-1", "hello", ("el-1",), (object(),), {})  # type: ignore[arg-type]
