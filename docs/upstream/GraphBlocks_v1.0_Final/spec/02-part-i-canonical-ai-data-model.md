@@ -766,6 +766,8 @@ class ChangeSet(BaseModel):
     integrity_policy_ref: str | None = None
 ```
 
+구현이 `operations_ref` 대신 lightweight inline operation list를 제공하는 경우에도, `ChangeSet` 생성 시 operation mapping을 복사하고 immutable sequence로 고정해야 한다. Review, gate, CAS commit은 생성 이후 caller-side mutation으로 operation 내용이 바뀌지 않는다는 전제에 의존한다.
+
 표준 lifecycle:
 
 ```text
@@ -971,5 +973,4 @@ class MetricResult(BaseModel):
 ```
 
 Conversation/RAG convenience schema는 profile-specific wrapper로 제공한다. Evaluation은 deterministic verification, model-based quality evaluation, policy compliance를 구분해야 한다.
-
 

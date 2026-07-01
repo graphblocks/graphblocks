@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import pytest
+
 from graphblocks.diagnostics import Diagnostic
 from graphblocks.documents import ArtifactRef
 from graphblocks.evaluation import (
     CheckResult,
+    ChangeSet,
     GateConstraint,
     MetricObservation,
     ResourceSnapshotRef,
@@ -133,6 +136,34 @@ def test_review_record_is_invalid_for_changed_subject_digest() -> None:
     assert review.is_valid_for(subject)
     assert not review.is_valid_for(ResourceSnapshotRef("candidate-1", "sha256:new"))
     assert not review.invalidate("2026-06-22T00:05:00Z").is_valid_for(subject)
+
+
+def test_change_set_freezes_operation_mappings_at_construction() -> None:
+    operation = {"op": "file.write", "resource_id": "a.txt"}
+    operations = [operation]
+    change_set = ChangeSet(
+        change_set_id="change-1",
+        base=ResourceSnapshotRef("base", "sha256:base"),
+        candidate=ResourceSnapshotRef("candidate", "sha256:candidate"),
+        operations=operations,
+    )
+
+    operation["resource_id"] = "mutated.txt"
+    operations.append({"op": "file.delete", "resource_id": "b.txt"})
+
+    assert change_set.operations == ({"op": "file.write", "resource_id": "a.txt"},)
+    with pytest.raises(AttributeError):
+        change_set.operations.append({"op": "file.delete"})
+
+
+def test_change_set_rejects_non_mapping_operations() -> None:
+    with pytest.raises(ValueError, match="change set operations must be mappings"):
+        ChangeSet(
+            change_set_id="change-1",
+            base=ResourceSnapshotRef("base", "sha256:base"),
+            candidate=ResourceSnapshotRef("candidate", "sha256:candidate"),
+            operations=["file.write"],  # type: ignore[list-item]
+        )
 
 
 def test_result_bundle_digest_is_stable_without_record_identity() -> None:

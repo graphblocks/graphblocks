@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field, replace, is_dataclass
 from decimal import Decimal
 from typing import Literal
@@ -107,8 +107,20 @@ class ChangeSet:
     change_set_id: str
     base: ResourceSnapshotRef
     candidate: ResourceSnapshotRef
-    operations: list[dict[str, object]] = field(default_factory=list)
+    operations: tuple[dict[str, object], ...] = field(default_factory=tuple)
     summary: str | None = None
+
+    def __post_init__(self) -> None:
+        operations: list[dict[str, object]] = []
+        try:
+            raw_operations = tuple(self.operations)
+        except TypeError as error:
+            raise ValueError("change set operations must be mappings") from error
+        for operation in raw_operations:
+            if not isinstance(operation, Mapping):
+                raise ValueError("change set operations must be mappings")
+            operations.append(dict(operation))
+        object.__setattr__(self, "operations", tuple(operations))
 
 
 @dataclass(frozen=True, slots=True)
