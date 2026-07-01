@@ -1574,6 +1574,81 @@ fn budget_ledger_commit_with_expired_permit_rejects_without_mutating() -> Result
 }
 
 #[test]
+fn budget_ledger_commit_with_permit_compares_expiration_as_datetime() -> Result<(), BudgetError> {
+    let mut ledger = InMemoryBudgetLedger::new();
+    ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+    let reservation = ledger.reserve(
+        "budget-1",
+        "run:1",
+        [tokens(40)],
+        ReservationPurpose::ProviderCall,
+        "2026-06-22T01:10:00Z",
+        None,
+    )?;
+    let permit = ledger.issue_permit(
+        "permit-1",
+        vec![reservation.reservation_id.clone()],
+        "worker:1",
+        "turn:1",
+        1,
+        "finish_current_turn",
+        "sha256:policy",
+        "2026-06-21T20:00:00-05:00",
+        Vec::new(),
+    )?;
+
+    let settlement = ledger.commit_with_permit_at(
+        &permit.permit_id,
+        &reservation.reservation_id,
+        [tokens(25)],
+        "2026-06-22T00:59:59Z",
+    )?;
+
+    assert_eq!(settlement.committed, vec![tokens(25)]);
+
+    let mut expired_ledger = InMemoryBudgetLedger::new();
+    expired_ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+    let expired_reservation = expired_ledger.reserve(
+        "budget-1",
+        "run:2",
+        [tokens(40)],
+        ReservationPurpose::ProviderCall,
+        "2026-06-22T01:10:00Z",
+        None,
+    )?;
+    let expired_permit = expired_ledger.issue_permit(
+        "permit-2",
+        vec![expired_reservation.reservation_id.clone()],
+        "worker:1",
+        "turn:1",
+        1,
+        "finish_current_turn",
+        "sha256:policy",
+        "2026-06-21T20:00:00-05:00",
+        Vec::new(),
+    )?;
+
+    let error = expired_ledger
+        .commit_with_permit_at(
+            &expired_permit.permit_id,
+            &expired_reservation.reservation_id,
+            [tokens(25)],
+            "2026-06-22T01:00:01Z",
+        )
+        .expect_err("expired offset permit cannot settle a reservation");
+
+    assert_eq!(
+        error,
+        BudgetError::PermitExpired {
+            permit_id: "permit-2".to_string(),
+            expires_at: "2026-06-21T20:00:00-05:00".to_string(),
+            now: "2026-06-22T01:00:01Z".to_string(),
+        }
+    );
+    Ok(())
+}
+
+#[test]
 fn budget_ledger_release_with_expired_permit_rejects_without_mutating() -> Result<(), BudgetError> {
     let mut ledger = InMemoryBudgetLedger::new();
     ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;

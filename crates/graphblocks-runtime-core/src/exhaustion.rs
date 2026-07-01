@@ -568,7 +568,7 @@ impl ExhaustionController {
             && self
                 .validation_time
                 .as_ref()
-                .is_none_or(|validation_time| permit.expires_at.as_str() > validation_time.as_str())
+                .is_none_or(|validation_time| permit.is_active_at(validation_time))
     }
 }
 

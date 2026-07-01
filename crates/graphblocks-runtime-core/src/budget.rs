@@ -3,6 +3,7 @@ use std::{
     path::Path,
 };
 
+use crate::policy::parse_policy_datetime_millis;
 pub use crate::usage::UsageAmount;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde_json::{Map, Number, Value};
@@ -302,6 +303,16 @@ impl BudgetPermit {
         requested
             .iter()
             .all(|(key, amount)| *amount <= authorized.get(key).copied().unwrap_or(0))
+    }
+
+    pub fn is_active_at(&self, now: &str) -> bool {
+        match (
+            parse_policy_datetime_millis(&self.expires_at),
+            parse_policy_datetime_millis(now),
+        ) {
+            (Some(expires_at), Some(now)) => expires_at > now,
+            _ => false,
+        }
     }
 }
 
@@ -1166,7 +1177,7 @@ impl InMemoryBudgetLedger {
             .ok_or_else(|| BudgetError::PermitNotFound {
                 permit_id: permit_id.to_string(),
             })?;
-        if permit.expires_at.as_str() <= now {
+        if !permit.is_active_at(now) {
             return Err(BudgetError::PermitExpired {
                 permit_id: permit_id.to_string(),
                 expires_at: permit.expires_at.clone(),
@@ -2653,7 +2664,7 @@ fn sqlite_ensure_permit_not_expired(
     permit: &StoredBudgetPermit,
     now: &str,
 ) -> Result<(), BudgetError> {
-    if permit.permit.expires_at.as_str() <= now {
+    if !permit.permit.is_active_at(now) {
         return Err(BudgetError::PermitExpired {
             permit_id: permit.permit.permit_id.clone(),
             expires_at: permit.permit.expires_at.clone(),

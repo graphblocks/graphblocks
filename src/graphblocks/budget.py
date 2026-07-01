@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from decimal import Decimal
 import json
 from pathlib import Path
@@ -226,6 +227,23 @@ class BudgetPermit:
         authorized = _amounts_to_dict(self.authorized_amounts)
         requested = _amounts_to_dict(amounts)
         return all(amount <= authorized.get(key, Decimal("0")) for key, amount in requested.items())
+
+    def is_active_at(self, now: str) -> bool:
+        def parse_datetime(value: str) -> datetime:
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError("datetime must be a non-empty string")
+            normalized = value.strip()
+            if normalized.endswith(("Z", "z")):
+                normalized = f"{normalized[:-1]}+00:00"
+            parsed = datetime.fromisoformat(normalized)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+
+        try:
+            return parse_datetime(self.expires_at) > parse_datetime(now)
+        except ValueError:
+            return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -847,7 +865,7 @@ class InMemoryBudgetLedger:
         return permit
 
     def _ensure_permit_not_expired(self, permit: BudgetPermit, now: str) -> None:
-        if permit.expires_at <= now:
+        if not permit.is_active_at(now):
             raise BudgetPermitExpiredError(permit.permit_id, permit.expires_at, now)
 
     def _ensure_permit_allows_additional(

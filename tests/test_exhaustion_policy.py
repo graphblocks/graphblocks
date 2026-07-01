@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from decimal import Decimal
 
 import pytest
@@ -152,6 +153,38 @@ def test_continuation_permit_must_not_be_expired_at_validation_time() -> None:
 
     assert decision.allowed is False
     assert decision.reason == "invalid_permit"
+
+
+def test_continuation_permit_expiration_uses_datetime_comparison() -> None:
+    policy = ExhaustionPolicy.from_preset(
+        "finish_current_turn",
+        unit="turn",
+        continuation=ContinuationEnvelope(max_additional_usage=[_tokens("100")], max_additional_steps=1),
+    )
+    permit = replace(_permit(), expires_at="2026-06-21T20:00:00-05:00")
+    allowed_controller = ExhaustionController(
+        policy,
+        atomic_unit_id="turn:1",
+        admission_epoch=7,
+        validation_time="2026-06-22T00:59:59Z",
+    )
+
+    allowed = allowed_controller.admit("declared_finalization", work_epoch=8, permit=permit)
+
+    assert allowed.allowed is True
+    assert allowed.reason == "allowed"
+
+    expired_controller = ExhaustionController(
+        policy,
+        atomic_unit_id="turn:1",
+        admission_epoch=7,
+        validation_time="2026-06-22T01:00:01Z",
+    )
+
+    expired = expired_controller.admit("declared_finalization", work_epoch=8, permit=permit)
+
+    assert expired.allowed is False
+    assert expired.reason == "invalid_permit"
 
 
 def test_controller_level_continuation_permit_must_match_policy() -> None:

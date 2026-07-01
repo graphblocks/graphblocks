@@ -168,6 +168,36 @@ fn continuation_permit_must_not_be_expired_at_validation_time() {
 }
 
 #[test]
+fn continuation_permit_expiration_uses_datetime_comparison() {
+    let policy = ExhaustionPolicy::from_preset(
+        ExhaustionPreset::FinishCurrentTurn,
+        ExhaustionUnit::Turn,
+        Some(
+            ContinuationEnvelope::new()
+                .with_max_additional_usage([tokens(100)])
+                .with_max_additional_steps(1),
+        ),
+    );
+    let mut permit = permit();
+    permit.expires_at = "2026-06-21T20:00:00-05:00".to_string();
+    let mut allowed_controller = ExhaustionController::new(policy.clone(), "turn:1", 7)
+        .with_validation_time("2026-06-22T00:59:59Z");
+
+    let allowed = allowed_controller.admit(WorkKind::DeclaredFinalization, 8, Some(&permit));
+
+    assert!(allowed.allowed);
+    assert_eq!(allowed.reason, "allowed");
+
+    let mut expired_controller =
+        ExhaustionController::new(policy, "turn:1", 7).with_validation_time("2026-06-22T01:00:01Z");
+
+    let expired = expired_controller.admit(WorkKind::DeclaredFinalization, 8, Some(&permit));
+
+    assert!(!expired.allowed);
+    assert_eq!(expired.reason, "invalid_permit");
+}
+
+#[test]
 fn continuation_usage_must_fit_permit_authorized_amounts() {
     let policy = ExhaustionPolicy::from_preset(
         ExhaustionPreset::FinishCurrentTurn,

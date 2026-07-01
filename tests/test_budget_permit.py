@@ -346,6 +346,69 @@ def test_budget_ledger_commit_with_expired_permit_rejects_without_mutating() -> 
     assert balance.available == [_tokens("60")]
 
 
+def test_budget_ledger_commit_with_permit_compares_expiration_as_datetime() -> None:
+    ledger = InMemoryBudgetLedger()
+    ledger.allocate("budget-1", ResourceRef("tenant:acme"), [_tokens("100")], policy_ref="policy-1")
+    reservation = ledger.reserve(
+        "budget-1",
+        ResourceRef("run:1"),
+        [_tokens("40")],
+        purpose="provider_call",
+        expires_at="2026-06-22T01:10:00Z",
+    )
+    permit = ledger.issue_permit(
+        "permit-1",
+        reservation_ids=[reservation.reservation_id],
+        owner=ResourceRef("worker:1"),
+        atomic_unit=ResourceRef("turn:1"),
+        admission_epoch=1,
+        continuation_profile="finish_current_turn",
+        policy_snapshot_digest="sha256:policy",
+        expires_at="2026-06-21T20:00:00-05:00",
+    )
+
+    settlement = ledger.commit_with_permit_at(
+        permit.permit_id,
+        reservation.reservation_id,
+        [_tokens("25")],
+        now="2026-06-22T00:59:59Z",
+    )
+
+    assert settlement.committed == [_tokens("25")]
+
+    expired_ledger = InMemoryBudgetLedger()
+    expired_ledger.allocate("budget-1", ResourceRef("tenant:acme"), [_tokens("100")], policy_ref="policy-1")
+    expired_reservation = expired_ledger.reserve(
+        "budget-1",
+        ResourceRef("run:2"),
+        [_tokens("40")],
+        purpose="provider_call",
+        expires_at="2026-06-22T01:10:00Z",
+    )
+    expired_permit = expired_ledger.issue_permit(
+        "permit-2",
+        reservation_ids=[expired_reservation.reservation_id],
+        owner=ResourceRef("worker:1"),
+        atomic_unit=ResourceRef("turn:1"),
+        admission_epoch=1,
+        continuation_profile="finish_current_turn",
+        policy_snapshot_digest="sha256:policy",
+        expires_at="2026-06-21T20:00:00-05:00",
+    )
+
+    with pytest.raises(BudgetPermitExpiredError) as error:
+        expired_ledger.commit_with_permit_at(
+            expired_permit.permit_id,
+            expired_reservation.reservation_id,
+            [_tokens("25")],
+            now="2026-06-22T01:00:01Z",
+        )
+
+    assert error.value.permit_id == "permit-2"
+    assert error.value.expires_at == "2026-06-21T20:00:00-05:00"
+    assert error.value.now == "2026-06-22T01:00:01Z"
+
+
 def test_budget_ledger_release_with_expired_permit_rejects_without_mutating() -> None:
     ledger = InMemoryBudgetLedger()
     ledger.allocate("budget-1", ResourceRef("tenant:acme"), [_tokens("100")], policy_ref="policy-1")

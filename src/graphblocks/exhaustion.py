@@ -281,7 +281,7 @@ class ExhaustionController:
             permit.atomic_unit.resource_id == self.atomic_unit_id
             and permit.continuation_profile == self.policy.preset
             and permit.admission_epoch == self.admission_epoch
-            and (self.validation_time is None or permit.expires_at > self.validation_time)
+            and (self.validation_time is None or permit.is_active_at(self.validation_time))
         )
 
 
