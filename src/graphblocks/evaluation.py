@@ -22,6 +22,10 @@ SloComparison = Literal["at_least", "at_most"]
 SloReportStatus = Literal["pass", "fail", "no_data"]
 
 
+VALID_CHECK_STATUSES = frozenset(("passed", "failed", "error", "timeout", "inconclusive", "skipped"))
+VALID_METRIC_DIRECTIONS = frozenset(("minimize", "maximize", "target", "informational"))
+VALID_GATE_DECISIONS = frozenset(("pass", "fail", "inconclusive"))
+VALID_CONSTRAINT_OPERATORS = frozenset(("at_least", "at_most", "equals"))
 VALID_REVIEW_DECISIONS = frozenset(("accept", "accept_with_conditions", "revise", "reject"))
 
 
@@ -59,6 +63,31 @@ def _validate_string_list(owner: str, field_name: str, values: object) -> list[s
         if not item.strip():
             raise ValueError(f"{owner} {field_name} item must not be empty")
     return list(normalized)
+
+
+def _validate_record_list(owner: str, field_name: str, values: object, item_type: type) -> list[object]:
+    if isinstance(values, (str, bytes)):
+        raise ValueError(f"{owner} {field_name} must be a collection")
+    try:
+        normalized = list(values)  # type: ignore[arg-type]
+    except TypeError as error:
+        raise ValueError(f"{owner} {field_name} must be a collection") from error
+    for item in normalized:
+        if not isinstance(item, item_type):
+            raise ValueError(f"{owner} {field_name} items must be {item_type.__name__}")
+    return list(normalized)
+
+
+def _copy_mapping(owner: str, field_name: str, value: object) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{owner} {field_name} must be a mapping")
+    mapping = dict(value)
+    for key in mapping:
+        if not isinstance(key, str):
+            raise ValueError(f"{owner} {field_name} keys must be strings")
+        if not key.strip():
+            raise ValueError(f"{owner} {field_name} key must not be empty")
+    return mapping
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,6 +220,31 @@ class CheckResult:
     tool: dict[str, object] = field(default_factory=dict)
     environment: ResourceSnapshotRef | None = None
 
+    def __post_init__(self) -> None:
+        _validate_non_empty_string("check result", "check_id", self.check_id)
+        if not isinstance(self.subject, ResourceSnapshotRef):
+            raise ValueError("check result subject must be a ResourceSnapshotRef")
+        if self.status not in VALID_CHECK_STATUSES:
+            raise ValueError(f"invalid check status {self.status}")
+        object.__setattr__(
+            self,
+            "diagnostics",
+            _validate_record_list("check result", "diagnostics", self.diagnostics, Diagnostic),
+        )
+        object.__setattr__(
+            self,
+            "evidence",
+            _validate_record_list("check result", "evidence", self.evidence, EvidenceRef),
+        )
+        object.__setattr__(
+            self,
+            "artifacts",
+            _validate_record_list("check result", "artifacts", self.artifacts, ArtifactRef),
+        )
+        object.__setattr__(self, "tool", _copy_mapping("check result", "tool", self.tool))
+        if self.environment is not None and not isinstance(self.environment, ResourceSnapshotRef):
+            raise ValueError("check result environment must be a ResourceSnapshotRef")
+
 
 @dataclass(frozen=True, slots=True)
 class MetricObservation:
@@ -203,10 +257,19 @@ class MetricObservation:
     evaluator: dict[str, object] | None = None
 
     def __post_init__(self) -> None:
+        _validate_non_empty_string("metric observation", "name", self.name)
+        if self.unit is not None:
+            _validate_non_empty_string("metric observation", "unit", self.unit)
+        if self.direction not in VALID_METRIC_DIRECTIONS:
+            raise ValueError(f"invalid metric direction {self.direction}")
         if isinstance(self.value, float):
             object.__setattr__(self, "value", Decimal(str(self.value)))
         if self.baseline_value is not None and not isinstance(self.baseline_value, Decimal):
             object.__setattr__(self, "baseline_value", Decimal(str(self.baseline_value)))
+        if self.subject is not None and not isinstance(self.subject, ResourceSnapshotRef):
+            raise ValueError("metric observation subject must be a ResourceSnapshotRef")
+        if self.evaluator is not None:
+            object.__setattr__(self, "evaluator", _copy_mapping("metric observation", "evaluator", self.evaluator))
 
 
 @dataclass(frozen=True, slots=True)
@@ -216,7 +279,10 @@ class GateConstraint:
     threshold: Decimal | bool | str
 
     def __post_init__(self) -> None:
-        if isinstance(self.threshold, (int, float)):
+        _validate_non_empty_string("gate constraint", "metric_name", self.metric_name)
+        if self.operator not in VALID_CONSTRAINT_OPERATORS:
+            raise ValueError(f"invalid gate constraint operator {self.operator}")
+        if isinstance(self.threshold, (int, float)) and not isinstance(self.threshold, bool):
             object.__setattr__(self, "threshold", Decimal(str(self.threshold)))
 
 
@@ -228,6 +294,24 @@ class GateResult:
     check_ids: list[str] = field(default_factory=list)
     violated_constraints: list[str] = field(default_factory=list)
     metrics: list[MetricObservation] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        _validate_non_empty_string("gate result", "gate_id", self.gate_id)
+        if not isinstance(self.subject, ResourceSnapshotRef):
+            raise ValueError("gate result subject must be a ResourceSnapshotRef")
+        if self.decision not in VALID_GATE_DECISIONS:
+            raise ValueError(f"invalid gate decision {self.decision}")
+        object.__setattr__(self, "check_ids", _validate_string_list("gate result", "check_ids", self.check_ids))
+        object.__setattr__(
+            self,
+            "violated_constraints",
+            _validate_string_list("gate result", "violated_constraints", self.violated_constraints),
+        )
+        object.__setattr__(
+            self,
+            "metrics",
+            _validate_record_list("gate result", "metrics", self.metrics, MetricObservation),
+        )
     policy_ref: str | None = None
 
 

@@ -9,7 +9,9 @@ from graphblocks.documents import ArtifactRef
 from graphblocks.evaluation import (
     CheckResult,
     ChangeSet,
+    EvidenceRef,
     GateConstraint,
+    GateResult,
     MetricObservation,
     ResourceSnapshotRef,
     ResultBundle,
@@ -76,6 +78,104 @@ def test_evaluate_gate_uses_metric_thresholds() -> None:
     assert passing.decision == "pass"
     assert failing.decision == "fail"
     assert failing.violated_constraints == ["metric:latency_ms"]
+
+
+def test_check_result_validates_status_subject_and_copies_collections() -> None:
+    subject = ResourceSnapshotRef("candidate-1", "sha256:candidate")
+    diagnostic = Diagnostic("GBE1001", "assertion failed")
+    evidence = EvidenceRef("evidence-1", subject, "log")
+    artifact = ArtifactRef("artifact-1", "file:///tmp/out.txt", checksum="sha256:out")
+    diagnostics = [diagnostic]
+    evidence_refs = [evidence]
+    artifacts = [artifact]
+    tool = {"processor_id": "lint"}
+    check = CheckResult(
+        "lint",
+        subject,
+        "passed",
+        diagnostics=diagnostics,
+        evidence=evidence_refs,
+        artifacts=artifacts,
+        tool=tool,
+    )
+    diagnostics.append(Diagnostic("GBE1002", "mutated"))
+    evidence_refs.append(EvidenceRef("evidence-2", subject, "log"))
+    artifacts.append(ArtifactRef("artifact-2", "file:///tmp/other.txt"))
+    tool["processor_id"] = "mutated"
+
+    assert check.diagnostics == [diagnostic]
+    assert check.evidence == [evidence]
+    assert check.artifacts == [artifact]
+    assert check.tool == {"processor_id": "lint"}
+    with pytest.raises(ValueError, match="check result check_id must not be empty"):
+        CheckResult(" ", subject, "passed")
+    with pytest.raises(ValueError, match="check result subject must be a ResourceSnapshotRef"):
+        CheckResult("lint", object(), "passed")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="invalid check status maybe"):
+        CheckResult("lint", subject, "maybe")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="check result diagnostics items must be Diagnostic"):
+        CheckResult("lint", subject, "passed", diagnostics=[object()])  # type: ignore[list-item]
+    with pytest.raises(ValueError, match="check result evidence items must be EvidenceRef"):
+        CheckResult("lint", subject, "passed", evidence=[object()])  # type: ignore[list-item]
+    with pytest.raises(ValueError, match="check result artifacts items must be ArtifactRef"):
+        CheckResult("lint", subject, "passed", artifacts=[object()])  # type: ignore[list-item]
+    with pytest.raises(ValueError, match="check result tool must be a mapping"):
+        CheckResult("lint", subject, "passed", tool=object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="check result environment must be a ResourceSnapshotRef"):
+        CheckResult("lint", subject, "passed", environment=object())  # type: ignore[arg-type]
+
+
+def test_metric_observation_validates_identity_direction_and_copies_evaluator() -> None:
+    evaluator = {"processor_id": "metric"}
+    metric = MetricObservation("latency_ms", 12.5, unit="ms", direction="minimize", evaluator=evaluator)
+    evaluator["processor_id"] = "mutated"
+
+    assert metric.value == Decimal("12.5")
+    assert metric.evaluator == {"processor_id": "metric"}
+    with pytest.raises(ValueError, match="metric observation name must not be empty"):
+        MetricObservation(" ", Decimal("1"))
+    with pytest.raises(ValueError, match="metric observation unit must not be empty"):
+        MetricObservation("latency_ms", Decimal("1"), unit=" ")
+    with pytest.raises(ValueError, match="invalid metric direction sideways"):
+        MetricObservation("latency_ms", Decimal("1"), direction="sideways")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="metric observation subject must be a ResourceSnapshotRef"):
+        MetricObservation("latency_ms", Decimal("1"), subject=object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="metric observation evaluator must be a mapping"):
+        MetricObservation("latency_ms", Decimal("1"), evaluator=object())  # type: ignore[arg-type]
+
+
+def test_gate_constraint_and_result_validate_literals_and_copy_lists() -> None:
+    subject = ResourceSnapshotRef("candidate-1", "sha256:candidate")
+    metric = MetricObservation("accuracy", Decimal("0.91"), direction="maximize")
+    check_ids = ["lint"]
+    violated = ["metric:accuracy"]
+    metrics = [metric]
+    gate = GateResult("quality", subject, "fail", check_ids=check_ids, violated_constraints=violated, metrics=metrics)
+    check_ids.append("mutated")
+    violated.append("mutated")
+    metrics.append(MetricObservation("latency_ms", Decimal("125")))
+
+    assert gate.check_ids == ["lint"]
+    assert gate.violated_constraints == ["metric:accuracy"]
+    assert gate.metrics == [metric]
+    assert GateConstraint("is_safe", "equals", True).threshold is True
+    assert GateConstraint("latency_ms", "at_most", 150).threshold == Decimal("150")
+    with pytest.raises(ValueError, match="gate constraint metric_name must not be empty"):
+        GateConstraint(" ", "equals", True)
+    with pytest.raises(ValueError, match="invalid gate constraint operator around"):
+        GateConstraint("latency_ms", "around", 150)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="gate result gate_id must not be empty"):
+        GateResult(" ", subject, "pass")
+    with pytest.raises(ValueError, match="gate result subject must be a ResourceSnapshotRef"):
+        GateResult("quality", object(), "pass")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="invalid gate decision maybe"):
+        GateResult("quality", subject, "maybe")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="gate result check_ids must be a collection of strings"):
+        GateResult("quality", subject, "pass", check_ids="lint")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="gate result violated_constraints item must not be empty"):
+        GateResult("quality", subject, "fail", violated_constraints=[" "])
+    with pytest.raises(ValueError, match="gate result metrics items must be MetricObservation"):
+        GateResult("quality", subject, "pass", metrics=[object()])  # type: ignore[list-item]
 
 
 def test_slo_objective_passes_when_ratio_meets_objective() -> None:
