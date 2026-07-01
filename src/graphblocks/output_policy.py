@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Literal
@@ -334,6 +335,8 @@ class OutputPolicyDecision:
             raise ValueError("replace output policy decisions require replacement content")
         redactions: list[MappingProxyType[str, object]] = []
         for redaction in self.redactions:
+            if not isinstance(redaction, Mapping):
+                raise ValueError("output policy redactions must be mappings")
             redaction_copy = dict(redaction)
             path = redaction_copy.get("path")
             if not isinstance(path, str):

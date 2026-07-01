@@ -75,6 +75,14 @@ def test_output_policy_decision_redact_carries_redaction_instructions() -> None:
 
 
 def test_output_policy_decision_rejects_invalid_redaction_instructions() -> None:
+    with pytest.raises(ValueError, match="output policy redactions must be mappings"):
+        OutputPolicyDecision.redact(
+            "decision-redact",
+            accepted_through_sequence=1,
+            redactions=(object(),),  # type: ignore[arg-type]
+            input_digest="sha256:redact",
+        )
+
     with pytest.raises(ValueError, match="redaction path must not be empty"):
         OutputPolicyDecision.redact(
             "decision-redact",

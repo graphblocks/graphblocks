@@ -2252,6 +2252,8 @@ conversation.begin_turn
 - `AssistantDraftDelta`가 전송된 뒤 hard-stop이면 `AssistantRetracted` 또는 `AssistantIncomplete`를 반드시 보낸다.
 - Output-policy application event builders MUST validate typed `GenerationChunk`,
   `OutputPolicyDecision`, `OutputCutoff`, and digest inputs before constructing events.
+- Output-policy redaction instructions MUST be typed mapping records; malformed redaction entries
+  MUST fail before event construction, delivery-gate mutation, or client delivery.
 
 ## 68. Checkpoint
 
