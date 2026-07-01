@@ -8825,6 +8825,10 @@ class CompletionReserve(BaseModel):
     expires_at: datetime | None = None
 ```
 
+`CompletionReserve.spendable_by` MUST be a non-empty set of authorized finalization,
+checkpoint, cleanup, or compensation work identifiers. A reserve with no eligible spender MUST
+fail before budget capacity is held.
+
 Agent, research, trial workflow는 planning과 exploration이 모든 예산을 소모해 final response, checkpoint, cleanup을 수행하지 못하는 상황을 방지해야 한다.
 
 ```yaml

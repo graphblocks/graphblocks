@@ -403,6 +403,8 @@ class CompletionReserve:
             "spendable_by",
             frozenset(_validate_string_tuple("completion reserve", "spendable_by", self.spendable_by)),
         )
+        if not self.spendable_by:
+            raise ValueError("completion reserve spendable_by must not be empty")
         _validate_optional_non_empty_string("completion reserve", "expires_at", self.expires_at)
         if self.status not in VALID_COMPLETION_RESERVE_STATUSES:
             raise ValueError(f"unknown completion reserve status {self.status!r}")

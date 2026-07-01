@@ -120,7 +120,7 @@ def test_budget_models_reject_unknown_typed_values() -> None:
             "budget-1",
             purpose="finalization",
             amounts=[_tokens("1")],
-            spendable_by=frozenset(),
+            spendable_by=frozenset({"agent.finalize"}),
             status="maybe",
         )
 
@@ -187,6 +187,14 @@ def test_budget_records_validate_identity_nested_records_and_counters() -> None:
             purpose="cleanup",
             amounts=[_tokens("1")],
             spendable_by=frozenset({" "}),
+        )
+    with pytest.raises(ValueError, match="completion reserve spendable_by must not be empty"):
+        CompletionReserve(
+            "reserve-1",
+            "budget-1",
+            purpose="cleanup",
+            amounts=[_tokens("1")],
+            spendable_by=frozenset(),
         )
     with pytest.raises(ValueError, match="completion reserve fencing_token must be an integer"):
         CompletionReserve(
