@@ -324,7 +324,7 @@ def test_testing_package_loads_shared_approval_review_tck_cases(monkeypatch) -> 
     )
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["approval-review"] * 5
+    assert [case.kind for case in cases] == ["approval-review"] * 6
     assert report.ok
     assert {case.case_id for case in cases} == {
         "review_request_digest_is_scope_order_invariant",
@@ -332,6 +332,7 @@ def test_testing_package_loads_shared_approval_review_tck_cases(monkeypatch) -> 
         "changed_review_subject_is_rejected",
         "invalidated_review_does_not_complete_scope",
         "missing_reviewer_credential_is_rejected",
+        "expired_reviewer_credential_is_rejected",
     }
     assert any(result.observed.get("complete") is True for result in report.results)
     assert any(result.observed.get("error") == "review_subject_changed" for result in report.results)
@@ -782,6 +783,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "changed_review_subject_is_rejected",
         "invalidated_review_does_not_complete_scope",
         "missing_reviewer_credential_is_rejected",
+        "expired_reviewer_credential_is_rejected",
     )
     assert by_suite["conversation"].case_ids == (
         "turn_draft_commits_atomically",

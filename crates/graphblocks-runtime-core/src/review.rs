@@ -6,7 +6,7 @@ use graphblocks_compiler::canonical::canonical_hash;
 use serde_json::{Value, json};
 
 use crate::evaluation::{ResourceSnapshotRef, ReviewDecision, ReviewRecord};
-use crate::policy::PrincipalRef;
+use crate::policy::{PrincipalRef, parse_policy_datetime_millis};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ReviewRequest {
@@ -102,6 +102,19 @@ impl ReviewerCredential {
     pub fn allows(&self, reviewer: &PrincipalRef, scope: &str) -> bool {
         self.reviewer.principal_id == reviewer.principal_id
             && self.scopes.iter().any(|item| item == scope)
+    }
+
+    pub fn is_active_at(&self, created_at: &str) -> bool {
+        let Some(expires_at) = self.expires_at.as_deref() else {
+            return true;
+        };
+        match (
+            parse_policy_datetime_millis(created_at),
+            parse_policy_datetime_millis(expires_at),
+        ) {
+            (Some(created_at), Some(expires_at)) => created_at < expires_at,
+            _ => false,
+        }
     }
 }
 
@@ -258,7 +271,12 @@ impl ReviewWorkflow {
         {
             return Err(ReviewWorkflowError::ScopeNotRequested { scope });
         }
-        let credentials = self.credential_provider.credentials_for(&reviewer, &scope);
+        let credentials = self
+            .credential_provider
+            .credentials_for(&reviewer, &scope)
+            .into_iter()
+            .filter(|credential| credential.is_active_at(&submission.created_at))
+            .collect::<Vec<_>>();
         if credentials.is_empty() {
             return Err(ReviewWorkflowError::CredentialMissing {
                 reviewer_id: reviewer.principal_id,

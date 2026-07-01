@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from typing import Protocol
 
 from .canonical import canonical_hash
@@ -59,6 +60,26 @@ class ReviewerCredential:
 
     def allows(self, reviewer: PrincipalRef, scope: str) -> bool:
         return self.reviewer.principal_id == reviewer.principal_id and scope in self.scopes
+
+    def is_active_at(self, created_at: str) -> bool:
+        if self.expires_at is None:
+            return True
+
+        def parse_datetime(value: str) -> datetime:
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError("datetime must be a non-empty string")
+            normalized = value.strip()
+            if normalized.endswith(("Z", "z")):
+                normalized = f"{normalized[:-1]}+00:00"
+            parsed = datetime.fromisoformat(normalized)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+
+        try:
+            return parse_datetime(created_at) < parse_datetime(self.expires_at)
+        except ValueError:
+            return False
 
 
 class ReviewerCredentialProvider(Protocol):
@@ -130,7 +151,11 @@ class ReviewWorkflow:
             raise ReviewSubjectChangedError(self.request.subject.digest, subject.digest)
         if scope not in self.request.required_scopes:
             raise ReviewScopeNotRequestedError(scope)
-        credentials = self.credential_provider.credentials_for(reviewer, scope)
+        credentials = tuple(
+            credential
+            for credential in self.credential_provider.credentials_for(reviewer, scope)
+            if credential.is_active_at(created_at)
+        )
         if not credentials:
             raise ReviewCredentialMissingError(reviewer, scope)
         review = ReviewRecord(

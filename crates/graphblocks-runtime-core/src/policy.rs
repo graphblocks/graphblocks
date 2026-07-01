@@ -933,7 +933,7 @@ fn cached_decision_is_expired(valid_until: Option<&str>, evaluated_at: &str) -> 
     }
 }
 
-fn parse_policy_datetime_millis(value: &str) -> Option<i128> {
+pub(crate) fn parse_policy_datetime_millis(value: &str) -> Option<i128> {
     let value = value.trim();
     if value.is_empty() {
         return None;

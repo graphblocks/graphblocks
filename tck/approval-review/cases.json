@@ -198,5 +198,44 @@
       "reviewerId": "reviewer-1",
       "scope": "security"
     }
+  },
+  {
+    "name": "expired_reviewer_credential_is_rejected",
+    "kind": "review_missing_credential",
+    "subject": {
+      "resourceId": "candidate-1",
+      "digest": "sha256:subject"
+    },
+    "requestedBy": {
+      "principalId": "author-1"
+    },
+    "requiredScopes": [
+      "quality"
+    ],
+    "createdAt": "2026-06-24T00:00:00Z",
+    "reviewer": {
+      "principalId": "reviewer-1"
+    },
+    "credentials": [
+      {
+        "credentialRef": "cred-quality-expired",
+        "scopes": [
+          "quality"
+        ],
+        "issuedAt": "2026-06-23T00:00:00Z",
+        "expiresAt": "2026-06-23T19:05:00-05:00"
+      }
+    ],
+    "review": {
+      "reviewId": "review-1",
+      "scope": "quality",
+      "decision": "accept",
+      "createdAt": "2026-06-24T00:05:01Z"
+    },
+    "expected": {
+      "error": "review_credential_missing",
+      "reviewerId": "reviewer-1",
+      "scope": "quality"
+    }
   }
 ]

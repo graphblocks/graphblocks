@@ -159,3 +159,58 @@ fn review_workflow_rejects_missing_credential_for_scope() {
         }),
     );
 }
+
+#[test]
+fn review_workflow_ignores_expired_credentials() {
+    let request = ReviewRequest::new(
+        "request-1",
+        ResourceSnapshotRef::new("candidate-1", "sha256:subject"),
+        PrincipalRef::new("author-1"),
+        ["quality"],
+        "2026-06-24T00:00:00Z",
+    );
+    let reviewer = PrincipalRef::new("reviewer-1");
+    let mut expired = ReviewerCredential::new(
+        "cred-expired",
+        reviewer.clone(),
+        ["quality"],
+        "2026-06-23T00:00:00Z",
+    );
+    expired.expires_at = Some("2026-06-24T00:04:59Z".to_string());
+    let mut valid_offset = ReviewerCredential::new(
+        "cred-valid-offset",
+        reviewer.clone(),
+        ["quality"],
+        "2026-06-23T00:00:00Z",
+    );
+    valid_offset.expires_at = Some("2026-06-23T19:06:00-05:00".to_string());
+    let provider = InMemoryReviewerCredentialProvider::new([expired, valid_offset]);
+    let mut workflow = ReviewWorkflow::new(request.clone(), provider.clone());
+
+    let review = workflow
+        .record_review(ReviewSubmission::new(
+            "review-1",
+            reviewer.clone(),
+            "quality",
+            ReviewDecision::Accept,
+            "2026-06-24T00:05:00Z",
+        ))
+        .expect("unexpired credential is accepted");
+
+    assert_eq!(review.credential_refs, vec!["cred-valid-offset"]);
+
+    let mut expired_workflow = ReviewWorkflow::new(request, provider);
+    assert_eq!(
+        expired_workflow.record_review(ReviewSubmission::new(
+            "review-2",
+            reviewer,
+            "quality",
+            ReviewDecision::Accept,
+            "2026-06-24T00:06:01Z",
+        )),
+        Err(ReviewWorkflowError::CredentialMissing {
+            reviewer_id: "reviewer-1".to_string(),
+            scope: "quality".to_string(),
+        }),
+    );
+}

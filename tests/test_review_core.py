@@ -109,6 +109,59 @@ def test_review_workflow_rejects_missing_credential_for_scope() -> None:
     assert error.value.scope == "security"
 
 
+def test_review_workflow_ignores_expired_credentials() -> None:
+    request = ReviewRequest(
+        request_id="request-1",
+        subject=ResourceSnapshotRef("candidate-1", "sha256:subject"),
+        requested_by=PrincipalRef("author-1"),
+        required_scopes=("quality",),
+        created_at="2026-06-24T00:00:00Z",
+    )
+    reviewer = PrincipalRef("reviewer-1")
+    provider = InMemoryReviewerCredentialProvider(
+        [
+            ReviewerCredential(
+                "cred-expired",
+                reviewer,
+                scopes=("quality",),
+                issued_at="2026-06-23T00:00:00Z",
+                expires_at="2026-06-24T00:04:59Z",
+            ),
+            ReviewerCredential(
+                "cred-valid-offset",
+                reviewer,
+                scopes=("quality",),
+                issued_at="2026-06-23T00:00:00Z",
+                expires_at="2026-06-23T19:06:00-05:00",
+            ),
+        ]
+    )
+    workflow = ReviewWorkflow(request=request, credential_provider=provider)
+
+    review = workflow.record_review(
+        review_id="review-1",
+        reviewer=reviewer,
+        scope="quality",
+        decision="accept",
+        created_at="2026-06-24T00:05:00Z",
+    )
+
+    assert review.credential_refs == ["cred-valid-offset"]
+
+    expired_workflow = ReviewWorkflow(request=request, credential_provider=provider)
+    with pytest.raises(ReviewCredentialMissingError) as error:
+        expired_workflow.record_review(
+            review_id="review-2",
+            reviewer=reviewer,
+            scope="quality",
+            decision="accept",
+            created_at="2026-06-24T00:06:01Z",
+        )
+
+    assert error.value.reviewer == reviewer
+    assert error.value.scope == "quality"
+
+
 def test_review_workflow_rejects_changed_subject_and_ignores_invalidated_reviews() -> None:
     request = ReviewRequest(
         request_id="request-1",

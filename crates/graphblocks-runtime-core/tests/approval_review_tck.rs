@@ -166,26 +166,29 @@ fn approval_review_tck_cases_match_runtime_core() {
                 .expect("case credentials");
             let mut credentials = Vec::new();
             for raw_credential in raw_credentials {
-                let credential = raw_credential.as_object().expect("credential object");
-                let credential_reviewer = credential
+                let credential_mapping = raw_credential.as_object().expect("credential object");
+                let credential_reviewer = credential_mapping
                     .get("reviewer")
                     .and_then(Value::as_object)
                     .map(&principal_from)
                     .unwrap_or_else(|| reviewer.clone());
-                credentials.push(ReviewerCredential::new(
-                    credential
+                let mut credential = ReviewerCredential::new(
+                    credential_mapping
                         .get("credentialRef")
-                        .or_else(|| credential.get("credential_ref"))
+                        .or_else(|| credential_mapping.get("credential_ref"))
                         .and_then(Value::as_str)
                         .expect("credentialRef"),
                     credential_reviewer,
-                    strings(credential.get("scopes")),
-                    credential
+                    strings(credential_mapping.get("scopes")),
+                    credential_mapping
                         .get("issuedAt")
-                        .or_else(|| credential.get("issued_at"))
+                        .or_else(|| credential_mapping.get("issued_at"))
                         .and_then(Value::as_str)
                         .expect("issuedAt"),
-                ));
+                );
+                credential.expires_at =
+                    optional_str(credential_mapping, &["expiresAt", "expires_at"]);
+                credentials.push(credential);
             }
             let review_mapping = case
                 .get("review")
