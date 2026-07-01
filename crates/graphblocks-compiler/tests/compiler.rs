@@ -567,6 +567,88 @@ fn compile_graph_allows_effect_retry_with_idempotency_key() {
 }
 
 #[test]
+fn compile_graph_reports_malformed_output_policy_structure() {
+    let base = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "malformed-output-policy"},
+        "spec": {
+            "outputPolicy": {
+                "delivery": {
+                    "mode": "bounded_holdback",
+                    "holdbackMaxTokens": 8,
+                    "onViolation": "abort_response"
+                },
+                "evaluation": {
+                    "enforcementPoints": [
+                        "on_generation_chunk",
+                        "before_client_delivery",
+                        "before_output_commit"
+                    ]
+                },
+                "onViolation": {
+                    "disposition": "abort_response"
+                }
+            },
+            "nodes": {
+                "model": {"block": "model.generate@1"}
+            }
+        }
+    });
+    let cases = [
+        (
+            json!({"spec": {"outputPolicy": "strict"}}),
+            vec!["InvalidOutputPolicy"],
+        ),
+        (
+            json!({"spec": {"outputPolicy": {"delivery": "bounded"}}}),
+            vec!["InvalidOutputPolicy", "OutputPolicyBypass"],
+        ),
+        (
+            json!({"spec": {"outputPolicy": {"evaluation": "mandatory"}}}),
+            vec!["InvalidOutputPolicy", "OutputPolicyBypass"],
+        ),
+        (
+            json!({"spec": {"outputPolicy": {"evaluation": {"enforcementPoints": "before_client_delivery"}}}}),
+            vec!["InvalidOutputEnforcementPoint", "OutputPolicyBypass"],
+        ),
+        (
+            json!({"spec": {"outputPolicy": {
+                "evaluation": {"enforcementPoints": [
+                    "on_generation_chunk",
+                    "before_client_delivery",
+                    "before_output_commit"
+                ]},
+                "onViolation": "abort_response"
+            }}}),
+            vec!["InvalidOutputPolicy"],
+        ),
+    ];
+
+    for (override_fragment, expected_codes) in cases {
+        let mut graph = base.clone();
+        let graph_object = graph.as_object_mut().expect("graph must be an object");
+        let override_object = override_fragment
+            .as_object()
+            .expect("override must be an object");
+        for (key, value) in override_object {
+            graph_object.insert(key.clone(), value.clone());
+        }
+
+        let plan = compile_graph(&graph);
+
+        assert_eq!(
+            plan.diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.severity == Severity::Error)
+                .map(|diagnostic| diagnostic.code.as_str())
+                .collect::<Vec<_>>(),
+            expected_codes
+        );
+    }
+}
+
+#[test]
 fn compile_graph_rejects_unbounded_output_holdback() {
     let graph = json!({
         "apiVersion": GRAPH_API_VERSION,

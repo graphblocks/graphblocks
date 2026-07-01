@@ -461,15 +461,42 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
         }
     }
 
-    let output_policy = spec
-        .and_then(|spec| spec.get("outputPolicy"))
-        .or_else(|| spec.and_then(|spec| spec.get("output_policy")))
-        .and_then(Value::as_object);
+    let output_policy_value = spec.and_then(|spec| {
+        spec.get("outputPolicy")
+            .map(|value| ("outputPolicy", value))
+            .or_else(|| spec.get("output_policy").map(|value| ("output_policy", value)))
+    });
+    let output_policy = match output_policy_value {
+        Some((output_policy_key, Value::Object(output_policy))) => {
+            Some((output_policy_key, output_policy))
+        }
+        Some((output_policy_key, _)) => {
+            diagnostics.push(Diagnostic::error(
+                "InvalidOutputPolicy",
+                "outputPolicy must be a mapping",
+                format!("$.spec.{output_policy_key}"),
+            ));
+            None
+        }
+        None => None,
+    };
 
-    if let Some(delivery) = output_policy
-        .and_then(|output_policy| output_policy.get("delivery"))
-        .and_then(Value::as_object)
-    {
+    let delivery = output_policy.and_then(|(output_policy_key, output_policy)| {
+        match output_policy.get("delivery") {
+            Some(Value::Object(delivery)) => Some(delivery),
+            Some(_) => {
+                diagnostics.push(Diagnostic::error(
+                    "InvalidOutputPolicy",
+                    "outputPolicy delivery must be a mapping",
+                    format!("$.spec.{output_policy_key}.delivery"),
+                ));
+                None
+            }
+            None => None,
+        }
+    });
+
+    if let Some(delivery) = delivery {
         let mode = delivery.get("mode").and_then(Value::as_str);
         if let Some(mode) = delivery.get("mode")
             && !mode.as_str().is_some_and(|mode| {
@@ -624,20 +651,30 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
         }
     }
 
-    if let Some(output_policy) = output_policy {
-        let enforcement_points = output_policy
+    if let Some((output_policy_key, output_policy)) = output_policy {
+        let evaluation = match output_policy
             .get("evaluation")
             .or_else(|| output_policy.get("outputEvaluation"))
             .or_else(|| output_policy.get("output_evaluation"))
-            .and_then(Value::as_object)
-            .and_then(|evaluation| {
-                evaluation
-                    .get("enforcementPoints")
-                    .or_else(|| evaluation.get("enforcement_points"))
-            })
-            .and_then(Value::as_array);
+        {
+            Some(Value::Object(evaluation)) => Some(evaluation),
+            Some(_) => {
+                diagnostics.push(Diagnostic::error(
+                    "InvalidOutputPolicy",
+                    "outputPolicy evaluation must be a mapping",
+                    format!("$.spec.{output_policy_key}.evaluation"),
+                ));
+                None
+            }
+            None => None,
+        };
+        let enforcement_points_value = evaluation.and_then(|evaluation| {
+            evaluation
+                .get("enforcementPoints")
+                .or_else(|| evaluation.get("enforcement_points"))
+        });
 
-        if let Some(enforcement_points) = enforcement_points {
+        if let Some(enforcement_points) = enforcement_points_value.and_then(Value::as_array) {
             let mut on_generation_chunk_index = None;
             let mut before_client_delivery_index = None;
             let mut before_output_commit_index = None;
@@ -705,6 +742,17 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     "$.spec.outputPolicy.evaluation.enforcementPoints",
                 ));
             }
+        } else if enforcement_points_value.is_some() {
+            diagnostics.push(Diagnostic::error(
+                "InvalidOutputEnforcementPoint",
+                "output policy enforcementPoints must be a list of strings",
+                "$.spec.outputPolicy.evaluation.enforcementPoints",
+            ));
+            diagnostics.push(Diagnostic::error(
+                "OutputPolicyBypass",
+                "output policy enforcement must include the before_client_delivery gate",
+                "$.spec.outputPolicy.evaluation.enforcementPoints",
+            ));
         } else {
             diagnostics.push(Diagnostic::error(
                 "OutputPolicyBypass",
@@ -713,11 +761,22 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
             ));
         }
 
-        if let Some(on_violation) = output_policy
+        let on_violation = match output_policy
             .get("onViolation")
             .or_else(|| output_policy.get("on_violation"))
-            .and_then(Value::as_object)
         {
+            Some(Value::Object(on_violation)) => Some(on_violation),
+            Some(_) => {
+                diagnostics.push(Diagnostic::error(
+                    "InvalidOutputPolicy",
+                    "outputPolicy onViolation must be a mapping",
+                    format!("$.spec.{output_policy_key}.onViolation"),
+                ));
+                None
+            }
+            None => None,
+        };
+        if let Some(on_violation) = on_violation {
             let disposition = on_violation
                 .get("disposition")
                 .and_then(Value::as_str)
