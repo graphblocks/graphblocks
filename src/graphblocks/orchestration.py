@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from typing import Literal
 
 from .budget import BudgetPermit, UsageAmount
@@ -557,6 +558,23 @@ class LeaseGrant:
             raise LeasePoolCapacityError("units", self.units)
         object.__setattr__(self, "metadata", dict(self.metadata))
 
+    def is_active_at(self, now: str) -> bool:
+        def parse_datetime(value: str) -> datetime:
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError("datetime must be a non-empty string")
+            normalized = value.strip()
+            if normalized.endswith(("Z", "z")):
+                normalized = f"{normalized[:-1]}+00:00"
+            parsed = datetime.fromisoformat(normalized)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+
+        try:
+            return parse_datetime(self.expires_at) > parse_datetime(now)
+        except ValueError:
+            return False
+
 
 @dataclass(frozen=True, slots=True)
 class LeasePool:
@@ -605,7 +623,7 @@ class LeasePool:
         return self.capacity_units - self.used_units
 
     def reap_expired(self, now: str) -> LeasePool:
-        active_leases = tuple(lease for lease in self.active_leases if lease.expires_at > now)
+        active_leases = tuple(lease for lease in self.active_leases if lease.is_active_at(now))
         if active_leases == self.active_leases:
             return self
         return replace(self, active_leases=active_leases)

@@ -198,6 +198,26 @@ fn lease_pool_enforces_capacity_and_fencing_epoch() -> Result<(), Box<dyn Error>
 }
 
 #[test]
+fn lease_pool_reap_expired_compares_expiration_as_datetime() -> Result<(), Box<dyn Error>> {
+    let pool = LeasePool::new("formal-license", "eda.formal", 1)?;
+    let (leased, grant) = pool.acquire(
+        &LeaseRequest::new("formal-check", "trial:formal", "eda.formal"),
+        "lease-1",
+        "2026-06-23T00:00:00Z",
+        "2026-06-23T19:05:00-05:00",
+    )?;
+
+    let early = leased.reap_expired("2026-06-24T00:04:59Z")?;
+    let reaped = leased.reap_expired("2026-06-24T00:05:01Z")?;
+
+    assert_eq!(early.active_leases, vec![grant]);
+    assert_eq!(early.available_units(), 0);
+    assert!(reaped.active_leases.is_empty());
+    assert_eq!(reaped.available_units(), 1);
+    Ok(())
+}
+
+#[test]
 fn child_budget_delegation_creates_scoped_permit() -> Result<(), Box<dyn Error>> {
     let parent = BudgetPermit {
         permit_id: "permit-parent".to_string(),

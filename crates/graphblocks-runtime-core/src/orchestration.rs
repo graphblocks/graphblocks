@@ -6,6 +6,7 @@ use graphblocks_compiler::canonical::canonical_hash;
 use serde_json::{Value, json};
 
 use crate::budget::{BudgetPermit, UsageAmount};
+use crate::policy::parse_policy_datetime_millis;
 
 fn validate_identity(
     entity: &'static str,
@@ -1071,6 +1072,18 @@ pub struct LeaseGrant {
     pub metadata: BTreeMap<String, Value>,
 }
 
+impl LeaseGrant {
+    pub fn is_active_at(&self, now: &str) -> bool {
+        match (
+            parse_policy_datetime_millis(&self.expires_at),
+            parse_policy_datetime_millis(now),
+        ) {
+            (Some(expires_at), Some(now)) => expires_at > now,
+            _ => false,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct LeasePool {
     pub pool_id: String,
@@ -1163,9 +1176,7 @@ impl LeasePool {
     pub fn reap_expired(&self, now: impl AsRef<str>) -> Result<Self, LeasePoolError> {
         let now = now.as_ref();
         let mut reaped = self.clone();
-        reaped
-            .active_leases
-            .retain(|lease| lease.expires_at.as_str() > now);
+        reaped.active_leases.retain(|lease| lease.is_active_at(now));
         reaped.normalized()
     }
 

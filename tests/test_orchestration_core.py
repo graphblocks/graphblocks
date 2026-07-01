@@ -417,6 +417,24 @@ def test_lease_pool_acquires_capacity_with_fencing_and_expiration() -> None:
     assert renewed_grant.fencing_epoch == 2
 
 
+def test_lease_pool_reap_expired_compares_expiration_as_datetime() -> None:
+    pool = LeasePool("formal-license", "eda.formal", capacity_units=1)
+    leased, grant = pool.acquire(
+        LeaseRequest("formal-check", ResourceRef("trial:formal"), "eda.formal"),
+        lease_id="lease-1",
+        acquired_at="2026-06-23T00:00:00Z",
+        expires_at="2026-06-23T19:05:00-05:00",
+    )
+
+    early = leased.reap_expired("2026-06-24T00:04:59Z")
+    reaped = leased.reap_expired("2026-06-24T00:05:01Z")
+
+    assert early.active_leases == (grant,)
+    assert early.available_units == 0
+    assert reaped.active_leases == ()
+    assert reaped.available_units == 1
+
+
 def test_lease_pool_release_requires_matching_fencing_epoch() -> None:
     pool, grant = LeasePool("synthesis-license", "eda.synthesis", capacity_units=1).acquire(
         LeaseRequest("synthesis-check", ResourceRef("trial:synthesis"), "eda.synthesis"),
