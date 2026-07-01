@@ -2161,11 +2161,19 @@ def validate_tool_result_for_model(
             model_output[part_index] = replace(model_output[part_index], text=text)
 
     if capture_policy is not None:
+        if not isinstance(capture_policy, Mapping):
+            raise ToolResultValidationError("tool result capture policy must be a mapping")
         mode = capture_policy.get("mode", "hash_only")
+        if not isinstance(mode, str):
+            raise ToolResultValidationError("tool result capture mode must be a string")
         if mode not in {"none", "hash_only", "reference_only", "redacted_preview", "full"}:
             raise ToolResultValidationError(f"invalid capture mode {mode!r}")
-        retention_policy = str(capture_policy.get("retention_policy", ""))
+        retention_policy = capture_policy.get("retention_policy", "")
+        if not isinstance(retention_policy, str) or not retention_policy.strip():
+            raise ToolResultValidationError("tool result capture retention_policy must be a non-empty string")
         consent_ref = capture_policy.get("consent_ref")
+        if consent_ref is not None and (not isinstance(consent_ref, str) or not consent_ref.strip()):
+            raise ToolResultValidationError("tool result capture consent_ref must be a non-empty string")
         for index, part in enumerate(model_output):
             content_ref = None
             if part.kind == "text":

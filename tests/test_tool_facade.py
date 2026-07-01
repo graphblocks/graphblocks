@@ -3045,6 +3045,69 @@ def test_completed_tool_result_model_output_records_capture_policy_before_model_
     assert "capture" not in result.output[0].metadata
 
 
+@pytest.mark.parametrize(
+    ("capture_policy", "message"),
+    (
+        (object(), "tool result capture policy must be a mapping"),
+        ({"mode": 7, "retention_policy": "records-30d"}, "tool result capture mode must be a string"),
+        ({"mode": "hash_only"}, "tool result capture retention_policy must be a non-empty string"),
+        ({"mode": "hash_only", "retention_policy": " "}, "tool result capture retention_policy must be a non-empty string"),
+        (
+            {"mode": "hash_only", "retention_policy": "records-30d", "consent_ref": ""},
+            "tool result capture consent_ref must be a non-empty string",
+        ),
+        (
+            {"mode": "hash_only", "retention_policy": "records-30d", "consent_ref": 9},
+            "tool result capture consent_ref must be a non-empty string",
+        ),
+    ),
+)
+def test_completed_tool_result_model_output_rejects_invalid_capture_policy(
+    capture_policy: object, message: str
+) -> None:
+    catalog = ToolCatalog(
+        definitions=(
+            ToolDefinition(
+                name="knowledge.search",
+                description="Search documentation.",
+                input_schema="schemas/SearchRequest@1",
+            ),
+        ),
+        bindings=(
+            ToolBinding(
+                binding_id="binding-search",
+                tool_name="knowledge.search",
+                implementation=BlockToolImplementation(block="blocks.search"),
+            ),
+        ),
+    )
+    resolved = catalog.resolve(ToolResolutionScope(), effective_policy_snapshot_id="policy-snapshot-1")[0]
+    call = (
+        ToolCallDraft.proposed("response-1", "call-1", "knowledge.search")
+        .append_argument_fragment("{}")
+        .complete_arguments()
+        .into_tool_call(resolved.resolved_tool_id, created_at="2026-06-23T00:00:00Z")
+    )
+    registry = ToolSchemaRegistry(())
+    result = ToolResult.completed(
+        "call-1",
+        (ContentPart(kind="text", text="safe secret suffix"),),
+        started_at="2026-06-23T00:00:01Z",
+        completed_at="2026-06-23T00:00:02Z",
+    )
+
+    with pytest.raises(ToolResultValidationError) as error:
+        validate_tool_result_for_model(
+            call,
+            result,
+            resolved,
+            registry,
+            capture_policy=capture_policy,  # type: ignore[arg-type]
+        )
+
+    assert str(error.value) == message
+
+
 def test_policy_stopped_tool_result_is_final_but_incomplete() -> None:
     result = ToolResult.policy_stopped(
         "call-1",

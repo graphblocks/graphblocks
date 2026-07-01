@@ -575,6 +575,10 @@ before field dereference, schema lookup, or content-policy evaluation.
 Model-visible trust designation, prompt-injection label, and content-classification labels applied
 during tool-output preparation MUST be non-empty after trimming. Empty labels MUST fail before the
 tool result is returned to the model.
+When capture metadata is applied during tool-output preparation, the capture policy MUST be a typed
+mapping. `mode` MUST be a recognized string literal, `retention_policy` MUST be a non-empty string,
+and a supplied `consent_ref` MUST be a non-empty string. Malformed capture policy MUST fail before
+capture metadata is attached or returned to the model.
 
 Tool은 block, graph, remote service, MCP tool에서 생성할 수 있다.
 
