@@ -309,6 +309,59 @@ fn tool_implementations_validate_execution_targets() {
             field: "operation_id",
         })
     );
+
+    let mut block_empty_input_key = BlockToolImplementation::new("blocks.search");
+    block_empty_input_key
+        .input_mapping
+        .insert(" ".to_owned(), "$args.query".to_owned());
+    assert_eq!(
+        ToolImplementation::Block(block_empty_input_key).validate(),
+        Err(ToolResolutionError::EmptyToolImplementationMapping {
+            kind: "block",
+            field: "input_mapping",
+            entry: " ".to_owned(),
+        })
+    );
+
+    let mut block_empty_output_value = BlockToolImplementation::new("blocks.search");
+    block_empty_output_value
+        .output_mapping
+        .insert("items".to_owned(), " ".to_owned());
+    assert_eq!(
+        ToolImplementation::Block(block_empty_output_value).validate(),
+        Err(ToolResolutionError::EmptyToolImplementationMapping {
+            kind: "block",
+            field: "output_mapping",
+            entry: "items".to_owned(),
+        })
+    );
+
+    let mut graph_empty_input_value = GraphToolImplementation::new("graphs/search");
+    graph_empty_input_value
+        .input_mapping
+        .insert("query".to_owned(), "".to_owned());
+    assert_eq!(
+        ToolImplementation::Graph(graph_empty_input_value).validate(),
+        Err(ToolResolutionError::EmptyToolImplementationMapping {
+            kind: "graph",
+            field: "input_mapping",
+            entry: "query".to_owned(),
+        })
+    );
+
+    let mut graph_empty_output_key = GraphToolImplementation::new("graphs/search");
+    graph_empty_output_key
+        .output_mapping
+        .insert("".to_owned(), "$result.items".to_owned());
+    assert_eq!(
+        ToolImplementation::Graph(graph_empty_output_key).validate(),
+        Err(ToolResolutionError::EmptyToolImplementationMapping {
+            kind: "graph",
+            field: "output_mapping",
+            entry: "".to_owned(),
+        })
+    );
+
     assert_eq!(
         ToolBinding::new(
             "binding-search",

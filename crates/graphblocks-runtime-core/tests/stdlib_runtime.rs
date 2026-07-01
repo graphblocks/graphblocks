@@ -172,6 +172,62 @@ fn rust_stdlib_runtime_rejects_invalid_tool_tags_and_scope_entries() -> Result<(
             "tools.resolve@1 config.definitions[0].tags[1] must not be empty",
         ),
         (
+            "blank input mapping key",
+            json!({
+                "effectivePolicySnapshotId": "policy-snapshot-1",
+                "definitions": [
+                    {
+                        "name": "knowledge.search",
+                        "description": "Search support documentation.",
+                        "inputSchema": "schemas/SearchRequest@1"
+                    }
+                ],
+                "bindings": [
+                    {
+                        "bindingId": "binding-search",
+                        "toolName": "knowledge.search",
+                        "implementation": {
+                            "kind": "block",
+                            "block": "knowledge.search@1",
+                            "inputMapping": {" ": "$args.query"}
+                        },
+                        "effects": ["external_read"],
+                        "approval": "never"
+                    }
+                ],
+                "scope": {"principalTools": ["knowledge.search"]}
+            }),
+            "tools.resolve@1 implementation.inputMapping keys must not be empty",
+        ),
+        (
+            "blank output mapping value",
+            json!({
+                "effectivePolicySnapshotId": "policy-snapshot-1",
+                "definitions": [
+                    {
+                        "name": "knowledge.search",
+                        "description": "Search support documentation.",
+                        "inputSchema": "schemas/SearchRequest@1"
+                    }
+                ],
+                "bindings": [
+                    {
+                        "bindingId": "binding-search",
+                        "toolName": "knowledge.search",
+                        "implementation": {
+                            "kind": "graph",
+                            "graph": "graphs/knowledge-search",
+                            "outputMapping": {"items": " "}
+                        },
+                        "effects": ["external_read"],
+                        "approval": "never"
+                    }
+                ],
+                "scope": {"principalTools": ["knowledge.search"]}
+            }),
+            "tools.resolve@1 implementation.outputMapping.items must not be empty",
+        ),
+        (
             "non-string scope entry",
             json!({
                 "effectivePolicySnapshotId": "policy-snapshot-1",

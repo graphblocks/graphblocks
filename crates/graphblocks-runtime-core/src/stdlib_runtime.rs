@@ -1473,6 +1473,14 @@ fn parse_string_map(
     };
     let mut parsed = BTreeMap::new();
     for (entry_key, entry_value) in value {
+        if entry_key.trim().is_empty() {
+            return Err(BlockError::new(
+                "tools.resolve.invalid_binding",
+                ErrorCategory::Configuration,
+                format!("tools.resolve@1 {label} keys must not be empty"),
+                false,
+            ));
+        }
         let Some(entry_value) = entry_value.as_str() else {
             return Err(BlockError::new(
                 "tools.resolve.invalid_binding",
@@ -1481,6 +1489,14 @@ fn parse_string_map(
                 false,
             ));
         };
+        if entry_value.trim().is_empty() {
+            return Err(BlockError::new(
+                "tools.resolve.invalid_binding",
+                ErrorCategory::Configuration,
+                format!("tools.resolve@1 {label}.{entry_key} must not be empty"),
+                false,
+            ));
+        }
         parsed.insert(entry_key.clone(), entry_value.to_owned());
     }
     Ok(parsed)

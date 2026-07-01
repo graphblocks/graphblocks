@@ -4925,6 +4925,12 @@ fn serialize_tool_resolution_error(error: &ToolResolutionError) -> Value {
             "kind": kind,
             "field": field,
         }),
+        ToolResolutionError::EmptyToolImplementationMapping { kind, field, entry } => json!({
+            "code": "empty_tool_implementation_mapping",
+            "kind": kind,
+            "field": field,
+            "entry": entry,
+        }),
         ToolResolutionError::ConflictingToolEffects { binding_id } => json!({
             "code": "conflicting_tool_effects",
             "bindingId": binding_id,

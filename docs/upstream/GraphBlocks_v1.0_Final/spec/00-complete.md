@@ -587,6 +587,9 @@ Tool-output byte limits applied before model return MUST be non-negative integer
 non-integer values MUST fail as ToolResult validation errors before size comparison or delivery.
 
 Tool은 block, graph, remote service, MCP tool에서 생성할 수 있다.
+For block and graph tool implementations, `input_mapping` and `output_mapping` entries MUST have
+non-empty string keys and non-empty string target expressions before binding resolution and
+canonical digest calculation.
 
 ## 18. Artifact와 FileAttachment
 

@@ -294,10 +294,33 @@ impl ToolImplementation {
             }
             Ok(())
         };
+        let validate_mapping = |kind: &'static str,
+                                field: &'static str,
+                                mapping: &BTreeMap<String, String>|
+         -> Result<(), ToolResolutionError> {
+            for (entry, target) in mapping {
+                if entry.trim().is_empty() || target.trim().is_empty() {
+                    return Err(ToolResolutionError::EmptyToolImplementationMapping {
+                        kind,
+                        field,
+                        entry: entry.clone(),
+                    });
+                }
+            }
+            Ok(())
+        };
 
         match self {
-            Self::Block(implementation) => validate_field("block", "block", &implementation.block),
-            Self::Graph(implementation) => validate_field("graph", "graph", &implementation.graph),
+            Self::Block(implementation) => {
+                validate_field("block", "block", &implementation.block)?;
+                validate_mapping("block", "input_mapping", &implementation.input_mapping)?;
+                validate_mapping("block", "output_mapping", &implementation.output_mapping)
+            }
+            Self::Graph(implementation) => {
+                validate_field("graph", "graph", &implementation.graph)?;
+                validate_mapping("graph", "input_mapping", &implementation.input_mapping)?;
+                validate_mapping("graph", "output_mapping", &implementation.output_mapping)
+            }
             Self::Remote(implementation) => {
                 validate_field("remote", "connection", &implementation.connection)?;
                 validate_field("remote", "operation", &implementation.operation)
@@ -560,6 +583,11 @@ pub enum ToolResolutionError {
     EmptyToolImplementationField {
         kind: &'static str,
         field: &'static str,
+    },
+    EmptyToolImplementationMapping {
+        kind: &'static str,
+        field: &'static str,
+        entry: String,
     },
     ConflictingToolEffects {
         binding_id: String,
