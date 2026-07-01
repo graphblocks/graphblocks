@@ -32,6 +32,7 @@ from graphblocks.conversation import (
     CompactionRecord,
     ContentPart,
     Conversation,
+    ConversationArchivedError,
     ConversationConflictError,
     ConversationNotFoundError,
     FileAttachment,
@@ -1625,6 +1626,7 @@ def load_conversation_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
             "branch_regenerate",
             "branch_attachments",
             "attachment_resolution",
+            "archive_conversation",
             "compaction_record",
             "delete_retention",
         }:
@@ -4900,6 +4902,43 @@ class TckRunner:
                     "withoutConversationScopeIds": [
                         attachment.attachment_id for attachment in without_conversation_scope
                     ],
+                }
+            elif kind == "archive_conversation":
+                raw_message = fixture.get("message", {})
+                if not isinstance(raw_message, Mapping):
+                    raw_message = {}
+                    diagnostics.append(
+                        {
+                            "code": "ConversationMessageInvalid",
+                            "message": "conversation TCK message must be a mapping",
+                            "path": "$.message",
+                        }
+                    )
+                parent_message_id = raw_message.get("parentMessageId", raw_message.get("parent_message_id"))
+                store.create(Conversation(conversation_id=conversation_id))
+                archive_revision = store.archive(conversation_id)
+                append_rejected = False
+                try:
+                    store.append_messages(
+                        conversation_id,
+                        expected_revision=archive_revision,
+                        messages=[
+                            Message(
+                                message_id=str(raw_message.get("messageId", raw_message.get("message_id", "msg-1"))),
+                                role=str(raw_message.get("role", "user")),
+                                parts=(ContentPart(kind="text", text=str(raw_message.get("text", ""))),),
+                                parent_message_id=parent_message_id if isinstance(parent_message_id, str) else None,
+                            )
+                        ],
+                    )
+                except ConversationArchivedError:
+                    append_rejected = True
+                snapshot = store.get(conversation_id)
+                observed = {
+                    "archiveRevision": archive_revision,
+                    "archived": snapshot.conversation.archived,
+                    "appendRejected": append_rejected,
+                    "messageCount": len(snapshot.conversation.messages),
                 }
             elif kind == "compaction_record":
                 raw_messages = fixture.get("messages", [])

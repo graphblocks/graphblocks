@@ -363,5 +363,21 @@
         "att-message"
       ]
     }
+  },
+  {
+    "name": "archive_marks_conversation_terminal_for_appends",
+    "kind": "archive_conversation",
+    "conversationId": "conv-archive",
+    "message": {
+      "messageId": "msg-after-archive",
+      "role": "user",
+      "text": "should be rejected"
+    },
+    "expected": {
+      "archiveRevision": 1,
+      "archived": true,
+      "appendRejected": true,
+      "messageCount": 0
+    }
   }
 ]

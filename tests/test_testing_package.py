@@ -392,7 +392,7 @@ def test_testing_package_loads_shared_conversation_tck_cases(monkeypatch) -> Non
     cases = graphblocks_testing.load_conversation_tck_cases(ROOT / "tck" / "conversation" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["conversation"] * 9
+    assert [case.kind for case in cases] == ["conversation"] * 10
     assert report.ok
     assert {case.case_id for case in cases} == {
         "turn_draft_commits_atomically",
@@ -402,6 +402,7 @@ def test_testing_package_loads_shared_conversation_tck_cases(monkeypatch) -> Non
         "branch_and_regenerate_preserve_lineage",
         "branch_respects_attachment_scope_and_include_flag",
         "attachment_resolution_filters_by_readiness_message_and_conversation_scope",
+        "archive_marks_conversation_terminal_for_appends",
         "compaction_records_source_output_and_token_delta",
         "delete_retention_distinguishes_tombstone_and_hard_delete",
     }
@@ -409,6 +410,7 @@ def test_testing_package_loads_shared_conversation_tck_cases(monkeypatch) -> Non
     assert any(result.observed.get("sourceMessageStatuses") == ["committed", "superseded", "committed"] for result in report.results)
     assert any(result.observed.get("branchAttachmentIds") == ["att-1", "att-conversation"] for result in report.results)
     assert any(result.observed.get("withoutConversationScopeIds") == ["att-message"] for result in report.results)
+    assert any(result.observed.get("appendRejected") is True for result in report.results)
     assert any(result.observed.get("compactionIds") == ["compact-1"] for result in report.results)
     assert any(result.observed.get("hardDeleted") is True for result in report.results)
     assert "load_conversation_tck_cases" in graphblocks_testing.__all__
@@ -821,6 +823,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "compaction_records_source_output_and_token_delta",
         "delete_retention_distinguishes_tombstone_and_hard_delete",
         "attachment_resolution_filters_by_readiness_message_and_conversation_scope",
+        "archive_marks_conversation_terminal_for_appends",
     )
     assert by_suite["deployment"].case_ids == (
         "deployment_revision_digest_ignores_record_identity",

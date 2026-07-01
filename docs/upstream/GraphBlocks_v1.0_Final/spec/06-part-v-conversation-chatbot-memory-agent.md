@@ -762,6 +762,9 @@ retention:
 ```
 
 Delete는 conversation, attachment, temporary index, memory, telemetry link에 전파되어야 한다.
+Archive는 conversation identity와 existing state를 보존하지만 archived flag와 revision을 갱신하고
+이후 append/turn mutation을 거부해야 한다. 공유 conversation TCK는 archive 후 append rejection을
+검증해야 한다.
 `tombstone` delete는 conversation identity를 보존하되 message, attachment, compaction state를
 비우고 archived/deleted metadata를 남겨야 한다. `hard` delete는 conversation 조회가 실패하도록
 record를 제거해야 한다. 공유 conversation TCK는 두 retention mode를 모두 검증해야 한다.

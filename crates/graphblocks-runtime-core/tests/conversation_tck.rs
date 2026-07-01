@@ -478,6 +478,33 @@ fn run_case(case: &Value) -> Result<Value, String> {
                 "withoutConversationScopeIds": without_conversation_scope.iter().map(|attachment| attachment.attachment_id.as_str()).collect::<Vec<_>>(),
             }))
         }
+        "archive_conversation" => {
+            let raw_message = case.get("message").unwrap_or(&Value::Null);
+            store
+                .create(Conversation::new(conversation_id))
+                .map_err(|error| error.to_string())?;
+            let archive_revision = store
+                .archive(conversation_id)
+                .map_err(|error| error.to_string())?;
+            let append_rejected = matches!(
+                store.append_messages(
+                    conversation_id,
+                    archive_revision,
+                    [message_from(raw_message, "msg-1", MessageRole::User)?],
+                ),
+                Err(ConversationError::Archived { .. })
+            );
+            let snapshot = store
+                .get(conversation_id)
+                .map_err(|error| error.to_string())?;
+
+            Ok(json!({
+                "archiveRevision": archive_revision,
+                "archived": snapshot.conversation.archived,
+                "appendRejected": append_rejected,
+                "messageCount": snapshot.conversation.messages.len(),
+            }))
+        }
         "compaction_record" => {
             let raw_messages = case
                 .get("messages")
