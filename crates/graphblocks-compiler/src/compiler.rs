@@ -884,40 +884,123 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
         .and_then(|bindings| bindings.get("tools"))
         .and_then(Value::as_object)
     {
-        let tool_execution = spec
-            .and_then(|spec| spec.get("toolExecution"))
-            .or_else(|| spec.and_then(|spec| spec.get("tool_execution")))
-            .and_then(Value::as_object);
-        let maximum_parallelism = tool_execution
-            .and_then(|tool_execution| {
-                tool_execution
-                    .get("maximumParallelism")
-                    .or_else(|| tool_execution.get("maximum_parallelism"))
-            })
-            .and_then(Value::as_u64)
-            .unwrap_or(1);
-        let parallel_tool_calls = tool_execution
-            .and_then(|tool_execution| {
-                tool_execution
-                    .get("parallelToolCalls")
-                    .or_else(|| tool_execution.get("parallel_tool_calls"))
-            })
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        let has_effect_serialization_key = tool_execution
-            .and_then(|tool_execution| {
-                tool_execution
-                    .get("effectSerialization")
-                    .or_else(|| tool_execution.get("effect_serialization"))
-            })
-            .and_then(Value::as_object)
-            .and_then(|effect_serialization| {
-                effect_serialization
-                    .get("keyTemplate")
-                    .or_else(|| effect_serialization.get("key_template"))
-            })
-            .and_then(Value::as_str)
-            .is_some_and(|key_template| !key_template.trim().is_empty());
+        let tool_execution_value = spec.and_then(|spec| {
+            spec.get("toolExecution")
+                .map(|value| ("toolExecution", value))
+                .or_else(|| {
+                    spec.get("tool_execution")
+                        .map(|value| ("tool_execution", value))
+                })
+        });
+        let tool_execution = match tool_execution_value {
+            Some((tool_execution_key, Value::Object(tool_execution))) => {
+                Some((tool_execution_key, tool_execution))
+            }
+            Some((tool_execution_key, _)) => {
+                diagnostics.push(Diagnostic::error(
+                    "InvalidToolExecution",
+                    "toolExecution must be a mapping",
+                    format!("$.spec.{tool_execution_key}"),
+                ));
+                None
+            }
+            None => None,
+        };
+        let mut maximum_parallelism = 1;
+        let mut parallel_tool_calls = false;
+        let mut has_effect_serialization_key = false;
+        if let Some((tool_execution_key, tool_execution)) = tool_execution {
+            let maximum_parallelism_value = tool_execution
+                .get("maximumParallelism")
+                .map(|value| ("maximumParallelism", value))
+                .or_else(|| {
+                    tool_execution
+                        .get("maximum_parallelism")
+                        .map(|value| ("maximum_parallelism", value))
+                });
+            if let Some((maximum_parallelism_key, configured_parallelism)) =
+                maximum_parallelism_value
+            {
+                if let Some(configured_parallelism) = configured_parallelism.as_u64()
+                    && configured_parallelism > 0
+                {
+                    maximum_parallelism = configured_parallelism;
+                } else {
+                    diagnostics.push(Diagnostic::error(
+                        "InvalidToolExecution",
+                        "toolExecution maximumParallelism must be a positive integer",
+                        format!("$.spec.{tool_execution_key}.{maximum_parallelism_key}"),
+                    ));
+                }
+            }
+
+            let parallel_tool_calls_value = tool_execution
+                .get("parallelToolCalls")
+                .map(|value| ("parallelToolCalls", value))
+                .or_else(|| {
+                    tool_execution
+                        .get("parallel_tool_calls")
+                        .map(|value| ("parallel_tool_calls", value))
+                });
+            if let Some((parallel_tool_calls_key, configured_parallel_tool_calls)) =
+                parallel_tool_calls_value
+            {
+                if let Some(configured_parallel_tool_calls) =
+                    configured_parallel_tool_calls.as_bool()
+                {
+                    parallel_tool_calls = configured_parallel_tool_calls;
+                } else {
+                    diagnostics.push(Diagnostic::error(
+                        "InvalidToolExecution",
+                        "toolExecution parallelToolCalls must be a boolean",
+                        format!("$.spec.{tool_execution_key}.{parallel_tool_calls_key}"),
+                    ));
+                }
+            }
+
+            let effect_serialization_value = tool_execution
+                .get("effectSerialization")
+                .map(|value| ("effectSerialization", value))
+                .or_else(|| {
+                    tool_execution
+                        .get("effect_serialization")
+                        .map(|value| ("effect_serialization", value))
+                });
+            if let Some((effect_serialization_key, effect_serialization)) =
+                effect_serialization_value
+            {
+                if let Some(effect_serialization) = effect_serialization.as_object() {
+                    let key_template_value = effect_serialization
+                        .get("keyTemplate")
+                        .map(|value| ("keyTemplate", value))
+                        .or_else(|| {
+                            effect_serialization
+                                .get("key_template")
+                                .map(|value| ("key_template", value))
+                        });
+                    if let Some((key_template_key, key_template)) = key_template_value {
+                        if let Some(key_template) = key_template.as_str() {
+                            has_effect_serialization_key = !key_template.trim().is_empty();
+                        }
+                        if !has_effect_serialization_key {
+                            diagnostics.push(Diagnostic::error(
+                                "InvalidToolExecution",
+                                "toolExecution effectSerialization keyTemplate must be a non-empty string",
+                                format!(
+                                    "$.spec.{tool_execution_key}.{effect_serialization_key}.{key_template_key}"
+                                ),
+                            ));
+                        }
+                    }
+                } else {
+                    diagnostics.push(Diagnostic::error(
+                        "InvalidToolExecution",
+                        "toolExecution effectSerialization must be a mapping",
+                        format!("$.spec.{tool_execution_key}.{effect_serialization_key}"),
+                    ));
+                }
+            }
+        }
         let mut has_state_changing_tool = false;
 
         for (tool_key, tool) in tools {

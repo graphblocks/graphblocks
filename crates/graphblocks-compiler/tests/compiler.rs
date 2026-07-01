@@ -1657,6 +1657,59 @@ fn compile_graph_reports_invalid_tool_binding_literals() {
 }
 
 #[test]
+fn compile_graph_reports_invalid_tool_execution_settings() {
+    let cases = [
+        json!("parallel"),
+        json!({"maximumParallelism": 0}),
+        json!({"maximumParallelism": "4"}),
+        json!({"parallelToolCalls": "true"}),
+        json!({"effectSerialization": "resource"}),
+        json!({"effectSerialization": {"keyTemplate": " "}}),
+    ];
+
+    for tool_execution in cases {
+        let graph = json!({
+            "apiVersion": GRAPH_API_VERSION,
+            "kind": "Graph",
+            "metadata": {"name": "invalid-tool-execution-settings"},
+            "spec": {
+                "bindings": {
+                    "tools": {
+                        "knowledgeSearch": {
+                            "definition": {
+                                "name": "knowledge.search",
+                                "description": "Search support documentation.",
+                                "inputSchema": "schemas/SearchRequest@1"
+                            },
+                            "implementation": {
+                                "kind": "block",
+                                "block": "tools.search"
+                            },
+                            "effects": ["external_read"]
+                        }
+                    }
+                },
+                "toolExecution": tool_execution,
+                "nodes": {
+                    "agent": {"block": "agent.run@1"}
+                }
+            }
+        });
+
+        let plan = compile_graph(&graph);
+
+        assert_eq!(
+            plan.diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.severity == Severity::Error)
+                .map(|diagnostic| diagnostic.code.as_str())
+                .collect::<Vec<_>>(),
+            vec!["InvalidToolExecution"]
+        );
+    }
+}
+
+#[test]
 fn compile_graph_rejects_parallel_state_changing_tools_without_effect_serialization() {
     let graph = json!({
         "apiVersion": GRAPH_API_VERSION,
