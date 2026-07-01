@@ -518,8 +518,16 @@ def test_unavailable_policy_cache_reuse_requires_matching_digest_and_ttl() -> No
         evaluated_at="2026-06-23T00:01:00Z",
         cached_decision=cached,
     )
+    offset_cached = replace(cached, valid_until="2026-06-23T00:00:00-05:00")
+    offset_reused = unavailable_policy_decision(
+        request,
+        fail_mode="use_cached_decision",
+        evaluated_at="2026-06-23T04:59:59Z",
+        cached_decision=offset_cached,
+    )
 
     assert reused == cached
+    assert offset_reused == offset_cached
     with pytest.raises(PolicyUnavailableError, match="cached policy decision is required"):
         unavailable_policy_decision(
             request,
@@ -545,6 +553,13 @@ def test_unavailable_policy_cache_reuse_requires_matching_digest_and_ttl() -> No
             fail_mode="use_cached_decision",
             evaluated_at="2026-06-23T00:05:00Z",
             cached_decision=cached,
+        )
+    with pytest.raises(PolicyUnavailableError, match="expired"):
+        unavailable_policy_decision(
+            request,
+            fail_mode="use_cached_decision",
+            evaluated_at="2026-06-23T05:00:01Z",
+            cached_decision=offset_cached,
         )
 
 

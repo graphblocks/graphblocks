@@ -325,8 +325,18 @@ fn unavailable_policy_cache_reuse_requires_matching_digest_and_ttl() {
         Some(&cached),
     )
     .expect("matching unexpired cached decision is accepted");
+    let mut offset_cached = cached.clone();
+    offset_cached.valid_until = Some("2026-06-23T00:00:00-05:00".to_string());
+    let offset_reused = unavailable_policy_decision(
+        &request,
+        PolicyFailMode::UseCachedDecision,
+        "2026-06-23T04:59:59Z",
+        Some(&offset_cached),
+    )
+    .expect("offset cached decision remains valid until the UTC instant passes");
 
     assert_eq!(reused, cached);
+    assert_eq!(offset_reused, offset_cached);
     assert_eq!(
         unavailable_policy_decision(
             &request,
@@ -357,6 +367,15 @@ fn unavailable_policy_cache_reuse_requires_matching_digest_and_ttl() {
             PolicyFailMode::UseCachedDecision,
             "2026-06-23T00:05:00Z",
             Some(&cached),
+        ),
+        Err(PolicyUnavailableError::CachedDecisionExpired)
+    );
+    assert_eq!(
+        unavailable_policy_decision(
+            &request,
+            PolicyFailMode::UseCachedDecision,
+            "2026-06-23T05:00:01Z",
+            Some(&offset_cached),
         ),
         Err(PolicyUnavailableError::CachedDecisionExpired)
     );

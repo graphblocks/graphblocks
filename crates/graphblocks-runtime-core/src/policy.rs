@@ -883,11 +883,7 @@ pub fn unavailable_policy_decision(
         if cached_decision.input_digest != digested_request.input_digest {
             return Err(PolicyUnavailableError::CachedDecisionInputDigestMismatch);
         }
-        if cached_decision
-            .valid_until
-            .as_ref()
-            .is_none_or(|valid_until| valid_until.as_str() <= evaluated_at.as_str())
-        {
+        if cached_decision_is_expired(cached_decision.valid_until.as_deref(), &evaluated_at) {
             return Err(PolicyUnavailableError::CachedDecisionExpired);
         }
         return Ok(cached_decision.clone());
@@ -922,6 +918,134 @@ pub fn unavailable_policy_decision(
         evaluated_at,
         digested_request.input_digest,
     ))
+}
+
+fn cached_decision_is_expired(valid_until: Option<&str>, evaluated_at: &str) -> bool {
+    let Some(valid_until) = valid_until else {
+        return true;
+    };
+    match (
+        parse_policy_datetime_millis(valid_until),
+        parse_policy_datetime_millis(evaluated_at),
+    ) {
+        (Some(valid_until), Some(evaluated_at)) => valid_until <= evaluated_at,
+        _ => true,
+    }
+}
+
+fn parse_policy_datetime_millis(value: &str) -> Option<i128> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let separator = value.find('T').or_else(|| value.find('t'))?;
+    let (date, time_with_offset) = value.split_at(separator);
+    let time_with_offset = &time_with_offset[1..];
+    let (year, month, day) = parse_policy_date(date)?;
+    let (time, offset_seconds) = split_policy_time_offset(time_with_offset)?;
+    let (hour, minute, second, fractional_millis) = parse_policy_time(time)?;
+    if month == 0
+        || month > 12
+        || day == 0
+        || day > days_in_month(year, month)?
+        || hour > 23
+        || minute > 59
+        || second > 59
+    {
+        return None;
+    }
+    let days = days_from_civil(year, month, day);
+    Some(
+        (((((days * 24) + i128::from(hour)) * 60 + i128::from(minute)) * 60 + i128::from(second)
+            - i128::from(offset_seconds))
+            * 1_000)
+            + i128::from(fractional_millis),
+    )
+}
+
+fn parse_policy_date(value: &str) -> Option<(i128, u32, u32)> {
+    if value.len() != 10 || &value[4..5] != "-" || &value[7..8] != "-" {
+        return None;
+    }
+    Some((
+        value[0..4].parse().ok()?,
+        value[5..7].parse().ok()?,
+        value[8..10].parse().ok()?,
+    ))
+}
+
+fn split_policy_time_offset(value: &str) -> Option<(&str, i32)> {
+    if let Some(time) = value.strip_suffix('Z').or_else(|| value.strip_suffix('z')) {
+        return Some((time, 0));
+    }
+    for (index, character) in value.char_indices().rev() {
+        if character == '+' || character == '-' {
+            let offset = &value[index..];
+            let sign = if character == '+' { 1 } else { -1 };
+            if offset.len() != 6 || &offset[3..4] != ":" {
+                return None;
+            }
+            let hours: i32 = offset[1..3].parse().ok()?;
+            let minutes: i32 = offset[4..6].parse().ok()?;
+            if hours > 23 || minutes > 59 {
+                return None;
+            }
+            return Some((&value[..index], sign * ((hours * 60 + minutes) * 60)));
+        }
+    }
+    Some((value, 0))
+}
+
+fn parse_policy_time(value: &str) -> Option<(u32, u32, u32, u32)> {
+    let (base, fraction) = value
+        .split_once('.')
+        .map_or((value, ""), |(base, fraction)| (base, fraction));
+    if base.len() != 8 || &base[2..3] != ":" || &base[5..6] != ":" {
+        return None;
+    }
+    let fractional_millis = if fraction.is_empty() {
+        0
+    } else {
+        if !fraction.chars().all(|character| character.is_ascii_digit()) {
+            return None;
+        }
+        let mut millis = 0;
+        for (index, character) in fraction.chars().take(3).enumerate() {
+            millis += character.to_digit(10)? * 10_u32.pow(2 - index as u32);
+        }
+        millis
+    };
+    Some((
+        base[0..2].parse().ok()?,
+        base[3..5].parse().ok()?,
+        base[6..8].parse().ok()?,
+        fractional_millis,
+    ))
+}
+
+fn days_in_month(year: i128, month: u32) -> Option<u32> {
+    Some(match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if is_leap_year(year) => 29,
+        2 => 28,
+        _ => return None,
+    })
+}
+
+fn is_leap_year(year: i128) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+}
+
+fn days_from_civil(year: i128, month: u32, day: u32) -> i128 {
+    let year = year - i128::from(month <= 2);
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let yoe = year - era * 400;
+    let month = i128::from(month);
+    let day = i128::from(day);
+    let doy = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
 }
 
 #[derive(Clone, Debug, PartialEq)]

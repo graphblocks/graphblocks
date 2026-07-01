@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields, is_dataclass, replace
+from datetime import datetime, timezone
 from types import MappingProxyType
 from typing import Literal, get_args
 
@@ -639,7 +640,10 @@ def unavailable_policy_decision(
             raise PolicyUnavailableError("cached policy decision is required")
         if cached_decision.input_digest != digested_request.input_digest:
             raise PolicyUnavailableError("cached policy decision input digest does not match request")
-        if cached_decision.valid_until is None or cached_decision.valid_until <= evaluated_at:
+        if cached_decision.valid_until is None or _policy_datetime_expired(
+            cached_decision.valid_until,
+            evaluated_at,
+        ):
             raise PolicyUnavailableError("cached policy decision expired")
         return cached_decision
 
@@ -821,3 +825,22 @@ def _policy_value(value: object) -> object:
     if isinstance(value, (list, tuple)):
         return [_policy_value(item) for item in value]
     return value
+
+
+def _policy_datetime_expired(valid_until: str, evaluated_at: str) -> bool:
+    try:
+        return _parse_policy_datetime(valid_until) <= _parse_policy_datetime(evaluated_at)
+    except ValueError:
+        return True
+
+
+def _parse_policy_datetime(value: str) -> datetime:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("policy datetime must be a non-empty ISO datetime")
+    normalized = value.strip()
+    if normalized.endswith("Z"):
+        normalized = f"{normalized[:-1]}+00:00"
+    parsed = datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
