@@ -336,6 +336,20 @@ def test_mcp_adapter_rechecks_resolved_tool_capability_before_invocation(monkeyp
             validation_time="2026-06-23T00:00:02Z",
         )
 
+    offset_valid = replace(resolved, valid_until="2026-06-23T00:00:00-05:00")
+    invocation = graphblocks_mcp.prepare_mcp_tool_invocation(
+        admitted,
+        offset_valid,
+        validation_time="2026-06-23T04:59:59Z",
+    )
+    assert invocation.tool_call_id == "call-1"
+    with pytest.raises(graphblocks_mcp.McpToolAdapterError, match="expired at 2026-06-23T00:00:00-05:00"):
+        graphblocks_mcp.prepare_mcp_tool_invocation(
+            admitted,
+            offset_valid,
+            validation_time="2026-06-23T05:00:01Z",
+        )
+
 
 def test_mcp_adapter_requires_required_idempotency_key_before_execution(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-mcp" / "src"))
@@ -990,6 +1004,20 @@ def test_openapi_adapter_rechecks_resolved_tool_capability_before_invocation(mon
             admitted,
             replace(resolved, valid_until="2026-06-23T00:00:01Z"),
             validation_time="2026-06-23T00:00:02Z",
+        )
+
+    offset_valid = replace(resolved, valid_until="2026-06-23T00:00:00-05:00")
+    invocation = graphblocks_openapi.prepare_openapi_operation_invocation(
+        admitted,
+        offset_valid,
+        validation_time="2026-06-23T04:59:59Z",
+    )
+    assert invocation.tool_call_id == "call-1"
+    with pytest.raises(graphblocks_openapi.OpenApiToolAdapterError, match="expired at 2026-06-23T00:00:00-05:00"):
+        graphblocks_openapi.prepare_openapi_operation_invocation(
+            admitted,
+            offset_valid,
+            validation_time="2026-06-23T05:00:01Z",
         )
 
 

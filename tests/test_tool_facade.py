@@ -1571,6 +1571,45 @@ def test_tool_admission_denies_expired_resolved_tool() -> None:
     assert str(error.value) == "resolved tool process.run expired at 2026-06-23T00:00:00Z"
 
 
+def test_tool_admission_compares_resolved_tool_expiration_as_datetime() -> None:
+    base = _resolved_process_tool()
+    binding = replace(base.binding, approval="never", idempotency="optional")
+    resolved = ResolvedTool.from_definition_and_binding(
+        resolved_tool_id=base.resolved_tool_id,
+        definition=base.definition,
+        binding=binding,
+        effective_policy_snapshot_id=base.effective_policy_snapshot_id,
+        allowed_for_principal=True,
+        valid_until="2026-06-23T00:00:00-05:00",
+    )
+    call = _process_call(resolved)
+
+    admitted = admit_tool_call(
+        call,
+        resolved,
+        _process_schema_registry(),
+        policy_decision=_allow_tool_policy_decision(),
+        expected_policy_input_digest=_allow_tool_policy_decision().input_digest,
+        principal_id="user-1",
+        admitted_at="2026-06-23T04:59:59Z",
+        now=1_200,
+    )
+
+    assert admitted.call.status == "admitted"
+    with pytest.raises(ToolAdmissionError) as error:
+        admit_tool_call(
+            call,
+            resolved,
+            _process_schema_registry(),
+            policy_decision=_allow_tool_policy_decision(),
+            expected_policy_input_digest=_allow_tool_policy_decision().input_digest,
+            principal_id="user-1",
+            admitted_at="2026-06-23T05:00:01Z",
+            now=1_201,
+        )
+    assert str(error.value) == "resolved tool process.run expired at 2026-06-23T00:00:00-05:00"
+
+
 def test_tool_admission_requires_approval_and_idempotency_key() -> None:
     resolved = _resolved_process_tool()
     call = _process_call(resolved)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from types import MappingProxyType
 from typing import Literal
 
@@ -269,6 +270,21 @@ def _validate_string_mapping(kind: str, field_name: str, value: object) -> Mappi
     if any(not isinstance(key, str) or not isinstance(item, str) for key, item in mapping.items()):
         raise ValueError(f"{kind} tool implementation {field_name} entries must be strings")
     return MappingProxyType(mapping)
+
+
+def _parse_iso_datetime(value: str, *, owner: str, field: str) -> datetime:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{owner} {field} must be a non-empty ISO datetime")
+    normalized = value.strip()
+    if normalized.endswith("Z"):
+        normalized = f"{normalized[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as error:
+        raise ValueError(f"{owner} {field} must be an ISO datetime") from error
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1257,8 +1273,24 @@ def admit_tool_call(
             f"resolved tool {resolved_tool.definition.name} is not allowed for principal {principal_id}"
         )
 
-    if resolved_tool.valid_until is not None and admitted_at > resolved_tool.valid_until:
-        raise ToolAdmissionError(f"resolved tool {resolved_tool.definition.name} expired at {resolved_tool.valid_until}")
+    if resolved_tool.valid_until is not None:
+        try:
+            admitted_at_time = _parse_iso_datetime(
+                admitted_at,
+                owner="tool admission",
+                field="admitted_at",
+            )
+            valid_until_time = _parse_iso_datetime(
+                resolved_tool.valid_until,
+                owner="resolved tool",
+                field="valid_until",
+            )
+        except ValueError as error:
+            raise ToolAdmissionError(str(error)) from error
+        if admitted_at_time > valid_until_time:
+            raise ToolAdmissionError(
+                f"resolved tool {resolved_tool.definition.name} expired at {resolved_tool.valid_until}"
+            )
 
     if not isinstance(policy_decision.input_digest, str):
         raise ToolAdmissionError(f"policy decision {policy_decision.decision_id} input_digest must be a string")

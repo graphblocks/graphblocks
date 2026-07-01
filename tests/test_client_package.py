@@ -406,6 +406,20 @@ def test_client_package_remote_adapter_rechecks_resolved_tool_capability(monkeyp
             validation_time="2026-06-24T00:00:02Z",
         )
 
+    offset_valid = replace(resolved, valid_until="2026-06-24T00:00:00-05:00")
+    invocation = graphblocks_client.prepare_remote_tool_invocation(
+        admitted,
+        offset_valid,
+        validation_time="2026-06-24T04:59:59Z",
+    )
+    assert invocation.tool_call_id == "call-1"
+    with pytest.raises(graphblocks_client.RemoteToolAdapterError, match="expired at 2026-06-24T00:00:00-05:00"):
+        graphblocks_client.prepare_remote_tool_invocation(
+            admitted,
+            offset_valid,
+            validation_time="2026-06-24T05:00:01Z",
+        )
+
 
 def test_client_package_remote_adapter_requires_required_idempotency_key(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-client" / "src"))

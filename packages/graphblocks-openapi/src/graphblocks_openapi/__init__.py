@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 import json
 
 from graphblocks import (
@@ -792,10 +793,36 @@ def _validate_resolved_tool_capability(
     effective_time = validation_time if validation_time is not None else admitted.call.admitted_at
     if not isinstance(effective_time, str) or not effective_time.strip():
         raise OpenApiToolAdapterError(f"{owner} tool invocation validation_time must be a non-empty string")
-    if resolved_tool.valid_until is not None and effective_time > resolved_tool.valid_until:
-        raise OpenApiToolAdapterError(
-            f"{owner} resolved tool {resolved_tool.definition.name} expired at {resolved_tool.valid_until}"
+    if resolved_tool.valid_until is not None:
+        effective_datetime = _parse_iso_datetime(
+            effective_time,
+            owner=owner,
+            field="validation_time",
         )
+        valid_until_datetime = _parse_iso_datetime(
+            resolved_tool.valid_until,
+            owner=owner,
+            field="valid_until",
+        )
+        if effective_datetime > valid_until_datetime:
+            raise OpenApiToolAdapterError(
+                f"{owner} resolved tool {resolved_tool.definition.name} expired at {resolved_tool.valid_until}"
+            )
+
+
+def _parse_iso_datetime(value: str, *, owner: str, field: str) -> datetime:
+    if not isinstance(value, str) or not value.strip():
+        raise OpenApiToolAdapterError(f"{owner} tool invocation {field} must be a non-empty ISO datetime")
+    normalized = value.strip()
+    if normalized.endswith("Z"):
+        normalized = f"{normalized[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as error:
+        raise OpenApiToolAdapterError(f"{owner} tool invocation {field} must be an ISO datetime") from error
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _required_string(value: Mapping[str, object], name: str, *, owner: str) -> str:
