@@ -55,6 +55,7 @@ from graphblocks.deployment import (
 )
 from graphblocks.documents import (
     ArtifactRef,
+    SourceRef,
     chunk_document_by_lines,
     create_local_text_revision,
     parse_plain_text_document,
@@ -111,6 +112,12 @@ from graphblocks.rag import (
     Claim,
     ContextPack,
     InMemoryChunkRetriever,
+    KnowledgeItemRef,
+    RetrievalResult,
+    SearchHit,
+    SearchRequest,
+    build_context_pack,
+    evaluate_retrieval_metrics,
     validate_answer_grounding,
 )
 from graphblocks.review import (
@@ -1734,14 +1741,20 @@ def load_rag_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
         case_id = _first_mapping_value(raw_case, "name", "case_id", "caseId")
         if not isinstance(case_id, str) or not case_id.strip():
             raise ValueError(f"rag TCK case {index} requires name")
-        if raw_case.get("kind") != "grounding":
+        case_kind = raw_case.get("kind")
+        if case_kind not in {"grounding", "freshness"}:
             raise ValueError(f"rag TCK case {case_id} has unsupported kind {raw_case.get('kind')!r}")
-        context = raw_case.get("context")
-        if not isinstance(context, Mapping):
-            raise ValueError(f"rag TCK case {case_id} requires context")
-        answer = raw_case.get("answer")
-        if not isinstance(answer, Mapping):
-            raise ValueError(f"rag TCK case {case_id} requires answer")
+        if case_kind == "grounding":
+            context = raw_case.get("context")
+            if not isinstance(context, Mapping):
+                raise ValueError(f"rag TCK case {case_id} requires context")
+            answer = raw_case.get("answer")
+            if not isinstance(answer, Mapping):
+                raise ValueError(f"rag TCK case {case_id} requires answer")
+        if case_kind == "freshness":
+            retrieval = raw_case.get("retrieval")
+            if not isinstance(retrieval, Mapping):
+                raise ValueError(f"rag TCK case {case_id} requires retrieval")
         expected = raw_case.get("expected")
         if not isinstance(expected, Mapping):
             raise ValueError(f"rag TCK case {case_id} requires expected result")
@@ -6311,6 +6324,118 @@ class TckRunner:
                     "message": "rag TCK expected result must be a mapping",
                     "path": "$.expected",
                 }
+            )
+        if kind == "freshness":
+            retrieval_fixture = fixture.get("retrieval", {})
+            if not isinstance(retrieval_fixture, Mapping):
+                retrieval_fixture = {}
+                diagnostics.append(
+                    {
+                        "code": "RagRetrievalInvalid",
+                        "message": "rag TCK retrieval must be a mapping",
+                        "path": "$.retrieval",
+                    }
+                )
+            raw_hits = retrieval_fixture.get("hits", [])
+            hits: list[SearchHit] = []
+            if not isinstance(raw_hits, list):
+                diagnostics.append(
+                    {
+                        "code": "RagRetrievalHitsInvalid",
+                        "message": "rag TCK retrieval hits must be a list",
+                        "path": "$.retrieval.hits",
+                    }
+                )
+                raw_hits = []
+            for hit_index, raw_hit in enumerate(raw_hits):
+                if not isinstance(raw_hit, Mapping):
+                    diagnostics.append(
+                        {
+                            "code": "RagRetrievalHitInvalid",
+                            "message": "rag TCK retrieval hit must be a mapping",
+                            "path": f"$.retrieval.hits[{hit_index}]",
+                        }
+                    )
+                    continue
+                hit_id = str(raw_hit.get("hitId", raw_hit.get("hit_id", f"hit-{hit_index + 1}")))
+                item_id = str(raw_hit.get("itemId", raw_hit.get("item_id", f"doc-{hit_index + 1}")))
+                raw_rank = raw_hit.get("rank", hit_index + 1)
+                rank = raw_rank if isinstance(raw_rank, int) and not isinstance(raw_rank, bool) else hit_index + 1
+                source_modified_at = raw_hit.get("sourceModifiedAt", raw_hit.get("source_modified_at"))
+                metadata: dict[str, object] = {}
+                if source_modified_at is not None:
+                    metadata["source_modified_at"] = source_modified_at
+                source = SourceRef(source_id=item_id, source_kind="document_chunk")
+                item = KnowledgeItemRef(
+                    item_id,
+                    "document_chunk",
+                    source,
+                    metadata=dict(metadata),
+                )
+                hits.append(
+                    SearchHit(
+                        hit_id=hit_id,
+                        item=item,
+                        rank=rank,
+                        retriever=str(raw_hit.get("retriever", "local-test")),
+                        metadata=metadata,
+                    )
+                )
+            minimum_source_modified_at = retrieval_fixture.get(
+                "minimumSourceModifiedAt",
+                retrieval_fixture.get("minimum_source_modified_at"),
+            )
+            retrieval_metadata: dict[str, object] = {}
+            if minimum_source_modified_at is not None:
+                retrieval_metadata["minimum_source_modified_at"] = minimum_source_modified_at
+            top_k = retrieval_fixture.get("topK", retrieval_fixture.get("top_k", len(hits)))
+            if not isinstance(top_k, int) or isinstance(top_k, bool):
+                top_k = len(hits)
+            retrieval = RetrievalResult(
+                retrieval_id=str(retrieval_fixture.get("retrievalId", retrieval_fixture.get("retrieval_id", case.case_id))),
+                request=SearchRequest(str(retrieval_fixture.get("query", "")), top_k=top_k),
+                hits=hits,
+                total_candidates=len(hits),
+                metadata=retrieval_metadata,
+            )
+            context = build_context_pack(
+                str(fixture.get("contextId", fixture.get("context_id", "ctx-1"))),
+                hits,
+                token_budget=int(fixture.get("tokenBudget", fixture.get("token_budget", 1024))),
+                minimum_source_modified_at=(
+                    str(minimum_source_modified_at)
+                    if isinstance(minimum_source_modified_at, str)
+                    else None
+                ),
+            )
+            metrics = {
+                metric.name: metric
+                for metric in evaluate_retrieval_metrics(retrieval, set(), k=top_k)
+            }
+            freshness_value = metrics["freshness_satisfaction"].value
+            observed = {
+                "selectedHitIds": [hit.hit_id for hit in context.hits],
+                "droppedHitIds": list(context.metadata.get("dropped_hit_ids", [])),
+                "dropReasons": dict(context.metadata.get("drop_reasons", {})),
+                "freshnessSatisfaction": (
+                    None if freshness_value is None else str(freshness_value)
+                ),
+            }
+            for key, expected_value in expected.items():
+                if observed.get(str(key)) != expected_value:
+                    diagnostics.append(
+                        {
+                            "code": "RagExpectedMismatch",
+                            "message": f"rag observed {key} did not match expected value",
+                            "path": f"$.expected.{key}",
+                        }
+                    )
+            return TckResult(
+                case_id=case.case_id,
+                kind=case.kind,
+                status="passed" if not diagnostics else "failed",
+                diagnostics=tuple(diagnostics),
+                observed=observed,
             )
         context_fixture = fixture.get("context", {})
         if not isinstance(context_fixture, Mapping):

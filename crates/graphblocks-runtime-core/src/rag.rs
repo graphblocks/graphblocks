@@ -8,6 +8,92 @@ use serde_json::{Map, Value, json};
 use crate::documents::{DocumentChunk, DocumentSpan, SourceRef};
 use crate::evaluation::{MetricDirection, MetricObservation, ResultBundle};
 
+fn source_modified_at_satisfies(
+    source_modified_at: Option<&str>,
+    minimum_source_modified_at: &str,
+) -> bool {
+    let Some(source_modified_at) = source_modified_at else {
+        return false;
+    };
+    let Some(source_time) = parse_iso_datetime_seconds(source_modified_at) else {
+        return false;
+    };
+    let Some(minimum_time) = parse_iso_datetime_seconds(minimum_source_modified_at) else {
+        return false;
+    };
+    source_time >= minimum_time
+}
+
+fn parse_iso_datetime_seconds(value: &str) -> Option<i64> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let (datetime, offset_seconds) = if let Some(datetime) = value.strip_suffix('Z') {
+        (datetime, 0)
+    } else {
+        let time_start = value.find('T').or_else(|| value.find(' '))?;
+        let offset_index = value[time_start + 1..]
+            .rfind(['+', '-'])
+            .map(|index| time_start + 1 + index)?;
+        let (datetime, offset) = value.split_at(offset_index);
+        let sign = match offset.as_bytes().first().copied()? {
+            b'+' => 1,
+            b'-' => -1,
+            _ => return None,
+        };
+        let mut offset_parts = offset[1..].split(':');
+        let offset_hours = offset_parts.next()?.parse::<i64>().ok()?;
+        let offset_minutes = offset_parts.next()?.parse::<i64>().ok()?;
+        if offset_parts.next().is_some() || offset_hours > 23 || offset_minutes > 59 {
+            return None;
+        }
+        (
+            datetime,
+            sign * (offset_hours * 3_600 + offset_minutes * 60),
+        )
+    };
+    let (date, time) = datetime
+        .split_once('T')
+        .or_else(|| datetime.split_once(' '))?;
+    let mut date_parts = date.split('-');
+    let year = date_parts.next()?.parse::<i64>().ok()?;
+    let month = date_parts.next()?.parse::<u32>().ok()?;
+    let day = date_parts.next()?.parse::<u32>().ok()?;
+    if date_parts.next().is_some() {
+        return None;
+    }
+    let mut time_parts = time.split(':');
+    let hour = time_parts.next()?.parse::<u32>().ok()?;
+    let minute = time_parts.next()?.parse::<u32>().ok()?;
+    let second_part = time_parts.next()?;
+    if time_parts.next().is_some() {
+        return None;
+    }
+    let second = second_part.split('.').next()?.parse::<u32>().ok()?;
+    if !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || hour > 23
+        || minute > 59
+        || second > 60
+    {
+        return None;
+    }
+    let days = days_from_civil(year, month, day);
+    Some(days * 86_400 + hour as i64 * 3_600 + minute as i64 * 60 + second as i64 - offset_seconds)
+}
+
+fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
+    let year = year - i64::from(month <= 2);
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let year_of_era = year - era * 400;
+    let month = i64::from(month);
+    let day = i64::from(day);
+    let day_of_year = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    era * 146_097 + day_of_era - 719_468
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct SearchRequest {
     pub query_text: String,
@@ -1353,7 +1439,7 @@ pub fn build_context_pack(
                         .get("source_modified_at")
                         .and_then(Value::as_str)
                 });
-            if source_modified_at.is_none_or(|value| value < minimum_source_modified_at.as_str()) {
+            if !source_modified_at_satisfies(source_modified_at, minimum_source_modified_at) {
                 dropped_hit_ids.push(hit.hit_id.clone());
                 drop_reasons.insert(hit.hit_id.clone(), json!("freshness"));
                 continue;
@@ -2724,7 +2810,10 @@ where
                                 .and_then(Value::as_str)
                         })
                         .is_some_and(|source_modified_at| {
-                            source_modified_at >= minimum_source_modified_at
+                            source_modified_at_satisfies(
+                                Some(source_modified_at),
+                                minimum_source_modified_at,
+                            )
                         })
                 })
                 .count();

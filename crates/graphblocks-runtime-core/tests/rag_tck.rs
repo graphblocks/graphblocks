@@ -2,7 +2,8 @@
 
 use graphblocks_runtime_core::documents::{DocumentSpan, SourceRef};
 use graphblocks_runtime_core::rag::{
-    Answer, Citation, Claim, ContextPack, FailurePolicy, KnowledgeItemRef, SearchHit,
+    Answer, Citation, Claim, ContextBuildOptions, ContextPack, FailurePolicy, KnowledgeItemRef,
+    RetrievalResult, SearchHit, SearchRequest, build_context_pack, evaluate_retrieval_metrics,
     validate_answer_grounding,
 };
 use serde_json::{Value, json};
@@ -26,6 +27,9 @@ fn rust_rag_matches_shared_tck_cases() -> Result<(), String> {
 fn run_case(case: &Value) -> Result<(), String> {
     let name = required_str(case, "name", "rag TCK case")?;
     let kind = required_str(case, "kind", name)?;
+    if kind == "freshness" {
+        return run_freshness_case(name, case);
+    }
     if kind != "grounding" {
         return Err(format!("rag TCK case {name} has unsupported kind {kind}"));
     }
@@ -123,6 +127,110 @@ fn run_case(case: &Value) -> Result<(), String> {
         assert_eq!(observed, *expected_value, "{name}: expected {key} to match");
     }
 
+    Ok(())
+}
+
+fn run_freshness_case(name: &str, case: &Value) -> Result<(), String> {
+    let retrieval_fixture = case
+        .get("retrieval")
+        .and_then(Value::as_object)
+        .ok_or_else(|| format!("rag TCK case {name} is missing retrieval"))?;
+    let minimum_source_modified_at = retrieval_fixture
+        .get("minimumSourceModifiedAt")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            format!("rag TCK case {name} retrieval is missing minimumSourceModifiedAt")
+        })?;
+    let raw_hits = retrieval_fixture
+        .get("hits")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("rag TCK case {name} retrieval is missing hits"))?;
+    let mut hits = Vec::new();
+    for (index, raw_hit) in raw_hits.iter().enumerate() {
+        let hit_id = raw_hit
+            .get("hitId")
+            .and_then(Value::as_str)
+            .unwrap_or("hit");
+        let item_id = raw_hit
+            .get("itemId")
+            .and_then(Value::as_str)
+            .unwrap_or("doc");
+        let rank = raw_hit
+            .get("rank")
+            .and_then(Value::as_u64)
+            .map(|rank| rank as usize)
+            .unwrap_or(index + 1);
+        let mut built = hit(hit_id, item_id, item_id, item_id);
+        built.rank = rank;
+        if let Some(source_modified_at) = raw_hit.get("sourceModifiedAt").and_then(Value::as_str) {
+            built
+                .metadata
+                .insert("source_modified_at".to_owned(), json!(source_modified_at));
+        }
+        hits.push(built);
+    }
+    let top_k = retrieval_fixture
+        .get("topK")
+        .and_then(Value::as_u64)
+        .map(|top_k| top_k as usize)
+        .unwrap_or(hits.len());
+    let mut retrieval = RetrievalResult::new(
+        retrieval_fixture
+            .get("retrievalId")
+            .and_then(Value::as_str)
+            .unwrap_or(name),
+        SearchRequest::new(
+            retrieval_fixture
+                .get("query")
+                .and_then(Value::as_str)
+                .unwrap_or(""),
+        )
+        .with_top_k(top_k),
+        hits.clone(),
+    );
+    retrieval.metadata.insert(
+        "minimum_source_modified_at".to_owned(),
+        json!(minimum_source_modified_at),
+    );
+    let context = build_context_pack(
+        case.get("contextId")
+            .and_then(Value::as_str)
+            .unwrap_or("ctx-1"),
+        hits,
+        ContextBuildOptions::new(
+            case.get("tokenBudget")
+                .and_then(Value::as_u64)
+                .map(|budget| budget as usize)
+                .unwrap_or(1024),
+        )
+        .with_minimum_source_modified_at(minimum_source_modified_at),
+    )
+    .map_err(|error| format!("rag TCK case {name} failed context build: {error:?}"))?;
+    let metrics = evaluate_retrieval_metrics(&retrieval, std::iter::empty::<&str>(), Some(top_k));
+    let freshness_satisfaction = metrics
+        .iter()
+        .find(|metric| metric.name == "freshness_satisfaction")
+        .map(|metric| metric.value.clone())
+        .unwrap_or(Value::Null);
+    let observed = json!({
+        "selectedHitIds": context.hits.iter().map(|hit| hit.hit_id.as_str()).collect::<Vec<_>>(),
+        "droppedHitIds": context.metadata.get("dropped_hit_ids").cloned().unwrap_or(Value::Array(Vec::new())),
+        "dropReasons": context.metadata.get("drop_reasons").cloned().unwrap_or_else(|| json!({})),
+        "freshnessSatisfaction": freshness_satisfaction.as_f64().map(|value| value.to_string()),
+    });
+    let expected = case
+        .get("expected")
+        .and_then(Value::as_object)
+        .ok_or_else(|| format!("rag TCK case {name} is missing expected result"))?;
+    for (key, expected_value) in expected {
+        let observed_value = observed
+            .get(key)
+            .unwrap_or_else(|| panic!("{name}: unsupported rag expectation {key}"));
+        assert_eq!(
+            observed_value, expected_value,
+            "{name}: expected {key} to match"
+        );
+    }
     Ok(())
 }
 

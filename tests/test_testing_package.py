@@ -506,19 +506,31 @@ def test_testing_package_loads_shared_rag_tck_cases(monkeypatch) -> None:
     cases = graphblocks_testing.load_rag_tck_cases(ROOT / "tck" / "rag" / "cases.json")
     report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
 
-    assert [case.kind for case in cases] == ["rag"] * 3
+    assert [case.kind for case in cases] == ["rag"] * 4
     assert report.ok
     assert {case.case_id for case in cases} == {
+        "freshness_filter_compares_source_modified_at_as_datetime",
         "grounded_answer_accepts_current_context_source",
         "ungrounded_answer_abstains_when_context_empty",
         "unsupported_claim_abstains_with_validation_failure",
     }
-    assert {tuple(result.observed["issueCodes"]) for result in report.results} == {
+    grounding_results = [
+        result for result in report.results if "issueCodes" in result.observed
+    ]
+    assert {tuple(result.observed["issueCodes"]) for result in grounding_results} == {
         (),
         ("grounding.insufficient_context",),
         ("claim.unsupported_by_citation",),
     }
-    assert any(result.observed["abstentionReason"] == "insufficient_context" for result in report.results)
+    freshness = next(
+        result
+        for result in report.results
+        if result.case_id == "freshness_filter_compares_source_modified_at_as_datetime"
+    )
+    assert freshness.observed["selectedHitIds"] == ["hit-fresh"]
+    assert freshness.observed["droppedHitIds"] == ["hit-stale"]
+    assert freshness.observed["freshnessSatisfaction"] == "0.5"
+    assert any(result.observed.get("abstentionReason") == "insufficient_context" for result in report.results)
     assert "load_rag_tck_cases" in graphblocks_testing.__all__
 
 
@@ -846,6 +858,7 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "grounded_answer_accepts_current_context_source",
         "ungrounded_answer_abstains_when_context_empty",
         "unsupported_claim_abstains_with_validation_failure",
+        "freshness_filter_compares_source_modified_at_as_datetime",
     )
     assert by_suite["tool-execution"].case_ids == (
         "independent_read_tools_execute_concurrently",

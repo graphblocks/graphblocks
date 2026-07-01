@@ -451,6 +451,8 @@ Freshness 비교에 사용하는 `source_modified_at`, `indexed_at`, `valid_from
 `minimum_source_modified_at` 값은 ISO 8601 datetime으로 해석한다. Runtime과
 평가 도구는 문자열 정렬이 아니라 timezone-normalized instant 비교를 사용해야 하며,
 offset 표기가 다른 동일 시각을 동일하게 처리해야 한다.
+공유 RAG TCK는 offset 표기가 섞인 freshness filtering과 freshness satisfaction 계산을
+검증해야 한다.
 
 ## 120. RAG graph 예
 

@@ -101,5 +101,37 @@
       ],
       "abstentionReason": "citation_validation_failed"
     }
+  },
+  {
+    "name": "freshness_filter_compares_source_modified_at_as_datetime",
+    "kind": "freshness",
+    "retrieval": {
+      "retrievalId": "retrieval-freshness",
+      "query": "policy",
+      "topK": 2,
+      "minimumSourceModifiedAt": "2026-06-24T00:30:00+09:00",
+      "hits": [
+        {
+          "hitId": "hit-fresh",
+          "itemId": "doc-fresh",
+          "rank": 1,
+          "sourceModifiedAt": "2026-06-23T16:00:00Z"
+        },
+        {
+          "hitId": "hit-stale",
+          "itemId": "doc-stale",
+          "rank": 2,
+          "sourceModifiedAt": "2026-06-23T15:00:00Z"
+        }
+      ]
+    },
+    "expected": {
+      "selectedHitIds": ["hit-fresh"],
+      "droppedHitIds": ["hit-stale"],
+      "dropReasons": {
+        "hit-stale": "freshness"
+      },
+      "freshnessSatisfaction": "0.5"
+    }
   }
 ]

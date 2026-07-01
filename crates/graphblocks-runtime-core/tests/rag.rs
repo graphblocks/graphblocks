@@ -516,6 +516,41 @@ fn build_context_pack_filters_hits_by_minimum_source_modified_at() {
 }
 
 #[test]
+fn build_context_pack_compares_source_modified_at_as_datetime() {
+    let mut fresh = hit("hit-fresh", "chunk-fresh", "doc-1", "fresh", 1);
+    fresh.metadata.insert(
+        "source_modified_at".to_owned(),
+        json!("2026-06-23T16:00:00Z"),
+    );
+    let mut stale = hit("hit-stale", "chunk-stale", "doc-2", "stale", 2);
+    stale.metadata.insert(
+        "source_modified_at".to_owned(),
+        json!("2026-06-23T15:00:00Z"),
+    );
+
+    let context = build_context_pack(
+        "ctx-1",
+        vec![fresh, stale],
+        ContextBuildOptions::new(10).with_minimum_source_modified_at("2026-06-24T00:30:00+09:00"),
+    )
+    .expect("context build succeeds");
+
+    assert_eq!(
+        context
+            .hits
+            .iter()
+            .map(|hit| hit.hit_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["hit-fresh"]
+    );
+    assert_eq!(context.metadata["dropped_hit_ids"], json!(["hit-stale"]));
+    assert_eq!(
+        context.metadata["drop_reasons"],
+        json!({"hit-stale": "freshness"})
+    );
+}
+
+#[test]
 fn fuse_search_hits_uses_reciprocal_rank_fusion_and_preserves_source_ranks() {
     let keyword_hits = vec![
         hit_from("kw-b", "chunk-b", "doc-1", "chunk-b", 1, "keyword"),
@@ -1865,6 +1900,37 @@ fn evaluate_retrieval_metrics_reports_freshness_satisfaction() {
     assert_eq!(freshness_satisfaction.value, json!(1.0 / 3.0));
     assert_eq!(freshness_satisfaction.direction, MetricDirection::Maximize);
     assert_eq!(freshness_satisfaction.evaluator, Some(json!({ "k": 3 })));
+}
+
+#[test]
+fn evaluate_retrieval_metrics_compares_freshness_as_datetime() {
+    let mut fresh = hit("hit-a", "doc-a", "doc-1", "alpha", 1);
+    fresh.metadata.insert(
+        "source_modified_at".to_owned(),
+        json!("2026-06-23T16:00:00Z"),
+    );
+    let mut stale = hit("hit-b", "doc-b", "doc-2", "beta", 2);
+    stale.metadata.insert(
+        "source_modified_at".to_owned(),
+        json!("2026-06-23T15:00:00Z"),
+    );
+    let mut retrieval = RetrievalResult::new(
+        "retrieval-1",
+        SearchRequest::new("policy").with_top_k(2),
+        vec![fresh, stale],
+    );
+    retrieval.metadata.insert(
+        "minimum_source_modified_at".to_owned(),
+        json!("2026-06-24T00:30:00+09:00"),
+    );
+
+    let metrics = evaluate_retrieval_metrics(&retrieval, ["doc-a"], Some(2));
+
+    let freshness_satisfaction = metrics
+        .iter()
+        .find(|metric| metric.name == "freshness_satisfaction")
+        .expect("freshness satisfaction metric exists");
+    assert_eq!(freshness_satisfaction.value, json!(0.5));
 }
 
 #[test]
