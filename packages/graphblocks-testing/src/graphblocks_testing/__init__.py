@@ -29,9 +29,11 @@ from graphblocks.canonical import canonical_hash
 from graphblocks.compiler import compile_graph
 from graphblocks.conversation import (
     BranchRequest,
+    CompactionRecord,
     ContentPart,
     Conversation,
     ConversationConflictError,
+    ConversationNotFoundError,
     FileAttachment,
     InMemoryConversationStore,
     Message,
@@ -1622,6 +1624,8 @@ def load_conversation_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
             "commit_conflict",
             "branch_regenerate",
             "branch_attachments",
+            "compaction_record",
+            "delete_retention",
         }:
             raise ValueError(f"conversation TCK case {case_id} has unsupported kind {case_kind!r}")
         expected = raw_case.get("expected")
@@ -4830,6 +4834,246 @@ class TckRunner:
                     "sourceAttachmentIds": [
                         attachment.attachment_id for attachment in source.conversation.attachments
                     ],
+                }
+            elif kind == "compaction_record":
+                raw_messages = fixture.get("messages", [])
+                if not isinstance(raw_messages, list) or not all(isinstance(message, Mapping) for message in raw_messages):
+                    raw_messages = []
+                    diagnostics.append(
+                        {
+                            "code": "ConversationMessagesInvalid",
+                            "message": "conversation TCK messages must be a list of mappings",
+                            "path": "$.messages",
+                        }
+                    )
+                messages: list[Message] = []
+                for raw_message in raw_messages:
+                    parent_message_id = raw_message.get("parentMessageId", raw_message.get("parent_message_id"))
+                    messages.append(
+                        Message(
+                            message_id=str(raw_message.get("messageId", raw_message.get("message_id", "msg"))),
+                            role=str(raw_message.get("role", "user")),
+                            parts=(ContentPart(kind="text", text=str(raw_message.get("text", ""))),),
+                            parent_message_id=parent_message_id if isinstance(parent_message_id, str) else None,
+                        )
+                    )
+                raw_compaction = fixture.get("compaction", {})
+                if not isinstance(raw_compaction, Mapping):
+                    raw_compaction = {}
+                    diagnostics.append(
+                        {
+                            "code": "ConversationCompactionInvalid",
+                            "message": "conversation TCK compaction must be a mapping",
+                            "path": "$.compaction",
+                        }
+                    )
+                source_message_ids = raw_compaction.get(
+                    "sourceMessageIds",
+                    raw_compaction.get("source_message_ids", []),
+                )
+                if not isinstance(source_message_ids, list):
+                    source_message_ids = []
+                    diagnostics.append(
+                        {
+                            "code": "ConversationCompactionSourceInvalid",
+                            "message": "conversation TCK compaction sourceMessageIds must be a list",
+                            "path": "$.compaction.sourceMessageIds",
+                        }
+                    )
+                store.create(Conversation(conversation_id=conversation_id))
+                store.append_messages(conversation_id, expected_revision=0, messages=messages)
+                revision = store.record_compaction(
+                    conversation_id,
+                    CompactionRecord(
+                        compaction_id=str(
+                            raw_compaction.get(
+                                "compactionId",
+                                raw_compaction.get("compaction_id", "compact-1"),
+                            )
+                        ),
+                        source_message_ids=tuple(str(message_id) for message_id in source_message_ids),
+                        output_message_id=str(
+                            raw_compaction.get(
+                                "outputMessageId",
+                                raw_compaction.get("output_message_id", "msg-summary"),
+                            )
+                        ),
+                        method=str(raw_compaction.get("method", "summary_memory")),
+                        token_before=int(
+                            raw_compaction.get(
+                                "tokenBefore",
+                                raw_compaction.get("token_before", 0),
+                            )
+                        ),
+                        token_after=int(
+                            raw_compaction.get(
+                                "tokenAfter",
+                                raw_compaction.get("token_after", 0),
+                            )
+                        ),
+                        model=(
+                            str(raw_compaction.get("model"))
+                            if raw_compaction.get("model") is not None
+                            else None
+                        ),
+                    ),
+                )
+                snapshot = store.get(conversation_id)
+                compaction = snapshot.conversation.compactions[0]
+                observed = {
+                    "revision": revision,
+                    "compactionIds": [
+                        record.compaction_id for record in snapshot.conversation.compactions
+                    ],
+                    "sourceMessageIds": list(compaction.source_message_ids),
+                    "outputMessageId": compaction.output_message_id,
+                    "method": compaction.method,
+                    "tokenBefore": compaction.token_before,
+                    "tokenAfter": compaction.token_after,
+                    "model": compaction.model,
+                }
+            elif kind == "delete_retention":
+                raw_messages = fixture.get("messages", [])
+                if not isinstance(raw_messages, list) or not all(isinstance(message, Mapping) for message in raw_messages):
+                    raw_messages = []
+                    diagnostics.append(
+                        {
+                            "code": "ConversationMessagesInvalid",
+                            "message": "conversation TCK messages must be a list of mappings",
+                            "path": "$.messages",
+                        }
+                    )
+                messages: list[Message] = []
+                for raw_message in raw_messages:
+                    parent_message_id = raw_message.get("parentMessageId", raw_message.get("parent_message_id"))
+                    messages.append(
+                        Message(
+                            message_id=str(raw_message.get("messageId", raw_message.get("message_id", "msg"))),
+                            role=str(raw_message.get("role", "user")),
+                            parts=(ContentPart(kind="text", text=str(raw_message.get("text", ""))),),
+                            parent_message_id=parent_message_id if isinstance(parent_message_id, str) else None,
+                        )
+                    )
+                raw_attachments = fixture.get("attachments", [])
+                if not isinstance(raw_attachments, list) or not all(isinstance(attachment, Mapping) for attachment in raw_attachments):
+                    raw_attachments = []
+                    diagnostics.append(
+                        {
+                            "code": "ConversationAttachmentsInvalid",
+                            "message": "conversation TCK attachments must be a list of mappings",
+                            "path": "$.attachments",
+                        }
+                    )
+                raw_compaction = fixture.get("compaction", {})
+                if not isinstance(raw_compaction, Mapping):
+                    raw_compaction = {}
+                    diagnostics.append(
+                        {
+                            "code": "ConversationCompactionInvalid",
+                            "message": "conversation TCK compaction must be a mapping",
+                            "path": "$.compaction",
+                        }
+                    )
+                source_message_ids = raw_compaction.get(
+                    "sourceMessageIds",
+                    raw_compaction.get("source_message_ids", []),
+                )
+                if not isinstance(source_message_ids, list):
+                    source_message_ids = []
+                    diagnostics.append(
+                        {
+                            "code": "ConversationCompactionSourceInvalid",
+                            "message": "conversation TCK compaction sourceMessageIds must be a list",
+                            "path": "$.compaction.sourceMessageIds",
+                        }
+                    )
+                store.create(Conversation(conversation_id=conversation_id))
+                store.append_messages(conversation_id, expected_revision=0, messages=messages)
+                for raw_attachment in raw_attachments:
+                    store.add_attachment(
+                        conversation_id,
+                        FileAttachment(
+                            attachment_id=str(raw_attachment.get("attachmentId", raw_attachment.get("attachment_id", "att"))),
+                            asset=ArtifactRef(
+                                str(raw_attachment.get("artifactId", raw_attachment.get("artifact_id", "artifact"))),
+                                str(raw_attachment.get("uri", "blob://attachments/file")),
+                            ),
+                            scope=str(raw_attachment.get("scope", "message")),
+                            purpose=str(raw_attachment.get("purpose", "retrieval")),
+                            ingestion_status=str(
+                                raw_attachment.get(
+                                    "ingestionStatus",
+                                    raw_attachment.get("ingestion_status", "ready"),
+                                )
+                            ),
+                            message_id=(
+                                str(raw_attachment.get("messageId", raw_attachment.get("message_id")))
+                                if raw_attachment.get("messageId", raw_attachment.get("message_id")) is not None
+                                else None
+                            ),
+                        ),
+                    )
+                store.record_compaction(
+                    conversation_id,
+                    CompactionRecord(
+                        compaction_id=str(
+                            raw_compaction.get(
+                                "compactionId",
+                                raw_compaction.get("compaction_id", "compact-1"),
+                            )
+                        ),
+                        source_message_ids=tuple(str(message_id) for message_id in source_message_ids),
+                        output_message_id=str(
+                            raw_compaction.get(
+                                "outputMessageId",
+                                raw_compaction.get("output_message_id", "msg-summary"),
+                            )
+                        ),
+                        method=str(raw_compaction.get("method", "summary_memory")),
+                        token_before=int(
+                            raw_compaction.get(
+                                "tokenBefore",
+                                raw_compaction.get("token_before", 0),
+                            )
+                        ),
+                        token_after=int(
+                            raw_compaction.get(
+                                "tokenAfter",
+                                raw_compaction.get("token_after", 0),
+                            )
+                        ),
+                    ),
+                )
+                tombstone_revision = store.delete(conversation_id, policy="tombstone")
+                tombstone = store.get(conversation_id).conversation
+
+                hard_delete_conversation_id = str(
+                    fixture.get(
+                        "hardDeleteConversationId",
+                        fixture.get("hard_delete_conversation_id", f"{conversation_id}-hard"),
+                    )
+                )
+                store.create(
+                    Conversation(
+                        conversation_id=hard_delete_conversation_id,
+                        messages=tuple(messages),
+                    )
+                )
+                store.delete(hard_delete_conversation_id, policy="hard")
+                hard_deleted = False
+                try:
+                    store.get(hard_delete_conversation_id)
+                except ConversationNotFoundError:
+                    hard_deleted = True
+
+                observed = {
+                    "tombstoneRevision": tombstone_revision,
+                    "tombstoneArchived": tombstone.archived,
+                    "tombstoneDeleted": tombstone.metadata.get("deleted"),
+                    "tombstoneMessageCount": len(tombstone.messages),
+                    "tombstoneAttachmentCount": len(tombstone.attachments),
+                    "tombstoneCompactionCount": len(tombstone.compactions),
+                    "hardDeleted": hard_deleted,
                 }
             else:
                 diagnostics.append(

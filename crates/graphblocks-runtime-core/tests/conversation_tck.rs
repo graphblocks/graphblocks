@@ -1,7 +1,8 @@
 use graphblocks_runtime_core::conversation::{
-    AttachmentIngestionStatus, AttachmentPurpose, AttachmentScope, BranchRequest, ContentPart,
-    Conversation, ConversationError, FileAttachment, InMemoryConversationStore, Message,
-    MessageRole, MessageStatus, RegenerateRequest, TurnError, TurnStatus,
+    AttachmentIngestionStatus, AttachmentPurpose, AttachmentScope, BranchRequest, CompactionRecord,
+    ContentPart, Conversation, ConversationError, DeletePolicy, FileAttachment,
+    InMemoryConversationStore, Message, MessageRole, MessageStatus, RegenerateRequest, TurnError,
+    TurnStatus,
 };
 use graphblocks_runtime_core::documents::ArtifactRef;
 use serde_json::{json, Value};
@@ -436,6 +437,212 @@ fn run_case(case: &Value) -> Result<Value, String> {
                 "branchWithoutAttachmentIds": branch_without_attachments.attachments.iter().map(|attachment| attachment.attachment_id.as_str()).collect::<Vec<_>>(),
                 "branchMessageIds": branch.messages.iter().map(|message| message.message_id.as_str()).collect::<Vec<_>>(),
                 "sourceAttachmentIds": source.conversation.attachments.iter().map(|attachment| attachment.attachment_id.as_str()).collect::<Vec<_>>(),
+            }))
+        }
+        "compaction_record" => {
+            let raw_messages = case
+                .get("messages")
+                .and_then(Value::as_array)
+                .ok_or_else(|| "compaction_record case requires messages".to_owned())?;
+            let mut messages = Vec::new();
+            for raw_message in raw_messages {
+                messages.push(message_from(raw_message, "msg", MessageRole::User)?);
+            }
+            let raw_compaction = case
+                .get("compaction")
+                .and_then(Value::as_object)
+                .ok_or_else(|| "compaction_record case requires compaction".to_owned())?;
+            let source_message_ids = raw_compaction
+                .get("sourceMessageIds")
+                .or_else(|| raw_compaction.get("source_message_ids"))
+                .and_then(Value::as_array)
+                .ok_or_else(|| "compaction_record case requires sourceMessageIds".to_owned())?
+                .iter()
+                .map(|value| {
+                    value
+                        .as_str()
+                        .ok_or_else(|| "sourceMessageIds entries must be strings".to_owned())
+                        .map(ToOwned::to_owned)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let compaction_id = raw_compaction
+                .get("compactionId")
+                .or_else(|| raw_compaction.get("compaction_id"))
+                .and_then(Value::as_str)
+                .unwrap_or("compact-1");
+            let output_message_id = raw_compaction
+                .get("outputMessageId")
+                .or_else(|| raw_compaction.get("output_message_id"))
+                .and_then(Value::as_str)
+                .unwrap_or("msg-summary");
+            let method = raw_compaction
+                .get("method")
+                .and_then(Value::as_str)
+                .unwrap_or("summary_memory");
+            let token_before = raw_compaction
+                .get("tokenBefore")
+                .or_else(|| raw_compaction.get("token_before"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0) as usize;
+            let token_after = raw_compaction
+                .get("tokenAfter")
+                .or_else(|| raw_compaction.get("token_after"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0) as usize;
+            let mut record = CompactionRecord::new(
+                compaction_id,
+                source_message_ids,
+                output_message_id,
+                method,
+                token_before,
+                token_after,
+            );
+            if let Some(model) = raw_compaction.get("model").and_then(Value::as_str) {
+                record = record.with_model(model);
+            }
+
+            store
+                .create(Conversation::new(conversation_id))
+                .map_err(|error| error.to_string())?;
+            store
+                .append_messages(conversation_id, 0, messages)
+                .map_err(|error| error.to_string())?;
+            let revision = store
+                .record_compaction(conversation_id, record)
+                .map_err(|error| error.to_string())?;
+            let snapshot = store
+                .get(conversation_id)
+                .map_err(|error| error.to_string())?;
+            let compaction = snapshot
+                .conversation
+                .compactions
+                .first()
+                .ok_or_else(|| "compaction was not recorded".to_owned())?;
+
+            Ok(json!({
+                "revision": revision,
+                "compactionIds": snapshot.conversation.compactions.iter().map(|record| record.compaction_id.as_str()).collect::<Vec<_>>(),
+                "sourceMessageIds": compaction.source_message_ids.iter().map(String::as_str).collect::<Vec<_>>(),
+                "outputMessageId": compaction.output_message_id,
+                "method": compaction.method,
+                "tokenBefore": compaction.token_before,
+                "tokenAfter": compaction.token_after,
+                "model": compaction.model,
+            }))
+        }
+        "delete_retention" => {
+            let raw_messages = case
+                .get("messages")
+                .and_then(Value::as_array)
+                .ok_or_else(|| "delete_retention case requires messages".to_owned())?;
+            let mut messages = Vec::new();
+            for raw_message in raw_messages {
+                messages.push(message_from(raw_message, "msg", MessageRole::User)?);
+            }
+            let raw_attachments = case
+                .get("attachments")
+                .and_then(Value::as_array)
+                .ok_or_else(|| "delete_retention case requires attachments".to_owned())?;
+            let raw_compaction = case
+                .get("compaction")
+                .and_then(Value::as_object)
+                .ok_or_else(|| "delete_retention case requires compaction".to_owned())?;
+            let source_message_ids = raw_compaction
+                .get("sourceMessageIds")
+                .or_else(|| raw_compaction.get("source_message_ids"))
+                .and_then(Value::as_array)
+                .ok_or_else(|| "delete_retention case requires sourceMessageIds".to_owned())?
+                .iter()
+                .map(|value| {
+                    value
+                        .as_str()
+                        .ok_or_else(|| "sourceMessageIds entries must be strings".to_owned())
+                        .map(ToOwned::to_owned)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let compaction_id = raw_compaction
+                .get("compactionId")
+                .or_else(|| raw_compaction.get("compaction_id"))
+                .and_then(Value::as_str)
+                .unwrap_or("compact-1");
+            let output_message_id = raw_compaction
+                .get("outputMessageId")
+                .or_else(|| raw_compaction.get("output_message_id"))
+                .and_then(Value::as_str)
+                .unwrap_or("msg-summary");
+            let method = raw_compaction
+                .get("method")
+                .and_then(Value::as_str)
+                .unwrap_or("summary_memory");
+            let token_before = raw_compaction
+                .get("tokenBefore")
+                .or_else(|| raw_compaction.get("token_before"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0) as usize;
+            let token_after = raw_compaction
+                .get("tokenAfter")
+                .or_else(|| raw_compaction.get("token_after"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0) as usize;
+
+            store
+                .create(Conversation::new(conversation_id))
+                .map_err(|error| error.to_string())?;
+            store
+                .append_messages(conversation_id, 0, messages.clone())
+                .map_err(|error| error.to_string())?;
+            for raw_attachment in raw_attachments {
+                store
+                    .add_attachment(conversation_id, attachment_from(raw_attachment)?)
+                    .map_err(|error| error.to_string())?;
+            }
+            store
+                .record_compaction(
+                    conversation_id,
+                    CompactionRecord::new(
+                        compaction_id,
+                        source_message_ids,
+                        output_message_id,
+                        method,
+                        token_before,
+                        token_after,
+                    ),
+                )
+                .map_err(|error| error.to_string())?;
+            let tombstone_revision = store
+                .delete(conversation_id, DeletePolicy::Tombstone)
+                .map_err(|error| error.to_string())?;
+            let tombstone = store
+                .get(conversation_id)
+                .map_err(|error| error.to_string())?
+                .conversation;
+
+            let hard_delete_conversation_id = case
+                .get("hardDeleteConversationId")
+                .or_else(|| case.get("hard_delete_conversation_id"))
+                .and_then(Value::as_str)
+                .unwrap_or("conv-delete-hard");
+            let mut hard_delete_conversation = Conversation::new(hard_delete_conversation_id);
+            hard_delete_conversation.messages = messages;
+            store
+                .create(hard_delete_conversation)
+                .map_err(|error| error.to_string())?;
+            store
+                .delete(hard_delete_conversation_id, DeletePolicy::Hard)
+                .map_err(|error| error.to_string())?;
+            let hard_deleted = matches!(
+                store.get(hard_delete_conversation_id),
+                Err(ConversationError::NotFound { .. })
+            );
+
+            Ok(json!({
+                "tombstoneRevision": tombstone_revision,
+                "tombstoneArchived": tombstone.archived,
+                "tombstoneDeleted": tombstone.metadata.get("deleted").cloned().unwrap_or(Value::Null),
+                "tombstoneMessageCount": tombstone.messages.len(),
+                "tombstoneAttachmentCount": tombstone.attachments.len(),
+                "tombstoneCompactionCount": tombstone.compactions.len(),
+                "hardDeleted": hard_deleted,
             }))
         }
         other => Err(format!("unsupported conversation TCK kind {other:?}")),

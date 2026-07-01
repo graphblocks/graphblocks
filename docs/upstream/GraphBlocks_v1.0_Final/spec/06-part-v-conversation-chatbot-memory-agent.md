@@ -165,6 +165,10 @@ attachments:
 
 한 attachment가 여러 turn에서 재사용될 때 parse/index 결과를 cache할 수 있다.
 
+Compaction record는 source message id, output summary message id, method, model, token
+before/after를 보존해야 하며 conversation revision을 증가시킨다. 공유 conversation TCK는
+이 provenance와 token delta contract를 검증해야 한다.
+
 ## 132. Incremental chat events
 
 Transport-independent event:
@@ -753,6 +757,9 @@ retention:
 ```
 
 Delete는 conversation, attachment, temporary index, memory, telemetry link에 전파되어야 한다.
+`tombstone` delete는 conversation identity를 보존하되 message, attachment, compaction state를
+비우고 archived/deleted metadata를 남겨야 한다. `hard` delete는 conversation 조회가 실패하도록
+record를 제거해야 한다. 공유 conversation TCK는 두 retention mode를 모두 검증해야 한다.
 
 ## 158. Conversation evaluation
 

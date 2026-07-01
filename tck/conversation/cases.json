@@ -204,5 +204,102 @@
         "att-conversation"
       ]
     }
+  },
+  {
+    "name": "compaction_records_source_output_and_token_delta",
+    "kind": "compaction_record",
+    "conversationId": "conv-compaction",
+    "messages": [
+      {
+        "messageId": "msg-1",
+        "role": "user",
+        "text": "long prompt"
+      },
+      {
+        "messageId": "msg-2",
+        "role": "assistant",
+        "text": "long answer"
+      },
+      {
+        "messageId": "msg-summary",
+        "role": "assistant",
+        "text": "summary"
+      }
+    ],
+    "compaction": {
+      "compactionId": "compact-1",
+      "sourceMessageIds": [
+        "msg-1",
+        "msg-2"
+      ],
+      "outputMessageId": "msg-summary",
+      "method": "summary_memory",
+      "tokenBefore": 1200,
+      "tokenAfter": 120,
+      "model": "summary-model"
+    },
+    "expected": {
+      "revision": 2,
+      "compactionIds": [
+        "compact-1"
+      ],
+      "sourceMessageIds": [
+        "msg-1",
+        "msg-2"
+      ],
+      "outputMessageId": "msg-summary",
+      "method": "summary_memory",
+      "tokenBefore": 1200,
+      "tokenAfter": 120,
+      "model": "summary-model"
+    }
+  },
+  {
+    "name": "delete_retention_distinguishes_tombstone_and_hard_delete",
+    "kind": "delete_retention",
+    "conversationId": "conv-delete",
+    "hardDeleteConversationId": "conv-delete-hard",
+    "messages": [
+      {
+        "messageId": "msg-1",
+        "role": "user",
+        "text": "remove me"
+      },
+      {
+        "messageId": "msg-summary",
+        "role": "assistant",
+        "text": "summary"
+      }
+    ],
+    "attachments": [
+      {
+        "attachmentId": "att-1",
+        "artifactId": "artifact-1",
+        "uri": "blob://attachments/delete.pdf",
+        "scope": "message",
+        "purpose": "retrieval",
+        "messageId": "msg-1",
+        "ingestionStatus": "ready"
+      }
+    ],
+    "compaction": {
+      "compactionId": "compact-delete",
+      "sourceMessageIds": [
+        "msg-1"
+      ],
+      "outputMessageId": "msg-summary",
+      "method": "summary_memory",
+      "tokenBefore": 100,
+      "tokenAfter": 10
+    },
+    "expected": {
+      "tombstoneRevision": 4,
+      "tombstoneArchived": true,
+      "tombstoneDeleted": true,
+      "tombstoneMessageCount": 0,
+      "tombstoneAttachmentCount": 0,
+      "tombstoneCompactionCount": 0,
+      "hardDeleted": true
+    }
   }
 ]
