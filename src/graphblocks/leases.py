@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TypeAlias
@@ -24,6 +25,56 @@ class InvalidLeaseRequestError(ValueError):
     pass
 
 
+def _validate_non_empty_string(field_name: str, value: object) -> str:
+    if not isinstance(value, str):
+        raise InvalidLeaseRequestError(f"lease {field_name} must be a string")
+    if not value.strip():
+        raise InvalidLeaseRequestError(f"lease {field_name} must be a non-empty string")
+    return value
+
+
+def _validate_positive_integer(field_name: str, value: object) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise InvalidLeaseRequestError(f"lease {field_name} must be a positive integer")
+    if value <= 0:
+        raise InvalidLeaseRequestError(f"lease {field_name} must be a positive integer")
+    return value
+
+
+def _validate_non_negative_integer(field_name: str, value: object) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise InvalidLeaseRequestError(f"lease {field_name} must be a non-negative integer")
+    if value < 0:
+        raise InvalidLeaseRequestError(f"lease {field_name} must be a non-negative integer")
+    return value
+
+
+def _validate_time(field_name: str, value: object) -> LeaseTime:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise InvalidLeaseRequestError(f"lease {field_name} must be a number")
+    if value < 0:
+        raise InvalidLeaseRequestError(f"lease {field_name} must be non-negative")
+    return value
+
+
+def _validate_optional_time(field_name: str, value: object | None) -> LeaseTime | None:
+    if value is None:
+        return None
+    return _validate_time(field_name, value)
+
+
+def _freeze_attributes(value: object) -> MappingProxyType[str, object]:
+    if not isinstance(value, Mapping):
+        raise InvalidLeaseRequestError("lease attributes must be a mapping")
+    attributes = dict(value)
+    for key in attributes:
+        if not isinstance(key, str):
+            raise InvalidLeaseRequestError("lease attribute keys must be strings")
+        if not key.strip():
+            raise InvalidLeaseRequestError("lease attribute keys must not be empty")
+    return MappingProxyType(attributes)
+
+
 @dataclass(frozen=True, slots=True)
 class ActiveLease:
     resource: str
@@ -34,6 +85,23 @@ class ActiveLease:
     acquired_at: LeaseTime
     expires_at: LeaseTime | None = None
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "resource", _validate_non_empty_string("resource name", self.resource))
+        object.__setattr__(self, "owner", _validate_non_empty_string("owner", self.owner))
+        object.__setattr__(self, "units", _validate_positive_integer("units", self.units))
+        object.__setattr__(
+            self,
+            "fencing_token",
+            _validate_non_negative_integer("fencing_token", self.fencing_token),
+        )
+        object.__setattr__(self, "attributes", _freeze_attributes(self.attributes))
+        acquired_at = _validate_time("acquired_at", self.acquired_at)
+        expires_at = _validate_optional_time("expires_at", self.expires_at)
+        if expires_at is not None and expires_at <= acquired_at:
+            raise InvalidLeaseRequestError("lease expires_at must be after acquisition")
+        object.__setattr__(self, "acquired_at", acquired_at)
+        object.__setattr__(self, "expires_at", expires_at)
+
 
 @dataclass(slots=True)
 class Lease:
@@ -43,6 +111,15 @@ class Lease:
     owner: str
     units: int = 1
     fencing_token: int = 0
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.pool, InMemoryLeasePool):
+            raise InvalidLeaseRequestError("lease pool must be an InMemoryLeasePool")
+        self._validate_lease_id(self.lease_id)
+        self.resource = _validate_non_empty_string("resource name", self.resource)
+        self.owner = _validate_non_empty_string("owner", self.owner)
+        self.units = _validate_positive_integer("units", self.units)
+        self.fencing_token = _validate_non_negative_integer("fencing_token", self.fencing_token)
 
     @property
     def attributes(self) -> MappingProxyType[str, object]:
@@ -70,6 +147,10 @@ class Lease:
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
         self.release()
 
+    @staticmethod
+    def _validate_lease_id(lease_id: object) -> str:
+        return _validate_non_empty_string("lease_id", lease_id)
+
 
 @dataclass(slots=True)
 class InMemoryLeasePool:
@@ -83,11 +164,20 @@ class InMemoryLeasePool:
         for resource, capacity in capacities.items():
             if not isinstance(resource, str) or not resource.strip():
                 raise InvalidLeaseRequestError("lease resource name must be a non-empty string")
-            if not isinstance(capacity, int) or capacity <= 0:
+            if not isinstance(capacity, int) or isinstance(capacity, bool) or capacity <= 0:
                 raise InvalidLeaseRequestError(
                     f"lease capacity for {resource} must be a positive integer"
                 )
         self.capacities = capacities
+        for lease_id, active in self.active.items():
+            Lease._validate_lease_id(lease_id)
+            if not isinstance(active, ActiveLease):
+                raise InvalidLeaseRequestError("lease active records must be ActiveLease")
+        self.next_id = _validate_positive_integer("next_id", self.next_id)
+        self.next_fencing_token = _validate_positive_integer(
+            "next_fencing_token",
+            self.next_fencing_token,
+        )
 
     def available(self, resource: str) -> int:
         capacity = self._capacity(resource)
@@ -107,10 +197,13 @@ class InMemoryLeasePool:
         self._capacity(resource)
         if not isinstance(owner, str) or not owner.strip():
             raise InvalidLeaseRequestError("lease owner must be a non-empty string")
-        if not isinstance(units, int) or units <= 0:
+        if not isinstance(units, int) or isinstance(units, bool) or units <= 0:
             raise InvalidLeaseRequestError("lease units must be a positive integer")
+        acquired_at = _validate_time("acquired_at", acquired_at)
+        expires_at = _validate_optional_time("expires_at", expires_at)
         if expires_at is not None and expires_at <= acquired_at:
             raise InvalidLeaseRequestError("lease expires_at must be after acquisition")
+        frozen_attributes = _freeze_attributes(attributes or {})
 
         self.reap_expired(acquired_at)
         available = self.available(resource)
@@ -129,7 +222,7 @@ class InMemoryLeasePool:
             owner=owner,
             units=units,
             fencing_token=fencing_token,
-            attributes=MappingProxyType(dict(attributes or {})),
+            attributes=frozen_attributes,
             acquired_at=acquired_at,
             expires_at=expires_at,
         )
@@ -151,6 +244,8 @@ class InMemoryLeasePool:
         expires_at: LeaseTime,
         renewed_at: LeaseTime = 0,
     ) -> int:
+        renewed_at = _validate_time("renewed_at", renewed_at)
+        expires_at = _validate_time("expires_at", expires_at)
         if expires_at <= renewed_at:
             raise InvalidLeaseRequestError("lease expires_at must be after renewal")
         self.reap_expired(renewed_at)
@@ -172,6 +267,8 @@ class InMemoryLeasePool:
         return renewed_token
 
     def validate_fencing_token(self, lease_id: str, fencing_token: int) -> None:
+        Lease._validate_lease_id(lease_id)
+        _validate_non_negative_integer("fencing_token", fencing_token)
         active = self._active_lease(lease_id)
         if active.fencing_token != fencing_token:
             raise StaleFencingTokenError(f"lease {lease_id} fencing token is stale")
@@ -183,6 +280,7 @@ class InMemoryLeasePool:
         return self._active_lease(lease_id).expires_at
 
     def reap_expired(self, now: LeaseTime) -> int:
+        now = _validate_time("now", now)
         expired_ids = [
             lease_id
             for lease_id, active in self.active.items()
@@ -193,9 +291,11 @@ class InMemoryLeasePool:
         return len(expired_ids)
 
     def release(self, lease_id: str) -> bool:
+        Lease._validate_lease_id(lease_id)
         return self.active.pop(lease_id, None) is not None
 
     def release_all(self, owner: str) -> None:
+        owner = _validate_non_empty_string("owner", owner)
         for lease_id, active in list(self.active.items()):
             if active.owner == owner:
                 self.release(lease_id)
@@ -209,6 +309,7 @@ class InMemoryLeasePool:
             raise LeaseUnavailableError(f"unknown lease resource {resource}") from error
 
     def _active_lease(self, lease_id: str) -> ActiveLease:
+        Lease._validate_lease_id(lease_id)
         try:
             return self.active[lease_id]
         except KeyError as error:

@@ -3,8 +3,10 @@ from __future__ import annotations
 import pytest
 
 from graphblocks.leases import (
+    ActiveLease,
     InMemoryLeasePool,
     InvalidLeaseRequestError,
+    Lease,
     LeaseUnavailableError,
     StaleFencingTokenError,
     UnknownLeaseError,
@@ -130,11 +132,106 @@ def test_expired_leases_are_reaped_without_reusing_fencing_tokens() -> None:
 def test_lease_pool_rejects_invalid_capacity_units_and_expiration() -> None:
     with pytest.raises(InvalidLeaseRequestError, match="positive integer"):
         InMemoryLeasePool({"bad": 0})
+    with pytest.raises(InvalidLeaseRequestError, match="positive integer"):
+        InMemoryLeasePool({"bad": True})  # type: ignore[dict-item]
     pool = InMemoryLeasePool({"licensed-tool": 1})
 
     with pytest.raises(InvalidLeaseRequestError, match="positive integer"):
         pool.acquire("licensed-tool", owner="run-1", units=0)
+    with pytest.raises(InvalidLeaseRequestError, match="positive integer"):
+        pool.acquire("licensed-tool", owner="run-1", units=True)  # type: ignore[arg-type]
+    with pytest.raises(InvalidLeaseRequestError, match="acquired_at must be a number"):
+        pool.acquire("licensed-tool", owner="run-1", acquired_at="now")  # type: ignore[arg-type]
+    with pytest.raises(InvalidLeaseRequestError, match="expires_at must be a number"):
+        pool.acquire("licensed-tool", owner="run-1", expires_at="later")  # type: ignore[arg-type]
     with pytest.raises(InvalidLeaseRequestError, match="after acquisition"):
         pool.acquire("licensed-tool", owner="run-1", expires_at=10, acquired_at=10)
+    with pytest.raises(InvalidLeaseRequestError, match="renewed_at must be a number"):
+        pool.renew("missing", 1, expires_at=10, renewed_at="now")  # type: ignore[arg-type]
     with pytest.raises(InvalidLeaseRequestError, match="after renewal"):
         pool.renew("missing", 1, expires_at=10, renewed_at=10)
+
+
+def test_lease_records_validate_identity_counters_times_and_attributes() -> None:
+    with pytest.raises(InvalidLeaseRequestError, match="lease resource name must be a non-empty string"):
+        ActiveLease(
+            resource=" ",
+            owner="run-1",
+            units=1,
+            fencing_token=1,
+            attributes={},
+            acquired_at=1,
+        )
+    with pytest.raises(InvalidLeaseRequestError, match="lease owner must be a string"):
+        ActiveLease(
+            resource="model",
+            owner=object(),  # type: ignore[arg-type]
+            units=1,
+            fencing_token=1,
+            attributes={},
+            acquired_at=1,
+        )
+    with pytest.raises(InvalidLeaseRequestError, match="lease units must be a positive integer"):
+        ActiveLease(
+            resource="model",
+            owner="run-1",
+            units=True,  # type: ignore[arg-type]
+            fencing_token=1,
+            attributes={},
+            acquired_at=1,
+        )
+    with pytest.raises(InvalidLeaseRequestError, match="lease fencing_token must be a non-negative integer"):
+        ActiveLease(
+            resource="model",
+            owner="run-1",
+            units=1,
+            fencing_token=-1,
+            attributes={},
+            acquired_at=1,
+        )
+    with pytest.raises(InvalidLeaseRequestError, match="lease attribute keys must not be empty"):
+        ActiveLease(
+            resource="model",
+            owner="run-1",
+            units=1,
+            fencing_token=1,
+            attributes={" ": "acme"},
+            acquired_at=1,
+        )
+    with pytest.raises(InvalidLeaseRequestError, match="lease expires_at must be after acquisition"):
+        ActiveLease(
+            resource="model",
+            owner="run-1",
+            units=1,
+            fencing_token=1,
+            attributes={},
+            acquired_at=1,
+            expires_at=1,
+        )
+
+    pool = InMemoryLeasePool({"model": 1})
+    with pytest.raises(InvalidLeaseRequestError, match="lease pool must be an InMemoryLeasePool"):
+        Lease(object(), "lease-1", "model", "run-1")  # type: ignore[arg-type]
+    with pytest.raises(InvalidLeaseRequestError, match="lease lease_id must be a non-empty string"):
+        Lease(pool, " ", "model", "run-1")
+    with pytest.raises(InvalidLeaseRequestError, match="lease next_id must be a positive integer"):
+        InMemoryLeasePool({"model": 1}, next_id=0)
+    with pytest.raises(InvalidLeaseRequestError, match="lease next_fencing_token must be a positive integer"):
+        InMemoryLeasePool({"model": 1}, next_fencing_token=True)  # type: ignore[arg-type]
+    with pytest.raises(InvalidLeaseRequestError, match="lease active records must be ActiveLease"):
+        InMemoryLeasePool({"model": 1}, active={"lease-1": object()})  # type: ignore[dict-item]
+
+
+def test_lease_pool_rejects_invalid_attributes_and_release_inputs() -> None:
+    pool = InMemoryLeasePool({"model": 1})
+
+    with pytest.raises(InvalidLeaseRequestError, match="lease attributes must be a mapping"):
+        pool.acquire("model", owner="run-1", attributes=object())  # type: ignore[arg-type]
+    with pytest.raises(InvalidLeaseRequestError, match="lease attribute keys must be strings"):
+        pool.acquire("model", owner="run-1", attributes={object(): "value"})  # type: ignore[dict-item]
+    with pytest.raises(InvalidLeaseRequestError, match="lease lease_id must be a non-empty string"):
+        pool.release(" ")
+    with pytest.raises(InvalidLeaseRequestError, match="lease owner must be a non-empty string"):
+        pool.release_all(" ")
+    with pytest.raises(InvalidLeaseRequestError, match="lease fencing_token must be a non-negative integer"):
+        pool.validate_fencing_token("lease-1", True)  # type: ignore[arg-type]

@@ -992,6 +992,10 @@ class ResourceLease(BaseModel):
     expires_at: datetime
 ```
 
+LeasePool과 ResourceLease record는 construction/admission boundary에서 non-empty pool/resource/owner/lease
+identity, positive capacity and unit counts, non-negative fencing tokens, mapping-shaped attributes with
+non-empty string keys, and expiration times strictly after acquisition/renewal을 검증해야 한다.
+
 Lease loss는 stale worker의 commit을 막아야 한다. Resource usage는 Budget/UsageLedger와 연결할 수 있다.
 
 
