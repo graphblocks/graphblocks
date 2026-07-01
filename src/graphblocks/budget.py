@@ -102,6 +102,61 @@ class BudgetCompletionReserveStateError(BudgetError):
     pass
 
 
+def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{owner} {field_name} must be a string")
+    if not value.strip():
+        raise ValueError(f"{owner} {field_name} must not be empty")
+    return value
+
+
+def _validate_optional_non_empty_string(owner: str, field_name: str, value: object | None) -> str | None:
+    if value is None:
+        return None
+    return _validate_non_empty_string(owner, field_name, value)
+
+
+def _validate_non_negative_integer(owner: str, field_name: str, value: object) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ValueError(f"{owner} {field_name} must be an integer")
+    if value < 0:
+        raise ValueError(f"{owner} {field_name} must be non-negative")
+    return value
+
+
+def _validate_resource_ref(owner: str, field_name: str, value: object) -> ResourceRef:
+    if not isinstance(value, ResourceRef):
+        raise ValueError(f"{owner} {field_name} must be a ResourceRef")
+    return value
+
+
+def _validate_usage_amounts(owner: str, field_name: str, values: object) -> list[UsageAmount]:
+    if isinstance(values, str):
+        raise ValueError(f"{owner} {field_name} must be a collection of UsageAmount")
+    try:
+        amounts = list(values)  # type: ignore[arg-type]
+    except TypeError as error:
+        raise ValueError(f"{owner} {field_name} must be a collection of UsageAmount") from error
+    if any(not isinstance(amount, UsageAmount) for amount in amounts):
+        raise ValueError(f"{owner} {field_name} must contain UsageAmount records")
+    return list(amounts)
+
+
+def _validate_string_tuple(owner: str, field_name: str, values: object) -> tuple[str, ...]:
+    if isinstance(values, str):
+        raise ValueError(f"{owner} {field_name} must be a collection of strings")
+    try:
+        normalized = tuple(values)  # type: ignore[arg-type]
+    except TypeError as error:
+        raise ValueError(f"{owner} {field_name} must be a collection of strings") from error
+    for item in normalized:
+        if not isinstance(item, str):
+            raise ValueError(f"{owner} {field_name} items must be strings")
+        if not item.strip():
+            raise ValueError(f"{owner} {field_name} item must not be empty")
+    return normalized
+
+
 @dataclass(frozen=True, slots=True)
 class UsageAmount:
     kind: str
@@ -148,8 +203,19 @@ class BudgetAccount:
     revision: int = 0
 
     def __post_init__(self) -> None:
+        _validate_non_empty_string("budget account", "budget_id", self.budget_id)
+        _validate_resource_ref("budget account", "scope", self.scope)
+        object.__setattr__(
+            self,
+            "allocated",
+            _validate_usage_amounts("budget account", "allocated", self.allocated),
+        )
+        _validate_optional_non_empty_string("budget account", "parent_budget_id", self.parent_budget_id)
         if self.status not in VALID_BUDGET_STATUSES:
             raise ValueError(f"unknown budget status {self.status!r}")
+        if not isinstance(self.policy_ref, str):
+            raise ValueError("budget account policy_ref must be a string")
+        _validate_non_negative_integer("budget account", "revision", self.revision)
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,8 +230,18 @@ class BudgetReservation:
     status: ReservationStatus = "reserved"
 
     def __post_init__(self) -> None:
+        _validate_non_empty_string("budget reservation", "reservation_id", self.reservation_id)
+        _validate_non_empty_string("budget reservation", "budget_id", self.budget_id)
+        _validate_resource_ref("budget reservation", "owner", self.owner)
+        object.__setattr__(
+            self,
+            "amounts",
+            _validate_usage_amounts("budget reservation", "amounts", self.amounts),
+        )
         if self.purpose not in VALID_RESERVATION_PURPOSES:
             raise ValueError(f"unknown reservation purpose {self.purpose!r}")
+        _validate_non_empty_string("budget reservation", "expires_at", self.expires_at)
+        _validate_non_negative_integer("budget reservation", "fencing_token", self.fencing_token)
         if self.status not in VALID_RESERVATION_STATUSES:
             raise ValueError(f"unknown reservation status {self.status!r}")
 
@@ -181,6 +257,18 @@ class BudgetBalance:
     revision: int
     observed_at: str = ""
 
+    def __post_init__(self) -> None:
+        _validate_non_empty_string("budget balance", "budget_id", self.budget_id)
+        for field_name in ("allocated", "reserved", "committed", "available", "overdraft"):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_usage_amounts("budget balance", field_name, getattr(self, field_name)),
+            )
+        _validate_non_negative_integer("budget balance", "revision", self.revision)
+        if not isinstance(self.observed_at, str):
+            raise ValueError("budget balance observed_at must be a string")
+
 
 @dataclass(frozen=True, slots=True)
 class BudgetSettlement:
@@ -193,8 +281,17 @@ class BudgetSettlement:
     revision: int = 0
 
     def __post_init__(self) -> None:
+        _validate_non_empty_string("budget settlement", "reservation_id", self.reservation_id)
+        _validate_non_empty_string("budget settlement", "budget_id", self.budget_id)
+        for field_name in ("committed", "released", "overdraft"):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_usage_amounts("budget settlement", field_name, getattr(self, field_name)),
+            )
         if self.status not in VALID_RESERVATION_STATUSES:
             raise ValueError(f"unknown reservation status {self.status!r}")
+        _validate_non_negative_integer("budget settlement", "revision", self.revision)
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,7 +309,29 @@ class BudgetPermit:
     fencing_tokens: dict[str, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "reservation_refs", tuple(self.reservation_refs))
+        _validate_non_empty_string("budget permit", "permit_id", self.permit_id)
+        object.__setattr__(
+            self,
+            "reservation_refs",
+            _validate_string_tuple("budget permit", "reservation_refs", self.reservation_refs),
+        )
+        _validate_resource_ref("budget permit", "owner", self.owner)
+        _validate_resource_ref("budget permit", "atomic_unit", self.atomic_unit)
+        _validate_non_negative_integer("budget permit", "admission_epoch", self.admission_epoch)
+        object.__setattr__(
+            self,
+            "authorized_amounts",
+            _validate_usage_amounts("budget permit", "authorized_amounts", self.authorized_amounts),
+        )
+        if self.continuation_profile is not None:
+            _validate_non_empty_string("budget permit", "continuation_profile", self.continuation_profile)
+        _validate_non_empty_string("budget permit", "policy_snapshot_digest", self.policy_snapshot_digest)
+        _validate_non_empty_string("budget permit", "expires_at", self.expires_at)
+        object.__setattr__(
+            self,
+            "low_watermark",
+            _validate_usage_amounts("budget permit", "low_watermark", self.low_watermark),
+        )
         if not isinstance(self.fencing_tokens, Mapping):
             raise ValueError("budget permit fencing_tokens must be a mapping")
         fencing_tokens = dict(self.fencing_tokens)
@@ -259,11 +378,25 @@ class CompletionReserve:
     fencing_token: int = 0
 
     def __post_init__(self) -> None:
+        _validate_non_empty_string("completion reserve", "reserve_id", self.reserve_id)
+        _validate_non_empty_string("completion reserve", "budget_id", self.budget_id)
         if self.purpose not in VALID_COMPLETION_RESERVE_PURPOSES:
             raise ValueError(f"unknown completion reserve purpose {self.purpose!r}")
+        object.__setattr__(
+            self,
+            "amounts",
+            _validate_usage_amounts("completion reserve", "amounts", self.amounts),
+        )
+        object.__setattr__(
+            self,
+            "spendable_by",
+            frozenset(_validate_string_tuple("completion reserve", "spendable_by", self.spendable_by)),
+        )
+        _validate_optional_non_empty_string("completion reserve", "expires_at", self.expires_at)
         if self.status not in VALID_COMPLETION_RESERVE_STATUSES:
             raise ValueError(f"unknown completion reserve status {self.status!r}")
-        object.__setattr__(self, "spendable_by", frozenset(self.spendable_by))
+        _validate_optional_non_empty_string("completion reserve", "reservation_id", self.reservation_id)
+        _validate_non_negative_integer("completion reserve", "fencing_token", self.fencing_token)
 
 
 BudgetRecord = TypeVar("BudgetRecord", BudgetAccount, BudgetReservation, BudgetPermit, CompletionReserve)

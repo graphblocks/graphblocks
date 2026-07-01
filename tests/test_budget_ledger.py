@@ -120,6 +120,80 @@ def test_budget_models_reject_unknown_typed_values() -> None:
         )
 
 
+def test_budget_records_validate_identity_nested_records_and_counters() -> None:
+    with pytest.raises(ValueError, match="budget account budget_id must not be empty"):
+        BudgetAccount(" ", ResourceRef("tenant:acme"), [_tokens("1")])
+    with pytest.raises(ValueError, match="budget account scope must be a ResourceRef"):
+        BudgetAccount("budget-1", "tenant:acme", [_tokens("1")])  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="budget account allocated must contain UsageAmount records"):
+        BudgetAccount("budget-1", ResourceRef("tenant:acme"), [object()])  # type: ignore[list-item]
+    with pytest.raises(ValueError, match="budget account revision must be non-negative"):
+        BudgetAccount("budget-1", ResourceRef("tenant:acme"), [_tokens("1")], revision=-1)
+    with pytest.raises(ValueError, match="budget account policy_ref must be a string"):
+        BudgetAccount("budget-1", ResourceRef("tenant:acme"), [_tokens("1")], policy_ref=object())  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="budget reservation owner must be a ResourceRef"):
+        BudgetReservation(
+            "reservation-1",
+            "budget-1",
+            "run:1",  # type: ignore[arg-type]
+            [_tokens("1")],
+            purpose="provider_call",
+            expires_at="later",
+            fencing_token=1,
+        )
+    with pytest.raises(ValueError, match="budget reservation expires_at must not be empty"):
+        BudgetReservation(
+            "reservation-1",
+            "budget-1",
+            ResourceRef("run:1"),
+            [_tokens("1")],
+            purpose="provider_call",
+            expires_at=" ",
+            fencing_token=1,
+        )
+    with pytest.raises(ValueError, match="budget reservation fencing_token must be non-negative"):
+        BudgetReservation(
+            "reservation-1",
+            "budget-1",
+            ResourceRef("run:1"),
+            [_tokens("1")],
+            purpose="provider_call",
+            expires_at="later",
+            fencing_token=-1,
+        )
+
+    with pytest.raises(ValueError, match="budget balance committed must contain UsageAmount records"):
+        graphblocks.BudgetBalance(
+            "budget-1",
+            allocated=[_tokens("1")],
+            reserved=[],
+            committed=[object()],  # type: ignore[list-item]
+            available=[],
+            overdraft=[],
+            revision=1,
+        )
+    with pytest.raises(ValueError, match="budget settlement revision must be non-negative"):
+        BudgetSettlement("reservation-1", "budget-1", revision=-1)
+    with pytest.raises(ValueError, match="completion reserve spendable_by item must not be empty"):
+        CompletionReserve(
+            "reserve-1",
+            "budget-1",
+            purpose="cleanup",
+            amounts=[_tokens("1")],
+            spendable_by=frozenset({" "}),
+        )
+    with pytest.raises(ValueError, match="completion reserve fencing_token must be an integer"):
+        CompletionReserve(
+            "reserve-1",
+            "budget-1",
+            purpose="cleanup",
+            amounts=[_tokens("1")],
+            spendable_by=frozenset({"cleanup.worker"}),
+            fencing_token=True,  # type: ignore[arg-type]
+        )
+
+
 def test_budget_ledger_reserve_reduces_available_balance() -> None:
     ledger = InMemoryBudgetLedger()
     ledger.allocate("budget-1", ResourceRef("tenant:acme"), [_tokens("100")], policy_ref="policy-1")

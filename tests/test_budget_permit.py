@@ -71,6 +71,43 @@ def test_budget_permit_rejects_invalid_fencing_tokens() -> None:
         BudgetPermit(**base, fencing_tokens={"budget-1": -1})
 
 
+def test_budget_permit_validates_identity_scope_and_authorization_records() -> None:
+    base = {
+        "permit_id": "permit-1",
+        "reservation_refs": ("reservation-1",),
+        "owner": ResourceRef("worker:1", resource_kind="worker"),
+        "atomic_unit": ResourceRef("turn:1", resource_kind="turn"),
+        "admission_epoch": 3,
+        "authorized_amounts": [_tokens("40")],
+        "continuation_profile": "finish_current_turn",
+        "policy_snapshot_digest": "sha256:policy",
+        "expires_at": "2026-06-22T01:00:00Z",
+    }
+
+    with pytest.raises(ValueError, match="budget permit permit_id must not be empty"):
+        BudgetPermit(**{**base, "permit_id": " "})
+    with pytest.raises(ValueError, match="budget permit reservation_refs must be a collection of strings"):
+        BudgetPermit(**{**base, "reservation_refs": "reservation-1"})
+    with pytest.raises(ValueError, match="budget permit reservation_refs item must not be empty"):
+        BudgetPermit(**{**base, "reservation_refs": ("reservation-1", " ")})
+    with pytest.raises(ValueError, match="budget permit owner must be a ResourceRef"):
+        BudgetPermit(**{**base, "owner": "worker:1"})  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="budget permit atomic_unit must be a ResourceRef"):
+        BudgetPermit(**{**base, "atomic_unit": "turn:1"})  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="budget permit admission_epoch must be non-negative"):
+        BudgetPermit(**{**base, "admission_epoch": -1})
+    with pytest.raises(ValueError, match="budget permit authorized_amounts must contain UsageAmount records"):
+        BudgetPermit(**{**base, "authorized_amounts": [object()]})  # type: ignore[list-item]
+    with pytest.raises(ValueError, match="budget permit continuation_profile must not be empty"):
+        BudgetPermit(**{**base, "continuation_profile": " "})
+    with pytest.raises(ValueError, match="budget permit policy_snapshot_digest must not be empty"):
+        BudgetPermit(**{**base, "policy_snapshot_digest": ""})
+    with pytest.raises(ValueError, match="budget permit expires_at must not be empty"):
+        BudgetPermit(**{**base, "expires_at": " "})
+    with pytest.raises(ValueError, match="budget permit low_watermark must contain UsageAmount records"):
+        BudgetPermit(**base, low_watermark=[object()])  # type: ignore[list-item]
+
+
 def test_budget_permit_requires_matching_usage_dimensions() -> None:
     ledger = InMemoryBudgetLedger()
     ledger.allocate(

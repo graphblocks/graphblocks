@@ -601,6 +601,11 @@ class BudgetPermit(BaseModel):
     fencing_tokens: dict[str, int]
 ```
 
+`BudgetAccount`, `BudgetReservation`, `BudgetBalance`, `BudgetSettlement`, `BudgetPermit`,
+and `CompletionReserve` records는 construction 또는 storage replay boundary에서 non-empty
+identity strings, typed `ResourceRef` ownership/scope, `UsageAmount` collections, valid lifecycle
+literals, non-negative revision/fencing/admission counters, and non-empty fencing-token keys를 검증해야 한다.
+
 Distributed 실행 protocol:
 
 ```text
