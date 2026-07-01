@@ -7,6 +7,7 @@ from graphblocks.policy import PrincipalRef
 from graphblocks.workspace import (
     InMemoryWorkspaceStore,
     WorkspaceCommit,
+    WorkspaceMutationDecision,
     WorkspaceMutationDeniedError,
     WorkspaceMutationPolicy,
     WorkspaceSnapshot,
@@ -135,6 +136,37 @@ def test_workspace_commit_validates_identity_links_and_copies_snapshot() -> None
             "2026-06-24T00:05:00Z",
             "change-1",
         )
+
+
+def test_workspace_mutation_decision_validates_boolean_and_reason_codes() -> None:
+    decision = WorkspaceMutationDecision(True, ("workspace.b", "workspace.a", "workspace.a"))
+
+    assert decision.allowed is True
+    assert decision.reason_codes == ("workspace.a", "workspace.b")
+    with pytest.raises(ValueError, match="workspace mutation decision allowed must be a boolean"):
+        WorkspaceMutationDecision("yes", ())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="workspace mutation decision reason_codes item must not be empty"):
+        WorkspaceMutationDecision(False, (" ",))
+
+
+def test_workspace_mutation_policy_validates_identity_and_string_collections() -> None:
+    policy = WorkspaceMutationPolicy(
+        policy_id="policy-1",
+        allowed_resource_kinds=("file", "source", "file"),
+        denied_operations=("process.exec",),
+        required_review_scopes=("quality",),
+        read_only_resource_ids=("rtl/top.sv",),
+        read_only_resource_kinds=("test_oracle", "source"),
+    )
+
+    assert policy.allowed_resource_kinds == ("file", "source")
+    assert policy.read_only_resource_kinds == ("source", "test_oracle")
+    with pytest.raises(ValueError, match="workspace mutation policy policy_id must not be empty"):
+        WorkspaceMutationPolicy(" ", ("file",))
+    with pytest.raises(ValueError, match="workspace mutation policy allowed_resource_kinds must be a collection"):
+        WorkspaceMutationPolicy("policy-1", "file")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="workspace mutation policy denied_operations item must be a string"):
+        WorkspaceMutationPolicy("policy-1", ("file",), denied_operations=(object(),))  # type: ignore[arg-type]
 
 
 def test_workspace_mutation_policy_requires_allowed_kind_and_reviewer() -> None:

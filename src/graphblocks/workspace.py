@@ -22,6 +22,18 @@ def _validate_optional_non_empty_string(owner: str, field_name: str, value: obje
     return _validate_non_empty_string(owner, field_name, value)
 
 
+def _validate_string_tuple(owner: str, field_name: str, value: object) -> tuple[str, ...]:
+    if isinstance(value, str):
+        raise ValueError(f"{owner} {field_name} must be a collection of strings")
+    try:
+        items = tuple(value)  # type: ignore[arg-type]
+    except TypeError as error:
+        raise ValueError(f"{owner} {field_name} must be a collection of strings") from error
+    for item in items:
+        _validate_non_empty_string(owner, f"{field_name} item", item)
+    return tuple(sorted(set(items)))
+
+
 def _copy_resource_snapshot_ref(resource: ResourceSnapshotRef) -> ResourceSnapshotRef:
     if not isinstance(resource, ResourceSnapshotRef):
         raise ValueError("workspace snapshot resources items must be ResourceSnapshotRef")
@@ -132,7 +144,13 @@ class WorkspaceMutationDecision:
     reason_codes: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "reason_codes", tuple(sorted(set(self.reason_codes))))
+        if not isinstance(self.allowed, bool):
+            raise ValueError("workspace mutation decision allowed must be a boolean")
+        object.__setattr__(
+            self,
+            "reason_codes",
+            _validate_string_tuple("workspace mutation decision", "reason_codes", self.reason_codes),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,11 +163,32 @@ class WorkspaceMutationPolicy:
     read_only_resource_kinds: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "allowed_resource_kinds", tuple(sorted(set(self.allowed_resource_kinds))))
-        object.__setattr__(self, "denied_operations", tuple(sorted(set(self.denied_operations))))
-        object.__setattr__(self, "required_review_scopes", tuple(sorted(set(self.required_review_scopes))))
-        object.__setattr__(self, "read_only_resource_ids", tuple(sorted(set(self.read_only_resource_ids))))
-        object.__setattr__(self, "read_only_resource_kinds", tuple(sorted(set(self.read_only_resource_kinds))))
+        _validate_non_empty_string("workspace mutation policy", "policy_id", self.policy_id)
+        object.__setattr__(
+            self,
+            "allowed_resource_kinds",
+            _validate_string_tuple("workspace mutation policy", "allowed_resource_kinds", self.allowed_resource_kinds),
+        )
+        object.__setattr__(
+            self,
+            "denied_operations",
+            _validate_string_tuple("workspace mutation policy", "denied_operations", self.denied_operations),
+        )
+        object.__setattr__(
+            self,
+            "required_review_scopes",
+            _validate_string_tuple("workspace mutation policy", "required_review_scopes", self.required_review_scopes),
+        )
+        object.__setattr__(
+            self,
+            "read_only_resource_ids",
+            _validate_string_tuple("workspace mutation policy", "read_only_resource_ids", self.read_only_resource_ids),
+        )
+        object.__setattr__(
+            self,
+            "read_only_resource_kinds",
+            _validate_string_tuple("workspace mutation policy", "read_only_resource_kinds", self.read_only_resource_kinds),
+        )
 
     def evaluate(
         self,
