@@ -566,3 +566,39 @@ fn policy_stop_barrier_rejects_whitespace_identity_fields() {
         ),
     );
 }
+
+#[test]
+fn policy_stop_barrier_rejects_kept_draft_delivered_beyond_policy_acceptance() {
+    let mut store = InMemoryDurableToolTerminalStore::new();
+
+    assert_eq!(
+        store.record_response_policy_stop(
+            DurableResponsePolicyStopRecord::new("response-1", "decision-1", 7, 1_820_000_000_000,)
+                .with_last_generated_sequence(9)
+                .with_last_client_delivered_sequence(8)
+                .with_draft_disposition(DurableOutputCutoffDraftDisposition::Keep),
+        ),
+        Err(
+            ToolTerminalStoreError::DeliveredDraftBeyondPolicyAcceptanceKept {
+                last_policy_accepted_sequence: 7,
+                last_client_delivered_sequence: 8,
+            }
+        ),
+    );
+
+    let committed = store
+        .record_response_policy_stop(
+            DurableResponsePolicyStopRecord::new("response-1", "decision-1", 7, 1_820_000_000_000)
+                .with_last_generated_sequence(9)
+                .with_last_client_delivered_sequence(8)
+                .with_draft_disposition(DurableOutputCutoffDraftDisposition::Retract),
+        )
+        .expect("retracted over-accepted draft should commit");
+
+    assert_eq!(committed.record.last_policy_accepted_sequence, 7);
+    assert_eq!(committed.record.last_client_delivered_sequence, 8);
+    assert_eq!(
+        committed.record.draft_disposition,
+        DurableOutputCutoffDraftDisposition::Retract,
+    );
+}

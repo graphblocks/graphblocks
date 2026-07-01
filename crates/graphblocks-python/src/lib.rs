@@ -8488,6 +8488,9 @@ fn evaluate_durable_tool_terminal_store_json(operations_json: &str) -> PyResult<
             ToolTerminalStoreError::ClientDeliveredSequenceBeyondGenerated { .. } => {
                 "client_delivered_sequence_beyond_generated"
             }
+            ToolTerminalStoreError::DeliveredDraftBeyondPolicyAcceptanceKept { .. } => {
+                "delivered_draft_beyond_policy_acceptance_kept"
+            }
             ToolTerminalStoreError::DeniedEffectCommitted { .. } => "denied_effect_committed",
             ToolTerminalStoreError::ExpiredEffectCommitted { .. } => "expired_effect_committed",
             ToolTerminalStoreError::TerminalStateConflict { .. } => "terminal_state_conflict",

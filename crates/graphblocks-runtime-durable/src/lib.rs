@@ -769,6 +769,16 @@ fn validate_response_policy_stop_record(
             },
         );
     }
+    if record.last_client_delivered_sequence > record.last_policy_accepted_sequence
+        && record.draft_disposition == DurableOutputCutoffDraftDisposition::Keep
+    {
+        return Err(
+            ToolTerminalStoreError::DeliveredDraftBeyondPolicyAcceptanceKept {
+                last_policy_accepted_sequence: record.last_policy_accepted_sequence,
+                last_client_delivered_sequence: record.last_client_delivered_sequence,
+            },
+        );
+    }
     if record.occurred_at_unix_ms == 0 {
         return Err(ToolTerminalStoreError::InvalidCompletedAt);
     }
@@ -811,6 +821,10 @@ pub enum ToolTerminalStoreError {
     },
     ClientDeliveredSequenceBeyondGenerated {
         last_generated_sequence: u64,
+        last_client_delivered_sequence: u64,
+    },
+    DeliveredDraftBeyondPolicyAcceptanceKept {
+        last_policy_accepted_sequence: u64,
         last_client_delivered_sequence: u64,
     },
     TerminalStateConflict {
