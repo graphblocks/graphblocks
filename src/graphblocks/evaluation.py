@@ -4,6 +4,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field, replace, is_dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
+import math
 from typing import Literal
 
 from .canonical import canonical_hash
@@ -27,6 +28,8 @@ VALID_METRIC_DIRECTIONS = frozenset(("minimize", "maximize", "target", "informat
 VALID_GATE_DECISIONS = frozenset(("pass", "fail", "inconclusive"))
 VALID_CONSTRAINT_OPERATORS = frozenset(("at_least", "at_most", "equals"))
 VALID_REVIEW_DECISIONS = frozenset(("accept", "accept_with_conditions", "revise", "reject"))
+VALID_SLO_COMPARISONS = frozenset(("at_least", "at_most"))
+VALID_SLO_REPORT_STATUSES = frozenset(("pass", "fail", "no_data"))
 
 
 def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
@@ -88,6 +91,18 @@ def _copy_mapping(owner: str, field_name: str, value: object) -> dict[str, objec
         if not key.strip():
             raise ValueError(f"{owner} {field_name} key must not be empty")
     return mapping
+
+
+def _finite_float(owner: str, field_name: str, value: object) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f"{owner} {field_name} must be numeric")
+    try:
+        numeric = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{owner} {field_name} must be numeric") from error
+    if not math.isfinite(numeric):
+        raise ValueError(f"{owner} {field_name} must be finite")
+    return numeric
 
 
 @dataclass(frozen=True, slots=True)
@@ -367,9 +382,14 @@ class SloObjective:
     unit: str | None = None
 
     def __post_init__(self) -> None:
-        if self.comparison not in {"at_least", "at_most"}:
+        _validate_non_empty_string("SLO objective", "slo_id", self.slo_id)
+        _validate_non_empty_string("SLO objective", "indicator", self.indicator)
+        _validate_non_empty_string("SLO objective", "window", self.window)
+        if self.unit is not None:
+            _validate_non_empty_string("SLO objective", "unit", self.unit)
+        if self.comparison not in VALID_SLO_COMPARISONS:
             raise ValueError(f"unsupported SLO comparison {self.comparison!r}")
-        object.__setattr__(self, "objective", float(self.objective))
+        object.__setattr__(self, "objective", _finite_float("SLO objective", "objective", self.objective))
 
     @classmethod
     def at_least(cls, slo_id: str, indicator: str, objective: float, window: str) -> SloObjective:
@@ -431,7 +451,15 @@ class SloMeasurement:
     sample_count: int | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "value", float(self.value))
+        _validate_non_empty_string("SLO measurement", "indicator", self.indicator)
+        _validate_non_empty_string("SLO measurement", "window", self.window)
+        if self.unit is not None:
+            _validate_non_empty_string("SLO measurement", "unit", self.unit)
+        object.__setattr__(self, "value", _finite_float("SLO measurement", "value", self.value))
+        if self.sample_count is not None and (
+            not isinstance(self.sample_count, int) or isinstance(self.sample_count, bool)
+        ):
+            raise ValueError("SLO sample_count must be an integer")
         if self.sample_count is not None and self.sample_count < 0:
             raise ValueError("SLO sample_count must be non-negative")
 
@@ -453,6 +481,36 @@ class SloReport:
     sample_count: int | None = None
     violated_by: float | None = None
     reason: str | None = None
+
+    def __post_init__(self) -> None:
+        _validate_non_empty_string("SLO report", "slo_id", self.slo_id)
+        if self.status not in VALID_SLO_REPORT_STATUSES:
+            raise ValueError(f"invalid SLO report status {self.status}")
+        if self.status == "no_data":
+            if not isinstance(self.indicator, str):
+                raise ValueError("SLO report indicator must be a string")
+            if not isinstance(self.window, str):
+                raise ValueError("SLO report window must be a string")
+        else:
+            _validate_non_empty_string("SLO report", "indicator", self.indicator)
+            _validate_non_empty_string("SLO report", "window", self.window)
+        object.__setattr__(self, "objective", _finite_float("SLO report", "objective", self.objective))
+        if self.observed_value is not None:
+            object.__setattr__(
+                self,
+                "observed_value",
+                _finite_float("SLO report", "observed_value", self.observed_value),
+            )
+        if self.sample_count is not None and (
+            not isinstance(self.sample_count, int) or isinstance(self.sample_count, bool)
+        ):
+            raise ValueError("SLO report sample_count must be an integer")
+        if self.sample_count is not None and self.sample_count < 0:
+            raise ValueError("SLO report sample_count must be non-negative")
+        if self.violated_by is not None:
+            object.__setattr__(self, "violated_by", _finite_float("SLO report", "violated_by", self.violated_by))
+        if self.reason is not None:
+            _validate_non_empty_string("SLO report", "reason", self.reason)
 
 
 @dataclass(frozen=True, slots=True)

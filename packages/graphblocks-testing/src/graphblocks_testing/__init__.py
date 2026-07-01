@@ -5792,11 +5792,12 @@ class TckRunner:
                     for raw_report in raw_reports:
                         if not isinstance(raw_report, Mapping):
                             raise ValueError("deployment slo_condition report must be a mapping")
+                        slo_id = str(raw_report.get("sloId", raw_report.get("slo_id", "")))
                         reports.append(
                             SloReport(
-                                slo_id=str(raw_report.get("sloId", raw_report.get("slo_id", ""))),
-                                indicator="",
-                                window="",
+                                slo_id=slo_id,
+                                indicator=slo_id,
+                                window="deployment",
                                 status=str(raw_report.get("status", "")),
                                 objective=0.0,
                             )

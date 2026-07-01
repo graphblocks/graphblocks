@@ -20,6 +20,7 @@ from graphblocks.evaluation import (
     RunProvenance,
     SloMeasurement,
     SloObjective,
+    SloReport,
     TypedValueRef,
     TrialResult,
     evaluate_gate,
@@ -261,6 +262,60 @@ def test_slo_objective_is_no_data_for_mismatched_indicator_or_window() -> None:
     assert report.status == "no_data"
     assert report.observed_value is None
     assert report.reason == "window_mismatch"
+
+
+def test_slo_records_validate_identity_literals_and_finite_values() -> None:
+    with pytest.raises(ValueError, match="SLO objective slo_id must not be empty"):
+        SloObjective(" ", "availability", "at_least", 0.99, "30d")
+    with pytest.raises(ValueError, match="SLO objective indicator must not be empty"):
+        SloObjective("slo-1", " ", "at_least", 0.99, "30d")
+    with pytest.raises(ValueError, match="SLO objective window must not be empty"):
+        SloObjective("slo-1", "availability", "at_least", 0.99, " ")
+    with pytest.raises(ValueError, match="SLO objective unit must not be empty"):
+        SloObjective("slo-1", "latency", "at_most", 1500, "30d", unit=" ")
+    with pytest.raises(ValueError, match="unsupported SLO comparison 'around'"):
+        SloObjective("slo-1", "latency", "around", 1500, "30d")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="SLO objective objective must be numeric"):
+        SloObjective("slo-1", "latency", "at_most", True, "30d")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="SLO objective objective must be finite"):
+        SloObjective("slo-1", "latency", "at_most", float("inf"), "30d")
+
+    with pytest.raises(ValueError, match="SLO measurement indicator must not be empty"):
+        SloMeasurement(" ", 1.0, "30d")
+    with pytest.raises(ValueError, match="SLO measurement window must not be empty"):
+        SloMeasurement("availability", 1.0, " ")
+    with pytest.raises(ValueError, match="SLO measurement unit must not be empty"):
+        SloMeasurement("latency", 1.0, "30d", unit=" ")
+    with pytest.raises(ValueError, match="SLO measurement value must be finite"):
+        SloMeasurement("availability", float("nan"), "30d")
+    with pytest.raises(ValueError, match="SLO sample_count must be an integer"):
+        SloMeasurement("availability", 1.0, "30d", sample_count=True)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="SLO sample_count must be non-negative"):
+        SloMeasurement("availability", 1.0, "30d", sample_count=-1)
+
+    with pytest.raises(ValueError, match="SLO report slo_id must not be empty"):
+        SloReport(" ", "availability", "30d", "pass", 0.99)
+    with pytest.raises(ValueError, match="SLO report indicator must not be empty"):
+        SloReport("slo-1", " ", "30d", "pass", 0.99)
+    with pytest.raises(ValueError, match="SLO report window must not be empty"):
+        SloReport("slo-1", "availability", " ", "fail", 0.99)
+    with pytest.raises(ValueError, match="invalid SLO report status unknown"):
+        SloReport("slo-1", "availability", "30d", "unknown", 0.99)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="SLO report objective must be finite"):
+        SloReport("slo-1", "availability", "30d", "pass", float("inf"))
+    with pytest.raises(ValueError, match="SLO report observed_value must be finite"):
+        SloReport("slo-1", "availability", "30d", "pass", 0.99, observed_value=float("nan"))
+    with pytest.raises(ValueError, match="SLO report sample_count must be an integer"):
+        SloReport("slo-1", "availability", "30d", "pass", 0.99, sample_count=True)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="SLO report sample_count must be non-negative"):
+        SloReport("slo-1", "availability", "30d", "pass", 0.99, sample_count=-1)
+    with pytest.raises(ValueError, match="SLO report violated_by must be finite"):
+        SloReport("slo-1", "availability", "30d", "fail", 0.99, violated_by=float("inf"))
+    with pytest.raises(ValueError, match="SLO report reason must not be empty"):
+        SloReport("slo-1", "availability", "30d", "no_data", 0.99, reason=" ")
+    no_data_placeholder = SloReport("slo-1", "", "", "no_data", 0.0)
+
+    assert no_data_placeholder.status == "no_data"
 
 
 def test_review_record_is_invalid_for_changed_subject_digest() -> None:
