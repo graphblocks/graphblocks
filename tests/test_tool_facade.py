@@ -2526,6 +2526,68 @@ def test_completed_tool_result_rejects_stale_output_digest_before_model_return()
     assert str(error.value) == "tool result call-1 output digest does not match output"
 
 
+@pytest.mark.parametrize(
+    ("field_name", "message"),
+    (
+        ("call", "tool result validation call must be a ToolCall"),
+        ("result", "tool result validation result must be a ToolResult"),
+        ("resolved_tool", "tool result validation resolved_tool must be a ResolvedTool"),
+        ("schema_registry", "tool result validation schema_registry must be a ToolSchemaRegistry"),
+    ),
+)
+def test_completed_tool_result_model_output_rejects_invalid_boundary_records(
+    field_name: str, message: str
+) -> None:
+    catalog = ToolCatalog(
+        definitions=(
+            ToolDefinition(
+                name="knowledge.search",
+                description="Search documentation.",
+                input_schema="schemas/SearchRequest@1",
+                output_schema="schemas/SearchResult@1",
+            ),
+        ),
+        bindings=(
+            ToolBinding(
+                binding_id="binding-search",
+                tool_name="knowledge.search",
+                implementation=BlockToolImplementation(block="blocks.search"),
+            ),
+        ),
+    )
+    resolved = catalog.resolve(ToolResolutionScope(), effective_policy_snapshot_id="policy-snapshot-1")[0]
+    call = (
+        ToolCallDraft.proposed("response-1", "call-1", "knowledge.search")
+        .append_argument_fragment("{}")
+        .complete_arguments()
+        .into_tool_call(resolved.resolved_tool_id, created_at="2026-06-23T00:00:00Z")
+    )
+    registry = ToolSchemaRegistry(
+        (
+            JsonSchema(
+                "schemas/SearchResult@1",
+                JsonSchemaNode.object().required_property("answer", JsonSchemaNode.string()),
+            ),
+        )
+    )
+    result = ToolResult.completed(
+        "call-1",
+        (ContentPart(kind="json", data={"answer": "Use the runtime."}),),
+        started_at="2026-06-23T00:00:01Z",
+        completed_at="2026-06-23T00:00:02Z",
+    )
+
+    call_arg: object = "not-a-call" if field_name == "call" else call
+    result_arg: object = "not-a-result" if field_name == "result" else result
+    resolved_arg: object = "not-a-resolved-tool" if field_name == "resolved_tool" else resolved
+    registry_arg: object = "not-a-registry" if field_name == "schema_registry" else registry
+
+    with pytest.raises(ToolResultValidationError) as error:
+        validate_tool_result_for_model(call_arg, result_arg, resolved_arg, registry_arg)  # type: ignore[arg-type]
+
+    assert str(error.value) == message
+
+
 def test_completed_tool_result_model_output_overrides_raw_trust_metadata_by_default() -> None:
     catalog = ToolCatalog(
         definitions=(

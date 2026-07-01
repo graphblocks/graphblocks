@@ -568,6 +568,10 @@ ToolResult diagnostics MUST be mapping records with non-empty string codes and m
 diagnostic entries must fail as ToolResult validation errors before result delivery or persistence.
 When present, `ToolResult.error` MUST be a BlockError mapping with non-empty string `code` and
 `message` fields.
+Before tool output validation, policy processing, redaction, capture, or model return, the runtime
+MUST validate that the boundary records are typed `ToolCall`, `ToolResult`, `ResolvedTool`, and
+schema registry instances. Malformed boundary records MUST fail as ToolResult validation errors
+before field dereference, schema lookup, or content-policy evaluation.
 
 Tool은 block, graph, remote service, MCP tool에서 생성할 수 있다.
 

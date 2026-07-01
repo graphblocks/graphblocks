@@ -2057,6 +2057,14 @@ def validate_tool_result_for_model(
     prompt_injection_label: str = "untrusted_tool_output",
     content_classification: str = "external_tool_output",
 ) -> tuple[ContentPart, ...]:
+    if not isinstance(call, ToolCall):
+        raise ToolResultValidationError("tool result validation call must be a ToolCall")
+    if not isinstance(result, ToolResult):
+        raise ToolResultValidationError("tool result validation result must be a ToolResult")
+    if not isinstance(resolved_tool, ResolvedTool):
+        raise ToolResultValidationError("tool result validation resolved_tool must be a ResolvedTool")
+    if not isinstance(schema_registry, ToolSchemaRegistry):
+        raise ToolResultValidationError("tool result validation schema_registry must be a ToolSchemaRegistry")
     if result.tool_call_id != call.tool_call_id:
         raise ToolResultValidationError(
             f"tool result {result.tool_call_id} does not match tool call {call.tool_call_id}"
