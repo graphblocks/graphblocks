@@ -616,6 +616,8 @@ class OutputCutoff:
         )
 
     def accepts_sequence(self, sequence: int) -> bool:
+        if not isinstance(sequence, int) or isinstance(sequence, bool):
+            raise ValueError("output cutoff sequence must be an integer")
         return sequence > 0 and sequence <= self.last_client_delivered_sequence
 
 
@@ -853,6 +855,8 @@ class OutputDeliveryGate:
         return False
 
     def apply_decision(self, decision: OutputPolicyDecision, *, occurred_at: str) -> OutputGateUpdate:
+        if not isinstance(decision, OutputPolicyDecision):
+            raise TypeError("OutputDeliveryGate.apply_decision requires an OutputPolicyDecision")
         if self.cutoff is not None:
             raise OutputGateError("output gate is policy stopped")
         _validate_non_empty_string("output gate", "occurred_at", occurred_at)

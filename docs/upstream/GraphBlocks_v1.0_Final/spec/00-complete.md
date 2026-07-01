@@ -8612,6 +8612,10 @@ class OutputCutoff(BaseModel):
 
 `hard_stop`에서 server는 local PEP가 수락한 마지막 sequence를 terminal event에 포함한다. Client는 그 이후 지연 도착 frame/delta를 표시 또는 commit해서는 안 된다. 이미 렌더링된 draft를 되돌릴 수 없는 surface는 `AssistantIncomplete` 또는 `AssistantRetracted` 상태를 명확히 표시한다.
 
+Runtime cutoff checks and output-gate policy application MUST validate typed sequence and decision
+inputs before comparing or applying them, so malformed caller input fails as a protocol boundary
+error rather than an incidental attribute or comparison error.
+
 ### Safe point와 강제 종료 단계
 
 ```text

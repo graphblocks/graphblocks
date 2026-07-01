@@ -446,6 +446,18 @@ def test_output_policy_contract_rejects_non_integer_sequences_and_bounds() -> No
             last_client_delivered_sequence=2,
         )
 
+    cutoff = OutputCutoff(
+        stream_id="stream-1",
+        response_id="response-1",
+        last_generated_sequence=1,
+        last_client_delivered_sequence=1,
+        occurred_at="2026-06-23T00:00:00Z",
+    )
+    with pytest.raises(ValueError, match="output cutoff sequence must be an integer"):
+        cutoff.accepts_sequence(True)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="output cutoff sequence must be an integer"):
+        cutoff.accepts_sequence("1")  # type: ignore[arg-type]
+
 
 def test_bounded_holdback_requires_size_or_time_bound() -> None:
     policy = OutputDeliveryPolicy.bounded_holdback(on_violation="abort_response")
@@ -1153,6 +1165,10 @@ def test_output_delivery_gate_terminal_decision_records_accepted_prefix() -> Non
 def test_output_delivery_gate_terminal_decision_requires_occurred_at() -> None:
     gate = OutputDeliveryGate("stream-1", "response-1")
     gate.record_chunk(GenerationChunk.text("stream-1", "response-1", 1, "blocked"))
+
+    with pytest.raises(TypeError) as type_error:
+        gate.apply_decision(object(), occurred_at="2026-06-23T00:00:02Z")  # type: ignore[arg-type]
+    assert str(type_error.value) == "OutputDeliveryGate.apply_decision requires an OutputPolicyDecision"
 
     with pytest.raises(ValueError, match="output gate occurred_at must not be empty"):
         gate.apply_decision(
