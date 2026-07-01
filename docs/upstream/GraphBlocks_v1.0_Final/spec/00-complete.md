@@ -8439,6 +8439,11 @@ class BudgetPermit(BaseModel):
     fencing_tokens: dict[str, int]
 ```
 
+`BudgetPermit.reservation_refs` MUST be a non-empty set of unique reservation identifiers, and
+`fencing_tokens` MUST be a non-empty mapping of held budget scope keys to non-negative fencing
+tokens. A worker permit without scoped reservations or fencing metadata is not a valid execution
+authority.
+
 Distributed 실행 protocol:
 
 ```text

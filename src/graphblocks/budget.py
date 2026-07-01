@@ -315,6 +315,10 @@ class BudgetPermit:
             "reservation_refs",
             _validate_string_tuple("budget permit", "reservation_refs", self.reservation_refs),
         )
+        if not self.reservation_refs:
+            raise ValueError("budget permit reservation_refs must not be empty")
+        if len(set(self.reservation_refs)) != len(self.reservation_refs):
+            raise ValueError("budget permit reservation_refs must not contain duplicates")
         _validate_resource_ref("budget permit", "owner", self.owner)
         _validate_resource_ref("budget permit", "atomic_unit", self.atomic_unit)
         _validate_non_negative_integer("budget permit", "admission_epoch", self.admission_epoch)
@@ -335,6 +339,8 @@ class BudgetPermit:
         if not isinstance(self.fencing_tokens, Mapping):
             raise ValueError("budget permit fencing_tokens must be a mapping")
         fencing_tokens = dict(self.fencing_tokens)
+        if not fencing_tokens:
+            raise ValueError("budget permit fencing_tokens must not be empty")
         for reference, token in fencing_tokens.items():
             if not isinstance(reference, str) or not reference.strip():
                 raise ValueError("budget permit fencing token references must be non-empty strings")

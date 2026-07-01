@@ -69,6 +69,8 @@ def test_budget_permit_rejects_invalid_fencing_tokens() -> None:
         BudgetPermit(**base, fencing_tokens={"budget-1": True})  # type: ignore[dict-item]
     with pytest.raises(ValueError, match="budget permit fencing token values must be non-negative integers"):
         BudgetPermit(**base, fencing_tokens={"budget-1": -1})
+    with pytest.raises(ValueError, match="budget permit fencing_tokens must not be empty"):
+        BudgetPermit(**base, fencing_tokens={})
 
 
 def test_budget_permit_validates_identity_scope_and_authorization_records() -> None:
@@ -82,6 +84,7 @@ def test_budget_permit_validates_identity_scope_and_authorization_records() -> N
         "continuation_profile": "finish_current_turn",
         "policy_snapshot_digest": "sha256:policy",
         "expires_at": "2026-06-22T01:00:00Z",
+        "fencing_tokens": {"budget-1": 1},
     }
 
     with pytest.raises(ValueError, match="budget permit permit_id must not be empty"):
@@ -90,6 +93,10 @@ def test_budget_permit_validates_identity_scope_and_authorization_records() -> N
         BudgetPermit(**{**base, "reservation_refs": "reservation-1"})
     with pytest.raises(ValueError, match="budget permit reservation_refs item must not be empty"):
         BudgetPermit(**{**base, "reservation_refs": ("reservation-1", " ")})
+    with pytest.raises(ValueError, match="budget permit reservation_refs must not be empty"):
+        BudgetPermit(**{**base, "reservation_refs": ()})
+    with pytest.raises(ValueError, match="budget permit reservation_refs must not contain duplicates"):
+        BudgetPermit(**{**base, "reservation_refs": ("reservation-1", "reservation-1")})
     with pytest.raises(ValueError, match="budget permit owner must be a ResourceRef"):
         BudgetPermit(**{**base, "owner": "worker:1"})  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="budget permit atomic_unit must be a ResourceRef"):
