@@ -143,6 +143,12 @@ nodes:
 
 Conversion output은 `ParsedDocument` 또는 conversion failure다.
 
+Converter/parser 선택은 실행 재현성을 위해 `ParserSelectionLock`으로 기록해야 한다.
+Lock에는 processor id/version, 선택 이유, 정규화된 media type, filename,
+artifact checksum, parser metadata snapshot이 포함된다. 동일 priority 후보가 여러 개면
+processor id와 version의 안정 정렬로 deterministic하게 선택해야 하며, 공유 documents
+TCK는 이 lock 생성 규칙을 검증해야 한다.
+
 ### Converter capability
 
 ```text
@@ -723,4 +729,3 @@ delete_propagation_latency
 ```
 
 Metric은 processor version과 fixture revision에 연결되어야 한다.
-

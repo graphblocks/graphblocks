@@ -1,7 +1,9 @@
+use graphblocks_runtime_core::document_parsers::{DocumentParserRegistry, ParserDescriptor};
 use graphblocks_runtime_core::documents::{
-    DocumentError, chunk_document_by_lines, create_local_text_revision, parse_plain_text_document,
+    chunk_document_by_lines, create_local_text_revision, parse_plain_text_document, ArtifactRef,
+    DocumentError,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 fn required_str<'a>(value: &'a Value, key: &str) -> Result<&'a str, String> {
     value
@@ -96,6 +98,106 @@ fn run_case(case: &Value) -> Result<Value, String> {
                 Err(DocumentError::InvalidMaxElements) => json!("invalid_max_elements"),
             };
             Ok(json!({ "error": error }))
+        }
+        "parser_selection_lock" => {
+            let raw_artifact =
+                case.get("artifact")
+                    .and_then(Value::as_object)
+                    .ok_or_else(|| {
+                        "documents TCK parser_selection_lock requires artifact".to_owned()
+                    })?;
+            let mut artifact = ArtifactRef::new(
+                raw_artifact
+                    .get("artifactId")
+                    .or_else(|| raw_artifact.get("artifact_id"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("artifact-1"),
+                raw_artifact
+                    .get("uri")
+                    .and_then(Value::as_str)
+                    .unwrap_or("file:///tmp/document.txt"),
+            );
+            artifact.media_type = raw_artifact
+                .get("mediaType")
+                .or_else(|| raw_artifact.get("media_type"))
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            artifact.filename = raw_artifact
+                .get("filename")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            artifact.checksum = raw_artifact
+                .get("checksum")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            let raw_descriptors = case
+                .get("descriptors")
+                .and_then(Value::as_array)
+                .ok_or_else(|| {
+                    "documents TCK parser_selection_lock requires descriptors".to_owned()
+                })?;
+            let mut registry = DocumentParserRegistry::new();
+            for (index, raw_descriptor) in raw_descriptors.iter().enumerate() {
+                let mapping = raw_descriptor.as_object().ok_or_else(|| {
+                    format!("documents TCK parser descriptor {index} must be an object")
+                })?;
+                let mut descriptor = ParserDescriptor::new(
+                    mapping
+                        .get("processorId")
+                        .or_else(|| mapping.get("processor_id"))
+                        .and_then(Value::as_str)
+                        .unwrap_or(""),
+                    mapping.get("version").and_then(Value::as_str).unwrap_or(""),
+                );
+                if let Some(media_types) = mapping
+                    .get("mediaTypes")
+                    .or_else(|| mapping.get("media_types"))
+                    .and_then(Value::as_array)
+                {
+                    descriptor.media_types = media_types
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect();
+                }
+                if let Some(extensions) = mapping.get("extensions").and_then(Value::as_array) {
+                    descriptor.extensions = extensions
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect();
+                }
+                descriptor.priority = mapping
+                    .get("priority")
+                    .and_then(Value::as_i64)
+                    .map(|priority| priority as i32)
+                    .unwrap_or(0);
+                if let Some(metadata) = mapping.get("metadata").and_then(Value::as_object) {
+                    descriptor.metadata = metadata
+                        .iter()
+                        .map(|(key, value)| (key.clone(), value.clone()))
+                        .collect();
+                }
+                registry
+                    .register(descriptor)
+                    .map_err(|error| error.to_string())?;
+            }
+            let lock = registry
+                .select(&artifact)
+                .map_err(|error| error.to_string())?;
+            let resolved = registry
+                .resolve_locked(&lock)
+                .map_err(|error| error.to_string())?;
+            Ok(json!({
+                "processorId": lock.processor_id,
+                "processorVersion": lock.processor_version,
+                "reason": lock.reason,
+                "mediaType": lock.media_type,
+                "filename": lock.filename,
+                "artifactChecksum": lock.artifact_checksum,
+                "metadata": lock.metadata,
+                "resolvedMetadata": resolved.metadata,
+            }))
         }
         other => Err(format!("unsupported documents TCK kind {other:?}")),
     }

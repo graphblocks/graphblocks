@@ -53,6 +53,10 @@ from graphblocks.deployment import (
     SupplyChainLock,
     UpgradePolicy,
 )
+from graphblocks.document_parsers import (
+    DocumentParserRegistry,
+    ParserDescriptor,
+)
 from graphblocks.documents import (
     ArtifactRef,
     SourceRef,
@@ -1636,7 +1640,12 @@ def load_documents_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
         if not isinstance(case_id, str) or not case_id.strip():
             raise ValueError(f"documents TCK case {index} requires name")
         case_kind = raw_case.get("kind")
-        if case_kind not in {"plain_text_parse", "line_chunks", "invalid_chunk_size"}:
+        if case_kind not in {
+            "plain_text_parse",
+            "line_chunks",
+            "invalid_chunk_size",
+            "parser_selection_lock",
+        }:
             raise ValueError(f"documents TCK case {case_id} has unsupported kind {case_kind!r}")
         expected = raw_case.get("expected")
         if not isinstance(expected, Mapping):
@@ -4847,6 +4856,84 @@ class TckRunner:
                 except ValueError:
                     error = "invalid_max_elements"
                 observed = {"error": error}
+            elif kind == "parser_selection_lock":
+                raw_artifact = fixture.get("artifact", {})
+                if not isinstance(raw_artifact, Mapping):
+                    raise ValueError("documents TCK parser artifact must be a mapping")
+                artifact = ArtifactRef(
+                    str(raw_artifact.get("artifactId", raw_artifact.get("artifact_id", "artifact-1"))),
+                    str(raw_artifact.get("uri", "file:///tmp/document.txt")),
+                    media_type=(
+                        str(raw_artifact["mediaType"])
+                        if raw_artifact.get("mediaType") is not None
+                        else (
+                            str(raw_artifact["media_type"])
+                            if raw_artifact.get("media_type") is not None
+                            else None
+                        )
+                    ),
+                    checksum=(
+                        str(raw_artifact["checksum"])
+                        if raw_artifact.get("checksum") is not None
+                        else None
+                    ),
+                    filename=(
+                        str(raw_artifact["filename"])
+                        if raw_artifact.get("filename") is not None
+                        else None
+                    ),
+                )
+                raw_descriptors = fixture.get("descriptors", [])
+                if not isinstance(raw_descriptors, list):
+                    raise ValueError("documents TCK parser descriptors must be a list")
+                registry = DocumentParserRegistry()
+                for descriptor_index, raw_descriptor in enumerate(raw_descriptors):
+                    if not isinstance(raw_descriptor, Mapping):
+                        raise ValueError(
+                            f"documents TCK parser descriptor {descriptor_index} must be a mapping"
+                        )
+                    raw_media_types = raw_descriptor.get("mediaTypes", raw_descriptor.get("media_types", ()))
+                    raw_extensions = raw_descriptor.get("extensions", ())
+                    raw_metadata = raw_descriptor.get("metadata", {})
+                    registry.register(
+                        ParserDescriptor(
+                            str(raw_descriptor.get("processorId", raw_descriptor.get("processor_id", ""))),
+                            str(raw_descriptor.get("version", "")),
+                            media_types=(
+                                tuple(str(item) for item in raw_media_types)
+                                if isinstance(raw_media_types, list | tuple)
+                                else ()
+                            ),
+                            extensions=(
+                                tuple(str(item) for item in raw_extensions)
+                                if isinstance(raw_extensions, list | tuple)
+                                else ()
+                            ),
+                            priority=(
+                                raw_descriptor.get("priority")
+                                if isinstance(raw_descriptor.get("priority"), int)
+                                and not isinstance(raw_descriptor.get("priority"), bool)
+                                else 0
+                            ),
+                            metadata=(
+                                dict(raw_metadata)
+                                if isinstance(raw_metadata, Mapping)
+                                else {}
+                            ),
+                        )
+                    )
+                lock = registry.select(artifact)
+                resolved = registry.resolve_locked(lock)
+                observed = {
+                    "processorId": lock.processor_id,
+                    "processorVersion": lock.processor_version,
+                    "reason": lock.reason,
+                    "mediaType": lock.media_type,
+                    "filename": lock.filename,
+                    "artifactChecksum": lock.artifact_checksum,
+                    "metadata": dict(lock.metadata),
+                    "resolvedMetadata": dict(resolved.metadata),
+                }
             else:
                 diagnostics.append(
                     {
