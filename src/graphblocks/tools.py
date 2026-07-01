@@ -734,6 +734,8 @@ class ToolApprovalRequest:
             raise ToolApprovalError("approval call must be a ToolCall")
         if expires_at <= requested_at:
             raise ToolApprovalError("approval expiration must be after request time")
+        if not isinstance(call.arguments, Mapping):
+            raise ToolApprovalError("approval tool call arguments must be a mapping")
         if call.resolved_tool_id != resolved_tool.resolved_tool_id:
             raise ToolApprovalError("tool call references a different resolved tool")
         if call.name != resolved_tool.definition.name:

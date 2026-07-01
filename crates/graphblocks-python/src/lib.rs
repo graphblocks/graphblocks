@@ -3596,6 +3596,10 @@ fn tool_approval_error_json(error: &ToolApprovalError) -> Value {
         ToolApprovalError::InvalidRevision { revision } => {
             json!({"code": "InvalidRevision", "revision": revision})
         }
+        ToolApprovalError::ArgumentsNotObject { tool_call_id } => json!({
+            "code": "ArgumentsNotObject",
+            "toolCallId": tool_call_id,
+        }),
         ToolApprovalError::InvalidToolCall { source } => json!({
             "code": "InvalidToolCall",
             "message": format!("{source:?}"),

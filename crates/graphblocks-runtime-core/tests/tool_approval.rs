@@ -257,6 +257,22 @@ fn approval_request_rejects_invalid_tool_call_model() {
 }
 
 #[test]
+fn approval_request_rejects_non_object_arguments_before_request_creation() {
+    let resolved = resolved_search_tool().expect("resolved tool is valid");
+    let mut call = search_call("call-1", "runtime").expect("tool call is valid");
+    call.resolved_tool_id = resolved.resolved_tool_id.clone();
+    call.arguments = json!("runtime");
+    call.arguments_digest = graphblocks_compiler::canonical::canonical_hash(&call.arguments);
+
+    assert_eq!(
+        ToolApprovalRequest::for_call("approval-1", &resolved, &call, "user-1", 1_000, 2_000),
+        Err(ToolApprovalError::ArgumentsNotObject {
+            tool_call_id: "call-1".to_owned(),
+        }),
+    );
+}
+
+#[test]
 fn approval_record_rejects_malformed_embedded_request_digest() {
     let resolved = resolved_search_tool().expect("resolved tool is valid");
     let mut call = search_call("call-1", "runtime").expect("tool call is valid");

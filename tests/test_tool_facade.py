@@ -1239,6 +1239,28 @@ def test_tool_approval_request_rejects_mismatch_and_invalid_expiration() -> None
         )
     assert str(mismatch.value) == "tool call references a different resolved tool"
 
+    scalar_arguments = call.__class__(
+        tool_call_id=call.tool_call_id,
+        response_id=call.response_id,
+        resolved_tool_id=call.resolved_tool_id,
+        name=call.name,
+        arguments="runtime",
+        arguments_digest=canonical_hash("runtime"),
+        revision=call.revision,
+        status=call.status,
+        created_at=call.created_at,
+    )
+    with pytest.raises(ToolApprovalError) as arguments:
+        ToolApprovalRequest.for_call(
+            "approval-1",
+            resolved,
+            scalar_arguments,
+            principal_id="user-1",
+            requested_at=1_000,
+            expires_at=2_000,
+        )
+    assert str(arguments.value) == "approval tool call arguments must be a mapping"
+
 
 def _resolved_process_tool() -> ResolvedTool:
     catalog = ToolCatalog(

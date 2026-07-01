@@ -37,6 +37,9 @@ pub enum ToolApprovalError {
     InvalidRevision {
         revision: u32,
     },
+    ArgumentsNotObject {
+        tool_call_id: String,
+    },
     InvalidToolCall {
         source: ToolCallError,
     },
@@ -86,6 +89,11 @@ impl ToolApprovalRequest {
         }
         call.validate()
             .map_err(|source| ToolApprovalError::InvalidToolCall { source })?;
+        if !call.arguments.is_object() {
+            return Err(ToolApprovalError::ArgumentsNotObject {
+                tool_call_id: call.tool_call_id.clone(),
+            });
+        }
         if call.resolved_tool_id != resolved_tool.resolved_tool_id {
             return Err(ToolApprovalError::ResolvedToolMismatch {
                 expected: resolved_tool.resolved_tool_id.clone(),
