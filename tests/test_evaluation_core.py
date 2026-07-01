@@ -675,3 +675,84 @@ def test_trial_result_carries_gate_and_outcome() -> None:
 
     assert trial.gate == gate
     assert trial.outcome == "accepted"
+
+
+def test_trial_result_validates_nested_records_and_copies_collections() -> None:
+    base = ResourceSnapshotRef("base", "sha256:base")
+    candidate = ResourceSnapshotRef("candidate", "sha256:candidate")
+    checks = [CheckResult("lint", candidate, "passed")]
+    metrics = [MetricObservation("accuracy", Decimal("0.91"))]
+    usage = ["usage-1"]
+
+    trial = TrialResult("trial-1", base=base, candidate=candidate, checks=checks, metrics=metrics, usage=usage)
+    checks.append(CheckResult("tests", candidate, "passed"))
+    metrics.append(MetricObservation("latency_ms", Decimal("125")))
+    usage.append("usage-2")
+
+    assert trial.checks == (CheckResult("lint", candidate, "passed"),)
+    assert trial.metrics == (MetricObservation("accuracy", Decimal("0.91")),)
+    assert trial.usage == ("usage-1",)
+    with pytest.raises(ValueError, match="trial result base must be a ResourceSnapshotRef"):
+        TrialResult("trial-1", base=object(), candidate=candidate)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="trial result checks items must be CheckResult"):
+        TrialResult("trial-1", base=base, candidate=candidate, checks=[object()])  # type: ignore[list-item]
+    with pytest.raises(ValueError, match="trial result usage item must not be empty"):
+        TrialResult("trial-1", base=base, candidate=candidate, usage=[" "])
+
+
+def test_result_bundle_validates_nested_records_and_copies_collections() -> None:
+    subject = ResourceSnapshotRef("candidate-1", "sha256:candidate")
+    output = TypedValueRef("value-1", "schemas/Value", 1, "sha256:value")
+    artifact = ArtifactRef("artifact-1", "file:///tmp/out.txt")
+    diagnostic = Diagnostic("GBE1001", "assertion failed")
+    check = CheckResult("lint", subject, "passed")
+    metric = MetricObservation("accuracy", Decimal("0.91"))
+    evidence = EvidenceRef("evidence-1", subject, "snapshot")
+    review = ReviewRecord(
+        "review-1",
+        subject,
+        "sha256:candidate",
+        "quality",
+        PrincipalRef("user", "reviewer-1"),
+        "accept",
+        created_at="2026-06-22T00:00:00Z",
+    )
+    inputs = [subject]
+    outputs = [output]
+    usage_records = ["usage-1"]
+
+    bundle = ResultBundle(
+        "bundle-1",
+        "run-1",
+        "release-1",
+        inputs=inputs,
+        outputs=outputs,
+        artifacts=[artifact],
+        diagnostics=[diagnostic],
+        checks=[check],
+        metrics=[metric],
+        evidence=[evidence],
+        reviews=[review],
+        usage_records=usage_records,
+        policy_decision_refs=["decision-1"],
+    )
+    inputs.append(ResourceSnapshotRef("input-2", "sha256:input-2"))
+    outputs.append(TypedValueRef("value-2", "schemas/Value", 1, "sha256:value-2"))
+    usage_records.append("usage-2")
+
+    assert bundle.inputs == (subject,)
+    assert bundle.outputs == (output,)
+    assert bundle.artifacts == (artifact,)
+    assert bundle.diagnostics == (diagnostic,)
+    assert bundle.checks == (check,)
+    assert bundle.metrics == (metric,)
+    assert bundle.evidence == (evidence,)
+    assert bundle.reviews == (review,)
+    assert bundle.usage_records == ("usage-1",)
+    assert bundle.policy_decision_refs == ("decision-1",)
+    with pytest.raises(ValueError, match="result bundle bundle_id must not be empty"):
+        ResultBundle(" ", "run-1", "release-1", inputs=[], outputs=[])
+    with pytest.raises(ValueError, match="result bundle inputs items must be ResourceSnapshotRef"):
+        ResultBundle("bundle-1", "run-1", "release-1", inputs=[object()], outputs=[])  # type: ignore[list-item]
+    with pytest.raises(ValueError, match="result bundle provenance must be a RunProvenance"):
+        ResultBundle("bundle-1", "run-1", "release-1", inputs=[], outputs=[], provenance=object())  # type: ignore[arg-type]

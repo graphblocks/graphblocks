@@ -525,6 +525,26 @@ class TrialResult:
     usage: list[str] = field(default_factory=list)
     outcome: str = ""
 
+    def __post_init__(self) -> None:
+        _validate_non_empty_string("trial result", "trial_id", self.trial_id)
+        if not isinstance(self.base, ResourceSnapshotRef):
+            raise ValueError("trial result base must be a ResourceSnapshotRef")
+        if not isinstance(self.candidate, ResourceSnapshotRef):
+            raise ValueError("trial result candidate must be a ResourceSnapshotRef")
+        if self.change_set is not None and not isinstance(self.change_set, ChangeSet):
+            raise ValueError("trial result change_set must be a ChangeSet")
+        if self.gate is not None and not isinstance(self.gate, GateResult):
+            raise ValueError("trial result gate must be a GateResult")
+        if not isinstance(self.outcome, str):
+            raise ValueError("trial result outcome must be a string")
+        object.__setattr__(self, "checks", tuple(_validate_record_list("trial result", "checks", self.checks, CheckResult)))
+        object.__setattr__(
+            self,
+            "metrics",
+            tuple(_validate_record_list("trial result", "metrics", self.metrics, MetricObservation)),
+        )
+        object.__setattr__(self, "usage", tuple(_validate_string_list("trial result", "usage", self.usage)))
+
 
 @dataclass(frozen=True, slots=True)
 class ReviewRecord:
@@ -585,6 +605,64 @@ class ResultBundle:
     usage_records: list[str] = field(default_factory=list)
     policy_decision_refs: list[str] = field(default_factory=list)
     provenance: RunProvenance = field(default_factory=lambda: RunProvenance(graph_hash="", started_at=""))
+
+    def __post_init__(self) -> None:
+        for field_name in ("bundle_id", "run_id", "release_id"):
+            _validate_non_empty_string("result bundle", field_name, getattr(self, field_name))
+        if self.deployment_revision_id is not None:
+            _validate_non_empty_string("result bundle", "deployment_revision_id", self.deployment_revision_id)
+        if not isinstance(self.provenance, RunProvenance):
+            raise ValueError("result bundle provenance must be a RunProvenance")
+        object.__setattr__(
+            self,
+            "inputs",
+            tuple(_validate_record_list("result bundle", "inputs", self.inputs, ResourceSnapshotRef)),
+        )
+        object.__setattr__(
+            self,
+            "outputs",
+            tuple(_validate_record_list("result bundle", "outputs", self.outputs, TypedValueRef)),
+        )
+        object.__setattr__(
+            self,
+            "artifacts",
+            tuple(_validate_record_list("result bundle", "artifacts", self.artifacts, ArtifactRef)),
+        )
+        object.__setattr__(
+            self,
+            "diagnostics",
+            tuple(_validate_record_list("result bundle", "diagnostics", self.diagnostics, Diagnostic)),
+        )
+        object.__setattr__(
+            self,
+            "checks",
+            tuple(_validate_record_list("result bundle", "checks", self.checks, CheckResult)),
+        )
+        object.__setattr__(
+            self,
+            "metrics",
+            tuple(_validate_record_list("result bundle", "metrics", self.metrics, MetricObservation)),
+        )
+        object.__setattr__(
+            self,
+            "evidence",
+            tuple(_validate_record_list("result bundle", "evidence", self.evidence, EvidenceRef)),
+        )
+        object.__setattr__(
+            self,
+            "reviews",
+            tuple(_validate_record_list("result bundle", "reviews", self.reviews, ReviewRecord)),
+        )
+        object.__setattr__(
+            self,
+            "usage_records",
+            tuple(_validate_string_list("result bundle", "usage_records", self.usage_records)),
+        )
+        object.__setattr__(
+            self,
+            "policy_decision_refs",
+            tuple(_validate_string_list("result bundle", "policy_decision_refs", self.policy_decision_refs)),
+        )
 
     def content_digest(self) -> str:
         return canonical_hash(
