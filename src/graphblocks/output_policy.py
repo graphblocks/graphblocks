@@ -504,10 +504,18 @@ class OutputDeliveryPolicy:
             raise ValueError(f"invalid violation action {self.on_violation}")
         if self.delivered_draft_disposition not in VALID_DRAFT_DISPOSITIONS:
             raise ValueError(f"invalid draft disposition {self.delivered_draft_disposition}")
-        for boundary in self.flush_boundaries:
+        try:
+            if isinstance(self.flush_boundaries, str):
+                raise TypeError
+            flush_boundaries = frozenset(self.flush_boundaries)
+        except TypeError as error:
+            raise ValueError(
+                "output delivery flush_boundaries must be a collection of flush boundary names"
+            ) from error
+        for boundary in flush_boundaries:
             if boundary not in VALID_FLUSH_BOUNDARIES:
                 raise ValueError(f"invalid flush boundary {boundary}")
-        object.__setattr__(self, "flush_boundaries", frozenset(self.flush_boundaries))
+        object.__setattr__(self, "flush_boundaries", flush_boundaries)
 
     @classmethod
     def buffer_until_commit(cls, *, on_violation: ViolationAction) -> OutputDeliveryPolicy:

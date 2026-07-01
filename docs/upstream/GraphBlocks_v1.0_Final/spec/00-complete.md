@@ -2254,6 +2254,8 @@ conversation.begin_turn
   `OutputPolicyDecision`, `OutputCutoff`, and digest inputs before constructing events.
 - Output-policy redaction instructions MUST be typed mapping records; malformed redaction entries
   MUST fail before event construction, delivery-gate mutation, or client delivery.
+- Output-delivery `flush_boundaries` MUST be a collection of recognized boundary names; scalar
+  strings or non-iterable values MUST fail before output delivery policy construction completes.
 
 ## 68. Checkpoint
 

@@ -265,6 +265,26 @@ def test_output_policy_contract_rejects_unknown_literals() -> None:
             flush_boundaries=frozenset({"clause"}),
         )
 
+    with pytest.raises(
+        ValueError,
+        match="output delivery flush_boundaries must be a collection of flush boundary names",
+    ):
+        OutputDeliveryPolicy.bounded_holdback(
+            on_violation="abort_response",
+            holdback_max_tokens=1,
+            flush_boundaries="token",  # type: ignore[arg-type]
+        )
+
+    with pytest.raises(
+        ValueError,
+        match="output delivery flush_boundaries must be a collection of flush boundary names",
+    ):
+        OutputDeliveryPolicy.bounded_holdback(
+            on_violation="abort_response",
+            holdback_max_tokens=1,
+            flush_boundaries=object(),  # type: ignore[arg-type]
+        )
+
     with pytest.raises(ValueError, match="invalid terminal reason throttled"):
         OutputCutoff(stream_id="stream-1", response_id="response-1", terminal_reason="throttled")
 
