@@ -252,6 +252,31 @@ fn admission_rejects_tool_call_after_response_policy_stop() {
 }
 
 #[test]
+fn admission_rejects_malformed_output_policy_state() {
+    let resolved_tool = resolved_process_tool();
+    let call = process_call(&resolved_tool);
+    let schemas = process_schema_registry();
+    let policy_decision = allow_tool_policy_decision();
+    let output_policy_state = json!("policy_stopped");
+
+    assert_eq!(
+        ToolAdmission::admit(ToolAdmissionRequest {
+            call,
+            resolved_tool: &resolved_tool,
+            schema_registry: &schemas,
+            policy_decision: &policy_decision,
+            expected_policy_input_digest: &policy_decision.input_digest,
+            output_policy_state: Some(&output_policy_state),
+            approval: None,
+            principal_id: "user-1",
+            idempotency_key: Some("idem-1".to_owned()),
+            admitted_at_unix_ms: 1_200,
+        }),
+        Err(ToolAdmissionError::InvalidOutputPolicyState),
+    );
+}
+
+#[test]
 fn admission_requires_valid_approval_when_binding_requires_it() {
     let resolved_tool = resolved_process_tool();
     let call = process_call(&resolved_tool);

@@ -8010,6 +8010,8 @@ class PolicyRequest(BaseModel):
 Builders for `before_tool_or_effect` policy requests MUST validate typed `ToolCall`, `ResolvedTool`,
 `PrincipalRef`, tool-call/resolved-tool identity consistency, and output-policy state mapping inputs
 before constructing or hashing the canonical request.
+Tool admission MUST apply the same output-policy state mapping validation before checking whether a
+response is already `policy_stopped`.
 
 ```python
 class EntitlementSnapshot(BaseModel):

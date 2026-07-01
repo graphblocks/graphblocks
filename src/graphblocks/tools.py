@@ -1280,6 +1280,8 @@ def admit_tool_call(
         raise ToolAdmissionError("tool admission policy_decision must be a PolicyDecision")
     if call.status != "validated":
         raise ToolAdmissionError(f"tool call {call.tool_call_id} is {call.status}, not validated")
+    if output_policy_state is not None and not isinstance(output_policy_state, Mapping):
+        raise ToolAdmissionError("tool admission output_policy_state must be a mapping")
     if _output_policy_state_is_stopped(output_policy_state):
         raise ToolAdmissionError(
             f"response {call.response_id} is policy stopped; "

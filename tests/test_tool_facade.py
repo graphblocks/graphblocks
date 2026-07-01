@@ -1435,6 +1435,10 @@ def test_tool_admission_validates_typed_boundary_inputs() -> None:
             {"policy_decision": object()},
             "tool admission policy_decision must be a PolicyDecision",
         ),
+        (
+            {"output_policy_state": "policy_stopped"},
+            "tool admission output_policy_state must be a mapping",
+        ),
     )
 
     for overrides, message in cases:
@@ -1445,6 +1449,7 @@ def test_tool_admission_validates_typed_boundary_inputs() -> None:
                 overrides.get("schema_registry", registry),  # type: ignore[arg-type]
                 policy_decision=overrides.get("policy_decision", policy),  # type: ignore[arg-type]
                 expected_policy_input_digest=policy.input_digest,
+                output_policy_state=overrides.get("output_policy_state"),  # type: ignore[arg-type]
                 principal_id="user-1",
                 idempotency_key="idem-1",
                 admitted_at="2026-06-23T00:00:01Z",

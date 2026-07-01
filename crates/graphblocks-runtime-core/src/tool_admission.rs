@@ -225,6 +225,12 @@ impl ToolAdmission {
                 status: request.call.status,
             });
         }
+        if request
+            .output_policy_state
+            .is_some_and(|state| !state.is_object())
+        {
+            return Err(ToolAdmissionError::InvalidOutputPolicyState);
+        }
         if output_policy_state_is_stopped(request.output_policy_state) {
             return Err(ToolAdmissionError::ResponsePolicyStopped {
                 response_id: request.call.response_id,
