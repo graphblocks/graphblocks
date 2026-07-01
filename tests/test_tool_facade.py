@@ -1334,6 +1334,42 @@ def test_before_tool_or_effect_policy_request_carries_tool_admission_context() -
     assert request.input_digest.startswith("sha256:")
 
 
+def test_before_tool_or_effect_policy_request_validates_boundary_inputs() -> None:
+    resolved = _resolved_process_tool()
+    call = _process_call(resolved)
+    principal = PrincipalRef("user-1")
+
+    cases = (
+        (
+            {"call": object()},
+            "before-tool policy request call must be a ToolCall",
+        ),
+        (
+            {"resolved_tool": object()},
+            "before-tool policy request resolved_tool must be a ResolvedTool",
+        ),
+        (
+            {"principal": object()},
+            "before-tool policy request principal must be a PrincipalRef",
+        ),
+        (
+            {"output_policy_state": "policy_stopped"},
+            "before-tool policy request output_policy_state must be a mapping",
+        ),
+    )
+
+    for overrides, message in cases:
+        with pytest.raises(ToolAdmissionError, match=message):
+            build_before_tool_or_effect_policy_request(
+                request_id="policy-req-1",
+                call=overrides.get("call", call),  # type: ignore[arg-type]
+                resolved_tool=overrides.get("resolved_tool", resolved),  # type: ignore[arg-type]
+                principal=overrides.get("principal", principal),  # type: ignore[arg-type]
+                occurred_at="2026-06-23T00:00:00Z",
+                output_policy_state=overrides.get("output_policy_state"),  # type: ignore[arg-type]
+            )
+
+
 def test_tool_admission_validates_arguments_before_approval() -> None:
     resolved = _resolved_process_tool()
     call = _process_call(resolved, arguments='{"cmd":"echo hello"}')

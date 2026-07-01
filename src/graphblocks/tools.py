@@ -2210,6 +2210,14 @@ def build_before_tool_or_effect_policy_request(
     run_id: str | None = None,
     output_policy_state: dict[str, object] | None = None,
 ) -> PolicyRequest:
+    if not isinstance(call, ToolCall):
+        raise ToolAdmissionError("before-tool policy request call must be a ToolCall")
+    if not isinstance(resolved_tool, ResolvedTool):
+        raise ToolAdmissionError("before-tool policy request resolved_tool must be a ResolvedTool")
+    if not isinstance(principal, PrincipalRef):
+        raise ToolAdmissionError("before-tool policy request principal must be a PrincipalRef")
+    if output_policy_state is not None and not isinstance(output_policy_state, Mapping):
+        raise ToolAdmissionError("before-tool policy request output_policy_state must be a mapping")
     if call.resolved_tool_id != resolved_tool.resolved_tool_id:
         raise ToolAdmissionError("tool call references a different resolved tool")
     attributes: dict[str, object] = {
