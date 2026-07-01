@@ -566,6 +566,8 @@ class ToolResult(BaseModel):
 
 ToolResult diagnostics MUST be mapping records with non-empty string codes and messages; malformed
 diagnostic entries must fail as ToolResult validation errors before result delivery or persistence.
+ContentPart metadata keys in ToolResult output MUST be non-empty strings after trimming; malformed
+content metadata must fail as ToolResult validation errors before result delivery or persistence.
 ToolResult `artifacts` and `diagnostics` MUST be list-like collections; scalar strings,
 single mapping records, or non-iterable values MUST fail before entry normalization.
 When present, `ToolResult.error` MUST be a BlockError mapping with non-empty string `code` and

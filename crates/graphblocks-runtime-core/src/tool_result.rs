@@ -69,6 +69,10 @@ impl ContentPart {
     }
 
     pub fn validate(&self) -> Result<(), ContentPartError> {
+        if self.metadata.keys().any(|key| key.trim().is_empty()) {
+            return Err(ContentPartError::EmptyMetadataKey);
+        }
+
         match self.kind {
             ContentPartKind::Text => {
                 if self.text.is_none() {
@@ -112,6 +116,7 @@ pub enum ContentPartError {
     MissingArtifactRefPayload,
     UnexpectedTextPayload { kind: ContentPartKind },
     UnexpectedDataPayload { kind: ContentPartKind },
+    EmptyMetadataKey,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

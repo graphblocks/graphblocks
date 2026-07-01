@@ -121,6 +121,28 @@ fn tool_result_rejects_content_parts_without_required_payload() {
 }
 
 #[test]
+fn tool_result_rejects_content_part_empty_metadata_keys() {
+    let empty_metadata_key = ContentPart::text("ok").with_metadata(" ", json!("bad"));
+
+    assert_eq!(
+        empty_metadata_key.validate(),
+        Err(ContentPartError::EmptyMetadataKey)
+    );
+    assert_eq!(
+        ToolResult::completed("call-1", [empty_metadata_key.clone()], 1_000, 1_050).validate(),
+        Err(ToolResultError::InvalidContentPart {
+            source: ContentPartError::EmptyMetadataKey,
+        })
+    );
+    assert_eq!(
+        ToolResultEvent::delta("call-1", 2, [empty_metadata_key]).validate(),
+        Err(ToolResultEventError::InvalidOutput {
+            source: ContentPartError::EmptyMetadataKey,
+        })
+    );
+}
+
+#[test]
 fn completed_tool_result_validates_output_schema_before_model_return() {
     let catalog = ToolCatalog::new(
         [ToolDefinition::new(
