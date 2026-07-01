@@ -14,6 +14,32 @@ from .diagnostics import Diagnostic, DiagnosticSet
 WheelBuildKind = Literal["pure_python", "native_extension"]
 
 
+def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{owner} {field_name} must be a string")
+    if not value.strip():
+        raise ValueError(f"{owner} {field_name} must not be empty")
+    return value
+
+
+def _validate_optional_non_empty_string(owner: str, field_name: str, value: object | None) -> str | None:
+    if value is None:
+        return None
+    return _validate_non_empty_string(owner, field_name, value)
+
+
+def _validate_string_tuple(owner: str, field_name: str, value: object) -> tuple[str, ...]:
+    if isinstance(value, str):
+        raise ValueError(f"{owner} {field_name} must be a collection of strings")
+    try:
+        items = tuple(value)  # type: ignore[arg-type]
+    except TypeError as error:
+        raise ValueError(f"{owner} {field_name} must be a collection of strings") from error
+    for item in items:
+        _validate_non_empty_string(owner, f"{field_name} item", item)
+    return items
+
+
 @dataclass(frozen=True, slots=True)
 class PackageLockEntry:
     distribution: str
@@ -25,6 +51,25 @@ class PackageLockEntry:
     stability: str | None
     dependencies: tuple[str, ...] = field(default_factory=tuple)
     forbidden_dependencies: tuple[str, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        _validate_non_empty_string("package lock entry", "distribution", self.distribution)
+        _validate_optional_non_empty_string("package lock entry", "version_constraint", self.version_constraint)
+        _validate_optional_non_empty_string("package lock entry", "import_package", self.import_package)
+        if not isinstance(self.default, bool):
+            raise ValueError("package lock entry default must be a boolean")
+        for field_name in ("layer", "kind", "stability"):
+            _validate_optional_non_empty_string("package lock entry", field_name, getattr(self, field_name))
+        object.__setattr__(
+            self,
+            "dependencies",
+            _validate_string_tuple("package lock entry", "dependencies", self.dependencies),
+        )
+        object.__setattr__(
+            self,
+            "forbidden_dependencies",
+            _validate_string_tuple("package lock entry", "forbidden_dependencies", self.forbidden_dependencies),
+        )
 
     def lock_payload(self) -> dict[str, object]:
         return {
@@ -47,6 +92,26 @@ class PackageLock:
     requested: tuple[str, ...]
     entries: tuple[PackageLockEntry, ...]
     excluded_categories: tuple[str, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.catalog_version, int) or isinstance(self.catalog_version, bool):
+            raise ValueError("package lock catalog_version must be an integer")
+        if self.catalog_version <= 0:
+            raise ValueError("package lock catalog_version must be positive")
+        _validate_non_empty_string("package lock", "spec_version", self.spec_version)
+        object.__setattr__(self, "requested", _validate_string_tuple("package lock", "requested", self.requested))
+        entries = tuple(self.entries)
+        if any(not isinstance(entry, PackageLockEntry) for entry in entries):
+            raise ValueError("package lock entries must be PackageLockEntry")
+        distributions = [entry.distribution for entry in entries]
+        if len(set(distributions)) != len(distributions):
+            raise ValueError("package lock entries must have unique distributions")
+        object.__setattr__(self, "entries", entries)
+        object.__setattr__(
+            self,
+            "excluded_categories",
+            _validate_string_tuple("package lock", "excluded_categories", self.excluded_categories),
+        )
 
     def entry(self, distribution: str) -> PackageLockEntry | None:
         for entry in self.entries:
@@ -77,7 +142,15 @@ class WheelBuildTarget:
     python_versions: tuple[str, ...]
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "python_versions", tuple(str(version) for version in self.python_versions))
+        for field_name in ("distribution", "manifest", "backend", "source_layout"):
+            _validate_non_empty_string("wheel build target", field_name, getattr(self, field_name))
+        if self.kind not in {"pure_python", "native_extension"}:
+            raise ValueError(f"invalid wheel build target kind {self.kind}")
+        object.__setattr__(
+            self,
+            "python_versions",
+            _validate_string_tuple("wheel build target", "python_versions", self.python_versions),
+        )
 
     def target_contract(self) -> dict[str, object]:
         return {
@@ -96,11 +169,20 @@ class WheelMatrix:
     diagnostics: tuple[Diagnostic, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "targets", tuple(sorted(self.targets, key=lambda item: item.distribution)))
+        targets = tuple(self.targets)
+        if any(not isinstance(target, WheelBuildTarget) for target in targets):
+            raise ValueError("wheel matrix targets must be WheelBuildTarget")
+        distributions = [target.distribution for target in targets]
+        if len(set(distributions)) != len(distributions):
+            raise ValueError("wheel matrix targets must have unique distributions")
+        object.__setattr__(self, "targets", tuple(sorted(targets, key=lambda item: item.distribution)))
+        diagnostics = tuple(self.diagnostics)
+        if any(not isinstance(diagnostic, Diagnostic) for diagnostic in diagnostics):
+            raise ValueError("wheel matrix diagnostics must be Diagnostic")
         object.__setattr__(
             self,
             "diagnostics",
-            tuple(sorted(self.diagnostics, key=lambda item: (item.path, item.code, item.message))),
+            tuple(sorted(diagnostics, key=lambda item: (item.path, item.code, item.message))),
         )
 
     @property
@@ -125,10 +207,20 @@ class PackageManifestAuditPolicy:
     blocked_dependencies: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
+        allowed_licenses = _validate_string_tuple(
+            "package manifest audit policy",
+            "allowed_licenses",
+            self.allowed_licenses,
+        )
+        blocked_dependencies = _validate_string_tuple(
+            "package manifest audit policy",
+            "blocked_dependencies",
+            self.blocked_dependencies,
+        )
         object.__setattr__(
             self,
             "allowed_licenses",
-            tuple(sorted({license.strip() for license in self.allowed_licenses if license.strip()})),
+            tuple(sorted({license.strip() for license in allowed_licenses})),
         )
         object.__setattr__(
             self,
@@ -137,8 +229,7 @@ class PackageManifestAuditPolicy:
                 sorted(
                     {
                         dependency.strip().lower().replace("_", "-")
-                        for dependency in self.blocked_dependencies
-                        if dependency.strip()
+                        for dependency in blocked_dependencies
                     }
                 )
             ),

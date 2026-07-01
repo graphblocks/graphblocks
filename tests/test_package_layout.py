@@ -3,8 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 import tomllib
 
+import pytest
+
 from graphblocks.packages import (
+    PackageLock,
+    PackageLockEntry,
     PackageManifestAuditPolicy,
+    WheelBuildTarget,
+    WheelMatrix,
     build_wheel_matrix,
     audit_package_manifests,
     build_package_lock,
@@ -1080,6 +1086,40 @@ def test_package_lock_payload_and_digest_are_canonical() -> None:
     assert left.content_digest() == right.content_digest()
 
 
+def test_package_lock_records_validate_identity_types_and_uniqueness() -> None:
+    entry = PackageLockEntry(
+        distribution="graphblocks-core",
+        version_constraint="~=1.0",
+        import_package="graphblocks",
+        default=True,
+        layer="schema_authoring",
+        kind="pure_python",
+        stability="foundation",
+        dependencies=["graphblocks-schema"],  # type: ignore[arg-type]
+        forbidden_dependencies=["requests"],  # type: ignore[arg-type]
+    )
+
+    assert entry.dependencies == ("graphblocks-schema",)
+    assert entry.forbidden_dependencies == ("requests",)
+    with pytest.raises(ValueError, match="package lock entry distribution must not be empty"):
+        PackageLockEntry(" ", None, None, True, None, None, None)
+    with pytest.raises(ValueError, match="package lock entry default must be a boolean"):
+        PackageLockEntry("graphblocks-core", None, None, "yes", None, None, None)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="package lock entry dependencies item must not be empty"):
+        PackageLockEntry("graphblocks-core", None, None, True, None, None, None, dependencies=(" ",))
+
+    lock = PackageLock(1, "1.0", requested=["graphblocks-core"], entries=[entry])  # type: ignore[arg-type]
+
+    assert lock.requested == ("graphblocks-core",)
+    assert lock.entries == (entry,)
+    with pytest.raises(ValueError, match="package lock catalog_version must be positive"):
+        PackageLock(0, "1.0", requested=("graphblocks-core",), entries=(entry,))
+    with pytest.raises(ValueError, match="package lock entries must have unique distributions"):
+        PackageLock(1, "1.0", requested=("graphblocks-core",), entries=(entry, entry))
+    with pytest.raises(ValueError, match="package lock entries must be PackageLockEntry"):
+        PackageLock(1, "1.0", requested=("graphblocks-core",), entries=(object(),))  # type: ignore[arg-type]
+
+
 def test_package_catalog_doctor_accepts_builtin_catalog() -> None:
     diagnostics = doctor_package_catalog(load_package_catalog())
 
@@ -1113,6 +1153,47 @@ def test_package_wheel_matrix_covers_first_party_python_distributions() -> None:
     assert matrix.matrix_contract()["target_count"] == len(matrix.targets)
     assert matrix.content_digest().startswith("sha256:")
     assert "WheelMatrix" in __import__("graphblocks").__all__
+
+
+def test_wheel_matrix_records_validate_identity_and_collection_types() -> None:
+    target = WheelBuildTarget(
+        distribution="graphblocks-core",
+        manifest="pyproject.toml",
+        backend="hatchling.build",
+        kind="pure_python",
+        source_layout="src/graphblocks",
+        python_versions=["3.11", "3.12"],  # type: ignore[arg-type]
+    )
+
+    assert target.python_versions == ("3.11", "3.12")
+    with pytest.raises(ValueError, match="wheel build target distribution must not be empty"):
+        WheelBuildTarget(" ", "pyproject.toml", "hatchling.build", "pure_python", "src/graphblocks", ("3.11",))
+    with pytest.raises(ValueError, match="invalid wheel build target kind"):
+        WheelBuildTarget(
+            "graphblocks-core",
+            "pyproject.toml",
+            "hatchling.build",
+            "binary",  # type: ignore[arg-type]
+            "src/graphblocks",
+            ("3.11",),
+        )
+    with pytest.raises(ValueError, match="wheel build target python_versions item must not be empty"):
+        WheelBuildTarget(
+            "graphblocks-core",
+            "pyproject.toml",
+            "hatchling.build",
+            "pure_python",
+            "src/graphblocks",
+            (" ",),
+        )
+
+    matrix = WheelMatrix(targets=[target])  # type: ignore[arg-type]
+
+    assert matrix.targets == (target,)
+    with pytest.raises(ValueError, match="wheel matrix targets must have unique distributions"):
+        WheelMatrix(targets=(target, target))
+    with pytest.raises(ValueError, match="wheel matrix diagnostics must be Diagnostic"):
+        WheelMatrix(targets=(target,), diagnostics=(object(),))  # type: ignore[arg-type]
 
 
 def test_package_wheel_matrix_reports_missing_build_target(tmp_path) -> None:
@@ -1257,6 +1338,20 @@ def test_package_manifest_audit_accepts_repo_manifest_licenses() -> None:
 
     assert diagnostics.ok
     assert diagnostics.diagnostics == ()
+
+
+def test_package_manifest_audit_policy_validates_and_normalizes_string_collections() -> None:
+    policy = PackageManifestAuditPolicy(
+        allowed_licenses=("MIT", "Apache-2.0", "MIT"),
+        blocked_dependencies=("vulnerable_sdk", "Vulnerable-SDK"),
+    )
+
+    assert policy.allowed_licenses == ("Apache-2.0", "MIT")
+    assert policy.blocked_dependencies == ("vulnerable-sdk",)
+    with pytest.raises(ValueError, match="package manifest audit policy allowed_licenses item must not be empty"):
+        PackageManifestAuditPolicy(allowed_licenses=(" ",))
+    with pytest.raises(ValueError, match="package manifest audit policy blocked_dependencies item must be a string"):
+        PackageManifestAuditPolicy(blocked_dependencies=(object(),))  # type: ignore[arg-type]
 
 
 def test_package_manifest_audit_reports_denied_license_and_blocked_dependency(tmp_path) -> None:

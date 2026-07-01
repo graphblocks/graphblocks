@@ -1074,6 +1074,8 @@ Application production lock:
 
 Library author는 지나치게 exact pin하지 않고 compatibility range를 선언한다.
 
+`PackageLockEntry`, `PackageLock`, `WheelBuildTarget`, `WheelMatrix`, `PackageManifestAuditPolicy`는 construction 시 distribution/spec/version/backend/kind/license/dependency identity, boolean flags, unique package/target distribution, typed diagnostics, non-empty string collections를 검증해야 한다. Lock과 wheel matrix contract는 mutable caller collection에 의해 바뀌지 않는 tuple projection이어야 한다.
+
 ## 234. Distribution support tier
 
 | Tier | 소유자 | TCK | Release SLA | Registry 표시 |
@@ -1189,4 +1191,3 @@ Protocol은 schema ID/version과 runtime protocol을 handshake한다.
 13. `graphblocks-stdlib`은 domain/provider package를 암묵적으로 설치하지 않는다.
 14. environment lock과 `graphblocks.lock`의 불일치를 배포 전 검출한다.
 15. unsupported native platform에서도 core validation과 RemoteRuntime 안내가 동작한다.
-
