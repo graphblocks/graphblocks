@@ -2097,6 +2097,14 @@ def validate_tool_result_for_model(
             raise ToolResultValidationError(f"tool result {result.tool_call_id} has multiple JSON outputs")
         schema_registry.validate(output_schema, json_outputs[0].data)
 
+    for field_name, value in (
+        ("trust_designation", trust_designation),
+        ("prompt_injection_label", prompt_injection_label),
+        ("content_classification", content_classification),
+    ):
+        if not isinstance(value, str) or not value.strip():
+            raise ToolResultValidationError(f"tool result model output label {field_name} must not be empty")
+
     model_output: list[ContentPart] = []
     for part in result.output:
         metadata = dict(part.metadata)

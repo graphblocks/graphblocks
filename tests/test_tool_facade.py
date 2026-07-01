@@ -2712,6 +2712,55 @@ def test_completed_tool_result_model_output_accepts_runtime_configured_trust_lab
     assert result.output[0].metadata["trust_designation"] == "trusted_internal"
 
 
+@pytest.mark.parametrize(
+    ("kwargs", "field_name"),
+    (
+        ({"trust_designation": " "}, "trust_designation"),
+        ({"prompt_injection_label": "\t"}, "prompt_injection_label"),
+        ({"content_classification": ""}, "content_classification"),
+        ({"trust_designation": object()}, "trust_designation"),
+    ),
+)
+def test_completed_tool_result_model_output_rejects_blank_policy_labels(
+    kwargs: dict[str, object], field_name: str
+) -> None:
+    catalog = ToolCatalog(
+        definitions=(
+            ToolDefinition(
+                name="knowledge.search",
+                description="Search documentation.",
+                input_schema="schemas/SearchRequest@1",
+            ),
+        ),
+        bindings=(
+            ToolBinding(
+                binding_id="binding-search",
+                tool_name="knowledge.search",
+                implementation=BlockToolImplementation(block="blocks.search"),
+            ),
+        ),
+    )
+    resolved = catalog.resolve(ToolResolutionScope(), effective_policy_snapshot_id="policy-snapshot-1")[0]
+    call = (
+        ToolCallDraft.proposed("response-1", "call-1", "knowledge.search")
+        .append_argument_fragment("{}")
+        .complete_arguments()
+        .into_tool_call(resolved.resolved_tool_id, created_at="2026-06-23T00:00:00Z")
+    )
+    registry = ToolSchemaRegistry(())
+    result = ToolResult.completed(
+        "call-1",
+        (ContentPart(kind="text", text="classified output"),),
+        started_at="2026-06-23T00:00:01Z",
+        completed_at="2026-06-23T00:00:02Z",
+    )
+
+    with pytest.raises(ToolResultValidationError) as error:
+        validate_tool_result_for_model(call, result, resolved, registry, **kwargs)  # type: ignore[arg-type]
+
+    assert str(error.value) == f"tool result model output label {field_name} must not be empty"
+
+
 def test_completed_tool_result_model_output_enforces_byte_limit_before_model_return() -> None:
     catalog = ToolCatalog(
         definitions=(
