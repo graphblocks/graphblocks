@@ -32,7 +32,10 @@ def _validate_optional_non_empty_string(owner: str, field_name: str, value: obje
 def _freeze_metadata(owner: str, metadata: object) -> MappingProxyType[str, object]:
     if not isinstance(metadata, Mapping):
         raise ValueError(f"{owner} metadata must be a mapping")
-    return MappingProxyType(dict(metadata))
+    metadata_copy = dict(metadata)
+    if any(not isinstance(key, str) or not key.strip() for key in metadata_copy):
+        raise ValueError(f"{owner} metadata keys must be non-empty strings")
+    return MappingProxyType(metadata_copy)
 
 
 def _parse_datetime(value: str) -> datetime:

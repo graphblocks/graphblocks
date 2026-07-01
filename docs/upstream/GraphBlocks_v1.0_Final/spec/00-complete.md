@@ -4121,6 +4121,8 @@ invalidated
 Approval request builders MUST validate tool-call arguments as mapping records before computing
 `arguments_digest`; scalar, sequence, or non-iterable argument inputs MUST fail at the approval
 boundary and MUST NOT produce an approval request.
+Approval request and record metadata MUST be mapping records with non-empty string keys before
+metadata is captured in provenance, audit, policy, or UI approval events.
 Tool approval APIs MUST validate typed resolved-tool, tool-call, and approval-request records before
 binding or checking approvals, so malformed approval inputs fail at the approval boundary.
 

@@ -118,6 +118,28 @@ def test_approval_request_metadata_is_copied_and_read_only() -> None:
             summary="Run a process",
             metadata=object(),  # type: ignore[arg-type]
         )
+    with pytest.raises(ValueError, match="approval request metadata keys must be non-empty strings"):
+        ApprovalRequest.from_arguments(
+            "approval-1",
+            run_id="run-1",
+            subject=ResourceSnapshotRef("tool-call-1", "sha256:subject"),
+            action="process.execute",
+            arguments={"cmd": ["echo", "hello"]},
+            risk="external_process",
+            summary="Run a process",
+            metadata={object(): "T-1"},  # type: ignore[dict-item]
+        )
+    with pytest.raises(ValueError, match="approval request metadata keys must be non-empty strings"):
+        ApprovalRequest.from_arguments(
+            "approval-1",
+            run_id="run-1",
+            subject=ResourceSnapshotRef("tool-call-1", "sha256:subject"),
+            action="process.execute",
+            arguments={"cmd": ["echo", "hello"]},
+            risk="external_process",
+            summary="Run a process",
+            metadata={" ": "T-1"},
+        )
 
 
 def test_approved_record_is_valid_only_for_same_subject_and_arguments() -> None:
@@ -214,6 +236,10 @@ def test_approval_record_rejects_invalid_state() -> None:
         ApprovalRecord("approval-1", request, "requested", credential_refs=("cred-1", " "))
     with pytest.raises(ValueError, match="approval record metadata must be a mapping"):
         ApprovalRecord("approval-1", request, "requested", metadata=object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="approval record metadata keys must be non-empty strings"):
+        ApprovalRecord("approval-1", request, "requested", metadata={object(): "T-1"})  # type: ignore[dict-item]
+    with pytest.raises(ValueError, match="approval record metadata keys must be non-empty strings"):
+        ApprovalRecord("approval-1", request, "requested", metadata={" ": "T-1"})
 
 
 def test_denied_approval_record_never_authorizes_action() -> None:
