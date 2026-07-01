@@ -42,6 +42,17 @@ def test_review_request_digest_is_bound_to_subject_and_required_scopes() -> None
     assert left.required_scopes == ("quality", "safety")
 
 
+def test_review_request_rejects_invalid_created_at() -> None:
+    with pytest.raises(ValueError, match="review request created_at must be an ISO datetime"):
+        ReviewRequest(
+            request_id="request-1",
+            subject=ResourceSnapshotRef("candidate-1", "sha256:subject"),
+            requested_by=PrincipalRef("author-1"),
+            required_scopes=("quality",),
+            created_at="later",
+        )
+
+
 def test_review_workflow_records_review_with_credential_reference() -> None:
     request = ReviewRequest(
         request_id="request-1",
@@ -78,6 +89,55 @@ def test_review_workflow_records_review_with_credential_reference() -> None:
     assert review.is_valid_for(request.subject)
     assert workflow.completed_scopes() == ("quality",)
     assert workflow.is_complete()
+
+
+def test_reviewer_credential_rejects_invalid_timestamps() -> None:
+    reviewer = PrincipalRef("reviewer-1")
+
+    with pytest.raises(ValueError, match="reviewer credential issued_at must be an ISO datetime"):
+        ReviewerCredential("cred-quality", reviewer, scopes=("quality",), issued_at="later")
+    with pytest.raises(ValueError, match="reviewer credential expires_at must be an ISO datetime"):
+        ReviewerCredential(
+            "cred-quality",
+            reviewer,
+            scopes=("quality",),
+            issued_at="2026-06-24T00:00:00Z",
+            expires_at="later",
+        )
+    with pytest.raises(ValueError, match="reviewer credential expires_at must be after issued_at"):
+        ReviewerCredential(
+            "cred-quality",
+            reviewer,
+            scopes=("quality",),
+            issued_at="2026-06-24T00:00:00Z",
+            expires_at="2026-06-24T00:00:00Z",
+        )
+
+
+def test_review_workflow_rejects_invalid_review_created_at() -> None:
+    request = ReviewRequest(
+        request_id="request-1",
+        subject=ResourceSnapshotRef("candidate-1", "sha256:subject"),
+        requested_by=PrincipalRef("author-1"),
+        required_scopes=("quality",),
+        created_at="2026-06-24T00:00:00Z",
+    )
+    reviewer = PrincipalRef("reviewer-1")
+    workflow = ReviewWorkflow(
+        request=request,
+        credential_provider=InMemoryReviewerCredentialProvider(
+            [ReviewerCredential("cred-quality", reviewer, scopes=("quality",), issued_at="2026-06-24T00:00:00Z")]
+        ),
+    )
+
+    with pytest.raises(ValueError, match="review created_at must be an ISO datetime"):
+        workflow.record_review(
+            review_id="review-1",
+            reviewer=reviewer,
+            scope="quality",
+            decision="accept",
+            created_at="later",
+        )
 
 
 def test_review_workflow_rejects_missing_credential_for_scope() -> None:

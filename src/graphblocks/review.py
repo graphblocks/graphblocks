@@ -9,6 +9,28 @@ from .evaluation import ResourceSnapshotRef, ReviewDecision, ReviewRecord
 from .policy import PrincipalRef
 
 
+def _parse_review_datetime(value: object, *, owner: str, field_name: str) -> datetime:
+    if not isinstance(value, str):
+        raise ValueError(f"{owner} {field_name} must be a string")
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"{owner} {field_name} must not be empty")
+    if normalized.endswith(("Z", "z")):
+        normalized = f"{normalized[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as error:
+        raise ValueError(f"{owner} {field_name} must be an ISO datetime") from error
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _validate_optional_review_datetime(owner: str, field_name: str, value: object | None) -> None:
+    if value is not None:
+        _parse_review_datetime(value, owner=owner, field_name=field_name)
+
+
 @dataclass(frozen=True, slots=True)
 class ReviewRequest:
     request_id: str
@@ -19,6 +41,7 @@ class ReviewRequest:
     metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        _parse_review_datetime(self.created_at, owner="review request", field_name="created_at")
         object.__setattr__(self, "required_scopes", tuple(sorted(set(self.required_scopes))))
         object.__setattr__(self, "metadata", dict(self.metadata))
 
@@ -55,6 +78,12 @@ class ReviewerCredential:
     metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        _parse_review_datetime(self.issued_at, owner="reviewer credential", field_name="issued_at")
+        _validate_optional_review_datetime("reviewer credential", "expires_at", self.expires_at)
+        if self.expires_at is not None and _parse_review_datetime(
+            self.expires_at, owner="reviewer credential", field_name="expires_at"
+        ) <= _parse_review_datetime(self.issued_at, owner="reviewer credential", field_name="issued_at"):
+            raise ValueError("reviewer credential expires_at must be after issued_at")
         object.__setattr__(self, "scopes", tuple(sorted(set(self.scopes))))
         object.__setattr__(self, "metadata", dict(self.metadata))
 
@@ -65,19 +94,12 @@ class ReviewerCredential:
         if self.expires_at is None:
             return True
 
-        def parse_datetime(value: str) -> datetime:
-            if not isinstance(value, str) or not value.strip():
-                raise ValueError("datetime must be a non-empty string")
-            normalized = value.strip()
-            if normalized.endswith(("Z", "z")):
-                normalized = f"{normalized[:-1]}+00:00"
-            parsed = datetime.fromisoformat(normalized)
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=timezone.utc)
-            return parsed.astimezone(timezone.utc)
-
         try:
-            return parse_datetime(created_at) < parse_datetime(self.expires_at)
+            return _parse_review_datetime(created_at, owner="review", field_name="created_at") < _parse_review_datetime(
+                self.expires_at,
+                owner="reviewer credential",
+                field_name="expires_at",
+            )
         except ValueError:
             return False
 
@@ -146,6 +168,7 @@ class ReviewWorkflow:
         subject: ResourceSnapshotRef | None = None,
         comments: list[str] | None = None,
     ) -> ReviewRecord:
+        _parse_review_datetime(created_at, owner="review", field_name="created_at")
         subject = self.request.subject if subject is None else subject
         if subject.resource_id != self.request.subject.resource_id or subject.digest != self.request.subject.digest:
             raise ReviewSubjectChangedError(self.request.subject.digest, subject.digest)
