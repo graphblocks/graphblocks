@@ -63,6 +63,20 @@ fn usage_ledgers_reject_invalid_usage_records() -> Result<(), UsageLedgerError> 
         [tokens(-1)],
         1_000,
     );
+    let blank_dimension_key = UsageRecord::new(
+        "usage-blank-dimension-key",
+        UsageSource::RuntimeMeasured,
+        UsageConfidence::Estimated,
+        [tokens(12).with_dimension(" ", "test-model")],
+        1_000,
+    );
+    let blank_dimension_value = UsageRecord::new(
+        "usage-blank-dimension-value",
+        UsageSource::RuntimeMeasured,
+        UsageConfidence::Estimated,
+        [tokens(12).with_dimension("model", " ")],
+        1_000,
+    );
     let blank_run_id = UsageRecord::new(
         "usage-3",
         UsageSource::RuntimeMeasured,
@@ -79,6 +93,22 @@ fn usage_ledgers_reject_invalid_usage_records() -> Result<(), UsageLedgerError> 
         1_000,
     )
     .with_provider_response_id("");
+    let blank_metadata_key = UsageRecord::new(
+        "usage-blank-metadata-key",
+        UsageSource::RuntimeMeasured,
+        UsageConfidence::Estimated,
+        [tokens(12)],
+        1_000,
+    )
+    .with_metadata(" ", "generation");
+    let blank_metadata_value = UsageRecord::new(
+        "usage-blank-metadata-value",
+        UsageSource::RuntimeMeasured,
+        UsageConfidence::Estimated,
+        [tokens(12)],
+        1_000,
+    )
+    .with_metadata("phase", " ");
 
     assert_eq!(
         memory.append(blank_record_id.clone()),
@@ -129,6 +159,18 @@ fn usage_ledgers_reject_invalid_usage_records() -> Result<(), UsageLedgerError> 
         })
     );
     assert_eq!(
+        memory.append(blank_dimension_key),
+        Err(UsageLedgerError::InvalidRecord {
+            message: "usage amount dimension keys must not be empty".to_string()
+        })
+    );
+    assert_eq!(
+        sqlite.append(blank_dimension_value),
+        Err(UsageLedgerError::InvalidRecord {
+            message: "usage amount dimension values must not be empty".to_string()
+        })
+    );
+    assert_eq!(
         memory.append(blank_run_id),
         Err(UsageLedgerError::InvalidRecord {
             message: "usage run_id must not be empty".to_string()
@@ -138,6 +180,18 @@ fn usage_ledgers_reject_invalid_usage_records() -> Result<(), UsageLedgerError> 
         sqlite.append(blank_provider_response_id),
         Err(UsageLedgerError::InvalidRecord {
             message: "usage provider_response_id must not be empty".to_string()
+        })
+    );
+    assert_eq!(
+        memory.append(blank_metadata_key),
+        Err(UsageLedgerError::InvalidRecord {
+            message: "usage metadata keys must not be empty".to_string()
+        })
+    );
+    assert_eq!(
+        sqlite.append(blank_metadata_value),
+        Err(UsageLedgerError::InvalidRecord {
+            message: "usage metadata values must not be empty".to_string()
         })
     );
     Ok(())

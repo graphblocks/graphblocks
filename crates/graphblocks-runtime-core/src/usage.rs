@@ -643,6 +643,30 @@ fn validate_usage_record(record: &UsageRecord) -> Result<(), UsageLedgerError> {
                 message: "usage amount unit must not be empty".to_string(),
             });
         }
+        for (key, value) in &amount.dimensions {
+            if key.trim().is_empty() {
+                return Err(UsageLedgerError::InvalidRecord {
+                    message: "usage amount dimension keys must not be empty".to_string(),
+                });
+            }
+            if value.trim().is_empty() {
+                return Err(UsageLedgerError::InvalidRecord {
+                    message: "usage amount dimension values must not be empty".to_string(),
+                });
+            }
+        }
+    }
+    for (key, value) in &record.metadata {
+        if key.trim().is_empty() {
+            return Err(UsageLedgerError::InvalidRecord {
+                message: "usage metadata keys must not be empty".to_string(),
+            });
+        }
+        if value.trim().is_empty() {
+            return Err(UsageLedgerError::InvalidRecord {
+                message: "usage metadata values must not be empty".to_string(),
+            });
+        }
     }
     Ok(())
 }

@@ -8272,6 +8272,8 @@ Token은 provider/model/tokenizer에 따라 의미가 다르므로 ledger는 mod
 `UsageAmount.quantity` MUST be a finite non-negative decimal before usage or budget accounting.
 NaN, positive infinity, negative infinity, and unparseable quantities MUST fail before ledger
 reservation, settlement, serialization, or policy comparison.
+Usage amount dimensions and usage record metadata MUST use non-empty string keys and non-empty
+string values before ledger accounting, persistence, serialization, or policy comparison.
 
 ```python
 class BudgetLimit(BaseModel):
