@@ -228,6 +228,12 @@ pub enum BudgetError {
         kind: String,
         unit: String,
     },
+    InvalidPermit {
+        message: String,
+    },
+    InvalidCompletionReserve {
+        message: String,
+    },
     InvalidUsageAmount {
         message: String,
     },
@@ -833,6 +839,7 @@ impl InMemoryBudgetLedger {
         low_watermark: Vec<UsageAmount>,
     ) -> Result<BudgetPermit, BudgetError> {
         let permit_id = permit_id.into();
+        validate_permit_reservation_refs(&reservation_ids)?;
         validate_usage_amounts(&low_watermark)?;
         if self.permits.contains_key(&permit_id) {
             return Err(BudgetError::PermitConflict { permit_id });
@@ -915,6 +922,11 @@ impl InMemoryBudgetLedger {
         let amounts = amounts.into_iter().collect::<Vec<_>>();
         validate_usage_amounts(&amounts)?;
         let requested = amounts_to_map(amounts);
+        let spendable_by = spendable_by
+            .into_iter()
+            .map(Into::into)
+            .collect::<BTreeSet<_>>();
+        validate_completion_reserve_spenders(&spendable_by)?;
         let held_budget_ids = self.budget_chain(budget_id)?;
         for held_budget_id in &held_budget_ids {
             let available = self.available_map(held_budget_id)?;
@@ -945,7 +957,7 @@ impl InMemoryBudgetLedger {
             budget_id: budget_id.to_string(),
             purpose,
             amounts: map_to_amounts(&requested),
-            spendable_by: spendable_by.into_iter().map(Into::into).collect(),
+            spendable_by,
             expires_at,
             status: CompletionReserveStatus::Available,
             reservation_id: None,
@@ -1634,6 +1646,7 @@ impl SqliteBudgetLedger {
         low_watermark: Vec<UsageAmount>,
     ) -> Result<BudgetPermit, BudgetError> {
         let permit_id = permit_id.into();
+        validate_permit_reservation_refs(&reservation_ids)?;
         validate_usage_amounts(&low_watermark)?;
         let transaction = self
             .connection
@@ -1843,6 +1856,7 @@ impl SqliteBudgetLedger {
             .into_iter()
             .map(Into::into)
             .collect::<BTreeSet<_>>();
+        validate_completion_reserve_spenders(&spendable_by)?;
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -2099,6 +2113,45 @@ fn validate_usage_amounts(amounts: &[UsageAmount]) -> Result<(), BudgetError> {
                 });
             }
         }
+    }
+    Ok(())
+}
+
+fn validate_permit_reservation_refs(reservation_ids: &[String]) -> Result<(), BudgetError> {
+    if reservation_ids.is_empty() {
+        return Err(BudgetError::InvalidPermit {
+            message: "budget permit reservation_refs must not be empty".to_string(),
+        });
+    }
+
+    let mut seen = BTreeSet::new();
+    for reservation_id in reservation_ids {
+        if reservation_id.trim().is_empty() {
+            return Err(BudgetError::InvalidPermit {
+                message: "budget permit reservation_refs must not contain empty ids".to_string(),
+            });
+        }
+        if !seen.insert(reservation_id) {
+            return Err(BudgetError::InvalidPermit {
+                message: "budget permit reservation_refs must not contain duplicates".to_string(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_completion_reserve_spenders(
+    spendable_by: &BTreeSet<String>,
+) -> Result<(), BudgetError> {
+    if spendable_by.is_empty() {
+        return Err(BudgetError::InvalidCompletionReserve {
+            message: "completion reserve spendable_by must not be empty".to_string(),
+        });
+    }
+    if spendable_by.iter().any(|spender| spender.trim().is_empty()) {
+        return Err(BudgetError::InvalidCompletionReserve {
+            message: "completion reserve spendable_by must not contain empty ids".to_string(),
+        });
     }
     Ok(())
 }

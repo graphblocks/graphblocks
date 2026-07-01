@@ -8455,6 +8455,8 @@ class BudgetPermit(BaseModel):
 `fencing_tokens` MUST be a non-empty mapping of held budget scope keys to non-negative fencing
 tokens. A worker permit without scoped reservations or fencing metadata is not a valid execution
 authority.
+Budget permit APIs MUST reject empty, blank, or duplicate reservation references before permit
+issuance or persistence.
 
 Distributed 실행 protocol:
 
@@ -8842,6 +8844,8 @@ class CompletionReserve(BaseModel):
 `CompletionReserve.spendable_by` MUST be a non-empty set of authorized finalization,
 checkpoint, cleanup, or compensation work identifiers. A reserve with no eligible spender MUST
 fail before budget capacity is held.
+Runtime reserve APIs MUST reject empty or blank `spendable_by` entries before mutating reserved
+budget capacity.
 
 Agent, research, trial workflow는 planning과 exploration이 모든 예산을 소모해 final response, checkpoint, cleanup을 수행하지 못하는 상황을 방지해야 한다.
 

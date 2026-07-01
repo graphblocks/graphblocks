@@ -206,6 +206,178 @@ fn sqlite_budget_ledger_rejects_invalid_usage_amount_dimensions() -> Result<(), 
 }
 
 #[test]
+fn budget_ledger_rejects_invalid_permit_authority_and_completion_spenders() -> Result<(), BudgetError> {
+    let mut ledger = InMemoryBudgetLedger::new();
+    ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+    let reservation = ledger.reserve(
+        "budget-1",
+        "run:1",
+        [tokens(10)],
+        ReservationPurpose::ProviderCall,
+        "later",
+        None,
+    )?;
+
+    assert_eq!(
+        ledger.issue_permit(
+            "permit-empty",
+            Vec::new(),
+            "run:1",
+            "turn-1",
+            1,
+            "standard",
+            "policy-digest",
+            "2026-06-22T01:00:00Z",
+            Vec::new(),
+        ),
+        Err(BudgetError::InvalidPermit {
+            message: "budget permit reservation_refs must not be empty".to_string(),
+        })
+    );
+    assert_eq!(
+        ledger.issue_permit(
+            "permit-blank",
+            vec![" ".to_string()],
+            "run:1",
+            "turn-1",
+            1,
+            "standard",
+            "policy-digest",
+            "2026-06-22T01:00:00Z",
+            Vec::new(),
+        ),
+        Err(BudgetError::InvalidPermit {
+            message: "budget permit reservation_refs must not contain empty ids".to_string(),
+        })
+    );
+    assert_eq!(
+        ledger.issue_permit(
+            "permit-duplicate",
+            vec![
+                reservation.reservation_id.clone(),
+                reservation.reservation_id.clone(),
+            ],
+            "run:1",
+            "turn-1",
+            1,
+            "standard",
+            "policy-digest",
+            "2026-06-22T01:00:00Z",
+            Vec::new(),
+        ),
+        Err(BudgetError::InvalidPermit {
+            message: "budget permit reservation_refs must not contain duplicates".to_string(),
+        })
+    );
+    assert_eq!(
+        ledger.create_completion_reserve(
+            "reserve-empty",
+            "budget-1",
+            CompletionReservePurpose::Finalization,
+            [tokens(1)],
+            Vec::<String>::new(),
+            None,
+        ),
+        Err(BudgetError::InvalidCompletionReserve {
+            message: "completion reserve spendable_by must not be empty".to_string(),
+        })
+    );
+    assert_eq!(
+        ledger.create_completion_reserve(
+            "reserve-blank",
+            "budget-1",
+            CompletionReservePurpose::Finalization,
+            [tokens(1)],
+            [" "],
+            None,
+        ),
+        Err(BudgetError::InvalidCompletionReserve {
+            message: "completion reserve spendable_by must not contain empty ids".to_string(),
+        })
+    );
+    assert_eq!(ledger.balance("budget-1")?.reserved, vec![tokens(10)]);
+    Ok(())
+}
+
+#[test]
+fn sqlite_budget_ledger_rejects_invalid_permit_authority_and_completion_spenders() -> Result<(), BudgetError> {
+    let mut ledger = SqliteBudgetLedger::open_in_memory()?;
+    ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
+    let reservation = ledger.reserve(
+        "budget-1",
+        "run:1",
+        [tokens(10)],
+        ReservationPurpose::ProviderCall,
+        "later",
+        None,
+    )?;
+
+    assert_eq!(
+        ledger.issue_permit(
+            "permit-empty",
+            Vec::new(),
+            "run:1",
+            "turn-1",
+            1,
+            "standard",
+            "policy-digest",
+            "2026-06-22T01:00:00Z",
+            Vec::new(),
+        ),
+        Err(BudgetError::InvalidPermit {
+            message: "budget permit reservation_refs must not be empty".to_string(),
+        })
+    );
+    assert_eq!(
+        ledger.issue_permit(
+            "permit-duplicate",
+            vec![
+                reservation.reservation_id.clone(),
+                reservation.reservation_id.clone(),
+            ],
+            "run:1",
+            "turn-1",
+            1,
+            "standard",
+            "policy-digest",
+            "2026-06-22T01:00:00Z",
+            Vec::new(),
+        ),
+        Err(BudgetError::InvalidPermit {
+            message: "budget permit reservation_refs must not contain duplicates".to_string(),
+        })
+    );
+    assert_eq!(
+        ledger.create_completion_reserve(
+            "reserve-empty",
+            "budget-1",
+            CompletionReservePurpose::Finalization,
+            [tokens(1)],
+            Vec::<String>::new(),
+            None,
+        ),
+        Err(BudgetError::InvalidCompletionReserve {
+            message: "completion reserve spendable_by must not be empty".to_string(),
+        })
+    );
+    assert_eq!(
+        ledger.create_completion_reserve(
+            "reserve-blank",
+            "budget-1",
+            CompletionReservePurpose::Finalization,
+            [tokens(1)],
+            [" "],
+            None,
+        ),
+        Err(BudgetError::InvalidCompletionReserve {
+            message: "completion reserve spendable_by must not contain empty ids".to_string(),
+        })
+    );
+    assert_eq!(ledger.balance("budget-1")?.reserved, vec![tokens(10)]);
+    Ok(())
+}
+
+#[test]
 fn budget_ledger_reserve_reduces_available_balance() -> Result<(), BudgetError> {
     let mut ledger = InMemoryBudgetLedger::new();
     ledger.allocate("budget-1", "tenant:acme", [tokens(100)], "policy-1", None)?;
