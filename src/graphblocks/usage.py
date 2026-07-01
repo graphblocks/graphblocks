@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from decimal import Decimal
 import json
 from pathlib import Path
@@ -44,6 +45,23 @@ class UsageRecordConflictError(UsageLedgerError):
     pass
 
 
+def _parse_datetime(owner: str, field_name: str, value: object) -> datetime:
+    if not isinstance(value, str):
+        raise ValueError(f"{owner} {field_name} must be a string")
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"{owner} {field_name} must not be empty")
+    if normalized.endswith(("Z", "z")):
+        normalized = f"{normalized[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as error:
+        raise ValueError(f"{owner} {field_name} must be an ISO datetime") from error
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 @dataclass(frozen=True, slots=True)
 class UsageRecord:
     record_id: str
@@ -69,10 +87,7 @@ class UsageRecord:
             raise ValueError(f"invalid usage source {self.source}")
         if self.confidence not in VALID_USAGE_CONFIDENCES:
             raise ValueError(f"invalid usage confidence {self.confidence}")
-        if not isinstance(self.occurred_at, str):
-            raise ValueError("usage occurred_at must be a string")
-        if not self.occurred_at.strip():
-            raise ValueError("usage occurred_at must not be empty")
+        _parse_datetime("usage", "occurred_at", self.occurred_at)
         for field_name in (
             "run_id",
             "attempt_id",
@@ -93,6 +108,8 @@ class UsageRecord:
             raw_amounts = tuple(self.amounts)
         except TypeError as error:
             raise ValueError("usage amounts must be UsageAmount") from error
+        if not raw_amounts:
+            raise ValueError("usage amounts must not be empty")
         if any(not isinstance(amount, UsageAmount) for amount in raw_amounts):
             raise ValueError("usage amounts must be UsageAmount")
         amounts = tuple(

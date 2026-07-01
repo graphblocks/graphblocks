@@ -502,6 +502,8 @@ class UsageMeasurement(BaseModel):
     provider_response_id: str | None = None
 ```
 
+`UsageRecord`는 non-empty record identity, source/confidence literal, parse 가능한 ISO `occurred_at`, non-empty `UsageAmount` collection, optional lineage identity, metadata mapping key를 검증해야 한다. Empty amount record는 billing/audit에서 의미가 없으므로 거부한다.
+
 규칙:
 
 - Provider가 최종 usage를 늦게 반환하면 provisional record를 쓴 뒤 reconciled record로 정산한다.

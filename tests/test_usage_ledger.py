@@ -137,6 +137,15 @@ def test_usage_record_rejects_invalid_identity_source_and_confidence() -> None:
             occurred_at=object(),  # type: ignore[arg-type]
         )
 
+    with pytest.raises(ValueError, match="usage occurred_at must be an ISO datetime"):
+        UsageRecord(
+            record_id="usage-1",
+            source="runtime_measured",
+            confidence="estimated",
+            amounts=[_tokens("12")],
+            occurred_at="later",
+        )
+
     optional_identity_cases = (
         ({"run_id": " "}, "usage run_id must not be empty"),
         ({"attempt_id": ""}, "usage attempt_id must not be empty"),
@@ -153,6 +162,15 @@ def test_usage_record_rejects_invalid_identity_source_and_confidence() -> None:
                 occurred_at="2026-06-22T00:00:00Z",
                 **overrides,
             )
+
+    with pytest.raises(ValueError, match="usage amounts must not be empty"):
+        UsageRecord(
+            record_id="usage-1",
+            source="runtime_measured",
+            confidence="estimated",
+            amounts=[],
+            occurred_at="2026-06-22T00:00:00Z",
+        )
 
     for amounts in (object(), [object()], "tokens"):
         with pytest.raises(ValueError, match="usage amounts must be UsageAmount"):
