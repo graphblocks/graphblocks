@@ -880,6 +880,10 @@ class ApplicationEvent:
         *,
         input_digest: str,
     ) -> ApplicationEvent:
+        if not isinstance(chunk, GenerationChunk):
+            raise ApplicationEventError("output policy evaluation chunk must be a GenerationChunk")
+        if not isinstance(input_digest, str):
+            raise ApplicationEventError("output policy evaluation input_digest must be a string")
         if not input_digest.strip():
             raise ApplicationEventError("output policy evaluation input_digest must not be empty")
         return cls.new(
@@ -900,6 +904,8 @@ class ApplicationEvent:
         metadata: ApplicationEventMetadata,
         decision: OutputPolicyDecision,
     ) -> ApplicationEvent:
+        if not isinstance(decision, OutputPolicyDecision):
+            raise ApplicationEventError("output policy decision must be an OutputPolicyDecision")
         kind: ApplicationEventKind
         if decision.disposition == "allow":
             kind = "OutputPolicyAllowed"

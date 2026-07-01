@@ -1130,6 +1130,18 @@ def test_output_policy_evaluation_start_event_identifies_chunk_without_text_payl
             chunk,
             input_digest=" ",
         )
+    with pytest.raises(ApplicationEventError, match="output policy evaluation chunk must be a GenerationChunk"):
+        ApplicationEvent.output_policy_evaluation_started(
+            _metadata(),
+            object(),  # type: ignore[arg-type]
+            input_digest="sha256:pending-window",
+        )
+    with pytest.raises(ApplicationEventError, match="output policy evaluation input_digest must be a string"):
+        ApplicationEvent.output_policy_evaluation_started(
+            _metadata(),
+            chunk,
+            input_digest=object(),  # type: ignore[arg-type]
+        )
 
 
 def test_output_policy_decision_event_maps_disposition_and_metadata_payload() -> None:
@@ -1162,6 +1174,9 @@ def test_output_policy_decision_event_maps_disposition_and_metadata_payload() ->
         "draft_disposition": "keep",
         "pending_tool_calls": "keep",
     }
+
+    with pytest.raises(ApplicationEventError, match="output policy decision must be an OutputPolicyDecision"):
+        ApplicationEvent.output_policy_decision(_metadata(), object())  # type: ignore[arg-type]
 
 
 def test_output_cutoff_events_include_cutoff_and_retraction_semantics() -> None:
