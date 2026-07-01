@@ -63,6 +63,11 @@ def test_usage_amount_rejects_negative_amounts_and_freezes_dimensions() -> None:
     assert amount.dimensions == {"model": "support"}
     with pytest.raises(TypeError):
         amount.dimensions["model"] = "direct"
+    for invalid_amount in (Decimal("NaN"), Decimal("Infinity"), Decimal("-Infinity")):
+        with pytest.raises(ValueError, match="usage amount must be finite"):
+            UsageAmount("model_total_tokens", invalid_amount, "tokens")
+    with pytest.raises(ValueError, match="usage amount must be a decimal"):
+        UsageAmount("model_total_tokens", object(), "tokens")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="usage amount must be non-negative"):
         UsageAmount("model_total_tokens", Decimal("-1"), "tokens")
     with pytest.raises(ValueError, match="usage amount kind must not be empty"):

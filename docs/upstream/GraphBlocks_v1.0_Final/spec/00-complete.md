@@ -8264,6 +8264,9 @@ class UsageAmount(BaseModel):
 ```
 
 Token은 provider/model/tokenizer에 따라 의미가 다르므로 ledger는 model과 tokenizer/pricing revision을 보존한다. Monetary cost와 token quota는 별도 unit이며, 둘 중 하나만 초과해도 hard policy가 동작할 수 있다.
+`UsageAmount.quantity` MUST be a finite non-negative decimal before usage or budget accounting.
+NaN, positive infinity, negative infinity, and unparseable quantities MUST fail before ledger
+reservation, settlement, serialization, or policy comparison.
 
 ```python
 class BudgetLimit(BaseModel):

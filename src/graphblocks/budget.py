@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 import json
 from pathlib import Path
 import sqlite3
@@ -185,8 +185,13 @@ class UsageAmount:
             raise ValueError("usage amount dimensions must be string keys and values")
         amount = self.amount
         if not isinstance(self.amount, Decimal):
-            amount = Decimal(str(self.amount))
+            try:
+                amount = Decimal(str(self.amount))
+            except (InvalidOperation, ValueError) as error:
+                raise ValueError("usage amount must be a decimal") from error
             object.__setattr__(self, "amount", amount)
+        if not amount.is_finite():
+            raise ValueError("usage amount must be finite")
         if amount < 0:
             raise ValueError("usage amount must be non-negative")
         object.__setattr__(self, "dimensions", MappingProxyType(dimensions))
