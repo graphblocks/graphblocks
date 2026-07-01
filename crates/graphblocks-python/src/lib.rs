@@ -45,7 +45,7 @@ use graphblocks_runtime_core::output_policy::{
     RedactionInstruction, TerminalReason, ViolationAction,
 };
 use graphblocks_runtime_core::policy::{
-    PolicyDecision, PolicyEffect, PolicyObligation, PrincipalRef, ResourceRef,
+    PolicyDecision, PolicyEffect, PolicyObligation, PolicyRequest, PrincipalRef, ResourceRef,
 };
 use graphblocks_runtime_core::readiness::{
     InputDependency, PortRef, Readiness, ReadinessTracker, ResolvedInput,
@@ -652,7 +652,7 @@ fn evaluate_tool_admission_json(request_json: &str) -> PyResult<String> {
     .unwrap_or(&policy_decision.evaluated_at);
     let run_id =
         optional_nullable_alias_string(request, "runId", "run_id", "tool admission request")?;
-    let policy_request =
+    let policy_request_result =
         ToolAdmission::before_tool_or_effect_policy_request(ToolPolicyRequestContext {
             request_id: policy_request_id,
             call: &call,
@@ -662,7 +662,23 @@ fn evaluate_tool_admission_json(request_json: &str) -> PyResult<String> {
             run_id,
             output_policy_state: output_policy_state.cloned(),
         })
-        .with_input_digest();
+        .map(PolicyRequest::with_input_digest);
+    let policy_request = match policy_request_result {
+        Ok(policy_request) => policy_request,
+        Err(error) => {
+            let payload = json!({
+                "ok": false,
+                "policyRequest": Value::Null,
+                "admitted": Value::Null,
+                "error": serialize_tool_admission_error(&error),
+            });
+            return serde_json::to_string(&payload).map_err(|error| {
+                PyRuntimeError::new_err(format!(
+                    "failed to serialize tool admission evaluation: {error}"
+                ))
+            });
+        }
+    };
 
     let admission = ToolAdmission::admit(ToolAdmissionRequest {
         call,
@@ -4694,6 +4710,13 @@ fn serialize_tool_admission_error(error: &ToolAdmissionError) -> Value {
         ToolAdmissionError::InvalidToolCall { source } => json!({
             "code": "invalid_tool_call",
             "source": format!("{source:?}"),
+        }),
+        ToolAdmissionError::InvalidResolvedTool { source } => json!({
+            "code": "invalid_resolved_tool",
+            "source": serialize_tool_resolution_error(source),
+        }),
+        ToolAdmissionError::InvalidOutputPolicyState => json!({
+            "code": "invalid_output_policy_state",
         }),
         ToolAdmissionError::EmptyPrincipalId => json!({"code": "empty_principal_id"}),
         ToolAdmissionError::ToolCallNotValidated {

@@ -4,7 +4,9 @@ use serde_json::{Value, json};
 use crate::policy::{
     EnforcementPoint, PolicyDecision, PolicyEffect, PolicyRequest, PrincipalRef, ResourceRef,
 };
-use crate::tool::{ResolvedTool, ToolApproval, ToolIdempotency, canonical_effect_names};
+use crate::tool::{
+    ResolvedTool, ToolApproval, ToolIdempotency, ToolResolutionError, canonical_effect_names,
+};
 use crate::tool_approval::ToolApprovalRecord;
 use crate::tool_call::{ToolCall, ToolCallError, ToolCallStatus};
 use crate::tool_schema::{ToolSchemaRegistry, ToolSchemaValidationError};
@@ -45,6 +47,10 @@ pub enum ToolAdmissionError {
     InvalidToolCall {
         source: ToolCallError,
     },
+    InvalidResolvedTool {
+        source: ToolResolutionError,
+    },
+    InvalidOutputPolicyState,
     EmptyPrincipalId,
     ToolCallNotValidated {
         tool_call_id: String,
@@ -124,7 +130,38 @@ pub struct ToolAdmission;
 impl ToolAdmission {
     pub fn before_tool_or_effect_policy_request(
         context: ToolPolicyRequestContext<'_>,
-    ) -> PolicyRequest {
+    ) -> Result<PolicyRequest, ToolAdmissionError> {
+        context
+            .call
+            .validate()
+            .map_err(|source| ToolAdmissionError::InvalidToolCall { source })?;
+        context
+            .resolved_tool
+            .validate()
+            .map_err(|source| ToolAdmissionError::InvalidResolvedTool { source })?;
+        if context.principal.principal_id.trim().is_empty() {
+            return Err(ToolAdmissionError::EmptyPrincipalId);
+        }
+        if context.call.resolved_tool_id != context.resolved_tool.resolved_tool_id {
+            return Err(ToolAdmissionError::ResolvedToolMismatch {
+                expected: context.resolved_tool.resolved_tool_id.clone(),
+                actual: context.call.resolved_tool_id.clone(),
+            });
+        }
+        if context.call.name != context.resolved_tool.definition.name {
+            return Err(ToolAdmissionError::ToolNameMismatch {
+                expected: context.resolved_tool.definition.name.clone(),
+                actual: context.call.name.clone(),
+            });
+        }
+        if context
+            .output_policy_state
+            .as_ref()
+            .is_some_and(|state| !state.is_object())
+        {
+            return Err(ToolAdmissionError::InvalidOutputPolicyState);
+        }
+
         let mut request = PolicyRequest::new(
             context.request_id,
             EnforcementPoint::BeforeToolOrEffect,
@@ -165,7 +202,7 @@ impl ToolAdmission {
         if let Some(output_policy_state) = context.output_policy_state {
             request = request.with_attribute("output_policy_state", output_policy_state);
         }
-        request
+        Ok(request)
     }
 
     pub fn admit(

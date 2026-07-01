@@ -102,6 +102,7 @@ fn before_tool_or_effect_policy_request_carries_tool_admission_context() {
         run_id: Some("run-1"),
         output_policy_state: Some(json!({"response_status": "generating"})),
     })
+    .expect("policy request is valid")
     .with_input_digest();
 
     assert_eq!(
@@ -141,6 +142,86 @@ fn before_tool_or_effect_policy_request_carries_tool_admission_context() {
         Some(&json!({"response_status": "generating"}))
     );
     assert!(request.input_digest.starts_with("sha256:"));
+}
+
+#[test]
+fn before_tool_or_effect_policy_request_rejects_invalid_boundary_inputs() {
+    let resolved_tool = resolved_process_tool();
+    let call = process_call(&resolved_tool);
+
+    let mut mismatched_call = call.clone();
+    mismatched_call.resolved_tool_id = "resolved-tool-other".to_owned();
+    assert_eq!(
+        ToolAdmission::before_tool_or_effect_policy_request(ToolPolicyRequestContext {
+            request_id: "policy-req-1",
+            call: &mismatched_call,
+            resolved_tool: &resolved_tool,
+            principal: PrincipalRef::new("user-1"),
+            occurred_at: "2026-06-23T00:00:00Z",
+            run_id: None,
+            output_policy_state: None,
+        }),
+        Err(ToolAdmissionError::ResolvedToolMismatch {
+            expected: resolved_tool.resolved_tool_id.clone(),
+            actual: "resolved-tool-other".to_owned(),
+        })
+    );
+
+    let mut invalid_call = call.clone();
+    invalid_call.arguments_digest = "sha256:stale".to_owned();
+    assert!(matches!(
+        ToolAdmission::before_tool_or_effect_policy_request(ToolPolicyRequestContext {
+            request_id: "policy-req-1",
+            call: &invalid_call,
+            resolved_tool: &resolved_tool,
+            principal: PrincipalRef::new("user-1"),
+            occurred_at: "2026-06-23T00:00:00Z",
+            run_id: None,
+            output_policy_state: None,
+        }),
+        Err(ToolAdmissionError::InvalidToolCall { .. })
+    ));
+
+    let mut invalid_resolved_tool = resolved_tool.clone();
+    invalid_resolved_tool.binding_digest = "sha256:stale".to_owned();
+    assert!(matches!(
+        ToolAdmission::before_tool_or_effect_policy_request(ToolPolicyRequestContext {
+            request_id: "policy-req-1",
+            call: &call,
+            resolved_tool: &invalid_resolved_tool,
+            principal: PrincipalRef::new("user-1"),
+            occurred_at: "2026-06-23T00:00:00Z",
+            run_id: None,
+            output_policy_state: None,
+        }),
+        Err(ToolAdmissionError::InvalidResolvedTool { .. })
+    ));
+
+    assert_eq!(
+        ToolAdmission::before_tool_or_effect_policy_request(ToolPolicyRequestContext {
+            request_id: "policy-req-1",
+            call: &call,
+            resolved_tool: &resolved_tool,
+            principal: PrincipalRef::new(" "),
+            occurred_at: "2026-06-23T00:00:00Z",
+            run_id: None,
+            output_policy_state: None,
+        }),
+        Err(ToolAdmissionError::EmptyPrincipalId)
+    );
+
+    assert_eq!(
+        ToolAdmission::before_tool_or_effect_policy_request(ToolPolicyRequestContext {
+            request_id: "policy-req-1",
+            call: &call,
+            resolved_tool: &resolved_tool,
+            principal: PrincipalRef::new("user-1"),
+            occurred_at: "2026-06-23T00:00:00Z",
+            run_id: None,
+            output_policy_state: Some(json!("policy_stopped")),
+        }),
+        Err(ToolAdmissionError::InvalidOutputPolicyState)
+    );
 }
 
 #[test]
@@ -437,6 +518,7 @@ fn admission_rejects_policy_decision_for_different_input_digest() {
             run_id: None,
             output_policy_state: None,
         })
+        .expect("policy request is valid")
         .with_input_digest();
 
     assert_eq!(

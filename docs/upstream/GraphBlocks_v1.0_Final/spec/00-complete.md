@@ -8007,7 +8007,8 @@ class PolicyRequest(BaseModel):
 
 `PolicyRequest.attributes`는 schema-registered allowlist여야 한다. Prompt, 문서 본문, tool result 같은 민감한 payload는 기본적으로 포함하지 않고 digest, `SourceRef`, `ArtifactRef`, classification만 전달한다.
 Builders for `before_tool_or_effect` policy requests MUST validate typed `ToolCall`, `ResolvedTool`,
-`PrincipalRef`, and output-policy state mapping inputs before constructing the canonical request.
+`PrincipalRef`, tool-call/resolved-tool identity consistency, and output-policy state mapping inputs
+before constructing or hashing the canonical request.
 
 ```python
 class EntitlementSnapshot(BaseModel):
