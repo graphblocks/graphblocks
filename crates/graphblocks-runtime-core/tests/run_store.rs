@@ -84,6 +84,24 @@ fn run_store_records_model_visible_tools_and_preserves_them_across_mutations()
 }
 
 #[test]
+fn run_store_records_model_visible_tools_after_run_creation() -> Result<(), RunStoreError> {
+    let mut store = InMemoryRunStore::new();
+    let record = store.create_run("sha256:test", json!({}));
+    let ticket_tool = model_visible_tool("ticket.create", "resolved-ticket", false);
+    let search_tool = model_visible_tool("knowledge.search", "resolved-search", true);
+
+    let updated = store.record_model_visible_tools(
+        &record.run_id,
+        vec![ticket_tool.clone(), search_tool.clone()],
+    )?;
+
+    assert_eq!(updated.model_visible_tools, vec![search_tool, ticket_tool]);
+    assert_eq!(updated.state_revision, 0);
+    assert_eq!(store.get_run(&record.run_id)?, updated);
+    Ok(())
+}
+
+#[test]
 fn run_store_applies_state_patch_operations_with_revision_cas() -> Result<(), RunStoreError> {
     let mut store = InMemoryRunStore::new();
     let record = store.create_run("sha256:test", json!({}));
@@ -160,6 +178,44 @@ fn run_store_rejects_state_patch_and_status_after_terminal() -> Result<(), RunSt
     assert_eq!(
         store.set_status(&record.run_id, RunStatus::Failed),
         Err(RunStoreError::StatusAfterTerminal {
+            run_id: record.run_id.clone(),
+            status: RunStatus::Completed,
+        }),
+    );
+    assert_eq!(
+        store.record_model_visible_tools(
+            &record.run_id,
+            vec![model_visible_tool(
+                "knowledge.search",
+                "resolved-search",
+                true
+            )],
+        ),
+        Err(RunStoreError::InvocationProvenanceAfterTerminal {
+            run_id: record.run_id,
+            status: RunStatus::Completed,
+        }),
+    );
+    Ok(())
+}
+
+#[test]
+fn run_store_rejects_model_visible_tools_after_terminal() -> Result<(), RunStoreError> {
+    let mut store = InMemoryRunStore::new();
+    let record = store.create_run("sha256:test", json!({}));
+
+    store.set_status(&record.run_id, RunStatus::Completed)?;
+
+    assert_eq!(
+        store.record_model_visible_tools(
+            &record.run_id,
+            vec![model_visible_tool(
+                "knowledge.search",
+                "resolved-search",
+                true
+            )],
+        ),
+        Err(RunStoreError::InvocationProvenanceAfterTerminal {
             run_id: record.run_id,
             status: RunStatus::Completed,
         }),
@@ -233,6 +289,33 @@ fn sqlite_run_store_persists_runs_across_reopen() -> Result<(), String> {
     );
 
     let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
+#[test]
+fn sqlite_run_store_records_model_visible_tools_after_run_creation() -> Result<(), String> {
+    let mut store = SqliteRunStore::open_in_memory().map_err(|error| format!("{error:?}"))?;
+    let record = store
+        .create_run("sha256:test", json!({}))
+        .map_err(|error| format!("{error:?}"))?;
+    let ticket_tool = model_visible_tool("ticket.create", "resolved-ticket", false);
+    let search_tool = model_visible_tool("knowledge.search", "resolved-search", true);
+
+    let updated = store
+        .record_model_visible_tools(
+            &record.run_id,
+            vec![ticket_tool.clone(), search_tool.clone()],
+        )
+        .map_err(|error| format!("{error:?}"))?;
+
+    assert_eq!(updated.model_visible_tools, vec![search_tool, ticket_tool]);
+    assert_eq!(updated.state_revision, 0);
+    assert_eq!(
+        store
+            .get_run(&record.run_id)
+            .map_err(|error| format!("{error:?}"))?,
+        updated
+    );
     Ok(())
 }
 

@@ -153,6 +153,10 @@ pub enum RunStoreError {
         run_id: String,
         status: RunStatus,
     },
+    InvocationProvenanceAfterTerminal {
+        run_id: String,
+        status: RunStatus,
+    },
     InvalidStatePath {
         path: Vec<String>,
     },
@@ -457,6 +461,22 @@ fn record_with_state_patch(
     Ok(updated)
 }
 
+fn record_with_model_visible_tools(
+    current: &RunRecord,
+    model_visible_tools: Vec<ModelVisibleToolRef>,
+) -> Result<RunRecord, RunStoreError> {
+    if current.status.is_terminal() {
+        return Err(RunStoreError::InvocationProvenanceAfterTerminal {
+            run_id: current.run_id.clone(),
+            status: current.status,
+        });
+    }
+
+    let mut updated = current.clone();
+    updated.model_visible_tools = sorted_model_visible_tools(model_visible_tools);
+    Ok(updated)
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct InMemoryRunStore {
     runs: BTreeMap<String, RunRecord>,
@@ -537,6 +557,23 @@ impl InMemoryRunStore {
         };
 
         let updated = record_with_status(current, status)?;
+        self.runs.insert(run_id.to_owned(), updated.clone());
+        Ok(updated)
+    }
+
+    pub fn record_model_visible_tools(
+        &mut self,
+        run_id: impl AsRef<str>,
+        model_visible_tools: Vec<ModelVisibleToolRef>,
+    ) -> Result<RunRecord, RunStoreError> {
+        let run_id = run_id.as_ref();
+        let Some(current) = self.runs.get(run_id) else {
+            return Err(RunStoreError::NotFound {
+                run_id: run_id.to_owned(),
+            });
+        };
+
+        let updated = record_with_model_visible_tools(current, model_visible_tools)?;
         self.runs.insert(run_id.to_owned(), updated.clone());
         Ok(updated)
     }
@@ -800,6 +837,29 @@ impl SqliteRunStore {
             .execute(
                 "UPDATE runs SET status = ? WHERE run_id = ?",
                 params![updated.status.as_str(), &updated.run_id],
+            )
+            .map_err(storage_error)?;
+        Ok(updated)
+    }
+
+    pub fn record_model_visible_tools(
+        &mut self,
+        run_id: impl AsRef<str>,
+        model_visible_tools: Vec<ModelVisibleToolRef>,
+    ) -> Result<RunRecord, RunStoreError> {
+        let current = self.get_run(run_id.as_ref())?;
+        let updated = record_with_model_visible_tools(&current, model_visible_tools)?;
+        self.connection
+            .execute(
+                "
+                UPDATE runs
+                SET model_visible_tools_json = ?
+                WHERE run_id = ?
+                ",
+                params![
+                    storage_json(&model_visible_tools_value(&updated.model_visible_tools))?,
+                    &updated.run_id,
+                ],
             )
             .map_err(storage_error)?;
         Ok(updated)

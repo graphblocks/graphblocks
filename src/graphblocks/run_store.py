@@ -147,6 +147,27 @@ class InMemoryRunStore:
         self.runs[run_id] = updated
         return deepcopy(updated)
 
+    def record_model_visible_tools(
+        self,
+        run_id: str,
+        tools: Iterable[ModelVisibleToolRef],
+    ) -> RunRecord:
+        current = self.runs[run_id]
+        if current.status in TERMINAL_RUN_STATUSES:
+            raise RunTerminalStateError(run_id, current.status)
+        updated = RunRecord(
+            run_id=current.run_id,
+            graph_hash=current.graph_hash,
+            inputs=deepcopy(current.inputs),
+            deployment_provenance=current.deployment_provenance,
+            model_visible_tools=tuple(tools),
+            status=current.status,
+            state=deepcopy(current.state),
+            state_revision=current.state_revision,
+        )
+        self.runs[run_id] = updated
+        return deepcopy(updated)
+
     def set_status(self, run_id: str, status: MutableRunStatus) -> RunRecord:
         current = self.runs[run_id]
         if current.status in TERMINAL_RUN_STATUSES:
@@ -336,6 +357,27 @@ class SQLiteRunStore:
         if cursor.rowcount != 1:
             refreshed = self.get_run(run_id)
             raise StateConflictError(run_id, expected_revision, refreshed.state_revision)
+        self.connection.commit()
+        return self.get_run(run_id)
+
+    def record_model_visible_tools(
+        self,
+        run_id: str,
+        tools: Iterable[ModelVisibleToolRef],
+    ) -> RunRecord:
+        current = self.get_run(run_id)
+        if current.status in TERMINAL_RUN_STATUSES:
+            raise RunTerminalStateError(run_id, current.status)
+        cursor = self.connection.execute(
+            """
+            UPDATE runs
+            SET model_visible_tools_json = ?
+            WHERE run_id = ?
+            """,
+            (_model_visible_tools_json(tools), run_id),
+        )
+        if cursor.rowcount != 1:
+            raise KeyError(run_id)
         self.connection.commit()
         return self.get_run(run_id)
 

@@ -11,6 +11,7 @@ from types import MappingProxyType
 from typing import Any, Callable, Literal, Protocol
 
 from .compiler import compile_graph
+from .evaluation import ModelVisibleToolRef
 from .leases import InMemoryLeasePool
 from .run_store import InMemoryRunStore
 from .tools import (
@@ -305,6 +306,7 @@ class InProcessRuntime:
             "conversation_id": "conversation-default",
             "cancellation_token": self.cancellation_token or CancellationToken(),
             "lease_pool": self.lease_pool,
+            "run_store": self.run_store,
         }
 
         while remaining:
@@ -797,28 +799,47 @@ def stdlib_registry() -> RuntimeRegistry:
         if not isinstance(tools, list):
             raise TypeError("agent.run@1 input 'tools' must be a list")
         model_visible_tools: list[dict[str, Any]] = []
+        provenance_tools: list[ModelVisibleToolRef] = []
         for index, tool in enumerate(tools):
             if not isinstance(tool, dict):
                 raise TypeError(f"agent.run@1 input 'tools[{index}]' must be a mapping")
             definition = tool.get("definition")
             definition = definition if isinstance(definition, dict) else {}
+            tool_name = str(definition.get("name", ""))
+            resolved_tool_id = str(tool.get("resolved_tool_id", tool.get("resolvedToolId", "")))
+            definition_digest = str(tool.get("definition_digest", tool.get("definitionDigest", "")))
+            binding_digest = str(tool.get("binding_digest", tool.get("bindingDigest", "")))
+            effective_policy_snapshot_id = str(
+                tool.get(
+                    "effective_policy_snapshot_id",
+                    tool.get("effectivePolicySnapshotId", ""),
+                )
+            )
+            allowed_for_principal = bool(
+                tool.get("allowed_for_principal", tool.get("allowedForPrincipal", False))
+            )
+            valid_until = tool.get("valid_until", tool.get("validUntil"))
             model_visible_tools.append(
                 {
-                    "toolName": str(definition.get("name", "")),
-                    "resolvedToolId": str(tool.get("resolved_tool_id", tool.get("resolvedToolId", ""))),
-                    "definitionDigest": str(tool.get("definition_digest", tool.get("definitionDigest", ""))),
-                    "bindingDigest": str(tool.get("binding_digest", tool.get("bindingDigest", ""))),
-                    "effectivePolicySnapshotId": str(
-                        tool.get(
-                            "effective_policy_snapshot_id",
-                            tool.get("effectivePolicySnapshotId", ""),
-                        )
-                    ),
-                    "allowedForPrincipal": bool(
-                        tool.get("allowed_for_principal", tool.get("allowedForPrincipal", False))
-                    ),
-                    "validUntil": tool.get("valid_until", tool.get("validUntil")),
+                    "toolName": tool_name,
+                    "resolvedToolId": resolved_tool_id,
+                    "definitionDigest": definition_digest,
+                    "bindingDigest": binding_digest,
+                    "effectivePolicySnapshotId": effective_policy_snapshot_id,
+                    "allowedForPrincipal": allowed_for_principal,
+                    "validUntil": valid_until,
                 }
+            )
+            provenance_tools.append(
+                ModelVisibleToolRef(
+                    tool_name=tool_name,
+                    resolved_tool_id=resolved_tool_id,
+                    definition_digest=definition_digest,
+                    binding_digest=binding_digest,
+                    effective_policy_snapshot_id=effective_policy_snapshot_id,
+                    allowed_for_principal=allowed_for_principal,
+                    valid_until=str(valid_until) if valid_until is not None else None,
+                )
             )
         model_visible_tools.sort(
             key=lambda tool: (
@@ -826,6 +847,9 @@ def stdlib_registry() -> RuntimeRegistry:
                 str(tool["resolvedToolId"]),
             )
         )
+        run_store = context.get("run_store")
+        if run_store is not None:
+            run_store.record_model_visible_tools(str(context["run_id"]), provenance_tools)
         messages = inputs.get("messages", [])
         if not isinstance(messages, list):
             raise TypeError("agent.run@1 input 'messages' must be a list")

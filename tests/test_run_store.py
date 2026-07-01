@@ -63,6 +63,22 @@ def test_run_store_records_model_visible_tools_and_preserves_them_across_mutatio
     assert running.model_visible_tools == record.model_visible_tools
 
 
+def test_run_store_records_model_visible_tools_after_run_creation() -> None:
+    store = InMemoryRunStore()
+    record = store.create_run("sha256:test", {})
+    ticket_tool = _model_visible_tool("ticket.create", "resolved-ticket", False)
+    search_tool = _model_visible_tool("knowledge.search", "resolved-search", True)
+
+    updated = store.record_model_visible_tools(
+        record.run_id,
+        (ticket_tool, search_tool),
+    )
+
+    assert updated.model_visible_tools == (search_tool, ticket_tool)
+    assert updated.state_revision == 0
+    assert store.get_run(record.run_id).model_visible_tools == (search_tool, ticket_tool)
+
+
 def test_run_store_rejects_stale_state_patch() -> None:
     store = InMemoryRunStore()
     record = store.create_run("sha256:test", {})
@@ -109,6 +125,12 @@ def test_run_store_rejects_state_and_status_mutation_after_terminal_status() -> 
 
     with pytest.raises(RunTerminalStateError):
         store.set_status(record.run_id, "failed")
+
+    with pytest.raises(RunTerminalStateError):
+        store.record_model_visible_tools(
+            record.run_id,
+            (_model_visible_tool("knowledge.search", "resolved-search", True),),
+        )
 
 
 def test_run_store_treats_policy_stopped_as_terminal_status() -> None:
@@ -162,6 +184,22 @@ def test_sqlite_run_store_persists_records_across_instances(tmp_path) -> None:
     )
 
 
+def test_sqlite_run_store_records_model_visible_tools_after_run_creation(tmp_path) -> None:
+    store = SQLiteRunStore(tmp_path / "runs.sqlite3")
+    record = store.create_run("sha256:test", {})
+    ticket_tool = _model_visible_tool("ticket.create", "resolved-ticket", False)
+    search_tool = _model_visible_tool("knowledge.search", "resolved-search", True)
+
+    updated = store.record_model_visible_tools(
+        record.run_id,
+        (ticket_tool, search_tool),
+    )
+
+    assert updated.model_visible_tools == (search_tool, ticket_tool)
+    assert updated.state_revision == 0
+    assert store.get_run(record.run_id).model_visible_tools == (search_tool, ticket_tool)
+
+
 def test_sqlite_run_store_enforces_state_revision_cas(tmp_path) -> None:
     store = SQLiteRunStore(tmp_path / "runs.sqlite3")
     record = store.create_run("sha256:test", {})
@@ -190,6 +228,11 @@ def test_sqlite_run_store_rejects_state_and_status_mutation_after_terminal_statu
         store.set_status(record.run_id, "running")
 
     assert store.get_run(record.run_id).status == "cancelled"
+    with pytest.raises(RunTerminalStateError):
+        store.record_model_visible_tools(
+            record.run_id,
+            (_model_visible_tool("knowledge.search", "resolved-search", True),),
+        )
 
 
 def _model_visible_tool(

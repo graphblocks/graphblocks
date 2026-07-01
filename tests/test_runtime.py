@@ -180,7 +180,8 @@ def test_stdlib_runtime_executes_tool_resolution_and_agent_run() -> None:
         },
     }
 
-    result = InProcessRuntime(stdlib_registry()).run(
+    store = InMemoryRunStore()
+    result = InProcessRuntime(stdlib_registry(), run_store=store).run(
         graph,
         {"messages": [{"role": "user", "content": "Hello"}]},
     )
@@ -208,6 +209,13 @@ def test_stdlib_runtime_executes_tool_resolution_and_agent_run() -> None:
     assert result.outputs["tools"][0]["definition"]["name"] == "knowledge.search"
     assert result.outputs["tools"][0]["allowed_for_principal"] is True
     assert result.outputs["tools"][0]["binding"]["timeout_ms"] == 250
+    stored = store.get_run(result.run_id)
+    assert [tool.tool_name for tool in stored.model_visible_tools] == ["knowledge.search"]
+    assert stored.model_visible_tools[0].resolved_tool_id == resolved_tool["resolved_tool_id"]
+    assert stored.model_visible_tools[0].definition_digest == resolved_tool["definition_digest"]
+    assert stored.model_visible_tools[0].binding_digest == resolved_tool["binding_digest"]
+    assert stored.model_visible_tools[0].effective_policy_snapshot_id == "policy-snapshot-1"
+    assert stored.model_visible_tools[0].allowed_for_principal is True
 
 
 @pytest.mark.parametrize("timeout_ms", [True, "250", -1])
