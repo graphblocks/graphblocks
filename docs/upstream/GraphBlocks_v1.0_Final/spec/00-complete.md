@@ -8673,6 +8673,11 @@ class OutputCutoff(BaseModel):
 Runtime cutoff checks and output-gate policy application MUST validate typed sequence and decision
 inputs before comparing or applying them, so malformed caller input fails as a protocol boundary
 error rather than an incidental attribute or comparison error.
+Persisted cutoff state and resumable output-gate state MUST preserve sequence consistency. In
+`buffer_until_commit` and `bounded_holdback` modes, `last_client_delivered_sequence` MUST NOT
+exceed `last_policy_accepted_sequence`; in `immediate_draft` mode, already delivered draft beyond
+policy acceptance MUST be represented with `mark_incomplete` or `retract`, never `keep`. Neither
+policy-accepted nor client-delivered sequence may exceed `last_generated_sequence`.
 
 ### Safe point와 강제 종료 단계
 

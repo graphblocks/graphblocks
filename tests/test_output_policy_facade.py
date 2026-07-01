@@ -370,6 +370,16 @@ def test_output_policy_contract_rejects_unknown_literals() -> None:
             last_client_delivered_sequence=2,
         )
 
+    with pytest.raises(ValueError, match="delivered draft beyond policy acceptance cannot be kept"):
+        OutputCutoff(
+            stream_id="stream-1",
+            response_id="response-1",
+            last_generated_sequence=2,
+            last_policy_accepted_sequence=1,
+            last_client_delivered_sequence=2,
+            draft_disposition="keep",
+        )
+
 
 def test_output_policy_contract_rejects_non_string_identifiers() -> None:
     with pytest.raises(ValueError, match="generation chunk stream_id must be a string"):
@@ -471,6 +481,18 @@ def test_output_policy_contract_rejects_non_integer_sequences_and_bounds() -> No
             "stream-1",
             "response-1",
             last_generated_sequence=1,
+            last_client_delivered_sequence=2,
+        )
+
+    with pytest.raises(
+        ValueError,
+        match="last_client_delivered_sequence cannot exceed last_policy_accepted_sequence outside immediate_draft",
+    ):
+        OutputDeliveryGate(
+            "stream-1",
+            "response-1",
+            last_generated_sequence=2,
+            last_policy_accepted_sequence=1,
             last_client_delivered_sequence=2,
         )
 

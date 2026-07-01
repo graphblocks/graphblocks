@@ -615,6 +615,11 @@ class OutputCutoff:
             raise ValueError("last_policy_accepted_sequence cannot exceed last_generated_sequence")
         if self.last_client_delivered_sequence > self.last_generated_sequence:
             raise ValueError("last_client_delivered_sequence cannot exceed last_generated_sequence")
+        if (
+            self.last_client_delivered_sequence > self.last_policy_accepted_sequence
+            and self.draft_disposition == "keep"
+        ):
+            raise ValueError("delivered draft beyond policy acceptance cannot be kept")
         _validate_non_empty_string("output cutoff", "occurred_at", self.occurred_at)
 
     def accepts(self, output: GenerationChunk) -> bool:
@@ -677,6 +682,13 @@ class OutputDeliveryGate:
             raise ValueError("last_policy_accepted_sequence cannot exceed last_generated_sequence")
         if self.last_client_delivered_sequence > self.last_generated_sequence:
             raise ValueError("last_client_delivered_sequence cannot exceed last_generated_sequence")
+        if (
+            self.last_client_delivered_sequence > self.last_policy_accepted_sequence
+            and self.delivery_policy.mode != "immediate_draft"
+        ):
+            raise ValueError(
+                "last_client_delivered_sequence cannot exceed last_policy_accepted_sequence outside immediate_draft"
+            )
         self.delivery_policy.validate()
 
     @classmethod
