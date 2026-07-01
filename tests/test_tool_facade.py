@@ -993,6 +993,21 @@ def test_tool_lifecycle_counters_are_non_negative_and_positive() -> None:
             admitted_at="2026-06-23T00:00:03Z",
             completed_at="2026-06-23T00:00:02Z",
         )
+    offset_ordered = replace(
+        call,
+        created_at="2026-06-24T00:30:00+09:00",
+        admitted_at="2026-06-23T16:00:00Z",
+        completed_at="2026-06-23T16:05:00Z",
+    )
+    assert offset_ordered.admitted_at == "2026-06-23T16:00:00Z"
+    with pytest.raises(ValueError, match="tool call admitted_at must not be before created_at"):
+        replace(
+            call,
+            created_at="2026-06-23T23:30:00-05:00",
+            admitted_at="2026-06-24T04:00:00Z",
+        )
+    with pytest.raises(ValueError, match="tool call completed_at must be an ISO datetime"):
+        replace(call, completed_at="not-a-date")
 
     with pytest.raises(ValueError, match="tool result event sequence must be positive"):
         ToolResultEvent.started("call-1", 0, started_at="2026-06-23T00:00:00Z")

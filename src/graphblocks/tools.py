@@ -1090,22 +1090,37 @@ class ToolCall:
         object.__setattr__(self, "depends_on", depends_on)
         if any(not dependency.strip() for dependency in depends_on):
             raise ValueError("tool call dependency ids must not be empty")
+        created_at_time = (
+            _parse_iso_datetime(self.created_at, owner="tool call", field="created_at")
+            if self.created_at is not None
+            else None
+        )
+        admitted_at_time = (
+            _parse_iso_datetime(self.admitted_at, owner="tool call", field="admitted_at")
+            if self.admitted_at is not None
+            else None
+        )
+        completed_at_time = (
+            _parse_iso_datetime(self.completed_at, owner="tool call", field="completed_at")
+            if self.completed_at is not None
+            else None
+        )
         if (
-            self.created_at is not None
-            and self.admitted_at is not None
-            and self.admitted_at < self.created_at
+            created_at_time is not None
+            and admitted_at_time is not None
+            and admitted_at_time < created_at_time
         ):
             raise ValueError("tool call admitted_at must not be before created_at")
         if (
-            self.created_at is not None
-            and self.completed_at is not None
-            and self.completed_at < self.created_at
+            created_at_time is not None
+            and completed_at_time is not None
+            and completed_at_time < created_at_time
         ):
             raise ValueError("tool call completed_at must not be before created_at")
         if (
-            self.admitted_at is not None
-            and self.completed_at is not None
-            and self.completed_at < self.admitted_at
+            admitted_at_time is not None
+            and completed_at_time is not None
+            and completed_at_time < admitted_at_time
         ):
             raise ValueError("tool call completed_at must not be before admitted_at")
         try:
