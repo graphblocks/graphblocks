@@ -564,7 +564,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   corrupt stored callback receipts or idempotency comparisons.
 - `graphblocks-server` now also exposes the framework-neutral `GET /runs/{run_id}`
   `GetRunStatus` route, deriving status, release id, replay cursor, timestamps, wait reasons, and
-  active operation projection from the authoritative stored application events.
+  active operation projection from the authoritative stored application events and accepted async
+  callback submissions.
 - Stored server application events are immutable snapshots; `/events`, attach/replay, subscription
   replay, and websocket snapshot responses thaw them back to plain JSON payloads.
 - `graphblocks-server` now exposes the framework-neutral `GET /runs` `ListRuns` route using the

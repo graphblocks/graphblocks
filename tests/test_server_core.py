@@ -799,6 +799,19 @@ def test_server_app_rejects_run_control_for_missing_stream_or_malformed_reason()
 
 def test_server_app_accepts_authenticated_async_callback_submission() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
+    app._events_by_run_id["run-1"] = (
+        {
+            "kind": "RunStarted",
+            "payload": {"runId": "run-1"},
+            "metadata": {
+                "runId": "run-1",
+                "sequence": 1,
+                "cursor": "run-1:1",
+                "releaseId": "release-1",
+                "occurredAt": "2026-07-02T00:00:00Z",
+            },
+        },
+    )
 
     response = app.handle(
         ServerRequest(
@@ -843,6 +856,28 @@ def test_server_app_accepts_authenticated_async_callback_submission() -> None:
             received_at="2026-07-02T00:00:00Z",
         ),
     )
+    status = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-1",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            requested_at="2026-07-02T00:00:01Z",
+        )
+    )
+    status_payload = json.loads(status.body.decode("utf-8"))
+
+    assert status_payload["state"] == "waiting_callback"
+    assert status_payload["waitingOn"] == [
+        {
+            "kind": "callback",
+            "operationId": "op-ci-1",
+            "nodeId": "waitCI",
+            "attemptId": "attempt-1",
+        }
+    ]
+    assert status_payload["activeOperations"] == ["op-ci-1"]
 
 
 def test_server_app_deduplicates_async_callback_submission_by_idempotency_key() -> None:

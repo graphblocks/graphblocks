@@ -1663,6 +1663,28 @@ class GraphBlocksServerApp:
                 if control_status in {"cancelled", "expired"}:
                     completed_at = control_occurred_at
 
+        waiting_on: list[dict[str, object]] = []
+        active_operations: list[str] = []
+        for operation_id in sorted(self._callbacks_by_operation_id):
+            submissions = self._callbacks_by_operation_id[operation_id]
+            if not submissions:
+                continue
+            submission = submissions[-1]
+            if submission.run_id != run_id:
+                continue
+            waiting: dict[str, object] = {
+                "kind": "callback",
+                "operationId": submission.operation_id,
+            }
+            if submission.node_id is not None:
+                waiting["nodeId"] = submission.node_id
+            if submission.attempt_id is not None:
+                waiting["attemptId"] = submission.attempt_id
+            waiting_on.append(waiting)
+            active_operations.append(submission.operation_id)
+        if waiting_on and state == "running":
+            state = "waiting_callback"
+
         payload: dict[str, object] = {
             "runId": run_id,
             "state": state,
@@ -1671,8 +1693,8 @@ class GraphBlocksServerApp:
             "startedAt": started_at,
             "updatedAt": updated_at,
             "completedAt": completed_at,
-            "waitingOn": [],
-            "activeOperations": [],
+            "waitingOn": waiting_on,
+            "activeOperations": active_operations,
         }
         if include_ok:
             return {"ok": True, **payload}
