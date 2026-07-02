@@ -221,6 +221,7 @@ def default_server_route_manifest() -> ServerRouteManifest:
             ServerEndpoint("GET", "/health", "http", "health", auth_required=False),
             ServerEndpoint("POST", "/runs", "http", "invoke_graph", auth_required=True),
             ServerEndpoint("POST", "/runs/{run_id}/cancel", "http", "cancel_run", auth_required=True),
+            ServerEndpoint("POST", "/callbacks/{operation_id}", "http", "submit_async_callback", auth_required=True),
             ServerEndpoint("GET", "/runs/{run_id}/events", "sse", "application_events", auth_required=True),
             ServerEndpoint("GET", "/runs/{run_id}/stream", "websocket", "application_stream", auth_required=True),
         )
@@ -325,6 +326,117 @@ class ServerResponse:
             headers={"content-type": "application/json"},
             body=json.dumps(payload_copy, separators=(",", ":"), sort_keys=True).encode("utf-8"),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class ServerAsyncCallbackSubmission:
+    operation_id: str
+    callback_id: str
+    idempotency_key: str
+    payload: Mapping[str, object]
+    run_id: str | None = None
+    node_id: str | None = None
+    attempt_id: str | None = None
+    provider_operation_id: str | None = None
+    received_at: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "operation_id",
+            _validate_non_empty_string("server async callback", "operation_id", self.operation_id),
+        )
+        object.__setattr__(
+            self,
+            "callback_id",
+            _validate_non_empty_string("server async callback", "callback_id", self.callback_id),
+        )
+        object.__setattr__(
+            self,
+            "idempotency_key",
+            _validate_non_empty_string("server async callback", "idempotency_key", self.idempotency_key),
+        )
+        if not isinstance(self.payload, Mapping):
+            raise ValueError("server async callback payload must be a JSON object")
+        payload = dict(self.payload)
+        if any(not isinstance(key, str) or not key.strip() for key in payload):
+            raise ValueError("server async callback payload keys must be non-empty strings")
+        object.__setattr__(self, "payload", MappingProxyType(payload))
+        for field_name in ("run_id", "node_id", "attempt_id", "provider_operation_id"):
+            value = getattr(self, field_name)
+            if value is not None:
+                object.__setattr__(
+                    self,
+                    field_name,
+                    _validate_non_empty_string("server async callback", field_name, value),
+                )
+        if self.received_at != "":
+            object.__setattr__(
+                self,
+                "received_at",
+                _validate_non_empty_string("server async callback", "received_at", self.received_at),
+            )
+
+    @classmethod
+    def from_request(
+        cls,
+        *,
+        operation_id: str,
+        request: ServerRequest,
+    ) -> ServerAsyncCallbackSubmission:
+        body = json.loads(request.body.decode("utf-8") or "{}")
+        if not isinstance(body, Mapping):
+            raise ValueError("server async callback body must be a JSON object")
+        headers = request.headers
+        idempotency_key = body.get(
+            "idempotency_key",
+            body.get(
+                "idempotencyKey",
+                headers.get("graphblocks-idempotency-key", headers.get("idempotency-key", "")),
+            ),
+        )
+        payload = body.get("payload")
+        if payload is None:
+            raise ValueError("server async callback payload is required")
+        return cls(
+            operation_id=operation_id,
+            callback_id=_validate_non_empty_string(
+                "server async callback",
+                "callback_id",
+                body.get("callback_id", body.get("callbackId", "")),
+            ),
+            idempotency_key=_validate_non_empty_string(
+                "server async callback",
+                "idempotency_key",
+                idempotency_key,
+            ),
+            payload=payload,
+            run_id=_optional_callback_string(body, "run_id", "runId"),
+            node_id=_optional_callback_string(body, "node_id", "nodeId"),
+            attempt_id=_optional_callback_string(body, "attempt_id", "attemptId"),
+            provider_operation_id=_optional_callback_string(
+                body,
+                "provider_operation_id",
+                "providerOperationId",
+            ),
+            received_at=request.requested_at or _utc_now_iso(),
+        )
+
+    def response_payload(self) -> dict[str, object]:
+        return {
+            "ok": True,
+            "operationId": self.operation_id,
+            "callbackId": self.callback_id,
+            "idempotencyKey": self.idempotency_key,
+            "status": "accepted",
+        }
+
+
+def _optional_callback_string(body: Mapping[str, object], snake: str, camel: str) -> str | None:
+    value = body.get(snake, body.get(camel))
+    if value is None:
+        return None
+    return _validate_non_empty_string("server async callback", snake, value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -435,6 +547,11 @@ class GraphBlocksServerApp:
     health: ServerHealth = field(default_factory=lambda: ServerHealth("graphblocks-api"))
     registry: RuntimeRegistry = field(default_factory=stdlib_registry)
     _events_by_run_id: dict[str, tuple[dict[str, object], ...]] = field(default_factory=dict, init=False, repr=False)
+    _callbacks_by_operation_id: dict[str, tuple[ServerAsyncCallbackSubmission, ...]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
 
     def handle(self, request: ServerRequest) -> ServerResponse:
         try:
@@ -479,6 +596,23 @@ class GraphBlocksServerApp:
                     "status": "cancel_requested",
                 },
             )
+        if route.operation == "submit_async_callback":
+            try:
+                submission = ServerAsyncCallbackSubmission.from_request(
+                    operation_id=route_match.path_params.get("operation_id", ""),
+                    request=request,
+                )
+                existing = self._callbacks_by_operation_id.get(submission.operation_id, ())
+                self._callbacks_by_operation_id[submission.operation_id] = (*existing, submission)
+                return ServerResponse.json(202, submission.response_payload())
+            except (TypeError, ValueError, json.JSONDecodeError) as error:
+                return ServerResponse.json(
+                    400,
+                    {
+                        "ok": False,
+                        "error": str(error),
+                    },
+                )
         if route.operation == "application_events":
             run_id = route_match.path_params.get("run_id", "")
             events = self._events_by_run_id.get(run_id)
@@ -680,6 +814,10 @@ class GraphBlocksServerApp:
             },
         )
 
+    def callback_submissions(self, operation_id: str) -> tuple[ServerAsyncCallbackSubmission, ...]:
+        operation_id = _validate_non_empty_string("server async callback", "operation_id", operation_id)
+        return self._callbacks_by_operation_id.get(operation_id, ())
+
 
 class ServerProtocolVersionMismatchError(ValueError):
     def __init__(self, left: str, right: str) -> None:
@@ -743,6 +881,7 @@ __all__ = [
     "ApplicationProtocolCapabilities",
     "GraphBlocksServerApp",
     "ServerAuthDecision",
+    "ServerAsyncCallbackSubmission",
     "ServerAuthHook",
     "ServerAuthRequest",
     "ServerEndpoint",

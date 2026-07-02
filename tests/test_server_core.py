@@ -9,6 +9,7 @@ from graphblocks.policy import PrincipalRef
 from graphblocks.server import (
     ApplicationProtocolCapabilities,
     GraphBlocksServerApp,
+    ServerAsyncCallbackSubmission,
     ServerAuthRequest,
     ServerEndpoint,
     ServerHealth,
@@ -78,6 +79,14 @@ def test_server_route_manifest_matches_templated_run_paths() -> None:
         ServerRouteMatch(endpoint, path_params={" ": "run-123"})
     with pytest.raises(ValueError, match="server route path_params keys and values must be strings"):
         ServerRouteMatch(endpoint, path_params={"run_id": object()})  # type: ignore[dict-item]
+
+
+def test_server_route_manifest_matches_async_callback_ingress_path() -> None:
+    route_match = default_server_route_manifest().match("POST", "/callbacks/op-ci-1")
+
+    assert route_match.endpoint.operation == "submit_async_callback"
+    assert route_match.endpoint.auth_required is True
+    assert route_match.path_params == {"operation_id": "op-ci-1"}
 
 
 def test_static_bearer_auth_hook_authorizes_configured_principal() -> None:
@@ -410,6 +419,76 @@ def test_server_app_handles_authenticated_cancel_request() -> None:
         "ok": True,
         "runId": "run-server-1",
         "status": "cancel_requested",
+    }
+
+
+def test_server_app_accepts_authenticated_async_callback_submission() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/op-ci-1",
+            headers={"Authorization": "Bearer token-1", "GraphBlocks-Idempotency-Key": "idem-callback-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "callback_id": "cb-1",
+                    "attempt_id": "attempt-1",
+                    "run_id": "run-1",
+                    "node_id": "waitCI",
+                    "payload": {"status": "completed"},
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-02T00:00:00Z",
+        )
+    )
+
+    payload = json.loads(response.body.decode("utf-8"))
+
+    assert response.status_code == 202
+    assert payload == {
+        "ok": True,
+        "operationId": "op-ci-1",
+        "callbackId": "cb-1",
+        "idempotencyKey": "idem-callback-1",
+        "status": "accepted",
+    }
+    assert app.callback_submissions("op-ci-1") == (
+        ServerAsyncCallbackSubmission(
+            operation_id="op-ci-1",
+            callback_id="cb-1",
+            idempotency_key="idem-callback-1",
+            payload={"status": "completed"},
+            run_id="run-1",
+            node_id="waitCI",
+            attempt_id="attempt-1",
+            provider_operation_id=None,
+            received_at="2026-07-02T00:00:00Z",
+        ),
+    )
+
+
+def test_server_app_rejects_malformed_async_callback_submission() -> None:
+    app = GraphBlocksServerApp()
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/op-ci-1",
+            headers={"GraphBlocks-Idempotency-Key": "idem-callback-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"callback_id": "cb-1", "payload": ["not", "object"]}).encode("utf-8"),
+            requested_at="2026-07-02T00:00:00Z",
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "server async callback payload must be a JSON object",
     }
 
 

@@ -357,6 +357,10 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
 - `graphblocks-kubernetes` now renders callback ingress manifest sets as a Service, Gateway API
   `HTTPRoute`, and ingress-only `NetworkPolicy`, preserving signature, anti-enumeration, payload,
   and rate-limit metadata without mutating any live cluster.
+- `graphblocks-server` now exposes the framework-neutral `POST /callbacks/{operation_id}`
+  `SubmitAsyncCallback` route and typed `ServerAsyncCallbackSubmission` contract, accepting
+  authenticated callback ingress signals with idempotency keys while leaving durable journal/resume
+  authority to the runtime.
 - Server-level HTTP/TLS webhook client integration and multi-process coordinator failover execution
   remain follow-on slices.
 

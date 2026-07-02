@@ -59,9 +59,16 @@ def test_server_package_reexports_framework_neutral_contracts(monkeypatch) -> No
             cookies={},
         )
     ).status_code == 200
+    assert graphblocks_server.ServerAsyncCallbackSubmission(
+        operation_id="op-1",
+        callback_id="cb-1",
+        idempotency_key="idem-1",
+        payload={"status": "completed"},
+    ).response_payload()["status"] == "accepted"
     assert "ApplicationCommand" in graphblocks_server.__all__
     assert "ApplicationProtocolEvent" in graphblocks_server.__all__
     assert "ApplicationProtocolLog" in graphblocks_server.__all__
+    assert "ServerAsyncCallbackSubmission" in graphblocks_server.__all__
     assert "ServerResponse" in graphblocks_server.__all__
 
 
