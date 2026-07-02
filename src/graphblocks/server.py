@@ -136,6 +136,12 @@ def _validate_mandatory_callback_policy(
         )
 
 
+def _validate_callback_not_authoritative(owner: str, config: Mapping[str, object]) -> None:
+    authoritative_for = config.get("authoritativeFor", config.get("authoritative_for"))
+    if config.get("sourceOfTruth") is True or config.get("source_of_truth") is True or authoritative_for:
+        raise ValueError(f"{owner} callback delivery must not be used as the source of truth")
+
+
 def _webhook_url_is_unsafe(url: str) -> bool:
     parsed = urlparse(url)
     if parsed.scheme in {"file", "unix"}:
@@ -791,6 +797,7 @@ class ServerEventSubscription:
         failure_policy = _validate_callback_failure_policy(
             body.get("failure_policy", body.get("failurePolicy", "retry_then_dead_letter"))
         )
+        _validate_callback_not_authoritative("server event subscription", body)
         _validate_mandatory_callback_policy("server event subscription", body, delivery, failure_policy)
         return cls(
             subscription_id=_validate_non_empty_string(
@@ -918,6 +925,7 @@ class ServerCallbackRegistration:
         failure_policy = _validate_callback_failure_policy(
             body.get("failure_policy", body.get("failurePolicy", "retry_then_dead_letter"))
         )
+        _validate_callback_not_authoritative("server callback registration", body)
         _validate_mandatory_callback_policy("server callback registration", body, delivery, failure_policy)
         return cls(
             subscription_id=_validate_non_empty_string(
