@@ -17,6 +17,8 @@ if str(ROOT / "src") not in sys.path:
 
 from graphblocks import ArtifactRef  # noqa: E402
 from graphblocks_callbacks import (  # noqa: E402
+    CallbackEndpointAuth,
+    CallbackEndpointRef,
     CallbackEnvelope,
     CallbackDeliveryProjection,
     CallbackPayloadProjection,
@@ -692,5 +694,64 @@ def test_external_callback_receipt_rejects_idempotency_key_mismatch() -> None:
             verified_by="hmac-sha256:key-current",
             policy_snapshot_id="policy_001",
             received_at="2026-07-02T00:00:02Z",
+        ),
+    )
+
+
+def test_callback_endpoint_ref_binds_auth_schema_and_resume_fence_identity() -> None:
+    auth = CallbackEndpointAuth(kind="hmac", secret_ref="secret://callbacks/ci")
+    endpoint = CallbackEndpointRef(
+        endpoint_id="cbep_ci_001",
+        url="https://graphblocks.example.com/v1/callbacks/op_ci_001",
+        accepted_schema="schemas/CICallback@1",
+        auth=auth,
+        operation_id="op_ci_001",
+        run_id="run_coding_001",
+        node_id="waitCI",
+        attempt_id="attempt_001",
+        release_id="rel_001",
+        tenant_id="tenant_001",
+        expires_at="2026-07-02T00:30:00Z",
+    )
+
+    assert endpoint.auth == auth
+    assert endpoint.operation_id == "op_ci_001"
+    assert endpoint.attempt_id == "attempt_001"
+    assert endpoint.binding_key() == "tenant_001:rel_001:run_coding_001:waitCI:attempt_001:op_ci_001"
+
+
+def test_callback_endpoint_auth_requires_kind_specific_credentials() -> None:
+    _assert_raises_value_error(
+        "hmac callback auth requires secret_ref",
+        lambda: CallbackEndpointAuth(kind="hmac"),
+    )
+    _assert_raises_value_error(
+        "bearer callback auth requires token_ref",
+        lambda: CallbackEndpointAuth(kind="bearer"),
+    )
+    _assert_raises_value_error(
+        "mtls callback auth requires client_identity_ref",
+        lambda: CallbackEndpointAuth(kind="mtls"),
+    )
+    _assert_raises_value_error(
+        "oidc callback auth requires issuer and audience",
+        lambda: CallbackEndpointAuth(kind="oidc", issuer="https://issuer.example.com"),
+    )
+
+
+def test_callback_endpoint_ref_requires_complete_resume_identity() -> None:
+    _assert_raises_value_error(
+        "attempt_id must be a non-empty string",
+        lambda: CallbackEndpointRef(
+            endpoint_id="cbep_ci_001",
+            url="https://graphblocks.example.com/v1/callbacks/op_ci_001",
+            accepted_schema="schemas/CICallback@1",
+            auth=CallbackEndpointAuth(kind="hmac", secret_ref="secret://callbacks/ci"),
+            operation_id="op_ci_001",
+            run_id="run_coding_001",
+            node_id="waitCI",
+            attempt_id="",
+            release_id="rel_001",
+            tenant_id="tenant_001",
         ),
     )

@@ -591,6 +591,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   verified callback envelope and bounded/artifact-backed payload projection, preserving callback,
   run, operation, node, attempt, idempotency, payload digest, verifier, and policy snapshot identity
   for journal-before-resume flows without making callback delivery the source of truth.
+- `graphblocks-callbacks` now exposes callback endpoint auth/reference projections for bearer,
+  HMAC, mTLS, and OIDC callback ingress. Endpoint refs bind accepted schema, operation, run, node,
+  attempt, release, and tenant identity into a stable fencing key so stale callbacks cannot be
+  confused with the current resumable operation.
 - `graphblocks-server` now exposes framework-neutral
   `POST /callbacks/deliveries/{delivery_id}/redrive` and
   `POST /callbacks/deliveries/{delivery_id}/dead-letter`

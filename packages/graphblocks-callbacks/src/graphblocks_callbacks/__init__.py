@@ -33,6 +33,7 @@ VALID_DELIVERY_STATUSES = frozenset({
     "cancelled",
     "expired",
 })
+VALID_CALLBACK_AUTH_KINDS = frozenset({"bearer", "hmac", "mtls", "oidc"})
 FORBIDDEN_WEBHOOK_HOSTS = frozenset({"localhost", "metadata.google.internal"})
 
 
@@ -624,6 +625,78 @@ class CallbackReplayGuard:
 
 
 @dataclass(frozen=True, slots=True)
+class CallbackEndpointAuth:
+    kind: str
+    token_ref: str | None = None
+    secret_ref: str | None = None
+    client_identity_ref: str | None = None
+    issuer: str | None = None
+    audience: str | None = None
+
+    def __post_init__(self) -> None:
+        _require_non_empty_string("kind", self.kind)
+        if self.kind not in VALID_CALLBACK_AUTH_KINDS:
+            raise ValueError("kind must be bearer, hmac, mtls, or oidc")
+        for field_name in ("token_ref", "secret_ref", "client_identity_ref", "issuer", "audience"):
+            value = getattr(self, field_name)
+            if value is not None:
+                _require_non_empty_string(field_name, value)
+        if self.kind == "bearer" and self.token_ref is None:
+            raise ValueError("bearer callback auth requires token_ref")
+        if self.kind == "hmac" and self.secret_ref is None:
+            raise ValueError("hmac callback auth requires secret_ref")
+        if self.kind == "mtls" and self.client_identity_ref is None:
+            raise ValueError("mtls callback auth requires client_identity_ref")
+        if self.kind == "oidc" and (self.issuer is None or self.audience is None):
+            raise ValueError("oidc callback auth requires issuer and audience")
+
+
+@dataclass(frozen=True, slots=True)
+class CallbackEndpointRef:
+    endpoint_id: str
+    url: str
+    accepted_schema: str
+    auth: CallbackEndpointAuth
+    operation_id: str
+    run_id: str
+    node_id: str
+    attempt_id: str
+    release_id: str
+    tenant_id: str
+    expires_at: str | None = None
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "endpoint_id",
+            "url",
+            "accepted_schema",
+            "operation_id",
+            "run_id",
+            "node_id",
+            "attempt_id",
+            "release_id",
+            "tenant_id",
+        ):
+            _require_non_empty_string(field_name, getattr(self, field_name))
+        if not isinstance(self.auth, CallbackEndpointAuth):
+            raise ValueError("auth must be a CallbackEndpointAuth")
+        if self.expires_at is not None:
+            _require_non_empty_string("expires_at", self.expires_at)
+
+    def binding_key(self) -> str:
+        return ":".join(
+            (
+                self.tenant_id,
+                self.release_id,
+                self.run_id,
+                self.node_id,
+                self.attempt_id,
+                self.operation_id,
+            )
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class CallbackEnvelope:
     delivery_id: str
     subscription_id: str
@@ -898,6 +971,8 @@ def verify_webhook_headers_hmac_sha256_keyring(
 __all__ = [
     "CallbackDeadLetterRecord",
     "CallbackDeliveryProjection",
+    "CallbackEndpointAuth",
+    "CallbackEndpointRef",
     "CallbackEnvelope",
     "CallbackPayloadProjection",
     "CallbackRedriveRecord",
