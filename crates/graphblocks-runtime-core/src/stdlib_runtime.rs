@@ -6,6 +6,7 @@ use graphblocks_compiler::compiler::compile_graph;
 use graphblocks_compiler::diagnostics::Severity;
 use serde_json::{Value, json};
 
+use crate::async_operation::{AsyncOperation, AsyncOperationKind};
 use crate::outcome::{BlockError, ErrorCategory, Outcome};
 use crate::readiness::{InputDependency, PortRef, ResolvedInput};
 use crate::scheduler::{ScheduledNode, StartedNode};
@@ -414,6 +415,8 @@ fn execute_stdlib_block(
         "model.generate@1" => execute_scripted_generate(inputs, config),
         "tools.resolve@1" => execute_resolve_tools(inputs, config),
         "agent.run@1" => execute_scripted_agent_run(inputs, config),
+        "async.start_operation@1" => execute_async_start_operation(inputs, config),
+        "async.await_callback@1" => execute_async_await_callback(inputs, config),
         "conversation.commit_turn@1" => execute_commit_turn(inputs),
         "conversation.policy_stop_turn@1" => execute_policy_stop_turn(inputs, config),
         "control.map@2" => execute_control_map(inputs, config),
@@ -496,6 +499,165 @@ fn execute_scripted_generate(inputs: &Value, config: &Value) -> Result<Value, Bl
         .unwrap_or(prompt);
 
     Ok(json!({ "response": response }))
+}
+
+fn execute_async_start_operation(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
+    let Some(config) = config.as_object() else {
+        return Err(BlockError::new(
+            "async.start_operation.invalid_config",
+            ErrorCategory::Configuration,
+            "async.start_operation@1 config must be an object",
+            false,
+        ));
+    };
+    let operation_id = required_alias_object_str(
+        config,
+        "operationId",
+        "operation_id",
+        "async.start_operation.invalid_config",
+    )?;
+    let run_id = required_alias_object_str(
+        config,
+        "runId",
+        "run_id",
+        "async.start_operation.invalid_config",
+    )?;
+    let node_id = required_alias_object_str(
+        config,
+        "nodeId",
+        "node_id",
+        "async.start_operation.invalid_config",
+    )?;
+    let attempt_id = required_alias_object_str(
+        config,
+        "attemptId",
+        "attempt_id",
+        "async.start_operation.invalid_config",
+    )?;
+    let kind = parse_async_operation_kind(required_object_str(
+        config,
+        "kind",
+        "async.start_operation.invalid_config",
+    )?)?;
+    let resume_token_hash = required_alias_object_str(
+        config,
+        "resumeTokenHash",
+        "resume_token_hash",
+        "async.start_operation.invalid_config",
+    )?;
+    let idempotency_key = required_alias_object_str(
+        config,
+        "idempotencyKey",
+        "idempotency_key",
+        "async.start_operation.invalid_config",
+    )?;
+    let expected_schema = required_alias_object_str(
+        config,
+        "expectedSchema",
+        "expected_schema",
+        "async.start_operation.invalid_config",
+    )?;
+    let created_at_unix_ms = required_alias_object_u64(
+        config,
+        "createdAtUnixMs",
+        "created_at_unix_ms",
+        "async.start_operation.invalid_config",
+    )?;
+    let mut operation = AsyncOperation::new(
+        operation_id,
+        run_id,
+        node_id,
+        attempt_id,
+        kind,
+        resume_token_hash,
+        idempotency_key,
+        expected_schema,
+        created_at_unix_ms,
+    );
+    if let Some(provider_operation_id) =
+        optional_alias_string(config, "providerOperationId", "provider_operation_id")?
+    {
+        let submitted_at_unix_ms = required_alias_object_u64(
+            config,
+            "submittedAtUnixMs",
+            "submitted_at_unix_ms",
+            "async.start_operation.invalid_config",
+        )?;
+        operation = operation.submitted(provider_operation_id, submitted_at_unix_ms);
+    }
+    if let Some(expires_at_unix_ms) =
+        optional_alias_u64(config, "expiresAtUnixMs", "expires_at_unix_ms")?
+    {
+        operation = operation.waiting_callback(expires_at_unix_ms);
+    }
+    operation.validate().map_err(|error| {
+        BlockError::new(
+            "async.start_operation.invalid_operation",
+            ErrorCategory::Configuration,
+            format!("async.start_operation@1 invalid operation: {error:?}"),
+            false,
+        )
+    })?;
+
+    Ok(json!({
+        "operation": async_operation_json(&operation, inputs.get("subject").cloned()),
+    }))
+}
+
+fn execute_async_await_callback(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
+    let operation = inputs.get("operation").ok_or_else(|| {
+        BlockError::new(
+            "async.await_callback.missing_operation",
+            ErrorCategory::Configuration,
+            "async.await_callback@1 requires operation input",
+            false,
+        )
+    })?;
+    let Some(operation_object) = operation.as_object() else {
+        return Err(BlockError::new(
+            "async.await_callback.invalid_operation",
+            ErrorCategory::Configuration,
+            "async.await_callback@1 input operation must be an object",
+            false,
+        ));
+    };
+    let state = operation_object
+        .get("state")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            BlockError::new(
+                "async.await_callback.invalid_operation",
+                ErrorCategory::Configuration,
+                "async.await_callback@1 input operation.state must be a string",
+                false,
+            )
+        })?;
+    if state != "waiting_callback" {
+        return Err(BlockError::new(
+            "async.await_callback.not_waiting",
+            ErrorCategory::Configuration,
+            format!("async.await_callback@1 operation must be waiting_callback, got {state:?}"),
+            false,
+        ));
+    }
+    let checkpoint = config
+        .get("checkpoint")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let on_timeout = config
+        .get("onTimeout")
+        .or_else(|| config.get("on_timeout"))
+        .and_then(Value::as_str)
+        .unwrap_or("fail");
+
+    Ok(json!({
+        "wait": {
+            "state": "waiting_callback",
+            "operation": operation,
+            "checkpoint": checkpoint,
+            "onTimeout": on_timeout,
+        }
+    }))
 }
 
 fn execute_resolve_tools(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
@@ -1414,6 +1576,26 @@ fn required_alias_object_str<'a>(
         })
 }
 
+fn required_alias_object_u64(
+    object: &serde_json::Map<String, Value>,
+    primary: &str,
+    alternate: &str,
+    code: impl Into<String>,
+) -> Result<u64, BlockError> {
+    object
+        .get(primary)
+        .or_else(|| object.get(alternate))
+        .and_then(Value::as_u64)
+        .ok_or_else(|| {
+            BlockError::new(
+                code.into(),
+                ErrorCategory::Configuration,
+                format!("field {primary} must be an unsigned integer"),
+                false,
+            )
+        })
+}
+
 fn optional_string<'a>(
     object: &'a serde_json::Map<String, Value>,
     field: &str,
@@ -1449,6 +1631,28 @@ fn optional_alias_string<'a>(
                     "tools.resolve.invalid_binding",
                     ErrorCategory::Configuration,
                     format!("field {primary} must be a string"),
+                    false,
+                )
+            })
+        })
+        .transpose()
+}
+
+fn optional_alias_u64(
+    object: &serde_json::Map<String, Value>,
+    primary: &str,
+    alternate: &str,
+) -> Result<Option<u64>, BlockError> {
+    object
+        .get(primary)
+        .or_else(|| object.get(alternate))
+        .filter(|value| !value.is_null())
+        .map(|value| {
+            value.as_u64().ok_or_else(|| {
+                BlockError::new(
+                    "async.start_operation.invalid_config",
+                    ErrorCategory::Configuration,
+                    format!("field {primary} must be an unsigned integer"),
                     false,
                 )
             })
@@ -1666,5 +1870,59 @@ fn resolved_tool_json(tool: &ResolvedTool) -> Value {
         "effective_policy_snapshot_id": tool.effective_policy_snapshot_id,
         "allowed_for_principal": tool.allowed_for_principal,
         "valid_until": tool.valid_until_unix_ms,
+    })
+}
+
+fn parse_async_operation_kind(kind: &str) -> Result<AsyncOperationKind, BlockError> {
+    match kind {
+        "tool" => Ok(AsyncOperationKind::Tool),
+        "sandbox_task" => Ok(AsyncOperationKind::SandboxTask),
+        "ci_job" => Ok(AsyncOperationKind::CiJob),
+        "browser_task" => Ok(AsyncOperationKind::BrowserTask),
+        "workspace_trial" => Ok(AsyncOperationKind::WorkspaceTrial),
+        "external_provider_job" => Ok(AsyncOperationKind::ExternalProviderJob),
+        "document_job" => Ok(AsyncOperationKind::DocumentJob),
+        "research_task" => Ok(AsyncOperationKind::ResearchTask),
+        "custom" => Ok(AsyncOperationKind::Custom),
+        _ => Err(BlockError::new(
+            "async.start_operation.invalid_config",
+            ErrorCategory::Configuration,
+            format!("async.start_operation@1 unsupported operation kind {kind:?}"),
+            false,
+        )),
+    }
+}
+
+fn async_operation_kind_as_str(kind: &AsyncOperationKind) -> &'static str {
+    match kind {
+        AsyncOperationKind::Tool => "tool",
+        AsyncOperationKind::SandboxTask => "sandbox_task",
+        AsyncOperationKind::CiJob => "ci_job",
+        AsyncOperationKind::BrowserTask => "browser_task",
+        AsyncOperationKind::WorkspaceTrial => "workspace_trial",
+        AsyncOperationKind::ExternalProviderJob => "external_provider_job",
+        AsyncOperationKind::DocumentJob => "document_job",
+        AsyncOperationKind::ResearchTask => "research_task",
+        AsyncOperationKind::Custom => "custom",
+    }
+}
+
+fn async_operation_json(operation: &AsyncOperation, subject: Option<Value>) -> Value {
+    json!({
+        "operation_id": operation.operation_id,
+        "run_id": operation.run_id,
+        "node_id": operation.node_id,
+        "attempt_id": operation.attempt_id,
+        "kind": async_operation_kind_as_str(&operation.kind),
+        "provider_operation_id": operation.provider_operation_id,
+        "state": "waiting_callback",
+        "resume_token_hash": operation.resume_token_hash,
+        "idempotency_key": operation.idempotency_key,
+        "expected_schema": operation.expected_schema,
+        "created_at_unix_ms": operation.created_at_unix_ms,
+        "submitted_at_unix_ms": operation.submitted_at_unix_ms,
+        "expires_at_unix_ms": operation.expires_at_unix_ms,
+        "completed_at_unix_ms": operation.completed_at_unix_ms,
+        "subject": subject,
     })
 }

@@ -416,6 +416,60 @@ fn rust_stdlib_agent_run_rejects_unresolved_tool_entries() -> Result<(), String>
 }
 
 #[test]
+fn rust_stdlib_async_blocks_start_and_await_callback_operation() -> Result<(), String> {
+    let graph = json!({
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "runtime-async-start-await"},
+        "spec": {
+            "interface": {
+                "inputs": {"changeset": "graphblocks.ai/Changeset@1"},
+                "outputs": {"wait": "graphblocks.ai/AsyncWait@1"}
+            },
+            "nodes": {
+                "startCI": {
+                    "block": "async.start_operation@1",
+                    "config": {
+                        "operationId": "op-ci-1",
+                        "runId": "run-coding-1",
+                        "nodeId": "startCI",
+                        "attemptId": "attempt-1",
+                        "kind": "ci_job",
+                        "providerOperationId": "gha-run-1",
+                        "resumeTokenHash": "sha256:resume-token",
+                        "idempotencyKey": "idem-op-ci-1",
+                        "expectedSchema": "schemas/CICallback@1",
+                        "createdAtUnixMs": 1_000,
+                        "submittedAtUnixMs": 1_050,
+                        "expiresAtUnixMs": 1_800
+                    },
+                    "inputs": {"subject": "$input.changeset"},
+                    "outputs": {"operation": "waitCI.operation"}
+                },
+                "waitCI": {
+                    "block": "async.await_callback@1",
+                    "config": {"checkpoint": true, "onTimeout": "fail"},
+                    "inputs": {"operation": "startCI.operation"},
+                    "outputs": {"wait": "$output.wait"}
+                }
+            }
+        }
+    });
+    let result = run_graph(&graph, &json!({"changeset": {"id": "changeset-1"}}))?;
+
+    assert_eq!(result["status"], "succeeded");
+    assert_eq!(result["outputs"]["wait"]["state"], "waiting_callback");
+    assert_eq!(
+        result["outputs"]["wait"]["operation"]["operation_id"],
+        "op-ci-1"
+    );
+    assert_eq!(result["outputs"]["wait"]["operation"]["kind"], "ci_job");
+    assert_eq!(result["outputs"]["wait"]["checkpoint"], true);
+    assert_eq!(result["outputs"]["wait"]["onTimeout"], "fail");
+    Ok(())
+}
+
+#[test]
 fn rust_stdlib_runtime_matches_shared_runtime_tck_cases() -> Result<(), String> {
     let cases = serde_json::from_str::<Value>(include_str!("../../../tck/runtime/cases.json"))
         .map_err(|error| error.to_string())?;
