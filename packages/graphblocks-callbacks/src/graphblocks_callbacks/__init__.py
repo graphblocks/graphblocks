@@ -27,6 +27,17 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
+def _parse_utc_timestamp(value: str) -> datetime:
+    _require_non_empty_string("timestamp", value)
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        raise ValueError("timestamp must be an ISO-8601 datetime") from None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def _require_non_empty_string(field_name: str, value: str) -> None:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{field_name} must be a non-empty string")
@@ -174,10 +185,54 @@ def verify_webhook_hmac_sha256(
     return hmac.compare_digest(expected, signature)
 
 
+def verify_webhook_headers_hmac_sha256(
+    envelope: CallbackEnvelope,
+    headers: Mapping[str, str],
+    secret: bytes,
+    *,
+    now: str | None = None,
+    replay_window_seconds: int = 300,
+) -> bool:
+    if not isinstance(headers, Mapping):
+        raise ValueError("headers must be a mapping")
+    if (
+        isinstance(replay_window_seconds, bool)
+        or not isinstance(replay_window_seconds, int)
+        or replay_window_seconds < 0
+    ):
+        raise ValueError("replay_window_seconds must be a non-negative integer")
+
+    normalized = {str(key).lower(): value for key, value in headers.items()}
+    for header in REQUIRED_WEBHOOK_HEADERS:
+        value = normalized.get(header.lower())
+        if not isinstance(value, str) or not value.strip():
+            return False
+
+    expected = envelope.unsigned_headers(timestamp=normalized["graphblocks-timestamp"])
+    for header, value in expected.items():
+        if normalized.get(header.lower()) != value:
+            return False
+    if normalized["graphblocks-signature-algorithm"] != "hmac-sha256":
+        return False
+
+    delivered_at = _parse_utc_timestamp(normalized["graphblocks-timestamp"])
+    reference = _parse_utc_timestamp(_utc_now_iso() if now is None else now)
+    if abs((reference - delivered_at).total_seconds()) > replay_window_seconds:
+        return False
+
+    return verify_webhook_hmac_sha256(
+        envelope,
+        secret,
+        normalized["graphblocks-signature"],
+        timestamp=normalized["graphblocks-timestamp"],
+    )
+
+
 __all__ = [
     "CallbackEnvelope",
     "REQUIRED_WEBHOOK_HEADERS",
     "sign_webhook_hmac_sha256",
+    "verify_webhook_headers_hmac_sha256",
     "verify_webhook_hmac_sha256",
     "webhook_headers_hmac_sha256",
 ]

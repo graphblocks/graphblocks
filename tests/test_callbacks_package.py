@@ -18,6 +18,7 @@ if str(ROOT / "src") not in sys.path:
 from graphblocks_callbacks import (  # noqa: E402
     CallbackEnvelope,
     REQUIRED_WEBHOOK_HEADERS,
+    verify_webhook_headers_hmac_sha256,
     verify_webhook_hmac_sha256,
     webhook_headers_hmac_sha256,
 )
@@ -170,3 +171,71 @@ def test_callback_envelope_deterministic_fuzz_signatures_survive_reordering_and_
 
         assert before == after
         assert before == reordered
+
+
+def test_callback_webhook_header_verification_accepts_valid_signed_request() -> None:
+    envelope = CallbackEnvelope(
+        delivery_id="del_001",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        sequence=1042,
+        cursor="evt_1042",
+        type="ReviewRequested",
+        payload={"subject": "changeset_abc"},
+        idempotency_key="sub_001:evt_1042",
+        occurred_at="2026-07-02T00:00:00Z",
+        delivered_at="2026-07-02T00:00:01Z",
+    )
+    headers = webhook_headers_hmac_sha256(envelope, b"callback-secret")
+
+    assert verify_webhook_headers_hmac_sha256(
+        envelope,
+        headers,
+        b"callback-secret",
+        now="2026-07-02T00:00:31Z",
+        replay_window_seconds=60,
+    )
+
+
+def test_callback_webhook_header_verification_rejects_tampering_and_stale_timestamps() -> None:
+    envelope = CallbackEnvelope(
+        delivery_id="del_001",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        sequence=1042,
+        cursor="evt_1042",
+        type="ReviewRequested",
+        payload={"subject": "changeset_abc"},
+        idempotency_key="sub_001:evt_1042",
+        occurred_at="2026-07-02T00:00:00Z",
+        delivered_at="2026-07-02T00:00:01Z",
+    )
+    headers = webhook_headers_hmac_sha256(envelope, b"callback-secret")
+
+    missing = dict(headers)
+    del missing["GraphBlocks-Signature"]
+    tampered = {**headers, "GraphBlocks-Event-Id": "evt_other"}
+
+    assert not verify_webhook_headers_hmac_sha256(
+        envelope,
+        missing,
+        b"callback-secret",
+        now="2026-07-02T00:00:31Z",
+        replay_window_seconds=60,
+    )
+    assert not verify_webhook_headers_hmac_sha256(
+        envelope,
+        tampered,
+        b"callback-secret",
+        now="2026-07-02T00:00:31Z",
+        replay_window_seconds=60,
+    )
+    assert not verify_webhook_headers_hmac_sha256(
+        envelope,
+        headers,
+        b"callback-secret",
+        now="2026-07-02T00:02:02Z",
+        replay_window_seconds=60,
+    )
