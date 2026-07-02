@@ -27,6 +27,7 @@ from graphblocks_callbacks import (  # noqa: E402
     project_callback_payload,
     validate_webhook_target_url,
     verify_webhook_headers_hmac_sha256,
+    verify_webhook_headers_hmac_sha256_keyring,
     verify_webhook_hmac_sha256,
     webhook_headers_hmac_sha256,
 )
@@ -246,6 +247,68 @@ def test_callback_webhook_header_verification_rejects_tampering_and_stale_timest
         b"callback-secret",
         now="2026-07-02T00:02:02Z",
         replay_window_seconds=60,
+    )
+
+
+def test_callback_webhook_hmac_headers_include_optional_key_id() -> None:
+    envelope = CallbackEnvelope(
+        delivery_id="del_001",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        sequence=1042,
+        cursor="evt_1042",
+        type="ReviewRequested",
+        payload={"subject": "changeset_abc"},
+        idempotency_key="sub_001:evt_1042",
+        occurred_at="2026-07-02T00:00:00Z",
+        delivered_at="2026-07-02T00:00:01Z",
+    )
+
+    headers = webhook_headers_hmac_sha256(envelope, b"callback-secret", key_id="current")
+
+    assert headers["GraphBlocks-Key-Id"] == "current"
+    assert verify_webhook_headers_hmac_sha256_keyring(
+        envelope,
+        headers,
+        {"current": b"callback-secret", "previous": b"old-secret"},
+        now="2026-07-02T00:00:31Z",
+        replay_window_seconds=60,
+    ) == "current"
+
+
+def test_callback_webhook_hmac_keyring_accepts_previous_key_during_rotation() -> None:
+    envelope = CallbackEnvelope(
+        delivery_id="del_001",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        sequence=1042,
+        cursor="evt_1042",
+        type="ReviewRequested",
+        payload={"subject": "changeset_abc"},
+        idempotency_key="sub_001:evt_1042",
+        occurred_at="2026-07-02T00:00:00Z",
+        delivered_at="2026-07-02T00:00:01Z",
+    )
+    headers = webhook_headers_hmac_sha256(envelope, b"old-secret", key_id="previous")
+
+    assert verify_webhook_headers_hmac_sha256_keyring(
+        envelope,
+        headers,
+        {"current": b"callback-secret", "previous": b"old-secret"},
+        now="2026-07-02T00:00:31Z",
+        replay_window_seconds=60,
+    ) == "previous"
+    assert (
+        verify_webhook_headers_hmac_sha256_keyring(
+            envelope,
+            {**headers, "GraphBlocks-Key-Id": "missing"},
+            {"current": b"callback-secret", "previous": b"old-secret"},
+            now="2026-07-02T00:00:31Z",
+            replay_window_seconds=60,
+        )
+        is None
     )
 
 

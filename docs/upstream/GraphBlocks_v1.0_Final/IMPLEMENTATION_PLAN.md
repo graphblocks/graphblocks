@@ -581,6 +581,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - `graphblocks-callbacks` now maps webhook receiver HTTP responses into delivery decisions:
   2xx delivered, 409 acknowledged duplicate, 410 gone, 429/5xx retry, and other 4xx terminal
   failure, including `Retry-After` parsing for retry scheduling.
+- `graphblocks-callbacks` HMAC helpers now support optional `GraphBlocks-Key-Id` emission and
+  keyring verification so receivers can accept current and previous signing secrets during
+  rotation while rejecting unknown key IDs.
 - `graphblocks-server` now exposes framework-neutral
   `POST /callbacks/deliveries/{delivery_id}/redrive` and
   `POST /callbacks/deliveries/{delivery_id}/dead-letter`

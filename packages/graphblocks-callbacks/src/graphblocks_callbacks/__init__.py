@@ -612,6 +612,7 @@ def webhook_headers_hmac_sha256(
     secret: bytes,
     *,
     timestamp: str | None = None,
+    key_id: str | None = None,
 ) -> dict[str, str]:
     timestamp = envelope.delivered_at if timestamp is None else timestamp
     headers = envelope.unsigned_headers(timestamp=timestamp)
@@ -621,6 +622,9 @@ def webhook_headers_hmac_sha256(
         timestamp=timestamp,
     )
     headers["GraphBlocks-Signature-Algorithm"] = "hmac-sha256"
+    if key_id is not None:
+        _require_non_empty_string("key_id", key_id)
+        headers["GraphBlocks-Key-Id"] = key_id
     return headers
 
 
@@ -679,6 +683,39 @@ def verify_webhook_headers_hmac_sha256(
     )
 
 
+def verify_webhook_headers_hmac_sha256_keyring(
+    envelope: CallbackEnvelope,
+    headers: Mapping[str, str],
+    secrets_by_key_id: Mapping[str, bytes],
+    *,
+    now: str | None = None,
+    replay_window_seconds: int = 300,
+) -> str | None:
+    if not isinstance(secrets_by_key_id, Mapping):
+        raise ValueError("secrets_by_key_id must be a mapping")
+    normalized = _string_headers(headers)
+    requested_key_id = normalized.get("graphblocks-key-id")
+    candidates: list[tuple[str, bytes]] = []
+    for key_id, secret in secrets_by_key_id.items():
+        _require_non_empty_string("key_id", key_id)
+        if not isinstance(secret, bytes) or not secret:
+            raise ValueError("secret values must be non-empty bytes")
+        if requested_key_id is None or requested_key_id == key_id:
+            candidates.append((key_id, secret))
+    if not candidates:
+        return None
+    for key_id, secret in candidates:
+        if verify_webhook_headers_hmac_sha256(
+            envelope,
+            headers,
+            secret,
+            now=now,
+            replay_window_seconds=replay_window_seconds,
+        ):
+            return key_id
+    return None
+
+
 __all__ = [
     "CallbackDeadLetterRecord",
     "CallbackDeliveryProjection",
@@ -694,6 +731,7 @@ __all__ = [
     "sign_webhook_hmac_sha256",
     "validate_webhook_target_url",
     "verify_webhook_headers_hmac_sha256",
+    "verify_webhook_headers_hmac_sha256_keyring",
     "verify_webhook_hmac_sha256",
     "webhook_headers_hmac_sha256",
 ]
