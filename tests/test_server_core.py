@@ -2815,6 +2815,81 @@ def test_server_app_registers_and_revokes_callback_projection_with_run_replay() 
     ]
 
 
+def test_server_app_rejects_duplicate_callback_registration_id_without_overwrite() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+
+    first = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/register",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "callback-sub-duplicate",
+                    "scope": "tenant",
+                    "scopeId": "tenant-1",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {
+                        "kind": "webhook",
+                        "url": "https://relay.example/events",
+                        "signing": {"algorithm": "hmac-sha256", "secret_ref": "secret://relay"},
+                    },
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-03T00:00:00Z",
+        )
+    )
+    duplicate = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/register",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "callback-sub-duplicate",
+                    "scope": "tenant",
+                    "scopeId": "tenant-2",
+                    "eventFilter": {"types": ["RunFailed"]},
+                    "delivery": {
+                        "kind": "webhook",
+                        "url": "https://other-relay.example/events",
+                        "signing": {"algorithm": "ed25519", "secret_ref": "secret://other-relay"},
+                    },
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-03T00:00:05Z",
+        )
+    )
+
+    assert first.status_code == 201
+    assert duplicate.status_code == 409
+    assert json.loads(duplicate.body.decode("utf-8")) == {
+        "ok": False,
+        "subscriptionId": "callback-sub-duplicate",
+        "state": "active",
+        "error": "callback registration 'callback-sub-duplicate' already exists",
+    }
+    assert app.callback_registrations() == (
+        ServerCallbackRegistration(
+            subscription_id="callback-sub-duplicate",
+            scope="tenant",
+            scope_id="tenant-1",
+            event_filter={"types": ["RunSucceeded"]},
+            delivery={
+                "kind": "webhook",
+                "url": "https://relay.example/events",
+                "signing": {"algorithm": "hmac-sha256", "secret_ref": "secret://relay"},
+            },
+            failure_policy="retry_then_dead_letter",
+            created_at="2026-07-03T00:00:00Z",
+        ),
+    )
+
+
 def test_server_app_registers_callback_projection_from_accepted_run_initial_cursor() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     graph = {

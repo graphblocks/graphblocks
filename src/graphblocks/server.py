@@ -1331,6 +1331,17 @@ class GraphBlocksServerApp:
                     request=request,
                     ordinal=len(self._callback_registrations) + 1,
                 )
+                existing = self._callback_registrations.get(registration.subscription_id)
+                if existing is not None:
+                    return ServerResponse.json(
+                        409,
+                        {
+                            "ok": False,
+                            "subscriptionId": registration.subscription_id,
+                            "state": existing.status,
+                            "error": f"callback registration {registration.subscription_id!r} already exists",
+                        },
+                    )
                 replay = self._callback_registration_replay(registration)
                 if isinstance(replay, ServerResponse):
                     return replay
