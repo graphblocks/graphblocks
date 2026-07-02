@@ -1,5 +1,6 @@
 use graphblocks_runtime_core::application_event::{
     ApplicationProtocolEvent, ApplicationProtocolEventKind, ApplicationProtocolEventMetadata,
+    ApplicationProtocolLog,
 };
 use graphblocks_runtime_core::callback_delivery::{
     CallbackDeadLetter, CallbackDeliveryResponse, CallbackDeliveryScheduler,
@@ -343,5 +344,95 @@ fn webhook_signature_verification_rejects_stale_or_tampered_payloads() {
     assert_eq!(
         signing.verify_signed_delivery(&signed, 2_050),
         Err(WebhookSignatureError::SignatureMismatch)
+    );
+}
+
+#[test]
+fn subscription_replay_schedules_matching_events_after_cursor() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let mut subscription = subscription(
+        EventFilter::new()
+            .with_types([ApplicationProtocolEventKind::ReviewRequested])
+            .with_terminal_events(true),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    )
+    .with_replay_from_cursor("cursor-1")
+    .expect("replay cursor is valid");
+    let mut log = ApplicationProtocolLog::new();
+    log.append(protocol_event(
+        "event-1",
+        ApplicationProtocolEventKind::RunStarted,
+        1,
+    ))
+    .expect("event appends");
+    log.append(protocol_event(
+        "event-2",
+        ApplicationProtocolEventKind::ReviewRequested,
+        2,
+    ))
+    .expect("event appends");
+    log.append(protocol_event(
+        "event-3",
+        ApplicationProtocolEventKind::JobProgress,
+        3,
+    ))
+    .expect("event appends");
+    log.append(protocol_event(
+        "event-4",
+        ApplicationProtocolEventKind::RunCompleted,
+        4,
+    ))
+    .expect("event appends");
+
+    let deliveries = scheduler.schedule_replay(&subscription, &log, 10);
+
+    assert_eq!(
+        deliveries
+            .iter()
+            .map(|delivery| delivery.event_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["event-2", "event-4"]
+    );
+    assert_eq!(deliveries[0].delivery_id, "del_sub-1_event-2");
+    assert_eq!(deliveries[0].cursor, "cursor-2");
+    assert_eq!(deliveries[1].idempotency_key, "sub-1:event-4");
+
+    subscription.replay_from_cursor = Some("cursor-2".to_owned());
+    let deliveries = scheduler.schedule_replay(&subscription, &log, 10);
+    assert_eq!(
+        deliveries
+            .iter()
+            .map(|delivery| delivery.event_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["event-4"]
+    );
+}
+
+#[test]
+fn subscription_replay_respects_limit_and_inactive_subscriptions() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let mut subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    )
+    .with_replay_from_cursor("cursor-1")
+    .expect("replay cursor is valid");
+    let mut log = ApplicationProtocolLog::new();
+    for sequence in 1..=4 {
+        log.append(protocol_event(
+            &format!("event-{sequence}"),
+            ApplicationProtocolEventKind::ReviewRequested,
+            sequence,
+        ))
+        .expect("event appends");
+    }
+
+    assert_eq!(scheduler.schedule_replay(&subscription, &log, 2).len(), 2);
+
+    subscription.status = CallbackSubscriptionStatus::Revoked;
+    assert!(
+        scheduler
+            .schedule_replay(&subscription, &log, 10)
+            .is_empty()
     );
 }

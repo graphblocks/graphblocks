@@ -238,6 +238,9 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   reason.
 - Webhook delivery envelopes now support required GraphBlocks headers, canonical JSON signing,
   `hmac-sha256` verification, replay-window enforcement, and header/body identity checks.
+- Callback subscriptions can schedule cursor replay from the authoritative `ApplicationProtocolLog`
+  while applying the same event filters and deterministic delivery/idempotency metadata as live
+  projection.
 - Durable storage, Ed25519/mTLS/OIDC callback authentication adapters, real webhook delivery
   workers, dead-letter persistence, budget-aware resume, and coordinator failover remain follow-on
   slices.

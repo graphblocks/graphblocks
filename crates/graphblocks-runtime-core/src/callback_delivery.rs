@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::application_event::{ApplicationProtocolEvent, ApplicationProtocolEventKind};
+use crate::application_event::{
+    ApplicationProtocolEvent, ApplicationProtocolEventKind, ApplicationProtocolLog,
+};
 use hmac::{Hmac, Mac};
 use serde_json::{Value, json};
 use sha2::Sha256;
@@ -141,6 +143,20 @@ impl CallbackSubscription {
             });
         }
         Ok(())
+    }
+
+    pub fn with_replay_from_cursor(
+        mut self,
+        cursor: impl Into<String>,
+    ) -> Result<Self, CallbackDeliveryError> {
+        let cursor = cursor.into();
+        if cursor.trim().is_empty() {
+            return Err(CallbackDeliveryError::EmptyField {
+                field: "replay_from_cursor".to_owned(),
+            });
+        }
+        self.replay_from_cursor = Some(cursor);
+        Ok(self)
     }
 
     pub fn can_receive(&self, event: &ApplicationProtocolEvent) -> bool {
@@ -545,6 +561,22 @@ impl CallbackDeliveryScheduler {
             last_redrive_operator: None,
             last_redrive_reason: None,
         })
+    }
+
+    pub fn schedule_replay(
+        &self,
+        subscription: &CallbackSubscription,
+        log: &ApplicationProtocolLog,
+        limit: usize,
+    ) -> Vec<CallbackDelivery> {
+        if subscription.status != CallbackSubscriptionStatus::Active || limit == 0 {
+            return Vec::new();
+        }
+
+        log.replay_after(subscription.replay_from_cursor.as_deref(), limit)
+            .iter()
+            .filter_map(|event| self.schedule_event(subscription, event))
+            .collect()
     }
 
     pub fn record_response(
