@@ -5,7 +5,7 @@ use crate::application_event::{
     ApplicationProtocolEvent, ApplicationProtocolEventKind, ApplicationProtocolLog,
 };
 use hmac::{Hmac, Mac};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::Sha256;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -90,6 +90,7 @@ pub struct CallbackSubscription {
     pub expires_at_unix_ms: Option<u64>,
     pub replay_from_cursor: Option<String>,
     pub failure_policy: CallbackFailurePolicy,
+    pub ordered_delivery: bool,
 }
 
 impl CallbackSubscription {
@@ -115,6 +116,7 @@ impl CallbackSubscription {
             expires_at_unix_ms: None,
             replay_from_cursor: None,
             failure_policy,
+            ordered_delivery: false,
         };
         subscription.validate()?;
         Ok(subscription)
@@ -160,6 +162,11 @@ impl CallbackSubscription {
         Ok(self)
     }
 
+    pub fn with_ordered_delivery(mut self) -> Self {
+        self.ordered_delivery = true;
+        self
+    }
+
     pub fn can_receive(&self, event: &ApplicationProtocolEvent) -> bool {
         self.status == CallbackSubscriptionStatus::Active
             && self
@@ -179,6 +186,12 @@ pub enum CallbackDeliveryStatus {
     DeadLettered,
     Cancelled,
     Expired,
+}
+
+impl CallbackDeliveryStatus {
+    fn blocks_ordered_delivery(self) -> bool {
+        matches!(self, Self::Pending | Self::Delivering)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -216,6 +229,53 @@ pub struct CallbackDeadLetter {
     pub last_error: Option<String>,
     pub dead_lettered_at_unix_ms: u64,
     pub redrive_count: u32,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct OrderedDeliveryState {
+    blocking_by_subscription_run: BTreeMap<(String, String), CallbackDelivery>,
+}
+
+impl OrderedDeliveryState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn is_blocked(&self, subscription_id: &str, run_id: &str) -> bool {
+        self.blocking_by_subscription_run
+            .get(&(subscription_id.to_owned(), run_id.to_owned()))
+            .is_some_and(|delivery| delivery.status.blocks_ordered_delivery())
+    }
+
+    pub fn blocking_delivery(&self, subscription_id: &str, run_id: &str) -> Option<String> {
+        self.blocking_by_subscription_run
+            .get(&(subscription_id.to_owned(), run_id.to_owned()))
+            .and_then(|delivery| {
+                delivery
+                    .status
+                    .blocks_ordered_delivery()
+                    .then(|| delivery.delivery_id.clone())
+            })
+    }
+
+    pub fn record_scheduled(&mut self, delivery: &CallbackDelivery) {
+        if delivery.status.blocks_ordered_delivery() {
+            self.blocking_by_subscription_run.insert(
+                (delivery.subscription_id.clone(), delivery.run_id.clone()),
+                delivery.clone(),
+            );
+        }
+    }
+
+    pub fn record_delivery_status(&mut self, delivery: &CallbackDelivery) {
+        let key = (delivery.subscription_id.clone(), delivery.run_id.clone());
+        if delivery.status.blocks_ordered_delivery() {
+            self.blocking_by_subscription_run
+                .insert(key, delivery.clone());
+        } else {
+            self.blocking_by_subscription_run.remove(&key);
+        }
+    }
 }
 
 impl CallbackDeadLetter {
@@ -775,6 +835,30 @@ impl CallbackDeliveryScheduler {
             last_redrive_operator: None,
             last_redrive_reason: None,
         })
+    }
+
+    pub fn schedule_ordered_event(
+        &self,
+        subscription: &CallbackSubscription,
+        event: &ApplicationProtocolEvent,
+        ordering: &mut OrderedDeliveryState,
+    ) -> Option<Option<CallbackDelivery>> {
+        if !subscription.can_receive(event) {
+            return None;
+        }
+        if subscription.ordered_delivery
+            && ordering.is_blocked(&subscription.subscription_id, &event.metadata.run_id)
+        {
+            return Some(None);
+        }
+
+        let delivery = self
+            .schedule_event(subscription, event)
+            .expect("subscription and event were already checked");
+        if subscription.ordered_delivery {
+            ordering.record_scheduled(&delivery);
+        }
+        Some(Some(delivery))
     }
 
     pub fn schedule_replay(

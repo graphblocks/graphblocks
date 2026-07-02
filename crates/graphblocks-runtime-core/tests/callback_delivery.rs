@@ -5,8 +5,8 @@ use graphblocks_runtime_core::application_event::{
 use graphblocks_runtime_core::callback_delivery::{
     CallbackDeadLetter, CallbackDeliveryResponse, CallbackDeliveryScheduler,
     CallbackDeliveryStatus, CallbackFailurePolicy, CallbackRetryPolicy, CallbackSubscription,
-    CallbackSubscriptionStatus, EventFilter, WebhookDeliveryTarget, WebhookEgressPolicy,
-    WebhookEndpointError, WebhookSignatureError, WebhookSigningConfig,
+    CallbackSubscriptionStatus, EventFilter, OrderedDeliveryState, WebhookDeliveryTarget,
+    WebhookEgressPolicy, WebhookEndpointError, WebhookSignatureError, WebhookSigningConfig,
 };
 use serde_json::json;
 
@@ -136,10 +136,12 @@ fn webhook_server_errors_retry_then_dead_letter_with_bounded_backoff() {
     assert_eq!(retry_twice.next_retry_at_unix_ms, Some(1_300));
     assert_eq!(dead_lettered.status, CallbackDeliveryStatus::DeadLettered);
     assert_eq!(dead_lettered.attempt, 3);
-    assert!(dead_lettered
-        .last_error
-        .as_deref()
-        .is_some_and(|error| { error.contains("server_error:503") }));
+    assert!(
+        dead_lettered
+            .last_error
+            .as_deref()
+            .is_some_and(|error| { error.contains("server_error:503") })
+    );
 }
 
 #[test]
@@ -181,6 +183,79 @@ fn best_effort_delivery_drops_retryable_failures_without_dead_letter() {
 
     assert_eq!(failed.status, CallbackDeliveryStatus::Failed);
     assert_eq!(failed.next_retry_at_unix_ms, None);
+}
+
+#[test]
+fn ordered_delivery_blocks_later_events_until_prior_delivery_is_terminal() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    )
+    .with_ordered_delivery();
+    let first = protocol_event("event-1", ApplicationProtocolEventKind::JobProgress, 1);
+    let second = protocol_event("event-2", ApplicationProtocolEventKind::JobProgress, 2);
+    let mut ordering = OrderedDeliveryState::new();
+
+    let first_delivery = scheduler
+        .schedule_ordered_event(&subscription, &first, &mut ordering)
+        .expect("first event schedules")
+        .expect("first event is deliverable");
+    let blocked = scheduler
+        .schedule_ordered_event(&subscription, &second, &mut ordering)
+        .expect("second event matches subscription");
+
+    assert!(blocked.is_none());
+    assert_eq!(
+        ordering.blocking_delivery("sub-1", "run-1").as_deref(),
+        Some("del_sub-1_event-1")
+    );
+
+    let delivered =
+        scheduler.record_response(first_delivery, CallbackDeliveryResponse::Success, 2_000);
+    ordering.record_delivery_status(&delivered);
+    let second_delivery = scheduler
+        .schedule_ordered_event(&subscription, &second, &mut ordering)
+        .expect("second event matches subscription")
+        .expect("second event is deliverable after first completes");
+
+    assert_eq!(second_delivery.delivery_id, "del_sub-1_event-2");
+    assert_eq!(
+        ordering.blocking_delivery("sub-1", "run-1").as_deref(),
+        Some("del_sub-1_event-2")
+    );
+}
+
+#[test]
+fn ordered_delivery_allows_gap_after_dead_letter() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(1, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    )
+    .with_ordered_delivery();
+    let first = protocol_event("event-1", ApplicationProtocolEventKind::JobProgress, 1);
+    let second = protocol_event("event-2", ApplicationProtocolEventKind::JobProgress, 2);
+    let mut ordering = OrderedDeliveryState::new();
+
+    let first_delivery = scheduler
+        .schedule_ordered_event(&subscription, &first, &mut ordering)
+        .expect("first event matches subscription")
+        .expect("first event is deliverable");
+    let dead_lettered = scheduler.record_response(
+        first_delivery,
+        CallbackDeliveryResponse::ServerError(503),
+        2_000,
+    );
+    ordering.record_delivery_status(&dead_lettered);
+
+    let second_delivery = scheduler
+        .schedule_ordered_event(&subscription, &second, &mut ordering)
+        .expect("second event matches subscription")
+        .expect("dead-lettered gap allows next event");
+
+    assert_eq!(dead_lettered.status, CallbackDeliveryStatus::DeadLettered);
+    assert_eq!(second_delivery.event_id, "event-2");
 }
 
 #[test]
@@ -242,12 +317,16 @@ fn redrive_rejects_empty_operator_or_reason() {
     let dead_letter = CallbackDeadLetter::from_delivery(dead_lettered, 1_001)
         .expect("dead-letter record is valid");
 
-    assert!(scheduler
-        .redrive_dead_letter(&dead_letter, " ", "receiver recovered", 2_000)
-        .is_err());
-    assert!(scheduler
-        .redrive_dead_letter(&dead_letter, "operator:alice", " ", 2_000)
-        .is_err());
+    assert!(
+        scheduler
+            .redrive_dead_letter(&dead_letter, " ", "receiver recovered", 2_000)
+            .is_err()
+    );
+    assert!(
+        scheduler
+            .redrive_dead_letter(&dead_letter, "operator:alice", " ", 2_000)
+            .is_err()
+    );
 }
 
 #[test]
@@ -503,9 +582,11 @@ fn subscription_replay_respects_limit_and_inactive_subscriptions() {
     assert_eq!(scheduler.schedule_replay(&subscription, &log, 2).len(), 2);
 
     subscription.status = CallbackSubscriptionStatus::Revoked;
-    assert!(scheduler
-        .schedule_replay(&subscription, &log, 10)
-        .is_empty());
+    assert!(
+        scheduler
+            .schedule_replay(&subscription, &log, 10)
+            .is_empty()
+    );
 }
 
 #[test]

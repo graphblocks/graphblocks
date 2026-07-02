@@ -249,6 +249,9 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   bounded retry scheduling, best-effort failure handling, dead-letter terminal state, and redrive
   records that preserve original delivery identity, event identity, attempt history, operator, and
   reason.
+- Ordered callback delivery now tracks the blocking delivery per subscription/run and prevents later
+  events from scheduling until the prior delivery succeeds, is acknowledged, fails terminally,
+  dead-letters, is cancelled, or expires.
 - Webhook delivery envelopes now support required GraphBlocks headers, canonical JSON signing,
   `hmac-sha256` verification, replay-window enforcement, and header/body identity checks.
 - Callback subscriptions can schedule cursor replay from the authoritative `ApplicationProtocolLog`
