@@ -3,7 +3,7 @@ use std::thread;
 
 use graphblocks_runtime_core::async_operation::{
     AsyncCallbackSubmission, AsyncOperation, AsyncOperationError, AsyncOperationEvent,
-    AsyncOperationKind, AsyncOperationStore,
+    AsyncOperationKind, AsyncOperationState, AsyncOperationStore,
 };
 use graphblocks_runtime_core::tool_schema::{JsonSchema, JsonSchemaNode, ToolSchemaRegistry};
 use serde_json::json;
@@ -166,7 +166,7 @@ fn callback_schema_failure_and_stale_attempt_do_not_resume_run() {
     ));
     assert_eq!(
         store.operation_state("op-1"),
-        Some(graphblocks_runtime_core::async_operation::AsyncOperationState::WaitingCallback)
+        Some(AsyncOperationState::WaitingCallback)
     );
 }
 
@@ -223,6 +223,155 @@ fn concurrent_duplicate_callbacks_have_one_resume_winner() {
             .count(),
         1
     );
+}
+
+#[test]
+fn callback_after_timeout_records_late_callback_without_resume() {
+    let store = AsyncOperationStore::new();
+    store
+        .register(waiting_operation())
+        .expect("operation registers");
+    store
+        .expire_operation("op-1", 2_001)
+        .expect("operation expires");
+
+    let accepted = store
+        .accept_callback(
+            valid_submission("cb-late", "idem-late"),
+            &callback_schema_registry(),
+        )
+        .expect("late callback is recorded");
+    let events = store.events_for_operation("op-1");
+
+    assert!(!accepted.should_resume);
+    assert!(!accepted.duplicate);
+    assert_eq!(
+        store.operation_state("op-1"),
+        Some(AsyncOperationState::Expired)
+    );
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AsyncOperationEvent::LateExternalCallbackReceived {
+            terminal_state: AsyncOperationState::Expired,
+            ..
+        }
+    )));
+    assert!(!events.iter().any(|event| matches!(
+        event,
+        AsyncOperationEvent::StateChanged {
+            to: AsyncOperationState::CallbackReceived,
+            ..
+        }
+    )));
+}
+
+#[test]
+fn callback_after_cancellation_records_late_callback_without_committing_result() {
+    let store = AsyncOperationStore::new();
+    store
+        .register(waiting_operation())
+        .expect("operation registers");
+    store
+        .cancel_operation("op-1", 1_300)
+        .expect("operation cancels");
+
+    let accepted = store
+        .accept_callback(
+            valid_submission("cb-cancelled", "idem-cancelled"),
+            &callback_schema_registry(),
+        )
+        .expect("cancelled callback is recorded for diagnostics");
+
+    assert!(!accepted.should_resume);
+    assert_eq!(
+        store.operation_state("op-1"),
+        Some(AsyncOperationState::Cancelled)
+    );
+    assert_eq!(
+        store
+            .events_for_operation("op-1")
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    AsyncOperationEvent::LateExternalCallbackReceived {
+                        terminal_state: AsyncOperationState::Cancelled,
+                        ..
+                    }
+                )
+            })
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn callback_and_cancel_race_has_single_terminal_winner() {
+    for seed in 0..64_u64 {
+        let store = Arc::new(AsyncOperationStore::new());
+        store
+            .register(waiting_operation())
+            .expect("operation registers");
+        let registry = Arc::new(callback_schema_registry());
+        let workers = 2;
+        let barrier = Arc::new(Barrier::new(workers + 1));
+
+        let callback_store = Arc::clone(&store);
+        let callback_registry = Arc::clone(&registry);
+        let callback_barrier = Arc::clone(&barrier);
+        let callback = thread::spawn(move || {
+            callback_barrier.wait();
+            callback_store.accept_callback(
+                valid_submission(&format!("cb-race-{seed}"), "idem-race"),
+                &callback_registry,
+            )
+        });
+
+        let cancel_store = Arc::clone(&store);
+        let cancel_barrier = Arc::clone(&barrier);
+        let cancel = thread::spawn(move || {
+            cancel_barrier.wait();
+            cancel_store.cancel_operation("op-1", 1_250)
+        });
+
+        barrier.wait();
+        let callback_result = callback.join().expect("callback worker joins");
+        let cancel_result = cancel.join().expect("cancel worker joins");
+        let state = store
+            .operation_state("op-1")
+            .expect("operation state exists");
+        let events = store.events_for_operation("op-1");
+        let callback_received = events
+            .iter()
+            .filter(|event| matches!(event, AsyncOperationEvent::ExternalCallbackReceived { .. }))
+            .count();
+        let late_callbacks = events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    AsyncOperationEvent::LateExternalCallbackReceived { .. }
+                )
+            })
+            .count();
+        let callback_resume = callback_result
+            .as_ref()
+            .is_ok_and(|accepted| accepted.should_resume);
+
+        assert!(cancel_result.is_ok() || callback_resume, "seed {seed}");
+        assert!(matches!(
+            state,
+            AsyncOperationState::CallbackReceived | AsyncOperationState::Cancelled
+        ));
+        assert_eq!(
+            callback_received + late_callbacks,
+            1,
+            "seed {seed} recorded the callback more than once"
+        );
+        if state == AsyncOperationState::CallbackReceived {
+            assert!(callback_resume, "seed {seed}");
+        }
+    }
 }
 
 #[test]

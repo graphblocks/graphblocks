@@ -220,6 +220,10 @@ pub enum AsyncOperationEvent {
     ExternalCallbackReceived {
         receipt: ExternalCallbackReceived,
     },
+    LateExternalCallbackReceived {
+        receipt: ExternalCallbackReceived,
+        terminal_state: AsyncOperationState,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -249,6 +253,10 @@ pub enum AsyncOperationError {
         actual: String,
     },
     OperationNotWaitingCallback {
+        operation_id: String,
+        state: AsyncOperationState,
+    },
+    OperationTerminal {
         operation_id: String,
         state: AsyncOperationState,
     },
@@ -401,12 +409,6 @@ impl AsyncOperationStore {
                 actual_attempt_id: submission.attempt_id,
             });
         }
-        if operation.state != AsyncOperationState::WaitingCallback {
-            return Err(AsyncOperationError::OperationNotWaitingCallback {
-                operation_id: operation.operation_id,
-                state: operation.state,
-            });
-        }
 
         if let Err(error) = registry.validate(&operation.expected_schema, &submission.payload) {
             return Err(match error {
@@ -436,6 +438,8 @@ impl AsyncOperationStore {
             });
         }
 
+        let operation_id = operation.operation_id.clone();
+        let operation_state = operation.state;
         let receipt = ExternalCallbackReceived {
             callback_id: submission.callback_id,
             operation_id: submission.operation_id.clone(),
@@ -450,6 +454,36 @@ impl AsyncOperationStore {
             verified_by: submission.verified_by,
             policy_snapshot_id: submission.policy_snapshot_id,
         };
+
+        if matches!(
+            operation_state,
+            AsyncOperationState::Expired | AsyncOperationState::Cancelled
+        ) {
+            inner
+                .events_by_operation
+                .entry(submission.operation_id.clone())
+                .or_default()
+                .push(AsyncOperationEvent::LateExternalCallbackReceived {
+                    receipt: receipt.clone(),
+                    terminal_state: operation_state,
+                });
+            inner
+                .receipts_by_idempotency_key
+                .insert(submission.idempotency_key, receipt.clone());
+            return Ok(AcceptedCallback {
+                receipt,
+                duplicate: false,
+                should_resume: false,
+            });
+        }
+
+        if operation_state != AsyncOperationState::WaitingCallback {
+            return Err(AsyncOperationError::OperationNotWaitingCallback {
+                operation_id,
+                state: operation_state,
+            });
+        }
+
         inner
             .events_by_operation
             .entry(submission.operation_id.clone())
@@ -483,6 +517,96 @@ impl AsyncOperationStore {
             duplicate: false,
             should_resume: true,
         })
+    }
+
+    pub fn cancel_operation(
+        &self,
+        operation_id: &str,
+        cancelled_at_unix_ms: u64,
+    ) -> Result<(), AsyncOperationError> {
+        let mut inner = self
+            .inner
+            .lock()
+            .expect("async operation store lock poisoned");
+        let operation = inner.operations.get_mut(operation_id).ok_or_else(|| {
+            AsyncOperationError::OperationNotFound {
+                operation_id: operation_id.to_owned(),
+            }
+        })?;
+
+        if matches!(
+            operation.state,
+            AsyncOperationState::CallbackReceived
+                | AsyncOperationState::Completed
+                | AsyncOperationState::Failed
+                | AsyncOperationState::Cancelled
+                | AsyncOperationState::Expired
+        ) {
+            return Err(AsyncOperationError::OperationTerminal {
+                operation_id: operation_id.to_owned(),
+                state: operation.state,
+            });
+        }
+
+        let from = operation.state;
+        operation.state = AsyncOperationState::Cancelled;
+        operation.completed_at_unix_ms = Some(cancelled_at_unix_ms);
+        inner
+            .events_by_operation
+            .entry(operation_id.to_owned())
+            .or_default()
+            .push(AsyncOperationEvent::StateChanged {
+                operation_id: operation_id.to_owned(),
+                from,
+                to: AsyncOperationState::Cancelled,
+                occurred_at_unix_ms: cancelled_at_unix_ms,
+            });
+        Ok(())
+    }
+
+    pub fn expire_operation(
+        &self,
+        operation_id: &str,
+        expired_at_unix_ms: u64,
+    ) -> Result<(), AsyncOperationError> {
+        let mut inner = self
+            .inner
+            .lock()
+            .expect("async operation store lock poisoned");
+        let operation = inner.operations.get_mut(operation_id).ok_or_else(|| {
+            AsyncOperationError::OperationNotFound {
+                operation_id: operation_id.to_owned(),
+            }
+        })?;
+
+        if matches!(
+            operation.state,
+            AsyncOperationState::CallbackReceived
+                | AsyncOperationState::Completed
+                | AsyncOperationState::Failed
+                | AsyncOperationState::Cancelled
+                | AsyncOperationState::Expired
+        ) {
+            return Err(AsyncOperationError::OperationTerminal {
+                operation_id: operation_id.to_owned(),
+                state: operation.state,
+            });
+        }
+
+        let from = operation.state;
+        operation.state = AsyncOperationState::Expired;
+        operation.completed_at_unix_ms = Some(expired_at_unix_ms);
+        inner
+            .events_by_operation
+            .entry(operation_id.to_owned())
+            .or_default()
+            .push(AsyncOperationEvent::StateChanged {
+                operation_id: operation_id.to_owned(),
+                from,
+                to: AsyncOperationState::Expired,
+                occurred_at_unix_ms: expired_at_unix_ms,
+            });
+        Ok(())
     }
 
     pub fn events_for_operation(&self, operation_id: &str) -> Vec<AsyncOperationEvent> {

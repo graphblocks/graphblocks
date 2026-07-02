@@ -226,9 +226,11 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   callback ingestion state machine for the first TDD slice.
 - Implemented behavior covers operation registration, submitted-to-waiting journal entries,
   schema-validated `ExternalCallbackReceived` records, idempotent duplicate callback handling,
-  stale-attempt rejection, and the required journal-before-resume ordering.
+  stale-attempt rejection, terminal expiration/cancellation transitions, diagnostic late callback
+  records after terminal states, and the required journal-before-resume ordering.
 - Focused tests include duplicate delivery, invalid callback schema, stale attempt fencing,
-  concurrent duplicate callback racing, and a deterministic fuzz-style idempotency sequence.
+  callback-after-timeout/cancellation, concurrent duplicate callback racing, callback/cancel racing,
+  and a deterministic fuzz-style idempotency sequence.
 - Durable storage, callback authentication adapters, webhook delivery queues, dead-letter redrive,
   budget-aware resume, and coordinator failover remain follow-on slices.
 
