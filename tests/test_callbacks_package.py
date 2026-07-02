@@ -399,6 +399,47 @@ def test_callback_dead_letter_and_redrive_preserve_delivery_identity_and_attempt
     assert redrive.reason == "receiver fixed"
 
 
+def test_callback_dead_letter_redrive_creates_pending_delivery_without_new_event_identity() -> None:
+    policy = CallbackRetryPolicy(max_attempts=2, initial_delay_ms=100, max_delay_ms=1_000, jitter_ms=0)
+    delivery = CallbackDeliveryProjection(
+        delivery_id="del_001",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        sequence=1042,
+        cursor="evt_1042",
+        attempt=2,
+        idempotency_key="sub_001:evt_1042",
+        status="failed",
+        delivered_at="2026-07-02T00:00:10Z",
+        last_error="receiver 503",
+    )
+    dead_letter = delivery.to_dead_letter(
+        policy,
+        dead_lettered_at="2026-07-02T00:00:30Z",
+        reason="retry exhausted",
+    )
+
+    redriven = dead_letter.redrive_delivery(
+        redriven_at="2026-07-02T00:01:00Z",
+        reason="operator redrive",
+    )
+
+    assert redriven.delivery_id == "del_001"
+    assert redriven.subscription_id == "sub_001"
+    assert redriven.event_id == "evt_1042"
+    assert redriven.run_id == "run_coding_001"
+    assert redriven.sequence == 1042
+    assert redriven.cursor == "evt_1042"
+    assert redriven.idempotency_key == "sub_001:evt_1042"
+    assert redriven.status == "pending"
+    assert redriven.attempt == 3
+    assert redriven.next_retry_at == "2026-07-02T00:01:00Z"
+    assert redriven.delivered_at is None
+    assert redriven.acknowledged_at is None
+    assert redriven.last_error == "operator redrive"
+
+
 def test_webhook_target_safety_allows_public_https_targets() -> None:
     safety = validate_webhook_target_url("https://callbacks.example.com/graphblocks/events")
 

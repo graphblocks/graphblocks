@@ -632,6 +632,31 @@ class CallbackDeadLetterRecord:
             redriven_at=redriven_at,
         )
 
+    def redrive_delivery(
+        self,
+        *,
+        redriven_at: str,
+        reason: str,
+    ) -> CallbackDeliveryProjection:
+        _require_non_empty_string("redriven_at", redriven_at)
+        _require_non_empty_string("reason", reason)
+        next_attempt = max(self.attempt_history, default=self.delivery.attempt) + 1
+        return CallbackDeliveryProjection(
+            delivery_id=self.delivery.delivery_id,
+            subscription_id=self.delivery.subscription_id,
+            event_id=self.delivery.event_id,
+            run_id=self.delivery.run_id,
+            sequence=self.delivery.sequence,
+            cursor=self.delivery.cursor,
+            attempt=next_attempt,
+            idempotency_key=self.delivery.idempotency_key,
+            status="pending",
+            next_retry_at=redriven_at,
+            delivered_at=None,
+            acknowledged_at=None,
+            last_error=reason,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class CallbackReplayRecord:
