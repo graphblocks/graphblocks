@@ -481,6 +481,37 @@ pub struct CallbackConfigurationDiagnostic {
 }
 
 impl CallbackConfigurationDiagnostic {
+    pub fn subscription(subscription: &CallbackSubscription) -> Vec<Self> {
+        let mut diagnostics = Vec::new();
+        if subscription.ordered_delivery
+            && !subscription.delivery_target.starts_with("webhook:")
+            && !subscription.delivery_target.starts_with("websocket:")
+        {
+            diagnostics.push(Self {
+                code: "GB6012",
+                field: "delivery.ordering",
+                message: format!(
+                    "callback subscription {} requests ordered delivery for target {} that cannot guarantee ordering",
+                    subscription.subscription_id, subscription.delivery_target
+                ),
+            });
+        }
+        if matches!(
+            subscription.failure_policy,
+            CallbackFailurePolicy::PauseRunOnFailure | CallbackFailurePolicy::FailRunOnFailure
+        ) {
+            diagnostics.push(Self {
+                code: "GB6014",
+                field: "failure_policy",
+                message: format!(
+                    "callback subscription {} uses mandatory failure policy without dead-letter behavior",
+                    subscription.subscription_id
+                ),
+            });
+        }
+        diagnostics
+    }
+
     pub fn webhook_subscription(
         subscription: &CallbackSubscription,
         signing: Option<&WebhookSigningConfig>,

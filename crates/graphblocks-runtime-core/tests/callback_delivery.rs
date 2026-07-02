@@ -759,3 +759,36 @@ fn callback_diagnostics_map_unsafe_endpoint_to_compiler_code() {
     assert_eq!(diagnostic.code, "GB6011");
     assert_eq!(diagnostic.field, "delivery.url");
 }
+
+#[test]
+fn callback_diagnostics_report_impossible_ordering_for_unordered_targets() {
+    let subscription = CallbackSubscription::new(
+        "sub-local",
+        "principal:dev",
+        "run",
+        "run-1",
+        EventFilter::new(),
+        "local_callback:test-hook",
+        CallbackFailurePolicy::RetryThenDeadLetter,
+        900,
+    )
+    .expect("subscription is valid")
+    .with_ordered_delivery();
+
+    let diagnostics = CallbackConfigurationDiagnostic::subscription(&subscription);
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].code, "GB6012");
+    assert_eq!(diagnostics[0].field, "delivery.ordering");
+}
+
+#[test]
+fn callback_diagnostics_report_missing_dead_letter_policy_for_retrying_callbacks() {
+    let subscription = subscription(EventFilter::new(), CallbackFailurePolicy::PauseRunOnFailure);
+
+    let diagnostics = CallbackConfigurationDiagnostic::subscription(&subscription);
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].code, "GB6014");
+    assert_eq!(diagnostics[0].field, "failure_policy");
+}

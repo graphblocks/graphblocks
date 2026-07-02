@@ -280,6 +280,8 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   with explicit host allowlisting for trusted development or private deployments.
 - Callback configuration diagnostics now map unsigned webhook subscriptions to `GB6002` and unsafe
   webhook endpoint failures to `GB6011` for compiler/deployment reporting.
+- Callback subscription diagnostics now report impossible ordered-delivery requests (`GB6012`) and
+  mandatory callback failure policies without dead-letter behavior (`GB6014`).
 - Webhook delivery targets now enforce the specification's default `262144` byte payload limit
   before signing delivery envelopes, and tests cover explicit small-limit rejection for oversized
   callback projections.
