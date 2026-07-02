@@ -50,6 +50,26 @@ fn task_plan_patch_revises_steps_and_preserves_noop_digest() -> Result<(), Box<d
 }
 
 #[test]
+fn task_plan_patch_rejects_duplicate_upsert_steps() -> Result<(), Box<dyn Error>> {
+    let base = TaskPlan::new("plan-1", "answer support request")?
+        .with_steps([TaskStep::new("draft", "Draft response")])?;
+    let duplicate = base
+        .apply_patch(TaskPlanPatch::new("patch-duplicate", "plan-1", 1).with_upsert_steps([
+            TaskStep::new("verify", "Verify citations"),
+            TaskStep::new("verify", "Verify policy"),
+        ]))
+        .expect_err("duplicate upserts should be rejected before last-write-wins");
+
+    assert_eq!(
+        duplicate,
+        TaskPlanError::DuplicateStep {
+            step_id: "verify".to_owned(),
+        }
+    );
+    Ok(())
+}
+
+#[test]
 fn task_plan_reports_missing_dependencies_cycles_and_context_errors() -> Result<(), Box<dyn Error>>
 {
     let missing = TaskPlan::new("plan-1", "answer support request")?

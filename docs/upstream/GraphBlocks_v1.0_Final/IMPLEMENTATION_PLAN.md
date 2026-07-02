@@ -855,6 +855,8 @@ sandbox
 - `graphblocks-runtime-core::orchestration` includes bounded `TaskPlan` and `TaskPlanPatch`
   revision-CAS semantics, dependency/cycle validation, context-resource validation, model/worker
   eligibility, child budget delegation, and `LeasePool` fencing for scarce resources.
+- `TaskPlanPatch` validation now rejects duplicate upsert step ids before patch application, so
+  model-authored plan edits cannot rely on ambiguous last-write-wins behavior.
 - `TaskPlan::context_access_graph` now derives deterministic resource-conflict edges from declared
   task context access, serializing write/read and write/write access separately from
   model-authored task dependencies.

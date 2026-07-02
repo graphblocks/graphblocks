@@ -127,6 +127,15 @@ impl TaskPlanPatch {
     fn validated(mut self) -> Result<Self, TaskPlanError> {
         validate_identity("patch", "patch_id", &self.patch_id)?;
         validate_identity("patch", "base_plan_id", &self.base_plan_id)?;
+        let mut upsert_step_ids = BTreeSet::new();
+        for step in &self.upsert_steps {
+            validate_identity("patch", "upsert_steps.step_id", &step.step_id)?;
+            if !upsert_step_ids.insert(step.step_id.clone()) {
+                return Err(TaskPlanError::DuplicateStep {
+                    step_id: step.step_id.clone(),
+                });
+            }
+        }
         for step_id in &self.remove_step_ids {
             validate_identity("patch", "remove_step_ids", step_id)?;
         }
