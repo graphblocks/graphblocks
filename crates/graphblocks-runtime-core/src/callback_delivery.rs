@@ -458,6 +458,55 @@ pub enum WebhookEndpointError {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CallbackConfigurationDiagnostic {
+    pub code: &'static str,
+    pub field: &'static str,
+    pub message: String,
+}
+
+impl CallbackConfigurationDiagnostic {
+    pub fn webhook_subscription(
+        subscription: &CallbackSubscription,
+        signing: Option<&WebhookSigningConfig>,
+        endpoint_error: Option<&WebhookEndpointError>,
+    ) -> Vec<Self> {
+        let mut diagnostics = Vec::new();
+        if signing.is_none() {
+            diagnostics.push(Self {
+                code: "GB6002",
+                field: "delivery.signing",
+                message: format!(
+                    "callback subscription {} uses webhook delivery without signing",
+                    subscription.subscription_id
+                ),
+            });
+        }
+        if let Some(diagnostic) = endpoint_error
+            .and_then(|error| Self::webhook_endpoint_error(&subscription.delivery_target, error))
+        {
+            diagnostics.push(diagnostic);
+        }
+        diagnostics
+    }
+
+    pub fn webhook_endpoint_error(url: &str, error: &WebhookEndpointError) -> Option<Self> {
+        match error {
+            WebhookEndpointError::UnsafeEndpoint { host } => Some(Self {
+                code: "GB6011",
+                field: "delivery.url",
+                message: format!("callback webhook target {url} reaches forbidden host {host}"),
+            }),
+            WebhookEndpointError::UnsupportedScheme { scheme } => Some(Self {
+                code: "GB6011",
+                field: "delivery.url",
+                message: format!("callback webhook target {url} uses forbidden scheme {scheme}"),
+            }),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WebhookSigningConfig {
     pub secret_ref: String,
     secret: Vec<u8>,

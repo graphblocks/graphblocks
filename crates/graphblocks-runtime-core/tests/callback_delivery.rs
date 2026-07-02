@@ -3,10 +3,11 @@ use graphblocks_runtime_core::application_event::{
     ApplicationProtocolLog,
 };
 use graphblocks_runtime_core::callback_delivery::{
-    CallbackDeadLetter, CallbackDeliveryResponse, CallbackDeliveryScheduler,
-    CallbackDeliveryStatus, CallbackFailurePolicy, CallbackRetryPolicy, CallbackSubscription,
-    CallbackSubscriptionStatus, EventFilter, OrderedDeliveryState, WebhookDeliveryTarget,
-    WebhookEgressPolicy, WebhookEndpointError, WebhookSignatureError, WebhookSigningConfig,
+    CallbackConfigurationDiagnostic, CallbackDeadLetter, CallbackDeliveryResponse,
+    CallbackDeliveryScheduler, CallbackDeliveryStatus, CallbackFailurePolicy, CallbackRetryPolicy,
+    CallbackSubscription, CallbackSubscriptionStatus, EventFilter, OrderedDeliveryState,
+    WebhookDeliveryTarget, WebhookEgressPolicy, WebhookEndpointError, WebhookSignatureError,
+    WebhookSigningConfig,
 };
 use serde_json::json;
 
@@ -655,4 +656,38 @@ fn webhook_target_rejects_malformed_or_empty_urls() {
             max_payload_bytes: 0
         })
     );
+}
+
+#[test]
+fn callback_diagnostics_report_webhook_without_authentication() {
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+
+    let diagnostics =
+        CallbackConfigurationDiagnostic::webhook_subscription(&subscription, None, None);
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].code, "GB6002");
+    assert_eq!(
+        diagnostics[0].message,
+        "callback subscription sub-1 uses webhook delivery without signing"
+    );
+}
+
+#[test]
+fn callback_diagnostics_map_unsafe_endpoint_to_compiler_code() {
+    let policy = WebhookEgressPolicy::default_deny_internal();
+    let endpoint_error = WebhookDeliveryTarget::new("http://127.0.0.1/events", &policy)
+        .expect_err("loopback webhook target is unsafe");
+
+    let diagnostic = CallbackConfigurationDiagnostic::webhook_endpoint_error(
+        "http://127.0.0.1/events",
+        &endpoint_error,
+    )
+    .expect("unsafe endpoint maps to a diagnostic");
+
+    assert_eq!(diagnostic.code, "GB6011");
+    assert_eq!(diagnostic.field, "delivery.url");
 }
