@@ -417,6 +417,10 @@ fn execute_stdlib_block(
         "agent.run@1" => execute_scripted_agent_run(inputs, config),
         "async.start_operation@1" => execute_async_start_operation(inputs, config),
         "async.await_callback@1" => execute_async_await_callback(inputs, config),
+        "async.poll_operation@1" => execute_async_poll_operation(inputs, config),
+        "async.complete_operation@1" => execute_async_complete_operation(inputs),
+        "async.cancel_operation@1" => execute_async_cancel_operation(inputs, config),
+        "async.expire_operation@1" => execute_async_expire_operation(inputs, config),
         "conversation.commit_turn@1" => execute_commit_turn(inputs),
         "conversation.policy_stop_turn@1" => execute_policy_stop_turn(inputs, config),
         "control.map@2" => execute_control_map(inputs, config),
@@ -657,6 +661,72 @@ fn execute_async_await_callback(inputs: &Value, config: &Value) -> Result<Value,
             "checkpoint": checkpoint,
             "onTimeout": on_timeout,
         }
+    }))
+}
+
+fn execute_async_poll_operation(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
+    let operation = required_async_operation_input(inputs, "async.poll_operation@1")?;
+    let interval_ms = config
+        .get("intervalMs")
+        .or_else(|| config.get("interval_ms"))
+        .and_then(Value::as_u64)
+        .unwrap_or(30_000);
+    let max_interval_ms = config
+        .get("maxIntervalMs")
+        .or_else(|| config.get("max_interval_ms"))
+        .and_then(Value::as_u64)
+        .unwrap_or(interval_ms);
+    let timeout_ms = config
+        .get("timeoutMs")
+        .or_else(|| config.get("timeout_ms"))
+        .and_then(Value::as_u64);
+    let mut polling_operation = operation.clone();
+    polling_operation["state"] = json!("polling");
+
+    Ok(json!({
+        "poll": {
+            "state": "polling",
+            "operation": polling_operation,
+            "intervalMs": interval_ms,
+            "maxIntervalMs": max_interval_ms,
+            "timeoutMs": timeout_ms,
+        }
+    }))
+}
+
+fn execute_async_complete_operation(inputs: &Value) -> Result<Value, BlockError> {
+    let operation = required_async_operation_input(inputs, "async.complete_operation@1")?;
+    let operation_id = required_async_operation_id(operation, "async.complete_operation@1")?;
+    let output = inputs.get("output").cloned().unwrap_or(Value::Null);
+
+    Ok(json!({
+        "result": async_operation_result_json(operation_id, "completed", Some(output), None),
+    }))
+}
+
+fn execute_async_cancel_operation(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
+    let operation = required_async_operation_input(inputs, "async.cancel_operation@1")?;
+    let operation_id = required_async_operation_id(operation, "async.cancel_operation@1")?;
+    let completed_at_unix_ms = config
+        .get("cancelledAtUnixMs")
+        .or_else(|| config.get("cancelled_at_unix_ms"))
+        .and_then(Value::as_u64);
+
+    Ok(json!({
+        "result": async_operation_result_json(operation_id, "cancelled", None, completed_at_unix_ms),
+    }))
+}
+
+fn execute_async_expire_operation(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
+    let operation = required_async_operation_input(inputs, "async.expire_operation@1")?;
+    let operation_id = required_async_operation_id(operation, "async.expire_operation@1")?;
+    let completed_at_unix_ms = config
+        .get("expiredAtUnixMs")
+        .or_else(|| config.get("expired_at_unix_ms"))
+        .and_then(Value::as_u64);
+
+    Ok(json!({
+        "result": async_operation_result_json(operation_id, "expired", None, completed_at_unix_ms),
     }))
 }
 
@@ -1924,5 +1994,67 @@ fn async_operation_json(operation: &AsyncOperation, subject: Option<Value>) -> V
         "expires_at_unix_ms": operation.expires_at_unix_ms,
         "completed_at_unix_ms": operation.completed_at_unix_ms,
         "subject": subject,
+    })
+}
+
+fn required_async_operation_input<'a>(
+    inputs: &'a Value,
+    block_label: &str,
+) -> Result<&'a Value, BlockError> {
+    let operation = inputs.get("operation").ok_or_else(|| {
+        BlockError::new(
+            format!("{block_label}.missing_operation"),
+            ErrorCategory::Configuration,
+            format!("{block_label} requires operation input"),
+            false,
+        )
+    })?;
+    if !operation.is_object() {
+        return Err(BlockError::new(
+            format!("{block_label}.invalid_operation"),
+            ErrorCategory::Configuration,
+            format!("{block_label} input operation must be an object"),
+            false,
+        ));
+    }
+    Ok(operation)
+}
+
+fn required_async_operation_id<'a>(
+    operation: &'a Value,
+    block_label: &str,
+) -> Result<&'a str, BlockError> {
+    operation
+        .get("operation_id")
+        .or_else(|| operation.get("operationId"))
+        .and_then(Value::as_str)
+        .filter(|operation_id| !operation_id.trim().is_empty())
+        .ok_or_else(|| {
+            BlockError::new(
+                format!("{block_label}.invalid_operation"),
+                ErrorCategory::Configuration,
+                format!("{block_label} input operation.operation_id must be a non-empty string"),
+                false,
+            )
+        })
+}
+
+fn async_operation_result_json(
+    operation_id: &str,
+    status: &str,
+    output: Option<Value>,
+    completed_at_unix_ms: Option<u64>,
+) -> Value {
+    json!({
+        "operation_id": operation_id,
+        "status": status,
+        "output": output,
+        "artifacts": [],
+        "diagnostics": [],
+        "metrics": [],
+        "checks": [],
+        "usage": [],
+        "external_effects": [],
+        "completed_at_unix_ms": completed_at_unix_ms,
     })
 }

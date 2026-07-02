@@ -282,6 +282,9 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
 - `graphblocks-runtime-core::stdlib_runtime` now exposes deterministic `async.start_operation@1`
   and `async.await_callback@1` blocks so graph-level examples can start an external operation and
   checkpoint while waiting for callback without treating callback delivery as the source of truth.
+- The stdlib runtime also exposes `async.poll_operation@1`, `async.complete_operation@1`,
+  `async.cancel_operation@1`, and `async.expire_operation@1` projections for polling and terminal
+  async operation results.
 - `graphblocks-runtime-core::callback_delivery` now contains callback subscription filtering,
   deterministic delivery records, idempotency keys, success/duplicate acknowledgement handling,
   bounded retry scheduling, best-effort failure handling, dead-letter terminal state, and redrive

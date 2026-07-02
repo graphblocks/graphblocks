@@ -470,6 +470,96 @@ fn rust_stdlib_async_blocks_start_and_await_callback_operation() -> Result<(), S
 }
 
 #[test]
+fn rust_stdlib_async_blocks_poll_complete_cancel_and_expire_operations() -> Result<(), String> {
+    let graph = json!({
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "runtime-async-terminal-blocks"},
+        "spec": {
+            "interface": {
+                "outputs": {
+                    "poll": "graphblocks.ai/AsyncPoll@1",
+                    "completed": "graphblocks.ai/AsyncOperationResult@1",
+                    "cancelled": "graphblocks.ai/AsyncOperationResult@1",
+                    "expired": "graphblocks.ai/AsyncOperationResult@1"
+                }
+            },
+            "nodes": {
+                "startPoll": {
+                    "block": "async.start_operation@1",
+                    "config": async_start_config("op-poll", "node-poll"),
+                    "outputs": {"operation": "poll.operation"}
+                },
+                "poll": {
+                    "block": "async.poll_operation@1",
+                    "config": {"intervalMs": 30_000, "maxIntervalMs": 300_000, "timeoutMs": 7_200_000},
+                    "inputs": {"operation": "startPoll.operation"},
+                    "outputs": {"poll": "$output.poll"}
+                },
+                "startComplete": {
+                    "block": "async.start_operation@1",
+                    "config": async_start_config("op-complete", "node-complete"),
+                    "outputs": {"operation": "complete.operation"}
+                },
+                "complete": {
+                    "block": "async.complete_operation@1",
+                    "inputs": {
+                        "operation": "startComplete.operation",
+                        "output": "$input.payload"
+                    },
+                    "outputs": {"result": "$output.completed"}
+                },
+                "startCancel": {
+                    "block": "async.start_operation@1",
+                    "config": async_start_config("op-cancel", "node-cancel"),
+                    "outputs": {"operation": "cancel.operation"}
+                },
+                "cancel": {
+                    "block": "async.cancel_operation@1",
+                    "config": {"cancelledAtUnixMs": 1_900},
+                    "inputs": {"operation": "startCancel.operation"},
+                    "outputs": {"result": "$output.cancelled"}
+                },
+                "startExpire": {
+                    "block": "async.start_operation@1",
+                    "config": async_start_config("op-expire", "node-expire"),
+                    "outputs": {"operation": "expire.operation"}
+                },
+                "expire": {
+                    "block": "async.expire_operation@1",
+                    "config": {"expiredAtUnixMs": 2_100},
+                    "inputs": {"operation": "startExpire.operation"},
+                    "outputs": {"result": "$output.expired"}
+                }
+            }
+        }
+    });
+    let result = run_graph(&graph, &json!({"payload": {"status": "completed"}}))?;
+
+    assert_eq!(result["status"], "succeeded");
+    assert_eq!(result["outputs"]["poll"]["state"], "polling");
+    assert_eq!(
+        result["outputs"]["poll"]["operation"]["operation_id"],
+        "op-poll"
+    );
+    assert_eq!(result["outputs"]["poll"]["intervalMs"], 30_000);
+    assert_eq!(
+        result["outputs"]["completed"]["operation_id"],
+        "op-complete"
+    );
+    assert_eq!(result["outputs"]["completed"]["status"], "completed");
+    assert_eq!(
+        result["outputs"]["completed"]["output"],
+        json!({"status": "completed"})
+    );
+    assert_eq!(result["outputs"]["cancelled"]["operation_id"], "op-cancel");
+    assert_eq!(result["outputs"]["cancelled"]["status"], "cancelled");
+    assert_eq!(result["outputs"]["expired"]["operation_id"], "op-expire");
+    assert_eq!(result["outputs"]["expired"]["status"], "expired");
+    Ok(())
+}
+
+#[test]
 fn rust_stdlib_runtime_matches_shared_runtime_tck_cases() -> Result<(), String> {
     let cases = serde_json::from_str::<Value>(include_str!("../../../tck/runtime/cases.json"))
         .map_err(|error| error.to_string())?;
@@ -521,6 +611,23 @@ fn rust_stdlib_runtime_matches_shared_runtime_tck_cases() -> Result<(), String> 
     }
 
     Ok(())
+}
+
+fn async_start_config(operation_id: &str, node_id: &str) -> Value {
+    json!({
+        "operationId": operation_id,
+        "runId": "run-coding-1",
+        "nodeId": node_id,
+        "attemptId": "attempt-1",
+        "kind": "ci_job",
+        "providerOperationId": format!("provider-{operation_id}"),
+        "resumeTokenHash": format!("sha256:resume-token-{operation_id}"),
+        "idempotencyKey": format!("idem-{operation_id}"),
+        "expectedSchema": "schemas/CICallback@1",
+        "createdAtUnixMs": 1_000,
+        "submittedAtUnixMs": 1_050,
+        "expiresAtUnixMs": 2_000
+    })
 }
 
 fn run_graph(graph: &Value, inputs: &Value) -> Result<Value, String> {
