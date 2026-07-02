@@ -445,6 +445,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - The Python `AsyncOperation` facade now rejects provider operation identity before submission, so
   `provider_operation_id` cannot appear on a still-created operation record and provider invocation
   remains separated from durable operation creation.
+- The Python `AsyncOperation` facade now enforces the amendment's bounded-wait invariant at runtime:
+  callback and polling waits require either `expires_at` or an explicit `infinite_wait_policy`, with
+  deterministic fuzz coverage for deadline/policy combinations.
 - `AsyncOperationResult` and `ExternalEffectRecord` now preserve committed external side effects
   even when an async operation result is `cancelled` or `incomplete`; stdlib async terminal blocks
   can project `externalEffects` config into the final result instead of dropping provider effect

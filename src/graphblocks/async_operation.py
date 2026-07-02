@@ -182,6 +182,7 @@ class AsyncOperation:
     provider_operation_id: str | None = None
     callback_ref: str | None = None
     polling_ref: str | None = None
+    infinite_wait_policy: str | None = None
     submitted_at: str | None = None
     expires_at: str | None = None
     completed_at: str | None = None
@@ -208,6 +209,7 @@ class AsyncOperation:
             "provider_operation_id",
             "callback_ref",
             "polling_ref",
+            "infinite_wait_policy",
             "submitted_at",
             "expires_at",
             "completed_at",
@@ -278,6 +280,7 @@ class AsyncOperation:
         provider_operation_id: str | None = None,
         callback_ref: str | None = None,
         polling_ref: str | None = None,
+        infinite_wait_policy: str | None = None,
         expires_at: str | None = None,
     ) -> AsyncOperation:
         return cls(
@@ -290,6 +293,7 @@ class AsyncOperation:
             provider_operation_id=provider_operation_id,
             callback_ref=callback_ref,
             polling_ref=polling_ref,
+            infinite_wait_policy=infinite_wait_policy,
             expected_schema=expected_schema,
             resume_token_hash=resume_token_hash,
             idempotency_key=idempotency_key,
@@ -303,6 +307,9 @@ class AsyncOperation:
         if state not in ASYNC_OPERATION_ALLOWED_TRANSITIONS.get(self.state, frozenset()):
             raise ValueError(f"async operation cannot transition from {self.state} to {state}")
         return replace(self, state=state, **changes)
+
+    def _has_wait_boundary(self) -> bool:
+        return self.expires_at is not None or self.infinite_wait_policy is not None
 
     def mark_submitted(
         self,
@@ -318,6 +325,8 @@ class AsyncOperation:
     def wait_for_callback(self) -> AsyncOperation:
         if self.callback_ref is None:
             raise ValueError("async operation callback_ref is required before waiting_callback")
+        if not self._has_wait_boundary():
+            raise ValueError("async operation callback wait requires expires_at or explicit infinite_wait_policy")
         return self._replace_state("waiting_callback")
 
     def mark_callback_received(self, *, completed_at: str | None = None) -> AsyncOperation:
@@ -329,6 +338,8 @@ class AsyncOperation:
     def start_polling(self) -> AsyncOperation:
         if self.polling_ref is None:
             raise ValueError("async operation polling_ref is required before polling")
+        if not self._has_wait_boundary():
+            raise ValueError("async operation polling wait requires expires_at or explicit infinite_wait_policy")
         return self._replace_state("polling")
 
     def mark_resuming(self) -> AsyncOperation:
@@ -357,6 +368,7 @@ class AsyncOperation:
             "provider_operation_id": self.provider_operation_id,
             "callback_ref": self.callback_ref,
             "polling_ref": self.polling_ref,
+            "infinite_wait_policy": self.infinite_wait_policy,
             "resume_token_hash": self.resume_token_hash,
             "idempotency_key": self.idempotency_key,
             "expected_schema": self.expected_schema,

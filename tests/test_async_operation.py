@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import math
+import random
 from collections.abc import Callable
 from contextlib import contextmanager
 
@@ -141,6 +142,7 @@ def test_async_operation_result_projects_from_terminal_operation_state() -> None
         idempotency_key="idem-ci-1",
         created_at="2026-07-02T00:00:00Z",
         callback_ref="cbep-ci-1",
+        expires_at="2026-07-02T00:30:00Z",
     ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").wait_for_callback().mark_callback_received(
         completed_at="2026-07-02T00:10:00Z"
     ).mark_resuming().complete(completed_at="2026-07-02T00:10:05Z")
@@ -181,6 +183,7 @@ def test_async_operation_result_rejects_projection_from_non_terminal_operation()
         idempotency_key="idem-ci-1",
         created_at="2026-07-02T00:00:00Z",
         callback_ref="cbep-ci-1",
+        expires_at="2026-07-02T00:30:00Z",
     ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").wait_for_callback()
 
     with raises_value_error("async operation result requires a terminal operation"):
@@ -314,6 +317,7 @@ def test_async_operation_rejects_invalid_refs_and_transitions() -> None:
         idempotency_key="idem-ci-1",
         created_at="2026-07-02T00:00:00Z",
         callback_ref="cbep-ci-1",
+        expires_at="2026-07-02T00:30:00Z",
     ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").wait_for_callback().mark_callback_received(
         completed_at="2026-07-02T00:10:00Z"
     ).mark_resuming().complete(completed_at="2026-07-02T00:10:05Z")
@@ -384,6 +388,126 @@ def test_async_operation_rejects_provider_identity_before_submission() -> None:
         )
 
 
+def test_async_operation_rejects_unbounded_callback_and_polling_waits() -> None:
+    with raises_value_error("async operation callback wait requires expires_at or explicit infinite_wait_policy"):
+        graphblocks.AsyncOperation.created(
+            operation_id="op-ci-1",
+            run_id="run-1",
+            node_id="startCI",
+            attempt_id="attempt-1",
+            kind="ci_job",
+            expected_schema="schemas/CICallback@1",
+            resume_token_hash="sha256:resume",
+            idempotency_key="idem-ci-1",
+            created_at="2026-07-02T00:00:00Z",
+            callback_ref="cbep-ci-1",
+        ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").wait_for_callback()
+
+    with raises_value_error("async operation polling wait requires expires_at or explicit infinite_wait_policy"):
+        graphblocks.AsyncOperation.created(
+            operation_id="op-batch-1",
+            run_id="run-1",
+            node_id="waitBatch",
+            attempt_id="attempt-1",
+            kind="external_provider_job",
+            expected_schema="schemas/BatchResult@1",
+            resume_token_hash="sha256:resume",
+            idempotency_key="idem-batch-1",
+            created_at="2026-07-02T00:00:00Z",
+            polling_ref="poll-batch-1",
+        ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").start_polling()
+
+
+def test_async_operation_accepts_explicit_infinite_wait_policy() -> None:
+    callback_waiting = graphblocks.AsyncOperation.created(
+        operation_id="op-ci-1",
+        run_id="run-1",
+        node_id="startCI",
+        attempt_id="attempt-1",
+        kind="ci_job",
+        expected_schema="schemas/CICallback@1",
+        resume_token_hash="sha256:resume",
+        idempotency_key="idem-ci-1",
+        created_at="2026-07-02T00:00:00Z",
+        callback_ref="cbep-ci-1",
+        infinite_wait_policy="operator_review_required",
+    ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").wait_for_callback()
+    polling = graphblocks.AsyncOperation.created(
+        operation_id="op-batch-1",
+        run_id="run-1",
+        node_id="waitBatch",
+        attempt_id="attempt-1",
+        kind="external_provider_job",
+        expected_schema="schemas/BatchResult@1",
+        resume_token_hash="sha256:resume",
+        idempotency_key="idem-batch-1",
+        created_at="2026-07-02T00:00:00Z",
+        polling_ref="poll-batch-1",
+        infinite_wait_policy="provider_has_no_timeout",
+    ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").start_polling()
+
+    assert callback_waiting.state == graphblocks.AsyncOperationState.WAITING_CALLBACK
+    assert callback_waiting.to_json()["infinite_wait_policy"] == "operator_review_required"
+    assert polling.state == graphblocks.AsyncOperationState.POLLING
+
+    with raises_value_error("async operation infinite_wait_policy must not be empty"):
+        graphblocks.AsyncOperation.created(
+            operation_id="op-ci-2",
+            run_id="run-1",
+            node_id="startCI",
+            attempt_id="attempt-1",
+            kind="ci_job",
+            expected_schema="schemas/CICallback@1",
+            resume_token_hash="sha256:resume",
+            idempotency_key="idem-ci-2",
+            created_at="2026-07-02T00:00:00Z",
+            callback_ref="cbep-ci-2",
+            infinite_wait_policy=" ",
+        )
+
+
+def test_async_operation_wait_boundary_deterministic_fuzz() -> None:
+    rng = random.Random(6001)
+
+    for case in range(80):
+        use_callback = bool(rng.getrandbits(1))
+        use_deadline = bool(rng.getrandbits(1))
+        use_infinite_policy = bool(rng.getrandbits(1))
+        kwargs: dict[str, object] = {
+            "operation_id": f"op-wait-{case:03d}",
+            "run_id": "run-1",
+            "node_id": "waitNode",
+            "attempt_id": "attempt-1",
+            "kind": "ci_job" if use_callback else "external_provider_job",
+            "expected_schema": "schemas/Callback@1",
+            "resume_token_hash": "sha256:resume",
+            "idempotency_key": f"idem-wait-{case:03d}",
+            "created_at": "2026-07-02T00:00:00Z",
+        }
+        if use_callback:
+            kwargs["callback_ref"] = f"cbep-{case:03d}"
+        else:
+            kwargs["polling_ref"] = f"poll-{case:03d}"
+        if use_deadline:
+            kwargs["expires_at"] = "2026-07-02T00:30:00Z"
+        if use_infinite_policy:
+            kwargs["infinite_wait_policy"] = f"explicit-wait-{case:03d}"
+
+        submitted = graphblocks.AsyncOperation.created(**kwargs).mark_submitted(
+            submitted_at="2026-07-02T00:00:01Z"
+        )
+        if use_deadline or use_infinite_policy:
+            waiting = submitted.wait_for_callback() if use_callback else submitted.start_polling()
+            assert waiting.state in {
+                graphblocks.AsyncOperationState.WAITING_CALLBACK,
+                graphblocks.AsyncOperationState.POLLING,
+            }
+        else:
+            expected = "callback wait" if use_callback else "polling wait"
+            with raises_value_error(f"async operation {expected} requires expires_at or explicit infinite_wait_policy"):
+                submitted.wait_for_callback() if use_callback else submitted.start_polling()
+
+
 def test_async_operation_rejects_invalid_timestamp_format_and_ordering() -> None:
     with raises_value_error("async operation created_at must be an ISO datetime"):
         graphblocks.AsyncOperation.created(
@@ -423,6 +547,7 @@ def test_async_operation_rejects_invalid_timestamp_format_and_ordering() -> None
             idempotency_key="idem-ci-1",
             created_at="2026-07-02T00:00:00Z",
             callback_ref="cbep-ci-1",
+            expires_at="2026-07-02T00:30:00Z",
         ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").wait_for_callback().mark_callback_received(
             completed_at="2026-07-02T00:00:00Z"
         )
@@ -465,6 +590,9 @@ def run_direct() -> None:
         test_async_operation_rejects_invalid_refs_and_transitions,
         test_async_operation_rejects_state_timestamp_inconsistency,
         test_async_operation_rejects_provider_identity_before_submission,
+        test_async_operation_rejects_unbounded_callback_and_polling_waits,
+        test_async_operation_accepts_explicit_infinite_wait_policy,
+        test_async_operation_wait_boundary_deterministic_fuzz,
         test_async_operation_rejects_invalid_timestamp_format_and_ordering,
         test_async_operation_result_exports_are_available,
     )
