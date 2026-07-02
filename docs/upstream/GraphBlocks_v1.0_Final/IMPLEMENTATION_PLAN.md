@@ -498,6 +498,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `hmac-sha256` verification, replay-window enforcement, and header/body identity checks.
 - Callback envelopes now validate `occurred_at` and `delivered_at` as ISO-8601 timestamps and
   reject deliveries whose delivery timestamp precedes the source event timestamp.
+- External callback receipts now validate `received_at` as an ISO-8601 timestamp and reject receipt
+  records whose durable receipt time precedes the callback envelope delivery time.
 - `SqliteCallbackDeliveryQueue` now persists pending and retry-scheduled callback deliveries across
   reopen, preserving delivery status, idempotency keys, sequence ordering, and retry due times.
 - `WebhookDeliveryWorker` now processes due durable callback deliveries with signed webhook

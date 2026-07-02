@@ -967,6 +967,7 @@ class ExternalCallbackReceipt:
             _require_non_empty_string("tenant_id", self.tenant_id)
         if self.provider_operation_id is not None:
             _require_non_empty_string("provider_operation_id", self.provider_operation_id)
+        _parse_field_timestamp("received_at", self.received_at)
         if not isinstance(self.payload_projection, CallbackPayloadProjection):
             raise ValueError("payload_projection must be a CallbackPayloadProjection")
         if self.payload_projection.payload_digest != self.payload_digest:
@@ -1007,6 +1008,11 @@ def record_external_callback_receipt(
     expected_payload_digest = canonical_hash(envelope.payload)
     if payload_projection.payload_digest != expected_payload_digest:
         raise ValueError("payload_projection must match the envelope payload")
+    if _parse_field_timestamp("received_at", received_at) < _parse_field_timestamp(
+        "envelope delivered_at",
+        envelope.delivered_at,
+    ):
+        raise ValueError("received_at must not be before envelope delivered_at")
     callback_id = envelope.delivery_id if callback_id is None else callback_id
     idempotency_key = envelope.idempotency_key if idempotency_key is None else idempotency_key
     if idempotency_key != envelope.idempotency_key:
