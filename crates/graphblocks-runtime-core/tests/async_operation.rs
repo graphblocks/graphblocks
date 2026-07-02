@@ -269,6 +269,117 @@ fn callback_during_budget_exhaustion_is_journaled_but_resume_is_paused() {
 }
 
 #[test]
+fn callback_resume_policy_denial_is_journaled_without_resuming() {
+    let store = AsyncOperationStore::new();
+    store
+        .register(waiting_operation())
+        .expect("operation registers");
+
+    let accepted = store
+        .accept_callback_with_resume_decision(
+            valid_submission("cb-policy", "idem-policy"),
+            &callback_schema_registry(),
+            AsyncCallbackResumeDecision::DenyPolicy {
+                decision_id: "decision-deny-resume".to_owned(),
+                reason: "tenant no longer entitled".to_owned(),
+            },
+        )
+        .expect("callback is recorded before policy denial is applied");
+    let events = store.events_for_operation("op-1");
+
+    assert!(!accepted.should_resume);
+    assert_eq!(
+        store.operation_state("op-1"),
+        Some(AsyncOperationState::CallbackReceived)
+    );
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AsyncOperationEvent::CallbackResumeDenied {
+            operation_id,
+            decision_id,
+            reason,
+            ..
+        } if operation_id == "op-1"
+            && decision_id == "decision-deny-resume"
+            && reason == "tenant no longer entitled"
+    )));
+}
+
+#[test]
+fn callback_resume_release_incompatibility_pauses_operator_resume() {
+    let store = AsyncOperationStore::new();
+    store
+        .register(waiting_operation())
+        .expect("operation registers");
+
+    let accepted = store
+        .accept_callback_with_resume_decision(
+            valid_submission("cb-release", "idem-release"),
+            &callback_schema_registry(),
+            AsyncCallbackResumeDecision::PauseReleaseIncompatible {
+                required_release_id: "release-old".to_owned(),
+                available_release_id: "release-new".to_owned(),
+            },
+        )
+        .expect("callback is recorded before release incompatibility pause");
+    let events = store.events_for_operation("op-1");
+
+    assert!(!accepted.should_resume);
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AsyncOperationEvent::CallbackResumePaused {
+            operation_id,
+            reason,
+            ..
+        } if operation_id == "op-1"
+            && reason == "release incompatible: required release-old, available release-new"
+    )));
+}
+
+#[test]
+fn callback_resume_gates_require_auditable_policy_and_release_fields() {
+    let store = AsyncOperationStore::new();
+    store
+        .register(waiting_operation())
+        .expect("operation registers");
+
+    assert_eq!(
+        store.accept_callback_with_resume_decision(
+            valid_submission("cb-policy", "idem-policy"),
+            &callback_schema_registry(),
+            AsyncCallbackResumeDecision::DenyPolicy {
+                decision_id: " ".to_owned(),
+                reason: "denied".to_owned(),
+            },
+        ),
+        Err(AsyncOperationError::EmptyField {
+            field: "resume_policy_decision_id".to_owned(),
+        })
+    );
+    assert_eq!(
+        store.accept_callback_with_resume_decision(
+            valid_submission("cb-release", "idem-release"),
+            &callback_schema_registry(),
+            AsyncCallbackResumeDecision::PauseReleaseIncompatible {
+                required_release_id: "release-old".to_owned(),
+                available_release_id: " ".to_owned(),
+            },
+        ),
+        Err(AsyncOperationError::EmptyField {
+            field: "available_release_id".to_owned(),
+        })
+    );
+    assert_eq!(
+        store
+            .events_for_operation("op-1")
+            .iter()
+            .filter(|event| matches!(event, AsyncOperationEvent::ExternalCallbackReceived { .. }))
+            .count(),
+        0
+    );
+}
+
+#[test]
 fn callback_resume_pause_requires_reason_before_journaling() {
     let store = AsyncOperationStore::new();
     store

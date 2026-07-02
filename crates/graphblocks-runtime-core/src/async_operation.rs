@@ -216,7 +216,17 @@ pub struct ExternalCallbackReceived {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AsyncCallbackResumeDecision {
     Resume,
-    PauseBudget { reason: String },
+    PauseBudget {
+        reason: String,
+    },
+    DenyPolicy {
+        decision_id: String,
+        reason: String,
+    },
+    PauseReleaseIncompatible {
+        required_release_id: String,
+        available_release_id: String,
+    },
 }
 
 impl ExternalCallbackReceived {
@@ -245,6 +255,12 @@ pub enum AsyncOperationEvent {
     },
     CallbackResumePaused {
         operation_id: String,
+        reason: String,
+        occurred_at_unix_ms: u64,
+    },
+    CallbackResumeDenied {
+        operation_id: String,
+        decision_id: String,
         reason: String,
         occurred_at_unix_ms: u64,
     },
@@ -437,11 +453,44 @@ impl AsyncOperationStore {
                 });
             }
         }
-        if let AsyncCallbackResumeDecision::PauseBudget { reason } = &resume_decision {
-            if reason.trim().is_empty() {
-                return Err(AsyncOperationError::EmptyField {
-                    field: "resume_pause_reason".to_owned(),
-                });
+        match &resume_decision {
+            AsyncCallbackResumeDecision::Resume => {}
+            AsyncCallbackResumeDecision::PauseBudget { reason } => {
+                if reason.trim().is_empty() {
+                    return Err(AsyncOperationError::EmptyField {
+                        field: "resume_pause_reason".to_owned(),
+                    });
+                }
+            }
+            AsyncCallbackResumeDecision::DenyPolicy {
+                decision_id,
+                reason,
+            } => {
+                if decision_id.trim().is_empty() {
+                    return Err(AsyncOperationError::EmptyField {
+                        field: "resume_policy_decision_id".to_owned(),
+                    });
+                }
+                if reason.trim().is_empty() {
+                    return Err(AsyncOperationError::EmptyField {
+                        field: "resume_policy_reason".to_owned(),
+                    });
+                }
+            }
+            AsyncCallbackResumeDecision::PauseReleaseIncompatible {
+                required_release_id,
+                available_release_id,
+            } => {
+                if required_release_id.trim().is_empty() {
+                    return Err(AsyncOperationError::EmptyField {
+                        field: "required_release_id".to_owned(),
+                    });
+                }
+                if available_release_id.trim().is_empty() {
+                    return Err(AsyncOperationError::EmptyField {
+                        field: "available_release_id".to_owned(),
+                    });
+                }
             }
         }
 
@@ -618,6 +667,39 @@ impl AsyncOperationStore {
                     .push(AsyncOperationEvent::CallbackResumePaused {
                         operation_id: submission.operation_id,
                         reason,
+                        occurred_at_unix_ms: submission.received_at_unix_ms,
+                    });
+                false
+            }
+            AsyncCallbackResumeDecision::DenyPolicy {
+                decision_id,
+                reason,
+            } => {
+                inner
+                    .events_by_operation
+                    .entry(submission.operation_id.clone())
+                    .or_default()
+                    .push(AsyncOperationEvent::CallbackResumeDenied {
+                        operation_id: submission.operation_id,
+                        decision_id,
+                        reason,
+                        occurred_at_unix_ms: submission.received_at_unix_ms,
+                    });
+                false
+            }
+            AsyncCallbackResumeDecision::PauseReleaseIncompatible {
+                required_release_id,
+                available_release_id,
+            } => {
+                inner
+                    .events_by_operation
+                    .entry(submission.operation_id.clone())
+                    .or_default()
+                    .push(AsyncOperationEvent::CallbackResumePaused {
+                        operation_id: submission.operation_id,
+                        reason: format!(
+                            "release incompatible: required {required_release_id}, available {available_release_id}"
+                        ),
                         occurred_at_unix_ms: submission.received_at_unix_ms,
                     });
                 false

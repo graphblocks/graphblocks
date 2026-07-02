@@ -249,6 +249,9 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
 - Callback resume admission can now pause after a durable callback receipt when budget policy
   denies continuation; the operation records `CallbackReceived`, emits a pause reason, and returns
   `should_resume = false`.
+- Callback resume admission also records policy-denied and release-incompatible resume decisions
+  after durable callback receipt, preserving the journal-before-resume rule while preventing
+  scheduler continuation.
 - `graphblocks-runtime-core::callback_delivery` now contains callback subscription filtering,
   deterministic delivery records, idempotency keys, success/duplicate acknowledgement handling,
   bounded retry scheduling, best-effort failure handling, dead-letter terminal state, and redrive
@@ -276,8 +279,8 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   before signing delivery envelopes, and tests cover explicit small-limit rejection for oversized
   callback projections.
 - Durable storage, Ed25519/mTLS/OIDC callback authentication adapters, real webhook delivery
-  workers, dead-letter persistence, budget-aware resume, DNS-time egress enforcement, and
-  coordinator failover remain follow-on slices.
+  workers, dead-letter persistence, DNS-time egress enforcement, and coordinator failover remain
+  follow-on slices.
 
 ### Package ownership
 
