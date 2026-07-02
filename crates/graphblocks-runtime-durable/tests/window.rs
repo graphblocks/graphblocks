@@ -57,6 +57,25 @@ fn event_time_window_rejects_event_after_lateness_deadline() {
 }
 
 #[test]
+fn event_time_watermark_never_moves_backward() {
+    let policy = WindowPolicy::tumbling_event_time(1_000, 250, AccumulationMode::Discarding)
+        .expect("policy should be valid");
+    let mut windows = WindowAccumulator::new(policy);
+
+    windows.advance_watermark(Watermark::event_time(1_820_000_001_250));
+    windows.advance_watermark(Watermark::event_time(1_820_000_000_500));
+
+    assert_eq!(
+        windows.ingest(event(1, 1_820_000_000_999)),
+        Err(DurableError::LateEvent {
+            event_time_unix_ms: 1_820_000_000_999,
+            watermark_unix_ms: 1_820_000_001_250,
+            allowed_lateness_ms: 250,
+        }),
+    );
+}
+
+#[test]
 fn window_policy_rejects_size_without_event_time() {
     assert_eq!(
         WindowPolicy::tumbling_event_time(0, 250, AccumulationMode::Accumulating),

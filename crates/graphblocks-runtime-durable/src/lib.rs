@@ -339,7 +339,13 @@ impl WindowAccumulator {
     }
 
     pub fn advance_watermark(&mut self, watermark: Watermark) -> Vec<WindowPane> {
-        self.watermark = Some(watermark);
+        let effective_watermark = match self.watermark {
+            Some(current) if current.unix_ms >= watermark.unix_ms => current,
+            _ => {
+                self.watermark = Some(watermark);
+                watermark
+            }
+        };
         let closable = self
             .windows
             .keys()
@@ -348,7 +354,7 @@ impl WindowAccumulator {
                 start_unix_ms
                     .saturating_add(self.policy.size_ms)
                     .saturating_add(self.policy.allowed_lateness_ms)
-                    <= watermark.unix_ms
+                    <= effective_watermark.unix_ms
             })
             .collect::<Vec<_>>();
         let mut closed = Vec::new();

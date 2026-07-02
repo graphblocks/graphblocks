@@ -899,6 +899,8 @@ offset, partition, watermark, late data, trigger, checkpoint barrier, idempotent
 - `graphblocks-runtime-durable::InMemoryDurableSource` now tracks committed cursors per stream
   partition. A commit for one partition does not hide uncommitted events in another partition, and
   an explicit replay cursor only overrides replay for its own partition.
+- Durable event-time window accumulation now treats watermarks as monotonic: stale watermark
+  updates cannot move the late-data boundary backward or make already-late events admissible again.
 
 ## 11. CI/CD와 품질 게이트
 
