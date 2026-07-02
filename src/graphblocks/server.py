@@ -240,6 +240,9 @@ def default_server_route_manifest() -> ServerRouteManifest:
                 auth_required=True,
             ),
             ServerEndpoint("POST", "/runs/{run_id}/cancel", "http", "cancel_run", auth_required=True),
+            ServerEndpoint("POST", "/runs/{run_id}/pause", "http", "pause_run", auth_required=True),
+            ServerEndpoint("POST", "/runs/{run_id}/resume", "http", "resume_run", auth_required=True),
+            ServerEndpoint("POST", "/runs/{run_id}/expire", "http", "expire_run", auth_required=True),
             ServerEndpoint("POST", "/callbacks/register", "http", "register_callback", auth_required=True),
             ServerEndpoint("DELETE", "/callbacks/{subscription_id}", "http", "revoke_callback", auth_required=True),
             ServerEndpoint("POST", "/callbacks/{operation_id}", "http", "submit_async_callback", auth_required=True),
@@ -852,6 +855,11 @@ class GraphBlocksServerApp:
         init=False,
         repr=False,
     )
+    _run_controls_by_run_id: dict[str, tuple[dict[str, object], ...]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
     _subscriptions_by_run_id: dict[str, tuple[ServerEventSubscription, ...]] = field(
         default_factory=dict,
         init=False,
@@ -922,6 +930,36 @@ class GraphBlocksServerApp:
                     "status": "cancel_requested",
                 },
             )
+        if route.operation in {"pause_run", "resume_run", "expire_run"}:
+            try:
+                run_id = route_match.path_params.get("run_id", "")
+                events = self._events_by_run_id.get(run_id)
+                if events is None:
+                    return ServerResponse.json(
+                        404,
+                        {
+                            "ok": False,
+                            "error": f"run control stream not found for run {run_id!r}",
+                        },
+                    )
+                payload = json.loads(request.body.decode("utf-8") or "{}")
+                if not isinstance(payload, Mapping):
+                    raise ValueError("run control request body must be a JSON object")
+                return self._run_control_response(
+                    run_id,
+                    route.operation,
+                    events,
+                    payload,
+                    request.requested_at or _utc_now_iso(),
+                )
+            except (TypeError, ValueError, json.JSONDecodeError) as error:
+                return ServerResponse.json(
+                    400,
+                    {
+                        "ok": False,
+                        "error": str(error),
+                    },
+                )
         if route.operation == "get_run_status":
             run_id = route_match.path_params.get("run_id", "")
             events = self._events_by_run_id.get(run_id)
@@ -1378,6 +1416,10 @@ class GraphBlocksServerApp:
         run_id = _validate_non_empty_string("server detach", "run_id", run_id)
         return self._detachments_by_run_id.get(run_id, ())
 
+    def run_controls(self, run_id: str) -> tuple[dict[str, object], ...]:
+        run_id = _validate_non_empty_string("server run control", "run_id", run_id)
+        return self._run_controls_by_run_id.get(run_id, ())
+
     def subscriptions(self, run_id: str) -> tuple[ServerEventSubscription, ...]:
         run_id = _validate_non_empty_string("server event subscription", "run_id", run_id)
         return self._subscriptions_by_run_id.get(run_id, ())
@@ -1430,6 +1472,18 @@ class GraphBlocksServerApp:
                 state = terminal_states[event_kind]
                 completed_at = updated_at
 
+        controls = self._run_controls_by_run_id.get(run_id, ())
+        if controls:
+            latest_control = controls[-1]
+            control_status = latest_control.get("status")
+            if isinstance(control_status, str) and control_status:
+                state = control_status
+            control_occurred_at = latest_control.get("occurredAt")
+            if isinstance(control_occurred_at, str) and control_occurred_at:
+                updated_at = control_occurred_at
+                if control_status == "expired":
+                    completed_at = control_occurred_at
+
         payload: dict[str, object] = {
             "runId": run_id,
             "state": state,
@@ -1444,6 +1498,43 @@ class GraphBlocksServerApp:
         if include_ok:
             return {"ok": True, **payload}
         return payload
+
+    def _run_control_response(
+        self,
+        run_id: str,
+        operation: str,
+        events: tuple[dict[str, object], ...],
+        payload: Mapping[str, object],
+        occurred_at: str,
+    ) -> ServerResponse:
+        control_states = {
+            "pause_run": "paused_operator",
+            "resume_run": "resuming",
+            "expire_run": "expired",
+        }
+        status = control_states[operation]
+        reason = payload.get("reason")
+        if reason is not None:
+            reason = _validate_non_empty_string("run control request", "reason", reason)
+        record: dict[str, object] = {
+            "operation": operation,
+            "status": status,
+            "reason": reason,
+            "occurredAt": occurred_at,
+            "lastCursor": f"{run_id}:{self._last_event_sequence(events)}",
+        }
+        existing = self._run_controls_by_run_id.get(run_id, ())
+        self._run_controls_by_run_id[run_id] = (*existing, record)
+        return ServerResponse.json(
+            202,
+            {
+                "ok": True,
+                "runId": run_id,
+                "status": status,
+                "reason": reason,
+                "lastCursor": record["lastCursor"],
+            },
+        )
 
     def _attach_to_run_response(
         self,

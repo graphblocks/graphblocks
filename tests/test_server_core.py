@@ -75,6 +75,9 @@ def test_server_route_manifest_matches_templated_run_paths() -> None:
     with pytest.raises(TypeError):
         match.path_params["run_id"] = "mutated"
     assert default_server_route_manifest().lookup("POST", "/runs/run-123/cancel").operation == "cancel_run"
+    assert default_server_route_manifest().match("POST", "/runs/run-123/pause").endpoint.operation == "pause_run"
+    assert default_server_route_manifest().match("POST", "/runs/run-123/resume").endpoint.operation == "resume_run"
+    assert default_server_route_manifest().match("POST", "/runs/run-123/expire").endpoint.operation == "expire_run"
 
     endpoint = default_server_route_manifest().lookup("POST", "/runs/{run_id}/cancel")
     with pytest.raises(ValueError, match="server route path_params must be a mapping"):
@@ -481,6 +484,196 @@ def test_server_app_handles_authenticated_cancel_request() -> None:
         "ok": True,
         "runId": "run-server-1",
         "status": "cancel_requested",
+    }
+
+
+def test_server_app_records_run_control_projection_without_mutating_events() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "server-control"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Control {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+    run = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "ok"}},
+                    "runId": "run-control-1",
+                    "responseId": "response-control-1",
+                    "releaseId": "release-control-1",
+                    "policySnapshotId": "policy-control-1",
+                    "occurredAt": "2026-06-24T00:01:00Z",
+                }
+            ).encode("utf-8"),
+            requested_at="2026-06-24T00:01:00Z",
+        )
+    )
+    assert run.status_code == 200
+
+    pause = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-control-1/pause",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"reason": "operator_hold"}).encode("utf-8"),
+            requested_at="2026-06-24T00:01:01Z",
+        )
+    )
+    paused_status = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-control-1",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            requested_at="2026-06-24T00:01:02Z",
+        )
+    )
+    resume = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-control-1/resume",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            requested_at="2026-06-24T00:01:03Z",
+        )
+    )
+    expire = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-control-1/expire",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"reason": "retention_deadline"}).encode("utf-8"),
+            requested_at="2026-06-24T00:01:04Z",
+        )
+    )
+    expired_status = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-control-1",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            requested_at="2026-06-24T00:01:05Z",
+        )
+    )
+    events = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-control-1/events",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            requested_at="2026-06-24T00:01:06Z",
+        )
+    )
+
+    assert pause.status_code == 202
+    assert json.loads(pause.body.decode("utf-8")) == {
+        "ok": True,
+        "runId": "run-control-1",
+        "status": "paused_operator",
+        "reason": "operator_hold",
+        "lastCursor": "run-control-1:2",
+    }
+    assert json.loads(paused_status.body.decode("utf-8"))["state"] == "paused_operator"
+    assert json.loads(resume.body.decode("utf-8"))["status"] == "resuming"
+    assert json.loads(expire.body.decode("utf-8")) == {
+        "ok": True,
+        "runId": "run-control-1",
+        "status": "expired",
+        "reason": "retention_deadline",
+        "lastCursor": "run-control-1:2",
+    }
+    expired_payload = json.loads(expired_status.body.decode("utf-8"))
+    assert expired_payload["state"] == "expired"
+    assert expired_payload["completedAt"] == "2026-06-24T00:01:04Z"
+    event_payload = json.loads(events.body.decode("utf-8"))
+    assert [event["kind"] for event in event_payload["events"]] == ["RunStarted", "RunSucceeded"]
+    assert app.run_controls("run-control-1") == (
+        {
+            "operation": "pause_run",
+            "status": "paused_operator",
+            "reason": "operator_hold",
+            "occurredAt": "2026-06-24T00:01:01Z",
+            "lastCursor": "run-control-1:2",
+        },
+        {
+            "operation": "resume_run",
+            "status": "resuming",
+            "reason": None,
+            "occurredAt": "2026-06-24T00:01:03Z",
+            "lastCursor": "run-control-1:2",
+        },
+        {
+            "operation": "expire_run",
+            "status": "expired",
+            "reason": "retention_deadline",
+            "occurredAt": "2026-06-24T00:01:04Z",
+            "lastCursor": "run-control-1:2",
+        },
+    )
+
+
+def test_server_app_rejects_run_control_for_missing_stream_or_malformed_reason() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+
+    missing = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/missing-run/pause",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            requested_at="2026-06-24T00:01:07Z",
+        )
+    )
+
+    assert missing.status_code == 404
+    assert json.loads(missing.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "run control stream not found for run 'missing-run'",
+    }
+
+    app._events_by_run_id["run-control-invalid-1"] = ()
+    invalid = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-control-invalid-1/pause",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"reason": ""}).encode("utf-8"),
+            requested_at="2026-06-24T00:01:08Z",
+        )
+    )
+
+    assert invalid.status_code == 400
+    assert json.loads(invalid.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "run control request reason must not be empty",
     }
 
 
