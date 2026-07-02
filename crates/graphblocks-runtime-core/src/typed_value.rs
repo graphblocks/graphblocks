@@ -66,6 +66,51 @@ impl fmt::Display for RemoteBoundaryValuePolicyError {
 impl Error for RemoteBoundaryValuePolicyError {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RemoteBoundaryValueDiagnostic {
+    pub code: &'static str,
+    pub node_id: String,
+    pub port: String,
+    pub message: String,
+}
+
+impl RemoteBoundaryValueDiagnostic {
+    pub fn for_value(
+        node_id: impl AsRef<str>,
+        port: impl AsRef<str>,
+        value: &TypedValue,
+        policy: &RemoteBoundaryValuePolicy,
+    ) -> Vec<Self> {
+        match policy.validate(node_id, port, value) {
+            Ok(()) => Vec::new(),
+            Err(RemoteBoundaryValuePolicyError::NonSerializableInlineValue {
+                node_id,
+                port,
+                ..
+            }) => vec![Self {
+                code: "GB7001",
+                node_id,
+                port,
+                message: "remote boundary value must use a serializable encoding or ArtifactRef"
+                    .to_owned(),
+            }],
+            Err(RemoteBoundaryValuePolicyError::InlineValueTooLarge {
+                node_id,
+                port,
+                size_bytes,
+                max_inline_bytes,
+            }) => vec![Self {
+                code: "GB7002",
+                node_id,
+                port,
+                message: format!(
+                    "remote boundary inline value is {size_bytes} bytes, exceeding configured limit {max_inline_bytes}; use ArtifactRef"
+                ),
+            }],
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RemoteBoundaryValuePolicy {
     pub max_inline_bytes: usize,
 }

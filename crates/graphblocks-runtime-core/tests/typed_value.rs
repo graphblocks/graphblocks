@@ -1,6 +1,6 @@
 use graphblocks_runtime_core::typed_value::{
-    RemoteBoundaryValuePolicy, RemoteBoundaryValuePolicyError, TypedValue, TypedValueError,
-    ValueEncoding,
+    RemoteBoundaryValueDiagnostic, RemoteBoundaryValuePolicy, RemoteBoundaryValuePolicyError,
+    TypedValue, TypedValueError, ValueEncoding,
 };
 use serde_json::json;
 
@@ -100,4 +100,60 @@ fn remote_boundary_policy_allows_artifact_references_over_inline_limit() {
     policy
         .validate("node-1", "output", &artifact_ref)
         .expect("artifact references cross remote boundaries by reference");
+}
+
+#[test]
+fn remote_boundary_diagnostics_report_non_serializable_and_oversized_inline_values() {
+    let policy = RemoteBoundaryValuePolicy::new(8);
+    let raw_bytes = TypedValue::new(
+        "graphblocks.ai/Binary",
+        1,
+        ValueEncoding::RawBytes,
+        vec![1, 2, 3],
+    );
+    let oversized_json = TypedValue::json(
+        "graphblocks.ai/Message",
+        1,
+        json!({"text": "larger than inline limit"}),
+    )
+    .expect("json typed value builds");
+
+    assert_eq!(
+        RemoteBoundaryValueDiagnostic::for_value("node-1", "binary", &raw_bytes, &policy),
+        vec![RemoteBoundaryValueDiagnostic {
+            code: "GB7001",
+            node_id: "node-1".to_owned(),
+            port: "binary".to_owned(),
+            message: "remote boundary value must use a serializable encoding or ArtifactRef"
+                .to_owned(),
+        }]
+    );
+    assert_eq!(
+        RemoteBoundaryValueDiagnostic::for_value("node-1", "message", &oversized_json, &policy),
+        vec![RemoteBoundaryValueDiagnostic {
+            code: "GB7002",
+            node_id: "node-1".to_owned(),
+            port: "message".to_owned(),
+            message: format!(
+                "remote boundary inline value is {} bytes, exceeding configured limit 8; use ArtifactRef",
+                oversized_json.payload().len()
+            ),
+        }]
+    );
+}
+
+#[test]
+fn remote_boundary_diagnostics_allow_artifact_reference_values() {
+    let policy = RemoteBoundaryValuePolicy::new(1);
+    let artifact_ref = TypedValue::new(
+        "graphblocks.ai/ArtifactRef",
+        1,
+        ValueEncoding::ArtifactRef,
+        br#"{"artifactId":"artifact-1","uri":"blob://large"}"#.to_vec(),
+    );
+
+    assert!(
+        RemoteBoundaryValueDiagnostic::for_value("node-1", "output", &artifact_ref, &policy)
+            .is_empty()
+    );
 }
