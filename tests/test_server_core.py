@@ -154,6 +154,18 @@ def test_server_route_manifest_matches_async_callback_ingress_path() -> None:
     assert route_match.path_params == {"operation_id": "op-ci-1"}
 
 
+def test_server_route_manifest_matches_callback_delivery_control_paths() -> None:
+    redrive_match = default_server_route_manifest().match("POST", "/callbacks/deliveries/del-1/redrive")
+    dead_letter_match = default_server_route_manifest().match("POST", "/callbacks/deliveries/del-1/dead-letter")
+
+    assert redrive_match.endpoint.operation == "redrive_callback_delivery"
+    assert redrive_match.endpoint.auth_required is True
+    assert redrive_match.path_params == {"delivery_id": "del-1"}
+    assert dead_letter_match.endpoint.operation == "move_callback_to_dead_letter"
+    assert dead_letter_match.endpoint.auth_required is True
+    assert dead_letter_match.path_params == {"delivery_id": "del-1"}
+
+
 def test_static_bearer_auth_hook_authorizes_configured_principal() -> None:
     principals_by_token = {"token-1": PrincipalRef("user-1", roles=("operator",))}
     hook = StaticBearerAuthHook(principals_by_token)
@@ -1941,6 +1953,91 @@ def test_server_app_rejects_callback_registration_for_missing_run_scope() -> Non
         "error": "run event stream not found for callback registration scope 'missing-run'",
     }
     assert app.callback_registrations() == ()
+
+
+def test_server_app_records_callback_delivery_redrive_and_dead_letter_projection() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("operator-1")}))
+
+    redrive = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/deliveries/del-1/redrive",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"operator": "operator-1", "reason": "receiver recovered"}).encode("utf-8"),
+            requested_at="2026-07-02T00:02:00Z",
+        )
+    )
+    dead_letter = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/deliveries/del-1/dead-letter",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"operator": "operator-1", "reason": "max attempts exhausted"}).encode("utf-8"),
+            requested_at="2026-07-02T00:03:00Z",
+        )
+    )
+
+    assert redrive.status_code == 202
+    assert json.loads(redrive.body.decode("utf-8")) == {
+        "ok": True,
+        "deliveryId": "del-1",
+        "operator": "operator-1",
+        "reason": "receiver recovered",
+        "status": "redrive_requested",
+    }
+    assert dead_letter.status_code == 202
+    assert json.loads(dead_letter.body.decode("utf-8")) == {
+        "ok": True,
+        "deliveryId": "del-1",
+        "operator": "operator-1",
+        "reason": "max attempts exhausted",
+        "status": "dead_letter_requested",
+    }
+    assert app.callback_delivery_redrives("del-1") == (
+        {
+            "deliveryId": "del-1",
+            "operator": "operator-1",
+            "reason": "receiver recovered",
+            "requestedAt": "2026-07-02T00:02:00Z",
+            "status": "redrive_requested",
+        },
+    )
+    assert app.callback_delivery_dead_letter_moves("del-1") == (
+        {
+            "deliveryId": "del-1",
+            "operator": "operator-1",
+            "reason": "max attempts exhausted",
+            "requestedAt": "2026-07-02T00:03:00Z",
+            "status": "dead_letter_requested",
+        },
+    )
+
+
+def test_server_app_rejects_malformed_callback_delivery_control_request() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("operator-1")}))
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/deliveries/del-1/redrive",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"operator": "operator-1", "reason": " "}).encode("utf-8"),
+            requested_at="2026-07-02T00:04:00Z",
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "callback delivery control request reason must not be empty",
+    }
+    assert app.callback_delivery_redrives("del-1") == ()
 
 
 def test_server_app_reports_missing_run_events() -> None:

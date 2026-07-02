@@ -245,6 +245,20 @@ def default_server_route_manifest() -> ServerRouteManifest:
             ServerEndpoint("POST", "/runs/{run_id}/expire", "http", "expire_run", auth_required=True),
             ServerEndpoint("POST", "/callbacks/register", "http", "register_callback", auth_required=True),
             ServerEndpoint("DELETE", "/callbacks/{subscription_id}", "http", "revoke_callback", auth_required=True),
+            ServerEndpoint(
+                "POST",
+                "/callbacks/deliveries/{delivery_id}/redrive",
+                "http",
+                "redrive_callback_delivery",
+                auth_required=True,
+            ),
+            ServerEndpoint(
+                "POST",
+                "/callbacks/deliveries/{delivery_id}/dead-letter",
+                "http",
+                "move_callback_to_dead_letter",
+                auth_required=True,
+            ),
             ServerEndpoint("POST", "/callbacks/{operation_id}", "http", "submit_async_callback", auth_required=True),
             ServerEndpoint("GET", "/runs/{run_id}/events", "sse", "application_events", auth_required=True),
             ServerEndpoint("GET", "/runs/{run_id}/stream", "websocket", "application_stream", auth_required=True),
@@ -875,6 +889,16 @@ class GraphBlocksServerApp:
         init=False,
         repr=False,
     )
+    _callback_delivery_redrives: dict[str, tuple[dict[str, object], ...]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
+    _callback_delivery_dead_letter_moves: dict[str, tuple[dict[str, object], ...]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
 
     def handle(self, request: ServerRequest) -> ServerResponse:
         try:
@@ -1170,6 +1194,26 @@ class GraphBlocksServerApp:
                     "status": "revoked",
                 },
             )
+        if route.operation in {"redrive_callback_delivery", "move_callback_to_dead_letter"}:
+            try:
+                delivery_id = route_match.path_params.get("delivery_id", "")
+                payload = json.loads(request.body.decode("utf-8") or "{}")
+                if not isinstance(payload, Mapping):
+                    raise ValueError("callback delivery control request body must be a JSON object")
+                return self._callback_delivery_control_response(
+                    delivery_id,
+                    route.operation,
+                    payload,
+                    request.requested_at or _utc_now_iso(),
+                )
+            except (TypeError, ValueError, json.JSONDecodeError) as error:
+                return ServerResponse.json(
+                    400,
+                    {
+                        "ok": False,
+                        "error": str(error),
+                    },
+                )
         if route.operation == "submit_async_callback":
             try:
                 submission = ServerAsyncCallbackSubmission.from_request(
@@ -1432,6 +1476,14 @@ class GraphBlocksServerApp:
     def callback_registrations(self) -> tuple[ServerCallbackRegistration, ...]:
         return tuple(self._callback_registrations[key] for key in sorted(self._callback_registrations))
 
+    def callback_delivery_redrives(self, delivery_id: str) -> tuple[dict[str, object], ...]:
+        delivery_id = _validate_non_empty_string("server callback delivery control", "delivery_id", delivery_id)
+        return self._callback_delivery_redrives.get(delivery_id, ())
+
+    def callback_delivery_dead_letter_moves(self, delivery_id: str) -> tuple[dict[str, object], ...]:
+        delivery_id = _validate_non_empty_string("server callback delivery control", "delivery_id", delivery_id)
+        return self._callback_delivery_dead_letter_moves.get(delivery_id, ())
+
     def _run_status_payload(
         self,
         run_id: str,
@@ -1533,6 +1585,53 @@ class GraphBlocksServerApp:
                 "status": status,
                 "reason": reason,
                 "lastCursor": record["lastCursor"],
+            },
+        )
+
+    def _callback_delivery_control_response(
+        self,
+        delivery_id: str,
+        operation: str,
+        payload: Mapping[str, object],
+        requested_at: str,
+    ) -> ServerResponse:
+        delivery_id = _validate_non_empty_string("callback delivery control request", "delivery_id", delivery_id)
+        operator = _validate_non_empty_string(
+            "callback delivery control request",
+            "operator",
+            payload.get("operator", payload.get("operatorPrincipal", "")),
+        )
+        reason = _validate_non_empty_string(
+            "callback delivery control request",
+            "reason",
+            payload.get("reason", ""),
+        )
+        status = (
+            "redrive_requested"
+            if operation == "redrive_callback_delivery"
+            else "dead_letter_requested"
+        )
+        record: dict[str, object] = {
+            "deliveryId": delivery_id,
+            "operator": operator,
+            "reason": reason,
+            "requestedAt": requested_at,
+            "status": status,
+        }
+        if operation == "redrive_callback_delivery":
+            existing = self._callback_delivery_redrives.get(delivery_id, ())
+            self._callback_delivery_redrives[delivery_id] = (*existing, record)
+        else:
+            existing = self._callback_delivery_dead_letter_moves.get(delivery_id, ())
+            self._callback_delivery_dead_letter_moves[delivery_id] = (*existing, record)
+        return ServerResponse.json(
+            202,
+            {
+                "ok": True,
+                "deliveryId": delivery_id,
+                "operator": operator,
+                "reason": reason,
+                "status": status,
             },
         )
 

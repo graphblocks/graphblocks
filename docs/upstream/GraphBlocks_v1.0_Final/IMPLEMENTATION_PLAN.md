@@ -394,6 +394,11 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   `POST /runs/{run_id}/resume`, and `POST /runs/{run_id}/expire`
   `PauseRun`/`ResumeRun`/`ExpireRun` routes, recording run-control projections and reflecting
   the latest control state in `GetRunStatus` while preserving the authoritative event stream.
+- `graphblocks-server` now exposes framework-neutral
+  `POST /callbacks/deliveries/{delivery_id}/redrive` and
+  `POST /callbacks/deliveries/{delivery_id}/dead-letter`
+  `RedriveCallbackDelivery`/`MoveCallbackToDeadLetter` routes, recording operator and reason
+  projections while leaving durable callback queue/dead-letter authority in the runtime layer.
 - Server-level HTTP/TLS webhook client integration and multi-process coordinator failover execution
   remain follow-on slices.
 
