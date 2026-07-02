@@ -188,6 +188,83 @@ fn hmac_callback_endpoint_authenticates_and_rejects_replay_or_tampering() {
 }
 
 #[test]
+fn callback_endpoint_rejects_whitespace_identity_fields_before_building_submission() {
+    let endpoint = CallbackEndpointRef::new(
+        "callback-endpoint-1",
+        "https://graphblocks.example.com/v1/callbacks/op-1",
+        "schemas/CICallback@1",
+        CallbackEndpointAuth::hmac_sha256("secret://callbacks/op-1", b"top-secret", 300_000)
+            .expect("hmac auth is valid"),
+    )
+    .expect("endpoint is valid");
+    let payload = json!({"status": "completed", "workflow_run_id": "gha-run-1"});
+    let headers = endpoint
+        .sign_callback_headers(1_200, &payload)
+        .expect("headers sign");
+
+    for field in [
+        "callback_id",
+        "operation_id",
+        "run_id",
+        "node_id",
+        "attempt_id",
+        "idempotency_key",
+        "policy_snapshot_id",
+    ] {
+        let callback_id = if field == "callback_id" {
+            " \t"
+        } else {
+            "cb-1"
+        };
+        let operation_id = if field == "operation_id" {
+            " \t"
+        } else {
+            "op-1"
+        };
+        let run_id = if field == "run_id" { " \t" } else { "run-1" };
+        let node_id = if field == "node_id" {
+            " \t"
+        } else {
+            "node-ci"
+        };
+        let attempt_id = if field == "attempt_id" {
+            " \t"
+        } else {
+            "attempt-1"
+        };
+        let idempotency_key = if field == "idempotency_key" {
+            " \t"
+        } else {
+            "idem-cb-1"
+        };
+        let policy_snapshot_id = if field == "policy_snapshot_id" {
+            " \t"
+        } else {
+            "policy-snapshot-1"
+        };
+
+        assert_eq!(
+            endpoint.authenticate_and_build_submission(
+                callback_id,
+                operation_id,
+                run_id,
+                node_id,
+                attempt_id,
+                idempotency_key,
+                payload.clone(),
+                1_200,
+                policy_snapshot_id,
+                &headers,
+            ),
+            Err(AsyncOperationError::EmptyField {
+                field: field.to_owned(),
+            }),
+            "{field} should reject whitespace-only values at callback endpoint boundary",
+        );
+    }
+}
+
+#[test]
 fn ed25519_callback_endpoint_authenticates_with_injected_verifier() {
     let endpoint = CallbackEndpointRef::new(
         "callback-endpoint-ed25519",

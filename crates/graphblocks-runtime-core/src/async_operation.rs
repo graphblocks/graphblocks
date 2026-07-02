@@ -483,7 +483,7 @@ impl CallbackEndpointRef {
         let verified_by =
             self.auth
                 .verify(&self.endpoint_id, headers, &payload, received_at_unix_ms)?;
-        Ok(AsyncCallbackSubmission::new(
+        let submission = AsyncCallbackSubmission::new(
             callback_id,
             operation_id,
             run_id,
@@ -494,7 +494,9 @@ impl CallbackEndpointRef {
             received_at_unix_ms,
             verified_by,
             policy_snapshot_id,
-        ))
+        );
+        validate_callback_submission_identity(&submission)?;
+        Ok(submission)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -528,7 +530,7 @@ impl CallbackEndpointRef {
             received_at_unix_ms,
             verifier,
         )?;
-        Ok(AsyncCallbackSubmission::new(
+        let submission = AsyncCallbackSubmission::new(
             callback_id,
             operation_id,
             run_id,
@@ -539,7 +541,9 @@ impl CallbackEndpointRef {
             received_at_unix_ms,
             verified_by,
             policy_snapshot_id,
-        ))
+        );
+        validate_callback_submission_identity(&submission)?;
+        Ok(submission)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -569,7 +573,7 @@ impl CallbackEndpointRef {
         let verified_by = self
             .auth
             .verify_mtls(&self.endpoint_id, headers, client_identity)?;
-        Ok(AsyncCallbackSubmission::new(
+        let submission = AsyncCallbackSubmission::new(
             callback_id,
             operation_id,
             run_id,
@@ -580,7 +584,9 @@ impl CallbackEndpointRef {
             received_at_unix_ms,
             verified_by,
             policy_snapshot_id,
-        ))
+        );
+        validate_callback_submission_identity(&submission)?;
+        Ok(submission)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -610,7 +616,7 @@ impl CallbackEndpointRef {
         let verified_by = self
             .auth
             .verify_oidc(&self.endpoint_id, headers, verifier)?;
-        Ok(AsyncCallbackSubmission::new(
+        let submission = AsyncCallbackSubmission::new(
             callback_id,
             operation_id,
             run_id,
@@ -621,7 +627,9 @@ impl CallbackEndpointRef {
             received_at_unix_ms,
             verified_by,
             policy_snapshot_id,
-        ))
+        );
+        validate_callback_submission_identity(&submission)?;
+        Ok(submission)
     }
 }
 
@@ -2039,31 +2047,7 @@ fn validate_callback_submission_and_resume_decision(
     submission: &AsyncCallbackSubmission,
     resume_decision: &AsyncCallbackResumeDecision,
 ) -> Result<(), AsyncOperationError> {
-    for (field, value) in [
-        ("callback_id", &submission.callback_id),
-        ("operation_id", &submission.operation_id),
-        ("run_id", &submission.run_id),
-        ("node_id", &submission.node_id),
-        ("attempt_id", &submission.attempt_id),
-        ("idempotency_key", &submission.idempotency_key),
-        ("verified_by", &submission.verified_by),
-        ("policy_snapshot_id", &submission.policy_snapshot_id),
-    ] {
-        if value.trim().is_empty() {
-            return Err(AsyncOperationError::EmptyField {
-                field: field.to_owned(),
-            });
-        }
-    }
-    if submission
-        .provider_operation_id
-        .as_ref()
-        .is_some_and(|provider_operation_id| provider_operation_id.trim().is_empty())
-    {
-        return Err(AsyncOperationError::EmptyField {
-            field: "provider_operation_id".to_owned(),
-        });
-    }
+    validate_callback_submission_identity(submission)?;
     match resume_decision {
         AsyncCallbackResumeDecision::Resume => {}
         AsyncCallbackResumeDecision::PauseBudget { reason } => {
@@ -2103,6 +2087,37 @@ fn validate_callback_submission_and_resume_decision(
                 });
             }
         }
+    }
+    Ok(())
+}
+
+fn validate_callback_submission_identity(
+    submission: &AsyncCallbackSubmission,
+) -> Result<(), AsyncOperationError> {
+    for (field, value) in [
+        ("callback_id", &submission.callback_id),
+        ("operation_id", &submission.operation_id),
+        ("run_id", &submission.run_id),
+        ("node_id", &submission.node_id),
+        ("attempt_id", &submission.attempt_id),
+        ("idempotency_key", &submission.idempotency_key),
+        ("verified_by", &submission.verified_by),
+        ("policy_snapshot_id", &submission.policy_snapshot_id),
+    ] {
+        if value.trim().is_empty() {
+            return Err(AsyncOperationError::EmptyField {
+                field: field.to_owned(),
+            });
+        }
+    }
+    if submission
+        .provider_operation_id
+        .as_ref()
+        .is_some_and(|provider_operation_id| provider_operation_id.trim().is_empty())
+    {
+        return Err(AsyncOperationError::EmptyField {
+            field: "provider_operation_id".to_owned(),
+        });
     }
     Ok(())
 }
