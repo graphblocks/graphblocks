@@ -327,6 +327,28 @@ packages:
   - health endpoints
   implementationPhase: 3
   stability: first-party-extension
+- distribution: graphblocks-callbacks
+  import: graphblocks_callbacks
+  layer: callback_projection
+  default: false
+  kind: pure_python
+  dependsOn:
+  - graphblocks-core
+  responsibility:
+  - webhook delivery envelope projection
+  - callback signing helper contracts
+  - retry and dead-letter projection helpers
+  - receiver verification boundary helpers
+  forbiddenDependencies:
+  - httpx
+  - requests
+  - aiohttp
+  - urllib3
+  - websockets
+  - fastapi
+  - starlette
+  implementationPhase: 4
+  stability: foundation-extension
 - distribution: graphblocks-worker
   import: graphblocks_worker
   layer: runtime

@@ -557,6 +557,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - `SubscribeEvents` and `RegisterCallback` server projections now have coverage for replay from
   the accepted/background run handle's initial cursor, so event subscriptions and callback
   registrations can attach from the beginning without treating the initial cursor as expired.
+- `graphblocks-callbacks` is now cataloged as an optional pure-Python callback projection package
+  with no default HTTP/WebSocket client dependency. Its initial facade projects webhook envelopes,
+  required headers, and HMAC-SHA256 signing/verification helpers while keeping callback delivery
+  non-authoritative relative to the event stream and runtime journals.
 - `graphblocks-server` now exposes framework-neutral
   `POST /callbacks/deliveries/{delivery_id}/redrive` and
   `POST /callbacks/deliveries/{delivery_id}/dead-letter`

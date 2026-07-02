@@ -734,6 +734,43 @@ def test_server_package_has_pure_python_layout_without_web_framework_dependencie
     assert (package_root / "src" / "graphblocks_server" / "py.typed").exists()
 
 
+def test_callbacks_package_is_cataloged_as_optional_protocol_projection() -> None:
+    rows = {row["distribution"]: row for row in package_rows(load_package_catalog())}
+    manifests = {manifest["distribution"]: manifest for manifest in load_package_catalog()["packages"]}
+
+    assert rows["graphblocks-callbacks"] == {
+        "distribution": "graphblocks-callbacks",
+        "import": "graphblocks_callbacks",
+        "default": False,
+        "layer": "callback_projection",
+        "kind": "pure_python",
+        "implementationPhase": 4,
+        "stability": "foundation-extension",
+    }
+    assert manifests["graphblocks-callbacks"]["dependsOn"] == ["graphblocks-core"]
+    assert "webhook delivery envelope projection" in manifests["graphblocks-callbacks"]["responsibility"]
+
+
+def test_callbacks_package_has_pure_python_layout_without_http_client_dependencies() -> None:
+    package_root = ROOT / "packages" / "graphblocks-callbacks"
+    pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
+    dependencies = pyproject["project"]["dependencies"]
+
+    assert pyproject["build-system"]["build-backend"] == "hatchling.build"
+    assert pyproject["project"]["name"] == "graphblocks-callbacks"
+    assert dependencies == ["graphblocks-core~=1.0"]
+    assert not any(
+        client in dependency.lower()
+        for dependency in dependencies
+        for client in ("httpx", "requests", "aiohttp", "urllib3", "websockets", "fastapi", "starlette")
+    )
+    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
+        "src/graphblocks_callbacks"
+    ]
+    assert (package_root / "src" / "graphblocks_callbacks" / "__init__.py").exists()
+    assert (package_root / "src" / "graphblocks_callbacks" / "py.typed").exists()
+
+
 def test_workspace_package_has_pure_python_layout_without_vcs_or_process_dependencies() -> None:
     package_root = ROOT / "packages" / "graphblocks-workspace"
     pyproject = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
