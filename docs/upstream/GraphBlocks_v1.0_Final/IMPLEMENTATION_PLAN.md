@@ -563,7 +563,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   authenticated callback ingress signals with idempotency keys, acknowledging duplicate callback
   submissions without recording them twice, and rejecting conflicting replays that reuse an
   idempotency key with different content while leaving durable journal/resume authority to the
-  runtime. Nested callback JSON payloads are deep-frozen at ingress so later caller mutation cannot
+  runtime. Callback submissions that declare a `run_id` must reference a retained run event stream.
+  Nested callback JSON payloads are deep-frozen at ingress so later caller mutation cannot
   corrupt stored callback receipts or idempotency comparisons.
 - `graphblocks-server` now also exposes the framework-neutral `GET /runs/{run_id}`
   `GetRunStatus` route, deriving status, release id, replay cursor, timestamps, wait reasons, and

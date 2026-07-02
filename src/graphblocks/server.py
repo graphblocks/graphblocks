@@ -1438,6 +1438,16 @@ class GraphBlocksServerApp:
                     operation_id=route_match.path_params.get("operation_id", ""),
                     request=request,
                 )
+                if submission.run_id is not None and submission.run_id not in self._events_by_run_id:
+                    return ServerResponse.json(
+                        404,
+                        {
+                            "ok": False,
+                            "operationId": submission.operation_id,
+                            "runId": submission.run_id,
+                            "error": f"async callback run {submission.run_id!r} not found",
+                        },
+                    )
                 existing = self._callbacks_by_operation_id.get(submission.operation_id, ())
                 for previous in existing:
                     if previous.idempotency_key == submission.idempotency_key:

@@ -1063,6 +1063,39 @@ def test_server_app_terminal_run_status_suppresses_active_callback_waits() -> No
     assert status_payload["activeOperations"] == []
 
 
+def test_server_app_rejects_async_callback_for_unknown_declared_run() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/op-ci-unknown-run",
+            headers={"Authorization": "Bearer token-1", "GraphBlocks-Idempotency-Key": "idem-callback-unknown-run"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "callback_id": "cb-unknown-run",
+                    "attempt_id": "attempt-1",
+                    "run_id": "missing-run",
+                    "node_id": "waitCI",
+                    "payload": {"status": "completed"},
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-03T00:00:00Z",
+        )
+    )
+
+    assert response.status_code == 404
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "operationId": "op-ci-unknown-run",
+        "runId": "missing-run",
+        "error": "async callback run 'missing-run' not found",
+    }
+    assert app.callback_submissions("op-ci-unknown-run") == ()
+
+
 def test_server_app_deduplicates_async_callback_submission_by_idempotency_key() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
     request = ServerRequest(
