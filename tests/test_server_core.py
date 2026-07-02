@@ -1499,7 +1499,11 @@ def test_server_app_subscribes_to_run_events_with_filtered_replay() -> None:
                 {
                     "subscription_id": "sub-run-1",
                     "event_filter": {"types": ["RunSucceeded"]},
-                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                    "delivery": {
+                        "kind": "local_callback",
+                        "callback_name": "ide",
+                        "options": {"priority": "normal"},
+                    },
                     "replay_from_cursor": "run-subscribe-1:1",
                     "failure_policy": "best_effort",
                 }
@@ -1518,20 +1522,30 @@ def test_server_app_subscribes_to_run_events_with_filtered_replay() -> None:
     assert payload["replayFromCursor"] == "run-subscribe-1:1"
     assert payload["lastCursor"] == "run-subscribe-1:2"
     assert payload["eventFilter"] == {"types": ["RunSucceeded"]}
-    assert payload["delivery"] == {"kind": "local_callback", "callback_name": "ide"}
+    assert payload["delivery"] == {
+        "kind": "local_callback",
+        "callback_name": "ide",
+        "options": {"priority": "normal"},
+    }
     assert [event["kind"] for event in payload["events"]] == ["RunSucceeded"]
     assert app.subscriptions("run-subscribe-1") == (
         ServerEventSubscription(
             subscription_id="sub-run-1",
             run_id="run-subscribe-1",
             event_filter={"types": ["RunSucceeded"]},
-            delivery={"kind": "local_callback", "callback_name": "ide"},
+            delivery={
+                "kind": "local_callback",
+                "callback_name": "ide",
+                "options": {"priority": "normal"},
+            },
             status="active",
             failure_policy="best_effort",
             replay_from_cursor="run-subscribe-1:1",
             created_at="2026-07-02T00:00:00Z",
         ),
     )
+    with pytest.raises(TypeError):
+        app.subscriptions("run-subscribe-1")[0].delivery["options"]["priority"] = "high"  # type: ignore[index]
 
 
 def test_server_app_subscribe_events_reports_cursor_expired() -> None:
@@ -1959,7 +1973,11 @@ def test_server_app_registers_and_revokes_callback_projection_with_run_replay() 
                     "scope": "run",
                     "scopeId": "run-register-callback-1",
                     "eventFilter": {"types": ["RunSucceeded"]},
-                    "delivery": {"kind": "webhook", "url": "https://relay.example/events"},
+                    "delivery": {
+                        "kind": "webhook",
+                        "url": "https://relay.example/events",
+                        "signing": {"algorithm": "hmac-sha256", "secret_ref": "secret://relay"},
+                    },
                     "replayFromCursor": "run-register-callback-1:1",
                     "failurePolicy": "retry_then_dead_letter",
                 }
@@ -1992,6 +2010,11 @@ def test_server_app_registers_and_revokes_callback_projection_with_run_replay() 
     assert payload["scope"] == "run"
     assert payload["scopeId"] == "run-register-callback-1"
     assert payload["lastCursor"] == "run-register-callback-1:2"
+    assert payload["delivery"] == {
+        "kind": "webhook",
+        "url": "https://relay.example/events",
+        "signing": {"algorithm": "hmac-sha256", "secret_ref": "secret://relay"},
+    }
     assert [event["kind"] for event in payload["events"]] == ["RunSucceeded"]
     assert revoked.status_code == 202
     assert json.loads(revoked.body.decode("utf-8")) == {
@@ -2005,13 +2028,19 @@ def test_server_app_registers_and_revokes_callback_projection_with_run_replay() 
             scope="run",
             scope_id="run-register-callback-1",
             event_filter={"types": ["RunSucceeded"]},
-            delivery={"kind": "webhook", "url": "https://relay.example/events"},
+            delivery={
+                "kind": "webhook",
+                "url": "https://relay.example/events",
+                "signing": {"algorithm": "hmac-sha256", "secret_ref": "secret://relay"},
+            },
             status="revoked",
             failure_policy="retry_then_dead_letter",
             replay_from_cursor="run-register-callback-1:1",
             created_at="2026-07-02T00:00:00Z",
         ),
     )
+    with pytest.raises(TypeError):
+        app.callback_registrations()[0].delivery["signing"]["algorithm"] = "none"  # type: ignore[index]
     assert [event["kind"] for event in json.loads(events.body.decode("utf-8"))["events"]] == [
         "RunStarted",
         "RunSucceeded",

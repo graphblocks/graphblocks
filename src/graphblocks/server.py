@@ -104,6 +104,14 @@ def _freeze_json_value(owner: str, field_name: str, value: object) -> object:
     raise ValueError(f"{owner} {field_name} must be a JSON value")
 
 
+def _thaw_json_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {key: _thaw_json_value(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_json_value(item) for item in value]
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class ServerEndpoint:
     method: str
@@ -527,19 +535,21 @@ class ServerEventSubscription:
             raise ValueError("server event subscription event_filter must be a mapping")
         if not isinstance(self.delivery, Mapping):
             raise ValueError("server event subscription delivery must be a mapping")
-        event_filter = dict(self.event_filter)
-        delivery = dict(self.delivery)
-        if any(not isinstance(key, str) or not key.strip() for key in event_filter):
-            raise ValueError("server event subscription event_filter keys must be non-empty strings")
-        if any(not isinstance(key, str) or not key.strip() for key in delivery):
-            raise ValueError("server event subscription delivery keys must be non-empty strings")
+        event_filter = _freeze_json_value(
+            "server event subscription",
+            "event_filter",
+            self.event_filter,
+        )
+        delivery = _freeze_json_value("server event subscription", "delivery", self.delivery)
+        assert isinstance(event_filter, Mapping)
+        assert isinstance(delivery, Mapping)
         _validate_non_empty_string(
             "server event subscription",
             "delivery.kind",
             delivery.get("kind", ""),
         )
-        object.__setattr__(self, "event_filter", MappingProxyType(event_filter))
-        object.__setattr__(self, "delivery", MappingProxyType(delivery))
+        object.__setattr__(self, "event_filter", event_filter)
+        object.__setattr__(self, "delivery", delivery)
         object.__setattr__(
             self,
             "status",
@@ -624,8 +634,8 @@ class ServerEventSubscription:
             "failurePolicy": self.failure_policy,
             "replayFromCursor": self.replay_from_cursor,
             "lastCursor": last_cursor,
-            "delivery": dict(self.delivery),
-            "eventFilter": dict(self.event_filter),
+            "delivery": _thaw_json_value(self.delivery),
+            "eventFilter": _thaw_json_value(self.event_filter),
             "events": replayed_events,
         }
 
@@ -662,19 +672,21 @@ class ServerCallbackRegistration:
             raise ValueError("server callback registration event_filter must be a mapping")
         if not isinstance(self.delivery, Mapping):
             raise ValueError("server callback registration delivery must be a mapping")
-        event_filter = dict(self.event_filter)
-        delivery = dict(self.delivery)
-        if any(not isinstance(key, str) or not key.strip() for key in event_filter):
-            raise ValueError("server callback registration event_filter keys must be non-empty strings")
-        if any(not isinstance(key, str) or not key.strip() for key in delivery):
-            raise ValueError("server callback registration delivery keys must be non-empty strings")
+        event_filter = _freeze_json_value(
+            "server callback registration",
+            "event_filter",
+            self.event_filter,
+        )
+        delivery = _freeze_json_value("server callback registration", "delivery", self.delivery)
+        assert isinstance(event_filter, Mapping)
+        assert isinstance(delivery, Mapping)
         _validate_non_empty_string(
             "server callback registration",
             "delivery.kind",
             delivery.get("kind", ""),
         )
-        object.__setattr__(self, "event_filter", MappingProxyType(event_filter))
-        object.__setattr__(self, "delivery", MappingProxyType(delivery))
+        object.__setattr__(self, "event_filter", event_filter)
+        object.__setattr__(self, "delivery", delivery)
         object.__setattr__(
             self,
             "status",
@@ -759,8 +771,8 @@ class ServerCallbackRegistration:
             "failurePolicy": self.failure_policy,
             "replayFromCursor": self.replay_from_cursor,
             "lastCursor": last_cursor,
-            "delivery": dict(self.delivery),
-            "eventFilter": dict(self.event_filter),
+            "delivery": _thaw_json_value(self.delivery),
+            "eventFilter": _thaw_json_value(self.event_filter),
             "events": replayed_events,
         }
 

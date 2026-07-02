@@ -380,7 +380,9 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   event stream and current run status. Stored detach projection records are immutable snapshots.
 - `graphblocks-server` now exposes the framework-neutral `POST /runs/{run_id}/subscriptions`
   `SubscribeEvents` route, recording run-scoped event subscription projections and replaying
-  retained matching events from the authoritative event stream after an optional cursor.
+  retained matching events from the authoritative event stream after an optional cursor. Nested
+  event filter and delivery configs are immutable snapshots and are thawed back to plain JSON for
+  response payloads.
 - `graphblocks-server` now exposes the framework-neutral
   `DELETE /runs/{run_id}/subscriptions/{subscription_id}` `UnsubscribeEvents` route, revoking
   subscription projections without deleting the authoritative event stream.
@@ -390,7 +392,8 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
 - `graphblocks-server` now exposes framework-neutral `POST /callbacks/register` and
   `DELETE /callbacks/{subscription_id}` `RegisterCallback`/`RevokeCallback` routes, storing
   callback delivery registration projections and replaying retained run-scoped matching events
-  without making callback delivery authoritative.
+  without making callback delivery authoritative. Nested event filter and delivery configs are
+  immutable snapshots and are thawed back to plain JSON for response payloads.
 - `graphblocks-server` now exposes framework-neutral `POST /runs/{run_id}/pause`,
   `POST /runs/{run_id}/resume`, and `POST /runs/{run_id}/expire`
   `PauseRun`/`ResumeRun`/`ExpireRun` routes, recording run-control projections and reflecting
