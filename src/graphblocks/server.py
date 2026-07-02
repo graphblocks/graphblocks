@@ -109,6 +109,33 @@ def _validate_callback_failure_policy(value: object) -> str:
     return failure_policy
 
 
+def _has_callback_dead_letter_config(config: Mapping[str, object], delivery: Mapping[str, object]) -> bool:
+    dead_letter = (
+        config.get("deadLetterPolicy")
+        or config.get("dead_letter_policy")
+        or config.get("deadLetterRef")
+        or config.get("dead_letter_ref")
+        or delivery.get("deadLetterPolicy")
+        or delivery.get("dead_letter_policy")
+        or delivery.get("deadLetterRef")
+        or delivery.get("dead_letter_ref")
+    )
+    return isinstance(dead_letter, Mapping) or (isinstance(dead_letter, str) and bool(dead_letter.strip()))
+
+
+def _validate_mandatory_callback_policy(
+    owner: str,
+    config: Mapping[str, object],
+    delivery: Mapping[str, object],
+    failure_policy: str,
+) -> None:
+    mandatory = config.get("mandatory") is True or delivery.get("mandatory") is True
+    if mandatory and failure_policy == "best_effort" and not _has_callback_dead_letter_config(config, delivery):
+        raise ValueError(
+            f"{owner} mandatory delivery requires retry, dead-letter, pause-run, or fail-run failure policy"
+        )
+
+
 def _webhook_url_is_unsafe(url: str) -> bool:
     parsed = urlparse(url)
     if parsed.scheme in {"file", "unix"}:
@@ -761,7 +788,10 @@ class ServerEventSubscription:
         if subscription_id is None:
             subscription_id = f"sub-{run_id}-{ordinal:06d}"
         replay_from_cursor = body.get("replay_from_cursor", body.get("replayFromCursor"))
-        failure_policy = body.get("failure_policy", body.get("failurePolicy", "retry_then_dead_letter"))
+        failure_policy = _validate_callback_failure_policy(
+            body.get("failure_policy", body.get("failurePolicy", "retry_then_dead_letter"))
+        )
+        _validate_mandatory_callback_policy("server event subscription", body, delivery, failure_policy)
         return cls(
             subscription_id=_validate_non_empty_string(
                 "server event subscription",
@@ -771,7 +801,7 @@ class ServerEventSubscription:
             run_id=run_id,
             event_filter=event_filter,
             delivery=delivery,
-            failure_policy=_validate_callback_failure_policy(failure_policy),
+            failure_policy=failure_policy,
             replay_from_cursor=(
                 _validate_non_empty_string(
                     "server event subscription",
@@ -885,7 +915,10 @@ class ServerCallbackRegistration:
         if subscription_id is None:
             subscription_id = f"callback-sub-{ordinal:06d}"
         replay_from_cursor = body.get("replay_from_cursor", body.get("replayFromCursor"))
-        failure_policy = body.get("failure_policy", body.get("failurePolicy", "retry_then_dead_letter"))
+        failure_policy = _validate_callback_failure_policy(
+            body.get("failure_policy", body.get("failurePolicy", "retry_then_dead_letter"))
+        )
+        _validate_mandatory_callback_policy("server callback registration", body, delivery, failure_policy)
         return cls(
             subscription_id=_validate_non_empty_string(
                 "server callback registration",
@@ -900,7 +933,7 @@ class ServerCallbackRegistration:
             ),
             event_filter=event_filter,
             delivery=delivery,
-            failure_policy=_validate_callback_failure_policy(failure_policy),
+            failure_policy=failure_policy,
             replay_from_cursor=(
                 _validate_non_empty_string(
                     "server callback registration",
