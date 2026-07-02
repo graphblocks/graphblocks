@@ -3,10 +3,14 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use graphblocks_compiler::canonical::canonical_hash;
+use hmac::{Hmac, Mac};
 use rusqlite::{Connection, params};
 use serde_json::{Value, json};
+use sha2::Sha256;
 
 use crate::tool_schema::{ToolSchemaRegistry, ToolSchemaValidationError};
+
+type HmacSha256 = Hmac<Sha256>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AsyncCallbackIngestionLimits {
@@ -332,6 +336,293 @@ impl AsyncCallbackSubmission {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct CallbackEndpointRef {
+    pub endpoint_id: String,
+    pub url: String,
+    pub accepted_schema: String,
+    pub auth: CallbackEndpointAuth,
+    pub expires_at_unix_ms: Option<u64>,
+}
+
+impl CallbackEndpointRef {
+    pub fn new(
+        endpoint_id: impl Into<String>,
+        url: impl Into<String>,
+        accepted_schema: impl Into<String>,
+        auth: CallbackEndpointAuth,
+    ) -> Result<Self, AsyncOperationError> {
+        let endpoint = Self {
+            endpoint_id: endpoint_id.into(),
+            url: url.into(),
+            accepted_schema: accepted_schema.into(),
+            auth,
+            expires_at_unix_ms: None,
+        };
+        endpoint.validate()?;
+        Ok(endpoint)
+    }
+
+    pub fn with_expiration(mut self, expires_at_unix_ms: u64) -> Self {
+        self.expires_at_unix_ms = Some(expires_at_unix_ms);
+        self
+    }
+
+    pub fn validate(&self) -> Result<(), AsyncOperationError> {
+        for (field, value) in [
+            ("endpoint_id", &self.endpoint_id),
+            ("url", &self.url),
+            ("accepted_schema", &self.accepted_schema),
+        ] {
+            if value.trim().is_empty() {
+                return Err(AsyncOperationError::EmptyField {
+                    field: field.to_owned(),
+                });
+            }
+        }
+        self.auth.validate()
+    }
+
+    pub fn sign_callback_headers(
+        &self,
+        timestamp_unix_ms: u64,
+        payload: &Value,
+    ) -> Result<BTreeMap<String, String>, AsyncOperationError> {
+        self.auth.sign_headers(timestamp_unix_ms, payload)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn authenticate_and_build_submission(
+        &self,
+        callback_id: impl Into<String>,
+        operation_id: impl Into<String>,
+        run_id: impl Into<String>,
+        node_id: impl Into<String>,
+        attempt_id: impl Into<String>,
+        idempotency_key: impl Into<String>,
+        payload: Value,
+        received_at_unix_ms: u64,
+        policy_snapshot_id: impl Into<String>,
+        headers: &BTreeMap<String, String>,
+    ) -> Result<AsyncCallbackSubmission, AsyncOperationError> {
+        if self
+            .expires_at_unix_ms
+            .is_some_and(|expires_at_unix_ms| received_at_unix_ms > expires_at_unix_ms)
+        {
+            return Err(AsyncOperationError::CallbackAuthenticationFailed {
+                endpoint_id: self.endpoint_id.clone(),
+                reason: "endpoint_expired".to_owned(),
+            });
+        }
+        let verified_by =
+            self.auth
+                .verify(&self.endpoint_id, headers, &payload, received_at_unix_ms)?;
+        Ok(AsyncCallbackSubmission::new(
+            callback_id,
+            operation_id,
+            run_id,
+            node_id,
+            attempt_id,
+            idempotency_key,
+            payload,
+            received_at_unix_ms,
+            verified_by,
+            policy_snapshot_id,
+        ))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum CallbackEndpointAuth {
+    Bearer {
+        token_ref: String,
+        token: String,
+    },
+    HmacSha256 {
+        secret_ref: String,
+        secret: Vec<u8>,
+        timestamp_header: String,
+        signature_header: String,
+        replay_window_ms: u64,
+    },
+    Mtls {
+        trusted_identity: String,
+    },
+    Oidc {
+        issuer: String,
+        audience: String,
+    },
+}
+
+impl CallbackEndpointAuth {
+    pub fn bearer(token_ref: impl Into<String>, token: impl Into<String>) -> Self {
+        Self::Bearer {
+            token_ref: token_ref.into(),
+            token: token.into(),
+        }
+    }
+
+    pub fn hmac_sha256(
+        secret_ref: impl Into<String>,
+        secret: impl AsRef<[u8]>,
+        replay_window_ms: u64,
+    ) -> Result<Self, AsyncOperationError> {
+        let auth = Self::HmacSha256 {
+            secret_ref: secret_ref.into(),
+            secret: secret.as_ref().to_vec(),
+            timestamp_header: "GraphBlocks-Timestamp".to_owned(),
+            signature_header: "GraphBlocks-Signature".to_owned(),
+            replay_window_ms,
+        };
+        auth.validate()?;
+        Ok(auth)
+    }
+
+    fn validate(&self) -> Result<(), AsyncOperationError> {
+        match self {
+            Self::Bearer { token_ref, token } => {
+                if token_ref.trim().is_empty() {
+                    return Err(AsyncOperationError::EmptyField {
+                        field: "token_ref".to_owned(),
+                    });
+                }
+                if token.is_empty() {
+                    return Err(AsyncOperationError::EmptyField {
+                        field: "token".to_owned(),
+                    });
+                }
+            }
+            Self::HmacSha256 {
+                secret_ref,
+                secret,
+                timestamp_header,
+                signature_header,
+                replay_window_ms,
+            } => {
+                for (field, value) in [
+                    ("secret_ref", secret_ref),
+                    ("timestamp_header", timestamp_header),
+                    ("signature_header", signature_header),
+                ] {
+                    if value.trim().is_empty() {
+                        return Err(AsyncOperationError::EmptyField {
+                            field: field.to_owned(),
+                        });
+                    }
+                }
+                if secret.is_empty() {
+                    return Err(AsyncOperationError::EmptyField {
+                        field: "secret".to_owned(),
+                    });
+                }
+                if *replay_window_ms == 0 {
+                    return Err(AsyncOperationError::InvalidOperation {
+                        operation_id: "callback_endpoint_auth".to_owned(),
+                        reason: "hmac replay window must be greater than zero".to_owned(),
+                    });
+                }
+            }
+            Self::Mtls { trusted_identity } => {
+                if trusted_identity.trim().is_empty() {
+                    return Err(AsyncOperationError::EmptyField {
+                        field: "trusted_identity".to_owned(),
+                    });
+                }
+            }
+            Self::Oidc { issuer, audience } => {
+                if issuer.trim().is_empty() {
+                    return Err(AsyncOperationError::EmptyField {
+                        field: "issuer".to_owned(),
+                    });
+                }
+                if audience.trim().is_empty() {
+                    return Err(AsyncOperationError::EmptyField {
+                        field: "audience".to_owned(),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn sign_headers(
+        &self,
+        timestamp_unix_ms: u64,
+        payload: &Value,
+    ) -> Result<BTreeMap<String, String>, AsyncOperationError> {
+        match self {
+            Self::HmacSha256 {
+                secret,
+                timestamp_header,
+                signature_header,
+                ..
+            } => {
+                let mut headers = BTreeMap::new();
+                headers.insert(timestamp_header.clone(), timestamp_unix_ms.to_string());
+                headers.insert(
+                    signature_header.clone(),
+                    compute_callback_hmac_signature(secret, timestamp_unix_ms, payload)?,
+                );
+                Ok(headers)
+            }
+            _ => Err(AsyncOperationError::InvalidOperation {
+                operation_id: "callback_endpoint_auth".to_owned(),
+                reason: "only hmac-sha256 callback auth can sign headers".to_owned(),
+            }),
+        }
+    }
+
+    fn verify(
+        &self,
+        endpoint_id: &str,
+        headers: &BTreeMap<String, String>,
+        payload: &Value,
+        received_at_unix_ms: u64,
+    ) -> Result<String, AsyncOperationError> {
+        match self {
+            Self::Bearer { token, .. } => {
+                let Some(header) = headers.get("Authorization") else {
+                    return Err(callback_auth_failed(endpoint_id, "authorization_missing"));
+                };
+                let expected = format!("Bearer {token}");
+                if !constant_time_eq(header.as_bytes(), expected.as_bytes()) {
+                    return Err(callback_auth_failed(endpoint_id, "bearer_token_mismatch"));
+                }
+                Ok(format!("bearer:{endpoint_id}"))
+            }
+            Self::HmacSha256 {
+                secret,
+                timestamp_header,
+                signature_header,
+                replay_window_ms,
+                ..
+            } => {
+                let timestamp = headers
+                    .get(timestamp_header)
+                    .ok_or_else(|| callback_auth_failed(endpoint_id, "timestamp_missing"))?
+                    .parse::<u64>()
+                    .map_err(|_| callback_auth_failed(endpoint_id, "timestamp_invalid"))?;
+                if received_at_unix_ms.abs_diff(timestamp) > *replay_window_ms {
+                    return Err(callback_auth_failed(
+                        endpoint_id,
+                        "timestamp_outside_replay_window",
+                    ));
+                }
+                let signature = headers
+                    .get(signature_header)
+                    .ok_or_else(|| callback_auth_failed(endpoint_id, "signature_missing"))?;
+                let expected = compute_callback_hmac_signature(secret, timestamp, payload)?;
+                if !constant_time_eq(signature.as_bytes(), expected.as_bytes()) {
+                    return Err(callback_auth_failed(endpoint_id, "signature_mismatch"));
+                }
+                Ok(format!("hmac-sha256:{endpoint_id}"))
+            }
+            Self::Mtls { .. } => Err(callback_auth_failed(endpoint_id, "mtls_not_bound")),
+            Self::Oidc { .. } => Err(callback_auth_failed(endpoint_id, "oidc_not_bound")),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct ExternalCallbackReceived {
     pub callback_id: String,
     pub operation_id: String,
@@ -457,6 +748,10 @@ pub enum AsyncOperationError {
         schema_id: String,
         path: String,
         property: String,
+    },
+    CallbackAuthenticationFailed {
+        endpoint_id: String,
+        reason: String,
     },
     CallbackPayloadTooLarge {
         operation_id: String,
@@ -1276,6 +1571,51 @@ impl SqliteAsyncOperationStore {
 
 fn callback_payload_size_bytes(payload: &Value) -> usize {
     graphblocks_compiler::canonical::canonical_json(payload).len()
+}
+
+fn callback_auth_failed(endpoint_id: &str, reason: &str) -> AsyncOperationError {
+    AsyncOperationError::CallbackAuthenticationFailed {
+        endpoint_id: endpoint_id.to_owned(),
+        reason: reason.to_owned(),
+    }
+}
+
+fn compute_callback_hmac_signature(
+    secret: &[u8],
+    timestamp_unix_ms: u64,
+    payload: &Value,
+) -> Result<String, AsyncOperationError> {
+    let body = graphblocks_compiler::canonical::canonical_json(payload);
+    let mut mac =
+        HmacSha256::new_from_slice(secret).map_err(|_| AsyncOperationError::InvalidOperation {
+            operation_id: "callback_endpoint_auth".to_owned(),
+            reason: "invalid hmac secret".to_owned(),
+        })?;
+    mac.update(timestamp_unix_ms.to_string().as_bytes());
+    mac.update(b".");
+    mac.update(body.as_bytes());
+    Ok(hex_encode(&mac.finalize().into_bytes()))
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    output
+}
+
+fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut diff = 0_u8;
+    for index in 0..left.len() {
+        diff |= left[index] ^ right[index];
+    }
+    diff == 0
 }
 
 fn operation_to_value(operation: &AsyncOperation) -> Value {

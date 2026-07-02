@@ -6,10 +6,11 @@ use graphblocks_runtime_core::async_operation::{
     AsyncCallbackIngestionLimits, AsyncCallbackResumeDecision, AsyncCallbackSubmission,
     AsyncOperation, AsyncOperationConfigurationDiagnostic, AsyncOperationError,
     AsyncOperationEvent, AsyncOperationKind, AsyncOperationState, AsyncOperationStore,
-    SqliteAsyncOperationStore,
+    CallbackEndpointAuth, CallbackEndpointRef, SqliteAsyncOperationStore,
 };
 use graphblocks_runtime_core::tool_schema::{JsonSchema, JsonSchemaNode, ToolSchemaRegistry};
 use serde_json::json;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 fn sqlite_async_operation_path(label: &str) -> PathBuf {
@@ -61,6 +62,129 @@ fn valid_submission(callback_id: &str, idempotency_key: &str) -> AsyncCallbackSu
         "hmac:callback-endpoint-1",
         "policy-snapshot-1",
     )
+}
+
+#[test]
+fn bearer_callback_endpoint_authenticates_and_builds_submission() {
+    let endpoint = CallbackEndpointRef::new(
+        "callback-endpoint-1",
+        "https://graphblocks.example.com/v1/callbacks/op-1",
+        "schemas/CICallback@1",
+        CallbackEndpointAuth::bearer("secret://callbacks/op-1", "top-secret"),
+    )
+    .expect("endpoint is valid");
+    let mut headers = BTreeMap::new();
+    headers.insert("Authorization".to_owned(), "Bearer top-secret".to_owned());
+
+    let submission = endpoint
+        .authenticate_and_build_submission(
+            "cb-1",
+            "op-1",
+            "run-1",
+            "node-ci",
+            "attempt-1",
+            "idem-cb-1",
+            json!({"status": "completed", "workflow_run_id": "gha-run-1"}),
+            1_200,
+            "policy-snapshot-1",
+            &headers,
+        )
+        .expect("bearer token authenticates");
+
+    assert_eq!(submission.verified_by, "bearer:callback-endpoint-1");
+    assert_eq!(submission.operation_id, "op-1");
+    assert_eq!(submission.policy_snapshot_id, "policy-snapshot-1");
+
+    headers.insert("Authorization".to_owned(), "Bearer wrong".to_owned());
+    assert_eq!(
+        endpoint.authenticate_and_build_submission(
+            "cb-2",
+            "op-1",
+            "run-1",
+            "node-ci",
+            "attempt-1",
+            "idem-cb-2",
+            json!({"status": "completed", "workflow_run_id": "gha-run-1"}),
+            1_201,
+            "policy-snapshot-1",
+            &headers,
+        ),
+        Err(AsyncOperationError::CallbackAuthenticationFailed {
+            endpoint_id: "callback-endpoint-1".to_owned(),
+            reason: "bearer_token_mismatch".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn hmac_callback_endpoint_authenticates_and_rejects_replay_or_tampering() {
+    let auth = CallbackEndpointAuth::hmac_sha256("secret://callbacks/op-1", b"top-secret", 300_000)
+        .expect("hmac auth is valid");
+    let endpoint = CallbackEndpointRef::new(
+        "callback-endpoint-1",
+        "https://graphblocks.example.com/v1/callbacks/op-1",
+        "schemas/CICallback@1",
+        auth,
+    )
+    .expect("endpoint is valid");
+    let payload = json!({"status": "completed", "workflow_run_id": "gha-run-1"});
+    let headers = endpoint
+        .sign_callback_headers(1_200, &payload)
+        .expect("headers sign");
+
+    let submission = endpoint
+        .authenticate_and_build_submission(
+            "cb-1",
+            "op-1",
+            "run-1",
+            "node-ci",
+            "attempt-1",
+            "idem-cb-1",
+            payload.clone(),
+            1_200,
+            "policy-snapshot-1",
+            &headers,
+        )
+        .expect("hmac signature authenticates");
+
+    assert_eq!(submission.verified_by, "hmac-sha256:callback-endpoint-1");
+
+    assert_eq!(
+        endpoint.authenticate_and_build_submission(
+            "cb-2",
+            "op-1",
+            "run-1",
+            "node-ci",
+            "attempt-1",
+            "idem-cb-2",
+            json!({"status": "failed", "workflow_run_id": "gha-run-1"}),
+            1_201,
+            "policy-snapshot-1",
+            &headers,
+        ),
+        Err(AsyncOperationError::CallbackAuthenticationFailed {
+            endpoint_id: "callback-endpoint-1".to_owned(),
+            reason: "signature_mismatch".to_owned(),
+        })
+    );
+    assert_eq!(
+        endpoint.authenticate_and_build_submission(
+            "cb-3",
+            "op-1",
+            "run-1",
+            "node-ci",
+            "attempt-1",
+            "idem-cb-3",
+            payload,
+            401_201,
+            "policy-snapshot-1",
+            &headers,
+        ),
+        Err(AsyncOperationError::CallbackAuthenticationFailed {
+            endpoint_id: "callback-endpoint-1".to_owned(),
+            reason: "timestamp_outside_replay_window".to_owned(),
+        })
+    );
 }
 
 #[test]

@@ -255,6 +255,9 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
 - Callback ingestion now enforces the specification's default `262144` byte payload limit before
   journaling or resume, and focused tests cover explicit small-limit rejection without operation
   state changes.
+- `CallbackEndpointRef` and `CallbackEndpointAuth` now model callback ingress authentication for
+  async operations, with bearer-token and `hmac-sha256` verification helpers that build
+  `AsyncCallbackSubmission` only after authentication succeeds.
 - Async operation configuration diagnostics now report missing callback timeout (`GB6001`), missing
   idempotency key (`GB6003`), and missing callback schema (`GB6007`) in deterministic order.
 - Async operation configuration diagnostics now compare declared expected callback payload size to
@@ -322,7 +325,7 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
 - `WebhookHttpTransport` now provides the runtime transport adapter boundary: DNS preflight,
   signed POST request construction, and spec-defined receiver status mapping are implemented
   without adding a default HTTP/TLS client dependency to `graphblocks-runtime-core`.
-- Ed25519/mTLS/OIDC callback authentication adapters, server-level HTTP/TLS webhook client
+- Ed25519/mTLS/OIDC callback authentication bindings, server-level HTTP/TLS webhook client
   integration, and multi-process coordinator failover execution remain follow-on slices.
 
 ### Package ownership
