@@ -3260,6 +3260,61 @@ def test_server_app_deduplicates_repeated_subscription_ack_by_event_identity() -
     )
 
 
+def test_server_app_rejects_ack_with_conflicting_event_id_and_cursor() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-ack-conflict-1"] = (
+        {
+            "kind": "RunStarted",
+            "metadata": {"eventId": "evt-start", "sequence": 1},
+            "payload": {},
+        },
+        {
+            "kind": "RunSucceeded",
+            "metadata": {"eventId": "evt-terminal", "sequence": 2},
+            "payload": {},
+        },
+    )
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-ack-conflict-1/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-ack-conflict-1",
+                    "eventFilter": {"types": ["RunStarted", "RunSucceeded"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-ack-conflict-1/subscriptions/sub-ack-conflict-1/ack",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"eventId": "evt-start", "cursor": "run-ack-conflict-1:2"}).encode("utf-8"),
+            requested_at="2026-07-03T00:00:00Z",
+        )
+    )
+
+    assert response.status_code == 409
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "runId": "run-ack-conflict-1",
+        "subscriptionId": "sub-ack-conflict-1",
+        "eventId": "evt-start",
+        "cursor": "run-ack-conflict-1:2",
+        "error": "ack event_id and cursor refer to different retained events",
+    }
+    assert app.event_acks("run-ack-conflict-1", "sub-ack-conflict-1") == ()
+
+
 def test_server_app_rejects_ack_for_missing_event_or_subscription() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     graph = {

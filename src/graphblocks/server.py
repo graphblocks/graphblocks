@@ -2344,9 +2344,31 @@ class GraphBlocksServerApp:
             )
         metadata = matched_event.get("metadata")
         assert isinstance(metadata, Mapping)
+        matched_sequence = metadata.get("sequence")
+        matched_cursor = (
+            f"{run_id}:{matched_sequence}"
+            if isinstance(matched_sequence, int) and not isinstance(matched_sequence, bool)
+            else None
+        )
+        matched_event_id = metadata.get("eventId")
+        if (
+            event_id_text is not None
+            and cursor_text is not None
+            and (matched_event_id != event_id_text or matched_cursor != cursor_text)
+        ):
+            return ServerResponse.json(
+                409,
+                {
+                    "ok": False,
+                    "runId": run_id,
+                    "subscriptionId": subscription_id,
+                    "eventId": event_id_text,
+                    "cursor": cursor_text,
+                    "error": "ack event_id and cursor refer to different retained events",
+                },
+            )
         event_id_text = str(metadata.get("eventId", event_id_text or ""))
-        sequence = metadata.get("sequence")
-        cursor_text = f"{run_id}:{sequence}" if isinstance(sequence, int) and not isinstance(sequence, bool) else cursor_text
+        cursor_text = matched_cursor if matched_cursor is not None else cursor_text
         record = _freeze_json_value("event ack record", "record", {
             "eventId": event_id_text,
             "cursor": cursor_text,
