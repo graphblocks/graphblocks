@@ -152,6 +152,36 @@ def _freeze_json_value(owner: str, field_name: str, value: object) -> object:
     raise ValueError(f"{owner} {field_name} must be a JSON value")
 
 
+def _validate_server_event_filter(owner: str, event_filter: Mapping[str, object]) -> None:
+    for source_key, field_name in (
+        ("types", "types"),
+        ("visibility", "visibility"),
+        ("node_ids", "node_ids"),
+        ("nodeIds", "node_ids"),
+        ("operation_ids", "operation_ids"),
+        ("operationIds", "operation_ids"),
+    ):
+        if source_key in event_filter:
+            _validate_string_sequence(owner, f"event_filter.{field_name}", event_filter[source_key])
+
+    severity_min = event_filter.get("severity_min", event_filter.get("severityMin"))
+    if severity_min is not None:
+        severity_min_text = _validate_non_empty_string(
+            owner,
+            "event_filter.severity_min",
+            severity_min,
+        )
+        if severity_min_text not in SERVER_EVENT_SEVERITY_RANKS:
+            raise ValueError(f"{owner} event_filter.severity_min is invalid")
+
+    include_terminal_events = event_filter.get(
+        "include_terminal_events",
+        event_filter.get("includeTerminalEvents"),
+    )
+    if include_terminal_events is not None and not isinstance(include_terminal_events, bool):
+        raise ValueError(f"{owner} event_filter.include_terminal_events must be a boolean")
+
+
 def _thaw_json_value(value: object) -> object:
     if isinstance(value, Mapping):
         return {key: _thaw_json_value(item) for key, item in value.items()}
@@ -598,6 +628,7 @@ class ServerEventSubscription:
         delivery = _freeze_json_value("server event subscription", "delivery", self.delivery)
         assert isinstance(event_filter, Mapping)
         assert isinstance(delivery, Mapping)
+        _validate_server_event_filter("server event subscription", event_filter)
         _validate_non_empty_string(
             "server event subscription",
             "delivery.kind",
@@ -731,6 +762,7 @@ class ServerCallbackRegistration:
         delivery = _freeze_json_value("server callback registration", "delivery", self.delivery)
         assert isinstance(event_filter, Mapping)
         assert isinstance(delivery, Mapping)
+        _validate_server_event_filter("server event subscription", event_filter)
         _validate_non_empty_string(
             "server callback registration",
             "delivery.kind",

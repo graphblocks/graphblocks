@@ -1845,6 +1845,35 @@ def test_server_app_rejects_subscription_with_invalid_failure_policy() -> None:
     assert app.subscriptions("run-subscribe-policy-1") == ()
 
 
+def test_server_app_rejects_subscription_with_invalid_event_filter_before_replay() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-subscribe-filter-invalid-1"] = ()
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-subscribe-filter-invalid-1/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-filter-invalid",
+                    "eventFilter": {"types": ["RunSucceeded"], "severityMin": "panic"},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "server event subscription event_filter.severity_min is invalid",
+    }
+    assert app.subscriptions("run-subscribe-filter-invalid-1") == ()
+
+
 def test_server_app_unsubscribes_without_dropping_events() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     graph = {
@@ -2392,6 +2421,36 @@ def test_server_app_rejects_callback_registration_with_invalid_failure_policy() 
     assert json.loads(response.body.decode("utf-8")) == {
         "ok": False,
         "error": "server subscription failure_policy must be one of best_effort, retry_then_dead_letter, pause_run_on_failure, or fail_run_on_failure",
+    }
+    assert app.callback_registrations() == ()
+
+
+def test_server_app_rejects_callback_registration_with_invalid_event_filter_before_replay() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/register",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "callback-sub-invalid-filter",
+                    "scope": "tenant",
+                    "scopeId": "tenant-1",
+                    "eventFilter": {"types": ["RunSucceeded"], "includeTerminalEvents": "yes"},
+                    "delivery": {"kind": "webhook", "url": "https://relay.example/events"},
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "server event subscription event_filter.include_terminal_events must be a boolean",
     }
     assert app.callback_registrations() == ()
 

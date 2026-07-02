@@ -234,7 +234,8 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   and schema, evaluate policy, journal `ExternalCallbackReceived`, update operation state, and only
   then signal resume.
 - Callback delivery retry uses bounded exponential backoff with jitter and dead-letter preservation.
-  Exactly-once delivery is not promised.
+  Exactly-once delivery is not promised. Subscription and callback registration projections validate
+  event filter shape and spec failure policy literals before storage.
 - Resume from callback re-evaluates policy, budget, release compatibility, ownership lease,
   worker availability, callback authenticity, and idempotency state.
 - Large callback payloads are rejected or converted to `ArtifactRef`; callback payloads are always
