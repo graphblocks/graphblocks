@@ -1,10 +1,11 @@
 use graphblocks_runtime_core::deployment::{
-    DeploymentCondition, DeploymentEvent, DeploymentEventKind, DeploymentObservabilityContext,
-    DeploymentRecoveryProfile, DeploymentRevision, DeploymentSloProfile, DeploymentSloReport,
-    DeploymentTargetProfileSet, ExecutionTarget, ExecutionTargetKind, GraphRelease,
-    GraphReleaseError, GraphReleaseGraph, ImageRef, KnowledgeBinding, PhysicalExecutionPlan,
-    PlacementError, PlacementRule, PlacementSelector, PromptLock, ReleaseLockRef, RevisionDecision,
-    RolloutAnalysisResult, RolloutPlan, RolloutStep, SupplyChainLock, UpgradePolicy, WorkloadKind,
+    CallbackIngressConfig, DeploymentCondition, DeploymentEvent, DeploymentEventKind,
+    DeploymentObservabilityContext, DeploymentRecoveryProfile, DeploymentRevision,
+    DeploymentSloProfile, DeploymentSloReport, DeploymentTargetProfileSet, ExecutionTarget,
+    ExecutionTargetKind, GraphRelease, GraphReleaseError, GraphReleaseGraph, ImageRef,
+    KnowledgeBinding, PhysicalExecutionPlan, PlacementError, PlacementRule, PlacementSelector,
+    PromptLock, ReleaseLockRef, RevisionDecision, RolloutAnalysisResult, RolloutPlan, RolloutStep,
+    SupplyChainLock, UpgradePolicy, WorkloadKind,
 };
 use serde_json::json;
 
@@ -236,6 +237,111 @@ fn deployment_target_profiles_project_to_execution_targets() {
         Some("registry.example.com/gb/control@sha256:control")
     );
     assert!(target_set.content_digest().starts_with("sha256:"));
+}
+
+#[test]
+fn callback_ingress_manifest_parses_security_limits_and_routes() {
+    let ingress = CallbackIngressConfig::from_document(&json!({
+        "enabled": true,
+        "routes": [
+            {
+                "path": "/v1/callbacks/{operation_id}",
+                "command": "SubmitAsyncCallback"
+            }
+        ],
+        "security": {
+            "requireSignature": true,
+            "antiEnumeration": true
+        },
+        "limits": {
+            "maxPayloadBytes": 262144,
+            "maxRequestsPerSecond": 100
+        }
+    }))
+    .expect("callback ingress manifest parses");
+
+    assert!(ingress.enabled);
+    assert!(ingress.diagnostics().is_empty());
+    assert_eq!(
+        ingress.manifest_contract(),
+        json!({
+            "enabled": true,
+            "routes": [
+                {
+                    "path": "/v1/callbacks/{operation_id}",
+                    "command": "SubmitAsyncCallback"
+                }
+            ],
+            "security": {
+                "require_signature": true,
+                "anti_enumeration": true
+            },
+            "limits": {
+                "max_payload_bytes": 262144,
+                "max_requests_per_second": 100
+            }
+        })
+    );
+    assert!(ingress.content_digest().starts_with("sha256:"));
+}
+
+#[test]
+fn callback_ingress_diagnostics_require_signature_when_enabled() {
+    let ingress = CallbackIngressConfig::from_document(&json!({
+        "enabled": true,
+        "routes": [
+            {
+                "path": "/v1/callbacks/{operation_id}",
+                "command": "SubmitAsyncCallback"
+            }
+        ],
+        "security": {
+            "requireSignature": false,
+            "antiEnumeration": true
+        },
+        "limits": {
+            "maxPayloadBytes": 262144,
+            "maxRequestsPerSecond": 100
+        }
+    }))
+    .expect("callback ingress manifest parses");
+
+    let diagnostics = ingress.diagnostics();
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].code, "GB6002");
+    assert_eq!(
+        diagnostics[0].field,
+        "callbackIngress.security.requireSignature"
+    );
+}
+
+#[test]
+fn callback_ingress_requires_submit_async_callback_route() {
+    let error = CallbackIngressConfig::from_document(&json!({
+        "enabled": true,
+        "routes": [
+            {
+                "path": "/v1/other",
+                "command": "GetRunStatus"
+            }
+        ],
+        "security": {
+            "requireSignature": true,
+            "antiEnumeration": true
+        },
+        "limits": {
+            "maxPayloadBytes": 262144,
+            "maxRequestsPerSecond": 100
+        }
+    }))
+    .expect_err("callback ingress must expose SubmitAsyncCallback");
+
+    assert!(
+        error
+            .to_string()
+            .contains("enabled callback ingress requires a SubmitAsyncCallback route")
+    );
 }
 
 #[test]

@@ -169,6 +169,252 @@ impl SupplyChainLock {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CallbackIngressRoute {
+    pub path: String,
+    pub command: String,
+}
+
+impl CallbackIngressRoute {
+    pub fn new(path: impl Into<String>, command: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            command: command.into(),
+        }
+    }
+
+    fn from_value(value: &Value) -> Result<Self, DeploymentTargetProfileError> {
+        let Some(object) = value.as_object() else {
+            return Err(DeploymentTargetProfileError::new(
+                "callback ingress route must be a mapping",
+            ));
+        };
+        let route = Self {
+            path: required_manifest_string(object, &["path"], "callbackIngress.routes[].path")?,
+            command: required_manifest_string(
+                object,
+                &["command"],
+                "callbackIngress.routes[].command",
+            )?,
+        };
+        route.validate()?;
+        Ok(route)
+    }
+
+    fn validate(&self) -> Result<(), DeploymentTargetProfileError> {
+        if self.path.trim().is_empty() {
+            return Err(DeploymentTargetProfileError::new(
+                "callback ingress route path must not be empty",
+            ));
+        }
+        if self.command.trim().is_empty() {
+            return Err(DeploymentTargetProfileError::new(
+                "callback ingress route command must not be empty",
+            ));
+        }
+        Ok(())
+    }
+
+    fn canonical_value(&self) -> Value {
+        json!({
+            "path": self.path,
+            "command": self.command,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CallbackIngressSecurity {
+    pub require_signature: bool,
+    pub anti_enumeration: bool,
+}
+
+impl Default for CallbackIngressSecurity {
+    fn default() -> Self {
+        Self {
+            require_signature: true,
+            anti_enumeration: true,
+        }
+    }
+}
+
+impl CallbackIngressSecurity {
+    fn from_value(value: Option<&Value>) -> Result<Self, DeploymentTargetProfileError> {
+        let Some(value) = value else {
+            return Ok(Self::default());
+        };
+        let Some(object) = value.as_object() else {
+            return Err(DeploymentTargetProfileError::new(
+                "callback ingress security must be a mapping",
+            ));
+        };
+        Ok(Self {
+            require_signature: optional_manifest_bool(
+                object,
+                &["requireSignature", "require_signature"],
+            )?
+            .unwrap_or(true),
+            anti_enumeration: optional_manifest_bool(
+                object,
+                &["antiEnumeration", "anti_enumeration"],
+            )?
+            .unwrap_or(true),
+        })
+    }
+
+    fn canonical_value(&self) -> Value {
+        json!({
+            "require_signature": self.require_signature,
+            "anti_enumeration": self.anti_enumeration,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CallbackIngressLimits {
+    pub max_payload_bytes: usize,
+    pub max_requests_per_second: u32,
+}
+
+impl Default for CallbackIngressLimits {
+    fn default() -> Self {
+        Self {
+            max_payload_bytes: 262_144,
+            max_requests_per_second: 100,
+        }
+    }
+}
+
+impl CallbackIngressLimits {
+    fn from_value(value: Option<&Value>) -> Result<Self, DeploymentTargetProfileError> {
+        let Some(value) = value else {
+            return Ok(Self::default());
+        };
+        let Some(object) = value.as_object() else {
+            return Err(DeploymentTargetProfileError::new(
+                "callback ingress limits must be a mapping",
+            ));
+        };
+        Ok(Self {
+            max_payload_bytes: optional_manifest_usize(
+                object,
+                &["maxPayloadBytes", "max_payload_bytes"],
+                "callbackIngress.limits.maxPayloadBytes",
+            )?
+            .unwrap_or(262_144),
+            max_requests_per_second: optional_manifest_u32(
+                object,
+                &["maxRequestsPerSecond", "max_requests_per_second"],
+                "callbackIngress.limits.maxRequestsPerSecond",
+            )?
+            .unwrap_or(100),
+        })
+    }
+
+    fn canonical_value(&self) -> Value {
+        json!({
+            "max_payload_bytes": self.max_payload_bytes,
+            "max_requests_per_second": self.max_requests_per_second,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CallbackIngressDiagnostic {
+    pub code: String,
+    pub field: String,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CallbackIngressConfig {
+    pub enabled: bool,
+    pub routes: Vec<CallbackIngressRoute>,
+    pub security: CallbackIngressSecurity,
+    pub limits: CallbackIngressLimits,
+}
+
+impl CallbackIngressConfig {
+    pub fn from_document(document: &Value) -> Result<Self, DeploymentTargetProfileError> {
+        let Some(object) = document.as_object() else {
+            return Err(DeploymentTargetProfileError::new(
+                "callback ingress manifest must be a mapping",
+            ));
+        };
+        let enabled = optional_manifest_bool(object, &["enabled"])?.unwrap_or(false);
+        let routes = match object.get("routes") {
+            Some(Value::Array(routes)) => routes
+                .iter()
+                .map(CallbackIngressRoute::from_value)
+                .collect::<Result<Vec<_>, _>>()?,
+            Some(_) => {
+                return Err(DeploymentTargetProfileError::new(
+                    "callback ingress routes must be a list",
+                ));
+            }
+            None => Vec::new(),
+        };
+        let config = Self {
+            enabled,
+            routes,
+            security: CallbackIngressSecurity::from_value(object.get("security"))?,
+            limits: CallbackIngressLimits::from_value(object.get("limits"))?,
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
+    pub fn manifest_contract(&self) -> Value {
+        json!({
+            "enabled": self.enabled,
+            "routes": self.routes.iter().map(CallbackIngressRoute::canonical_value).collect::<Vec<_>>(),
+            "security": self.security.canonical_value(),
+            "limits": self.limits.canonical_value(),
+        })
+    }
+
+    pub fn content_digest(&self) -> String {
+        canonical_hash(&self.manifest_contract())
+    }
+
+    pub fn diagnostics(&self) -> Vec<CallbackIngressDiagnostic> {
+        if self.enabled && !self.security.require_signature {
+            vec![CallbackIngressDiagnostic {
+                code: "GB6002".to_owned(),
+                field: "callbackIngress.security.requireSignature".to_owned(),
+                message: "enabled callback ingress must require authenticated callback signatures"
+                    .to_owned(),
+            }]
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn validate(&self) -> Result<(), DeploymentTargetProfileError> {
+        if self.enabled
+            && !self
+                .routes
+                .iter()
+                .any(|route| route.command == "SubmitAsyncCallback")
+        {
+            return Err(DeploymentTargetProfileError::new(
+                "enabled callback ingress requires a SubmitAsyncCallback route",
+            ));
+        }
+        if self.limits.max_payload_bytes == 0 {
+            return Err(DeploymentTargetProfileError::new(
+                "callback ingress maxPayloadBytes must be positive",
+            ));
+        }
+        if self.limits.max_requests_per_second == 0 {
+            return Err(DeploymentTargetProfileError::new(
+                "callback ingress maxRequestsPerSecond must be positive",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GraphRelease {
     pub name: String,
     pub version: String,
@@ -1854,6 +2100,85 @@ fn assert_unique_deployment_targets(
         }
     }
     Ok(())
+}
+
+fn required_manifest_string(
+    object: &serde_json::Map<String, Value>,
+    keys: &[&str],
+    label: &str,
+) -> Result<String, DeploymentTargetProfileError> {
+    let value = keys.iter().find_map(|key| object.get(*key));
+    match value {
+        Some(Value::String(value)) if !value.trim().is_empty() => Ok(value.clone()),
+        _ => Err(DeploymentTargetProfileError::new(format!(
+            "{label} must be a non-empty string"
+        ))),
+    }
+}
+
+fn optional_manifest_bool(
+    object: &serde_json::Map<String, Value>,
+    keys: &[&str],
+) -> Result<Option<bool>, DeploymentTargetProfileError> {
+    match keys.iter().find_map(|key| object.get(*key)) {
+        Some(Value::Bool(value)) => Ok(Some(*value)),
+        Some(_) => Err(DeploymentTargetProfileError::new(
+            "manifest boolean field must be true or false",
+        )),
+        None => Ok(None),
+    }
+}
+
+fn optional_manifest_usize(
+    object: &serde_json::Map<String, Value>,
+    keys: &[&str],
+    label: &str,
+) -> Result<Option<usize>, DeploymentTargetProfileError> {
+    match keys.iter().find_map(|key| object.get(*key)) {
+        Some(Value::Number(value)) => {
+            let Some(value) = value.as_u64() else {
+                return Err(DeploymentTargetProfileError::new(format!(
+                    "{label} must be a positive integer"
+                )));
+            };
+            if value == 0 || value > usize::MAX as u64 {
+                return Err(DeploymentTargetProfileError::new(format!(
+                    "{label} must be a positive integer"
+                )));
+            }
+            Ok(Some(value as usize))
+        }
+        Some(_) => Err(DeploymentTargetProfileError::new(format!(
+            "{label} must be an integer"
+        ))),
+        None => Ok(None),
+    }
+}
+
+fn optional_manifest_u32(
+    object: &serde_json::Map<String, Value>,
+    keys: &[&str],
+    label: &str,
+) -> Result<Option<u32>, DeploymentTargetProfileError> {
+    match keys.iter().find_map(|key| object.get(*key)) {
+        Some(Value::Number(value)) => {
+            let Some(value) = value.as_u64() else {
+                return Err(DeploymentTargetProfileError::new(format!(
+                    "{label} must be a positive integer"
+                )));
+            };
+            if value == 0 || value > u64::from(u32::MAX) {
+                return Err(DeploymentTargetProfileError::new(format!(
+                    "{label} must be a positive integer"
+                )));
+            }
+            Ok(Some(value as u32))
+        }
+        Some(_) => Err(DeploymentTargetProfileError::new(format!(
+            "{label} must be an integer"
+        ))),
+        None => Ok(None),
+    }
 }
 
 fn required_string_field(

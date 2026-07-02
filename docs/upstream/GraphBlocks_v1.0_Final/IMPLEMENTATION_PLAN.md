@@ -351,6 +351,9 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
 - `WebhookHttpTransport` now provides the runtime transport adapter boundary: DNS preflight,
   signed POST request construction, and spec-defined receiver status mapping are implemented
   without adding a default HTTP/TLS client dependency to `graphblocks-runtime-core`.
+- Deployment manifests now include a `CallbackIngressConfig` contract for async callback ingress
+  routes, signature and anti-enumeration security, payload/rate limits, stable digests, and `GB6002`
+  diagnostics when enabled callback ingress does not require signatures.
 - Server-level HTTP/TLS webhook client integration and multi-process coordinator failover execution
   remain follow-on slices.
 
