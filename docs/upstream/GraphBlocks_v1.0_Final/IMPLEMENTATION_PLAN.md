@@ -453,6 +453,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   usage projections as strict JSON-compatible values, deep-freezes them on construction, and
   returns thawed copies from `to_json()` so untrusted callback/result payloads cannot be mutated
   after journaling.
+- Python `AsyncOperationResult.from_operation` now projects durable results only from terminal
+  `AsyncOperation` records, mapping terminal state to result status while preserving the operation
+  id and rejecting non-terminal waits or resumes.
 - `graphblocks-runtime-core::stdlib_runtime` now exposes deterministic `async.start_operation@1`
   and `async.await_callback@1` blocks so graph-level examples can start an external operation and
   checkpoint while waiting for callback without treating callback delivery as the source of truth.

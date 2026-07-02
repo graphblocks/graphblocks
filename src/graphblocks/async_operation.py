@@ -481,6 +481,14 @@ class AsyncOperationResult:
     def incomplete(cls, operation_id: str, output: object | None = None) -> AsyncOperationResult:
         return cls(operation_id=operation_id, status="incomplete", output=output)
 
+    @classmethod
+    def from_operation(cls, operation: AsyncOperation, output: object | None = None) -> AsyncOperationResult:
+        if not isinstance(operation, AsyncOperation):
+            raise ValueError("async operation result operation must be an AsyncOperation")
+        if operation.state not in TERMINAL_ASYNC_OPERATION_STATES:
+            raise ValueError("async operation result requires a terminal operation")
+        return cls(operation_id=operation.operation_id, status=operation.state, output=output)
+
     def with_external_effects(
         self,
         external_effects: Iterable[ExternalEffectRecord],

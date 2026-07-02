@@ -129,6 +129,64 @@ def test_async_operation_result_rejects_non_json_output_and_projection_values() 
         graphblocks.AsyncOperationResult.completed("op-1").with_projections(artifacts=[{"bad": object()}])
 
 
+def test_async_operation_result_projects_from_terminal_operation_state() -> None:
+    completed_operation = graphblocks.AsyncOperation.created(
+        operation_id="op-ci-1",
+        run_id="run-1",
+        node_id="startCI",
+        attempt_id="attempt-1",
+        kind="ci_job",
+        expected_schema="schemas/CICallback@1",
+        resume_token_hash="sha256:resume",
+        idempotency_key="idem-ci-1",
+        created_at="2026-07-02T00:00:00Z",
+        callback_ref="cbep-ci-1",
+    ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").wait_for_callback().mark_callback_received(
+        completed_at="2026-07-02T00:10:00Z"
+    ).mark_resuming().complete(completed_at="2026-07-02T00:10:05Z")
+    cancelled_operation = graphblocks.AsyncOperation.created(
+        operation_id="op-ci-2",
+        run_id="run-1",
+        node_id="startCI",
+        attempt_id="attempt-1",
+        kind="ci_job",
+        expected_schema="schemas/CICallback@1",
+        resume_token_hash="sha256:resume",
+        idempotency_key="idem-ci-2",
+        created_at="2026-07-02T00:00:00Z",
+    ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").cancel(completed_at="2026-07-02T00:01:00Z")
+
+    completed_result = graphblocks.AsyncOperationResult.from_operation(
+        completed_operation,
+        output={"summary": "ok"},
+    )
+    cancelled_result = graphblocks.AsyncOperationResult.from_operation(cancelled_operation)
+
+    assert completed_result.operation_id == "op-ci-1"
+    assert completed_result.status == graphblocks.AsyncOperationResultStatus.COMPLETED
+    assert completed_result.output == {"summary": "ok"}
+    assert cancelled_result.operation_id == "op-ci-2"
+    assert cancelled_result.status == graphblocks.AsyncOperationResultStatus.CANCELLED
+
+
+def test_async_operation_result_rejects_projection_from_non_terminal_operation() -> None:
+    waiting = graphblocks.AsyncOperation.created(
+        operation_id="op-ci-1",
+        run_id="run-1",
+        node_id="startCI",
+        attempt_id="attempt-1",
+        kind="ci_job",
+        expected_schema="schemas/CICallback@1",
+        resume_token_hash="sha256:resume",
+        idempotency_key="idem-ci-1",
+        created_at="2026-07-02T00:00:00Z",
+        callback_ref="cbep-ci-1",
+    ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").wait_for_callback()
+
+    with raises_value_error("async operation result requires a terminal operation"):
+        graphblocks.AsyncOperationResult.from_operation(waiting)
+
+
 def test_async_operation_records_callback_wait_metadata_and_state_transitions() -> None:
     operation = graphblocks.AsyncOperation.created(
         operation_id="op-ci-1",
@@ -384,6 +442,8 @@ def run_direct() -> None:
         test_async_operation_result_rejects_invalid_external_effect_records,
         test_async_operation_result_deep_copies_json_output_and_projection_sequences,
         test_async_operation_result_rejects_non_json_output_and_projection_values,
+        test_async_operation_result_projects_from_terminal_operation_state,
+        test_async_operation_result_rejects_projection_from_non_terminal_operation,
         test_async_operation_records_callback_wait_metadata_and_state_transitions,
         test_async_operation_records_polling_metadata_and_terminal_failure,
         test_async_operation_rejects_invalid_refs_and_transitions,
