@@ -221,6 +221,52 @@ def test_async_operation_rejects_invalid_refs_and_transitions() -> None:
         completed.mark_resuming()
 
 
+def test_async_operation_rejects_state_timestamp_inconsistency() -> None:
+    with raises_value_error("async operation submitted state requires submitted_at"):
+        graphblocks.AsyncOperation(
+            operation_id="op-ci-1",
+            run_id="run-1",
+            node_id="startCI",
+            attempt_id="attempt-1",
+            kind="ci_job",
+            state="submitted",
+            expected_schema="schemas/CICallback@1",
+            resume_token_hash="sha256:resume",
+            idempotency_key="idem-ci-1",
+            created_at="2026-07-02T00:00:00Z",
+        )
+
+    with raises_value_error("async operation terminal state requires completed_at"):
+        graphblocks.AsyncOperation(
+            operation_id="op-ci-1",
+            run_id="run-1",
+            node_id="startCI",
+            attempt_id="attempt-1",
+            kind="ci_job",
+            state="completed",
+            expected_schema="schemas/CICallback@1",
+            resume_token_hash="sha256:resume",
+            idempotency_key="idem-ci-1",
+            created_at="2026-07-02T00:00:00Z",
+            submitted_at="2026-07-02T00:00:01Z",
+        )
+
+    with raises_value_error("async operation created state must not have submitted_at or completed_at"):
+        graphblocks.AsyncOperation(
+            operation_id="op-ci-1",
+            run_id="run-1",
+            node_id="startCI",
+            attempt_id="attempt-1",
+            kind="ci_job",
+            state="created",
+            expected_schema="schemas/CICallback@1",
+            resume_token_hash="sha256:resume",
+            idempotency_key="idem-ci-1",
+            created_at="2026-07-02T00:00:00Z",
+            completed_at="2026-07-02T00:10:05Z",
+        )
+
+
 def test_async_operation_result_exports_are_available() -> None:
     assert "AsyncOperation" in graphblocks.__all__
     assert "AsyncOperationState" in graphblocks.__all__
@@ -238,6 +284,7 @@ def run_direct() -> None:
         test_async_operation_records_callback_wait_metadata_and_state_transitions,
         test_async_operation_records_polling_metadata_and_terminal_failure,
         test_async_operation_rejects_invalid_refs_and_transitions,
+        test_async_operation_rejects_state_timestamp_inconsistency,
         test_async_operation_result_exports_are_available,
     )
     for test in tests:

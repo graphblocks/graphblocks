@@ -177,6 +177,22 @@ class AsyncOperation:
                     field_name,
                     _validate_non_empty_string("async operation", field_name, value),
                 )
+        if self.state == "created" and (self.submitted_at is not None or self.completed_at is not None):
+            raise ValueError("async operation created state must not have submitted_at or completed_at")
+        if self.state in {
+            "submitted",
+            "waiting_callback",
+            "callback_received",
+            "polling",
+            "resuming",
+            "completed",
+            "failed",
+            "cancelled",
+            "expired",
+        } and self.submitted_at is None:
+            raise ValueError(f"async operation {self.state} state requires submitted_at")
+        if self.state in TERMINAL_ASYNC_OPERATION_STATES and self.completed_at is None:
+            raise ValueError("async operation terminal state requires completed_at")
 
     @classmethod
     def created(
