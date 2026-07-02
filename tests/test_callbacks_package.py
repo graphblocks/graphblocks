@@ -1026,6 +1026,22 @@ def test_callback_endpoint_ref_requires_complete_resume_identity() -> None:
             tenant_id="tenant_001",
         ),
     )
+    _assert_raises_value_error(
+        "expires_at must be an ISO-8601 datetime",
+        lambda: CallbackEndpointRef(
+            endpoint_id="cbep_ci_001",
+            url="https://graphblocks.example.com/v1/callbacks/op_ci_001",
+            accepted_schema="schemas/CICallback@1",
+            auth=CallbackEndpointAuth(kind="hmac", secret_ref="secret://callbacks/ci"),
+            operation_id="op_ci_001",
+            run_id="run_coding_001",
+            node_id="waitCI",
+            attempt_id="attempt_001",
+            release_id="rel_001",
+            tenant_id="tenant_001",
+            expires_at="later",
+        ),
+    )
 
 
 def test_callback_resume_admission_accepts_current_endpoint_receipt() -> None:

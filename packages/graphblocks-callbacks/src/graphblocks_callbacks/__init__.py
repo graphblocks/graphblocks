@@ -836,7 +836,7 @@ class CallbackEndpointRef:
         if not isinstance(self.auth, CallbackEndpointAuth):
             raise ValueError("auth must be a CallbackEndpointAuth")
         if self.expires_at is not None:
-            _require_non_empty_string("expires_at", self.expires_at)
+            _parse_field_timestamp("expires_at", self.expires_at)
 
     def binding_key(self) -> str:
         return ":".join(

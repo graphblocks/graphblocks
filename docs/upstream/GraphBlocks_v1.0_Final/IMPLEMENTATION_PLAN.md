@@ -383,6 +383,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   async operations, with bearer-token, `hmac-sha256`, Ed25519 verifier-boundary, mTLS
   client-identity, and OIDC/JWT verifier-boundary helpers that build `AsyncCallbackSubmission` only
   after authentication succeeds.
+- `CallbackEndpointRef` now validates `expires_at` as an ISO-8601 timestamp at creation time, so
+  invalid callback endpoint deadlines are rejected before resume admission.
 - Callback rejection paths now emit durable `ExternalCallbackRejected` metadata events for stale
   attempts, schema mismatches, and payload-limit failures without journaling rejected payload bodies;
   SQLite persistence covers these rejection events across reopen.
