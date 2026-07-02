@@ -3628,6 +3628,52 @@ def test_server_app_deduplicates_repeated_subscription_ack_by_event_identity() -
     )
 
 
+def test_server_app_rejects_subscription_ack_with_invalid_timestamp() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-ack-invalid-time-1"] = (
+        {
+            "kind": "RunSucceeded",
+            "metadata": {"eventId": "evt-terminal", "sequence": 1},
+            "payload": {},
+        },
+    )
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-ack-invalid-time-1/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-ack-invalid-time-1",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-ack-invalid-time-1/subscriptions/sub-ack-invalid-time-1/ack",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"eventId": "evt-terminal"}).encode("utf-8"),
+            requested_at="not-a-date",
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "ack request acknowledged_at must be an ISO datetime",
+    }
+    assert app.event_acks("run-ack-invalid-time-1", "sub-ack-invalid-time-1") == ()
+
+
 def test_server_app_rejects_ack_with_conflicting_event_id_and_cursor() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     app._events_by_run_id["run-ack-conflict-1"] = (

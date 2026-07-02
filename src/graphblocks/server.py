@@ -2401,6 +2401,7 @@ class GraphBlocksServerApp:
         payload: Mapping[str, object],
         acknowledged_at: str,
     ) -> ServerResponse:
+        acknowledged_at = _validate_iso_datetime("ack request", "acknowledged_at", acknowledged_at)
         event_id = payload.get("event_id", payload.get("eventId"))
         cursor = payload.get("cursor")
         if event_id is None and cursor is None:
