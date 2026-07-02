@@ -1713,6 +1713,86 @@ def test_server_app_detaches_from_run_without_cancelling_or_dropping_events() ->
     assert json.loads(status.body.decode("utf-8"))["state"] == "succeeded"
 
 
+def test_server_app_treats_repeated_detach_from_same_client_as_idempotent() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "server-detach-idempotent"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Detach {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "ok"}},
+                    "runId": "run-detach-idempotent-1",
+                    "responseId": "response-detach-idempotent-1",
+                }
+            ).encode("utf-8"),
+        )
+    )
+    first = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-detach-idempotent-1/detach",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"client_id": "client-1", "reason": "tab_closed"}).encode("utf-8"),
+            requested_at="2026-07-03T00:00:00Z",
+        )
+    )
+    duplicate = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-detach-idempotent-1/detach",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"client_id": "client-1", "reason": "network_retry"}).encode("utf-8"),
+            requested_at="2026-07-03T00:00:05Z",
+        )
+    )
+
+    assert first.status_code == 202
+    assert duplicate.status_code == 200
+    assert json.loads(duplicate.body.decode("utf-8")) == {
+        "ok": True,
+        "runId": "run-detach-idempotent-1",
+        "clientId": "client-1",
+        "reason": "tab_closed",
+        "status": "detached",
+        "lastCursor": "run-detach-idempotent-1:2",
+        "detachedAt": "2026-07-03T00:00:00Z",
+        "duplicate": True,
+    }
+    assert app.detachments("run-detach-idempotent-1") == (
+        {
+            "clientId": "client-1",
+            "reason": "tab_closed",
+            "detachedAt": "2026-07-03T00:00:00Z",
+            "lastCursor": "run-detach-idempotent-1:2",
+        },
+    )
+
+
 def test_server_app_rejects_detach_for_missing_run_or_client_id() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     graph = {

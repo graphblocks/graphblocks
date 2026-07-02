@@ -2048,6 +2048,21 @@ class GraphBlocksServerApp:
             "lastCursor": last_cursor,
         })
         existing = self._detachments_by_run_id.get(run_id, ())
+        for detached in existing:
+            if detached.get("clientId") == client_id:
+                return ServerResponse.json(
+                    200,
+                    {
+                        "ok": True,
+                        "runId": run_id,
+                        "clientId": client_id,
+                        "reason": detached.get("reason"),
+                        "status": "detached",
+                        "lastCursor": detached.get("lastCursor"),
+                        "detachedAt": detached.get("detachedAt"),
+                        "duplicate": True,
+                    },
+                )
         self._detachments_by_run_id[run_id] = (*existing, record)
         return ServerResponse.json(
             202,
