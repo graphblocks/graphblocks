@@ -575,6 +575,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   delivery adapters, rejecting unsupported schemes, userinfo URLs, localhost/metadata hosts, and
   loopback/private/link-local/reserved IP destinations unless private targets are explicitly
   allowed by deployment policy.
+- `graphblocks-callbacks` now provides callback payload projection helpers that canonicalize
+  strict JSON payloads, keep bounded payloads inline with a digest, and require an `ArtifactRef`
+  when payloads exceed the configured inline byte limit.
 - `graphblocks-server` now exposes framework-neutral
   `POST /callbacks/deliveries/{delivery_id}/redrive` and
   `POST /callbacks/deliveries/{delivery_id}/dead-letter`

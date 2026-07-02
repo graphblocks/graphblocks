@@ -15,12 +15,15 @@ if str(ROOT / "src") not in sys.path:
     sys.path.insert(0, str(ROOT / "src"))
 
 
+from graphblocks import ArtifactRef  # noqa: E402
 from graphblocks_callbacks import (  # noqa: E402
     CallbackEnvelope,
     CallbackDeliveryProjection,
+    CallbackPayloadProjection,
     CallbackRetryPolicy,
     REQUIRED_WEBHOOK_HEADERS,
     WebhookTargetSafety,
+    project_callback_payload,
     validate_webhook_target_url,
     verify_webhook_headers_hmac_sha256,
     verify_webhook_hmac_sha256,
@@ -360,3 +363,47 @@ def test_webhook_target_safety_can_allow_private_hosts_explicitly() -> None:
     assert safety.allowed is True
     assert safety.reason == "allowed"
     assert safety.host == "10.0.0.7"
+
+
+def test_callback_payload_projection_keeps_small_payload_inline() -> None:
+    projection = project_callback_payload(
+        {"status": "completed", "checks": ["lint", "unit"]},
+        max_inline_bytes=256,
+    )
+
+    assert projection == CallbackPayloadProjection(
+        mode="inline",
+        payload={"status": "completed", "checks": ["lint", "unit"]},
+        payload_digest=projection.payload_digest,
+        payload_size_bytes=47,
+    )
+    assert projection.artifact is None
+    assert projection.payload_digest.startswith("sha256:")
+
+
+def test_callback_payload_projection_converts_large_payload_to_artifact_ref() -> None:
+    artifact = ArtifactRef(
+        "artifact-callback-log",
+        "blob://callbacks/run-1/log.txt",
+        media_type="text/plain",
+        size_bytes=2048,
+        checksum="sha256:callback-log",
+    )
+    projection = project_callback_payload(
+        {"log": "x" * 200},
+        max_inline_bytes=64,
+        artifact=artifact,
+    )
+
+    assert projection.mode == "artifact_reference"
+    assert projection.payload == {}
+    assert projection.artifact == artifact
+    assert projection.payload_size_bytes > 64
+    assert projection.payload_digest.startswith("sha256:")
+
+
+def test_callback_payload_projection_rejects_oversized_payload_without_artifact_ref() -> None:
+    _assert_raises_value_error(
+        "oversized callback payload requires an ArtifactRef",
+        lambda: project_callback_payload({"log": "x" * 200}, max_inline_bytes=64),
+    )

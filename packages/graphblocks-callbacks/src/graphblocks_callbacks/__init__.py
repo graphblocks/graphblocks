@@ -10,7 +10,7 @@ import json
 import math
 from urllib.parse import urlparse
 
-from graphblocks import canonical_dumps, canonical_hash
+from graphblocks import ArtifactRef, canonical_dumps, canonical_hash
 
 
 REQUIRED_WEBHOOK_HEADERS = (
@@ -105,6 +105,58 @@ def _json_payload(value: Mapping[str, object]) -> dict[str, object]:
     _validate_json_value(dict(value))
     json.dumps(value, allow_nan=False)
     return deepcopy(dict(value))
+
+
+@dataclass(frozen=True, slots=True)
+class CallbackPayloadProjection:
+    mode: str
+    payload: dict[str, object] = field(default_factory=dict)
+    payload_digest: str | None = None
+    payload_size_bytes: int = 0
+    artifact: ArtifactRef | None = None
+
+    def __post_init__(self) -> None:
+        _require_non_empty_string("mode", self.mode)
+        if self.mode not in {"inline", "artifact_reference"}:
+            raise ValueError("mode must be inline or artifact_reference")
+        if not isinstance(self.payload, Mapping):
+            raise ValueError("payload must be a JSON object")
+        object.__setattr__(self, "payload", _json_payload(self.payload))
+        if self.payload_digest is not None:
+            _require_non_empty_string("payload_digest", self.payload_digest)
+        object.__setattr__(self, "payload_size_bytes", _non_negative_int("payload_size_bytes", self.payload_size_bytes))
+        if self.mode == "inline" and self.artifact is not None:
+            raise ValueError("inline callback payload projection must not include an artifact")
+        if self.mode == "artifact_reference" and not isinstance(self.artifact, ArtifactRef):
+            raise ValueError("artifact_reference callback payload projection requires an ArtifactRef")
+
+
+def project_callback_payload(
+    payload: Mapping[str, object],
+    *,
+    max_inline_bytes: int,
+    artifact: ArtifactRef | None = None,
+) -> CallbackPayloadProjection:
+    max_inline_bytes = _non_negative_int("max_inline_bytes", max_inline_bytes)
+    payload_copy = _json_payload(payload)
+    canonical = canonical_dumps(payload_copy).encode("utf-8")
+    digest = canonical_hash(payload_copy)
+    if len(canonical) <= max_inline_bytes:
+        return CallbackPayloadProjection(
+            mode="inline",
+            payload=payload_copy,
+            payload_digest=digest,
+            payload_size_bytes=len(canonical),
+        )
+    if artifact is None:
+        raise ValueError("oversized callback payload requires an ArtifactRef")
+    return CallbackPayloadProjection(
+        mode="artifact_reference",
+        payload={},
+        payload_digest=digest,
+        payload_size_bytes=len(canonical),
+        artifact=artifact,
+    )
 
 
 def _host_is_forbidden(host: str) -> bool:
@@ -537,10 +589,12 @@ __all__ = [
     "CallbackDeadLetterRecord",
     "CallbackDeliveryProjection",
     "CallbackEnvelope",
+    "CallbackPayloadProjection",
     "CallbackRedriveRecord",
     "CallbackRetryPolicy",
     "REQUIRED_WEBHOOK_HEADERS",
     "WebhookTargetSafety",
+    "project_callback_payload",
     "sign_webhook_hmac_sha256",
     "validate_webhook_target_url",
     "verify_webhook_headers_hmac_sha256",
