@@ -605,7 +605,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   scope literals (`run`, `conversation`, `project`, `tenant`, `deployment`). Nested event filter and
   delivery configs are immutable snapshots and are thawed back to plain JSON for response payloads.
   Callback registration ids are single-assignment and cannot overwrite an existing active or
-  revoked projection.
+  revoked projection. Repeating `RevokeCallback` for an already revoked registration is idempotent
+  and does not rewrite the stored projection.
 - `graphblocks-server` now exposes framework-neutral `POST /runs/{run_id}/cancel`,
   `POST /runs/{run_id}/pause`, `POST /runs/{run_id}/resume`, and
   `POST /runs/{run_id}/expire` `CancelRun`/`PauseRun`/`ResumeRun`/`ExpireRun` routes,

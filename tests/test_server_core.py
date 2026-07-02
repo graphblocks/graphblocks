@@ -2890,6 +2890,62 @@ def test_server_app_rejects_duplicate_callback_registration_id_without_overwrite
     )
 
 
+def test_server_app_treats_repeated_callback_revoke_as_idempotent() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/register",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "callback-sub-revoke-idempotent",
+                    "scope": "tenant",
+                    "scopeId": "tenant-1",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {
+                        "kind": "webhook",
+                        "url": "https://relay.example/events",
+                        "signing": {"algorithm": "hmac-sha256", "secret_ref": "secret://relay"},
+                    },
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-03T00:00:00Z",
+        )
+    )
+
+    first = app.handle(
+        ServerRequest(
+            method="DELETE",
+            path="/callbacks/callback-sub-revoke-idempotent",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+        )
+    )
+    duplicate = app.handle(
+        ServerRequest(
+            method="DELETE",
+            path="/callbacks/callback-sub-revoke-idempotent",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+        )
+    )
+
+    assert first.status_code == 202
+    assert duplicate.status_code == 200
+    assert json.loads(duplicate.body.decode("utf-8")) == {
+        "ok": True,
+        "subscriptionId": "callback-sub-revoke-idempotent",
+        "status": "revoked",
+        "duplicate": True,
+    }
+    assert app.callback_registrations()[0].status == "revoked"
+
+
 def test_server_app_registers_callback_projection_from_accepted_run_initial_cursor() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     graph = {

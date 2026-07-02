@@ -1367,6 +1367,16 @@ class GraphBlocksServerApp:
                         "error": f"callback registration {subscription_id!r} not found",
                     },
                 )
+            if registration.status == "revoked":
+                return ServerResponse.json(
+                    200,
+                    {
+                        "ok": True,
+                        "subscriptionId": subscription_id,
+                        "status": "revoked",
+                        "duplicate": True,
+                    },
+                )
             revoked = replace(registration, status="revoked")
             self._callback_registrations[subscription_id] = revoked
             return ServerResponse.json(
