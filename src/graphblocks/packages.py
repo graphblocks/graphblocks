@@ -262,6 +262,17 @@ def package_rows(catalog: dict[str, Any]) -> list[dict[str, Any]]:
     return sorted(rows, key=lambda item: str(item.get("distribution")))
 
 
+def _package_categories(package: dict[str, Any]) -> set[str]:
+    categories: set[str] = set()
+    raw_category = package.get("category")
+    if isinstance(raw_category, str):
+        categories.add(raw_category)
+    raw_categories = package.get("categories", [])
+    if isinstance(raw_categories, list):
+        categories.update(category for category in raw_categories if isinstance(category, str))
+    return categories
+
+
 def build_package_lock(
     catalog: dict[str, Any],
     *,
@@ -354,14 +365,7 @@ def build_package_lock(
     if excluded_category_set:
         for distribution in sorted(default_selected):
             package = packages_by_distribution[distribution]
-            categories: set[str] = set()
-            raw_category = package.get("category")
-            if isinstance(raw_category, str):
-                categories.add(raw_category)
-            raw_categories = package.get("categories", [])
-            if isinstance(raw_categories, list):
-                categories.update(category for category in raw_categories if isinstance(category, str))
-            blocked = sorted(categories & excluded_category_set)
+            blocked = sorted(_package_categories(package) & excluded_category_set)
             if blocked:
                 raise ValueError(
                     f"default package closure includes excluded category {blocked[0]!r} "
@@ -1109,19 +1113,20 @@ def doctor_package_catalog(catalog: dict[str, Any], *, root: str | Path | None =
     if excluded_categories and isinstance(default_distribution, str) and default_distribution in packages_by_distribution:
         try:
             default_lock = build_package_lock(catalog, requested=(), include_default=True)
-        except ValueError:
+        except ValueError as error:
             default_lock = None
+            if "default package closure includes excluded category" in str(error):
+                diagnostics.append(
+                    Diagnostic(
+                        "PackageDefaultIncludesExcludedCategory",
+                        str(error),
+                        "$.defaultMetaPackage.excludedCategories",
+                    )
+                )
         if default_lock is not None:
             for entry in default_lock.entries:
                 package = packages_by_distribution.get(entry.distribution, {})
-                categories: set[str] = set()
-                raw_category = package.get("category")
-                if isinstance(raw_category, str):
-                    categories.add(raw_category)
-                raw_categories = package.get("categories", [])
-                if isinstance(raw_categories, list):
-                    categories.update(category for category in raw_categories if isinstance(category, str))
-                blocked = sorted(categories & excluded_categories)
+                blocked = sorted(_package_categories(package) & excluded_categories)
                 if blocked:
                     diagnostics.append(
                         Diagnostic(

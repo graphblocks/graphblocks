@@ -1132,6 +1132,36 @@ def test_package_lock_rejects_default_closure_excluded_categories() -> None:
         build_package_lock(catalog, requested=(), include_default=True)
 
 
+def test_package_catalog_doctor_reports_default_closure_excluded_categories() -> None:
+    diagnostics = doctor_package_catalog(
+        {
+            "catalogVersion": 1,
+            "specVersion": "1.0",
+            "defaultMetaPackage": {
+                "distribution": "graphblocks",
+                "dependencies": [],
+                "excludedCategories": ["model_provider"],
+            },
+            "packages": [
+                {"distribution": "graphblocks", "default": True, "dependsOn": ["graphblocks-openai"]},
+                {
+                    "distribution": "graphblocks-openai",
+                    "default": False,
+                    "dependsOn": [],
+                    "categories": ["model_provider"],
+                },
+            ],
+        }
+    )
+
+    assert [(item.code, item.message) for item in diagnostics.diagnostics] == [
+        (
+            "PackageDefaultIncludesExcludedCategory",
+            "default package closure includes excluded category 'model_provider' from package 'graphblocks-openai'",
+        )
+    ]
+
+
 def test_package_lock_records_validate_identity_types_and_uniqueness() -> None:
     entry = PackageLockEntry(
         distribution="graphblocks-core",

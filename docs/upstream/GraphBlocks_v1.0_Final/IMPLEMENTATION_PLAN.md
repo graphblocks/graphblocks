@@ -102,7 +102,8 @@ graphblocks-cli
   `forbiddenDependencies`, so optional integration SDKs cannot enter a generated lock indirectly
   through a transitive dependency. Default metapackage lock generation also rejects packages in
   categories listed by `excludedCategories`, while still allowing those integrations when explicitly
-  requested outside the default closure.
+  requested outside the default closure. `graphblocks packages doctor` reports the same
+  excluded-default closure issue as a catalog diagnostic.
 
 ## 4. Phase 1 — Local Rust Runtime (`GB-C1-LOCAL-RUNTIME`)
 
