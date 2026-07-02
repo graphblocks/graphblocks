@@ -561,6 +561,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   with no default HTTP/WebSocket client dependency. Its initial facade projects webhook envelopes,
   required headers, and HMAC-SHA256 signing/verification helpers while keeping callback delivery
   non-authoritative relative to the event stream and runtime journals.
+- The callback projection facade now validates webhook payloads as strict JSON before signing:
+  object keys must be strings, non-finite numbers are rejected, payloads are deep-copied, and a
+  deterministic fuzz-style test pins signature stability under key reordering and caller mutation.
 - `graphblocks-server` now exposes framework-neutral
   `POST /callbacks/deliveries/{delivery_id}/redrive` and
   `POST /callbacks/deliveries/{delivery_id}/dead-letter`

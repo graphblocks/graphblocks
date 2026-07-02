@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import math
+import random
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 
@@ -18,6 +21,15 @@ from graphblocks_callbacks import (  # noqa: E402
     verify_webhook_hmac_sha256,
     webhook_headers_hmac_sha256,
 )
+
+
+def _assert_raises_value_error(match: str, callback: Callable[[], object]) -> None:
+    try:
+        callback()
+    except ValueError as exc:
+        assert match in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
 
 
 def test_callback_envelope_projects_required_webhook_headers() -> None:
@@ -71,3 +83,90 @@ def test_callback_envelope_deep_copies_payload() -> None:
     projected["payload"]["summary"]["files"].append("c.py")  # type: ignore[index, union-attr]
 
     assert envelope.to_payload()["payload"] == {"summary": {"files": ["a.py"]}}
+
+
+def test_callback_envelope_rejects_non_json_payload_values() -> None:
+    _assert_raises_value_error(
+        "payload must contain only string object keys",
+        lambda: CallbackEnvelope(
+            delivery_id="del_001",
+            subscription_id="sub_001",
+            event_id="evt_1042",
+            run_id="run_coding_001",
+            sequence=1042,
+            cursor="evt_1042",
+            type="ReviewRequested",
+            payload={1: "not-json-object-key"},  # type: ignore[dict-item]
+            idempotency_key="sub_001:evt_1042",
+            occurred_at="2026-07-02T00:00:00Z",
+        ),
+    )
+    _assert_raises_value_error(
+        "payload must not contain non-finite numbers",
+        lambda: CallbackEnvelope(
+            delivery_id="del_001",
+            subscription_id="sub_001",
+            event_id="evt_1042",
+            run_id="run_coding_001",
+            sequence=1042,
+            cursor="evt_1042",
+            type="ReviewRequested",
+            payload={"value": math.nan},
+            idempotency_key="sub_001:evt_1042",
+            occurred_at="2026-07-02T00:00:00Z",
+        ),
+    )
+
+
+def test_callback_envelope_deterministic_fuzz_signatures_survive_reordering_and_mutation() -> None:
+    rng = random.Random(6016)
+
+    for case in range(100):
+        keys = [f"k_{index:02d}" for index in range(rng.randint(2, 8))]
+        values = {
+            key: {
+                "number": rng.randint(0, 1_000_000),
+                "flag": bool(rng.getrandbits(1)),
+                "items": [rng.choice(["alpha", "beta", "gamma"]), rng.randint(0, 99)],
+            }
+            for key in keys
+        }
+        shuffled_keys = keys[:]
+        rng.shuffle(shuffled_keys)
+        ordered_payload = {key: values[key] for key in keys}
+        reordered_payload = {key: values[key] for key in shuffled_keys}
+
+        envelope = CallbackEnvelope(
+            delivery_id=f"del_{case:03d}",
+            subscription_id="sub_fuzz",
+            event_id=f"evt_{case:03d}",
+            run_id="run_fuzz",
+            sequence=case,
+            cursor=f"evt_{case:03d}",
+            type="FuzzEvent",
+            payload=ordered_payload,
+            idempotency_key=f"sub_fuzz:evt_{case:03d}",
+            occurred_at="2026-07-02T00:00:00Z",
+            delivered_at="2026-07-02T00:00:01Z",
+        )
+        reordered_envelope = CallbackEnvelope(
+            delivery_id=f"del_{case:03d}",
+            subscription_id="sub_fuzz",
+            event_id=f"evt_{case:03d}",
+            run_id="run_fuzz",
+            sequence=case,
+            cursor=f"evt_{case:03d}",
+            type="FuzzEvent",
+            payload=reordered_payload,
+            idempotency_key=f"sub_fuzz:evt_{case:03d}",
+            occurred_at="2026-07-02T00:00:00Z",
+            delivered_at="2026-07-02T00:00:01Z",
+        )
+
+        before = webhook_headers_hmac_sha256(envelope, b"callback-secret")
+        ordered_payload[keys[0]]["items"].append("mutated")  # type: ignore[index, union-attr]
+        after = webhook_headers_hmac_sha256(envelope, b"callback-secret")
+        reordered = webhook_headers_hmac_sha256(reordered_envelope, b"callback-secret")
+
+        assert before == after
+        assert before == reordered

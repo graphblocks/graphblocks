@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hmac
 import json
+import math
 
 from graphblocks import canonical_dumps, canonical_hash
 
@@ -31,8 +32,31 @@ def _require_non_empty_string(field_name: str, value: str) -> None:
         raise ValueError(f"{field_name} must be a non-empty string")
 
 
+def _validate_json_value(value: object) -> None:
+    if value is None or isinstance(value, str) or isinstance(value, bool):
+        return
+    if isinstance(value, int):
+        return
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("payload must not contain non-finite numbers")
+        return
+    if isinstance(value, list):
+        for item in value:
+            _validate_json_value(item)
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise ValueError("payload must contain only string object keys")
+            _validate_json_value(item)
+        return
+    raise ValueError("payload must contain only JSON values")
+
+
 def _json_payload(value: Mapping[str, object]) -> dict[str, object]:
-    json.dumps(value)
+    _validate_json_value(dict(value))
+    json.dumps(value, allow_nan=False)
     return deepcopy(dict(value))
 
 
