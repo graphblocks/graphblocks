@@ -223,6 +223,7 @@ def default_server_route_manifest() -> ServerRouteManifest:
             ServerEndpoint("POST", "/runs", "http", "invoke_graph", auth_required=True),
             ServerEndpoint("GET", "/runs/{run_id}", "http", "get_run_status", auth_required=True),
             ServerEndpoint("POST", "/runs/{run_id}/attach", "http", "attach_to_run", auth_required=True),
+            ServerEndpoint("POST", "/runs/{run_id}/detach", "http", "detach_from_run", auth_required=True),
             ServerEndpoint("POST", "/runs/{run_id}/cancel", "http", "cancel_run", auth_required=True),
             ServerEndpoint("POST", "/callbacks/{operation_id}", "http", "submit_async_callback", auth_required=True),
             ServerEndpoint("GET", "/runs/{run_id}/events", "sse", "application_events", auth_required=True),
@@ -565,6 +566,11 @@ class GraphBlocksServerApp:
         init=False,
         repr=False,
     )
+    _detachments_by_run_id: dict[str, tuple[dict[str, object], ...]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
 
     def handle(self, request: ServerRequest) -> ServerResponse:
         try:
@@ -648,6 +654,30 @@ class GraphBlocksServerApp:
                 if not isinstance(payload, Mapping):
                     raise ValueError("attach request body must be a JSON object")
                 return self._attach_to_run_response(run_id, events, payload)
+            except (TypeError, ValueError, json.JSONDecodeError) as error:
+                return ServerResponse.json(
+                    400,
+                    {
+                        "ok": False,
+                        "error": str(error),
+                    },
+                )
+        if route.operation == "detach_from_run":
+            try:
+                run_id = route_match.path_params.get("run_id", "")
+                events = self._events_by_run_id.get(run_id)
+                if events is None:
+                    return ServerResponse.json(
+                        404,
+                        {
+                            "ok": False,
+                            "error": f"run detach stream not found for run {run_id!r}",
+                        },
+                    )
+                payload = json.loads(request.body.decode("utf-8") or "{}")
+                if not isinstance(payload, Mapping):
+                    raise ValueError("detach request body must be a JSON object")
+                return self._detach_from_run_response(run_id, events, payload, request.requested_at or _utc_now_iso())
             except (TypeError, ValueError, json.JSONDecodeError) as error:
                 return ServerResponse.json(
                     400,
@@ -898,6 +928,10 @@ class GraphBlocksServerApp:
         operation_id = _validate_non_empty_string("server async callback", "operation_id", operation_id)
         return self._callbacks_by_operation_id.get(operation_id, ())
 
+    def detachments(self, run_id: str) -> tuple[dict[str, object], ...]:
+        run_id = _validate_non_empty_string("server detach", "run_id", run_id)
+        return self._detachments_by_run_id.get(run_id, ())
+
     def _run_status_payload(
         self,
         run_id: str,
@@ -1021,6 +1055,56 @@ class GraphBlocksServerApp:
                 "events": replayed_events,
             },
         )
+
+    def _detach_from_run_response(
+        self,
+        run_id: str,
+        events: tuple[dict[str, object], ...],
+        payload: Mapping[str, object],
+        detached_at: str,
+    ) -> ServerResponse:
+        client_id = _validate_non_empty_string(
+            "detach request",
+            "client_id",
+            payload.get("client_id", payload.get("clientId", "")),
+        )
+        reason_value = payload.get("reason")
+        reason = (
+            _validate_non_empty_string("detach request", "reason", reason_value)
+            if reason_value is not None
+            else None
+        )
+        last_sequence = self._last_event_sequence(events)
+        last_cursor = f"{run_id}:{last_sequence}"
+        record: dict[str, object] = {
+            "clientId": client_id,
+            "reason": reason,
+            "detachedAt": detached_at,
+            "lastCursor": last_cursor,
+        }
+        existing = self._detachments_by_run_id.get(run_id, ())
+        self._detachments_by_run_id[run_id] = (*existing, record)
+        return ServerResponse.json(
+            202,
+            {
+                "ok": True,
+                "runId": run_id,
+                "clientId": client_id,
+                "reason": reason,
+                "status": "detached",
+                "lastCursor": last_cursor,
+            },
+        )
+
+    def _last_event_sequence(self, events: tuple[dict[str, object], ...]) -> int:
+        last_sequence = 0
+        for event in events:
+            metadata = event.get("metadata")
+            if isinstance(metadata, Mapping):
+                sequence = metadata.get("sequence")
+                if isinstance(sequence, int) and not isinstance(sequence, bool) and sequence > last_sequence:
+                    last_sequence = sequence
+        return last_sequence
 
 
 class ServerProtocolVersionMismatchError(ValueError):

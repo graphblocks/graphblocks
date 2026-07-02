@@ -371,6 +371,9 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
 - `graphblocks-server` now exposes the framework-neutral `POST /runs/{run_id}/attach`
   `AttachToRun` route, replaying stored events after a supplied cursor and returning explicit
   `CursorExpired` recovery metadata when the requested cursor is no longer retained.
+- `graphblocks-server` now exposes the framework-neutral `POST /runs/{run_id}/detach`
+  `DetachFromRun` route, recording client detach projections while preserving the authoritative
+  event stream and current run status.
 - Server-level HTTP/TLS webhook client integration and multi-process coordinator failover execution
   remain follow-on slices.
 

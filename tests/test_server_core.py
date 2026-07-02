@@ -99,6 +99,14 @@ def test_server_route_manifest_matches_attach_to_run_path() -> None:
     assert route_match.path_params == {"run_id": "run-123"}
 
 
+def test_server_route_manifest_matches_detach_from_run_path() -> None:
+    route_match = default_server_route_manifest().match("POST", "/runs/run-123/detach")
+
+    assert route_match.endpoint.operation == "detach_from_run"
+    assert route_match.endpoint.auth_required is True
+    assert route_match.path_params == {"run_id": "run-123"}
+
+
 def test_server_route_manifest_matches_async_callback_ingress_path() -> None:
     route_match = default_server_route_manifest().match("POST", "/callbacks/op-ci-1")
 
@@ -949,6 +957,164 @@ def test_server_app_reports_attach_cursor_expired_for_unknown_cursor() -> None:
         "nearestAvailableCursor": "run-attach-expired-1:1",
         "lastCursor": "run-attach-expired-1:2",
         "lastSequence": 2,
+    }
+
+
+def test_server_app_detaches_from_run_without_cancelling_or_dropping_events() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "server-detach"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Detach {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "ok"}},
+                    "runId": "run-detach-1",
+                    "responseId": "response-detach-1",
+                }
+            ).encode("utf-8"),
+        )
+    )
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-detach-1/detach",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"client_id": "client-1", "reason": "tab_closed"}).encode("utf-8"),
+            requested_at="2026-07-02T00:00:00Z",
+        )
+    )
+    events = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-detach-1/events",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+        )
+    )
+    status = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-detach-1",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+        )
+    )
+
+    assert response.status_code == 202
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": True,
+        "runId": "run-detach-1",
+        "clientId": "client-1",
+        "reason": "tab_closed",
+        "status": "detached",
+        "lastCursor": "run-detach-1:2",
+    }
+    assert app.detachments("run-detach-1") == (
+        {
+            "clientId": "client-1",
+            "reason": "tab_closed",
+            "detachedAt": "2026-07-02T00:00:00Z",
+            "lastCursor": "run-detach-1:2",
+        },
+    )
+    assert events.status_code == 200
+    assert [event["kind"] for event in json.loads(events.body.decode("utf-8"))["events"]] == [
+        "RunStarted",
+        "RunSucceeded",
+    ]
+    assert json.loads(status.body.decode("utf-8"))["state"] == "succeeded"
+
+
+def test_server_app_rejects_detach_for_missing_run_or_client_id() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "server-detach-invalid"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Detach {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "ok"}},
+                    "runId": "run-detach-invalid-1",
+                    "responseId": "response-detach-invalid-1",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    missing = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/missing-run/detach",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"clientId": "client-1"}).encode("utf-8"),
+        )
+    )
+    malformed = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-detach-invalid-1/detach",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"reason": "no-client"}).encode("utf-8"),
+        )
+    )
+
+    assert missing.status_code == 404
+    assert json.loads(missing.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "run detach stream not found for run 'missing-run'",
+    }
+    assert malformed.status_code == 400
+    assert json.loads(malformed.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "detach request client_id must not be empty",
     }
 
 
