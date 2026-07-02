@@ -1879,6 +1879,91 @@ def test_server_app_acknowledges_subscription_event_without_dropping_events() ->
     ]
 
 
+def test_server_app_deduplicates_repeated_subscription_ack_by_event_identity() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "server-ack-idempotent"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Ack {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "ok"}},
+                    "runId": "run-ack-idempotent-1",
+                    "responseId": "response-ack-idempotent-1",
+                }
+            ).encode("utf-8"),
+        )
+    )
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-ack-idempotent-1/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-ack-idempotent-1",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    first = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-ack-idempotent-1/subscriptions/sub-ack-idempotent-1/ack",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"cursor": "run-ack-idempotent-1:2"}).encode("utf-8"),
+            requested_at="2026-07-02T00:00:00Z",
+        )
+    )
+    duplicate = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-ack-idempotent-1/subscriptions/sub-ack-idempotent-1/ack",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"eventId": "run-ack-idempotent-1:run-terminal"}).encode("utf-8"),
+            requested_at="2026-07-02T00:00:05Z",
+        )
+    )
+
+    assert first.status_code == 202
+    assert duplicate.status_code == 202
+    assert app.event_acks("run-ack-idempotent-1", "sub-ack-idempotent-1") == (
+        {
+            "eventId": "run-ack-idempotent-1:run-terminal",
+            "cursor": "run-ack-idempotent-1:2",
+            "acknowledgedAt": "2026-07-02T00:00:00Z",
+        },
+    )
+
+
 def test_server_app_rejects_ack_for_missing_event_or_subscription() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     graph = {
