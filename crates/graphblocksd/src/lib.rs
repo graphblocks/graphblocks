@@ -1,11 +1,14 @@
 use std::collections::BTreeMap;
+use std::io::{Read, Write};
+use std::net::TcpStream;
+use std::time::Duration;
 
 use graphblocks_protocol::{
-    WORKER_PROTOCOL_VERSION, WorkerAdmissionDecision, WorkerAdmissionPolicy, WorkerAdvertisement,
+    evaluate_worker_admission, WorkerAdmissionDecision, WorkerAdmissionPolicy, WorkerAdvertisement,
     WorkerDrainError, WorkerDrainPlan, WorkerDrainPolicy, WorkerDrainTask, WorkerProtocolMessage,
-    WorkerProtocolMessageKind, WorkerProtocolMessagePayload, WorkerState,
-    evaluate_worker_admission,
+    WorkerProtocolMessageKind, WorkerProtocolMessagePayload, WorkerState, WORKER_PROTOCOL_VERSION,
 };
+use graphblocks_runtime_core::callback_delivery::{WebhookHttpRequest, WebhookHttpResponse};
 use serde_json::Value;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -256,6 +259,223 @@ impl WorkerRegistry {
         }
         Ok(plan)
     }
+}
+
+pub trait WebhookHttpClient {
+    fn send(
+        &mut self,
+        request: WebhookHttpRequest,
+    ) -> Result<WebhookHttpResponse, WebhookHttpClientError>;
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StdWebhookHttpClient {
+    timeout: Duration,
+}
+
+impl StdWebhookHttpClient {
+    pub fn new(timeout: Duration) -> Self {
+        Self { timeout }
+    }
+}
+
+impl WebhookHttpClient for StdWebhookHttpClient {
+    fn send(
+        &mut self,
+        request: WebhookHttpRequest,
+    ) -> Result<WebhookHttpResponse, WebhookHttpClientError> {
+        if request.method != "POST" {
+            return Err(WebhookHttpClientError::UnsupportedMethod(request.method));
+        }
+        let endpoint = parse_http_url(&request.url)?;
+        let body = request.canonical_body();
+        let mut has_content_type = false;
+        let mut has_content_length = false;
+        let mut has_connection = false;
+        for (name, value) in &request.headers {
+            validate_header(name, value)?;
+            if name.eq_ignore_ascii_case("content-type") {
+                has_content_type = true;
+            } else if name.eq_ignore_ascii_case("content-length") {
+                has_content_length = true;
+            } else if name.eq_ignore_ascii_case("connection") {
+                has_connection = true;
+            }
+        }
+
+        let mut stream = TcpStream::connect((endpoint.connect_host.as_str(), endpoint.port))
+            .map_err(|error| WebhookHttpClientError::Connect(error.to_string()))?;
+        stream
+            .set_read_timeout(Some(self.timeout))
+            .map_err(|error| WebhookHttpClientError::Transport(error.to_string()))?;
+        stream
+            .set_write_timeout(Some(self.timeout))
+            .map_err(|error| WebhookHttpClientError::Transport(error.to_string()))?;
+
+        let mut wire = String::new();
+        wire.push_str("POST ");
+        wire.push_str(&endpoint.path_and_query);
+        wire.push_str(" HTTP/1.1\r\n");
+        wire.push_str("Host: ");
+        wire.push_str(&endpoint.host_header);
+        wire.push_str("\r\n");
+
+        for (name, value) in &request.headers {
+            wire.push_str(name);
+            wire.push_str(": ");
+            wire.push_str(value);
+            wire.push_str("\r\n");
+        }
+        if !has_content_type {
+            wire.push_str("Content-Type: application/json\r\n");
+        }
+        if !has_content_length {
+            wire.push_str("Content-Length: ");
+            wire.push_str(&body.len().to_string());
+            wire.push_str("\r\n");
+        }
+        if !has_connection {
+            wire.push_str("Connection: close\r\n");
+        }
+        wire.push_str("\r\n");
+        wire.push_str(&body);
+
+        stream
+            .write_all(wire.as_bytes())
+            .map_err(|error| WebhookHttpClientError::Transport(error.to_string()))?;
+        stream
+            .flush()
+            .map_err(|error| WebhookHttpClientError::Transport(error.to_string()))?;
+
+        let mut response = String::new();
+        stream
+            .read_to_string(&mut response)
+            .map_err(|error| WebhookHttpClientError::Transport(error.to_string()))?;
+        parse_http_response(&response)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WebhookHttpClientError {
+    EmptyUrl,
+    UnsupportedScheme(String),
+    UnsupportedMethod(String),
+    MalformedUrl,
+    InvalidPort,
+    InvalidHeader,
+    Connect(String),
+    Transport(String),
+    MalformedResponse,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ParsedHttpEndpoint {
+    connect_host: String,
+    host_header: String,
+    port: u16,
+    path_and_query: String,
+}
+
+fn parse_http_url(url: &str) -> Result<ParsedHttpEndpoint, WebhookHttpClientError> {
+    if url.trim().is_empty() {
+        return Err(WebhookHttpClientError::EmptyUrl);
+    }
+    if let Some(_rest) = url.strip_prefix("https://") {
+        return Err(WebhookHttpClientError::UnsupportedScheme(
+            "https".to_owned(),
+        ));
+    }
+    let rest = url
+        .strip_prefix("http://")
+        .ok_or(WebhookHttpClientError::MalformedUrl)?;
+    let (authority, path_and_query) = rest
+        .split_once('/')
+        .map_or((rest, "/".to_owned()), |(authority, path)| {
+            (authority, format!("/{path}"))
+        });
+    if authority.is_empty() || authority.contains('@') {
+        return Err(WebhookHttpClientError::MalformedUrl);
+    }
+    let (host, port) = parse_authority(authority)?;
+    Ok(ParsedHttpEndpoint {
+        connect_host: host,
+        host_header: authority.to_owned(),
+        port,
+        path_and_query,
+    })
+}
+
+fn parse_authority(authority: &str) -> Result<(String, u16), WebhookHttpClientError> {
+    if let Some(rest) = authority.strip_prefix('[') {
+        let (host, suffix) = rest
+            .split_once(']')
+            .ok_or(WebhookHttpClientError::MalformedUrl)?;
+        let port = if let Some(port) = suffix.strip_prefix(':') {
+            parse_port(port)?
+        } else if suffix.is_empty() {
+            80
+        } else {
+            return Err(WebhookHttpClientError::MalformedUrl);
+        };
+        return Ok((host.to_owned(), port));
+    }
+    let (host, port) = authority
+        .split_once(':')
+        .map_or(Ok((authority, 80)), |(host, port)| {
+            Ok((host, parse_port(port)?))
+        })?;
+    if host.is_empty() || host.contains(':') {
+        return Err(WebhookHttpClientError::MalformedUrl);
+    }
+    Ok((host.to_owned(), port))
+}
+
+fn parse_port(port: &str) -> Result<u16, WebhookHttpClientError> {
+    port.parse::<u16>()
+        .map_err(|_| WebhookHttpClientError::InvalidPort)
+}
+
+fn validate_header(name: &str, value: &str) -> Result<(), WebhookHttpClientError> {
+    if name.is_empty()
+        || name.contains(':')
+        || name.bytes().any(|byte| byte <= 31 || byte == 127)
+        || value.contains('\r')
+        || value.contains('\n')
+    {
+        return Err(WebhookHttpClientError::InvalidHeader);
+    }
+    Ok(())
+}
+
+fn parse_http_response(response: &str) -> Result<WebhookHttpResponse, WebhookHttpClientError> {
+    let header_end = response
+        .find("\r\n\r\n")
+        .ok_or(WebhookHttpClientError::MalformedResponse)?;
+    let mut lines = response[..header_end].lines();
+    let status_line = lines
+        .next()
+        .ok_or(WebhookHttpClientError::MalformedResponse)?;
+    let status = status_line
+        .split_whitespace()
+        .nth(1)
+        .ok_or(WebhookHttpClientError::MalformedResponse)?
+        .parse::<u16>()
+        .map_err(|_| WebhookHttpClientError::MalformedResponse)?;
+    let retry_after_ms = lines.find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        if !name.eq_ignore_ascii_case("retry-after") {
+            return None;
+        }
+        value
+            .trim()
+            .parse::<u64>()
+            .ok()
+            .map(|seconds| seconds.saturating_mul(1_000))
+    });
+    Ok(WebhookHttpResponse {
+        status,
+        retry_after_ms,
+    })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

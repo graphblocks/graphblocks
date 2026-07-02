@@ -7,8 +7,8 @@ use crate::application_event::{
     ApplicationProtocolEvent, ApplicationProtocolEventKind, ApplicationProtocolLog,
 };
 use hmac::{Hmac, Mac};
-use rusqlite::{Connection, params};
-use serde_json::{Value, json};
+use rusqlite::{params, Connection};
+use serde_json::{json, Value};
 use sha2::Sha256;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -1369,6 +1369,12 @@ pub struct WebhookHttpRequest {
     pub method: String,
     pub headers: BTreeMap<String, String>,
     pub body: Value,
+}
+
+impl WebhookHttpRequest {
+    pub fn canonical_body(&self) -> String {
+        graphblocks_compiler::canonical::canonical_json(&self.body)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

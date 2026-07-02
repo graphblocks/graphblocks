@@ -209,6 +209,7 @@ name = "graphblocksd"
 version = "0.1.0"
 dependencies = [
  "graphblocks-protocol",
+ "graphblocks-runtime-core",
  "serde_json",
 ]
 

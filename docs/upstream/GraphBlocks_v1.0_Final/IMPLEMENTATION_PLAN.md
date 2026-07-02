@@ -421,7 +421,12 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   projections while leaving durable callback queue/dead-letter authority in the runtime layer.
   Stored control projections are immutable snapshots so inspection callers cannot mutate redrive or
   dead-letter history after recording.
-- Server-level HTTP/TLS webhook client integration remains a follow-on slice.
+- `graphblocksd` now includes a server-side webhook HTTP client adapter that consumes the
+  `graphblocks-runtime-core` signed webhook request, sends the exact canonical JSON body used for
+  signing, maps response status and `Retry-After` back into the runtime delivery response model,
+  and keeps the actual network client behind a daemon boundary instead of adding an HTTP/TLS client
+  dependency to `graphblocks-runtime-core`. A TLS-capable production client can implement the same
+  daemon adapter boundary.
 
 ### Package ownership
 
