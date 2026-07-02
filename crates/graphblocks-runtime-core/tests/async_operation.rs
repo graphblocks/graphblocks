@@ -1,13 +1,26 @@
 use std::sync::{Arc, Barrier};
 use std::thread;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use graphblocks_runtime_core::async_operation::{
     AsyncCallbackIngestionLimits, AsyncCallbackResumeDecision, AsyncCallbackSubmission,
     AsyncOperation, AsyncOperationConfigurationDiagnostic, AsyncOperationError,
     AsyncOperationEvent, AsyncOperationKind, AsyncOperationState, AsyncOperationStore,
+    SqliteAsyncOperationStore,
 };
 use graphblocks_runtime_core::tool_schema::{JsonSchema, JsonSchemaNode, ToolSchemaRegistry};
 use serde_json::json;
+use std::path::PathBuf;
+
+fn sqlite_async_operation_path(label: &str) -> PathBuf {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock is after unix epoch")
+        .as_nanos();
+    std::env::temp_dir().join(format!(
+        "graphblocks-async-operation-{label}-{unique}.sqlite3"
+    ))
+}
 
 fn callback_schema_registry() -> ToolSchemaRegistry {
     ToolSchemaRegistry::new([JsonSchema::new(
@@ -772,4 +785,69 @@ fn callback_idempotency_fuzz_sequence_never_records_duplicate_receipts() {
             .count();
         assert_eq!(receipts, 1, "seed {seed} recorded more than one receipt");
     }
+}
+
+#[test]
+fn sqlite_async_operation_store_persists_waiting_operation_across_reopen()
+-> Result<(), AsyncOperationError> {
+    let path = sqlite_async_operation_path("waiting-reopen");
+    {
+        let store = SqliteAsyncOperationStore::open(&path)?;
+        store.register(waiting_operation())?;
+    }
+
+    let store = SqliteAsyncOperationStore::open(&path)?;
+
+    assert_eq!(
+        store.operation_state("op-1"),
+        Some(AsyncOperationState::WaitingCallback)
+    );
+    let events = store.events_for_operation("op-1");
+    assert_eq!(events.len(), 2);
+    assert!(matches!(
+        events[1],
+        AsyncOperationEvent::StateChanged {
+            to: AsyncOperationState::WaitingCallback,
+            ..
+        }
+    ));
+    Ok(())
+}
+
+#[test]
+fn sqlite_async_operation_store_persists_callback_receipt_and_duplicate_guard_across_reopen()
+-> Result<(), AsyncOperationError> {
+    let path = sqlite_async_operation_path("callback-reopen");
+    {
+        let store = SqliteAsyncOperationStore::open(&path)?;
+        store.register(waiting_operation())?;
+        let accepted = store.accept_callback(
+            valid_submission("cb-1", "idem-cb-1"),
+            &callback_schema_registry(),
+        )?;
+        assert!(accepted.should_resume);
+    }
+
+    let store = SqliteAsyncOperationStore::open(&path)?;
+    let duplicate = store.accept_callback(
+        valid_submission("cb-duplicate", "idem-cb-1"),
+        &callback_schema_registry(),
+    )?;
+
+    assert!(duplicate.duplicate);
+    assert!(!duplicate.should_resume);
+    assert_eq!(duplicate.receipt.callback_id, "cb-1");
+    assert_eq!(
+        store.operation_state("op-1"),
+        Some(AsyncOperationState::CallbackReceived)
+    );
+    assert_eq!(
+        store
+            .events_for_operation("op-1")
+            .iter()
+            .filter(|event| matches!(event, AsyncOperationEvent::ExternalCallbackReceived { .. }))
+            .count(),
+        1
+    );
+    Ok(())
 }

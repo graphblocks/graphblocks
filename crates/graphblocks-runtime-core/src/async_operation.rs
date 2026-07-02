@@ -1,8 +1,10 @@
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::Mutex;
 
 use graphblocks_compiler::canonical::canonical_hash;
-use serde_json::Value;
+use rusqlite::{Connection, params};
+use serde_json::{Value, json};
 
 use crate::tool_schema::{ToolSchemaRegistry, ToolSchemaValidationError};
 
@@ -460,6 +462,9 @@ pub enum AsyncOperationError {
         operation_id: String,
         max_payload_bytes: usize,
         actual_payload_bytes: usize,
+    },
+    Storage {
+        message: String,
     },
 }
 
@@ -962,6 +967,653 @@ impl AsyncOperationStore {
     }
 }
 
+#[derive(Debug)]
+pub struct SqliteAsyncOperationStore {
+    connection: Mutex<Connection>,
+}
+
+impl SqliteAsyncOperationStore {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, AsyncOperationError> {
+        let connection = Connection::open(path).map_err(storage_error)?;
+        let store = Self {
+            connection: Mutex::new(connection),
+        };
+        store.initialize()?;
+        Ok(store)
+    }
+
+    pub fn open_in_memory() -> Result<Self, AsyncOperationError> {
+        let connection = Connection::open_in_memory().map_err(storage_error)?;
+        let store = Self {
+            connection: Mutex::new(connection),
+        };
+        store.initialize()?;
+        Ok(store)
+    }
+
+    fn initialize(&self) -> Result<(), AsyncOperationError> {
+        let connection = self
+            .connection
+            .lock()
+            .expect("sqlite async operation store lock poisoned");
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS async_operations (
+                    operation_id TEXT PRIMARY KEY,
+                    operation_json TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS async_callback_receipts (
+                    idempotency_key TEXT PRIMARY KEY,
+                    operation_id TEXT NOT NULL,
+                    receipt_json TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS async_operation_events (
+                    operation_id TEXT NOT NULL,
+                    event_index INTEGER NOT NULL,
+                    event_json TEXT NOT NULL,
+                    PRIMARY KEY (operation_id, event_index)
+                );
+                ",
+            )
+            .map_err(storage_error)?;
+        Ok(())
+    }
+
+    pub fn register(&self, operation: AsyncOperation) -> Result<(), AsyncOperationError> {
+        let memory = self.load_memory_store()?;
+        memory.register(operation)?;
+        self.replace_with_memory_store(&memory)
+    }
+
+    pub fn accept_callback(
+        &self,
+        submission: AsyncCallbackSubmission,
+        registry: &ToolSchemaRegistry,
+    ) -> Result<AcceptedCallback, AsyncOperationError> {
+        self.accept_callback_with_resume_decision(
+            submission,
+            registry,
+            AsyncCallbackResumeDecision::Resume,
+        )
+    }
+
+    pub fn accept_callback_with_resume_decision(
+        &self,
+        submission: AsyncCallbackSubmission,
+        registry: &ToolSchemaRegistry,
+        resume_decision: AsyncCallbackResumeDecision,
+    ) -> Result<AcceptedCallback, AsyncOperationError> {
+        self.accept_callback_with_limits_and_resume_decision(
+            submission,
+            registry,
+            AsyncCallbackIngestionLimits::default(),
+            resume_decision,
+        )
+    }
+
+    pub fn accept_callback_with_limits(
+        &self,
+        submission: AsyncCallbackSubmission,
+        registry: &ToolSchemaRegistry,
+        limits: AsyncCallbackIngestionLimits,
+    ) -> Result<AcceptedCallback, AsyncOperationError> {
+        self.accept_callback_with_limits_and_resume_decision(
+            submission,
+            registry,
+            limits,
+            AsyncCallbackResumeDecision::Resume,
+        )
+    }
+
+    fn accept_callback_with_limits_and_resume_decision(
+        &self,
+        submission: AsyncCallbackSubmission,
+        registry: &ToolSchemaRegistry,
+        limits: AsyncCallbackIngestionLimits,
+        resume_decision: AsyncCallbackResumeDecision,
+    ) -> Result<AcceptedCallback, AsyncOperationError> {
+        let memory = self.load_memory_store()?;
+        let accepted = memory.accept_callback_with_limits_and_resume_decision(
+            submission,
+            registry,
+            limits,
+            resume_decision,
+        )?;
+        if !accepted.duplicate {
+            self.replace_with_memory_store(&memory)?;
+        }
+        Ok(accepted)
+    }
+
+    pub fn cancel_operation(
+        &self,
+        operation_id: &str,
+        cancelled_at_unix_ms: u64,
+    ) -> Result<(), AsyncOperationError> {
+        let memory = self.load_memory_store()?;
+        memory.cancel_operation(operation_id, cancelled_at_unix_ms)?;
+        self.replace_with_memory_store(&memory)
+    }
+
+    pub fn expire_operation(
+        &self,
+        operation_id: &str,
+        expired_at_unix_ms: u64,
+    ) -> Result<(), AsyncOperationError> {
+        let memory = self.load_memory_store()?;
+        memory.expire_operation(operation_id, expired_at_unix_ms)?;
+        self.replace_with_memory_store(&memory)
+    }
+
+    pub fn events_for_operation(&self, operation_id: &str) -> Vec<AsyncOperationEvent> {
+        self.load_memory_store()
+            .map(|store| store.events_for_operation(operation_id))
+            .unwrap_or_default()
+    }
+
+    pub fn operation_state(&self, operation_id: &str) -> Option<AsyncOperationState> {
+        self.load_memory_store()
+            .ok()
+            .and_then(|store| store.operation_state(operation_id))
+    }
+
+    fn load_memory_store(&self) -> Result<AsyncOperationStore, AsyncOperationError> {
+        let store = AsyncOperationStore::new();
+        let mut inner = store
+            .inner
+            .lock()
+            .expect("async operation store lock poisoned");
+        let connection = self
+            .connection
+            .lock()
+            .expect("sqlite async operation store lock poisoned");
+
+        {
+            let mut statement = connection
+                .prepare("SELECT operation_json FROM async_operations ORDER BY operation_id")
+                .map_err(storage_error)?;
+            let operations = statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(storage_error)?;
+            for operation_json in operations {
+                let operation =
+                    operation_from_value(parse_json(&operation_json.map_err(storage_error)?)?)?;
+                inner
+                    .operations
+                    .insert(operation.operation_id.clone(), operation);
+            }
+        }
+
+        {
+            let mut statement = connection
+                .prepare(
+                    "SELECT receipt_json FROM async_callback_receipts ORDER BY idempotency_key",
+                )
+                .map_err(storage_error)?;
+            let receipts = statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(storage_error)?;
+            for receipt_json in receipts {
+                let receipt =
+                    receipt_from_value(parse_json(&receipt_json.map_err(storage_error)?)?)?;
+                inner
+                    .receipts_by_idempotency_key
+                    .insert(receipt.idempotency_key.clone(), receipt);
+            }
+        }
+
+        {
+            let mut statement = connection
+                .prepare(
+                    "
+                    SELECT operation_id, event_json
+                    FROM async_operation_events
+                    ORDER BY operation_id, event_index
+                    ",
+                )
+                .map_err(storage_error)?;
+            let events = statement
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(storage_error)?;
+            for event in events {
+                let (operation_id, event_json) = event.map_err(storage_error)?;
+                inner
+                    .events_by_operation
+                    .entry(operation_id)
+                    .or_default()
+                    .push(event_from_value(parse_json(&event_json)?)?);
+            }
+        }
+        drop(inner);
+        Ok(store)
+    }
+
+    fn replace_with_memory_store(
+        &self,
+        store: &AsyncOperationStore,
+    ) -> Result<(), AsyncOperationError> {
+        let mut connection = self
+            .connection
+            .lock()
+            .expect("sqlite async operation store lock poisoned");
+        let transaction = connection.transaction().map_err(storage_error)?;
+        transaction
+            .execute("DELETE FROM async_operation_events", [])
+            .map_err(storage_error)?;
+        transaction
+            .execute("DELETE FROM async_callback_receipts", [])
+            .map_err(storage_error)?;
+        transaction
+            .execute("DELETE FROM async_operations", [])
+            .map_err(storage_error)?;
+
+        let inner = store
+            .inner
+            .lock()
+            .expect("async operation store lock poisoned");
+        for operation in inner.operations.values() {
+            transaction
+                .execute(
+                    "
+                    INSERT INTO async_operations (operation_id, operation_json)
+                    VALUES (?, ?)
+                    ",
+                    params![
+                        &operation.operation_id,
+                        storage_json(&operation_to_value(operation))?,
+                    ],
+                )
+                .map_err(storage_error)?;
+        }
+        for receipt in inner.receipts_by_idempotency_key.values() {
+            transaction
+                .execute(
+                    "
+                    INSERT INTO async_callback_receipts (
+                        idempotency_key,
+                        operation_id,
+                        receipt_json
+                    )
+                    VALUES (?, ?, ?)
+                    ",
+                    params![
+                        &receipt.idempotency_key,
+                        &receipt.operation_id,
+                        storage_json(&receipt_to_value(receipt))?,
+                    ],
+                )
+                .map_err(storage_error)?;
+        }
+        for (operation_id, events) in &inner.events_by_operation {
+            for (index, event) in events.iter().enumerate() {
+                transaction
+                    .execute(
+                        "
+                        INSERT INTO async_operation_events (
+                            operation_id,
+                            event_index,
+                            event_json
+                        )
+                        VALUES (?, ?, ?)
+                        ",
+                        params![
+                            operation_id,
+                            sqlite_usize_to_i64(index, "async operation event index")?,
+                            storage_json(&event_to_value(event))?,
+                        ],
+                    )
+                    .map_err(storage_error)?;
+            }
+        }
+        drop(inner);
+        transaction.commit().map_err(storage_error)?;
+        Ok(())
+    }
+}
+
 fn callback_payload_size_bytes(payload: &Value) -> usize {
     graphblocks_compiler::canonical::canonical_json(payload).len()
+}
+
+fn operation_to_value(operation: &AsyncOperation) -> Value {
+    json!({
+        "operation_id": operation.operation_id,
+        "run_id": operation.run_id,
+        "node_id": operation.node_id,
+        "attempt_id": operation.attempt_id,
+        "kind": async_operation_kind_as_str(&operation.kind),
+        "provider_operation_id": operation.provider_operation_id,
+        "state": async_operation_state_as_str(operation.state),
+        "resume_token_hash": operation.resume_token_hash,
+        "idempotency_key": operation.idempotency_key,
+        "expected_schema": operation.expected_schema,
+        "created_at_unix_ms": operation.created_at_unix_ms,
+        "submitted_at_unix_ms": operation.submitted_at_unix_ms,
+        "expires_at_unix_ms": operation.expires_at_unix_ms,
+        "completed_at_unix_ms": operation.completed_at_unix_ms,
+        "expected_callback_payload_bytes": operation.expected_callback_payload_bytes,
+        "resume_policy_reevaluation": operation.resume_policy_reevaluation,
+        "callback_attempt_fencing": operation.callback_attempt_fencing,
+        "resume_ownership_fence": operation.resume_ownership_fence,
+    })
+}
+
+fn operation_from_value(value: Value) -> Result<AsyncOperation, AsyncOperationError> {
+    Ok(AsyncOperation {
+        operation_id: required_string(&value, "operation_id")?,
+        run_id: required_string(&value, "run_id")?,
+        node_id: required_string(&value, "node_id")?,
+        attempt_id: required_string(&value, "attempt_id")?,
+        kind: async_operation_kind_from_str(&required_string(&value, "kind")?)?,
+        provider_operation_id: optional_string(&value, "provider_operation_id")?,
+        state: async_operation_state_from_str(&required_string(&value, "state")?)?,
+        resume_token_hash: required_string(&value, "resume_token_hash")?,
+        idempotency_key: required_string(&value, "idempotency_key")?,
+        expected_schema: required_string(&value, "expected_schema")?,
+        created_at_unix_ms: required_u64(&value, "created_at_unix_ms")?,
+        submitted_at_unix_ms: optional_u64(&value, "submitted_at_unix_ms")?,
+        expires_at_unix_ms: optional_u64(&value, "expires_at_unix_ms")?,
+        completed_at_unix_ms: optional_u64(&value, "completed_at_unix_ms")?,
+        expected_callback_payload_bytes: optional_usize(&value, "expected_callback_payload_bytes")?,
+        resume_policy_reevaluation: optional_bool(&value, "resume_policy_reevaluation")?
+            .unwrap_or(true),
+        callback_attempt_fencing: optional_bool(&value, "callback_attempt_fencing")?
+            .unwrap_or(true),
+        resume_ownership_fence: optional_bool(&value, "resume_ownership_fence")?.unwrap_or(true),
+    })
+}
+
+fn receipt_to_value(receipt: &ExternalCallbackReceived) -> Value {
+    json!({
+        "callback_id": receipt.callback_id,
+        "operation_id": receipt.operation_id,
+        "run_id": receipt.run_id,
+        "node_id": receipt.node_id,
+        "attempt_id": receipt.attempt_id,
+        "provider_operation_id": receipt.provider_operation_id,
+        "idempotency_key": receipt.idempotency_key,
+        "payload": receipt.payload,
+        "payload_digest": receipt.payload_digest,
+        "received_at_unix_ms": receipt.received_at_unix_ms,
+        "verified_by": receipt.verified_by,
+        "policy_snapshot_id": receipt.policy_snapshot_id,
+    })
+}
+
+fn receipt_from_value(value: Value) -> Result<ExternalCallbackReceived, AsyncOperationError> {
+    Ok(ExternalCallbackReceived {
+        callback_id: required_string(&value, "callback_id")?,
+        operation_id: required_string(&value, "operation_id")?,
+        run_id: required_string(&value, "run_id")?,
+        node_id: required_string(&value, "node_id")?,
+        attempt_id: required_string(&value, "attempt_id")?,
+        provider_operation_id: optional_string(&value, "provider_operation_id")?,
+        idempotency_key: required_string(&value, "idempotency_key")?,
+        payload: value
+            .get("payload")
+            .cloned()
+            .ok_or_else(|| AsyncOperationError::Storage {
+                message: "stored callback receipt is missing payload".to_owned(),
+            })?,
+        payload_digest: required_string(&value, "payload_digest")?,
+        received_at_unix_ms: required_u64(&value, "received_at_unix_ms")?,
+        verified_by: required_string(&value, "verified_by")?,
+        policy_snapshot_id: required_string(&value, "policy_snapshot_id")?,
+    })
+}
+
+fn event_to_value(event: &AsyncOperationEvent) -> Value {
+    match event {
+        AsyncOperationEvent::StateChanged {
+            operation_id,
+            from,
+            to,
+            occurred_at_unix_ms,
+        } => json!({
+            "type": "StateChanged",
+            "operation_id": operation_id,
+            "from": async_operation_state_as_str(*from),
+            "to": async_operation_state_as_str(*to),
+            "occurred_at_unix_ms": occurred_at_unix_ms,
+        }),
+        AsyncOperationEvent::ExternalCallbackReceived { receipt } => json!({
+            "type": "ExternalCallbackReceived",
+            "receipt": receipt_to_value(receipt),
+        }),
+        AsyncOperationEvent::CallbackResumePaused {
+            operation_id,
+            reason,
+            occurred_at_unix_ms,
+        } => json!({
+            "type": "CallbackResumePaused",
+            "operation_id": operation_id,
+            "reason": reason,
+            "occurred_at_unix_ms": occurred_at_unix_ms,
+        }),
+        AsyncOperationEvent::CallbackResumeDenied {
+            operation_id,
+            decision_id,
+            reason,
+            occurred_at_unix_ms,
+        } => json!({
+            "type": "CallbackResumeDenied",
+            "operation_id": operation_id,
+            "decision_id": decision_id,
+            "reason": reason,
+            "occurred_at_unix_ms": occurred_at_unix_ms,
+        }),
+        AsyncOperationEvent::LateExternalCallbackReceived {
+            receipt,
+            terminal_state,
+        } => json!({
+            "type": "LateExternalCallbackReceived",
+            "receipt": receipt_to_value(receipt),
+            "terminal_state": async_operation_state_as_str(*terminal_state),
+        }),
+    }
+}
+
+fn event_from_value(value: Value) -> Result<AsyncOperationEvent, AsyncOperationError> {
+    match required_string(&value, "type")?.as_str() {
+        "StateChanged" => Ok(AsyncOperationEvent::StateChanged {
+            operation_id: required_string(&value, "operation_id")?,
+            from: async_operation_state_from_str(&required_string(&value, "from")?)?,
+            to: async_operation_state_from_str(&required_string(&value, "to")?)?,
+            occurred_at_unix_ms: required_u64(&value, "occurred_at_unix_ms")?,
+        }),
+        "ExternalCallbackReceived" => Ok(AsyncOperationEvent::ExternalCallbackReceived {
+            receipt: receipt_from_value(required_value(&value, "receipt")?)?,
+        }),
+        "CallbackResumePaused" => Ok(AsyncOperationEvent::CallbackResumePaused {
+            operation_id: required_string(&value, "operation_id")?,
+            reason: required_string(&value, "reason")?,
+            occurred_at_unix_ms: required_u64(&value, "occurred_at_unix_ms")?,
+        }),
+        "CallbackResumeDenied" => Ok(AsyncOperationEvent::CallbackResumeDenied {
+            operation_id: required_string(&value, "operation_id")?,
+            decision_id: required_string(&value, "decision_id")?,
+            reason: required_string(&value, "reason")?,
+            occurred_at_unix_ms: required_u64(&value, "occurred_at_unix_ms")?,
+        }),
+        "LateExternalCallbackReceived" => Ok(AsyncOperationEvent::LateExternalCallbackReceived {
+            receipt: receipt_from_value(required_value(&value, "receipt")?)?,
+            terminal_state: async_operation_state_from_str(&required_string(
+                &value,
+                "terminal_state",
+            )?)?,
+        }),
+        event_type => Err(AsyncOperationError::Storage {
+            message: format!("unknown async operation event type {event_type}"),
+        }),
+    }
+}
+
+fn async_operation_kind_as_str(kind: &AsyncOperationKind) -> &'static str {
+    match kind {
+        AsyncOperationKind::Tool => "tool",
+        AsyncOperationKind::SandboxTask => "sandbox_task",
+        AsyncOperationKind::CiJob => "ci_job",
+        AsyncOperationKind::BrowserTask => "browser_task",
+        AsyncOperationKind::WorkspaceTrial => "workspace_trial",
+        AsyncOperationKind::ExternalProviderJob => "external_provider_job",
+        AsyncOperationKind::DocumentJob => "document_job",
+        AsyncOperationKind::ResearchTask => "research_task",
+        AsyncOperationKind::Custom => "custom",
+    }
+}
+
+fn async_operation_kind_from_str(kind: &str) -> Result<AsyncOperationKind, AsyncOperationError> {
+    match kind {
+        "tool" => Ok(AsyncOperationKind::Tool),
+        "sandbox_task" => Ok(AsyncOperationKind::SandboxTask),
+        "ci_job" => Ok(AsyncOperationKind::CiJob),
+        "browser_task" => Ok(AsyncOperationKind::BrowserTask),
+        "workspace_trial" => Ok(AsyncOperationKind::WorkspaceTrial),
+        "external_provider_job" => Ok(AsyncOperationKind::ExternalProviderJob),
+        "document_job" => Ok(AsyncOperationKind::DocumentJob),
+        "research_task" => Ok(AsyncOperationKind::ResearchTask),
+        "custom" => Ok(AsyncOperationKind::Custom),
+        _ => Err(AsyncOperationError::Storage {
+            message: format!("unknown async operation kind {kind}"),
+        }),
+    }
+}
+
+fn async_operation_state_as_str(state: AsyncOperationState) -> &'static str {
+    match state {
+        AsyncOperationState::Created => "created",
+        AsyncOperationState::Submitted => "submitted",
+        AsyncOperationState::WaitingCallback => "waiting_callback",
+        AsyncOperationState::CallbackReceived => "callback_received",
+        AsyncOperationState::Polling => "polling",
+        AsyncOperationState::Resuming => "resuming",
+        AsyncOperationState::Completed => "completed",
+        AsyncOperationState::Failed => "failed",
+        AsyncOperationState::Cancelled => "cancelled",
+        AsyncOperationState::Expired => "expired",
+    }
+}
+
+fn async_operation_state_from_str(state: &str) -> Result<AsyncOperationState, AsyncOperationError> {
+    match state {
+        "created" => Ok(AsyncOperationState::Created),
+        "submitted" => Ok(AsyncOperationState::Submitted),
+        "waiting_callback" => Ok(AsyncOperationState::WaitingCallback),
+        "callback_received" => Ok(AsyncOperationState::CallbackReceived),
+        "polling" => Ok(AsyncOperationState::Polling),
+        "resuming" => Ok(AsyncOperationState::Resuming),
+        "completed" => Ok(AsyncOperationState::Completed),
+        "failed" => Ok(AsyncOperationState::Failed),
+        "cancelled" => Ok(AsyncOperationState::Cancelled),
+        "expired" => Ok(AsyncOperationState::Expired),
+        _ => Err(AsyncOperationError::Storage {
+            message: format!("unknown async operation state {state}"),
+        }),
+    }
+}
+
+fn required_value(value: &Value, field: &'static str) -> Result<Value, AsyncOperationError> {
+    value
+        .get(field)
+        .cloned()
+        .ok_or_else(|| AsyncOperationError::Storage {
+            message: format!("stored async operation value is missing {field}"),
+        })
+}
+
+fn required_string(value: &Value, field: &'static str) -> Result<String, AsyncOperationError> {
+    value
+        .get(field)
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| AsyncOperationError::Storage {
+            message: format!("stored async operation value has invalid {field}"),
+        })
+}
+
+fn optional_string(
+    value: &Value,
+    field: &'static str,
+) -> Result<Option<String>, AsyncOperationError> {
+    match value.get(field) {
+        Some(Value::Null) | None => Ok(None),
+        Some(Value::String(value)) => Ok(Some(value.clone())),
+        _ => Err(AsyncOperationError::Storage {
+            message: format!("stored async operation value has invalid {field}"),
+        }),
+    }
+}
+
+fn required_u64(value: &Value, field: &'static str) -> Result<u64, AsyncOperationError> {
+    value
+        .get(field)
+        .and_then(Value::as_u64)
+        .ok_or_else(|| AsyncOperationError::Storage {
+            message: format!("stored async operation value has invalid {field}"),
+        })
+}
+
+fn optional_u64(value: &Value, field: &'static str) -> Result<Option<u64>, AsyncOperationError> {
+    match value.get(field) {
+        Some(Value::Null) | None => Ok(None),
+        Some(value) => value
+            .as_u64()
+            .map(Some)
+            .ok_or_else(|| AsyncOperationError::Storage {
+                message: format!("stored async operation value has invalid {field}"),
+            }),
+    }
+}
+
+fn optional_usize(
+    value: &Value,
+    field: &'static str,
+) -> Result<Option<usize>, AsyncOperationError> {
+    match optional_u64(value, field)? {
+        Some(value) => usize::try_from(value)
+            .map(Some)
+            .map_err(|_| AsyncOperationError::Storage {
+                message: format!("stored async operation value has oversized {field}"),
+            }),
+        None => Ok(None),
+    }
+}
+
+fn optional_bool(value: &Value, field: &'static str) -> Result<Option<bool>, AsyncOperationError> {
+    match value.get(field) {
+        Some(Value::Null) | None => Ok(None),
+        Some(value) => value
+            .as_bool()
+            .map(Some)
+            .ok_or_else(|| AsyncOperationError::Storage {
+                message: format!("stored async operation value has invalid {field}"),
+            }),
+    }
+}
+
+fn storage_json(value: &Value) -> Result<String, AsyncOperationError> {
+    serde_json::to_string(value).map_err(|error| AsyncOperationError::Storage {
+        message: error.to_string(),
+    })
+}
+
+fn parse_json(value: &str) -> Result<Value, AsyncOperationError> {
+    serde_json::from_str(value).map_err(|error| AsyncOperationError::Storage {
+        message: error.to_string(),
+    })
+}
+
+fn storage_error(error: rusqlite::Error) -> AsyncOperationError {
+    AsyncOperationError::Storage {
+        message: error.to_string(),
+    }
+}
+
+fn sqlite_usize_to_i64(value: usize, label: &'static str) -> Result<i64, AsyncOperationError> {
+    i64::try_from(value).map_err(|_| AsyncOperationError::Storage {
+        message: format!("{label} exceeds sqlite integer range"),
+    })
 }

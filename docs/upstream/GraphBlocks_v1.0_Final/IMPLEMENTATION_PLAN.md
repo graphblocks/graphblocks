@@ -262,6 +262,8 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   where stale callbacks could resume newer attempts, as `GB6015`.
 - Async operation configuration diagnostics now report callback waits that can resume without run
   ownership lease or fencing protection as `GB6016`.
+- `SqliteAsyncOperationStore` now persists async operations, operation event journals, and external
+  callback receipts across reopen, including idempotency-key duplicate detection after restart.
 - Callback resume admission can now pause after a durable callback receipt when budget policy
   denies continuation; the operation records `CallbackReceived`, emits a pause reason, and returns
   `should_resume = false`.
@@ -304,8 +306,8 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
 - Webhook delivery targets now enforce the specification's default `262144` byte payload limit
   before signing delivery envelopes, and tests cover explicit small-limit rejection for oversized
   callback projections.
-- Durable storage, Ed25519/mTLS/OIDC callback authentication adapters, real webhook delivery
-  workers, dead-letter persistence, DNS-time egress enforcement, and coordinator failover remain
+- Ed25519/mTLS/OIDC callback authentication adapters, real webhook delivery workers, callback
+  delivery/dead-letter persistence, DNS-time egress enforcement, and coordinator failover remain
   follow-on slices.
 
 ### Package ownership
