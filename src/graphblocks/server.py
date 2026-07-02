@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import json
+import math
 from types import MappingProxyType
 from typing import Literal, Protocol
 
@@ -82,6 +83,25 @@ def _validate_string_sequence(owner: str, field_name: str, value: object) -> tup
         )
     except TypeError as error:
         raise ValueError(f"{owner} {field_name} must be a sequence") from error
+
+
+def _freeze_json_value(owner: str, field_name: str, value: object) -> object:
+    if isinstance(value, Mapping):
+        frozen: dict[str, object] = {}
+        for key, item in value.items():
+            if not isinstance(key, str) or not key.strip():
+                raise ValueError(f"{owner} {field_name} keys must be non-empty strings")
+            frozen[key] = _freeze_json_value(owner, f"{field_name}.{key}", item)
+        return MappingProxyType(frozen)
+    if isinstance(value, list | tuple):
+        return tuple(_freeze_json_value(owner, field_name, item) for item in value)
+    if value is None or isinstance(value, str | bool | int):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError(f"{owner} {field_name} must be finite")
+        return value
+    raise ValueError(f"{owner} {field_name} must be a JSON value")
 
 
 @dataclass(frozen=True, slots=True)
@@ -396,10 +416,11 @@ class ServerAsyncCallbackSubmission:
         )
         if not isinstance(self.payload, Mapping):
             raise ValueError("server async callback payload must be a JSON object")
-        payload = dict(self.payload)
-        if any(not isinstance(key, str) or not key.strip() for key in payload):
-            raise ValueError("server async callback payload keys must be non-empty strings")
-        object.__setattr__(self, "payload", MappingProxyType(payload))
+        object.__setattr__(
+            self,
+            "payload",
+            _freeze_json_value("server async callback", "payload", self.payload),
+        )
         for field_name in ("run_id", "node_id", "attempt_id", "provider_operation_id"):
             value = getattr(self, field_name)
             if value is not None:

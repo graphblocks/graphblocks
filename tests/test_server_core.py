@@ -862,6 +862,95 @@ def test_server_app_deduplicates_async_callback_sequence_deterministically() -> 
     ]
 
 
+def test_server_async_callback_submission_deep_freezes_nested_payload() -> None:
+    payload = {"checks": [{"name": "unit", "status": "passed"}], "summary": {"passed": True}}
+    submission = ServerAsyncCallbackSubmission(
+        operation_id="op-ci-1",
+        callback_id="cb-1",
+        idempotency_key="idem-callback-1",
+        payload=payload,
+    )
+
+    payload["checks"][0]["status"] = "failed"  # type: ignore[index]
+    payload["summary"]["passed"] = False  # type: ignore[index]
+
+    assert submission.payload == {"checks": ({"name": "unit", "status": "passed"},), "summary": {"passed": True}}
+    with pytest.raises(TypeError):
+        submission.payload["summary"]["passed"] = False  # type: ignore[index]
+    with pytest.raises(TypeError):
+        submission.payload["checks"][0]["status"] = "failed"  # type: ignore[index]
+
+
+def test_server_app_callback_idempotency_survives_returned_payload_mutation_attempts() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
+    body = {
+        "callback_id": "cb-1",
+        "attempt_id": "attempt-1",
+        "payload": {"checks": [{"name": "unit", "status": "passed"}], "summary": {"passed": True}},
+    }
+    request = ServerRequest(
+        method="POST",
+        path="/callbacks/op-ci-1",
+        headers={"Authorization": "Bearer token-1", "GraphBlocks-Idempotency-Key": "idem-callback-1"},
+        query={},
+        cookies={},
+        body=json.dumps(body).encode("utf-8"),
+        requested_at="2026-07-02T00:00:00Z",
+    )
+
+    first = app.handle(request)
+    stored = app.callback_submissions("op-ci-1")[0]
+
+    assert first.status_code == 202
+    with pytest.raises(TypeError):
+        stored.payload["checks"][0]["status"] = "failed"  # type: ignore[index]
+
+    duplicate = app.handle(request)
+
+    assert duplicate.status_code == 200
+    assert len(app.callback_submissions("op-ci-1")) == 1
+
+
+def test_server_app_deduplicates_nested_callback_payload_sequence_deterministically() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
+    sequence = [
+        ("idem-callback-1", "cb-1", {"checks": [{"name": "lint", "status": "passed"}]}),
+        ("idem-callback-2", "cb-2", {"checks": [{"name": "unit", "status": "passed"}]}),
+        ("idem-callback-1", "cb-1", {"checks": [{"name": "lint", "status": "passed"}]}),
+        ("idem-callback-3", "cb-3", {"checks": [{"name": "typecheck", "status": "failed"}]}),
+        ("idem-callback-2", "cb-2", {"checks": [{"name": "unit", "status": "passed"}]}),
+        ("idem-callback-3", "cb-3", {"checks": [{"name": "typecheck", "status": "failed"}]}),
+    ]
+
+    statuses = []
+    for index, (idempotency_key, callback_id, payload) in enumerate(sequence):
+        response = app.handle(
+            ServerRequest(
+                method="POST",
+                path="/callbacks/op-ci-1",
+                headers={"Authorization": "Bearer token-1", "GraphBlocks-Idempotency-Key": idempotency_key},
+                query={},
+                cookies={},
+                body=json.dumps(
+                    {
+                        "callback_id": callback_id,
+                        "attempt_id": "attempt-1",
+                        "payload": payload,
+                    }
+                ).encode("utf-8"),
+                requested_at=f"2026-07-02T00:00:0{index}Z",
+            )
+        )
+        statuses.append(response.status_code)
+
+    assert statuses == [202, 202, 200, 202, 200, 200]
+    assert [submission.idempotency_key for submission in app.callback_submissions("op-ci-1")] == [
+        "idem-callback-1",
+        "idem-callback-2",
+        "idem-callback-3",
+    ]
+
+
 def test_server_app_rejects_malformed_async_callback_submission() -> None:
     app = GraphBlocksServerApp()
 

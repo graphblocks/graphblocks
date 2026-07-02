@@ -365,7 +365,8 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   authenticated callback ingress signals with idempotency keys, acknowledging duplicate callback
   submissions without recording them twice, and rejecting conflicting replays that reuse an
   idempotency key with different content while leaving durable journal/resume authority to the
-  runtime.
+  runtime. Nested callback JSON payloads are deep-frozen at ingress so later caller mutation cannot
+  corrupt stored callback receipts or idempotency comparisons.
 - `graphblocks-server` now also exposes the framework-neutral `GET /runs/{run_id}`
   `GetRunStatus` route, deriving status, release id, replay cursor, timestamps, wait reasons, and
   active operation projection from the authoritative stored application events.
