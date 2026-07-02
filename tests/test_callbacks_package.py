@@ -15,7 +15,7 @@ if str(ROOT / "src") not in sys.path:
     sys.path.insert(0, str(ROOT / "src"))
 
 
-from graphblocks import ArtifactRef  # noqa: E402
+from graphblocks import ArtifactRef, canonical_dumps, canonical_hash  # noqa: E402
 from graphblocks_callbacks import (  # noqa: E402
     CallbackDeadLetterRecord,
     CallbackEndpointAuth,
@@ -646,14 +646,86 @@ def test_callback_payload_projection_rejects_inline_digest_mismatch() -> None:
 
 
 def test_callback_payload_projection_rejects_inline_size_mismatch() -> None:
+    payload = {"status": "completed"}
+
     _assert_raises_value_error(
         "inline callback payload_size_bytes must match canonical payload size",
         lambda: CallbackPayloadProjection(
             mode="inline",
-            payload={"status": "completed"},
+            payload=payload,
+            payload_digest=canonical_hash(payload),
             payload_size_bytes=999,
         ),
     )
+
+
+def test_callback_payload_projection_requires_payload_digest() -> None:
+    payload = {"status": "completed"}
+    artifact = ArtifactRef(
+        "artifact-callback-log",
+        "blob://callbacks/run-1/log.txt",
+        media_type="text/plain",
+        size_bytes=2048,
+        checksum="sha256:callback-log",
+    )
+
+    _assert_raises_value_error(
+        "callback payload projection requires payload_digest",
+        lambda: CallbackPayloadProjection(
+            mode="inline",
+            payload=payload,
+            payload_size_bytes=len(canonical_dumps(payload).encode("utf-8")),
+        ),
+    )
+    _assert_raises_value_error(
+        "callback payload projection requires payload_digest",
+        lambda: CallbackPayloadProjection(
+            mode="artifact_reference",
+            payload={},
+            payload_size_bytes=211,
+            artifact=artifact,
+        ),
+    )
+
+
+def test_callback_payload_projection_deterministic_fuzz_canonical_integrity() -> None:
+    rng = random.Random(20260702)
+
+    for index in range(50):
+        payload = {
+            "index": index,
+            "status": rng.choice(["created", "running", "completed", "failed"]),
+            "labels": [f"label-{rng.randrange(7)}" for _ in range(rng.randrange(4))],
+            "nested": {
+                "attempt": rng.randrange(5),
+                "ok": rng.choice([True, False]),
+                "score": rng.randrange(1000),
+            },
+        }
+        canonical_size = len(canonical_dumps(payload).encode("utf-8"))
+        projection = project_callback_payload(payload, max_inline_bytes=4096)
+
+        assert projection.mode == "inline"
+        assert projection.payload_digest == canonical_hash(payload)
+        assert projection.payload_size_bytes == canonical_size
+
+        reordered_payload = dict(reversed(list(payload.items())))
+        assert CallbackPayloadProjection(
+            mode="inline",
+            payload=reordered_payload,
+            payload_digest=projection.payload_digest,
+            payload_size_bytes=canonical_size,
+        ).payload_digest == projection.payload_digest
+
+        _assert_raises_value_error(
+            "inline callback payload_digest must match payload",
+            lambda payload=payload: CallbackPayloadProjection(
+                mode="inline",
+                payload=payload,
+                payload_digest=f"sha256:tampered-{index}",
+                payload_size_bytes=canonical_size,
+            ),
+        )
 
 
 def test_webhook_response_classification_maps_receiver_statuses() -> None:

@@ -232,8 +232,9 @@ class CallbackPayloadProjection:
         if not isinstance(self.payload, Mapping):
             raise ValueError("payload must be a JSON object")
         object.__setattr__(self, "payload", _json_payload(self.payload))
-        if self.payload_digest is not None:
-            _require_non_empty_string("payload_digest", self.payload_digest)
+        if self.payload_digest is None:
+            raise ValueError("callback payload projection requires payload_digest")
+        _require_non_empty_string("payload_digest", self.payload_digest)
         object.__setattr__(self, "payload_size_bytes", _non_negative_int("payload_size_bytes", self.payload_size_bytes))
         if self.mode == "inline":
             canonical = canonical_dumps(self.payload).encode("utf-8")
