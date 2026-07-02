@@ -263,6 +263,8 @@ class AsyncOperation:
             raise ValueError("async operation completed_at must not be before submitted_at")
         if expires_at is not None and expires_at <= created_at:
             raise ValueError("async operation expires_at must be after created_at")
+        if submitted_at is not None and expires_at is not None and expires_at <= submitted_at:
+            raise ValueError("async operation expires_at must be after submitted_at")
 
     @classmethod
     def created(

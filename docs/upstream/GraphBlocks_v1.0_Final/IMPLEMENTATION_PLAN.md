@@ -446,7 +446,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   already carry submitted or completed timestamps.
 - The Python `AsyncOperation` facade now validates ISO datetime syntax and ordering for
   `created_at`, `submitted_at`, `completed_at`, and `expires_at`, including offset-aware comparisons
-  for submitted-before-created, completed-before-submitted, and non-positive expiry windows.
+  for submitted-before-created, completed-before-submitted, non-positive expiry windows, and
+  expiry deadlines that are already elapsed by submission time.
 - The Python `AsyncOperation` facade now rejects provider operation identity before submission, so
   `provider_operation_id` cannot appear on a still-created operation record and provider invocation
   remains separated from durable operation creation.

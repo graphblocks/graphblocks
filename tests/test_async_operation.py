@@ -566,6 +566,21 @@ def test_async_operation_rejects_invalid_timestamp_format_and_ordering() -> None
             expires_at="2026-07-02T00:00:00Z",
         )
 
+    with raises_value_error("async operation expires_at must be after submitted_at"):
+        graphblocks.AsyncOperation.created(
+            operation_id="op-ci-1",
+            run_id="run-1",
+            node_id="startCI",
+            attempt_id="attempt-1",
+            kind="ci_job",
+            expected_schema="schemas/CICallback@1",
+            resume_token_hash="sha256:resume",
+            idempotency_key="idem-ci-1",
+            created_at="2026-07-02T00:00:00Z",
+            callback_ref="cbep-ci-1",
+            expires_at="2026-07-02T00:00:02Z",
+        ).mark_submitted(submitted_at="2026-07-02T00:00:03Z")
+
 
 def test_async_operation_result_exports_are_available() -> None:
     assert "AsyncOperation" in graphblocks.__all__
