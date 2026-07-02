@@ -225,6 +225,10 @@ pub enum RunStoreError {
         run_id: String,
         status: RunStatus,
     },
+    InvalidRunStatusSnapshot {
+        run_id: String,
+        reason: &'static str,
+    },
     InvalidStatePath {
         path: Vec<String>,
     },
@@ -249,6 +253,139 @@ pub struct RunInvocationResponse {
     pub websocket: String,
     pub cancel: String,
     pub initial_cursor: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RunWaitReasonKind {
+    Input,
+    Approval,
+    Review,
+    Callback,
+    Budget,
+    Policy,
+    Operator,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RunWaitReason {
+    pub kind: RunWaitReasonKind,
+    pub node_id: Option<String>,
+    pub operation_id: Option<String>,
+    pub message: Option<String>,
+}
+
+impl RunWaitReason {
+    pub fn callback(
+        operation_id: impl Into<String>,
+        node_id: Option<impl Into<String>>,
+    ) -> Result<Self, RunStoreError> {
+        let operation_id = operation_id.into();
+        if operation_id.trim().is_empty() {
+            return Err(RunStoreError::EmptyField {
+                field: "operation_id",
+            });
+        }
+        let node_id = node_id.map(Into::into);
+        if node_id
+            .as_ref()
+            .is_some_and(|node_id| node_id.trim().is_empty())
+        {
+            return Err(RunStoreError::EmptyField { field: "node_id" });
+        }
+        Ok(Self {
+            kind: RunWaitReasonKind::Callback,
+            node_id,
+            operation_id: Some(operation_id),
+            message: None,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RunStatusSnapshot {
+    pub run_id: String,
+    pub state: RunStatus,
+    pub release_id: String,
+    pub last_cursor: String,
+    pub started_at_unix_ms: u64,
+    pub updated_at_unix_ms: u64,
+    pub completed_at_unix_ms: Option<u64>,
+    pub waiting_on: Vec<RunWaitReason>,
+    pub active_operations: Vec<String>,
+}
+
+impl RunStatusSnapshot {
+    pub fn from_run(
+        run: &RunRecord,
+        last_cursor: impl Into<String>,
+        started_at_unix_ms: u64,
+        updated_at_unix_ms: u64,
+        completed_at_unix_ms: Option<u64>,
+        waiting_on: Vec<RunWaitReason>,
+        active_operations: Vec<String>,
+    ) -> Result<Self, RunStoreError> {
+        let last_cursor = last_cursor.into();
+        if last_cursor.trim().is_empty() {
+            return Err(RunStoreError::EmptyField {
+                field: "last_cursor",
+            });
+        }
+        if updated_at_unix_ms < started_at_unix_ms {
+            return Err(RunStoreError::InvalidRunStatusSnapshot {
+                run_id: run.run_id.clone(),
+                reason: "updated_at precedes started_at",
+            });
+        }
+        match (run.status.is_terminal(), completed_at_unix_ms) {
+            (true, None) => {
+                return Err(RunStoreError::InvalidRunStatusSnapshot {
+                    run_id: run.run_id.clone(),
+                    reason: "terminal run requires completed_at",
+                });
+            }
+            (false, Some(_)) => {
+                return Err(RunStoreError::InvalidRunStatusSnapshot {
+                    run_id: run.run_id.clone(),
+                    reason: "nonterminal run cannot have completed_at",
+                });
+            }
+            _ => {}
+        }
+        if completed_at_unix_ms.is_some_and(|completed_at| completed_at < updated_at_unix_ms) {
+            return Err(RunStoreError::InvalidRunStatusSnapshot {
+                run_id: run.run_id.clone(),
+                reason: "completed_at precedes updated_at",
+            });
+        }
+        if active_operations
+            .iter()
+            .any(|operation_id| operation_id.trim().is_empty())
+        {
+            return Err(RunStoreError::EmptyField {
+                field: "active_operations",
+            });
+        }
+
+        let mut active_operations = active_operations;
+        active_operations.sort();
+        active_operations.dedup();
+
+        Ok(Self {
+            run_id: run.run_id.clone(),
+            state: run.status,
+            release_id: run
+                .deployment_provenance
+                .release_digest
+                .clone()
+                .unwrap_or_else(|| run.graph_hash.clone()),
+            last_cursor,
+            started_at_unix_ms,
+            updated_at_unix_ms,
+            completed_at_unix_ms,
+            waiting_on,
+            active_operations,
+        })
+    }
 }
 
 impl RunInvocationResponse {

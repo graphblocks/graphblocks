@@ -229,6 +229,8 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
 - `RunInvocationMode` now records `sync`, `accepted`, and `background` invocation mode in
   `RunRecord`, persists the mode through SQLite, and builds accepted/background run handles with
   event stream, websocket, cancel route, and initial cursor fields.
+- Run status snapshots now expose the protocol response shape with state, release id, last cursor,
+  started/updated/completed timestamps, wait reasons, and active async operation ids.
 - `ApplicationCommandKind` now includes the async run, attach/replay, subscription, callback
   registration, callback ingestion, pause/resume/expire, redrive, and dead-letter command names
   from the amendment.

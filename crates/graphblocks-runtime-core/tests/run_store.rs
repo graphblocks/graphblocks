@@ -2,7 +2,8 @@ use graphblocks_runtime_core::{
     evaluation::ModelVisibleToolRef,
     run_store::{
         InMemoryRunStore, PatchOperation, RunDeploymentProvenance, RunInvocationMode,
-        RunInvocationResponse, RunStatus, RunStoreError, SqliteRunStore, StatePatch,
+        RunInvocationResponse, RunStatus, RunStatusSnapshot, RunStoreError, RunWaitReason,
+        SqliteRunStore, StatePatch,
     },
 };
 use serde_json::json;
@@ -55,6 +56,71 @@ fn run_store_records_invocation_mode_and_builds_accepted_handle() -> Result<(), 
     assert_eq!(handle.cancel, "/v1/runs/run-000001/cancel");
     assert_eq!(handle.initial_cursor, "evt_000000");
     Ok(())
+}
+
+#[test]
+fn run_status_snapshot_reports_waiting_callback_and_active_operations() -> Result<(), RunStoreError>
+{
+    let mut store = InMemoryRunStore::new();
+    let record = store.create_run_with_provenance(
+        "sha256:graph",
+        json!({"task": "ci"}),
+        RunDeploymentProvenance::new().with_release_digest("release-2026-07-02"),
+    );
+    let waiting = store.set_status(&record.run_id, RunStatus::WaitingCallback)?;
+
+    let snapshot = RunStatusSnapshot::from_run(
+        &waiting,
+        "evt_000042",
+        1_000,
+        1_500,
+        None,
+        vec![RunWaitReason::callback("op-ci-1", Some("waitCI"))?],
+        vec!["op-ci-1".to_owned()],
+    )?;
+
+    assert_eq!(snapshot.run_id, waiting.run_id);
+    assert_eq!(snapshot.state, RunStatus::WaitingCallback);
+    assert_eq!(snapshot.release_id, "release-2026-07-02");
+    assert_eq!(snapshot.last_cursor, "evt_000042");
+    assert_eq!(snapshot.started_at_unix_ms, 1_000);
+    assert_eq!(snapshot.updated_at_unix_ms, 1_500);
+    assert_eq!(snapshot.completed_at_unix_ms, None);
+    assert_eq!(snapshot.waiting_on.len(), 1);
+    assert_eq!(
+        snapshot.waiting_on[0].operation_id.as_deref(),
+        Some("op-ci-1")
+    );
+    assert_eq!(snapshot.waiting_on[0].node_id.as_deref(), Some("waitCI"));
+    assert_eq!(snapshot.active_operations, vec!["op-ci-1"]);
+    Ok(())
+}
+
+#[test]
+fn run_status_snapshot_validates_terminal_completion_and_nonterminal_completion() {
+    let mut store = InMemoryRunStore::new();
+    let record = store.create_run("sha256:graph", json!({}));
+    let running = store
+        .set_status(&record.run_id, RunStatus::Running)
+        .expect("run can start");
+    assert_eq!(
+        RunStatusSnapshot::from_run(&running, "evt_1", 1_000, 1_200, Some(1_300), vec![], vec![]),
+        Err(RunStoreError::InvalidRunStatusSnapshot {
+            run_id: running.run_id.clone(),
+            reason: "nonterminal run cannot have completed_at",
+        })
+    );
+
+    let completed = store
+        .set_status(&running.run_id, RunStatus::Completed)
+        .expect("run can complete");
+    assert_eq!(
+        RunStatusSnapshot::from_run(&completed, "evt_2", 1_000, 1_400, None, vec![], vec![]),
+        Err(RunStoreError::InvalidRunStatusSnapshot {
+            run_id: completed.run_id,
+            reason: "terminal run requires completed_at",
+        })
+    );
 }
 
 #[test]
