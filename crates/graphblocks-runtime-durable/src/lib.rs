@@ -159,7 +159,7 @@ pub struct InMemoryDurableSource {
     events: Vec<SourceEvent>,
     known_streams: BTreeSet<String>,
     known_partitions: BTreeSet<(String, u32)>,
-    committed_cursor: Option<SourceCursor>,
+    committed_cursors: BTreeMap<(String, u32), SourceCursor>,
     paused: bool,
 }
 
@@ -183,7 +183,7 @@ impl InMemoryDurableSource {
             events,
             known_streams,
             known_partitions,
-            committed_cursor: None,
+            committed_cursors: BTreeMap::new(),
             paused: false,
         }
     }
@@ -199,11 +199,22 @@ impl InMemoryDurableSource {
         if let Some(cursor) = cursor.as_ref() {
             self.validate_cursor(cursor)?;
         }
-        let replay_cursor = cursor.as_ref().or(self.committed_cursor.as_ref());
         let events = self
             .events
             .iter()
-            .filter(|event| replay_cursor.is_none_or(|cursor| event.cursor > *cursor))
+            .filter(|event| {
+                let partition_key = (event.cursor.stream.clone(), event.cursor.partition);
+                let replay_cursor = match cursor.as_ref() {
+                    Some(cursor)
+                        if cursor.stream == event.cursor.stream
+                            && cursor.partition == event.cursor.partition =>
+                    {
+                        Some(cursor)
+                    }
+                    _ => self.committed_cursors.get(&partition_key),
+                };
+                replay_cursor.is_none_or(|cursor| event.cursor > *cursor)
+            })
             .take(demand)
             .cloned()
             .collect::<Vec<_>>();
@@ -217,7 +228,8 @@ impl InMemoryDurableSource {
 
     pub fn commit(&mut self, cursor: SourceCursor) -> Result<(), DurableError> {
         self.validate_cursor(&cursor)?;
-        if let Some(current) = &self.committed_cursor
+        let partition_key = (cursor.stream.clone(), cursor.partition);
+        if let Some(current) = self.committed_cursors.get(&partition_key)
             && cursor < *current
         {
             return Err(DurableError::StaleCommit {
@@ -225,7 +237,7 @@ impl InMemoryDurableSource {
                 attempted: cursor,
             });
         }
-        self.committed_cursor = Some(cursor);
+        self.committed_cursors.insert(partition_key, cursor);
         Ok(())
     }
 

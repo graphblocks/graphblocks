@@ -12,6 +12,14 @@ fn order_event(offset: u64) -> SourceEvent {
     )
 }
 
+fn partition_event(partition: u32, offset: u64) -> SourceEvent {
+    SourceEvent::new(
+        SourceCursor::new("orders", partition, offset),
+        json!({"partition": partition, "offset": offset}),
+        Some(1_820_000_000_000 + offset),
+    )
+}
+
 #[test]
 fn source_cursor_orders_by_partition_and_offset() {
     let early = SourceCursor::new("orders", 0, 41);
@@ -65,6 +73,62 @@ fn in_memory_source_replays_from_committed_or_explicit_cursor() {
             .map(|event| event.cursor.offset)
             .collect::<Vec<_>>(),
         vec![11, 12],
+    );
+}
+
+#[test]
+fn in_memory_source_commits_are_partition_scoped() {
+    let mut source = InMemoryDurableSource::new(
+        DeliveryGuarantee::AtLeastOnce,
+        [
+            partition_event(0, 1),
+            partition_event(0, 2),
+            partition_event(1, 10),
+            partition_event(1, 11),
+        ],
+    );
+
+    source
+        .commit(SourceCursor::new("orders", 1, 10))
+        .expect("partition 1 commit should advance only partition 1");
+
+    let after_commit = source
+        .poll(None, 10)
+        .expect("source should retain uncommitted partition 0 events");
+
+    assert_eq!(
+        after_commit
+            .events
+            .iter()
+            .map(|event| (event.cursor.partition, event.cursor.offset))
+            .collect::<Vec<_>>(),
+        vec![(0, 1), (0, 2), (1, 11)],
+    );
+}
+
+#[test]
+fn in_memory_source_explicit_replay_cursor_filters_only_its_partition() {
+    let source = InMemoryDurableSource::new(
+        DeliveryGuarantee::AtLeastOnce,
+        [
+            partition_event(0, 1),
+            partition_event(0, 2),
+            partition_event(1, 1),
+            partition_event(1, 2),
+        ],
+    );
+
+    let replay = source
+        .poll(Some(SourceCursor::new("orders", 1, 1)), 10)
+        .expect("explicit partition cursor should replay across other partitions");
+
+    assert_eq!(
+        replay
+            .events
+            .iter()
+            .map(|event| (event.cursor.partition, event.cursor.offset))
+            .collect::<Vec<_>>(),
+        vec![(0, 1), (0, 2), (1, 2)],
     );
 }
 

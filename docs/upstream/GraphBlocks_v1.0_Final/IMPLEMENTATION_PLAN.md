@@ -879,6 +879,9 @@ offset, partition, watermark, late data, trigger, checkpoint barrier, idempotent
   hash and schema versions, delivery guarantee literals, and an idempotent sink commit log that
   accepts exact replays while rejecting mutated idempotency-key reuse. This remains a contract layer,
   not a default stream engine dependency.
+- `graphblocks-runtime-durable::InMemoryDurableSource` now tracks committed cursors per stream
+  partition. A commit for one partition does not hide uncommitted events in another partition, and
+  an explicit replay cursor only overrides replay for its own partition.
 
 ## 11. CI/CD와 품질 게이트
 
