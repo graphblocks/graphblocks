@@ -2808,7 +2808,11 @@ def test_server_app_rejects_callback_registration_for_missing_run_scope() -> Non
                     "scope": "run",
                     "scopeId": "missing-run",
                     "eventFilter": {"types": ["RunSucceeded"]},
-                    "delivery": {"kind": "webhook", "url": "https://relay.example/events"},
+                    "delivery": {
+                        "kind": "webhook",
+                        "url": "https://relay.example/events",
+                        "signing": {"algorithm": "hmac-sha256", "secret_ref": "secret://relay"},
+                    },
                 }
             ).encode("utf-8"),
         )
@@ -2879,6 +2883,70 @@ def test_server_app_rejects_callback_registration_with_invalid_failure_policy() 
     assert json.loads(response.body.decode("utf-8")) == {
         "ok": False,
         "error": "server subscription failure_policy must be one of best_effort, retry_then_dead_letter, pause_run_on_failure, or fail_run_on_failure",
+    }
+    assert app.callback_registrations() == ()
+
+
+def test_server_app_rejects_webhook_callback_registration_without_signing() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/register",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "callback-sub-missing-signing",
+                    "scope": "tenant",
+                    "scopeId": "tenant-1",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {"kind": "webhook", "url": "https://relay.example/events"},
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "server callback registration delivery.signing must be a mapping for webhook delivery",
+    }
+    assert app.callback_registrations() == ()
+
+
+def test_server_app_rejects_unsafe_webhook_callback_registration_target() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/register",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "callback-sub-unsafe-target",
+                    "scope": "tenant",
+                    "scopeId": "tenant-1",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {
+                        "kind": "webhook",
+                        "url": "http://127.0.0.1:9000/events",
+                        "signing": {"algorithm": "hmac-sha256", "secret_ref": "secret://relay"},
+                    },
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "server callback registration delivery.url is unsafe or forbidden by default egress policy",
     }
     assert app.callback_registrations() == ()
 

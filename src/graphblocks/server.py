@@ -3,10 +3,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
+import ipaddress
 import json
 import math
 from types import MappingProxyType
 from typing import Literal, Protocol
+from urllib.parse import urlparse
 
 from .application_event import ApplicationEvent, ApplicationEventMetadata
 from .canonical import canonical_hash
@@ -31,6 +33,16 @@ VALID_CALLBACK_FAILURE_POLICIES = frozenset({
     "pause_run_on_failure",
     "fail_run_on_failure",
 })
+VALID_CALLBACK_DELIVERY_KINDS = frozenset({
+    "webhook",
+    "websocket",
+    "sse",
+    "push_notification",
+    "email",
+    "local_callback",
+})
+VALID_WEBHOOK_SIGNING_ALGORITHMS = frozenset({"hmac-sha256", "ed25519"})
+FORBIDDEN_WEBHOOK_HOSTS = frozenset({"localhost", "metadata.google.internal"})
 SERVER_EVENT_SEVERITY_RANKS = {
     "debug": 10,
     "info": 20,
@@ -93,6 +105,58 @@ def _validate_callback_failure_policy(value: object) -> str:
             "server subscription failure_policy must be one of best_effort, retry_then_dead_letter, pause_run_on_failure, or fail_run_on_failure"
         )
     return failure_policy
+
+
+def _webhook_url_is_unsafe(url: str) -> bool:
+    parsed = urlparse(url)
+    if parsed.scheme in {"file", "unix"}:
+        return True
+    if parsed.scheme not in {"http", "https", "secret"}:
+        return True
+    if parsed.scheme == "secret":
+        return False
+    host = parsed.hostname
+    if host is None:
+        return True
+    normalized_host = host.rstrip(".").lower()
+    if normalized_host in FORBIDDEN_WEBHOOK_HOSTS or normalized_host.endswith(".localhost"):
+        return True
+    try:
+        address = ipaddress.ip_address(normalized_host)
+    except ValueError:
+        return False
+    return (
+        address.is_loopback
+        or address.is_private
+        or address.is_link_local
+        or address.is_multicast
+        or address.is_reserved
+        or address.is_unspecified
+    )
+
+
+def _validate_callback_delivery_target(owner: str, delivery: Mapping[str, object]) -> None:
+    delivery_kind = _validate_non_empty_string(owner, "delivery.kind", delivery.get("kind", ""))
+    if delivery_kind not in VALID_CALLBACK_DELIVERY_KINDS:
+        raise ValueError(
+            f"{owner} delivery.kind must be one of webhook, websocket, sse, push_notification, email, or local_callback"
+        )
+    if delivery_kind != "webhook":
+        return
+    url = _validate_non_empty_string(owner, "delivery.url", delivery.get("url", ""))
+    if _webhook_url_is_unsafe(url):
+        raise ValueError(f"{owner} delivery.url is unsafe or forbidden by default egress policy")
+    signing = delivery.get("signing")
+    if not isinstance(signing, Mapping):
+        raise ValueError(f"{owner} delivery.signing must be a mapping for webhook delivery")
+    algorithm = _validate_non_empty_string(owner, "delivery.signing.algorithm", signing.get("algorithm", ""))
+    if algorithm not in VALID_WEBHOOK_SIGNING_ALGORITHMS:
+        raise ValueError(f"{owner} delivery.signing.algorithm must be one of hmac-sha256 or ed25519")
+    _validate_non_empty_string(
+        owner,
+        "delivery.signing.secret_ref",
+        signing.get("secret_ref", signing.get("secretRef", "")),
+    )
 
 
 def _validate_string_mapping(
@@ -630,11 +694,7 @@ class ServerEventSubscription:
         assert isinstance(event_filter, Mapping)
         assert isinstance(delivery, Mapping)
         _validate_server_event_filter("server event subscription", event_filter)
-        _validate_non_empty_string(
-            "server event subscription",
-            "delivery.kind",
-            delivery.get("kind", ""),
-        )
+        _validate_callback_delivery_target("server event subscription", delivery)
         object.__setattr__(self, "event_filter", event_filter)
         object.__setattr__(self, "delivery", delivery)
         object.__setattr__(
@@ -764,11 +824,7 @@ class ServerCallbackRegistration:
         assert isinstance(event_filter, Mapping)
         assert isinstance(delivery, Mapping)
         _validate_server_event_filter("server event subscription", event_filter)
-        _validate_non_empty_string(
-            "server callback registration",
-            "delivery.kind",
-            delivery.get("kind", ""),
-        )
+        _validate_callback_delivery_target("server callback registration", delivery)
         object.__setattr__(self, "event_filter", event_filter)
         object.__setattr__(self, "delivery", delivery)
         object.__setattr__(

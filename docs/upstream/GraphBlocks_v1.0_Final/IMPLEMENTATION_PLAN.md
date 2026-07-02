@@ -484,6 +484,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Callback delivery targets are now typed as webhook, WebSocket, SSE, push notification, email, or
   local callback variants, and ordered-delivery diagnostics use target capabilities instead of
   string-prefix inference.
+- `graphblocks-server` now enforces callback delivery target safety at registration and subscription
+  admission: webhook delivery requires HMAC-SHA256 or Ed25519 signing metadata and rejects obvious
+  forbidden egress targets such as localhost, private/link-local IPs, `file://`, and Unix socket URLs.
 - Callback event filters now include visibility, node ID, operation ID, and minimum severity
   predicates in addition to event type and terminal-event inclusion.
 - `SqliteCallbackDeadLetterStore` now persists callback dead-letter records across reopen and can
