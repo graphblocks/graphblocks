@@ -4,9 +4,11 @@ use std::error::Error;
 use graphblocks_runtime_core::budget::{BudgetPermit, UsageAmount};
 use graphblocks_runtime_core::orchestration::{
     ChildBudgetDelegation, LeasePool, LeasePoolError, LeaseRequest, ModelPool, ModelProfile,
-    ModelSelectionError, ModelSelectionRequest, TaskContextAccess, TaskContextAccessErrorReason,
-    TaskPlan, TaskPlanError, TaskPlanLimits, TaskPlanPatch, TaskStep, WorkerProfile,
+    ModelSelectionError, ModelSelectionRequest, TaskContextAccess, TaskContextAccessEdge,
+    TaskContextAccessErrorReason, TaskContextConflictKind, TaskPlan, TaskPlanError,
+    TaskPlanLimits, TaskPlanPatch, TaskStep, WorkerProfile,
 };
+use serde_json::json;
 
 fn tokens(amount: i64) -> UsageAmount {
     UsageAmount::new("tokens", amount, "tokens")
@@ -104,6 +106,72 @@ fn task_plan_reports_missing_dependencies_cycles_and_context_errors() -> Result<
             mode: "read".to_string(),
             reason: TaskContextAccessErrorReason::UnknownResource,
         }
+    );
+    Ok(())
+}
+
+#[test]
+fn task_plan_context_access_graph_serializes_write_conflicts() -> Result<(), Box<dyn Error>> {
+    let plan = TaskPlan::new("plan-1", "verify workspace")?
+        .with_steps([
+            TaskStep::new("check", "Run checks").with_depends_on(["patch"]),
+            TaskStep::new("index", "Read docs"),
+            TaskStep::new("patch", "Apply patch"),
+            TaskStep::new("summarize", "Summarize docs"),
+        ])?
+        .with_context_resources(["workspace", "docs"])?
+        .with_context_access([
+            TaskContextAccess::new("patch", "workspace", "write"),
+            TaskContextAccess::new("check", "workspace", "read"),
+            TaskContextAccess::new("index", "docs", "read"),
+            TaskContextAccess::new("summarize", "docs", "read"),
+        ])?;
+
+    let graph = plan.context_access_graph();
+
+    assert_eq!(
+        graph.edges,
+        vec![TaskContextAccessEdge {
+            from_step_id: "patch".to_owned(),
+            to_step_id: "check".to_owned(),
+            resource_id: "workspace".to_owned(),
+            conflict: TaskContextConflictKind::WriteRead,
+        }]
+    );
+    assert_eq!(
+        graph.edge_contracts(),
+        vec![json!({
+            "from_step_id": "patch",
+            "to_step_id": "check",
+            "resource_id": "workspace",
+            "conflict": "write_read"
+        })]
+    );
+    assert!(graph.content_digest().starts_with("sha256:"));
+    Ok(())
+}
+
+#[test]
+fn task_plan_context_access_graph_orders_independent_writes_deterministically() -> Result<(), Box<dyn Error>> {
+    let plan = TaskPlan::new("plan-1", "merge workspace")?
+        .with_steps([
+            TaskStep::new("write-b", "Write generated file B"),
+            TaskStep::new("write-a", "Write generated file A"),
+        ])?
+        .with_context_resources(["workspace"])?
+        .with_context_access([
+            TaskContextAccess::new("write-b", "workspace", "write"),
+            TaskContextAccess::new("write-a", "workspace", "write"),
+        ])?;
+
+    assert_eq!(
+        plan.context_access_graph().edges,
+        vec![TaskContextAccessEdge {
+            from_step_id: "write-a".to_owned(),
+            to_step_id: "write-b".to_owned(),
+            resource_id: "workspace".to_owned(),
+            conflict: TaskContextConflictKind::WriteWrite,
+        }]
     );
     Ok(())
 }

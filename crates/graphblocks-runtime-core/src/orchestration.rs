@@ -190,6 +190,62 @@ impl TaskContextAccess {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TaskContextConflictKind {
+    ReadWrite,
+    WriteRead,
+    WriteWrite,
+}
+
+impl TaskContextConflictKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ReadWrite => "read_write",
+            Self::WriteRead => "write_read",
+            Self::WriteWrite => "write_write",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaskContextAccessEdge {
+    pub from_step_id: String,
+    pub to_step_id: String,
+    pub resource_id: String,
+    pub conflict: TaskContextConflictKind,
+}
+
+impl TaskContextAccessEdge {
+    fn canonical_value(&self) -> Value {
+        json!({
+            "from_step_id": self.from_step_id,
+            "to_step_id": self.to_step_id,
+            "resource_id": self.resource_id,
+            "conflict": self.conflict.as_str(),
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaskContextAccessGraph {
+    pub edges: Vec<TaskContextAccessEdge>,
+}
+
+impl TaskContextAccessGraph {
+    pub fn edge_contracts(&self) -> Vec<Value> {
+        self.edges
+            .iter()
+            .map(TaskContextAccessEdge::canonical_value)
+            .collect()
+    }
+
+    pub fn content_digest(&self) -> String {
+        canonical_hash(&json!({
+            "edges": self.edge_contracts(),
+        }))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TaskContextAccessErrorReason {
     InvalidMode,
     UnknownStep,
@@ -569,6 +625,141 @@ impl TaskPlan {
             "context_access": self.context_access.iter().map(TaskContextAccess::canonical_value).collect::<Vec<_>>(),
         }))
     }
+
+    pub fn context_access_graph(&self) -> TaskContextAccessGraph {
+        let step_order = self.dependency_ordered_step_ids();
+        let positions = step_order
+            .iter()
+            .enumerate()
+            .map(|(index, step_id)| (step_id.clone(), index))
+            .collect::<BTreeMap<_, _>>();
+        let mut access_by_resource = BTreeMap::<String, BTreeMap<String, TaskContextMode>>::new();
+        for access in &self.context_access {
+            access_by_resource
+                .entry(access.resource_id.clone())
+                .or_default()
+                .entry(access.step_id.clone())
+                .and_modify(|mode| mode.merge(access.mode.as_str()))
+                .or_insert_with(|| TaskContextMode::from_mode(access.mode.as_str()));
+        }
+
+        let mut edges = Vec::new();
+        for (resource_id, access_by_step) in access_by_resource {
+            let mut step_access = access_by_step.into_iter().collect::<Vec<_>>();
+            step_access.sort_by(|(left_step_id, _), (right_step_id, _)| {
+                positions[left_step_id]
+                    .cmp(&positions[right_step_id])
+                    .then_with(|| left_step_id.cmp(right_step_id))
+            });
+            for left_index in 0..step_access.len() {
+                for right_index in (left_index + 1)..step_access.len() {
+                    let (left_step_id, left_mode) = &step_access[left_index];
+                    let (right_step_id, right_mode) = &step_access[right_index];
+                    let Some(conflict) = context_conflict_kind(*left_mode, *right_mode) else {
+                        continue;
+                    };
+                    edges.push(TaskContextAccessEdge {
+                        from_step_id: left_step_id.clone(),
+                        to_step_id: right_step_id.clone(),
+                        resource_id: resource_id.clone(),
+                        conflict,
+                    });
+                }
+            }
+        }
+        edges.sort_by(|left, right| {
+            (
+                left.from_step_id.as_str(),
+                left.to_step_id.as_str(),
+                left.resource_id.as_str(),
+                left.conflict.as_str(),
+            )
+                .cmp(&(
+                    right.from_step_id.as_str(),
+                    right.to_step_id.as_str(),
+                    right.resource_id.as_str(),
+                    right.conflict.as_str(),
+                ))
+        });
+        TaskContextAccessGraph { edges }
+    }
+
+    fn dependency_ordered_step_ids(&self) -> Vec<String> {
+        let steps_by_id = self
+            .steps
+            .iter()
+            .map(|step| (step.step_id.clone(), step))
+            .collect::<BTreeMap<_, _>>();
+        let mut ordered = Vec::new();
+        let mut visited = BTreeSet::new();
+        for step_id in steps_by_id.keys() {
+            push_step_after_dependencies(step_id, &steps_by_id, &mut visited, &mut ordered);
+        }
+        ordered
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct TaskContextMode {
+    reads: bool,
+    writes: bool,
+}
+
+impl TaskContextMode {
+    fn from_mode(mode: &str) -> Self {
+        match mode {
+            "write" => Self {
+                reads: false,
+                writes: true,
+            },
+            "read_write" => Self {
+                reads: true,
+                writes: true,
+            },
+            _ => Self {
+                reads: true,
+                writes: false,
+            },
+        }
+    }
+
+    fn merge(&mut self, mode: &str) {
+        let mode = Self::from_mode(mode);
+        self.reads |= mode.reads;
+        self.writes |= mode.writes;
+    }
+}
+
+fn context_conflict_kind(
+    left: TaskContextMode,
+    right: TaskContextMode,
+) -> Option<TaskContextConflictKind> {
+    if !left.writes && !right.writes {
+        None
+    } else if left.writes && right.writes {
+        Some(TaskContextConflictKind::WriteWrite)
+    } else if left.writes && right.reads {
+        Some(TaskContextConflictKind::WriteRead)
+    } else {
+        Some(TaskContextConflictKind::ReadWrite)
+    }
+}
+
+fn push_step_after_dependencies(
+    step_id: &str,
+    steps_by_id: &BTreeMap<String, &TaskStep>,
+    visited: &mut BTreeSet<String>,
+    ordered: &mut Vec<String>,
+) {
+    if !visited.insert(step_id.to_owned()) {
+        return;
+    }
+    if let Some(step) = steps_by_id.get(step_id) {
+        for dependency_id in &step.depends_on {
+            push_step_after_dependencies(dependency_id, steps_by_id, visited, ordered);
+        }
+    }
+    ordered.push(step_id.to_owned());
 }
 
 fn visit_step(
