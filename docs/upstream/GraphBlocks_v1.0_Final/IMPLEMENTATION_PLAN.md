@@ -274,7 +274,9 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   attempts, schema mismatches, and payload-limit failures without journaling rejected payload bodies;
   SQLite persistence covers these rejection events across reopen.
 - Async operation configuration diagnostics now report missing callback timeout (`GB6001`), missing
-  idempotency key (`GB6003`), and missing callback schema (`GB6007`) in deterministic order.
+  idempotency key (`GB6003`), and missing callback schema (`GB6007`) in deterministic order for
+  top-level `asyncOperations` and `async.start_operation`/`async.await_callback` node configs, with
+  shared compiler TCK coverage.
 - Async operation configuration diagnostics now compare declared expected callback payload size to
   the configured ingestion limit and report oversized inline callback payloads as `GB6010`.
 - Async operation configuration diagnostics now report callback waits that can resume without

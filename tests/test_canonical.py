@@ -1154,3 +1154,82 @@ def test_compile_allows_safe_tool_execution_settings() -> None:
         "NonIdempotentRetry",
         "ApprovalWithoutArgumentDigest",
     } & set(_error_codes(graph))
+
+
+def test_compile_reports_async_operation_missing_timeout_idempotency_and_schema() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "async-operation-missing-contracts"},
+        "spec": {
+            "nodes": {"agent": {"block": "agent.run@1"}},
+            "asyncOperations": {
+                "ci": {
+                    "kind": "ci_job",
+                    "callback": {"required": True},
+                }
+            },
+        },
+    }
+
+    assert _error_codes(graph) == ["GB6001", "GB6003", "GB6007"]
+
+
+def test_compile_reports_async_start_operation_node_missing_callback_contracts() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "async-start-operation-missing-contracts"},
+        "spec": {
+            "nodes": {
+                "startCI": {
+                    "block": "async.start_operation@1",
+                    "config": {
+                        "provider": "github-actions",
+                        "operation": "workflow_dispatch",
+                        "callback": {"required": True},
+                    },
+                }
+            },
+        },
+    }
+
+    assert _error_codes(graph) == ["GB6001", "GB6003", "GB6007"]
+
+
+def test_compile_allows_async_operation_with_timeout_idempotency_and_schema() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "async-operation-safe-contracts"},
+        "spec": {
+            "nodes": {
+                "startCI": {
+                    "block": "async.start_operation@1",
+                    "config": {
+                        "provider": "github-actions",
+                        "operation": "workflow_dispatch",
+                        "timeout": "30m",
+                        "idempotencyKey": "$input.request_id",
+                        "callback": {
+                            "required": True,
+                            "schema": "schemas/CICallback@1",
+                        },
+                    },
+                }
+            },
+            "asyncOperations": {
+                "ci": {
+                    "kind": "ci_job",
+                    "timeout": "30m",
+                    "idempotencyKey": "$input.request_id",
+                    "callback": {
+                        "required": True,
+                        "schema": "schemas/CICallback@1",
+                    },
+                }
+            },
+        },
+    }
+
+    assert not {"GB6001", "GB6003", "GB6007"} & set(_error_codes(graph))

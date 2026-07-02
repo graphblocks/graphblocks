@@ -20,6 +20,9 @@ AMENDMENT_COMPILER_DIAGNOSTICS = {
     "PendingToolCallAfterAbort",
     "CommitAfterPolicyStop",
     "UnboundedPolicyHoldback",
+    "GB6001",
+    "GB6003",
+    "GB6007",
 }
 
 

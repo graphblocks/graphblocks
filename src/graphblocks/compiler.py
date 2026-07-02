@@ -66,6 +66,80 @@ def _is_positive_integer(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
 
+def _has_non_empty_string(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _has_async_timeout(config: dict[str, Any]) -> bool:
+    timeout = (
+        config.get("timeout")
+        or config.get("timeoutMs")
+        or config.get("timeout_ms")
+        or config.get("deadline")
+    )
+    if _has_non_empty_string(timeout) or _is_positive_integer(timeout):
+        return True
+    infinite_wait = config.get("infiniteWait", config.get("infinite_wait", False))
+    explicit_infinite_wait_policy = config.get("infiniteWaitPolicy") or config.get("infinite_wait_policy")
+    return infinite_wait is True or _has_non_empty_string(explicit_infinite_wait_policy)
+
+
+def _has_async_idempotency_key(config: dict[str, Any]) -> bool:
+    return _has_non_empty_string(config.get("idempotencyKey") or config.get("idempotency_key"))
+
+
+def _has_async_callback_schema(config: dict[str, Any]) -> bool:
+    callback = config.get("callback")
+    if isinstance(callback, dict):
+        schema = (
+            callback.get("schema")
+            or callback.get("acceptedSchema")
+            or callback.get("accepted_schema")
+            or callback.get("expectedSchema")
+            or callback.get("expected_schema")
+        )
+        return _has_non_empty_string(schema)
+    return _has_non_empty_string(config.get("callbackSchema") or config.get("callback_schema"))
+
+
+def _callback_schema_required(config: dict[str, Any]) -> bool:
+    callback = config.get("callback")
+    if isinstance(callback, dict):
+        return callback.get("required", True) is not False
+    return "callback" in config or "callbackSchema" in config or "callback_schema" in config
+
+
+def _diagnose_async_operation_config(
+    diagnostics: list[Diagnostic],
+    config: dict[str, Any],
+    path: str,
+) -> None:
+    if not _has_async_timeout(config):
+        diagnostics.append(
+            Diagnostic(
+                "GB6001",
+                "async operation callback waits require a timeout or explicit infinite-wait policy",
+                path,
+            )
+        )
+    if not _has_async_idempotency_key(config):
+        diagnostics.append(
+            Diagnostic(
+                "GB6003",
+                "async operation callbacks require an idempotency key",
+                path,
+            )
+        )
+    if _callback_schema_required(config) and not _has_async_callback_schema(config):
+        diagnostics.append(
+            Diagnostic(
+                "GB6007",
+                "async operation callbacks require an expected callback schema",
+                f"{path}.callback",
+            )
+        )
+
+
 def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None = None) -> Plan:
     diagnostics: list[Diagnostic] = []
     migrated = migrate_document(document)
@@ -136,6 +210,24 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
         block = node.get("block")
         if not isinstance(block, str) or "@" not in block or block.endswith("@"):
             diagnostics.append(Diagnostic("GB0009", "node.block must use '<type>@<major>'", f"$.spec.nodes.{node_name}.block"))
+        if isinstance(block, str) and block.split("@", 1)[0] in {"async.start_operation", "async.await_callback"}:
+            config = node.get("config", {})
+            if config is None:
+                config = {}
+            if isinstance(config, dict):
+                _diagnose_async_operation_config(
+                    diagnostics,
+                    config,
+                    f"$.spec.nodes.{node_name}.config",
+                )
+            else:
+                diagnostics.append(
+                    Diagnostic(
+                        "InvalidAsyncOperation",
+                        "async operation node config must be a mapping",
+                        f"$.spec.nodes.{node_name}.config",
+                    )
+                )
         if "connection" in node and "bindings" in node:
             diagnostics.append(
                 Diagnostic(
@@ -166,6 +258,44 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                     "GB1011",
                     "retrying effectful nodes requires an idempotency key",
                     f"$.spec.nodes.{node_name}.flow.retry",
+                )
+            )
+
+    async_operations_key = "asyncOperations" if "asyncOperations" in spec else "async_operations"
+    async_operations = spec.get(async_operations_key)
+    if async_operations is not None:
+        if isinstance(async_operations, dict):
+            for operation_key, operation_config in async_operations.items():
+                operation_path = f"$.spec.{async_operations_key}.{operation_key}"
+                if not isinstance(operation_config, dict):
+                    diagnostics.append(
+                        Diagnostic(
+                            "InvalidAsyncOperation",
+                            "async operation config must be a mapping",
+                            operation_path,
+                        )
+                    )
+                    continue
+                _diagnose_async_operation_config(diagnostics, operation_config, operation_path)
+        elif isinstance(async_operations, list):
+            for operation_index, operation_config in enumerate(async_operations):
+                operation_path = f"$.spec.{async_operations_key}[{operation_index}]"
+                if not isinstance(operation_config, dict):
+                    diagnostics.append(
+                        Diagnostic(
+                            "InvalidAsyncOperation",
+                            "async operation config must be a mapping",
+                            operation_path,
+                        )
+                    )
+                    continue
+                _diagnose_async_operation_config(diagnostics, operation_config, operation_path)
+        else:
+            diagnostics.append(
+                Diagnostic(
+                    "InvalidAsyncOperation",
+                    "asyncOperations must be a mapping or list",
+                    f"$.spec.{async_operations_key}",
                 )
             )
 
