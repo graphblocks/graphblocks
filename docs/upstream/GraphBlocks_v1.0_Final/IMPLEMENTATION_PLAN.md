@@ -571,6 +571,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   bounded deterministic jittered backoff, immutable delivery projections, dead-letter conversion,
   and redrive records that preserve original delivery identity, idempotency key, and attempt
   history without creating application events.
+- `graphblocks-callbacks` now exposes a dependency-free webhook target safety helper for callback
+  delivery adapters, rejecting unsupported schemes, userinfo URLs, localhost/metadata hosts, and
+  loopback/private/link-local/reserved IP destinations unless private targets are explicitly
+  allowed by deployment policy.
 - `graphblocks-server` now exposes framework-neutral
   `POST /callbacks/deliveries/{delivery_id}/redrive` and
   `POST /callbacks/deliveries/{delivery_id}/dead-letter`

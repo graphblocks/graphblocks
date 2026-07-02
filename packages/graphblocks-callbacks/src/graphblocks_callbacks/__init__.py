@@ -5,8 +5,10 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 import hmac
+import ipaddress
 import json
 import math
+from urllib.parse import urlparse
 
 from graphblocks import canonical_dumps, canonical_hash
 
@@ -31,6 +33,7 @@ VALID_DELIVERY_STATUSES = frozenset({
     "cancelled",
     "expired",
 })
+FORBIDDEN_WEBHOOK_HOSTS = frozenset({"localhost", "metadata.google.internal"})
 
 
 def _utc_now_iso() -> str:
@@ -102,6 +105,62 @@ def _json_payload(value: Mapping[str, object]) -> dict[str, object]:
     _validate_json_value(dict(value))
     json.dumps(value, allow_nan=False)
     return deepcopy(dict(value))
+
+
+def _host_is_forbidden(host: str) -> bool:
+    normalized = host.strip().rstrip(".").lower()
+    return normalized in FORBIDDEN_WEBHOOK_HOSTS or normalized.endswith(".localhost")
+
+
+def _ip_is_forbidden(host: str) -> bool:
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return (
+        address.is_loopback
+        or address.is_private
+        or address.is_link_local
+        or address.is_reserved
+        or address.is_multicast
+        or address.is_unspecified
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class WebhookTargetSafety:
+    url: str
+    allowed: bool
+    reason: str
+    host: str | None = None
+
+    def __post_init__(self) -> None:
+        _require_non_empty_string("url", self.url)
+        if not isinstance(self.allowed, bool):
+            raise ValueError("allowed must be a boolean")
+        _require_non_empty_string("reason", self.reason)
+        if self.host is not None:
+            _require_non_empty_string("host", self.host)
+
+
+def validate_webhook_target_url(url: str, *, allow_private: bool = False) -> WebhookTargetSafety:
+    _require_non_empty_string("url", url)
+    if not isinstance(allow_private, bool):
+        raise ValueError("allow_private must be a boolean")
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        return WebhookTargetSafety(url=url, allowed=False, reason="unsupported_scheme", host=parsed.hostname)
+    if parsed.username is not None or parsed.password is not None:
+        return WebhookTargetSafety(url=url, allowed=False, reason="userinfo_not_allowed", host=parsed.hostname)
+    if parsed.hostname is None or not parsed.hostname.strip():
+        return WebhookTargetSafety(url=url, allowed=False, reason="missing_host", host=None)
+
+    host = parsed.hostname.strip().rstrip(".").lower()
+    if not allow_private and _host_is_forbidden(host):
+        return WebhookTargetSafety(url=url, allowed=False, reason="forbidden_host", host=host)
+    if not allow_private and _ip_is_forbidden(host):
+        return WebhookTargetSafety(url=url, allowed=False, reason="forbidden_ip", host=host)
+    return WebhookTargetSafety(url=url, allowed=True, reason="allowed", host=host)
 
 
 @dataclass(frozen=True, slots=True)
@@ -481,7 +540,9 @@ __all__ = [
     "CallbackRedriveRecord",
     "CallbackRetryPolicy",
     "REQUIRED_WEBHOOK_HEADERS",
+    "WebhookTargetSafety",
     "sign_webhook_hmac_sha256",
+    "validate_webhook_target_url",
     "verify_webhook_headers_hmac_sha256",
     "verify_webhook_hmac_sha256",
     "webhook_headers_hmac_sha256",

@@ -20,6 +20,8 @@ from graphblocks_callbacks import (  # noqa: E402
     CallbackDeliveryProjection,
     CallbackRetryPolicy,
     REQUIRED_WEBHOOK_HEADERS,
+    WebhookTargetSafety,
+    validate_webhook_target_url,
     verify_webhook_headers_hmac_sha256,
     verify_webhook_hmac_sha256,
     webhook_headers_hmac_sha256,
@@ -321,3 +323,40 @@ def test_callback_dead_letter_and_redrive_preserve_delivery_identity_and_attempt
     assert redrive.attempt_history == (1, 2)
     assert redrive.operator_principal == "operator-1"
     assert redrive.reason == "receiver fixed"
+
+
+def test_webhook_target_safety_allows_public_https_targets() -> None:
+    safety = validate_webhook_target_url("https://callbacks.example.com/graphblocks/events")
+
+    assert safety == WebhookTargetSafety(
+        url="https://callbacks.example.com/graphblocks/events",
+        allowed=True,
+        reason="allowed",
+        host="callbacks.example.com",
+    )
+
+
+def test_webhook_target_safety_rejects_forbidden_targets_by_default() -> None:
+    cases = {
+        "http://localhost/callback": "forbidden_host",
+        "https://metadata.google.internal/computeMetadata/v1": "forbidden_host",
+        "https://127.0.0.1/callback": "forbidden_ip",
+        "https://10.0.0.7/callback": "forbidden_ip",
+        "https://169.254.169.254/latest/meta-data": "forbidden_ip",
+        "https://user:pass@example.com/callback": "userinfo_not_allowed",
+        "file:///tmp/callback.sock": "unsupported_scheme",
+        "unix:///var/run/callback.sock": "unsupported_scheme",
+    }
+
+    for url, reason in cases.items():
+        safety = validate_webhook_target_url(url)
+        assert safety.allowed is False
+        assert safety.reason == reason
+
+
+def test_webhook_target_safety_can_allow_private_hosts_explicitly() -> None:
+    safety = validate_webhook_target_url("https://10.0.0.7/callback", allow_private=True)
+
+    assert safety.allowed is True
+    assert safety.reason == "allowed"
+    assert safety.host == "10.0.0.7"
