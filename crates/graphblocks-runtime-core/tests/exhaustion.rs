@@ -100,6 +100,47 @@ fn hard_stop_allows_cleanup_and_blocks_provider_work() {
 }
 
 #[test]
+fn checkpoint_and_pause_allows_checkpoint_and_cleanup_without_topup_permit() {
+    let policy = ExhaustionPolicy::from_preset(
+        ExhaustionPreset::CheckpointAndPause,
+        ExhaustionUnit::Run,
+        None,
+    );
+    let mut controller = ExhaustionController::new(policy, "run:1", 4);
+
+    let checkpoint = controller.admit(WorkKind::Checkpoint, 5, None);
+    let cleanup = controller.admit(WorkKind::Cleanup, 6, None);
+    let finalization = controller.admit(WorkKind::DeclaredFinalization, 7, None);
+    let provider = controller.admit(WorkKind::UnreservedProviderCall, 7, None);
+
+    assert!(checkpoint.allowed);
+    assert_eq!(checkpoint.reason, "allowed");
+    assert!(cleanup.allowed);
+    assert_eq!(cleanup.reason, "allowed");
+    assert!(!finalization.allowed);
+    assert_eq!(finalization.reason, "new_work_denied");
+    assert!(!provider.allowed);
+    assert_eq!(provider.reason, "new_work_denied");
+}
+
+#[test]
+fn checkpoint_and_pause_still_honors_explicit_continuation_bounds() {
+    let policy = ExhaustionPolicy::from_preset(
+        ExhaustionPreset::CheckpointAndPause,
+        ExhaustionUnit::Run,
+        Some(ContinuationEnvelope::new().with_max_additional_steps(1)),
+    );
+    let mut controller = ExhaustionController::new(policy, "run:1", 4);
+
+    let checkpoint = controller.admit(WorkKind::Checkpoint, 5, None);
+    let cleanup = controller.admit(WorkKind::Cleanup, 6, None);
+
+    assert!(checkpoint.allowed);
+    assert!(!cleanup.allowed);
+    assert_eq!(cleanup.reason, "max_additional_steps_exceeded");
+}
+
+#[test]
 fn continuation_permit_must_match_atomic_unit_profile_and_epoch() {
     let policy = ExhaustionPolicy::from_preset(
         ExhaustionPreset::FinishCurrentTurn,

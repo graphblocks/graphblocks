@@ -694,6 +694,10 @@ E. parallel task가 동시에 마지막 budget을 reserve
 - `UsageLedger` reconciliation now enforces one final reconciliation per source usage record in
   both Python and Rust in-memory/SQLite ledgers, preventing late provider usage from being
   double-counted by multiple reconciled records for the same provisional measurement.
+- `ExhaustionController` now models `checkpoint_and_pause` as safe suspension work: checkpoint and
+  cleanup can proceed after exhaustion without requiring a top-up continuation permit, while new
+  provider work, finalization, optional tasks, and trials remain denied. Explicit continuation
+  step/usage bounds still apply, and the behavior is covered by the shared exhaustion TCK.
 
 ## 7. Phase 4 — Packaging, Integrations, Observability
 

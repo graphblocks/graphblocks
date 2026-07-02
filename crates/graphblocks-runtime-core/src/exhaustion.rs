@@ -464,7 +464,13 @@ impl ExhaustionController {
                 reason: "new_work_denied",
             };
         }
-        if work_epoch > self.admission_epoch && permit.is_none() {
+        let permits_checkpoint_pause_safety_work =
+            self.policy.preset == Some(ExhaustionPreset::CheckpointAndPause)
+                && matches!(work_kind, WorkKind::Checkpoint | WorkKind::Cleanup);
+        if work_epoch > self.admission_epoch
+            && permit.is_none()
+            && !permits_checkpoint_pause_safety_work
+        {
             match &self.continuation_permit {
                 Some(stored_permit) if !self.valid_permit(stored_permit) => {
                     return AdmissionDecision {

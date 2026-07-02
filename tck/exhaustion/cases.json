@@ -97,6 +97,41 @@
     }
   },
   {
+    "name": "checkpoint_and_pause_allows_safe_checkpoint_without_topup",
+    "policy": {
+      "preset": "checkpoint_and_pause",
+      "unit": "run",
+      "continuation": {
+        "maxAdditionalSteps": 2
+      }
+    },
+    "atomicUnit": "run:1",
+    "admissionEpoch": 4,
+    "admissions": [
+      {
+        "workKind": "checkpoint",
+        "workEpoch": 5,
+        "allowed": true,
+        "reason": "allowed"
+      },
+      {
+        "workKind": "cleanup",
+        "workEpoch": 6,
+        "allowed": true,
+        "reason": "allowed"
+      },
+      {
+        "workKind": "declared_finalization",
+        "workEpoch": 7,
+        "allowed": false,
+        "reason": "new_work_denied"
+      }
+    ],
+    "expected": {
+      "usedAdditionalSteps": 2
+    }
+  },
+  {
     "name": "continuation_permit_profile_mismatch_is_denied",
     "policy": {
       "preset": "finish_current_turn",
