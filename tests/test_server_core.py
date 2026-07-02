@@ -716,7 +716,9 @@ def test_server_app_records_run_control_projection_without_mutating_events() -> 
         "reason": "operator_hold",
         "lastCursor": "run-control-1:2",
     }
-    assert json.loads(paused_status.body.decode("utf-8"))["state"] == "paused_operator"
+    paused_payload = json.loads(paused_status.body.decode("utf-8"))
+    assert paused_payload["state"] == "paused_operator"
+    assert paused_payload["waitingOn"] == [{"kind": "operator", "reason": "operator_hold"}]
     assert json.loads(resume.body.decode("utf-8"))["status"] == "resuming"
     assert json.loads(expire.body.decode("utf-8")) == {
         "ok": True,

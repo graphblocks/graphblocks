@@ -1665,6 +1665,19 @@ class GraphBlocksServerApp:
 
         waiting_on: list[dict[str, object]] = []
         active_operations: list[str] = []
+        if controls and state in {"paused_operator", "paused_budget", "paused_policy", "paused_callback_delivery"}:
+            latest_control = controls[-1]
+            wait_kind_by_state = {
+                "paused_operator": "operator",
+                "paused_budget": "budget",
+                "paused_policy": "policy",
+                "paused_callback_delivery": "callback_delivery",
+            }
+            waiting: dict[str, object] = {"kind": wait_kind_by_state[state]}
+            reason = latest_control.get("reason")
+            if isinstance(reason, str) and reason:
+                waiting["reason"] = reason
+            waiting_on.append(waiting)
         if state not in {"completed", "succeeded", "failed", "cancelled", "expired", "policy_stopped"}:
             for operation_id in sorted(self._callbacks_by_operation_id):
                 submissions = self._callbacks_by_operation_id[operation_id]
