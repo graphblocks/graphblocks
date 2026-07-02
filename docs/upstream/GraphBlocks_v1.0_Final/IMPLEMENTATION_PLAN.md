@@ -244,6 +244,9 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
 - Webhook delivery targets now have default-deny endpoint validation for unsupported schemes,
   localhost, loopback, private RFC1918 ranges, link-local metadata addresses, and malformed hosts,
   with explicit host allowlisting for trusted development or private deployments.
+- Webhook delivery targets now enforce the specification's default `262144` byte payload limit
+  before signing delivery envelopes, and tests cover explicit small-limit rejection for oversized
+  callback projections.
 - Durable storage, Ed25519/mTLS/OIDC callback authentication adapters, real webhook delivery
   workers, dead-letter persistence, budget-aware resume, DNS-time egress enforcement, and
   coordinator failover remain follow-on slices.

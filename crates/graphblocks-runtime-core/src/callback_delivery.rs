@@ -5,7 +5,7 @@ use crate::application_event::{
     ApplicationProtocolEvent, ApplicationProtocolEventKind, ApplicationProtocolLog,
 };
 use hmac::{Hmac, Mac};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use sha2::Sha256;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -325,9 +325,12 @@ pub struct WebhookDeliveryTarget {
     pub url: String,
     pub scheme: String,
     pub host: String,
+    pub max_payload_bytes: usize,
 }
 
 impl WebhookDeliveryTarget {
+    pub const DEFAULT_MAX_PAYLOAD_BYTES: usize = 262_144;
+
     pub fn new(
         url: impl Into<String>,
         policy: &WebhookEgressPolicy,
@@ -364,7 +367,23 @@ impl WebhookDeliveryTarget {
             return Err(WebhookEndpointError::UnsafeEndpoint { host });
         }
 
-        Ok(Self { url, scheme, host })
+        Ok(Self {
+            url,
+            scheme,
+            host,
+            max_payload_bytes: Self::DEFAULT_MAX_PAYLOAD_BYTES,
+        })
+    }
+
+    pub fn with_max_payload_bytes(
+        mut self,
+        max_payload_bytes: usize,
+    ) -> Result<Self, WebhookEndpointError> {
+        if max_payload_bytes == 0 {
+            return Err(WebhookEndpointError::InvalidPayloadLimit { max_payload_bytes });
+        }
+        self.max_payload_bytes = max_payload_bytes;
+        Ok(self)
     }
 }
 
@@ -375,6 +394,7 @@ pub enum WebhookEndpointError {
     MissingHost,
     UnsupportedScheme { scheme: String },
     UnsafeEndpoint { host: String },
+    InvalidPayloadLimit { max_payload_bytes: usize },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -421,6 +441,31 @@ impl WebhookSigningConfig {
         event: &ApplicationProtocolEvent,
         delivered_at_unix_ms: u64,
     ) -> Result<SignedWebhookDelivery, WebhookSignatureError> {
+        self.build_signed_delivery(delivery, event, delivered_at_unix_ms, None)
+    }
+
+    pub fn sign_delivery_for_target(
+        &self,
+        target: &WebhookDeliveryTarget,
+        delivery: &CallbackDelivery,
+        event: &ApplicationProtocolEvent,
+        delivered_at_unix_ms: u64,
+    ) -> Result<SignedWebhookDelivery, WebhookSignatureError> {
+        self.build_signed_delivery(
+            delivery,
+            event,
+            delivered_at_unix_ms,
+            Some(target.max_payload_bytes),
+        )
+    }
+
+    fn build_signed_delivery(
+        &self,
+        delivery: &CallbackDelivery,
+        event: &ApplicationProtocolEvent,
+        delivered_at_unix_ms: u64,
+        max_payload_bytes: Option<usize>,
+    ) -> Result<SignedWebhookDelivery, WebhookSignatureError> {
         let body = json!({
             "delivery_id": &delivery.delivery_id,
             "subscription_id": &delivery.subscription_id,
@@ -435,6 +480,15 @@ impl WebhookSigningConfig {
             "delivered_at_unix_ms": delivered_at_unix_ms,
             "protocol_version": &event.metadata.protocol_version,
         });
+        let body_size_bytes = canonical_body_size_bytes(&body);
+        if let Some(max_payload_bytes) = max_payload_bytes {
+            if body_size_bytes > max_payload_bytes {
+                return Err(WebhookSignatureError::PayloadTooLarge {
+                    max_payload_bytes,
+                    actual_payload_bytes: body_size_bytes,
+                });
+            }
+        }
         let signature = self.compute_signature(delivered_at_unix_ms, &body)?;
         let mut headers = BTreeMap::new();
         headers.insert(
@@ -549,6 +603,12 @@ pub struct SignedWebhookDelivery {
     pub headers: BTreeMap<String, String>,
 }
 
+impl SignedWebhookDelivery {
+    pub fn body_size_bytes(&self) -> usize {
+        canonical_body_size_bytes(&self.body)
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum WebhookSignatureError {
     EmptyField {
@@ -574,8 +634,16 @@ pub enum WebhookSignatureError {
         algorithm: String,
     },
     SignatureMismatch,
+    PayloadTooLarge {
+        max_payload_bytes: usize,
+        actual_payload_bytes: usize,
+    },
     InvalidBody,
     InvalidSecret,
+}
+
+fn canonical_body_size_bytes(body: &Value) -> usize {
+    graphblocks_compiler::canonical::canonical_json(body).len()
 }
 
 fn hex_encode(bytes: &[u8]) -> String {

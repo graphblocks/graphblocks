@@ -136,12 +136,10 @@ fn webhook_server_errors_retry_then_dead_letter_with_bounded_backoff() {
     assert_eq!(retry_twice.next_retry_at_unix_ms, Some(1_300));
     assert_eq!(dead_lettered.status, CallbackDeliveryStatus::DeadLettered);
     assert_eq!(dead_lettered.attempt, 3);
-    assert!(
-        dead_lettered
-            .last_error
-            .as_deref()
-            .is_some_and(|error| { error.contains("server_error:503") })
-    );
+    assert!(dead_lettered
+        .last_error
+        .as_deref()
+        .is_some_and(|error| { error.contains("server_error:503") }));
 }
 
 #[test]
@@ -244,16 +242,12 @@ fn redrive_rejects_empty_operator_or_reason() {
     let dead_letter = CallbackDeadLetter::from_delivery(dead_lettered, 1_001)
         .expect("dead-letter record is valid");
 
-    assert!(
-        scheduler
-            .redrive_dead_letter(&dead_letter, " ", "receiver recovered", 2_000)
-            .is_err()
-    );
-    assert!(
-        scheduler
-            .redrive_dead_letter(&dead_letter, "operator:alice", " ", 2_000)
-            .is_err()
-    );
+    assert!(scheduler
+        .redrive_dead_letter(&dead_letter, " ", "receiver recovered", 2_000)
+        .is_err());
+    assert!(scheduler
+        .redrive_dead_letter(&dead_letter, "operator:alice", " ", 2_000)
+        .is_err());
 }
 
 #[test]
@@ -349,6 +343,84 @@ fn webhook_signature_verification_rejects_stale_or_tampered_payloads() {
 }
 
 #[test]
+fn webhook_target_rejects_oversized_signed_payload_before_delivery() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = ApplicationProtocolEvent::new(
+        ApplicationProtocolEventKind::ReviewRequested,
+        ApplicationProtocolEventMetadata {
+            event_id: "event-oversized".to_owned(),
+            protocol_version: "graphblocks.app.v1".to_owned(),
+            run_id: "run-1".to_owned(),
+            turn_id: None,
+            sequence: 11,
+            cursor: Some("cursor-11".to_owned()),
+            occurred_at_unix_ms: 1_011,
+        },
+        json!({"message": "x".repeat(512)}),
+    )
+    .expect("event is valid");
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let signing =
+        WebhookSigningConfig::hmac_sha256("secret://callbacks/ide-relay", b"top-secret", 300)
+            .expect("signing config is valid");
+    let target = WebhookDeliveryTarget::new(
+        "https://hooks.example.com/graphblocks/events",
+        &WebhookEgressPolicy::default_deny_internal(),
+    )
+    .expect("target is valid")
+    .with_max_payload_bytes(128)
+    .expect("payload limit is valid");
+
+    let error = signing
+        .sign_delivery_for_target(&target, &delivery, &event, 2_000)
+        .expect_err("oversized payload is rejected");
+
+    assert!(matches!(
+        error,
+        WebhookSignatureError::PayloadTooLarge {
+            max_payload_bytes: 128,
+            actual_payload_bytes
+        } if actual_payload_bytes > 128
+    ));
+}
+
+#[test]
+fn webhook_target_default_payload_limit_allows_normal_signed_payload() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let signing =
+        WebhookSigningConfig::hmac_sha256("secret://callbacks/ide-relay", b"top-secret", 300)
+            .expect("signing config is valid");
+    let target = WebhookDeliveryTarget::new(
+        "https://hooks.example.com/graphblocks/events",
+        &WebhookEgressPolicy::default_deny_internal(),
+    )
+    .expect("target is valid");
+
+    let signed = signing
+        .sign_delivery_for_target(&target, &delivery, &event, 2_000)
+        .expect("normal payload signs under default limit");
+
+    assert!(
+        signed.body_size_bytes() <= target.max_payload_bytes,
+        "signed webhook body should fit target payload limit"
+    );
+}
+
+#[test]
 fn subscription_replay_schedules_matching_events_after_cursor() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
     let mut subscription = subscription(
@@ -431,11 +503,9 @@ fn subscription_replay_respects_limit_and_inactive_subscriptions() {
     assert_eq!(scheduler.schedule_replay(&subscription, &log, 2).len(), 2);
 
     subscription.status = CallbackSubscriptionStatus::Revoked;
-    assert!(
-        scheduler
-            .schedule_replay(&subscription, &log, 10)
-            .is_empty()
-    );
+    assert!(scheduler
+        .schedule_replay(&subscription, &log, 10)
+        .is_empty());
 }
 
 #[test]
@@ -495,5 +565,13 @@ fn webhook_target_rejects_malformed_or_empty_urls() {
     assert_eq!(
         WebhookDeliveryTarget::new("not-a-url", &policy),
         Err(WebhookEndpointError::MalformedUrl)
+    );
+    assert_eq!(
+        WebhookDeliveryTarget::new("https://hooks.example.com/events", &policy)
+            .expect("target is valid")
+            .with_max_payload_bytes(0),
+        Err(WebhookEndpointError::InvalidPayloadLimit {
+            max_payload_bytes: 0
+        })
     );
 }
