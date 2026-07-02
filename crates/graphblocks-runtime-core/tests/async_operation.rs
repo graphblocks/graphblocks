@@ -1147,6 +1147,41 @@ fn callback_submission_whitespace_identity_fields_are_rejected_before_journal() 
 }
 
 #[test]
+fn async_operation_whitespace_identity_fields_are_rejected_before_registration() {
+    for field in [
+        "operation_id",
+        "run_id",
+        "node_id",
+        "attempt_id",
+        "resume_token_hash",
+        "idempotency_key",
+        "expected_schema",
+    ] {
+        let store = AsyncOperationStore::new();
+        let mut operation = waiting_operation();
+        match field {
+            "operation_id" => operation.operation_id = " \t".to_owned(),
+            "run_id" => operation.run_id = " \t".to_owned(),
+            "node_id" => operation.node_id = " \t".to_owned(),
+            "attempt_id" => operation.attempt_id = " \t".to_owned(),
+            "resume_token_hash" => operation.resume_token_hash = " \t".to_owned(),
+            "idempotency_key" => operation.idempotency_key = " \t".to_owned(),
+            "expected_schema" => operation.expected_schema = " \t".to_owned(),
+            _ => unreachable!("test field is declared above"),
+        }
+
+        assert_eq!(
+            store.register(operation),
+            Err(AsyncOperationError::EmptyField {
+                field: field.to_owned(),
+            }),
+            "{field} should reject whitespace-only values",
+        );
+        assert!(store.operation_state("op-1").is_none());
+    }
+}
+
+#[test]
 fn concurrent_duplicate_callbacks_have_one_resume_winner() {
     let store = Arc::new(AsyncOperationStore::new());
     store

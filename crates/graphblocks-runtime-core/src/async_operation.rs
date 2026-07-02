@@ -263,7 +263,7 @@ impl AsyncOperation {
             ("idempotency_key", &self.idempotency_key),
             ("expected_schema", &self.expected_schema),
         ] {
-            if value.is_empty() {
+            if value.trim().is_empty() {
                 return Err(AsyncOperationError::EmptyField {
                     field: field.to_owned(),
                 });

@@ -275,8 +275,8 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   records after terminal states, and the required journal-before-resume ordering.
 - Focused tests include duplicate delivery, invalid callback schema, stale attempt fencing,
   callback-after-timeout/cancellation, concurrent duplicate callback racing, callback/cancel racing,
-  whitespace-only callback identity rejection at both endpoint and store boundaries, and a
-  deterministic fuzz-style idempotency sequence.
+  whitespace-only operation registration and callback identity rejection at endpoint and store
+  boundaries, and a deterministic fuzz-style idempotency sequence.
 - Callback ingestion now enforces the specification's default `262144` byte payload limit before
   journaling or resume, and focused tests cover explicit small-limit rejection without operation
   state changes.
