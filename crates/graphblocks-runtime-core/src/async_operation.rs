@@ -1016,6 +1016,20 @@ pub struct AcceptedCallback {
     pub should_resume: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct QuarantinedCallback {
+    pub operation_id: String,
+    pub idempotency_key: String,
+    pub duplicate: bool,
+    pub expires_at_unix_ms: u64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct QuarantinedCallbackRecord {
+    submission: AsyncCallbackSubmission,
+    expires_at_unix_ms: u64,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AsyncOperationResultStatus {
     Completed,
@@ -1319,6 +1333,7 @@ pub struct AsyncOperationStore {
 struct AsyncOperationStoreInner {
     operations: BTreeMap<String, AsyncOperation>,
     receipts_by_operation_and_idempotency: BTreeMap<(String, String), ExternalCallbackReceived>,
+    quarantined_callbacks: BTreeMap<(String, String), QuarantinedCallbackRecord>,
     events_by_operation: BTreeMap<String, Vec<AsyncOperationEvent>>,
 }
 
@@ -1367,6 +1382,130 @@ impl AsyncOperationStore {
             .operations
             .insert(operation.operation_id.clone(), operation);
         Ok(())
+    }
+
+    pub fn quarantine_callback_before_operation_commit(
+        &self,
+        submission: AsyncCallbackSubmission,
+        expires_at_unix_ms: u64,
+    ) -> Result<QuarantinedCallback, AsyncOperationError> {
+        validate_callback_submission_and_resume_decision(
+            &submission,
+            &AsyncCallbackResumeDecision::Resume,
+        )?;
+        if expires_at_unix_ms <= submission.received_at_unix_ms {
+            return Err(AsyncOperationError::InvalidExpiration {
+                operation_id: submission.operation_id,
+                created_at_unix_ms: submission.received_at_unix_ms,
+                expires_at_unix_ms,
+            });
+        }
+
+        let mut inner = self
+            .inner
+            .lock()
+            .expect("async operation store lock poisoned");
+        if inner.operations.contains_key(&submission.operation_id) {
+            return Err(AsyncOperationError::InvalidOperation {
+                operation_id: submission.operation_id,
+                reason: "operation already exists; submit callback through normal admission"
+                    .to_owned(),
+            });
+        }
+
+        let quarantine_key = (
+            submission.operation_id.clone(),
+            submission.idempotency_key.clone(),
+        );
+        if let Some(existing) = inner.quarantined_callbacks.get(&quarantine_key) {
+            if let Some(field) =
+                callback_submission_idempotency_conflict_field(&existing.submission, &submission)
+            {
+                return Err(AsyncOperationError::CallbackIdempotencyConflict {
+                    operation_id: quarantine_key.0,
+                    idempotency_key: quarantine_key.1,
+                    field: field.to_owned(),
+                });
+            }
+            return Ok(QuarantinedCallback {
+                operation_id: existing.submission.operation_id.clone(),
+                idempotency_key: existing.submission.idempotency_key.clone(),
+                duplicate: true,
+                expires_at_unix_ms: existing.expires_at_unix_ms,
+            });
+        }
+
+        inner.quarantined_callbacks.insert(
+            quarantine_key.clone(),
+            QuarantinedCallbackRecord {
+                submission,
+                expires_at_unix_ms,
+            },
+        );
+        Ok(QuarantinedCallback {
+            operation_id: quarantine_key.0,
+            idempotency_key: quarantine_key.1,
+            duplicate: false,
+            expires_at_unix_ms,
+        })
+    }
+
+    pub fn quarantined_callback_count(&self, operation_id: &str) -> usize {
+        let inner = self
+            .inner
+            .lock()
+            .expect("async operation store lock poisoned");
+        inner
+            .quarantined_callbacks
+            .keys()
+            .filter(|(queued_operation_id, _)| queued_operation_id == operation_id)
+            .count()
+    }
+
+    pub fn accept_quarantined_callbacks(
+        &self,
+        operation_id: &str,
+        registry: &ToolSchemaRegistry,
+    ) -> Result<Vec<AcceptedCallback>, AsyncOperationError> {
+        let submissions = {
+            let mut inner = self
+                .inner
+                .lock()
+                .expect("async operation store lock poisoned");
+            if !inner.operations.contains_key(operation_id) {
+                return Err(AsyncOperationError::OperationNotFound {
+                    operation_id: operation_id.to_owned(),
+                });
+            }
+            let keys = inner
+                .quarantined_callbacks
+                .keys()
+                .filter(|(queued_operation_id, _)| queued_operation_id == operation_id)
+                .cloned()
+                .collect::<Vec<_>>();
+            let mut submissions = Vec::new();
+            for key in keys {
+                if let Some(record) = inner.quarantined_callbacks.remove(&key) {
+                    submissions.push(record.submission);
+                }
+            }
+            submissions
+        };
+
+        let mut accepted = Vec::new();
+        for submission in submissions {
+            let result = self.accept_callback(submission, registry)?;
+            accepted.push(result);
+            if accepted
+                .last()
+                .map(|callback| callback.should_resume)
+                .unwrap_or(false)
+            {
+                break;
+            }
+        }
+
+        Ok(accepted)
     }
 
     pub fn accept_callback(
@@ -1903,6 +2042,13 @@ impl SqliteAsyncOperationStore {
                     event_json TEXT NOT NULL,
                     PRIMARY KEY (operation_id, event_index)
                 );
+                CREATE TABLE IF NOT EXISTS async_callback_quarantine (
+                    operation_id TEXT NOT NULL,
+                    idempotency_key TEXT NOT NULL,
+                    submission_json TEXT NOT NULL,
+                    expires_at_unix_ms INTEGER NOT NULL,
+                    PRIMARY KEY (operation_id, idempotency_key)
+                );
                 ",
             )
             .map_err(storage_error)?;
@@ -1968,6 +2114,51 @@ impl SqliteAsyncOperationStore {
             .accept_callback_with_artifact_on_payload_limit(submission, registry, limits, artifact);
         match &accepted {
             Ok(accepted) if !accepted.duplicate => {
+                self.replace_with_memory_store(&memory)?;
+            }
+            Err(_) => {
+                self.replace_with_memory_store(&memory)?;
+            }
+            _ => {}
+        }
+        accepted
+    }
+
+    pub fn quarantine_callback_before_operation_commit(
+        &self,
+        submission: AsyncCallbackSubmission,
+        expires_at_unix_ms: u64,
+    ) -> Result<QuarantinedCallback, AsyncOperationError> {
+        let memory = self.load_memory_store()?;
+        let quarantined =
+            memory.quarantine_callback_before_operation_commit(submission, expires_at_unix_ms);
+        match &quarantined {
+            Ok(callback) if !callback.duplicate => {
+                self.replace_with_memory_store(&memory)?;
+            }
+            Err(_) => {
+                self.replace_with_memory_store(&memory)?;
+            }
+            _ => {}
+        }
+        quarantined
+    }
+
+    pub fn quarantined_callback_count(&self, operation_id: &str) -> usize {
+        self.load_memory_store()
+            .map(|store| store.quarantined_callback_count(operation_id))
+            .unwrap_or_default()
+    }
+
+    pub fn accept_quarantined_callbacks(
+        &self,
+        operation_id: &str,
+        registry: &ToolSchemaRegistry,
+    ) -> Result<Vec<AcceptedCallback>, AsyncOperationError> {
+        let memory = self.load_memory_store()?;
+        let accepted = memory.accept_quarantined_callbacks(operation_id, registry);
+        match &accepted {
+            Ok(callbacks) if !callbacks.is_empty() => {
                 self.replace_with_memory_store(&memory)?;
             }
             Err(_) => {
@@ -2089,6 +2280,38 @@ impl SqliteAsyncOperationStore {
             let mut statement = connection
                 .prepare(
                     "
+                    SELECT submission_json, expires_at_unix_ms
+                    FROM async_callback_quarantine
+                    ORDER BY operation_id, idempotency_key
+                    ",
+                )
+                .map_err(storage_error)?;
+            let quarantined = statement
+                .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))
+                .map_err(storage_error)?;
+            for callback in quarantined {
+                let (submission_json, expires_at_unix_ms) = callback.map_err(storage_error)?;
+                let submission = callback_submission_from_value(parse_json(&submission_json)?)?;
+                inner.quarantined_callbacks.insert(
+                    (
+                        submission.operation_id.clone(),
+                        submission.idempotency_key.clone(),
+                    ),
+                    QuarantinedCallbackRecord {
+                        submission,
+                        expires_at_unix_ms: sqlite_i64_to_u64(
+                            expires_at_unix_ms,
+                            "quarantined callback expiration",
+                        )?,
+                    },
+                );
+            }
+        }
+
+        {
+            let mut statement = connection
+                .prepare(
+                    "
                     SELECT operation_id, event_json
                     FROM async_operation_events
                     ORDER BY operation_id, event_index
@@ -2124,6 +2347,9 @@ impl SqliteAsyncOperationStore {
         let transaction = connection.transaction().map_err(storage_error)?;
         transaction
             .execute("DELETE FROM async_operation_events", [])
+            .map_err(storage_error)?;
+        transaction
+            .execute("DELETE FROM async_callback_quarantine", [])
             .map_err(storage_error)?;
         transaction
             .execute("DELETE FROM async_callback_receipts", [])
@@ -2165,6 +2391,30 @@ impl SqliteAsyncOperationStore {
                         &receipt.idempotency_key,
                         &receipt.operation_id,
                         storage_json(&receipt_to_value(receipt))?,
+                    ],
+                )
+                .map_err(storage_error)?;
+        }
+        for record in inner.quarantined_callbacks.values() {
+            transaction
+                .execute(
+                    "
+                    INSERT INTO async_callback_quarantine (
+                        operation_id,
+                        idempotency_key,
+                        submission_json,
+                        expires_at_unix_ms
+                    )
+                    VALUES (?, ?, ?, ?)
+                    ",
+                    params![
+                        &record.submission.operation_id,
+                        &record.submission.idempotency_key,
+                        storage_json(&callback_submission_to_value(&record.submission))?,
+                        u64_to_i64(
+                            record.expires_at_unix_ms,
+                            "quarantined callback expiration",
+                        )?,
                     ],
                 )
                 .map_err(storage_error)?;
@@ -2229,6 +2479,40 @@ fn callback_idempotency_conflict_field(
         return Some("verified_by");
     }
     if receipt.policy_snapshot_id != submission.policy_snapshot_id {
+        return Some("policy_snapshot_id");
+    }
+    None
+}
+
+fn callback_submission_idempotency_conflict_field(
+    existing: &AsyncCallbackSubmission,
+    incoming: &AsyncCallbackSubmission,
+) -> Option<&'static str> {
+    if existing.operation_id != incoming.operation_id {
+        return Some("operation_id");
+    }
+    if existing.run_id != incoming.run_id {
+        return Some("run_id");
+    }
+    if existing.node_id != incoming.node_id {
+        return Some("node_id");
+    }
+    if existing.attempt_id != incoming.attempt_id {
+        return Some("attempt_id");
+    }
+    if existing.provider_operation_id != incoming.provider_operation_id {
+        return Some("provider_operation_id");
+    }
+    if existing.idempotency_key != incoming.idempotency_key {
+        return Some("idempotency_key");
+    }
+    if canonical_hash(&existing.payload) != canonical_hash(&incoming.payload) {
+        return Some("payload_digest");
+    }
+    if existing.verified_by != incoming.verified_by {
+        return Some("verified_by");
+    }
+    if existing.policy_snapshot_id != incoming.policy_snapshot_id {
         return Some("policy_snapshot_id");
     }
     None
@@ -2521,6 +2805,45 @@ fn receipt_from_value(value: Value) -> Result<ExternalCallbackReceived, AsyncOpe
             })?,
         payload_digest: required_string(&value, "payload_digest")?,
         artifacts: callback_artifacts_from_value(value.get("artifacts"))?,
+        received_at_unix_ms: required_u64(&value, "received_at_unix_ms")?,
+        verified_by: required_string(&value, "verified_by")?,
+        policy_snapshot_id: required_string(&value, "policy_snapshot_id")?,
+    })
+}
+
+fn callback_submission_to_value(submission: &AsyncCallbackSubmission) -> Value {
+    json!({
+        "callback_id": submission.callback_id,
+        "operation_id": submission.operation_id,
+        "run_id": submission.run_id,
+        "node_id": submission.node_id,
+        "attempt_id": submission.attempt_id,
+        "provider_operation_id": submission.provider_operation_id,
+        "idempotency_key": submission.idempotency_key,
+        "payload": submission.payload,
+        "received_at_unix_ms": submission.received_at_unix_ms,
+        "verified_by": submission.verified_by,
+        "policy_snapshot_id": submission.policy_snapshot_id,
+    })
+}
+
+fn callback_submission_from_value(
+    value: Value,
+) -> Result<AsyncCallbackSubmission, AsyncOperationError> {
+    Ok(AsyncCallbackSubmission {
+        callback_id: required_string(&value, "callback_id")?,
+        operation_id: required_string(&value, "operation_id")?,
+        run_id: required_string(&value, "run_id")?,
+        node_id: required_string(&value, "node_id")?,
+        attempt_id: required_string(&value, "attempt_id")?,
+        provider_operation_id: optional_string(&value, "provider_operation_id")?,
+        idempotency_key: required_string(&value, "idempotency_key")?,
+        payload: value
+            .get("payload")
+            .cloned()
+            .ok_or_else(|| AsyncOperationError::Storage {
+                message: "stored callback submission is missing payload".to_owned(),
+            })?,
         received_at_unix_ms: required_u64(&value, "received_at_unix_ms")?,
         verified_by: required_string(&value, "verified_by")?,
         policy_snapshot_id: required_string(&value, "policy_snapshot_id")?,
@@ -2828,5 +3151,17 @@ fn storage_error(error: rusqlite::Error) -> AsyncOperationError {
 fn sqlite_usize_to_i64(value: usize, label: &'static str) -> Result<i64, AsyncOperationError> {
     i64::try_from(value).map_err(|_| AsyncOperationError::Storage {
         message: format!("{label} exceeds sqlite integer range"),
+    })
+}
+
+fn u64_to_i64(value: u64, label: &'static str) -> Result<i64, AsyncOperationError> {
+    i64::try_from(value).map_err(|_| AsyncOperationError::Storage {
+        message: format!("{label} exceeds sqlite integer range"),
+    })
+}
+
+fn sqlite_i64_to_u64(value: i64, label: &'static str) -> Result<u64, AsyncOperationError> {
+    u64::try_from(value).map_err(|_| AsyncOperationError::Storage {
+        message: format!("{label} is negative"),
     })
 }

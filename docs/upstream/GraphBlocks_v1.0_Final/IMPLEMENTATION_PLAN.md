@@ -271,6 +271,19 @@ conflicting replay:
   result = ExternalCallbackRejected(idempotency_conflict:payload_digest), no overwrite, no resume
 ```
 
+Example callback-before-operation-commit handling:
+
+```text
+provider responds before AsyncOperation commit is visible:
+  result = callback is authenticated and quarantined under (operation_id, idempotency_key)
+
+operation commit completes:
+  result = quarantined callback is replayed through normal callback admission
+
+after replay:
+  result = ExternalCallbackReceived is journaled before resume, quarantine entry is removed
+```
+
 Example cancelled operation with committed external effect:
 
 ```yaml
@@ -395,6 +408,11 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Callback receipt duplicate detection now rejects idempotency-key conflicts when a replay mutates
   callback identity or payload digest; in-memory, SQLite-reopen, and deterministic fuzz tests verify
   that the original receipt remains authoritative and no second resume is produced.
+- Async callback ingestion now supports durable pre-operation quarantine for the race where an
+  external provider replies before the committed `AsyncOperation` is visible. Quarantined callbacks
+  are keyed by `(operation_id, idempotency_key)`, persist across SQLite reopen, deduplicate
+  repeated provider delivery attempts, and are consumed through the normal journal-before-resume
+  callback admission path after operation registration.
 - Callback resume admission can now pause after a durable callback receipt when budget policy
   denies continuation; the operation records `CallbackReceived`, emits a pause reason, and returns
   `should_resume = false`.

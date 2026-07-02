@@ -648,6 +648,139 @@ fn duplicate_callback_is_idempotent_and_does_not_resume_twice() {
 }
 
 #[test]
+fn early_callback_is_quarantined_until_operation_registers() {
+    let store = AsyncOperationStore::new();
+    let quarantined = store
+        .quarantine_callback_before_operation_commit(
+            valid_submission("cb-early", "provider-delivery-early"),
+            5_000,
+        )
+        .expect("early callback is quarantined");
+
+    assert!(!quarantined.duplicate);
+    assert_eq!(quarantined.operation_id, "op-1");
+    assert_eq!(
+        store.quarantined_callback_count("op-1"),
+        1,
+        "pending callback must be retained before the operation is committed"
+    );
+
+    store
+        .register(waiting_operation())
+        .expect("operation is registered after callback ingress");
+    let accepted = store
+        .accept_quarantined_callbacks("op-1", &callback_schema_registry())
+        .expect("quarantined callback is consumed after registration");
+
+    assert_eq!(accepted.len(), 1);
+    assert_eq!(accepted[0].receipt.callback_id, "cb-early");
+    assert!(accepted[0].should_resume);
+    assert_eq!(store.quarantined_callback_count("op-1"), 0);
+    assert_eq!(
+        store.operation_state("op-1"),
+        Some(AsyncOperationState::CallbackReceived)
+    );
+    assert_eq!(
+        store
+            .events_for_operation("op-1")
+            .iter()
+            .filter(|event| matches!(event, AsyncOperationEvent::ExternalCallbackReceived { .. }))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn duplicate_early_callback_is_quarantined_once_and_consumed_once() {
+    let store = AsyncOperationStore::new();
+    let first = store
+        .quarantine_callback_before_operation_commit(
+            valid_submission("cb-early", "provider-delivery-early"),
+            5_000,
+        )
+        .expect("first early callback is quarantined");
+    let duplicate = store
+        .quarantine_callback_before_operation_commit(
+            valid_submission("cb-early-duplicate", "provider-delivery-early"),
+            5_001,
+        )
+        .expect("duplicate early callback is recognized");
+
+    assert!(!first.duplicate);
+    assert!(duplicate.duplicate);
+    assert_eq!(store.quarantined_callback_count("op-1"), 1);
+
+    store
+        .register(waiting_operation())
+        .expect("operation is registered after callback ingress");
+    let accepted = store
+        .accept_quarantined_callbacks("op-1", &callback_schema_registry())
+        .expect("quarantined duplicate set is consumed once");
+
+    assert_eq!(accepted.len(), 1);
+    assert_eq!(accepted[0].receipt.callback_id, "cb-early");
+    assert_eq!(
+        store
+            .events_for_operation("op-1")
+            .iter()
+            .filter(|event| matches!(event, AsyncOperationEvent::ExternalCallbackReceived { .. }))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn early_callback_quarantine_fuzz_sequence_consumes_each_idempotency_key_once() {
+    for seed in 0..64_u64 {
+        let store = AsyncOperationStore::new();
+        let mut expected_unique_keys = Vec::new();
+        for index in 0..32_u64 {
+            let idempotency_key = format!("provider-delivery-{}", (seed * 17 + index * 7) % 11);
+            if !expected_unique_keys.contains(&idempotency_key) {
+                expected_unique_keys.push(idempotency_key.clone());
+            }
+            let callback_id = format!("cb-{seed}-{index}");
+            let result = store.quarantine_callback_before_operation_commit(
+                valid_submission(&callback_id, &idempotency_key),
+                5_000 + index,
+            );
+            assert!(
+                result.is_ok(),
+                "seed {seed} index {index} should quarantine or deduplicate"
+            );
+        }
+
+        assert_eq!(
+            store.quarantined_callback_count("op-1"),
+            expected_unique_keys.len()
+        );
+        store
+            .register(waiting_operation())
+            .expect("operation is registered after callback ingress");
+        let accepted = store
+            .accept_quarantined_callbacks("op-1", &callback_schema_registry())
+            .expect("quarantined callbacks are consumed");
+
+        assert_eq!(accepted.len(), 1);
+        assert_eq!(
+            store.quarantined_callback_count("op-1"),
+            0,
+            "seed {seed} should drain quarantine after one accepted resume"
+        );
+        assert_eq!(
+            store
+                .events_for_operation("op-1")
+                .iter()
+                .filter(|event| {
+                    matches!(event, AsyncOperationEvent::ExternalCallbackReceived { .. })
+                })
+                .count(),
+            1
+        );
+    }
+}
+
+#[test]
 fn callback_idempotency_key_conflict_rejects_mutated_payload_without_overwriting_receipt() {
     let store = AsyncOperationStore::new();
     store
@@ -1864,6 +1997,39 @@ fn sqlite_async_operation_store_persists_artifact_backed_callback_receipt_across
     assert_eq!(
         duplicate.receipt.payload["artifact"]["artifact_id"],
         "artifact-ci-log"
+    );
+    Ok(())
+}
+
+#[test]
+fn sqlite_async_operation_store_persists_quarantined_callback_across_reopen()
+-> Result<(), AsyncOperationError> {
+    let path = sqlite_async_operation_path("callback-quarantine-reopen");
+    {
+        let store = SqliteAsyncOperationStore::open(&path)?;
+        store.quarantine_callback_before_operation_commit(
+            valid_submission("cb-early", "provider-delivery-early"),
+            5_000,
+        )?;
+        assert_eq!(store.quarantined_callback_count("op-1"), 1);
+    }
+
+    let store = SqliteAsyncOperationStore::open(&path)?;
+    assert_eq!(
+        store.quarantined_callback_count("op-1"),
+        1,
+        "early callback must survive process restart before operation commit"
+    );
+    store.register(waiting_operation())?;
+    let accepted = store.accept_quarantined_callbacks("op-1", &callback_schema_registry())?;
+
+    assert_eq!(accepted.len(), 1);
+    assert_eq!(accepted[0].receipt.callback_id, "cb-early");
+    assert!(accepted[0].should_resume);
+    assert_eq!(store.quarantined_callback_count("op-1"), 0);
+    assert_eq!(
+        store.operation_state("op-1"),
+        Some(AsyncOperationState::CallbackReceived)
     );
     Ok(())
 }
