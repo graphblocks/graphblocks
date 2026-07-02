@@ -2052,6 +2052,8 @@ class GraphBlocksServerApp:
         last_cursor = payload.get("last_cursor", payload.get("lastCursor"))
         if last_cursor is not None:
             last_cursor = _validate_non_empty_string("attach request", "last_cursor", last_cursor)
+            if not last_cursor.startswith(f"{run_id}:"):
+                raise ValueError(f"attach request last_cursor must belong to run {run_id!r}")
         capabilities = payload.get("capabilities", ())
         if capabilities is None:
             capabilities = ()
@@ -2194,6 +2196,10 @@ class GraphBlocksServerApp:
             and not isinstance(sequence, bool)
         }
         if subscription.replay_from_cursor is not None:
+            if not subscription.replay_from_cursor.startswith(f"{subscription.run_id}:"):
+                raise ValueError(
+                    f"server event subscription replay_from_cursor must belong to run {subscription.run_id!r}"
+                )
             if subscription.replay_from_cursor == f"{subscription.run_id}:0":
                 replay_after_sequence = 0
             elif subscription.replay_from_cursor not in sequence_by_cursor:
