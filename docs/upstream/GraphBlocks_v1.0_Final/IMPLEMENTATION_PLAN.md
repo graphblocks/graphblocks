@@ -231,6 +231,8 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   event stream, websocket, cancel route, and initial cursor fields.
 - Run invocation route diagnostics now report accepted/background routes without cursor-replayable
   event streams as `GB6005`.
+- Run invocation route diagnostics now report accepted/background routes tied to
+  `client_connection` lifetime as `GB6009`.
 - Run status snapshots now expose the protocol response shape with state, release id, last cursor,
   started/updated/completed timestamps, wait reasons, and active async operation ids.
 - `ApplicationCommandKind` now includes the async run, attach/replay, subscription, callback

@@ -255,11 +255,31 @@ pub struct RunInvocationResponse {
     pub initial_cursor: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RunLifetime {
+    ClientConnection,
+    Session,
+    Job,
+    Background,
+}
+
+impl RunLifetime {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ClientConnection => "client_connection",
+            Self::Session => "session",
+            Self::Job => "job",
+            Self::Background => "background",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunInvocationRouteConfig {
     pub route_id: String,
     pub invocation_mode: RunInvocationMode,
     pub cursor_replay: bool,
+    pub lifetime: RunLifetime,
 }
 
 impl RunInvocationRouteConfig {
@@ -276,7 +296,17 @@ impl RunInvocationRouteConfig {
             route_id,
             invocation_mode,
             cursor_replay,
+            lifetime: match invocation_mode {
+                RunInvocationMode::Sync => RunLifetime::ClientConnection,
+                RunInvocationMode::Accepted => RunLifetime::Job,
+                RunInvocationMode::Background => RunLifetime::Background,
+            },
         })
+    }
+
+    pub fn with_lifetime(mut self, lifetime: RunLifetime) -> Self {
+        self.lifetime = lifetime;
+        self
     }
 }
 
@@ -298,6 +328,18 @@ impl RunInvocationRouteDiagnostic {
                     "durable run route {} uses {} invocation without a replayable ApplicationEventStream",
                     route.route_id,
                     route.invocation_mode.as_str()
+                ),
+            });
+        }
+        if route.invocation_mode.is_durable() && route.lifetime == RunLifetime::ClientConnection {
+            diagnostics.push(Self {
+                code: "GB6009",
+                field: "lifetime",
+                message: format!(
+                    "durable run route {} uses {} invocation but is tied to {} lifetime",
+                    route.route_id,
+                    route.invocation_mode.as_str(),
+                    route.lifetime.as_str()
                 ),
             });
         }

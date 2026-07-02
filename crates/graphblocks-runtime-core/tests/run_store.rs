@@ -2,8 +2,8 @@ use graphblocks_runtime_core::{
     evaluation::ModelVisibleToolRef,
     run_store::{
         InMemoryRunStore, PatchOperation, RunDeploymentProvenance, RunInvocationMode,
-        RunInvocationResponse, RunInvocationRouteConfig, RunInvocationRouteDiagnostic, RunStatus,
-        RunStatusSnapshot, RunStoreError, RunWaitReason, SqliteRunStore, StatePatch,
+        RunInvocationResponse, RunInvocationRouteConfig, RunInvocationRouteDiagnostic, RunLifetime,
+        RunStatus, RunStatusSnapshot, RunStoreError, RunWaitReason, SqliteRunStore, StatePatch,
     },
 };
 use serde_json::json;
@@ -176,6 +176,30 @@ fn run_invocation_diagnostics_report_durable_run_without_replay() {
 fn run_invocation_diagnostics_allow_sync_without_replay() {
     let config = RunInvocationRouteConfig::new("sync-chat", RunInvocationMode::Sync, false)
         .expect("route config is valid");
+
+    assert_eq!(RunInvocationRouteDiagnostic::for_route(&config), Vec::new());
+}
+
+#[test]
+fn run_invocation_diagnostics_report_client_bound_durable_run() {
+    let config =
+        RunInvocationRouteConfig::new("coding-task-ws", RunInvocationMode::Background, true)
+            .expect("route config is valid")
+            .with_lifetime(RunLifetime::ClientConnection);
+
+    let diagnostics = RunInvocationRouteDiagnostic::for_route(&config);
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].code, "GB6009");
+    assert_eq!(diagnostics[0].field, "lifetime");
+    assert!(diagnostics[0].message.contains("coding-task-ws"));
+}
+
+#[test]
+fn run_invocation_diagnostics_allow_sync_client_connection_lifetime() {
+    let config = RunInvocationRouteConfig::new("sync-chat", RunInvocationMode::Sync, false)
+        .expect("route config is valid")
+        .with_lifetime(RunLifetime::ClientConnection);
 
     assert_eq!(RunInvocationRouteDiagnostic::for_route(&config), Vec::new());
 }
