@@ -5,6 +5,7 @@ use std::fmt;
 use graphblocks_compiler::canonical::canonical_hash;
 use serde_json::{Value, json};
 
+use crate::async_operation::ExternalCallbackReceived;
 use crate::policy::{PrincipalRef, ResourceRef};
 use crate::tool::{ResolvedTool, ToolEffect, canonical_effect_names};
 use crate::tool_call::{ToolCall, ToolCallStatus};
@@ -26,6 +27,7 @@ pub enum AuditTargetKind {
     PluginLoad,
     GraphDeployment,
     ToolEffect,
+    ExternalCallback,
 }
 
 impl AuditTargetKind {
@@ -45,8 +47,32 @@ impl AuditTargetKind {
             Self::PluginLoad => "plugin_load",
             Self::GraphDeployment => "graph_deployment",
             Self::ToolEffect => "tool_effect",
+            Self::ExternalCallback => "external_callback",
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExternalCallbackAuditContext<'a> {
+    pub event_id: &'a str,
+    pub occurred_at: &'a str,
+    pub actor: PrincipalRef,
+    pub receipt: &'a ExternalCallbackReceived,
+    pub release_id: &'a str,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExternalCallbackRejectionAuditContext<'a> {
+    pub event_id: &'a str,
+    pub occurred_at: &'a str,
+    pub actor: PrincipalRef,
+    pub operation_id: &'a str,
+    pub callback_id: &'a str,
+    pub reason: &'a str,
+    pub occurred_at_unix_ms: u64,
+    pub verified_by: &'a str,
+    pub policy_snapshot_id: &'a str,
+    pub release_id: &'a str,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -287,6 +313,65 @@ impl AuditEvent {
                 "started_at_unix_ms": context.result.started_at_unix_ms,
                 "completed_at_unix_ms": context.result.completed_at_unix_ms,
             })))
+    }
+
+    pub fn external_callback_received(context: ExternalCallbackAuditContext<'_>) -> Self {
+        let artifact_ids = context
+            .receipt
+            .artifacts
+            .iter()
+            .map(|artifact| artifact.artifact_id.as_str())
+            .collect::<Vec<_>>();
+        AuditEvent::new(
+            context.event_id,
+            AuditTargetKind::ExternalCallback,
+            context.occurred_at,
+        )
+        .with_actor(context.actor)
+        .with_resource(
+            ResourceRef::new(format!("async_operation:{}", context.receipt.operation_id))
+                .with_resource_kind("async_operation"),
+        )
+        .with_reason_code("external_callback.received")
+        .with_payload(json!({
+            "callback_id": &context.receipt.callback_id,
+            "operation_id": &context.receipt.operation_id,
+            "run_id": &context.receipt.run_id,
+            "node_id": &context.receipt.node_id,
+            "attempt_id": &context.receipt.attempt_id,
+            "provider_operation_id": &context.receipt.provider_operation_id,
+            "idempotency_key": &context.receipt.idempotency_key,
+            "payload_digest": &context.receipt.payload_digest,
+            "artifact_count": context.receipt.artifacts.len(),
+            "artifact_ids": artifact_ids,
+            "received_at_unix_ms": context.receipt.received_at_unix_ms,
+            "verified_by": &context.receipt.verified_by,
+            "policy_snapshot_id": &context.receipt.policy_snapshot_id,
+            "release_id": context.release_id,
+        }))
+    }
+
+    pub fn external_callback_rejected(context: ExternalCallbackRejectionAuditContext<'_>) -> Self {
+        AuditEvent::new(
+            context.event_id,
+            AuditTargetKind::ExternalCallback,
+            context.occurred_at,
+        )
+        .with_actor(context.actor)
+        .with_resource(
+            ResourceRef::new(format!("async_operation:{}", context.operation_id))
+                .with_resource_kind("async_operation"),
+        )
+        .with_reason_code("external_callback.rejected")
+        .with_payload(json!({
+            "operation_id": context.operation_id,
+            "callback_id": context.callback_id,
+            "reason": context.reason,
+            "occurred_at_unix_ms": context.occurred_at_unix_ms,
+            "verified_by": context.verified_by,
+            "policy_snapshot_id": context.policy_snapshot_id,
+            "release_id": context.release_id,
+        }))
     }
 
     pub fn payload_digest(&self) -> String {

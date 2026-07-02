@@ -259,6 +259,10 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   the caller supplies a `CallbackArtifactRef`; the runtime journals only compact callback metadata
   plus the artifact reference, and SQLite persistence preserves the artifact-backed receipt across
   reopen.
+- Audit helpers now produce metadata-only audit events for `ExternalCallbackReceived` and
+  `ExternalCallbackRejected`, recording operation/run/attempt identity, policy snapshot, release,
+  idempotency, verification, payload digest, and artifact ids without copying untrusted callback
+  payload bodies into the audit log.
 - `CallbackEndpointRef` and `CallbackEndpointAuth` now model callback ingress authentication for
   async operations, with bearer-token, `hmac-sha256`, Ed25519 verifier-boundary, mTLS
   client-identity, and OIDC/JWT verifier-boundary helpers that build `AsyncCallbackSubmission` only

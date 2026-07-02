@@ -1,5 +1,7 @@
+use graphblocks_runtime_core::async_operation::{CallbackArtifactRef, ExternalCallbackReceived};
 use graphblocks_runtime_core::audit::{
-    AuditEvent, AuditOutboxError, AuditQuery, AuditSinkError, AuditTargetKind, InMemoryAuditOutbox,
+    AuditEvent, AuditOutboxError, AuditQuery, AuditSinkError, AuditTargetKind,
+    ExternalCallbackAuditContext, ExternalCallbackRejectionAuditContext, InMemoryAuditOutbox,
     InMemoryAuditSink, ToolEffectAuditContext, ToolEffectAuditError, ToolEffectPrecondition,
     ToolEffectPreconditionContext,
 };
@@ -45,6 +47,30 @@ fn ticket_call(resolved_tool_id: impl AsRef<str>) -> graphblocks_runtime_core::t
     draft
         .into_completed_tool_call(resolved_tool_id.as_ref(), 1_000)
         .expect("arguments are valid")
+}
+
+fn callback_receipt() -> ExternalCallbackReceived {
+    ExternalCallbackReceived {
+        callback_id: "cb-1".to_owned(),
+        operation_id: "op-ci-1".to_owned(),
+        run_id: "run-1".to_owned(),
+        node_id: "waitCI".to_owned(),
+        attempt_id: "attempt-1".to_owned(),
+        provider_operation_id: Some("gha-run-1".to_owned()),
+        idempotency_key: "idem-callback-1".to_owned(),
+        payload: json!({
+            "status": "completed",
+            "secret": "do-not-copy-to-audit",
+        }),
+        payload_digest: "sha256:payload".to_owned(),
+        artifacts: vec![
+            CallbackArtifactRef::new("artifact-ci-log", "blob://callbacks/op-ci-1/cb-1.json")
+                .with_media_type("application/json"),
+        ],
+        received_at_unix_ms: 1_000,
+        verified_by: "hmac:endpoint-ci".to_owned(),
+        policy_snapshot_id: "policy-snapshot-1".to_owned(),
+    }
 }
 
 #[test]
@@ -144,6 +170,86 @@ fn audit_query_filters_by_target_actor_and_resource() -> Result<(), AuditSinkErr
         vec!["audit-2"]
     );
     Ok(())
+}
+
+#[test]
+fn external_callback_received_audit_event_records_digest_without_untrusted_payload() {
+    let receipt = callback_receipt();
+    let event = AuditEvent::external_callback_received(ExternalCallbackAuditContext {
+        event_id: "audit-callback-1",
+        occurred_at: "2026-07-02T00:00:00Z",
+        actor: PrincipalRef::new("callback:endpoint-ci").with_tenant_id("tenant-a"),
+        receipt: &receipt,
+        release_id: "release-1",
+    });
+
+    assert_eq!(event.target_kind, AuditTargetKind::ExternalCallback);
+    assert_eq!(
+        event
+            .resource
+            .as_ref()
+            .map(|resource| resource.resource_id.as_str()),
+        Some("async_operation:op-ci-1")
+    );
+    assert_eq!(event.reason_codes, vec!["external_callback.received"]);
+    assert_eq!(
+        event.payload,
+        json!({
+            "callback_id": "cb-1",
+            "operation_id": "op-ci-1",
+            "run_id": "run-1",
+            "node_id": "waitCI",
+            "attempt_id": "attempt-1",
+            "provider_operation_id": "gha-run-1",
+            "idempotency_key": "idem-callback-1",
+            "payload_digest": "sha256:payload",
+            "artifact_count": 1,
+            "artifact_ids": ["artifact-ci-log"],
+            "received_at_unix_ms": 1_000,
+            "verified_by": "hmac:endpoint-ci",
+            "policy_snapshot_id": "policy-snapshot-1",
+            "release_id": "release-1",
+        })
+    );
+    assert!(!event.payload.to_string().contains("do-not-copy-to-audit"));
+}
+
+#[test]
+fn external_callback_rejected_audit_event_records_reason_without_payload() {
+    let event = AuditEvent::external_callback_rejected(ExternalCallbackRejectionAuditContext {
+        event_id: "audit-callback-rejected-1",
+        occurred_at: "2026-07-02T00:00:01Z",
+        actor: PrincipalRef::new("callback:endpoint-ci").with_tenant_id("tenant-a"),
+        operation_id: "op-ci-1",
+        callback_id: "cb-bad",
+        reason: "callback_schema_invalid",
+        occurred_at_unix_ms: 1_010,
+        verified_by: "hmac:endpoint-ci",
+        policy_snapshot_id: "policy-snapshot-1",
+        release_id: "release-1",
+    });
+
+    assert_eq!(event.target_kind, AuditTargetKind::ExternalCallback);
+    assert_eq!(
+        event
+            .resource
+            .as_ref()
+            .map(|resource| resource.resource_id.as_str()),
+        Some("async_operation:op-ci-1")
+    );
+    assert_eq!(event.reason_codes, vec!["external_callback.rejected"]);
+    assert_eq!(
+        event.payload,
+        json!({
+            "operation_id": "op-ci-1",
+            "callback_id": "cb-bad",
+            "reason": "callback_schema_invalid",
+            "occurred_at_unix_ms": 1_010,
+            "verified_by": "hmac:endpoint-ci",
+            "policy_snapshot_id": "policy-snapshot-1",
+            "release_id": "release-1",
+        })
+    );
 }
 
 #[test]
