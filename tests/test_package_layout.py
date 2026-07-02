@@ -1392,6 +1392,34 @@ def test_package_catalog_doctor_reports_forbidden_dependency_conflicts() -> None
     assert "openai" in diagnostics.diagnostics[0].message
 
 
+def test_package_catalog_doctor_reports_forbidden_transitive_dependency_conflicts() -> None:
+    diagnostics = doctor_package_catalog(
+        {
+            "catalogVersion": 1,
+            "specVersion": "1.0",
+            "defaultMetaPackage": {"distribution": "graphblocks", "dependencies": [], "excludedCategories": []},
+            "packages": [
+                {"distribution": "graphblocks", "default": True, "dependsOn": []},
+                {
+                    "distribution": "graphblocks-documents",
+                    "default": False,
+                    "dependsOn": ["graphblocks-pdf"],
+                    "forbiddenDependencies": ["pypdf"],
+                },
+                {"distribution": "graphblocks-pdf", "default": False, "dependsOn": ["pypdf"]},
+                {"distribution": "pypdf", "default": False, "dependsOn": []},
+            ],
+        }
+    )
+
+    assert [(item.code, item.message) for item in diagnostics.diagnostics] == [
+        (
+            "PackageForbiddenDependencySelected",
+            "package 'graphblocks-documents' transitively selects forbidden dependency 'pypdf'",
+        )
+    ]
+
+
 def test_package_catalog_doctor_reports_dependency_cycles() -> None:
     diagnostics = doctor_package_catalog(
         {

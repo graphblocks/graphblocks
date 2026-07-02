@@ -273,6 +273,37 @@ def _package_categories(package: dict[str, Any]) -> set[str]:
     return categories
 
 
+def _package_dependency_closure(
+    distribution: str, packages_by_distribution: dict[str, dict[str, Any]]
+) -> set[str]:
+    package = packages_by_distribution.get(distribution)
+    if package is None:
+        return set()
+    raw_direct_dependencies = package.get("dependsOn", [])
+    raw_direct_dependencies = raw_direct_dependencies if isinstance(raw_direct_dependencies, list) else []
+    direct_dependencies = [
+        dependency
+        for dependency in raw_direct_dependencies
+        if isinstance(dependency, str) and dependency in packages_by_distribution
+    ]
+    closure: set[str] = set()
+    stack = list(reversed(direct_dependencies))
+    while stack:
+        dependency = stack.pop()
+        if dependency in closure:
+            continue
+        closure.add(dependency)
+        dependency_package = packages_by_distribution[dependency]
+        raw_nested_dependencies = dependency_package.get("dependsOn", [])
+        raw_nested_dependencies = raw_nested_dependencies if isinstance(raw_nested_dependencies, list) else []
+        stack.extend(
+            nested
+            for nested in reversed(raw_nested_dependencies)
+            if isinstance(nested, str) and nested in packages_by_distribution and nested not in closure
+        )
+    return closure
+
+
 def build_package_lock(
     catalog: dict[str, Any],
     *,
@@ -957,6 +988,19 @@ def doctor_package_catalog(catalog: dict[str, Any], *, root: str | Path | None =
                         f"$.packages.{distribution}.dependsOn[{index}]",
                     )
                 )
+        direct_dependencies = {dependency for dependency in dependencies if isinstance(dependency, str)}
+        transitive_forbidden_dependencies = sorted(
+            (valid_forbidden_dependencies & _package_dependency_closure(distribution, packages_by_distribution))
+            - direct_dependencies
+        )
+        for dependency in transitive_forbidden_dependencies:
+            diagnostics.append(
+                Diagnostic(
+                    "PackageForbiddenDependencySelected",
+                    f"package {distribution!r} transitively selects forbidden dependency {dependency!r}",
+                    f"$.packages.{distribution}.forbiddenDependencies",
+                )
+            )
 
     states: dict[str, str] = {}
     reported_cycles: set[frozenset[str]] = set()
