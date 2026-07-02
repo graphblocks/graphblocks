@@ -246,6 +246,9 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
 - Callback ingestion now enforces the specification's default `262144` byte payload limit before
   journaling or resume, and focused tests cover explicit small-limit rejection without operation
   state changes.
+- Callback resume admission can now pause after a durable callback receipt when budget policy
+  denies continuation; the operation records `CallbackReceived`, emits a pause reason, and returns
+  `should_resume = false`.
 - `graphblocks-runtime-core::callback_delivery` now contains callback subscription filtering,
   deterministic delivery records, idempotency keys, success/duplicate acknowledgement handling,
   bounded retry scheduling, best-effort failure handling, dead-letter terminal state, and redrive

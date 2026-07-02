@@ -213,6 +213,12 @@ pub struct ExternalCallbackReceived {
     pub policy_snapshot_id: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AsyncCallbackResumeDecision {
+    Resume,
+    PauseBudget { reason: String },
+}
+
 impl ExternalCallbackReceived {
     pub fn compute_payload_digest(&self) -> String {
         canonical_hash(&self.payload)
@@ -236,6 +242,11 @@ pub enum AsyncOperationEvent {
     },
     ExternalCallbackReceived {
         receipt: ExternalCallbackReceived,
+    },
+    CallbackResumePaused {
+        operation_id: String,
+        reason: String,
+        occurred_at_unix_ms: u64,
     },
     LateExternalCallbackReceived {
         receipt: ExternalCallbackReceived,
@@ -368,10 +379,24 @@ impl AsyncOperationStore {
         submission: AsyncCallbackSubmission,
         registry: &ToolSchemaRegistry,
     ) -> Result<AcceptedCallback, AsyncOperationError> {
-        self.accept_callback_with_limits(
+        self.accept_callback_with_resume_decision(
+            submission,
+            registry,
+            AsyncCallbackResumeDecision::Resume,
+        )
+    }
+
+    pub fn accept_callback_with_resume_decision(
+        &self,
+        submission: AsyncCallbackSubmission,
+        registry: &ToolSchemaRegistry,
+        resume_decision: AsyncCallbackResumeDecision,
+    ) -> Result<AcceptedCallback, AsyncOperationError> {
+        self.accept_callback_with_limits_and_resume_decision(
             submission,
             registry,
             AsyncCallbackIngestionLimits::default(),
+            resume_decision,
         )
     }
 
@@ -380,6 +405,21 @@ impl AsyncOperationStore {
         submission: AsyncCallbackSubmission,
         registry: &ToolSchemaRegistry,
         limits: AsyncCallbackIngestionLimits,
+    ) -> Result<AcceptedCallback, AsyncOperationError> {
+        self.accept_callback_with_limits_and_resume_decision(
+            submission,
+            registry,
+            limits,
+            AsyncCallbackResumeDecision::Resume,
+        )
+    }
+
+    fn accept_callback_with_limits_and_resume_decision(
+        &self,
+        submission: AsyncCallbackSubmission,
+        registry: &ToolSchemaRegistry,
+        limits: AsyncCallbackIngestionLimits,
+        resume_decision: AsyncCallbackResumeDecision,
     ) -> Result<AcceptedCallback, AsyncOperationError> {
         for (field, value) in [
             ("callback_id", &submission.callback_id),
@@ -397,6 +437,13 @@ impl AsyncOperationStore {
                 });
             }
         }
+        if let AsyncCallbackResumeDecision::PauseBudget { reason } = &resume_decision {
+            if reason.trim().is_empty() {
+                return Err(AsyncOperationError::EmptyField {
+                    field: "resume_pause_reason".to_owned(),
+                });
+            }
+        }
 
         let payload_size = callback_payload_size_bytes(&submission.payload);
         if payload_size > limits.max_payload_bytes {
@@ -407,6 +454,15 @@ impl AsyncOperationStore {
             });
         }
 
+        self.accept_validated_callback_with_resume_decision(submission, registry, resume_decision)
+    }
+
+    fn accept_validated_callback_with_resume_decision(
+        &self,
+        submission: AsyncCallbackSubmission,
+        registry: &ToolSchemaRegistry,
+        resume_decision: AsyncCallbackResumeDecision,
+    ) -> Result<AcceptedCallback, AsyncOperationError> {
         let mut inner = self
             .inner
             .lock()
@@ -547,11 +603,26 @@ impl AsyncOperationStore {
             .entry(submission.operation_id.clone())
             .or_default()
             .push(AsyncOperationEvent::StateChanged {
-                operation_id: submission.operation_id,
+                operation_id: submission.operation_id.clone(),
                 from,
                 to: AsyncOperationState::CallbackReceived,
                 occurred_at_unix_ms: submission.received_at_unix_ms,
             });
+        let should_resume = match resume_decision {
+            AsyncCallbackResumeDecision::Resume => true,
+            AsyncCallbackResumeDecision::PauseBudget { reason } => {
+                inner
+                    .events_by_operation
+                    .entry(submission.operation_id.clone())
+                    .or_default()
+                    .push(AsyncOperationEvent::CallbackResumePaused {
+                        operation_id: submission.operation_id,
+                        reason,
+                        occurred_at_unix_ms: submission.received_at_unix_ms,
+                    });
+                false
+            }
+        };
         inner
             .receipts_by_idempotency_key
             .insert(submission.idempotency_key, receipt.clone());
@@ -559,7 +630,7 @@ impl AsyncOperationStore {
         Ok(AcceptedCallback {
             receipt,
             duplicate: false,
-            should_resume: true,
+            should_resume,
         })
     }
 

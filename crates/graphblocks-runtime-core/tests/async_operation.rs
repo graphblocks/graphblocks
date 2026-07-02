@@ -2,8 +2,8 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 
 use graphblocks_runtime_core::async_operation::{
-    AsyncCallbackSubmission, AsyncOperation, AsyncOperationError, AsyncOperationEvent,
-    AsyncOperationKind, AsyncOperationState, AsyncOperationStore,
+    AsyncCallbackResumeDecision, AsyncCallbackSubmission, AsyncOperation, AsyncOperationError,
+    AsyncOperationEvent, AsyncOperationKind, AsyncOperationState, AsyncOperationStore,
 };
 use graphblocks_runtime_core::tool_schema::{JsonSchema, JsonSchemaNode, ToolSchemaRegistry};
 use serde_json::json;
@@ -228,6 +228,73 @@ fn callback_default_payload_limit_allows_normal_payload() {
 
     assert!(accepted.should_resume);
     assert!(!accepted.duplicate);
+}
+
+#[test]
+fn callback_during_budget_exhaustion_is_journaled_but_resume_is_paused() {
+    let store = AsyncOperationStore::new();
+    store
+        .register(waiting_operation())
+        .expect("operation registers");
+
+    let accepted = store
+        .accept_callback_with_resume_decision(
+            valid_submission("cb-budget", "idem-budget"),
+            &callback_schema_registry(),
+            AsyncCallbackResumeDecision::PauseBudget {
+                reason: "budget exhausted while waiting for callback".to_owned(),
+            },
+        )
+        .expect("callback is recorded even when resume pauses");
+    let events = store.events_for_operation("op-1");
+
+    assert!(!accepted.should_resume);
+    assert!(!accepted.duplicate);
+    assert_eq!(
+        store.operation_state("op-1"),
+        Some(AsyncOperationState::CallbackReceived)
+    );
+    assert!(matches!(
+        events[2],
+        AsyncOperationEvent::ExternalCallbackReceived { .. }
+    ));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AsyncOperationEvent::CallbackResumePaused {
+            operation_id,
+            reason,
+            ..
+        } if operation_id == "op-1" && reason == "budget exhausted while waiting for callback"
+    )));
+}
+
+#[test]
+fn callback_resume_pause_requires_reason_before_journaling() {
+    let store = AsyncOperationStore::new();
+    store
+        .register(waiting_operation())
+        .expect("operation registers");
+
+    assert_eq!(
+        store.accept_callback_with_resume_decision(
+            valid_submission("cb-budget", "idem-budget"),
+            &callback_schema_registry(),
+            AsyncCallbackResumeDecision::PauseBudget {
+                reason: " ".to_owned(),
+            },
+        ),
+        Err(AsyncOperationError::EmptyField {
+            field: "resume_pause_reason".to_owned(),
+        })
+    );
+    assert_eq!(
+        store
+            .events_for_operation("op-1")
+            .iter()
+            .filter(|event| matches!(event, AsyncOperationEvent::ExternalCallbackReceived { .. }))
+            .count(),
+        0
+    );
 }
 
 #[test]
