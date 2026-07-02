@@ -255,6 +255,56 @@ pub struct RunInvocationResponse {
     pub initial_cursor: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RunInvocationRouteConfig {
+    pub route_id: String,
+    pub invocation_mode: RunInvocationMode,
+    pub cursor_replay: bool,
+}
+
+impl RunInvocationRouteConfig {
+    pub fn new(
+        route_id: impl Into<String>,
+        invocation_mode: RunInvocationMode,
+        cursor_replay: bool,
+    ) -> Result<Self, RunStoreError> {
+        let route_id = route_id.into();
+        if route_id.trim().is_empty() {
+            return Err(RunStoreError::EmptyField { field: "route_id" });
+        }
+        Ok(Self {
+            route_id,
+            invocation_mode,
+            cursor_replay,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RunInvocationRouteDiagnostic {
+    pub code: &'static str,
+    pub field: &'static str,
+    pub message: String,
+}
+
+impl RunInvocationRouteDiagnostic {
+    pub fn for_route(route: &RunInvocationRouteConfig) -> Vec<Self> {
+        let mut diagnostics = Vec::new();
+        if route.invocation_mode.is_durable() && !route.cursor_replay {
+            diagnostics.push(Self {
+                code: "GB6005",
+                field: "cursor_replay",
+                message: format!(
+                    "durable run route {} uses {} invocation without a replayable ApplicationEventStream",
+                    route.route_id,
+                    route.invocation_mode.as_str()
+                ),
+            });
+        }
+        diagnostics
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RunWaitReasonKind {
     Input,

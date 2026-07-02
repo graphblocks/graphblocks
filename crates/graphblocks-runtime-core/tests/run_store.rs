@@ -2,8 +2,8 @@ use graphblocks_runtime_core::{
     evaluation::ModelVisibleToolRef,
     run_store::{
         InMemoryRunStore, PatchOperation, RunDeploymentProvenance, RunInvocationMode,
-        RunInvocationResponse, RunStatus, RunStatusSnapshot, RunStoreError, RunWaitReason,
-        SqliteRunStore, StatePatch,
+        RunInvocationResponse, RunInvocationRouteConfig, RunInvocationRouteDiagnostic, RunStatus,
+        RunStatusSnapshot, RunStoreError, RunWaitReason, SqliteRunStore, StatePatch,
     },
 };
 use serde_json::json;
@@ -146,6 +146,38 @@ fn run_invocation_response_rejects_sync_or_empty_cursor() {
             field: "initial_cursor",
         })
     );
+}
+
+#[test]
+fn run_invocation_diagnostics_report_durable_run_without_replay() {
+    let accepted =
+        RunInvocationRouteConfig::new("create-coding-task", RunInvocationMode::Accepted, false)
+            .expect("route config is valid");
+    let background =
+        RunInvocationRouteConfig::new("start-ingestion", RunInvocationMode::Background, false)
+            .expect("route config is valid");
+
+    let accepted_diagnostics = RunInvocationRouteDiagnostic::for_route(&accepted);
+    let background_diagnostics = RunInvocationRouteDiagnostic::for_route(&background);
+
+    assert_eq!(accepted_diagnostics.len(), 1);
+    assert_eq!(accepted_diagnostics[0].code, "GB6005");
+    assert_eq!(accepted_diagnostics[0].field, "cursor_replay");
+    assert!(
+        accepted_diagnostics[0]
+            .message
+            .contains("create-coding-task")
+    );
+    assert_eq!(background_diagnostics.len(), 1);
+    assert_eq!(background_diagnostics[0].code, "GB6005");
+}
+
+#[test]
+fn run_invocation_diagnostics_allow_sync_without_replay() {
+    let config = RunInvocationRouteConfig::new("sync-chat", RunInvocationMode::Sync, false)
+        .expect("route config is valid");
+
+    assert_eq!(RunInvocationRouteDiagnostic::for_route(&config), Vec::new());
 }
 
 #[test]
