@@ -2336,6 +2336,42 @@ def test_server_app_rejects_detach_for_missing_run_or_client_id() -> None:
     }
 
 
+def test_server_app_rejects_detach_with_invalid_timestamp() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-detach-invalid-time-1"] = (
+        {
+            "kind": "RunStarted",
+            "payload": {"runId": "run-detach-invalid-time-1"},
+            "metadata": {
+                "runId": "run-detach-invalid-time-1",
+                "sequence": 1,
+                "cursor": "run-detach-invalid-time-1:1",
+                "releaseId": "release-detach-invalid-time-1",
+                "occurredAt": "2026-07-03T00:00:00Z",
+            },
+        },
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-detach-invalid-time-1/detach",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"clientId": "client-1"}).encode("utf-8"),
+            requested_at="not-a-date",
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "detach request detached_at must be an ISO datetime",
+    }
+    assert app.detachments("run-detach-invalid-time-1") == ()
+
+
 def test_server_app_subscribes_to_run_events_with_filtered_replay() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     graph = {

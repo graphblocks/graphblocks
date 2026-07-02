@@ -2202,6 +2202,7 @@ class GraphBlocksServerApp:
         payload: Mapping[str, object],
         detached_at: str,
     ) -> ServerResponse:
+        detached_at = _validate_iso_datetime("detach request", "detached_at", detached_at)
         client_id = _validate_non_empty_string(
             "detach request",
             "client_id",

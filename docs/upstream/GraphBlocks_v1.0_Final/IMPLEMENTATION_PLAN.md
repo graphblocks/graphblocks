@@ -589,8 +589,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   must belong to the target run; wrong-run cursors are rejected before retention lookup.
 - `graphblocks-server` now exposes the framework-neutral `POST /runs/{run_id}/detach`
   `DetachFromRun` route, recording client detach projections while preserving the authoritative
-  event stream and current run status. Stored detach projection records are immutable snapshots.
-  Repeated detach requests from the same client are idempotent and return the first detach record.
+  event stream and current run status. Stored detach projection records are immutable snapshots,
+  and detach timestamps are validated as ISO datetimes. Repeated detach requests from the same
+  client are idempotent and return the first detach record.
 - `graphblocks-server` now exposes the framework-neutral `POST /runs/{run_id}/subscriptions`
   `SubscribeEvents` route, recording run-scoped event subscription projections and replaying
   retained matching events from the authoritative event stream after an optional cursor. Replay
