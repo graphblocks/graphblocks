@@ -3,7 +3,8 @@ use graphblocks_runtime_core::{
     run_store::{
         InMemoryRunStore, PatchOperation, RunDeploymentProvenance, RunInvocationMode,
         RunInvocationResponse, RunInvocationRouteConfig, RunInvocationRouteDiagnostic, RunLifetime,
-        RunStatus, RunStatusSnapshot, RunStoreError, RunWaitReason, SqliteRunStore, StatePatch,
+        RunOwnershipLease, RunStatus, RunStatusSnapshot, RunStoreError, RunWaitReason,
+        SqliteRunStore, StatePatch,
     },
 };
 use serde_json::json;
@@ -121,6 +122,105 @@ fn run_status_snapshot_validates_terminal_completion_and_nonterminal_completion(
             reason: "terminal run requires completed_at",
         })
     );
+}
+
+#[test]
+fn run_store_ownership_lease_fences_stale_coordinator_after_failover() -> Result<(), RunStoreError>
+{
+    let mut store = InMemoryRunStore::new();
+    let record = store.create_run_with_invocation_mode(
+        "sha256:graph",
+        json!({}),
+        RunInvocationMode::Background,
+    );
+
+    let first = store.acquire_ownership_lease(&record.run_id, "coordinator-a", 1_000, 1_500)?;
+    assert_eq!(first.fencing_epoch, 1);
+    assert_eq!(
+        store.acquire_ownership_lease(&record.run_id, "coordinator-b", 1_100, 1_600),
+        Err(RunStoreError::RunOwnershipLeaseActive {
+            run_id: record.run_id.clone(),
+            owner: "coordinator-a".to_owned(),
+            expires_at_unix_ms: 1_500,
+        })
+    );
+
+    let second = store.acquire_ownership_lease(&record.run_id, "coordinator-b", 1_501, 2_000)?;
+    assert_eq!(second.fencing_epoch, 2);
+    assert_eq!(
+        store.validate_ownership_lease(&record.run_id, &first.lease_id, first.fencing_epoch, 1_600),
+        Err(RunStoreError::RunOwnershipLeaseMismatch {
+            run_id: record.run_id.clone(),
+            expected_lease_id: second.lease_id.clone(),
+            actual_lease_id: first.lease_id,
+            expected_fencing_epoch: second.fencing_epoch,
+            actual_fencing_epoch: first.fencing_epoch,
+        })
+    );
+    store.validate_ownership_lease(
+        &record.run_id,
+        &second.lease_id,
+        second.fencing_epoch,
+        1_700,
+    )?;
+    Ok(())
+}
+
+#[test]
+fn sqlite_run_store_persists_ownership_lease_across_reopen_and_allows_failover()
+-> Result<(), String> {
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "graphblocks-sqlite-run-lease-{}-persist.sqlite3",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+
+    {
+        let mut store = SqliteRunStore::open(&path).map_err(|error| format!("{error:?}"))?;
+        let record = store
+            .create_run_with_invocation_mode(
+                "sha256:graph",
+                json!({}),
+                RunInvocationMode::Background,
+            )
+            .map_err(|error| format!("{error:?}"))?;
+        let lease = store
+            .acquire_ownership_lease(&record.run_id, "coordinator-a", 1_000, 1_500)
+            .map_err(|error| format!("{error:?}"))?;
+        assert_eq!(
+            lease,
+            RunOwnershipLease {
+                run_id: record.run_id,
+                lease_id: "run-000001:1".to_owned(),
+                owner: "coordinator-a".to_owned(),
+                fencing_epoch: 1,
+                acquired_at_unix_ms: 1_000,
+                expires_at_unix_ms: 1_500,
+            }
+        );
+    }
+
+    let mut store = SqliteRunStore::open(&path).map_err(|error| format!("{error:?}"))?;
+    assert_eq!(
+        store
+            .acquire_ownership_lease("run-000001", "coordinator-b", 1_100, 1_600)
+            .map_err(|error| format!("{error:?}")),
+        Err(
+            "RunOwnershipLeaseActive { run_id: \"run-000001\", owner: \"coordinator-a\", expires_at_unix_ms: 1500 }"
+                .to_owned()
+        )
+    );
+    let failover = store
+        .acquire_ownership_lease("run-000001", "coordinator-b", 1_501, 2_000)
+        .map_err(|error| format!("{error:?}"))?;
+
+    assert_eq!(failover.lease_id, "run-000001:2");
+    assert_eq!(failover.fencing_epoch, 2);
+    assert_eq!(failover.owner, "coordinator-b");
+
+    let _ = std::fs::remove_file(&path);
+    Ok(())
 }
 
 #[test]

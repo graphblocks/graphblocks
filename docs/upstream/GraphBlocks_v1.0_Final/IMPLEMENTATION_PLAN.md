@@ -237,6 +237,9 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   guarantees and report insufficient retention as `GB6013`.
 - Run status snapshots now expose the protocol response shape with state, release id, last cursor,
   started/updated/completed timestamps, wait reasons, and active async operation ids.
+- `RunOwnershipLease` now provides run-scoped coordinator ownership fencing in both in-memory and
+  SQLite run stores, including active-lease rejection, stale epoch rejection, and failover after
+  expiry.
 - `ApplicationCommandKind` now includes the async run, attach/replay, subscription, callback
   registration, callback ingestion, pause/resume/expire, redrive, and dead-letter command names
   from the amendment.
@@ -312,7 +315,7 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   before signing delivery envelopes, and tests cover explicit small-limit rejection for oversized
   callback projections.
 - Ed25519/mTLS/OIDC callback authentication adapters, real webhook delivery workers, DNS-time
-  egress enforcement, and coordinator failover remain follow-on slices.
+  egress enforcement, and multi-process coordinator failover execution remain follow-on slices.
 
 ### Package ownership
 

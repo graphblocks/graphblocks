@@ -196,6 +196,22 @@ pub struct RunRecord {
     pub state_revision: u64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RunOwnershipLease {
+    pub run_id: String,
+    pub lease_id: String,
+    pub owner: String,
+    pub fencing_epoch: u64,
+    pub acquired_at_unix_ms: u64,
+    pub expires_at_unix_ms: u64,
+}
+
+impl RunOwnershipLease {
+    pub fn is_active_at(&self, now_unix_ms: u64) -> bool {
+        self.expires_at_unix_ms > now_unix_ms
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum RunStoreError {
     EmptyField {
@@ -228,6 +244,28 @@ pub enum RunStoreError {
     InvalidRunStatusSnapshot {
         run_id: String,
         reason: &'static str,
+    },
+    InvalidRunOwnershipLease {
+        run_id: String,
+        reason: &'static str,
+    },
+    RunOwnershipLeaseActive {
+        run_id: String,
+        owner: String,
+        expires_at_unix_ms: u64,
+    },
+    RunOwnershipLeaseMismatch {
+        run_id: String,
+        expected_lease_id: String,
+        actual_lease_id: String,
+        expected_fencing_epoch: u64,
+        actual_fencing_epoch: u64,
+    },
+    RunOwnershipLeaseExpired {
+        run_id: String,
+        lease_id: String,
+        expires_at_unix_ms: u64,
+        now_unix_ms: u64,
     },
     InvalidStatePath {
         path: Vec<String>,
@@ -843,9 +881,89 @@ fn record_with_model_visible_tools(
     Ok(updated)
 }
 
+fn validate_lease_request(
+    run_id: &str,
+    owner: &str,
+    acquired_at_unix_ms: u64,
+    expires_at_unix_ms: u64,
+) -> Result<(), RunStoreError> {
+    if run_id.trim().is_empty() {
+        return Err(RunStoreError::EmptyField { field: "run_id" });
+    }
+    if owner.trim().is_empty() {
+        return Err(RunStoreError::EmptyField { field: "owner" });
+    }
+    if expires_at_unix_ms <= acquired_at_unix_ms {
+        return Err(RunStoreError::InvalidRunOwnershipLease {
+            run_id: run_id.to_owned(),
+            reason: "lease expiration must be after acquisition",
+        });
+    }
+    Ok(())
+}
+
+fn acquire_run_ownership_lease(
+    run_id: &str,
+    owner: &str,
+    acquired_at_unix_ms: u64,
+    expires_at_unix_ms: u64,
+    current: Option<&RunOwnershipLease>,
+) -> Result<RunOwnershipLease, RunStoreError> {
+    validate_lease_request(run_id, owner, acquired_at_unix_ms, expires_at_unix_ms)?;
+    if let Some(current) = current
+        && current.is_active_at(acquired_at_unix_ms)
+    {
+        return Err(RunStoreError::RunOwnershipLeaseActive {
+            run_id: run_id.to_owned(),
+            owner: current.owner.clone(),
+            expires_at_unix_ms: current.expires_at_unix_ms,
+        });
+    }
+
+    let fencing_epoch = current
+        .map(|lease| lease.fencing_epoch.saturating_add(1))
+        .unwrap_or(1);
+    Ok(RunOwnershipLease {
+        run_id: run_id.to_owned(),
+        lease_id: format!("{run_id}:{fencing_epoch}"),
+        owner: owner.to_owned(),
+        fencing_epoch,
+        acquired_at_unix_ms,
+        expires_at_unix_ms,
+    })
+}
+
+fn validate_run_ownership_lease(
+    run_id: &str,
+    lease_id: &str,
+    fencing_epoch: u64,
+    now_unix_ms: u64,
+    current: &RunOwnershipLease,
+) -> Result<(), RunStoreError> {
+    if current.lease_id != lease_id || current.fencing_epoch != fencing_epoch {
+        return Err(RunStoreError::RunOwnershipLeaseMismatch {
+            run_id: run_id.to_owned(),
+            expected_lease_id: current.lease_id.clone(),
+            actual_lease_id: lease_id.to_owned(),
+            expected_fencing_epoch: current.fencing_epoch,
+            actual_fencing_epoch: fencing_epoch,
+        });
+    }
+    if !current.is_active_at(now_unix_ms) {
+        return Err(RunStoreError::RunOwnershipLeaseExpired {
+            run_id: run_id.to_owned(),
+            lease_id: lease_id.to_owned(),
+            expires_at_unix_ms: current.expires_at_unix_ms,
+            now_unix_ms,
+        });
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct InMemoryRunStore {
     runs: BTreeMap<String, RunRecord>,
+    ownership_leases: BTreeMap<String, RunOwnershipLease>,
     next_sequence: u64,
 }
 
@@ -853,6 +971,7 @@ impl InMemoryRunStore {
     pub fn new() -> Self {
         Self {
             runs: BTreeMap::new(),
+            ownership_leases: BTreeMap::new(),
             next_sequence: 1,
         }
     }
@@ -994,6 +1113,54 @@ impl InMemoryRunStore {
         self.runs.insert(run_id.to_owned(), updated.clone());
         Ok(updated)
     }
+
+    pub fn acquire_ownership_lease(
+        &mut self,
+        run_id: impl AsRef<str>,
+        owner: impl AsRef<str>,
+        acquired_at_unix_ms: u64,
+        expires_at_unix_ms: u64,
+    ) -> Result<RunOwnershipLease, RunStoreError> {
+        let run_id = run_id.as_ref();
+        self.get_run(run_id)?;
+        let lease = acquire_run_ownership_lease(
+            run_id,
+            owner.as_ref(),
+            acquired_at_unix_ms,
+            expires_at_unix_ms,
+            self.ownership_leases.get(run_id),
+        )?;
+        self.ownership_leases
+            .insert(run_id.to_owned(), lease.clone());
+        Ok(lease)
+    }
+
+    pub fn validate_ownership_lease(
+        &self,
+        run_id: impl AsRef<str>,
+        lease_id: impl AsRef<str>,
+        fencing_epoch: u64,
+        now_unix_ms: u64,
+    ) -> Result<(), RunStoreError> {
+        let run_id = run_id.as_ref();
+        self.get_run(run_id)?;
+        let current = self.ownership_leases.get(run_id).ok_or_else(|| {
+            RunStoreError::RunOwnershipLeaseMismatch {
+                run_id: run_id.to_owned(),
+                expected_lease_id: String::new(),
+                actual_lease_id: lease_id.as_ref().to_owned(),
+                expected_fencing_epoch: 0,
+                actual_fencing_epoch: fencing_epoch,
+            }
+        })?;
+        validate_run_ownership_lease(
+            run_id,
+            lease_id.as_ref(),
+            fencing_epoch,
+            now_unix_ms,
+            current,
+        )
+    }
 }
 
 pub struct SqliteRunStore {
@@ -1030,6 +1197,14 @@ impl SqliteRunStore {
                     status TEXT NOT NULL,
                     state_json TEXT NOT NULL,
                     state_revision INTEGER NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS run_ownership_leases (
+                    run_id TEXT PRIMARY KEY,
+                    lease_id TEXT NOT NULL,
+                    owner TEXT NOT NULL,
+                    fencing_epoch INTEGER NOT NULL,
+                    acquired_at_unix_ms INTEGER NOT NULL,
+                    expires_at_unix_ms INTEGER NOT NULL
                 );
                 ",
             )
@@ -1337,6 +1512,145 @@ impl SqliteRunStore {
             .map_err(storage_error)?;
         Ok(updated)
     }
+
+    pub fn acquire_ownership_lease(
+        &mut self,
+        run_id: impl AsRef<str>,
+        owner: impl AsRef<str>,
+        acquired_at_unix_ms: u64,
+        expires_at_unix_ms: u64,
+    ) -> Result<RunOwnershipLease, RunStoreError> {
+        let run_id = run_id.as_ref();
+        self.get_run(run_id)?;
+        let transaction = self.connection.transaction().map_err(storage_error)?;
+        let current = sqlite_load_run_ownership_lease(&transaction, run_id)?;
+        let lease = acquire_run_ownership_lease(
+            run_id,
+            owner.as_ref(),
+            acquired_at_unix_ms,
+            expires_at_unix_ms,
+            current.as_ref(),
+        )?;
+        sqlite_upsert_run_ownership_lease(&transaction, &lease)?;
+        transaction.commit().map_err(storage_error)?;
+        Ok(lease)
+    }
+
+    pub fn validate_ownership_lease(
+        &self,
+        run_id: impl AsRef<str>,
+        lease_id: impl AsRef<str>,
+        fencing_epoch: u64,
+        now_unix_ms: u64,
+    ) -> Result<(), RunStoreError> {
+        let run_id = run_id.as_ref();
+        self.get_run(run_id)?;
+        let current =
+            sqlite_load_run_ownership_lease(&self.connection, run_id)?.ok_or_else(|| {
+                RunStoreError::RunOwnershipLeaseMismatch {
+                    run_id: run_id.to_owned(),
+                    expected_lease_id: String::new(),
+                    actual_lease_id: lease_id.as_ref().to_owned(),
+                    expected_fencing_epoch: 0,
+                    actual_fencing_epoch: fencing_epoch,
+                }
+            })?;
+        validate_run_ownership_lease(
+            run_id,
+            lease_id.as_ref(),
+            fencing_epoch,
+            now_unix_ms,
+            &current,
+        )
+    }
+}
+
+fn sqlite_load_run_ownership_lease(
+    connection: &Connection,
+    run_id: &str,
+) -> Result<Option<RunOwnershipLease>, RunStoreError> {
+    connection
+        .query_row(
+            "
+            SELECT
+                run_id,
+                lease_id,
+                owner,
+                fencing_epoch,
+                acquired_at_unix_ms,
+                expires_at_unix_ms
+            FROM run_ownership_leases
+            WHERE run_id = ?
+            ",
+            params![run_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(storage_error)?
+        .map(
+            |(run_id, lease_id, owner, fencing_epoch, acquired_at_unix_ms, expires_at_unix_ms)| {
+                Ok(RunOwnershipLease {
+                    run_id,
+                    lease_id,
+                    owner,
+                    fencing_epoch: sqlite_i64_to_u64(fencing_epoch, "run ownership fencing epoch")?,
+                    acquired_at_unix_ms: sqlite_i64_to_u64(
+                        acquired_at_unix_ms,
+                        "run ownership acquired_at",
+                    )?,
+                    expires_at_unix_ms: sqlite_i64_to_u64(
+                        expires_at_unix_ms,
+                        "run ownership expires_at",
+                    )?,
+                })
+            },
+        )
+        .transpose()
+}
+
+fn sqlite_upsert_run_ownership_lease(
+    connection: &Connection,
+    lease: &RunOwnershipLease,
+) -> Result<(), RunStoreError> {
+    connection
+        .execute(
+            "
+            INSERT INTO run_ownership_leases (
+                run_id,
+                lease_id,
+                owner,
+                fencing_epoch,
+                acquired_at_unix_ms,
+                expires_at_unix_ms
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(run_id) DO UPDATE SET
+                lease_id = excluded.lease_id,
+                owner = excluded.owner,
+                fencing_epoch = excluded.fencing_epoch,
+                acquired_at_unix_ms = excluded.acquired_at_unix_ms,
+                expires_at_unix_ms = excluded.expires_at_unix_ms
+            ",
+            params![
+                &lease.run_id,
+                &lease.lease_id,
+                &lease.owner,
+                sqlite_u64_to_i64(lease.fencing_epoch, "run ownership fencing epoch")?,
+                sqlite_u64_to_i64(lease.acquired_at_unix_ms, "run ownership acquired_at")?,
+                sqlite_u64_to_i64(lease.expires_at_unix_ms, "run ownership expires_at")?,
+            ],
+        )
+        .map_err(storage_error)?;
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
