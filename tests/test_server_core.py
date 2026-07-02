@@ -3271,6 +3271,54 @@ def test_server_app_records_callback_delivery_redrive_and_dead_letter_projection
         app.callback_delivery_dead_letter_moves("del-1")[0]["reason"] = "changed"
 
 
+def test_server_app_treats_repeated_callback_dead_letter_move_as_idempotent() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("operator-1")}))
+
+    first = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/deliveries/del-idempotent/dead-letter",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"operator": "operator-1", "reason": "max attempts exhausted"}).encode("utf-8"),
+            requested_at="2026-07-03T00:01:00Z",
+        )
+    )
+    duplicate = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/deliveries/del-idempotent/dead-letter",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"operator": "operator-2", "reason": "already moved"}).encode("utf-8"),
+            requested_at="2026-07-03T00:02:00Z",
+        )
+    )
+
+    assert first.status_code == 202
+    assert duplicate.status_code == 200
+    assert json.loads(duplicate.body.decode("utf-8")) == {
+        "ok": True,
+        "deliveryId": "del-idempotent",
+        "operator": "operator-1",
+        "reason": "max attempts exhausted",
+        "status": "dead_letter_requested",
+        "requestedAt": "2026-07-03T00:01:00Z",
+        "duplicate": True,
+    }
+    assert app.callback_delivery_dead_letter_moves("del-idempotent") == (
+        {
+            "deliveryId": "del-idempotent",
+            "operator": "operator-1",
+            "reason": "max attempts exhausted",
+            "requestedAt": "2026-07-03T00:01:00Z",
+            "status": "dead_letter_requested",
+        },
+    )
+
+
 def test_server_app_rejects_malformed_callback_delivery_control_request() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("operator-1")}))
 

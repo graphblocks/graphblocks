@@ -672,7 +672,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `RedriveCallbackDelivery`/`MoveCallbackToDeadLetter` routes, recording operator and reason
   projections while leaving durable callback queue/dead-letter authority in the runtime layer.
   Stored control projections are immutable snapshots so inspection callers cannot mutate redrive or
-  dead-letter history after recording.
+  dead-letter history after recording. Repeated dead-letter moves for the same delivery are
+  idempotent and return the first terminal move; redrive requests remain repeatable operator
+  actions.
 - `graphblocksd` now includes a server-side webhook HTTP client adapter that consumes the
   `graphblocks-runtime-core` signed webhook request, sends the exact canonical JSON body used for
   signing, maps response status and `Retry-After` back into the runtime delivery response model,

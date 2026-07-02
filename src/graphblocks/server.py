@@ -1909,6 +1909,20 @@ class GraphBlocksServerApp:
             self._callback_delivery_redrives[delivery_id] = (*existing, record)
         else:
             existing = self._callback_delivery_dead_letter_moves.get(delivery_id, ())
+            if existing:
+                first = existing[0]
+                return ServerResponse.json(
+                    200,
+                    {
+                        "ok": True,
+                        "deliveryId": delivery_id,
+                        "operator": first.get("operator"),
+                        "reason": first.get("reason"),
+                        "status": first.get("status"),
+                        "requestedAt": first.get("requestedAt"),
+                        "duplicate": True,
+                    },
+                )
             self._callback_delivery_dead_letter_moves[delivery_id] = (*existing, record)
         return ServerResponse.json(
             202,
