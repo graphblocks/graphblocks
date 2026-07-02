@@ -136,6 +136,40 @@ def test_callback_envelope_rejects_non_json_payload_values() -> None:
     )
 
 
+def test_callback_envelope_validates_timestamp_fields() -> None:
+    _assert_raises_value_error(
+        "occurred_at must be an ISO-8601 datetime",
+        lambda: CallbackEnvelope(
+            delivery_id="del_001",
+            subscription_id="sub_001",
+            event_id="evt_1042",
+            run_id="run_coding_001",
+            sequence=1042,
+            cursor="evt_1042",
+            type="ReviewRequested",
+            payload={"subject": "changeset_abc"},
+            idempotency_key="sub_001:evt_1042",
+            occurred_at="not-a-time",
+        ),
+    )
+    _assert_raises_value_error(
+        "delivered_at must not be before occurred_at",
+        lambda: CallbackEnvelope(
+            delivery_id="del_002",
+            subscription_id="sub_001",
+            event_id="evt_1042",
+            run_id="run_coding_001",
+            sequence=1042,
+            cursor="evt_1042",
+            type="ReviewRequested",
+            payload={"subject": "changeset_abc"},
+            idempotency_key="sub_001:evt_1042:early",
+            occurred_at="2026-07-02T00:00:10Z",
+            delivered_at="2026-07-02T00:00:09Z",
+        ),
+    )
+
+
 def test_callback_envelope_deterministic_fuzz_signatures_survive_reordering_and_mutation() -> None:
     rng = random.Random(6016)
 

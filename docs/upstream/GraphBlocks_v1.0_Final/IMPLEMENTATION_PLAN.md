@@ -496,6 +496,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   dead-letters, is cancelled, or expires.
 - Webhook delivery envelopes now support required GraphBlocks headers, canonical JSON signing,
   `hmac-sha256` verification, replay-window enforcement, and header/body identity checks.
+- Callback envelopes now validate `occurred_at` and `delivered_at` as ISO-8601 timestamps and
+  reject deliveries whose delivery timestamp precedes the source event timestamp.
 - `SqliteCallbackDeliveryQueue` now persists pending and retry-scheduled callback deliveries across
   reopen, preserving delivery status, idempotency keys, sequence ordering, and retry due times.
 - `WebhookDeliveryWorker` now processes due durable callback deliveries with signed webhook
