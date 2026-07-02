@@ -2098,6 +2098,115 @@ impl DeploymentTargetProfile {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct KubernetesTargetRenderer {
+    pub namespace: String,
+}
+
+impl KubernetesTargetRenderer {
+    pub fn new(namespace: impl Into<String>) -> Self {
+        Self {
+            namespace: namespace.into(),
+        }
+    }
+
+    pub fn render_target_profile(
+        &self,
+        profile: &DeploymentTargetProfile,
+        image: impl Into<String>,
+    ) -> Result<Vec<Value>, DeploymentTargetProfileError> {
+        if self.namespace.trim().is_empty() {
+            return Err(DeploymentTargetProfileError::new(
+                "kubernetes namespace must not be empty",
+            ));
+        }
+        let target = profile.to_execution_target(image)?;
+        let deployment = self.deployment_manifest(profile, &target);
+        let mut manifests = vec![deployment];
+        if matches!(
+            profile.kind,
+            ExecutionTargetKind::Service | ExecutionTargetKind::StatefulService
+        ) {
+            manifests.push(self.service_manifest(profile));
+        }
+        Ok(manifests)
+    }
+
+    fn deployment_manifest(
+        &self,
+        profile: &DeploymentTargetProfile,
+        target: &ExecutionTarget,
+    ) -> Value {
+        let mut env = vec![
+            json!({"name": "GRAPHBLOCKS_TARGET_ID", "value": profile.target_id}),
+            json!({"name": "GRAPHBLOCKS_IMAGE_ROLE", "value": profile.image_role}),
+            json!({"name": "GRAPHBLOCKS_EXECUTION_HOST", "value": profile.execution_host}),
+        ];
+        if let Some(package_lock) = &profile.package_lock {
+            env.push(json!({"name": "GRAPHBLOCKS_PACKAGE_LOCK", "value": package_lock}));
+        }
+        json!({
+            "apiVersion": "apps/v1",
+            "kind": "Deployment",
+            "metadata": {
+                "name": profile.target_id,
+                "namespace": self.namespace,
+                "labels": self.labels(profile),
+            },
+            "spec": {
+                "replicas": profile.default_replicas,
+                "selector": {
+                    "matchLabels": {
+                        "graphblocks.ai/target-id": profile.target_id,
+                    },
+                },
+                "template": {
+                    "metadata": {
+                        "labels": self.labels(profile),
+                    },
+                    "spec": {
+                        "containers": [{
+                            "name": profile.target_id,
+                            "image": target.image,
+                            "env": env,
+                        }],
+                    },
+                },
+            },
+        })
+    }
+
+    fn service_manifest(&self, profile: &DeploymentTargetProfile) -> Value {
+        json!({
+            "apiVersion": "v1",
+            "kind": "Service",
+            "metadata": {
+                "name": profile.target_id,
+                "namespace": self.namespace,
+                "labels": self.labels(profile),
+            },
+            "spec": {
+                "selector": {
+                    "graphblocks.ai/target-id": profile.target_id,
+                },
+                "ports": [{
+                    "name": "http",
+                    "port": 8080,
+                    "targetPort": 8080,
+                }],
+            },
+        })
+    }
+
+    fn labels(&self, profile: &DeploymentTargetProfile) -> Value {
+        json!({
+            "app.kubernetes.io/name": "graphblocks",
+            "graphblocks.ai/target-id": profile.target_id,
+            "graphblocks.ai/image-role": profile.image_role,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DeploymentTargetCoverageIssue {
     pub code: String,
     pub image_role: String,

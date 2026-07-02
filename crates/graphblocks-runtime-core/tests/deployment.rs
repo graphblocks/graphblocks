@@ -1,12 +1,12 @@
 use graphblocks_runtime_core::deployment::{
     CallbackIngressConfig, DeploymentCondition, DeploymentEvent, DeploymentEventKind,
     DeploymentObservabilityContext, DeploymentRecoveryProfile, DeploymentRevision,
-    DeploymentSloProfile, DeploymentSloReport, DeploymentTargetProfileSet, ExecutionTarget,
-    ExecutionTargetKind, GraphRelease, GraphReleaseError, GraphReleaseGraph, ImageRef,
-    KnowledgeBinding, PhysicalExecutionPlan, PlacementError, PlacementRule, PlacementSelector,
-    PromptLock, ReleaseLockRef, RevisionDecision, RolloutAnalysisResult, RolloutPlan, RolloutStep,
-    SupplyChainLock, UpgradePolicy, WorkerAdmissionError, WorkerAdmissionRequirement,
-    WorkerAdvertisement, WorkloadKind,
+    DeploymentSloProfile, DeploymentSloReport, DeploymentTargetProfile, DeploymentTargetProfileSet,
+    ExecutionTarget, ExecutionTargetKind, GraphRelease, GraphReleaseError, GraphReleaseGraph,
+    ImageRef, KnowledgeBinding, KubernetesTargetRenderer, PhysicalExecutionPlan, PlacementError,
+    PlacementRule, PlacementSelector, PromptLock, ReleaseLockRef, RevisionDecision,
+    RolloutAnalysisResult, RolloutPlan, RolloutStep, SupplyChainLock, UpgradePolicy,
+    WorkerAdmissionError, WorkerAdmissionRequirement, WorkerAdvertisement, WorkloadKind,
 };
 use serde_json::json;
 
@@ -238,6 +238,134 @@ fn deployment_target_profiles_project_to_execution_targets() {
         Some("registry.example.com/gb/control@sha256:control")
     );
     assert!(target_set.content_digest().starts_with("sha256:"));
+}
+
+#[test]
+fn kubernetes_renderer_projects_service_target_to_deployment_and_service() {
+    let profile = DeploymentTargetProfileSet::from_document(&json!({
+        "kind": "DeploymentTargetProfileSet",
+        "spec": {
+            "targets": [{
+                "id": "control",
+                "imageRole": "control-plane",
+                "kind": "service",
+                "executionHost": "rust",
+                "capabilities": ["graph.coordinator"],
+                "effects": ["network"],
+                "packageLock": "locks/control.lock",
+                "defaultReplicas": 2
+            }]
+        }
+    }))
+    .expect("profile parses")
+    .by_id("control")
+    .expect("control profile exists")
+    .clone();
+
+    let manifests = KubernetesTargetRenderer::new("graphblocks")
+        .render_target_profile(&profile, "registry.example.com/gb/control@sha256:control")
+        .expect("service target renders");
+
+    assert_eq!(
+        manifests,
+        vec![
+            json!({
+                "apiVersion": "apps/v1",
+                "kind": "Deployment",
+                "metadata": {
+                    "name": "control",
+                    "namespace": "graphblocks",
+                    "labels": {
+                        "app.kubernetes.io/name": "graphblocks",
+                        "graphblocks.ai/target-id": "control",
+                        "graphblocks.ai/image-role": "control-plane"
+                    }
+                },
+                "spec": {
+                    "replicas": 2,
+                    "selector": {
+                        "matchLabels": {
+                            "graphblocks.ai/target-id": "control"
+                        }
+                    },
+                    "template": {
+                        "metadata": {
+                            "labels": {
+                                "app.kubernetes.io/name": "graphblocks",
+                                "graphblocks.ai/target-id": "control",
+                                "graphblocks.ai/image-role": "control-plane"
+                            }
+                        },
+                        "spec": {
+                            "containers": [{
+                                "name": "control",
+                                "image": "registry.example.com/gb/control@sha256:control",
+                                "env": [
+                                    {"name": "GRAPHBLOCKS_TARGET_ID", "value": "control"},
+                                    {"name": "GRAPHBLOCKS_IMAGE_ROLE", "value": "control-plane"},
+                                    {"name": "GRAPHBLOCKS_EXECUTION_HOST", "value": "rust"},
+                                    {"name": "GRAPHBLOCKS_PACKAGE_LOCK", "value": "locks/control.lock"}
+                                ]
+                            }]
+                        }
+                    }
+                }
+            }),
+            json!({
+                "apiVersion": "v1",
+                "kind": "Service",
+                "metadata": {
+                    "name": "control",
+                    "namespace": "graphblocks",
+                    "labels": {
+                        "app.kubernetes.io/name": "graphblocks",
+                        "graphblocks.ai/target-id": "control",
+                        "graphblocks.ai/image-role": "control-plane"
+                    }
+                },
+                "spec": {
+                    "selector": {
+                        "graphblocks.ai/target-id": "control"
+                    },
+                    "ports": [{
+                        "name": "http",
+                        "port": 8080,
+                        "targetPort": 8080
+                    }]
+                }
+            })
+        ]
+    );
+}
+
+#[test]
+fn kubernetes_renderer_projects_worker_pool_without_service() {
+    let profile = DeploymentTargetProfile::new(
+        "document-cpu",
+        "document-cpu",
+        ExecutionTargetKind::WorkerPool,
+        "python_worker",
+    )
+    .expect("profile is valid")
+    .with_capabilities(["document.parse.pdf"])
+    .with_default_replicas(3);
+
+    let manifests = KubernetesTargetRenderer::new("graphblocks")
+        .render_target_profile(&profile, "registry.example.com/gb/document@sha256:document")
+        .expect("worker target renders");
+
+    assert_eq!(manifests.len(), 1);
+    assert_eq!(manifests[0]["kind"], "Deployment");
+    assert_eq!(manifests[0]["metadata"]["name"], "document-cpu");
+    assert_eq!(manifests[0]["spec"]["replicas"], 3);
+    assert_eq!(
+        manifests[0]["spec"]["template"]["spec"]["containers"][0]["env"],
+        json!([
+            {"name": "GRAPHBLOCKS_TARGET_ID", "value": "document-cpu"},
+            {"name": "GRAPHBLOCKS_IMAGE_ROLE", "value": "document-cpu"},
+            {"name": "GRAPHBLOCKS_EXECUTION_HOST", "value": "python_worker"}
+        ])
+    );
 }
 
 #[test]

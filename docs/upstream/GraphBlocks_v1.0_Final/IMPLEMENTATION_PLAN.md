@@ -745,6 +745,9 @@ sandbox
 - Production run provenance now has deterministic diagnostics: `GB7101` for missing signed release
   digest, `GB7102` for missing physical execution plan hash, and `GB7103` for missing release
   signature digest.
+- `KubernetesTargetRenderer` now projects deployment target profiles into deterministic Kubernetes
+  `Deployment` manifests and emits `Service` manifests for service-style targets while preserving
+  target id, image role, execution host, replica count, and package lock metadata.
 
 ## 9. Phase 6 — Adaptive Orchestration and Verified Work (`GB-X1-ORCHESTRATION`)
 
