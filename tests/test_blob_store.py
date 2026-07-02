@@ -188,6 +188,17 @@ def test_s3_compatible_blob_store_rejects_invalid_identity_fields() -> None:
         S3CompatibleBlobStore(bucket="kb-artifacts", client=_FakeS3Client(), uri_scheme=" ")
 
 
+def test_s3_compatible_blob_store_rejects_case_colliding_metadata_keys() -> None:
+    store = S3CompatibleBlobStore(bucket="kb-artifacts", client=_FakeS3Client())
+
+    with pytest.raises(ValueError, match="metadata keys collide after S3 normalization"):
+        store.put(
+            BlobKey("docs/policy.txt"),
+            b"alpha",
+            PutOptions(metadata={"Tenant": "acme", "tenant": "other"}),
+        )
+
+
 def test_s3_compatible_blob_store_supports_range_reads_and_pagination() -> None:
     client = _FakeS3Client()
     store = S3CompatibleBlobStore(bucket="kb-artifacts", client=client)

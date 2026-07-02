@@ -452,6 +452,8 @@ class S3CompatibleBlobStore:
             normalized_name = str(name).lower()
             if normalized_name in _RESERVED_METADATA_KEYS:
                 raise ValueError(f"metadata key {name!r} is reserved")
+            if normalized_name in normalized:
+                raise ValueError("metadata keys collide after S3 normalization")
             normalized[normalized_name] = str(value)
         return normalized
 

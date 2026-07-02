@@ -541,7 +541,9 @@ resume, and resume without ownership fencing.
 ### Current implementation slice
 
 - `graphblocks-core`/`graphblocks-documents` now expose document lineage primitives, parser
-  selection locks, local blob adapters, and ingestion manifests with ACL-gated publish records.
+  selection locks, local/S3-compatible blob adapters, and ingestion manifests with ACL-gated
+  publish records. S3-compatible metadata normalization rejects case-colliding user metadata keys
+  before artifact provenance can be silently overwritten.
 - `InMemoryIngestionManifestStore` now distinguishes tombstone retention from hard delete via a
   typed `IngestionDeletePolicy`: tombstone retains a deleted manifest snapshot while hard delete
   removes the manifest and clears the current-asset pointer.
