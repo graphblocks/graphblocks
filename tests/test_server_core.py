@@ -1627,6 +1627,68 @@ def test_server_app_subscription_replay_filters_visibility_node_operation_and_se
     assert [event["metadata"]["eventId"] for event in payload["events"]] == ["event-matching"]
 
 
+def test_server_app_subscription_replay_includes_terminal_events_by_default() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-subscribe-terminal-1"] = (
+        {
+            "kind": "JobProgress",
+            "metadata": {"eventId": "event-progress", "sequence": 1},
+            "payload": {"visibility": "client"},
+        },
+        {
+            "kind": "RunSucceeded",
+            "metadata": {"eventId": "event-terminal", "sequence": 2},
+            "payload": {"visibility": "client", "status": "succeeded"},
+        },
+    )
+
+    default_response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-subscribe-terminal-1/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-terminal-default",
+                    "eventFilter": {"types": ["JobProgress"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                }
+            ).encode("utf-8"),
+        )
+    )
+    opt_out_response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-subscribe-terminal-1/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-terminal-opt-out",
+                    "eventFilter": {"types": ["JobProgress"], "includeTerminalEvents": False},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    default_payload = json.loads(default_response.body.decode("utf-8"))
+    opt_out_payload = json.loads(opt_out_response.body.decode("utf-8"))
+
+    assert default_response.status_code == 201
+    assert [event["metadata"]["eventId"] for event in default_payload["events"]] == [
+        "event-progress",
+        "event-terminal",
+    ]
+    assert opt_out_response.status_code == 201
+    assert [event["metadata"]["eventId"] for event in opt_out_payload["events"]] == [
+        "event-progress"
+    ]
+
+
 def test_server_app_subscribe_events_reports_cursor_expired() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     graph = {

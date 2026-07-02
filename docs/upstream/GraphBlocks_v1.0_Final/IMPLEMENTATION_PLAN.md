@@ -416,9 +416,9 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
 - `graphblocks-server` now exposes the framework-neutral `POST /runs/{run_id}/subscriptions`
   `SubscribeEvents` route, recording run-scoped event subscription projections and replaying
   retained matching events from the authoritative event stream after an optional cursor. Replay
-  filters honor event type, visibility, node ID, operation ID, and minimum severity predicates.
-  Nested event filter and delivery configs are immutable snapshots and are thawed back to plain JSON
-  for response payloads.
+  filters honor event type, visibility, node ID, operation ID, minimum severity, and
+  `includeTerminalEvents` predicates. Nested event filter and delivery configs are immutable
+  snapshots and are thawed back to plain JSON for response payloads.
 - `graphblocks-server` now exposes the framework-neutral
   `DELETE /runs/{run_id}/subscriptions/{subscription_id}` `UnsubscribeEvents` route, revoking
   subscription projections without deleting the authoritative event stream.
