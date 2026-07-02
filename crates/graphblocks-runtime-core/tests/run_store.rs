@@ -1,10 +1,10 @@
 use graphblocks_runtime_core::{
     evaluation::ModelVisibleToolRef,
     run_store::{
-        InMemoryRunStore, PatchOperation, RunDeploymentProvenance, RunInvocationMode,
-        RunInvocationResponse, RunInvocationRouteConfig, RunInvocationRouteDiagnostic, RunLifetime,
-        RunOwnershipLease, RunStatus, RunStatusSnapshot, RunStoreError, RunWaitReason,
-        SqliteRunStore, StatePatch,
+        InMemoryRunStore, PatchOperation, ProductionRunProvenanceDiagnostic,
+        RunDeploymentProvenance, RunInvocationMode, RunInvocationResponse,
+        RunInvocationRouteConfig, RunInvocationRouteDiagnostic, RunLifetime, RunOwnershipLease,
+        RunStatus, RunStatusSnapshot, RunStoreError, RunWaitReason, SqliteRunStore, StatePatch,
     },
 };
 use serde_json::json;
@@ -503,6 +503,48 @@ fn run_store_records_deployment_provenance_and_preserves_it_across_mutations()
     assert_eq!(patched.deployment_provenance, provenance);
     assert_eq!(running.deployment_provenance, provenance);
     Ok(())
+}
+
+#[test]
+fn production_run_provenance_diagnostics_report_missing_required_fields() {
+    let diagnostics = ProductionRunProvenanceDiagnostic::for_provenance(
+        &RunDeploymentProvenance::new().with_deployment_revision_id("rev-1"),
+    );
+
+    assert_eq!(
+        diagnostics,
+        vec![
+            ProductionRunProvenanceDiagnostic {
+                code: "GB7101",
+                field: "release_digest",
+                message: "production runs must record signed release digest".to_owned(),
+            },
+            ProductionRunProvenanceDiagnostic {
+                code: "GB7102",
+                field: "physical_plan_hash",
+                message: "production runs must record physical execution plan hash".to_owned(),
+            },
+            ProductionRunProvenanceDiagnostic {
+                code: "GB7103",
+                field: "release_signature_digest",
+                message: "production runs must record release signature digest".to_owned(),
+            },
+        ]
+    );
+}
+
+#[test]
+fn production_run_provenance_diagnostics_accept_complete_provenance() {
+    let provenance = RunDeploymentProvenance::new()
+        .with_release_digest("sha256:release")
+        .with_deployment_revision_id("rev-1")
+        .with_physical_plan_hash("sha256:physical")
+        .with_release_signature_digest("sha256:signature");
+
+    assert_eq!(
+        ProductionRunProvenanceDiagnostic::for_provenance(&provenance),
+        Vec::new()
+    );
 }
 
 #[test]

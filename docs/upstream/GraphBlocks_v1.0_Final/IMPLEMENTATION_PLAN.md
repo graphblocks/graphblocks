@@ -742,6 +742,9 @@ sandbox
 - Remote boundary value validation now has deterministic compile/deployment diagnostics:
   `GB7001` for non-serializable inline encodings and `GB7002` for oversized inline values that
   should cross the boundary as artifact references.
+- Production run provenance now has deterministic diagnostics: `GB7101` for missing signed release
+  digest, `GB7102` for missing physical execution plan hash, and `GB7103` for missing release
+  signature digest.
 
 ## 9. Phase 6 — Adaptive Orchestration and Verified Work (`GB-X1-ORCHESTRATION`)
 

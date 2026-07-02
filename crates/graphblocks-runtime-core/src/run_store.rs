@@ -185,6 +185,49 @@ impl Default for RunDeploymentProvenance {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProductionRunProvenanceDiagnostic {
+    pub code: &'static str,
+    pub field: &'static str,
+    pub message: String,
+}
+
+impl ProductionRunProvenanceDiagnostic {
+    pub fn for_provenance(provenance: &RunDeploymentProvenance) -> Vec<Self> {
+        let mut diagnostics = Vec::new();
+        if provenance.release_digest.as_deref().is_none_or(str::is_empty) {
+            diagnostics.push(Self {
+                code: "GB7101",
+                field: "release_digest",
+                message: "production runs must record signed release digest".to_owned(),
+            });
+        }
+        if provenance
+            .physical_plan_hash
+            .as_deref()
+            .is_none_or(str::is_empty)
+        {
+            diagnostics.push(Self {
+                code: "GB7102",
+                field: "physical_plan_hash",
+                message: "production runs must record physical execution plan hash".to_owned(),
+            });
+        }
+        if provenance
+            .release_signature_digest
+            .as_deref()
+            .is_none_or(str::is_empty)
+        {
+            diagnostics.push(Self {
+                code: "GB7103",
+                field: "release_signature_digest",
+                message: "production runs must record release signature digest".to_owned(),
+            });
+        }
+        diagnostics
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct RunRecord {
     pub run_id: String,
