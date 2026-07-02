@@ -1287,12 +1287,24 @@ class GraphBlocksServerApp:
                             "error": f"run event stream not found for ack run {run_id!r}",
                         },
                     )
-                if not self._has_subscription(run_id, subscription_id):
+                subscription = self._subscription_for(run_id, subscription_id)
+                if subscription is None:
                     return ServerResponse.json(
                         404,
                         {
                             "ok": False,
                             "error": f"subscription {subscription_id!r} not found for run {run_id!r}",
+                        },
+                    )
+                if subscription.status != "active":
+                    return ServerResponse.json(
+                        409,
+                        {
+                            "ok": False,
+                            "runId": run_id,
+                            "subscriptionId": subscription_id,
+                            "state": subscription.status,
+                            "error": f"subscription {subscription_id!r} for run {run_id!r} is {subscription.status}",
                         },
                     )
                 payload = json.loads(request.body.decode("utf-8") or "{}")
@@ -2122,11 +2134,11 @@ class GraphBlocksServerApp:
         value = payload.get(field_name)
         return isinstance(value, str) and value in allowed
 
-    def _has_subscription(self, run_id: str, subscription_id: str) -> bool:
-        return any(
-            subscription.subscription_id == subscription_id
-            for subscription in self._subscriptions_by_run_id.get(run_id, ())
-        )
+    def _subscription_for(self, run_id: str, subscription_id: str) -> ServerEventSubscription | None:
+        for subscription in self._subscriptions_by_run_id.get(run_id, ()):
+            if subscription.subscription_id == subscription_id:
+                return subscription
+        return None
 
     def _ack_event_response(
         self,

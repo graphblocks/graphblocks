@@ -590,7 +590,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   registration projections validate the spec failure policy literals before storage.
 - `graphblocks-server` now exposes the framework-neutral
   `DELETE /runs/{run_id}/subscriptions/{subscription_id}` `UnsubscribeEvents` route, revoking
-  subscription projections without deleting the authoritative event stream.
+  subscription projections without deleting the authoritative event stream. Revoked subscriptions
+  cannot accept new `AckEvent` records.
 - `graphblocks-server` now exposes the framework-neutral
   `POST /runs/{run_id}/subscriptions/{subscription_id}/ack` `AckEvent` route, recording event
   acknowledgements by event id or cursor without mutating the authoritative event stream. Stored
