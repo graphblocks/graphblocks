@@ -40,6 +40,7 @@ pub mod tool_call;
 pub mod tool_execution;
 pub mod tool_result;
 pub mod tool_schema;
+pub mod tui;
 pub mod typed_value;
 pub mod usage;
 pub mod voice;

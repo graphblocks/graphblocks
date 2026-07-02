@@ -290,6 +290,29 @@ nodes:
           providerEffectId: ticket-123
 ```
 
+Example Codex-like background coding agent:
+
+```yaml
+application:
+  id: workspace-coding-agent
+  capabilities:
+    - background_runs
+    - cursor_replay
+    - callback_subscription
+    - reconnect_resume
+  routes:
+    - id: create-task
+      command: InvokeGraph
+      responseMode: accepted
+    - id: run-events
+      transport: sse
+      cursorReplay: true
+    - id: external-callback
+      command: SubmitAsyncCallback
+```
+
+Full example: `examples/11-coding-agent-background-callbacks.yaml`.
+
 ### Current implementation slice
 
 - `graphblocks-runtime-core::run_store::RunStatus` now includes the durable async lifecycle states
@@ -513,6 +536,9 @@ nodes:
   and keeps the actual network client behind a daemon boundary instead of adding an HTTP/TLS client
   dependency to `graphblocks-runtime-core`. A TLS-capable production client can implement the same
   daemon adapter boundary.
+- `examples/11-coding-agent-background-callbacks.yaml` now documents a concrete background coding
+  agent application with accepted invocation, cursor replay, callback subscription, async CI
+  operation start/wait, review, and CAS workspace commit.
 
 ### Package ownership
 
@@ -802,6 +828,9 @@ sandbox
 - `WorkspaceHead::commit` now provides a compare-and-swap commit boundary for `ChangeSet`
   candidates, requiring the expected base revision/digest and rejecting denied mutations,
   non-passing gates, or stale/non-accepting reviews before advancing the workspace revision.
+- `graphblocks-runtime-core::tui::TuiRunView` now projects `GetRunStatus` and `AttachToRun`
+  replay results into duplicate-tolerant terminal rows, preserving cursor-expired recovery metadata
+  without making the TUI the source of truth for run state.
 
 ## 10. Phase 7 — Optional Extensions
 

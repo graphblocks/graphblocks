@@ -12,3 +12,5 @@
 8. `08-kubernetes-production-deployment.yaml`: immutable release, target, placement, canary, drain
 9. `09-observability-profile.yaml`: telemetry와 durable records 분리
 10. `10-realtime-voice-extension.yaml`: 선택적 duplex voice extension
+11. `11-coding-agent-background-callbacks.yaml`: background coding agent run, cursor replay,
+    callback subscription, and authenticated external CI callback flow
