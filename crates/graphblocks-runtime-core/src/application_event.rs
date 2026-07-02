@@ -864,7 +864,20 @@ impl ApplicationEventStreamState {
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum ApplicationCommandKind {
     InvokeGraph,
+    GetRunStatus,
+    ListRuns,
+    AttachToRun,
+    DetachFromRun,
+    SubscribeEvents,
+    UnsubscribeEvents,
+    AckEvent,
+    RegisterCallback,
+    RevokeCallback,
+    SubmitAsyncCallback,
+    PauseRun,
+    ResumeRun,
     CancelRun,
+    ExpireRun,
     SubmitInput,
     ApproveEffect,
     DenyEffect,
@@ -876,13 +889,28 @@ pub enum ApplicationCommandKind {
     OpenArtifact,
     SetBreakpoint,
     RequestSnapshot,
+    RedriveCallbackDelivery,
+    MoveCallbackToDeadLetter,
 }
 
 impl ApplicationCommandKind {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::InvokeGraph => "InvokeGraph",
+            Self::GetRunStatus => "GetRunStatus",
+            Self::ListRuns => "ListRuns",
+            Self::AttachToRun => "AttachToRun",
+            Self::DetachFromRun => "DetachFromRun",
+            Self::SubscribeEvents => "SubscribeEvents",
+            Self::UnsubscribeEvents => "UnsubscribeEvents",
+            Self::AckEvent => "AckEvent",
+            Self::RegisterCallback => "RegisterCallback",
+            Self::RevokeCallback => "RevokeCallback",
+            Self::SubmitAsyncCallback => "SubmitAsyncCallback",
+            Self::PauseRun => "PauseRun",
+            Self::ResumeRun => "ResumeRun",
             Self::CancelRun => "CancelRun",
+            Self::ExpireRun => "ExpireRun",
             Self::SubmitInput => "SubmitInput",
             Self::ApproveEffect => "ApproveEffect",
             Self::DenyEffect => "DenyEffect",
@@ -894,6 +922,8 @@ impl ApplicationCommandKind {
             Self::OpenArtifact => "OpenArtifact",
             Self::SetBreakpoint => "SetBreakpoint",
             Self::RequestSnapshot => "RequestSnapshot",
+            Self::RedriveCallbackDelivery => "RedriveCallbackDelivery",
+            Self::MoveCallbackToDeadLetter => "MoveCallbackToDeadLetter",
         }
     }
 }

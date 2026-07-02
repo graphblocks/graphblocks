@@ -10,13 +10,23 @@ pub enum RunStatus {
     Created,
     Validating,
     AdmissionPending,
+    Admitted,
     Queued,
     Running,
+    WaitingInput,
+    WaitingApproval,
+    WaitingReview,
+    WaitingCallback,
     Paused,
+    PausedBudget,
+    PausedPolicy,
+    PausedOperator,
     Interrupted,
+    Resuming,
     Completed,
     Failed,
     Cancelled,
+    Expired,
     PolicyStopped,
 }
 
@@ -24,7 +34,7 @@ impl RunStatus {
     pub fn is_terminal(self) -> bool {
         matches!(
             self,
-            Self::Completed | Self::Failed | Self::Cancelled | Self::PolicyStopped
+            Self::Completed | Self::Failed | Self::Cancelled | Self::Expired | Self::PolicyStopped
         )
     }
 
@@ -33,13 +43,23 @@ impl RunStatus {
             Self::Created => "created",
             Self::Validating => "validating",
             Self::AdmissionPending => "admission_pending",
+            Self::Admitted => "admitted",
             Self::Queued => "queued",
             Self::Running => "running",
+            Self::WaitingInput => "waiting_input",
+            Self::WaitingApproval => "waiting_approval",
+            Self::WaitingReview => "waiting_review",
+            Self::WaitingCallback => "waiting_callback",
             Self::Paused => "paused",
+            Self::PausedBudget => "paused_budget",
+            Self::PausedPolicy => "paused_policy",
+            Self::PausedOperator => "paused_operator",
             Self::Interrupted => "interrupted",
+            Self::Resuming => "resuming",
             Self::Completed => "completed",
             Self::Failed => "failed",
             Self::Cancelled => "cancelled",
+            Self::Expired => "expired",
             Self::PolicyStopped => "policy_stopped",
         }
     }
@@ -49,13 +69,23 @@ impl RunStatus {
             "created" => Some(Self::Created),
             "validating" => Some(Self::Validating),
             "admission_pending" => Some(Self::AdmissionPending),
+            "admitted" => Some(Self::Admitted),
             "queued" => Some(Self::Queued),
             "running" => Some(Self::Running),
+            "waiting_input" => Some(Self::WaitingInput),
+            "waiting_approval" => Some(Self::WaitingApproval),
+            "waiting_review" => Some(Self::WaitingReview),
+            "waiting_callback" => Some(Self::WaitingCallback),
             "paused" => Some(Self::Paused),
+            "paused_budget" => Some(Self::PausedBudget),
+            "paused_policy" => Some(Self::PausedPolicy),
+            "paused_operator" => Some(Self::PausedOperator),
             "interrupted" => Some(Self::Interrupted),
+            "resuming" => Some(Self::Resuming),
             "completed" => Some(Self::Completed),
             "failed" => Some(Self::Failed),
             "cancelled" => Some(Self::Cancelled),
+            "expired" => Some(Self::Expired),
             "policy_stopped" => Some(Self::PolicyStopped),
             _ => None,
         }

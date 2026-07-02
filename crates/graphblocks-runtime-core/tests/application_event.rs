@@ -1315,6 +1315,21 @@ fn application_command_names_match_the_client_protocol() {
         ApplicationCommandKind::OpenArtifact.as_str(),
         ApplicationCommandKind::SetBreakpoint.as_str(),
         ApplicationCommandKind::RequestSnapshot.as_str(),
+        ApplicationCommandKind::GetRunStatus.as_str(),
+        ApplicationCommandKind::ListRuns.as_str(),
+        ApplicationCommandKind::AttachToRun.as_str(),
+        ApplicationCommandKind::DetachFromRun.as_str(),
+        ApplicationCommandKind::SubscribeEvents.as_str(),
+        ApplicationCommandKind::UnsubscribeEvents.as_str(),
+        ApplicationCommandKind::AckEvent.as_str(),
+        ApplicationCommandKind::RegisterCallback.as_str(),
+        ApplicationCommandKind::RevokeCallback.as_str(),
+        ApplicationCommandKind::SubmitAsyncCallback.as_str(),
+        ApplicationCommandKind::PauseRun.as_str(),
+        ApplicationCommandKind::ResumeRun.as_str(),
+        ApplicationCommandKind::ExpireRun.as_str(),
+        ApplicationCommandKind::RedriveCallbackDelivery.as_str(),
+        ApplicationCommandKind::MoveCallbackToDeadLetter.as_str(),
     ];
 
     assert_eq!(
@@ -1332,7 +1347,22 @@ fn application_command_names_match_the_client_protocol() {
             "SelectCandidate",
             "OpenArtifact",
             "SetBreakpoint",
-            "RequestSnapshot"
+            "RequestSnapshot",
+            "GetRunStatus",
+            "ListRuns",
+            "AttachToRun",
+            "DetachFromRun",
+            "SubscribeEvents",
+            "UnsubscribeEvents",
+            "AckEvent",
+            "RegisterCallback",
+            "RevokeCallback",
+            "SubmitAsyncCallback",
+            "PauseRun",
+            "ResumeRun",
+            "ExpireRun",
+            "RedriveCallbackDelivery",
+            "MoveCallbackToDeadLetter"
         ]
     );
 }

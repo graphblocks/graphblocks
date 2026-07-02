@@ -224,6 +224,86 @@ fn run_store_rejects_model_visible_tools_after_terminal() -> Result<(), RunStore
 }
 
 #[test]
+fn run_store_supports_durable_async_lifecycle_statuses() -> Result<(), RunStoreError> {
+    let mut store = InMemoryRunStore::new();
+    let record = store.create_run("sha256:test", json!({}));
+
+    for status in [
+        RunStatus::Admitted,
+        RunStatus::Running,
+        RunStatus::WaitingInput,
+        RunStatus::WaitingApproval,
+        RunStatus::WaitingReview,
+        RunStatus::WaitingCallback,
+        RunStatus::PausedBudget,
+        RunStatus::PausedPolicy,
+        RunStatus::PausedOperator,
+        RunStatus::Resuming,
+    ] {
+        assert_eq!(store.set_status(&record.run_id, status)?.status, status);
+    }
+
+    let expired = store.set_status(&record.run_id, RunStatus::Expired)?;
+    assert_eq!(expired.status, RunStatus::Expired);
+    assert!(expired.status.is_terminal());
+    assert_eq!(
+        store.set_status(&record.run_id, RunStatus::Running),
+        Err(RunStoreError::StatusAfterTerminal {
+            run_id: record.run_id,
+            status: RunStatus::Expired,
+        }),
+    );
+    Ok(())
+}
+
+#[test]
+fn sqlite_run_store_persists_durable_async_lifecycle_statuses() -> Result<(), String> {
+    let mut store = SqliteRunStore::open_in_memory().map_err(|error| format!("{error:?}"))?;
+    let waiting = store
+        .create_run("sha256:waiting", json!({}))
+        .map_err(|error| format!("{error:?}"))?;
+    let paused = store
+        .create_run("sha256:paused", json!({}))
+        .map_err(|error| format!("{error:?}"))?;
+    let expired = store
+        .create_run("sha256:expired", json!({}))
+        .map_err(|error| format!("{error:?}"))?;
+
+    store
+        .set_status(&waiting.run_id, RunStatus::WaitingCallback)
+        .map_err(|error| format!("{error:?}"))?;
+    store
+        .set_status(&paused.run_id, RunStatus::PausedBudget)
+        .map_err(|error| format!("{error:?}"))?;
+    store
+        .set_status(&expired.run_id, RunStatus::Expired)
+        .map_err(|error| format!("{error:?}"))?;
+
+    assert_eq!(
+        store
+            .get_run(&waiting.run_id)
+            .map_err(|error| format!("{error:?}"))?
+            .status,
+        RunStatus::WaitingCallback
+    );
+    assert_eq!(
+        store
+            .get_run(&paused.run_id)
+            .map_err(|error| format!("{error:?}"))?
+            .status,
+        RunStatus::PausedBudget
+    );
+    assert_eq!(
+        store
+            .get_run(&expired.run_id)
+            .map_err(|error| format!("{error:?}"))?
+            .status,
+        RunStatus::Expired
+    );
+    Ok(())
+}
+
+#[test]
 fn sqlite_run_store_persists_runs_across_reopen() -> Result<(), String> {
     let mut path = std::env::temp_dir();
     path.push(format!(

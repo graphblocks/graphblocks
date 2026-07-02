@@ -222,6 +222,13 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
 
 ### Current implementation slice
 
+- `graphblocks-runtime-core::run_store::RunStatus` now includes the durable async lifecycle states
+  `admitted`, `waiting_input`, `waiting_approval`, `waiting_review`, `waiting_callback`,
+  `paused_budget`, `paused_policy`, `paused_operator`, `resuming`, and terminal `expired`; SQLite
+  persistence tests cover the new state strings.
+- `ApplicationCommandKind` now includes the async run, attach/replay, subscription, callback
+  registration, callback ingestion, pause/resume/expire, redrive, and dead-letter command names
+  from the amendment.
 - `graphblocks-runtime-core::async_operation` now contains the in-memory `AsyncOperation` and
   callback ingestion state machine for the first TDD slice.
 - Implemented behavior covers operation registration, submitted-to-waiting journal entries,
