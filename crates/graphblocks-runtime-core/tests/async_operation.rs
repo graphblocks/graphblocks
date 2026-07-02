@@ -569,6 +569,75 @@ fn duplicate_callback_is_idempotent_and_does_not_resume_twice() {
 }
 
 #[test]
+fn callback_idempotency_key_is_scoped_to_operation() {
+    let store = AsyncOperationStore::new();
+    store
+        .register(waiting_operation())
+        .expect("first operation registers");
+    store
+        .register(
+            AsyncOperation::new(
+                "op-2",
+                "run-1",
+                "node-ci",
+                "attempt-1",
+                AsyncOperationKind::CiJob,
+                "sha256:resume-token-2",
+                "idem-op-2",
+                "schemas/CICallback@1",
+                1_000,
+            )
+            .submitted("gha-run-2", 1_050)
+            .waiting_callback(2_000),
+        )
+        .expect("second operation registers");
+    let registry = callback_schema_registry();
+
+    let first = store
+        .accept_callback(valid_submission("cb-1", "provider-delivery-1"), &registry)
+        .expect("first callback is accepted");
+    let second = store
+        .accept_callback(
+            AsyncCallbackSubmission::new(
+                "cb-2",
+                "op-2",
+                "run-1",
+                "node-ci",
+                "attempt-1",
+                "provider-delivery-1",
+                json!({"status": "completed", "workflow_run_id": "gha-run-2"}),
+                1_201,
+                "hmac:callback-endpoint-1",
+                "policy-snapshot-1",
+            ),
+            &registry,
+        )
+        .expect("same provider idempotency key is accepted for another operation");
+
+    assert!(first.should_resume);
+    assert!(!first.duplicate);
+    assert!(second.should_resume);
+    assert!(!second.duplicate);
+    assert_eq!(second.receipt.operation_id, "op-2");
+    assert_eq!(
+        store
+            .events_for_operation("op-1")
+            .iter()
+            .filter(|event| matches!(event, AsyncOperationEvent::ExternalCallbackReceived { .. }))
+            .count(),
+        1
+    );
+    assert_eq!(
+        store
+            .events_for_operation("op-2")
+            .iter()
+            .filter(|event| matches!(event, AsyncOperationEvent::ExternalCallbackReceived { .. }))
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn callback_schema_failure_and_stale_attempt_do_not_resume_run() {
     let store = AsyncOperationStore::new();
     store
@@ -1238,6 +1307,62 @@ fn sqlite_async_operation_store_persists_callback_receipt_and_duplicate_guard_ac
             .filter(|event| matches!(event, AsyncOperationEvent::ExternalCallbackReceived { .. }))
             .count(),
         1
+    );
+    Ok(())
+}
+
+#[test]
+fn sqlite_async_operation_store_scopes_callback_idempotency_to_operation_after_reopen()
+-> Result<(), AsyncOperationError> {
+    let path = sqlite_async_operation_path("callback-idempotency-scope");
+    {
+        let store = SqliteAsyncOperationStore::open(&path)?;
+        store.register(waiting_operation())?;
+        store.register(
+            AsyncOperation::new(
+                "op-2",
+                "run-1",
+                "node-ci",
+                "attempt-1",
+                AsyncOperationKind::CiJob,
+                "sha256:resume-token-2",
+                "idem-op-2",
+                "schemas/CICallback@1",
+                1_000,
+            )
+            .submitted("gha-run-2", 1_050)
+            .waiting_callback(2_000),
+        )?;
+        let accepted = store.accept_callback(
+            valid_submission("cb-1", "provider-delivery-1"),
+            &callback_schema_registry(),
+        )?;
+        assert!(accepted.should_resume);
+    }
+
+    let store = SqliteAsyncOperationStore::open(&path)?;
+    let accepted = store.accept_callback(
+        AsyncCallbackSubmission::new(
+            "cb-2",
+            "op-2",
+            "run-1",
+            "node-ci",
+            "attempt-1",
+            "provider-delivery-1",
+            json!({"status": "completed", "workflow_run_id": "gha-run-2"}),
+            1_201,
+            "hmac:callback-endpoint-1",
+            "policy-snapshot-1",
+        ),
+        &callback_schema_registry(),
+    )?;
+
+    assert!(accepted.should_resume);
+    assert!(!accepted.duplicate);
+    assert_eq!(accepted.receipt.operation_id, "op-2");
+    assert_eq!(
+        store.operation_state("op-2"),
+        Some(AsyncOperationState::CallbackReceived)
     );
     Ok(())
 }

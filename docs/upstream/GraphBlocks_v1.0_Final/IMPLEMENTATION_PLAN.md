@@ -285,6 +285,9 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   ownership lease or fencing protection as `GB6016`.
 - `SqliteAsyncOperationStore` now persists async operations, operation event journals, and external
   callback receipts across reopen, including idempotency-key duplicate detection after restart.
+- Callback receipt duplicate detection is now scoped by `(operation_id, idempotency_key)` in both
+  in-memory and SQLite async operation stores, so provider delivery keys reused by separate
+  operations do not suppress valid callback receipts or resume signals.
 - Callback resume admission can now pause after a durable callback receipt when budget policy
   denies continuation; the operation records `CallbackReceived`, emits a pause reason, and returns
   `should_resume = false`.

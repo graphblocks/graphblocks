@@ -1118,7 +1118,7 @@ pub struct AsyncOperationStore {
 #[derive(Debug, Default)]
 struct AsyncOperationStoreInner {
     operations: BTreeMap<String, AsyncOperation>,
-    receipts_by_idempotency_key: BTreeMap<String, ExternalCallbackReceived>,
+    receipts_by_operation_and_idempotency: BTreeMap<(String, String), ExternalCallbackReceived>,
     events_by_operation: BTreeMap<String, Vec<AsyncOperationEvent>>,
 }
 
@@ -1275,9 +1275,13 @@ impl AsyncOperationStore {
             .inner
             .lock()
             .expect("async operation store lock poisoned");
+        let receipt_key = (
+            submission.operation_id.clone(),
+            submission.idempotency_key.clone(),
+        );
         if let Some(receipt) = inner
-            .receipts_by_idempotency_key
-            .get(&submission.idempotency_key)
+            .receipts_by_operation_and_idempotency
+            .get(&receipt_key)
         {
             return Ok(AcceptedCallback {
                 receipt: receipt.clone(),
@@ -1399,8 +1403,8 @@ impl AsyncOperationStore {
                     terminal_state: operation_state,
                 });
             inner
-                .receipts_by_idempotency_key
-                .insert(submission.idempotency_key, receipt.clone());
+                .receipts_by_operation_and_idempotency
+                .insert(receipt_key, receipt.clone());
             return Ok(AcceptedCallback {
                 receipt,
                 duplicate: false,
@@ -1447,7 +1451,7 @@ impl AsyncOperationStore {
                     .entry(submission.operation_id.clone())
                     .or_default()
                     .push(AsyncOperationEvent::CallbackResumePaused {
-                        operation_id: submission.operation_id,
+                        operation_id: submission.operation_id.clone(),
                         reason,
                         occurred_at_unix_ms: submission.received_at_unix_ms,
                     });
@@ -1462,7 +1466,7 @@ impl AsyncOperationStore {
                     .entry(submission.operation_id.clone())
                     .or_default()
                     .push(AsyncOperationEvent::CallbackResumeDenied {
-                        operation_id: submission.operation_id,
+                        operation_id: submission.operation_id.clone(),
                         decision_id,
                         reason,
                         occurred_at_unix_ms: submission.received_at_unix_ms,
@@ -1478,7 +1482,7 @@ impl AsyncOperationStore {
                     .entry(submission.operation_id.clone())
                     .or_default()
                     .push(AsyncOperationEvent::CallbackResumePaused {
-                        operation_id: submission.operation_id,
+                        operation_id: submission.operation_id.clone(),
                         reason: format!(
                             "release incompatible: required {required_release_id}, available {available_release_id}"
                         ),
@@ -1488,8 +1492,8 @@ impl AsyncOperationStore {
             }
         };
         inner
-            .receipts_by_idempotency_key
-            .insert(submission.idempotency_key, receipt.clone());
+            .receipts_by_operation_and_idempotency
+            .insert(receipt_key, receipt.clone());
 
         Ok(AcceptedCallback {
             receipt,
@@ -1658,7 +1662,7 @@ impl SqliteAsyncOperationStore {
     }
 
     fn initialize(&self) -> Result<(), AsyncOperationError> {
-        let connection = self
+        let mut connection = self
             .connection
             .lock()
             .expect("sqlite async operation store lock poisoned");
@@ -1670,9 +1674,10 @@ impl SqliteAsyncOperationStore {
                     operation_json TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS async_callback_receipts (
-                    idempotency_key TEXT PRIMARY KEY,
                     operation_id TEXT NOT NULL,
-                    receipt_json TEXT NOT NULL
+                    idempotency_key TEXT NOT NULL,
+                    receipt_json TEXT NOT NULL,
+                    PRIMARY KEY (operation_id, idempotency_key)
                 );
                 CREATE TABLE IF NOT EXISTS async_operation_events (
                     operation_id TEXT NOT NULL,
@@ -1683,6 +1688,7 @@ impl SqliteAsyncOperationStore {
                 ",
             )
             .map_err(storage_error)?;
+        migrate_callback_receipts_idempotency_scope(&mut connection)?;
         Ok(())
     }
 
@@ -1851,9 +1857,13 @@ impl SqliteAsyncOperationStore {
             for receipt_json in receipts {
                 let receipt =
                     receipt_from_value(parse_json(&receipt_json.map_err(storage_error)?)?)?;
-                inner
-                    .receipts_by_idempotency_key
-                    .insert(receipt.idempotency_key.clone(), receipt);
+                inner.receipts_by_operation_and_idempotency.insert(
+                    (
+                        receipt.operation_id.clone(),
+                        receipt.idempotency_key.clone(),
+                    ),
+                    receipt,
+                );
             }
         }
 
@@ -1922,7 +1932,7 @@ impl SqliteAsyncOperationStore {
                 )
                 .map_err(storage_error)?;
         }
-        for receipt in inner.receipts_by_idempotency_key.values() {
+        for receipt in inner.receipts_by_operation_and_idempotency.values() {
             transaction
                 .execute(
                     "
@@ -1970,6 +1980,59 @@ impl SqliteAsyncOperationStore {
 
 fn callback_payload_size_bytes(payload: &Value) -> usize {
     graphblocks_compiler::canonical::canonical_json(payload).len()
+}
+
+fn migrate_callback_receipts_idempotency_scope(
+    connection: &mut Connection,
+) -> Result<(), AsyncOperationError> {
+    let mut statement = connection
+        .prepare("PRAGMA table_info(async_callback_receipts)")
+        .map_err(storage_error)?;
+    let columns = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(1)?, row.get::<_, i64>(5)?))
+        })
+        .map_err(storage_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(storage_error)?;
+    drop(statement);
+
+    let operation_pk = columns
+        .iter()
+        .find_map(|(name, pk)| (name == "operation_id").then_some(*pk))
+        .unwrap_or(0);
+    let idempotency_pk = columns
+        .iter()
+        .find_map(|(name, pk)| (name == "idempotency_key").then_some(*pk))
+        .unwrap_or(0);
+    if !(operation_pk == 0 && idempotency_pk > 0) {
+        return Ok(());
+    }
+
+    let transaction = connection.transaction().map_err(storage_error)?;
+    transaction
+        .execute_batch(
+            "
+            ALTER TABLE async_callback_receipts RENAME TO async_callback_receipts_global_key;
+            CREATE TABLE async_callback_receipts (
+                operation_id TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL,
+                receipt_json TEXT NOT NULL,
+                PRIMARY KEY (operation_id, idempotency_key)
+            );
+            INSERT OR IGNORE INTO async_callback_receipts (
+                operation_id,
+                idempotency_key,
+                receipt_json
+            )
+            SELECT operation_id, idempotency_key, receipt_json
+            FROM async_callback_receipts_global_key;
+            DROP TABLE async_callback_receipts_global_key;
+            ",
+        )
+        .map_err(storage_error)?;
+    transaction.commit().map_err(storage_error)?;
+    Ok(())
 }
 
 fn validate_callback_submission_and_resume_decision(
