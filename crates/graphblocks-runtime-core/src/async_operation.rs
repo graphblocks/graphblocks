@@ -678,6 +678,13 @@ pub enum AsyncOperationEvent {
     ExternalCallbackReceived {
         receipt: ExternalCallbackReceived,
     },
+    ExternalCallbackRejected {
+        operation_id: String,
+        callback_id: String,
+        reason: String,
+        occurred_at_unix_ms: u64,
+        verified_by: String,
+    },
     CallbackResumePaused {
         operation_id: String,
         reason: String,
@@ -928,6 +935,7 @@ impl AsyncOperationStore {
 
         let payload_size = callback_payload_size_bytes(&submission.payload);
         if payload_size > limits.max_payload_bytes {
+            self.record_callback_rejected(&submission, "payload_too_large");
             return Err(AsyncOperationError::CallbackPayloadTooLarge {
                 operation_id: submission.operation_id,
                 max_payload_bytes: limits.max_payload_bytes,
@@ -984,6 +992,17 @@ impl AsyncOperationStore {
             });
         }
         if operation.attempt_id != submission.attempt_id {
+            inner
+                .events_by_operation
+                .entry(submission.operation_id.clone())
+                .or_default()
+                .push(AsyncOperationEvent::ExternalCallbackRejected {
+                    operation_id: operation.operation_id.clone(),
+                    callback_id: submission.callback_id,
+                    reason: "stale_attempt".to_owned(),
+                    occurred_at_unix_ms: submission.received_at_unix_ms,
+                    verified_by: submission.verified_by,
+                });
             return Err(AsyncOperationError::StaleAttempt {
                 operation_id: operation.operation_id,
                 expected_attempt_id: operation.attempt_id,
@@ -992,6 +1011,17 @@ impl AsyncOperationStore {
         }
 
         if let Err(error) = registry.validate(&operation.expected_schema, &submission.payload) {
+            inner
+                .events_by_operation
+                .entry(submission.operation_id.clone())
+                .or_default()
+                .push(AsyncOperationEvent::ExternalCallbackRejected {
+                    operation_id: operation.operation_id.clone(),
+                    callback_id: submission.callback_id,
+                    reason: "schema_invalid".to_owned(),
+                    occurred_at_unix_ms: submission.received_at_unix_ms,
+                    verified_by: submission.verified_by,
+                });
             return Err(match error {
                 ToolSchemaValidationError::SchemaMissing { schema_id } => {
                     AsyncOperationError::CallbackSchemaMissing { schema_id }
@@ -1260,6 +1290,27 @@ impl AsyncOperationStore {
             .get(operation_id)
             .map(|operation| operation.state)
     }
+
+    fn record_callback_rejected(&self, submission: &AsyncCallbackSubmission, reason: &str) {
+        let mut inner = self
+            .inner
+            .lock()
+            .expect("async operation store lock poisoned");
+        if !inner.operations.contains_key(&submission.operation_id) {
+            return;
+        }
+        inner
+            .events_by_operation
+            .entry(submission.operation_id.clone())
+            .or_default()
+            .push(AsyncOperationEvent::ExternalCallbackRejected {
+                operation_id: submission.operation_id.clone(),
+                callback_id: submission.callback_id.clone(),
+                reason: reason.to_owned(),
+                occurred_at_unix_ms: submission.received_at_unix_ms,
+                verified_by: submission.verified_by.clone(),
+            });
+    }
 }
 
 #[derive(Debug)]
@@ -1374,11 +1425,17 @@ impl SqliteAsyncOperationStore {
             registry,
             limits,
             resume_decision,
-        )?;
-        if !accepted.duplicate {
-            self.replace_with_memory_store(&memory)?;
+        );
+        match &accepted {
+            Ok(accepted) if !accepted.duplicate => {
+                self.replace_with_memory_store(&memory)?;
+            }
+            Err(_) => {
+                self.replace_with_memory_store(&memory)?;
+            }
+            _ => {}
         }
-        Ok(accepted)
+        accepted
     }
 
     pub fn cancel_operation(
@@ -1723,6 +1780,20 @@ fn event_to_value(event: &AsyncOperationEvent) -> Value {
             "type": "ExternalCallbackReceived",
             "receipt": receipt_to_value(receipt),
         }),
+        AsyncOperationEvent::ExternalCallbackRejected {
+            operation_id,
+            callback_id,
+            reason,
+            occurred_at_unix_ms,
+            verified_by,
+        } => json!({
+            "type": "ExternalCallbackRejected",
+            "operation_id": operation_id,
+            "callback_id": callback_id,
+            "reason": reason,
+            "occurred_at_unix_ms": occurred_at_unix_ms,
+            "verified_by": verified_by,
+        }),
         AsyncOperationEvent::CallbackResumePaused {
             operation_id,
             reason,
@@ -1766,6 +1837,13 @@ fn event_from_value(value: Value) -> Result<AsyncOperationEvent, AsyncOperationE
         }),
         "ExternalCallbackReceived" => Ok(AsyncOperationEvent::ExternalCallbackReceived {
             receipt: receipt_from_value(required_value(&value, "receipt")?)?,
+        }),
+        "ExternalCallbackRejected" => Ok(AsyncOperationEvent::ExternalCallbackRejected {
+            operation_id: required_string(&value, "operation_id")?,
+            callback_id: required_string(&value, "callback_id")?,
+            reason: required_string(&value, "reason")?,
+            occurred_at_unix_ms: required_u64(&value, "occurred_at_unix_ms")?,
+            verified_by: required_string(&value, "verified_by")?,
         }),
         "CallbackResumePaused" => Ok(AsyncOperationEvent::CallbackResumePaused {
             operation_id: required_string(&value, "operation_id")?,

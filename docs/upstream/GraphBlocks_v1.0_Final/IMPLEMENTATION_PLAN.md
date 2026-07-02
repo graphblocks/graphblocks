@@ -258,6 +258,9 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
 - `CallbackEndpointRef` and `CallbackEndpointAuth` now model callback ingress authentication for
   async operations, with bearer-token and `hmac-sha256` verification helpers that build
   `AsyncCallbackSubmission` only after authentication succeeds.
+- Callback rejection paths now emit durable `ExternalCallbackRejected` metadata events for stale
+  attempts, schema mismatches, and payload-limit failures without journaling rejected payload bodies;
+  SQLite persistence covers these rejection events across reopen.
 - Async operation configuration diagnostics now report missing callback timeout (`GB6001`), missing
   idempotency key (`GB6003`), and missing callback schema (`GB6007`) in deterministic order.
 - Async operation configuration diagnostics now compare declared expected callback payload size to

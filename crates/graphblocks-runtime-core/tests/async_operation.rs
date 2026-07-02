@@ -441,6 +441,30 @@ fn callback_schema_failure_and_stale_attempt_do_not_resume_run() {
         store.operation_state("op-1"),
         Some(AsyncOperationState::WaitingCallback)
     );
+    let events = store.events_for_operation("op-1");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, AsyncOperationEvent::ExternalCallbackRejected { .. }))
+            .count(),
+        2
+    );
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AsyncOperationEvent::ExternalCallbackRejected {
+            callback_id,
+            reason,
+            ..
+        } if callback_id == "cb-stale" && reason == "stale_attempt"
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AsyncOperationEvent::ExternalCallbackRejected {
+            callback_id,
+            reason,
+            ..
+        } if callback_id == "cb-invalid" && reason == "schema_invalid"
+    )));
 }
 
 #[test]
@@ -481,6 +505,19 @@ fn callback_payload_limit_rejects_oversized_payload_before_journal_or_resume() {
             .filter(|event| matches!(event, AsyncOperationEvent::ExternalCallbackReceived { .. }))
             .count(),
         0
+    );
+    assert!(
+        store
+            .events_for_operation("op-1")
+            .iter()
+            .any(|event| matches!(
+                event,
+                AsyncOperationEvent::ExternalCallbackRejected {
+                    callback_id,
+                    reason,
+                    ..
+                } if callback_id == "cb-oversized" && reason == "payload_too_large"
+            ))
     );
 }
 
@@ -972,6 +1009,44 @@ fn sqlite_async_operation_store_persists_callback_receipt_and_duplicate_guard_ac
             .filter(|event| matches!(event, AsyncOperationEvent::ExternalCallbackReceived { .. }))
             .count(),
         1
+    );
+    Ok(())
+}
+
+#[test]
+fn sqlite_async_operation_store_persists_callback_rejection_events_across_reopen()
+-> Result<(), AsyncOperationError> {
+    let path = sqlite_async_operation_path("callback-rejection-reopen");
+    {
+        let store = SqliteAsyncOperationStore::open(&path)?;
+        store.register(waiting_operation())?;
+        let mut submission = valid_submission("cb-invalid", "idem-invalid");
+        submission.payload = json!({"status": 7});
+        assert!(matches!(
+            store.accept_callback(submission, &callback_schema_registry()),
+            Err(AsyncOperationError::CallbackSchemaInvalid { .. })
+        ));
+    }
+
+    let store = SqliteAsyncOperationStore::open(&path)?;
+    let events = store.events_for_operation("op-1");
+
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AsyncOperationEvent::ExternalCallbackRejected {
+            operation_id,
+            callback_id,
+            reason,
+            verified_by,
+            ..
+        } if operation_id == "op-1"
+            && callback_id == "cb-invalid"
+            && reason == "schema_invalid"
+            && verified_by == "hmac:callback-endpoint-1"
+    )));
+    assert_eq!(
+        store.operation_state("op-1"),
+        Some(AsyncOperationState::WaitingCallback)
     );
     Ok(())
 }
