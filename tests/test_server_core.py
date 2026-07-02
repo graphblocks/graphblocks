@@ -1697,6 +1697,29 @@ def test_server_app_rejects_malformed_async_callback_submission() -> None:
     }
 
 
+def test_server_app_rejects_async_callback_with_invalid_received_timestamp() -> None:
+    app = GraphBlocksServerApp()
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/op-ci-invalid-time",
+            headers={"GraphBlocks-Idempotency-Key": "idem-callback-invalid-time"},
+            query={},
+            cookies={},
+            body=json.dumps({"callback_id": "cb-invalid-time", "payload": {"status": "completed"}}).encode("utf-8"),
+            requested_at="not-a-date",
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "server async callback received_at must be an ISO datetime",
+    }
+    assert app.callback_submissions("op-ci-invalid-time") == ()
+
+
 def test_server_app_rejects_oversized_async_callback_payload_before_storage() -> None:
     app = GraphBlocksServerApp(max_async_callback_payload_bytes=32)
 

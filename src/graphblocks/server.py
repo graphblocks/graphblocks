@@ -91,6 +91,15 @@ def _validate_transport(value: object) -> ServerTransport:
     return transport  # type: ignore[return-value]
 
 
+def _validate_iso_datetime(owner: str, field_name: str, value: object) -> str:
+    timestamp = _validate_non_empty_string(owner, field_name, value)
+    try:
+        datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except ValueError:
+        raise ValueError(f"{owner} {field_name} must be an ISO datetime") from None
+    return timestamp
+
+
 def _validate_callback_subscription_scope(value: object) -> str:
     scope = _validate_non_empty_string("server callback registration", "scope", value)
     if scope not in VALID_CALLBACK_SUBSCRIPTION_SCOPES:
@@ -640,7 +649,7 @@ class ServerAsyncCallbackSubmission:
             object.__setattr__(
                 self,
                 "received_at",
-                _validate_non_empty_string("server async callback", "received_at", self.received_at),
+                _validate_iso_datetime("server async callback", "received_at", self.received_at),
             )
 
     @classmethod
