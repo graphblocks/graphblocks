@@ -748,6 +748,9 @@ sandbox
 - Production run provenance now has deterministic diagnostics: `GB7101` for missing signed release
   digest, `GB7102` for missing physical execution plan hash, and `GB7103` for missing release
   signature digest.
+- `OciReleaseBundleManifest` now records release bundle layers with path, media type, digest, and
+  size, computes a stable bundle manifest digest, and rejects mutable or empty production layer
+  references before publishing.
 - `KubernetesTargetRenderer` now projects deployment target profiles into deterministic Kubernetes
   `Deployment` manifests and emits `Service` manifests for service-style targets while preserving
   target id, image role, execution host, replica count, and package lock metadata.

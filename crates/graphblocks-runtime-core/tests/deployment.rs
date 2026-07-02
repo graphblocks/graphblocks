@@ -6,10 +6,10 @@ use graphblocks_runtime_core::deployment::{
     DeploymentSloProfile, DeploymentSloReport, DeploymentTargetProfile, DeploymentTargetProfileSet,
     ExecutionTarget, ExecutionTargetKind, GraphRelease, GraphReleaseError, GraphReleaseGraph,
     HelmTargetRenderer, ImageRef, KnowledgeBinding, KubernetesTargetRenderer,
-    PhysicalExecutionPlan, PlacementError, PlacementRule, PlacementSelector, PromptLock,
-    ReleaseLockRef, RemoteExecutionContext, RemoteExecutionEnvelope, RemoteTraceContext,
-    RevisionDecision, RolloutAnalysisResult, RolloutPlan, RolloutStep, SupplyChainLock,
-    TerraformOutputRequirement,
+    OciReleaseBundleLayer, OciReleaseBundleManifest, PhysicalExecutionPlan, PlacementError,
+    PlacementRule, PlacementSelector, PromptLock, ReleaseLockRef, RemoteExecutionContext,
+    RemoteExecutionEnvelope, RemoteTraceContext, RevisionDecision, RolloutAnalysisResult,
+    RolloutPlan, RolloutStep, SupplyChainLock, TerraformOutputRequirement,
     TerraformOutputRequirementSet, TerraformOutputValueKind, UpgradePolicy, WorkerAdmissionError,
     WorkerAdmissionRequirement, WorkerAdvertisement, WorkerDrainPlan, WorkerDrainRoutingDecision,
     WorkloadKind,
@@ -1014,6 +1014,63 @@ fn graph_release_digest_is_stable_for_artifact_order() {
         );
 
     assert_eq!(left.content_digest(), right.content_digest());
+}
+
+#[test]
+fn oci_release_bundle_manifest_digest_is_stable_for_layer_order() {
+    let graph_layer = OciReleaseBundleLayer::new(
+        "graphs/chat.graphblocks.json",
+        "application/vnd.graphblocks.graph+json",
+        "sha256:graph",
+        512,
+    );
+    let policy_layer = OciReleaseBundleLayer::new(
+        "policies/output.rego",
+        "application/vnd.graphblocks.policy+rego",
+        "sha256:policy",
+        128,
+    );
+    let left = OciReleaseBundleManifest::new("enterprise-rag", "2026.06.23.1")
+        .with_layer(policy_layer.clone())
+        .with_layer(graph_layer.clone());
+    let right = OciReleaseBundleManifest::new("enterprise-rag-copy", "2026.06.23.1")
+        .with_layer(graph_layer)
+        .with_layer(policy_layer);
+
+    assert_eq!(left.manifest_contract(), right.manifest_contract());
+    assert_eq!(left.content_digest(), right.content_digest());
+    assert_eq!(
+        left.bundle_media_type,
+        "application/vnd.graphblocks.release.bundle.v1+json"
+    );
+}
+
+#[test]
+fn oci_release_bundle_manifest_rejects_mutable_or_empty_layers() {
+    let manifest = OciReleaseBundleManifest::new("enterprise-rag", "2026.06.23.1")
+        .with_layer(OciReleaseBundleLayer::new(
+            "graphs/chat.graphblocks.json",
+            "application/vnd.graphblocks.graph+json",
+            "latest",
+            512,
+        ))
+        .with_layer(OciReleaseBundleLayer::new(
+            "",
+            "application/vnd.graphblocks.policy+rego",
+            "sha256:policy",
+            0,
+        ));
+
+    assert_eq!(
+        manifest.validate_production_pins(),
+        Err(GraphReleaseError::MutableReferences {
+            references: vec![
+                "bundle.layers.graphs/chat.graphblocks.json.digest".to_owned(),
+                "bundle.layers[1].path".to_owned(),
+                "bundle.layers[1].size_bytes".to_owned(),
+            ],
+        })
+    );
 }
 
 #[test]

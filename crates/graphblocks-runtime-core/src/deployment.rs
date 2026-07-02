@@ -139,6 +139,108 @@ impl ReleaseLockRef {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OciReleaseBundleLayer {
+    pub path: String,
+    pub media_type: String,
+    pub digest: String,
+    pub size_bytes: u64,
+}
+
+impl OciReleaseBundleLayer {
+    pub fn new(
+        path: impl Into<String>,
+        media_type: impl Into<String>,
+        digest: impl Into<String>,
+        size_bytes: u64,
+    ) -> Self {
+        Self {
+            path: path.into(),
+            media_type: media_type.into(),
+            digest: digest.into(),
+            size_bytes,
+        }
+    }
+
+    fn canonical_value(&self) -> Value {
+        json!({
+            "path": self.path,
+            "media_type": self.media_type,
+            "digest": self.digest,
+            "size_bytes": self.size_bytes,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OciReleaseBundleManifest {
+    pub name: String,
+    pub version: String,
+    pub bundle_media_type: String,
+    pub layers: Vec<OciReleaseBundleLayer>,
+}
+
+impl OciReleaseBundleManifest {
+    pub fn new(name: impl Into<String>, version: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            version: version.into(),
+            bundle_media_type: "application/vnd.graphblocks.release.bundle.v1+json".to_owned(),
+            layers: Vec::new(),
+        }
+    }
+
+    pub fn with_layer(mut self, layer: OciReleaseBundleLayer) -> Self {
+        self.layers.push(layer);
+        self
+    }
+
+    pub fn manifest_contract(&self) -> Value {
+        let mut layers = self.layers.iter().collect::<Vec<_>>();
+        layers.sort_by(|left, right| left.path.cmp(&right.path));
+        json!({
+            "version": self.version,
+            "bundle_media_type": self.bundle_media_type,
+            "layers": layers
+                .into_iter()
+                .map(OciReleaseBundleLayer::canonical_value)
+                .collect::<Vec<_>>(),
+        })
+    }
+
+    pub fn content_digest(&self) -> String {
+        canonical_hash(&self.manifest_contract())
+    }
+
+    pub fn validate_production_pins(&self) -> Result<(), GraphReleaseError> {
+        let mut references = Vec::new();
+        for (index, layer) in self.layers.iter().enumerate() {
+            let layer_reference = if layer.path.trim().is_empty() {
+                format!("bundle.layers[{index}]")
+            } else {
+                format!("bundle.layers.{}", layer.path)
+            };
+            if layer.path.trim().is_empty() {
+                references.push(format!("{layer_reference}.path"));
+            }
+            if layer.media_type.trim().is_empty() {
+                references.push(format!("{layer_reference}.media_type"));
+            }
+            if !is_sha256_digest(&layer.digest) {
+                references.push(format!("{layer_reference}.digest"));
+            }
+            if layer.size_bytes == 0 {
+                references.push(format!("{layer_reference}.size_bytes"));
+            }
+        }
+        if references.is_empty() {
+            Ok(())
+        } else {
+            Err(GraphReleaseError::MutableReferences { references })
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SupplyChainLock {
     pub sbom_ref: Option<String>,
