@@ -522,12 +522,18 @@ class CitationSourceTrace:
     item_kind: str
     source: SourceRef
     locator: DocumentSpan | None
+    rank: int = 1
+    raw_score: float | None = None
+    normalized_score: float | None = None
+    score_kind: str | None = None
     acl: dict[str, object] | None = None
     element_ids: list[str] = field(default_factory=list)
+    hit_metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         for field_name in ("citation_id", "context_id", "hit_id", "retriever", "item_id", "item_kind"):
             _validate_non_empty_string("citation source trace", field_name, getattr(self, field_name))
+        object.__setattr__(self, "rank", _validate_positive_int("citation source trace", "rank", self.rank))
         object.__setattr__(
             self,
             "claim_id",
@@ -539,6 +545,24 @@ class CitationSourceTrace:
             raise ValueError("citation source trace locator must be a DocumentSpan")
         object.__setattr__(
             self,
+            "raw_score",
+            _validate_optional_finite_float("citation source trace", "raw_score", self.raw_score),
+        )
+        normalized_score = _validate_optional_finite_float(
+            "citation source trace",
+            "normalized_score",
+            self.normalized_score,
+        )
+        if normalized_score is not None and not 0 <= normalized_score <= 1:
+            raise ValueError("citation source trace normalized_score must be between 0 and 1")
+        object.__setattr__(self, "normalized_score", normalized_score)
+        object.__setattr__(
+            self,
+            "score_kind",
+            _validate_optional_non_empty_string("citation source trace", "score_kind", self.score_kind),
+        )
+        object.__setattr__(
+            self,
             "acl",
             None if self.acl is None else _copy_metadata("citation source trace acl", self.acl),
         )
@@ -546,6 +570,11 @@ class CitationSourceTrace:
             self,
             "element_ids",
             _copy_string_list("citation source trace", "element_ids", self.element_ids),
+        )
+        object.__setattr__(
+            self,
+            "hit_metadata",
+            _copy_metadata("citation source trace hit_metadata", self.hit_metadata),
         )
 
 
@@ -1367,10 +1396,15 @@ def resolve_citation_source_trace(answer: Answer, context: ContextPack, citation
                     retriever=hit.retriever,
                     item_id=hit.item.item_id,
                     item_kind=hit.item.item_kind,
+                    rank=hit.rank,
                     source=source_ref,
                     locator=source_ref.locator,
+                    raw_score=hit.raw_score,
+                    normalized_score=hit.normalized_score,
+                    score_kind=hit.score_kind,
                     acl=hit.item.acl,
                     element_ids=element_ids,
+                    hit_metadata=hit.metadata,
                 )
 
     raise ValueError(f"citation {citation.citation_id!r} does not point to the current context")

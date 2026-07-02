@@ -129,6 +129,11 @@ def test_resolve_citation_source_trace_links_citation_to_context_hit_and_documen
     hit = replace(
         context.hits[0],
         item=replace(context.hits[0].item, acl={"tenant_id": "acme", "groups": ["support"]}),
+        rank=7,
+        raw_score=12.5,
+        normalized_score=0.72,
+        score_kind="bm25",
+        metadata={"source_id": "local-index", "section_id": "policy-section"},
     )
     context = replace(context, hits=[hit])
     citation = Citation(
@@ -152,6 +157,11 @@ def test_resolve_citation_source_trace_links_citation_to_context_hit_and_documen
     assert trace.retriever == "local-test"
     assert trace.item_id == hit.item.item_id
     assert trace.item_kind == "document_chunk"
+    assert trace.rank == 7
+    assert trace.raw_score == 12.5
+    assert trace.normalized_score == 0.72
+    assert trace.score_kind == "bm25"
+    assert trace.hit_metadata == {"source_id": "local-index", "section_id": "policy-section"}
     assert trace.acl == {"tenant_id": "acme", "groups": ["support"]}
     assert trace.element_ids == hit.item.metadata["element_ids"]
     assert trace.locator is not None
@@ -491,6 +501,7 @@ def test_answer_citation_and_validation_records_validate_wire_shape() -> None:
             retriever="local-test",
             item_id="chunk-1",
             item_kind="document_chunk",
+            rank=1,
             source=source,
             locator=source.locator,
         )

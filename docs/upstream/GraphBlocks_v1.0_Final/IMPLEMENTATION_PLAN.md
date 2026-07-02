@@ -493,7 +493,8 @@ resume, and resume without ownership fencing.
   typed `IngestionDeletePolicy`: tombstone retains a deleted manifest snapshot while hard delete
   removes the manifest and clears the current-asset pointer.
 - RAG primitives cover local chunk indexing, tombstone/hard delete propagation, context packs,
-  citation/source-trace resolution, answer grounding, abstention, fusion, and rerank projections.
+  citation/source-trace resolution with retrieval rank/score/metadata provenance, answer grounding,
+  abstention, fusion, and rerank projections.
 - Conversation primitives cover CAS, tombstone/hard delete retention, branch/regenerate lineage,
   turn lifecycle, draft/retract semantics, and deterministic conflict handling.
 
