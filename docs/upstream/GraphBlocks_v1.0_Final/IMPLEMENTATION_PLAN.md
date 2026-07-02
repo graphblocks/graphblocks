@@ -416,6 +416,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   are keyed by `(operation_id, idempotency_key)`, persist across SQLite reopen, deduplicate
   repeated provider delivery attempts, and are consumed through the normal journal-before-resume
   callback admission path after operation registration.
+- Pre-operation quarantine conflict tests now cover mutated provider replays before operation
+  registration, including deterministic fuzz-style sequences that prove the first quarantined
+  submission remains authoritative across replay and durable SQLite reopen.
 - Expired pre-operation quarantine entries are discarded instead of replayed after operation
   registration; the runtime emits `ExternalCallbackRejected` metadata with
   `quarantined_callback_expired`, leaves the operation in `WAITING_CALLBACK`, and does not produce

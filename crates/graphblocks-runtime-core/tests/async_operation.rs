@@ -789,6 +789,57 @@ fn duplicate_early_callback_is_quarantined_once_and_consumed_once() {
 }
 
 #[test]
+fn conflicting_early_callback_replay_does_not_overwrite_quarantine() {
+    let store = AsyncOperationStore::new();
+    store
+        .quarantine_callback_before_operation_commit(
+            valid_submission("cb-early", "provider-delivery-early"),
+            5_000,
+        )
+        .expect("first early callback is quarantined");
+
+    let conflict = store.quarantine_callback_before_operation_commit(
+        AsyncCallbackSubmission::new(
+            "cb-early-conflict",
+            "op-1",
+            "run-1",
+            "node-ci",
+            "attempt-1",
+            "provider-delivery-early",
+            json!({"status": "failed", "workflow_run_id": "gha-run-1"}),
+            1_201,
+            "hmac:callback-endpoint-1",
+            "policy-snapshot-1",
+        ),
+        5_001,
+    );
+
+    assert_eq!(
+        conflict,
+        Err(AsyncOperationError::CallbackIdempotencyConflict {
+            operation_id: "op-1".to_owned(),
+            idempotency_key: "provider-delivery-early".to_owned(),
+            field: "payload_digest".to_owned(),
+        })
+    );
+    assert_eq!(store.quarantined_callback_count("op-1"), 1);
+
+    store
+        .register(waiting_operation())
+        .expect("operation is registered after callback ingress");
+    let accepted = store
+        .accept_quarantined_callbacks("op-1", &callback_schema_registry())
+        .expect("original quarantined callback remains authoritative");
+
+    assert_eq!(accepted.len(), 1);
+    assert_eq!(accepted[0].receipt.callback_id, "cb-early");
+    assert_eq!(
+        accepted[0].receipt.payload,
+        json!({"status": "completed", "workflow_run_id": "gha-run-1"})
+    );
+}
+
+#[test]
 fn early_callback_quarantine_fuzz_sequence_consumes_each_idempotency_key_once() {
     for seed in 0..64_u64 {
         let store = AsyncOperationStore::new();
@@ -835,6 +886,72 @@ fn early_callback_quarantine_fuzz_sequence_consumes_each_idempotency_key_once() 
                 })
                 .count(),
             1
+        );
+    }
+}
+
+#[test]
+fn early_callback_quarantine_conflict_fuzz_preserves_first_submission() {
+    for seed in 0..64_u64 {
+        let store = AsyncOperationStore::new();
+        let first_callback_id = format!("cb-quarantine-first-{seed}");
+        store
+            .quarantine_callback_before_operation_commit(
+                valid_submission(&first_callback_id, "provider-delivery-conflict"),
+                5_000,
+            )
+            .expect("first early callback is quarantined");
+        let mut state = seed ^ 0x517c_c1b7_2722_0a95;
+
+        for index in 0..64_u64 {
+            state = state
+                .wrapping_mul(3202034522624059733)
+                .wrapping_add(4354685564936845354);
+            let payload = if state % 7 == 0 {
+                json!({"status": "completed", "workflow_run_id": "gha-run-1"})
+            } else {
+                json!({"status": format!("mutated-{seed}-{index}"), "workflow_run_id": "gha-run-1"})
+            };
+            let result = store.quarantine_callback_before_operation_commit(
+                AsyncCallbackSubmission::new(
+                    format!("cb-quarantine-conflict-{seed}-{index}"),
+                    "op-1",
+                    "run-1",
+                    "node-ci",
+                    "attempt-1",
+                    "provider-delivery-conflict",
+                    payload,
+                    1_300 + index,
+                    "hmac:callback-endpoint-1",
+                    "policy-snapshot-1",
+                ),
+                5_001 + index,
+            );
+
+            match result {
+                Ok(quarantined) => {
+                    assert!(quarantined.duplicate, "seed {seed} index {index}");
+                }
+                Err(AsyncOperationError::CallbackIdempotencyConflict { field, .. }) => {
+                    assert_eq!(field, "payload_digest", "seed {seed} index {index}");
+                }
+                Err(error) => panic!("unexpected error for seed {seed} index {index}: {error:?}"),
+            }
+        }
+
+        assert_eq!(store.quarantined_callback_count("op-1"), 1);
+        store
+            .register(waiting_operation())
+            .expect("operation is registered after callback ingress");
+        let accepted = store
+            .accept_quarantined_callbacks("op-1", &callback_schema_registry())
+            .expect("original quarantined callback remains authoritative");
+
+        assert_eq!(accepted.len(), 1, "seed {seed}");
+        assert_eq!(accepted[0].receipt.callback_id, first_callback_id);
+        assert_eq!(
+            accepted[0].receipt.payload,
+            json!({"status": "completed", "workflow_run_id": "gha-run-1"})
         );
     }
 }
@@ -2134,6 +2251,62 @@ fn sqlite_async_operation_store_discards_expired_quarantined_callback_after_reop
             } if callback_id == "cb-early-expired" && reason == "quarantined_callback_expired"
         )
     }));
+    Ok(())
+}
+
+#[test]
+fn sqlite_async_operation_store_preserves_quarantine_after_conflicting_replay()
+-> Result<(), AsyncOperationError> {
+    let path = sqlite_async_operation_path("callback-quarantine-conflict-reopen");
+    {
+        let store = SqliteAsyncOperationStore::open(&path)?;
+        store.quarantine_callback_before_operation_commit(
+            valid_submission("cb-early", "provider-delivery-early"),
+            5_000,
+        )?;
+    }
+
+    {
+        let store = SqliteAsyncOperationStore::open(&path)?;
+        let conflict = store.quarantine_callback_before_operation_commit(
+            AsyncCallbackSubmission::new(
+                "cb-early-conflict",
+                "op-1",
+                "run-1",
+                "node-ci",
+                "attempt-1",
+                "provider-delivery-early",
+                json!({"status": "failed", "workflow_run_id": "gha-run-1"}),
+                1_201,
+                "hmac:callback-endpoint-1",
+                "policy-snapshot-1",
+            ),
+            5_001,
+        );
+
+        assert_eq!(
+            conflict,
+            Err(AsyncOperationError::CallbackIdempotencyConflict {
+                operation_id: "op-1".to_owned(),
+                idempotency_key: "provider-delivery-early".to_owned(),
+                field: "payload_digest".to_owned(),
+            })
+        );
+        assert_eq!(store.quarantined_callback_count("op-1"), 1);
+    }
+
+    let store = SqliteAsyncOperationStore::open(&path)?;
+    assert_eq!(store.quarantined_callback_count("op-1"), 1);
+    store.register(waiting_operation())?;
+    let accepted = store.accept_quarantined_callbacks("op-1", &callback_schema_registry())?;
+
+    assert_eq!(accepted.len(), 1);
+    assert_eq!(accepted[0].receipt.callback_id, "cb-early");
+    assert_eq!(
+        accepted[0].receipt.payload,
+        json!({"status": "completed", "workflow_run_id": "gha-run-1"})
+    );
+    assert_eq!(store.quarantined_callback_count("op-1"), 0);
     Ok(())
 }
 
