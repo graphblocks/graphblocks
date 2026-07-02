@@ -291,6 +291,8 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   `hmac-sha256` verification, replay-window enforcement, and header/body identity checks.
 - `SqliteCallbackDeliveryQueue` now persists pending and retry-scheduled callback deliveries across
   reopen, preserving delivery status, idempotency keys, sequence ordering, and retry due times.
+- `WebhookDeliveryWorker` now processes due durable callback deliveries with signed webhook
+  envelopes, an injected transport boundary, and persisted success/retry outcomes.
 - Callback subscriptions can schedule cursor replay from the authoritative `ApplicationProtocolLog`
   while applying the same event filters and deterministic delivery/idempotency metadata as live
   projection.
@@ -314,8 +316,9 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
 - Webhook delivery targets now enforce the specification's default `262144` byte payload limit
   before signing delivery envelopes, and tests cover explicit small-limit rejection for oversized
   callback projections.
-- Ed25519/mTLS/OIDC callback authentication adapters, real webhook delivery workers, DNS-time
-  egress enforcement, and multi-process coordinator failover execution remain follow-on slices.
+- Ed25519/mTLS/OIDC callback authentication adapters, concrete network webhook transport,
+  DNS-time egress enforcement, and multi-process coordinator failover execution remain follow-on
+  slices.
 
 ### Package ownership
 

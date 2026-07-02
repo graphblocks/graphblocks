@@ -395,6 +395,12 @@ pub enum CallbackDeliveryError {
     DeadLetterNotFound {
         original_delivery_id: String,
     },
+    EventNotFound {
+        event_id: String,
+    },
+    WebhookSigning {
+        error: WebhookSignatureError,
+    },
     Storage {
         message: String,
     },
@@ -1085,6 +1091,74 @@ impl WebhookSigningConfig {
         mac.update(b".");
         mac.update(body.as_bytes());
         Ok(hex_encode(&mac.finalize().into_bytes()))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct WebhookDeliveryAttempt {
+    pub target: WebhookDeliveryTarget,
+    pub delivery: CallbackDelivery,
+    pub signed: SignedWebhookDelivery,
+}
+
+pub struct WebhookDeliveryWorker<'a> {
+    scheduler: &'a CallbackDeliveryScheduler,
+    queue: &'a SqliteCallbackDeliveryQueue,
+    target: &'a WebhookDeliveryTarget,
+    signing: &'a WebhookSigningConfig,
+}
+
+impl<'a> WebhookDeliveryWorker<'a> {
+    pub fn new(
+        scheduler: &'a CallbackDeliveryScheduler,
+        queue: &'a SqliteCallbackDeliveryQueue,
+        target: &'a WebhookDeliveryTarget,
+        signing: &'a WebhookSigningConfig,
+    ) -> Self {
+        Self {
+            scheduler,
+            queue,
+            target,
+            signing,
+        }
+    }
+
+    pub fn process_due<T, E>(
+        &self,
+        now_unix_ms: u64,
+        limit: usize,
+        mut transport: T,
+        mut event_lookup: E,
+    ) -> Result<usize, CallbackDeliveryError>
+    where
+        T: FnMut(&WebhookDeliveryAttempt) -> CallbackDeliveryResponse,
+        E: FnMut(&str) -> Option<ApplicationProtocolEvent>,
+    {
+        let due = self.queue.due_deliveries(now_unix_ms, limit)?;
+        let mut attempts = 0;
+        for delivery in due {
+            let event = event_lookup(&delivery.event_id).ok_or_else(|| {
+                CallbackDeliveryError::EventNotFound {
+                    event_id: delivery.event_id.clone(),
+                }
+            })?;
+            let signed = self
+                .signing
+                .sign_delivery_for_target(self.target, &delivery, &event, now_unix_ms)
+                .map_err(|error| CallbackDeliveryError::WebhookSigning { error })?;
+            let attempt = WebhookDeliveryAttempt {
+                target: self.target.clone(),
+                delivery: delivery.clone(),
+                signed,
+            };
+            let response = transport(&attempt);
+            let updated = self
+                .scheduler
+                .record_response(delivery, response, now_unix_ms);
+            self.queue.upsert_delivery(updated)?;
+            attempts += 1;
+        }
+        Ok(attempts)
     }
 }
 

@@ -7,8 +7,9 @@ use graphblocks_runtime_core::callback_delivery::{
     CallbackDeliveryResponse, CallbackDeliveryRunAction, CallbackDeliveryScheduler,
     CallbackDeliveryStatus, CallbackFailurePolicy, CallbackRetryPolicy, CallbackSubscription,
     CallbackSubscriptionStatus, EventFilter, OrderedDeliveryState, SqliteCallbackDeadLetterStore,
-    SqliteCallbackDeliveryQueue, WebhookDeliveryTarget, WebhookEgressPolicy, WebhookEndpointError,
-    WebhookSignatureError, WebhookSigningConfig,
+    SqliteCallbackDeliveryQueue, WebhookDeliveryAttempt, WebhookDeliveryTarget,
+    WebhookDeliveryWorker, WebhookEgressPolicy, WebhookEndpointError, WebhookSignatureError,
+    WebhookSigningConfig,
 };
 use serde_json::json;
 use std::path::PathBuf;
@@ -569,6 +570,108 @@ fn sqlite_callback_delivery_queue_persists_retry_schedule_across_reopen() {
 
     assert!(before_due.is_empty());
     assert_eq!(after_due, vec![retry]);
+}
+
+#[test]
+fn webhook_delivery_worker_signs_due_delivery_and_persists_success() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let queue = SqliteCallbackDeliveryQueue::open_in_memory().expect("queue opens");
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    queue.upsert_delivery(delivery).expect("delivery persists");
+    let signing =
+        WebhookSigningConfig::hmac_sha256("secret://callbacks/ide-relay", b"top-secret", 300)
+            .expect("signing config is valid");
+    let target = WebhookDeliveryTarget::new(
+        "https://hooks.example.com/graphblocks/events",
+        &WebhookEgressPolicy::default_deny_internal(),
+    )
+    .expect("target is valid");
+    let worker = WebhookDeliveryWorker::new(&scheduler, &queue, &target, &signing);
+
+    let attempts = worker
+        .process_due(
+            2_000,
+            10,
+            |attempt: &WebhookDeliveryAttempt| {
+                assert_eq!(
+                    attempt.target.url,
+                    "https://hooks.example.com/graphblocks/events"
+                );
+                assert_eq!(attempt.delivery.delivery_id, "del_sub-1_event-1");
+                assert_eq!(
+                    attempt
+                        .signed
+                        .headers
+                        .get("GraphBlocks-Signature-Algorithm")
+                        .map(String::as_str),
+                    Some("hmac-sha256")
+                );
+                CallbackDeliveryResponse::Success
+            },
+            |event_id| {
+                assert_eq!(event_id, "event-1");
+                Some(event.clone())
+            },
+        )
+        .expect("worker processes due delivery");
+    let stored = queue
+        .get_delivery("del_sub-1_event-1")
+        .expect("delivery loads")
+        .expect("delivery exists");
+
+    assert_eq!(attempts, 1);
+    assert_eq!(stored.status, CallbackDeliveryStatus::Delivered);
+    assert_eq!(stored.delivered_at_unix_ms, Some(2_000));
+}
+
+#[test]
+fn webhook_delivery_worker_persists_retry_after_server_error() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let queue = SqliteCallbackDeliveryQueue::open_in_memory().expect("queue opens");
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    queue.upsert_delivery(delivery).expect("delivery persists");
+    let signing =
+        WebhookSigningConfig::hmac_sha256("secret://callbacks/ide-relay", b"top-secret", 300)
+            .expect("signing config is valid");
+    let target = WebhookDeliveryTarget::new(
+        "https://hooks.example.com/graphblocks/events",
+        &WebhookEgressPolicy::default_deny_internal(),
+    )
+    .expect("target is valid");
+    let worker = WebhookDeliveryWorker::new(&scheduler, &queue, &target, &signing);
+
+    let attempts = worker
+        .process_due(
+            2_000,
+            10,
+            |_| CallbackDeliveryResponse::ServerError(503),
+            |_| Some(event.clone()),
+        )
+        .expect("worker processes due delivery");
+    let stored = queue
+        .get_delivery("del_sub-1_event-1")
+        .expect("delivery loads")
+        .expect("delivery exists");
+
+    assert_eq!(attempts, 1);
+    assert_eq!(stored.status, CallbackDeliveryStatus::Pending);
+    assert_eq!(stored.attempt, 2);
+    assert_eq!(stored.next_retry_at_unix_ms, Some(2_100));
+    assert_eq!(stored.last_error.as_deref(), Some("server_error:503"));
 }
 
 #[test]
