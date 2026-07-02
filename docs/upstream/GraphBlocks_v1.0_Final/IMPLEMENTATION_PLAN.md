@@ -340,14 +340,16 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   localhost, loopback, private RFC1918 ranges, link-local metadata addresses, and malformed hosts,
   with explicit host allowlisting for trusted development or private deployments.
 - Callback configuration diagnostics now map unsigned webhook subscriptions to `GB6002` and unsafe
-  webhook endpoint failures to `GB6011` for compiler/deployment reporting.
+  webhook endpoint failures to `GB6011` for compiler/deployment reporting, with shared compiler TCK
+  coverage.
 - Callback subscriptions can now explicitly mark forbidden authoritative uses, and diagnostics
   report callback delivery used as a source of truth for run correctness, billing, quota, audit, or
-  effect commit as `GB6004`.
+  effect commit as `GB6004`, with shared compiler TCK coverage.
 - Callback subscription diagnostics now report mandatory callback delivery without retry,
-  dead-letter, or fallback policy as `GB6006`.
+  dead-letter, or fallback policy as `GB6006`, with shared compiler TCK coverage.
 - Callback subscription diagnostics now report impossible ordered-delivery requests (`GB6012`) and
-  mandatory callback failure policies without dead-letter behavior (`GB6014`).
+  mandatory callback failure policies without dead-letter behavior (`GB6014`), with shared compiler
+  TCK coverage.
 - Webhook delivery targets now enforce the specification's default `262144` byte payload limit
   before signing delivery envelopes, and tests cover explicit small-limit rejection for oversized
   callback projections.

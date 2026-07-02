@@ -1285,3 +1285,90 @@ def test_compile_allows_async_operation_with_timeout_idempotency_and_schema() ->
     }
 
     assert not {"GB6001", "GB6003", "GB6007", "GB6008", "GB6015", "GB6016"} & set(_error_codes(graph))
+
+
+def test_compile_reports_callback_subscription_safety_diagnostics() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "unsafe-callback-subscription"},
+        "spec": {
+            "nodes": {"agent": {"block": "agent.run@1"}},
+            "callbackSubscriptions": [
+                {
+                    "subscriptionId": "sub-unsafe",
+                    "scope": "run",
+                    "scopeId": "run-1",
+                    "authoritativeFor": ["billing"],
+                    "delivery": {
+                        "kind": "webhook",
+                        "url": "http://127.0.0.1/events",
+                    },
+                },
+                {
+                    "subscriptionId": "sub-mandatory",
+                    "scope": "run",
+                    "scopeId": "run-1",
+                    "mandatory": True,
+                    "delivery": {
+                        "kind": "local_callback",
+                        "callbackName": "ide",
+                        "ordering": {"mode": "ordered", "scope": "run"},
+                    },
+                },
+                {
+                    "subscriptionId": "sub-fail",
+                    "scope": "run",
+                    "scopeId": "run-1",
+                    "failurePolicy": "fail_run_on_failure",
+                    "delivery": {
+                        "kind": "webhook",
+                        "url": "https://relay.example.com/events",
+                        "signing": {
+                            "algorithm": "hmac-sha256",
+                            "secretRef": "secret://relay",
+                        },
+                    },
+                },
+            ],
+        },
+    }
+
+    assert _error_codes(graph) == [
+        "GB6002",
+        "GB6011",
+        "GB6004",
+        "GB6006",
+        "GB6012",
+        "GB6014",
+    ]
+
+
+def test_compile_allows_safe_callback_subscription_contract() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "safe-callback-subscription"},
+        "spec": {
+            "nodes": {"agent": {"block": "agent.run@1"}},
+            "callbackSubscriptions": {
+                "ide": {
+                    "scope": "run",
+                    "scopeId": "run-1",
+                    "failurePolicy": "retry_then_dead_letter",
+                    "deadLetterPolicy": "standard",
+                    "delivery": {
+                        "kind": "webhook",
+                        "url": "https://relay.example.com/events",
+                        "signing": {
+                            "algorithm": "hmac-sha256",
+                            "secretRef": "secret://relay",
+                        },
+                        "ordering": {"mode": "ordered", "scope": "run"},
+                    },
+                }
+            },
+        },
+    }
+
+    assert not {"GB6002", "GB6004", "GB6006", "GB6011", "GB6012", "GB6014"} & set(_error_codes(graph))

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from ipaddress import ip_address
 from typing import Any
+from urllib.parse import urlparse
 
 from .canonical import PSEUDO_NODES, canonical_hash, normalize_graph
 from .diagnostics import Diagnostic, DiagnosticSet
@@ -41,6 +43,9 @@ FORBIDDEN_TOOL_DEFINITION_FIELDS = frozenset(
         "implementation",
     }
 )
+MANDATORY_CALLBACK_FAILURE_POLICIES = frozenset({"pause_run_on_failure", "fail_run_on_failure"})
+ORDER_CAPABLE_CALLBACK_TARGETS = frozenset({"webhook", "websocket", "sse"})
+UNSAFE_CALLBACK_HOSTS = frozenset({"localhost", "metadata.google.internal"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,6 +245,135 @@ def _diagnose_async_operation_config(
         )
 
 
+def _has_callback_signing(delivery: dict[str, Any]) -> bool:
+    signing = delivery.get("signing")
+    if not isinstance(signing, dict):
+        return False
+    algorithm = signing.get("algorithm")
+    secret_ref = signing.get("secretRef") or signing.get("secret_ref")
+    return algorithm in {"hmac-sha256", "ed25519"} and _has_non_empty_string(secret_ref)
+
+
+def _callback_url_is_unsafe(url: object) -> bool:
+    if not isinstance(url, str) or not url.strip():
+        return True
+    parsed = urlparse(url)
+    if parsed.scheme != "https":
+        return True
+    hostname = parsed.hostname
+    if not hostname:
+        return True
+    normalized_host = hostname.rstrip(".").lower()
+    if normalized_host in UNSAFE_CALLBACK_HOSTS or normalized_host.endswith(".localhost"):
+        return True
+    try:
+        address = ip_address(normalized_host)
+    except ValueError:
+        return False
+    return (
+        address.is_loopback
+        or address.is_private
+        or address.is_link_local
+        or address.is_multicast
+        or address.is_reserved
+        or address.is_unspecified
+    )
+
+
+def _has_callback_dead_letter_behavior(config: dict[str, Any], delivery: dict[str, Any]) -> bool:
+    failure_policy = config.get("failurePolicy") or config.get("failure_policy")
+    if failure_policy == "retry_then_dead_letter":
+        return True
+    dead_letter = (
+        config.get("deadLetterPolicy")
+        or config.get("dead_letter_policy")
+        or config.get("deadLetterRef")
+        or config.get("dead_letter_ref")
+        or delivery.get("deadLetterPolicy")
+        or delivery.get("dead_letter_policy")
+        or delivery.get("deadLetterRef")
+        or delivery.get("dead_letter_ref")
+    )
+    return _has_non_empty_string(dead_letter) or isinstance(dead_letter, dict)
+
+
+def _diagnose_callback_subscription_config(
+    diagnostics: list[Diagnostic],
+    config: dict[str, Any],
+    path: str,
+) -> None:
+    delivery = config.get("delivery")
+    if not isinstance(delivery, dict):
+        return
+    delivery_kind = delivery.get("kind")
+    if delivery_kind == "webhook":
+        if not _has_callback_signing(delivery):
+            diagnostics.append(
+                Diagnostic(
+                    "GB6002",
+                    "webhook callback subscriptions require signing configuration",
+                    f"{path}.delivery.signing",
+                )
+            )
+        if _callback_url_is_unsafe(delivery.get("url")):
+            diagnostics.append(
+                Diagnostic(
+                    "GB6011",
+                    "webhook callback endpoint is unsafe or forbidden by default egress policy",
+                    f"{path}.delivery.url",
+                )
+            )
+
+    authoritative_for = config.get("authoritativeFor", config.get("authoritative_for"))
+    if config.get("sourceOfTruth") is True or config.get("source_of_truth") is True or authoritative_for:
+        diagnostics.append(
+            Diagnostic(
+                "GB6004",
+                "callback delivery must not be used as the source of truth for run correctness or accounting",
+                path,
+            )
+        )
+
+    failure_policy = config.get("failurePolicy") or config.get("failure_policy")
+    mandatory = (
+        config.get("mandatory") is True
+        or delivery.get("mandatory") is True
+        or failure_policy in MANDATORY_CALLBACK_FAILURE_POLICIES
+    )
+    if mandatory and not failure_policy:
+        diagnostics.append(
+            Diagnostic(
+                "GB6006",
+                "mandatory callback delivery requires retry, dead-letter, or fallback failure policy",
+                f"{path}.failurePolicy",
+            )
+        )
+
+    ordering = delivery.get("ordering")
+    if not isinstance(ordering, dict):
+        ordering = config.get("ordering")
+    if isinstance(ordering, dict) and ordering.get("mode") == "ordered" and delivery_kind not in ORDER_CAPABLE_CALLBACK_TARGETS:
+        diagnostics.append(
+            Diagnostic(
+                "GB6012",
+                "callback subscription requests ordered delivery on a target that cannot guarantee it",
+                f"{path}.delivery.ordering",
+            )
+        )
+
+    if (
+        failure_policy in MANDATORY_CALLBACK_FAILURE_POLICIES
+        and not _has_callback_dead_letter_behavior(config, delivery)
+    ):
+        diagnostics.append(
+            Diagnostic(
+                "GB6014",
+                "mandatory callback failure policy requires dead-letter or fallback behavior",
+                f"{path}.deadLetterPolicy",
+            )
+        )
+
+
 def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None = None) -> Plan:
     diagnostics: list[Diagnostic] = []
     migrated = migrate_document(document)
@@ -396,6 +530,44 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                     "InvalidAsyncOperation",
                     "asyncOperations must be a mapping or list",
                     f"$.spec.{async_operations_key}",
+                )
+            )
+
+    callback_subscriptions_key = "callbackSubscriptions" if "callbackSubscriptions" in spec else "callback_subscriptions"
+    callback_subscriptions = spec.get(callback_subscriptions_key)
+    if callback_subscriptions is not None:
+        if isinstance(callback_subscriptions, dict):
+            for subscription_key, subscription_config in callback_subscriptions.items():
+                subscription_path = f"$.spec.{callback_subscriptions_key}.{subscription_key}"
+                if not isinstance(subscription_config, dict):
+                    diagnostics.append(
+                        Diagnostic(
+                            "InvalidCallbackSubscription",
+                            "callback subscription config must be a mapping",
+                            subscription_path,
+                        )
+                    )
+                    continue
+                _diagnose_callback_subscription_config(diagnostics, subscription_config, subscription_path)
+        elif isinstance(callback_subscriptions, list):
+            for subscription_index, subscription_config in enumerate(callback_subscriptions):
+                subscription_path = f"$.spec.{callback_subscriptions_key}[{subscription_index}]"
+                if not isinstance(subscription_config, dict):
+                    diagnostics.append(
+                        Diagnostic(
+                            "InvalidCallbackSubscription",
+                            "callback subscription config must be a mapping",
+                            subscription_path,
+                        )
+                    )
+                    continue
+                _diagnose_callback_subscription_config(diagnostics, subscription_config, subscription_path)
+        else:
+            diagnostics.append(
+                Diagnostic(
+                    "InvalidCallbackSubscription",
+                    "callbackSubscriptions must be a mapping or list",
+                    f"$.spec.{callback_subscriptions_key}",
                 )
             )
 

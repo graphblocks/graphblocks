@@ -1434,5 +1434,66 @@
       "graph_hash": "sha256:1f5714317007f9d13b837867140dcd021b935e7893f899e874b140ec8b3476fd",
       "error_codes": ["GB6008", "GB6015", "GB6016"]
     }
+  },
+  {
+    "name": "callback_subscription_safety_diagnostics",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "unsafe-callback-subscription"
+      },
+      "spec": {
+        "nodes": {
+          "agent": {
+            "block": "agent.run@1"
+          }
+        },
+        "callbackSubscriptions": [
+          {
+            "subscriptionId": "sub-unsafe",
+            "scope": "run",
+            "scopeId": "run-1",
+            "authoritativeFor": ["billing"],
+            "delivery": {
+              "kind": "webhook",
+              "url": "http://127.0.0.1/events"
+            }
+          },
+          {
+            "subscriptionId": "sub-mandatory",
+            "scope": "run",
+            "scopeId": "run-1",
+            "mandatory": true,
+            "delivery": {
+              "kind": "local_callback",
+              "callbackName": "ide",
+              "ordering": {
+                "mode": "ordered",
+                "scope": "run"
+              }
+            }
+          },
+          {
+            "subscriptionId": "sub-fail",
+            "scope": "run",
+            "scopeId": "run-1",
+            "failurePolicy": "fail_run_on_failure",
+            "delivery": {
+              "kind": "webhook",
+              "url": "https://relay.example.com/events",
+              "signing": {
+                "algorithm": "hmac-sha256",
+                "secretRef": "secret://relay"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:d504853609423e0c256966ab111845fcef8b9753b2804fa4ae99e9001a670dfc",
+      "error_codes": ["GB6002", "GB6011", "GB6004", "GB6006", "GB6012", "GB6014"]
+    }
   }
 ]
