@@ -2049,11 +2049,20 @@ fn validate_callback_submission_and_resume_decision(
         ("verified_by", &submission.verified_by),
         ("policy_snapshot_id", &submission.policy_snapshot_id),
     ] {
-        if value.is_empty() {
+        if value.trim().is_empty() {
             return Err(AsyncOperationError::EmptyField {
                 field: field.to_owned(),
             });
         }
+    }
+    if submission
+        .provider_operation_id
+        .as_ref()
+        .is_some_and(|provider_operation_id| provider_operation_id.trim().is_empty())
+    {
+        return Err(AsyncOperationError::EmptyField {
+            field: "provider_operation_id".to_owned(),
+        });
     }
     match resume_decision {
         AsyncCallbackResumeDecision::Resume => {}

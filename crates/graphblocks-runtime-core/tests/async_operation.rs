@@ -1017,6 +1017,59 @@ fn callback_resume_pause_requires_reason_before_journaling() {
 }
 
 #[test]
+fn callback_submission_whitespace_identity_fields_are_rejected_before_journal() {
+    for field in [
+        "callback_id",
+        "operation_id",
+        "run_id",
+        "node_id",
+        "attempt_id",
+        "provider_operation_id",
+        "idempotency_key",
+        "verified_by",
+        "policy_snapshot_id",
+    ] {
+        let store = AsyncOperationStore::new();
+        store
+            .register(waiting_operation())
+            .expect("operation registers");
+        let mut submission = valid_submission("cb-whitespace", "idem-whitespace");
+        match field {
+            "callback_id" => submission.callback_id = " \t".to_owned(),
+            "operation_id" => submission.operation_id = " \t".to_owned(),
+            "run_id" => submission.run_id = " \t".to_owned(),
+            "node_id" => submission.node_id = " \t".to_owned(),
+            "attempt_id" => submission.attempt_id = " \t".to_owned(),
+            "provider_operation_id" => submission.provider_operation_id = Some(" \t".to_owned()),
+            "idempotency_key" => submission.idempotency_key = " \t".to_owned(),
+            "verified_by" => submission.verified_by = " \t".to_owned(),
+            "policy_snapshot_id" => submission.policy_snapshot_id = " \t".to_owned(),
+            _ => unreachable!("test field is declared above"),
+        }
+
+        assert_eq!(
+            store.accept_callback(submission, &callback_schema_registry()),
+            Err(AsyncOperationError::EmptyField {
+                field: field.to_owned(),
+            }),
+            "{field} should reject whitespace-only values",
+        );
+        assert_eq!(
+            store
+                .events_for_operation("op-1")
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    AsyncOperationEvent::ExternalCallbackReceived { .. }
+                ))
+                .count(),
+            0,
+            "{field} should not journal a received callback",
+        );
+    }
+}
+
+#[test]
 fn concurrent_duplicate_callbacks_have_one_resume_winner() {
     let store = Arc::new(AsyncOperationStore::new());
     store
