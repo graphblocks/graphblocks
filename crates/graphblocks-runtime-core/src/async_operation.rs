@@ -8,6 +8,7 @@ use rusqlite::{Connection, params};
 use serde_json::{Value, json};
 use sha2::Sha256;
 
+use crate::tool_result::ToolEffectOutcome;
 use crate::tool_schema::{ToolSchemaRegistry, ToolSchemaValidationError};
 
 type HmacSha256 = Hmac<Sha256>;
@@ -1013,6 +1014,192 @@ pub struct AcceptedCallback {
     pub receipt: ExternalCallbackReceived,
     pub duplicate: bool,
     pub should_resume: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AsyncOperationResultStatus {
+    Completed,
+    Failed,
+    Cancelled,
+    Expired,
+    Incomplete,
+}
+
+impl AsyncOperationResultStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+            Self::Expired => "expired",
+            Self::Incomplete => "incomplete",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExternalEffectRecord {
+    pub effect_id: String,
+    pub target: String,
+    pub operation: String,
+    pub outcome: ToolEffectOutcome,
+    pub idempotency_key: Option<String>,
+    pub provider_effect_id: Option<String>,
+}
+
+impl ExternalEffectRecord {
+    pub fn new(
+        effect_id: impl Into<String>,
+        target: impl Into<String>,
+        operation: impl Into<String>,
+        outcome: ToolEffectOutcome,
+    ) -> Self {
+        Self {
+            effect_id: effect_id.into(),
+            target: target.into(),
+            operation: operation.into(),
+            outcome,
+            idempotency_key: None,
+            provider_effect_id: None,
+        }
+    }
+
+    pub fn with_idempotency_key(mut self, idempotency_key: impl Into<String>) -> Self {
+        self.idempotency_key = Some(idempotency_key.into());
+        self
+    }
+
+    pub fn with_provider_effect_id(mut self, provider_effect_id: impl Into<String>) -> Self {
+        self.provider_effect_id = Some(provider_effect_id.into());
+        self
+    }
+
+    pub fn validate(&self) -> Result<(), AsyncOperationError> {
+        for (field, value) in [
+            ("external_effect.effect_id", &self.effect_id),
+            ("external_effect.target", &self.target),
+            ("external_effect.operation", &self.operation),
+        ] {
+            if value.trim().is_empty() {
+                return Err(AsyncOperationError::EmptyField {
+                    field: field.to_owned(),
+                });
+            }
+        }
+        if self
+            .idempotency_key
+            .as_ref()
+            .is_some_and(|idempotency_key| idempotency_key.trim().is_empty())
+        {
+            return Err(AsyncOperationError::EmptyField {
+                field: "external_effect.idempotency_key".to_owned(),
+            });
+        }
+        if self
+            .provider_effect_id
+            .as_ref()
+            .is_some_and(|provider_effect_id| provider_effect_id.trim().is_empty())
+        {
+            return Err(AsyncOperationError::EmptyField {
+                field: "external_effect.provider_effect_id".to_owned(),
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AsyncOperationResult {
+    pub operation_id: String,
+    pub status: AsyncOperationResultStatus,
+    pub output: Option<Value>,
+    pub artifacts: Vec<CallbackArtifactRef>,
+    pub diagnostics: Vec<Value>,
+    pub metrics: Vec<Value>,
+    pub checks: Vec<Value>,
+    pub usage: Vec<Value>,
+    pub external_effects: Vec<ExternalEffectRecord>,
+}
+
+impl AsyncOperationResult {
+    pub fn completed(operation_id: impl Into<String>) -> Self {
+        Self::new(operation_id, AsyncOperationResultStatus::Completed)
+    }
+
+    pub fn failed(operation_id: impl Into<String>) -> Self {
+        Self::new(operation_id, AsyncOperationResultStatus::Failed)
+    }
+
+    pub fn cancelled(operation_id: impl Into<String>) -> Self {
+        Self::new(operation_id, AsyncOperationResultStatus::Cancelled)
+    }
+
+    pub fn expired(operation_id: impl Into<String>) -> Self {
+        Self::new(operation_id, AsyncOperationResultStatus::Expired)
+    }
+
+    pub fn incomplete(operation_id: impl Into<String>) -> Self {
+        Self::new(operation_id, AsyncOperationResultStatus::Incomplete)
+    }
+
+    fn new(operation_id: impl Into<String>, status: AsyncOperationResultStatus) -> Self {
+        Self {
+            operation_id: operation_id.into(),
+            status,
+            output: None,
+            artifacts: Vec::new(),
+            diagnostics: Vec::new(),
+            metrics: Vec::new(),
+            checks: Vec::new(),
+            usage: Vec::new(),
+            external_effects: Vec::new(),
+        }
+    }
+
+    pub fn with_output(mut self, output: Value) -> Self {
+        self.output = Some(output);
+        self
+    }
+
+    pub fn with_external_effects<I>(mut self, external_effects: I) -> Self
+    where
+        I: IntoIterator<Item = ExternalEffectRecord>,
+    {
+        self.external_effects = external_effects.into_iter().collect();
+        self
+    }
+
+    pub fn external_effect_was_committed(&self) -> bool {
+        self.external_effects
+            .iter()
+            .any(|effect| effect.outcome == ToolEffectOutcome::Committed)
+    }
+
+    pub fn validate(&self) -> Result<(), AsyncOperationError> {
+        if self.operation_id.trim().is_empty() {
+            return Err(AsyncOperationError::EmptyField {
+                field: "operation_id".to_owned(),
+            });
+        }
+        for artifact in &self.artifacts {
+            artifact.validate()?;
+        }
+        for effect in &self.external_effects {
+            effect.validate()?;
+            if effect.provider_effect_id.is_some()
+                && effect.outcome != ToolEffectOutcome::Committed
+            {
+                return Err(AsyncOperationError::InvalidOperation {
+                    operation_id: self.operation_id.clone(),
+                    reason: format!(
+                        "external effect {} has provider identity but no committed external effect",
+                        effect.effect_id
+                    ),
+                });
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

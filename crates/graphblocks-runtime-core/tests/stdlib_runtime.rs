@@ -540,7 +540,19 @@ fn rust_stdlib_async_blocks_poll_complete_cancel_and_expire_operations() -> Resu
                 },
                 "cancel": {
                     "block": "async.cancel_operation@1",
-                    "config": {"cancelledAtUnixMs": 1_900},
+                    "config": {
+                        "cancelledAtUnixMs": 1_900,
+                        "externalEffects": [
+                            {
+                                "effectId": "effect-ticket-1",
+                                "target": "ticket-system",
+                                "operation": "ticket.create",
+                                "outcome": "committed",
+                                "idempotencyKey": "idem-ticket-1",
+                                "providerEffectId": "ticket-123"
+                            }
+                        ]
+                    },
                     "inputs": {"operation": "startCancel.operation"},
                     "outputs": {"result": "$output.cancelled"}
                 },
@@ -578,6 +590,19 @@ fn rust_stdlib_async_blocks_poll_complete_cancel_and_expire_operations() -> Resu
     );
     assert_eq!(result["outputs"]["cancelled"]["operation_id"], "op-cancel");
     assert_eq!(result["outputs"]["cancelled"]["status"], "cancelled");
+    assert_eq!(
+        result["outputs"]["cancelled"]["external_effects"],
+        json!([
+            {
+                "effect_id": "effect-ticket-1",
+                "target": "ticket-system",
+                "operation": "ticket.create",
+                "outcome": "committed",
+                "idempotency_key": "idem-ticket-1",
+                "provider_effect_id": "ticket-123"
+            }
+        ])
+    );
     assert_eq!(result["outputs"]["expired"]["operation_id"], "op-expire");
     assert_eq!(result["outputs"]["expired"]["status"], "expired");
     Ok(())

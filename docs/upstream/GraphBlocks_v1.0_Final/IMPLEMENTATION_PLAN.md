@@ -244,6 +244,10 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   same logical callback receipt. Reusing an idempotency key with a different operation identity,
   attempt, provider operation, payload digest, verification principal, or policy snapshot is an
   `idempotency_conflict` rejection and MUST NOT overwrite the original receipt or resume the run.
+- `AsyncOperationResult` records final async operation status, output projections, artifacts,
+  diagnostics, metrics, checks, usage, and external effect records. Cancellation or timeout after an
+  external provider committed a side effect MUST preserve that committed effect in the result
+  projection and downstream audit/ledger path; cancellation is not treated as rollback.
 
 Example duplicate callback handling:
 
@@ -265,6 +269,25 @@ conflicting replay:
   idempotency_key = provider-delivery-1
   payload_digest = sha256:bbb
   result = ExternalCallbackRejected(idempotency_conflict:payload_digest), no overwrite, no resume
+```
+
+Example cancelled operation with committed external effect:
+
+```yaml
+nodes:
+  cancelTicketWrite:
+    block: async.cancel_operation
+    in:
+      operation: startTicketWrite.operation
+    config:
+      cancelledAtUnixMs: 1900
+      externalEffects:
+        - effectId: effect-ticket-1
+          target: ticket-system
+          operation: ticket.create
+          outcome: committed
+          idempotencyKey: idem-ticket-1
+          providerEffectId: ticket-123
 ```
 
 ### Current implementation slice
@@ -355,6 +378,10 @@ conflicting replay:
 - Callback resume admission also records policy-denied and release-incompatible resume decisions
   after durable callback receipt, preserving the journal-before-resume rule while preventing
   scheduler continuation.
+- `AsyncOperationResult` and `ExternalEffectRecord` now preserve committed external side effects
+  even when an async operation result is `cancelled` or `incomplete`; stdlib async terminal blocks
+  can project `externalEffects` config into the final result instead of dropping provider effect
+  identity.
 - `graphblocks-runtime-core::stdlib_runtime` now exposes deterministic `async.start_operation@1`
   and `async.await_callback@1` blocks so graph-level examples can start an external operation and
   checkpoint while waiting for callback without treating callback delivery as the source of truth.

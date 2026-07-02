@@ -5,9 +5,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use graphblocks_runtime_core::async_operation::{
     AsyncCallbackIngestionLimits, AsyncCallbackResumeDecision, AsyncCallbackSubmission,
     AsyncOperation, AsyncOperationConfigurationDiagnostic, AsyncOperationError,
-    AsyncOperationEvent, AsyncOperationKind, AsyncOperationState, AsyncOperationStore,
-    CallbackArtifactRef, CallbackEndpointAuth, CallbackEndpointRef, SqliteAsyncOperationStore,
+    AsyncOperationEvent, AsyncOperationKind, AsyncOperationResult, AsyncOperationResultStatus,
+    AsyncOperationState, AsyncOperationStore, CallbackArtifactRef, CallbackEndpointAuth,
+    CallbackEndpointRef, ExternalEffectRecord, SqliteAsyncOperationStore,
 };
+use graphblocks_runtime_core::tool_result::ToolEffectOutcome;
 use graphblocks_runtime_core::tool_schema::{JsonSchema, JsonSchemaNode, ToolSchemaRegistry};
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -1381,6 +1383,81 @@ fn callback_after_cancellation_records_late_callback_without_committing_result()
             })
             .count(),
         1
+    );
+}
+
+#[test]
+fn cancelled_async_operation_result_preserves_committed_external_effect() {
+    let result = AsyncOperationResult::cancelled("op-1").with_external_effects([
+        ExternalEffectRecord::new(
+            "effect-ticket-1",
+            "ticket-system",
+            "ticket.create",
+            ToolEffectOutcome::Committed,
+        )
+        .with_idempotency_key("idem-ticket-1")
+        .with_provider_effect_id("ticket-123"),
+    ]);
+
+    assert_eq!(result.status, AsyncOperationResultStatus::Cancelled);
+    assert_eq!(result.validate(), Ok(()));
+    assert!(result.external_effect_was_committed());
+    assert_eq!(result.external_effects[0].outcome, ToolEffectOutcome::Committed);
+    assert_eq!(
+        result.external_effects[0].idempotency_key.as_deref(),
+        Some("idem-ticket-1")
+    );
+}
+
+#[test]
+fn incomplete_async_operation_result_preserves_committed_external_effect_after_late_callback() {
+    let result = AsyncOperationResult::incomplete("op-1").with_external_effects([
+        ExternalEffectRecord::new(
+            "effect-ci-1",
+            "github-actions",
+            "workflow_dispatch",
+            ToolEffectOutcome::Committed,
+        )
+        .with_provider_effect_id("gha-run-1"),
+    ]);
+
+    assert_eq!(result.status, AsyncOperationResultStatus::Incomplete);
+    assert_eq!(result.validate(), Ok(()));
+    assert!(result.external_effect_was_committed());
+}
+
+#[test]
+fn async_operation_result_rejects_invalid_external_effect_records() {
+    let blank_effect = AsyncOperationResult::completed("op-1").with_external_effects([
+        ExternalEffectRecord::new(
+            " ",
+            "ticket-system",
+            "ticket.create",
+            ToolEffectOutcome::Committed,
+        ),
+    ]);
+    let impossible_denied_effect = AsyncOperationResult::failed("op-2").with_external_effects([
+        ExternalEffectRecord::new(
+            "effect-denied",
+            "ticket-system",
+            "ticket.create",
+            ToolEffectOutcome::NoExternalEffect,
+        )
+        .with_provider_effect_id("ticket-123"),
+    ]);
+
+    assert_eq!(
+        blank_effect.validate(),
+        Err(AsyncOperationError::EmptyField {
+            field: "external_effect.effect_id".to_owned(),
+        })
+    );
+    assert_eq!(
+        impossible_denied_effect.validate(),
+        Err(AsyncOperationError::InvalidOperation {
+            operation_id: "op-2".to_owned(),
+            reason: "external effect effect-denied has provider identity but no committed external effect".to_owned(),
+        })
     );
 }
 

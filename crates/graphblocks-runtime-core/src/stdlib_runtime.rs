@@ -6,7 +6,10 @@ use graphblocks_compiler::compiler::compile_graph;
 use graphblocks_compiler::diagnostics::Severity;
 use serde_json::{Value, json};
 
-use crate::async_operation::{AsyncOperation, AsyncOperationKind};
+use crate::async_operation::{
+    AsyncOperation, AsyncOperationKind, AsyncOperationResult, AsyncOperationResultStatus,
+    ExternalEffectRecord,
+};
 use crate::outcome::{BlockError, ErrorCategory, Outcome};
 use crate::readiness::{InputDependency, PortRef, ResolvedInput};
 use crate::scheduler::{ScheduledNode, StartedNode};
@@ -17,6 +20,7 @@ use crate::tool::{
     ToolCancellation, ToolCatalog, ToolDefinition, ToolEffect, ToolIdempotency, ToolImplementation,
     ToolResolutionScope, ToolResultMode,
 };
+use crate::tool_result::ToolEffectOutcome;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StdlibRuntimeError {
@@ -418,7 +422,7 @@ fn execute_stdlib_block(
         "async.start_operation@1" => execute_async_start_operation(inputs, config),
         "async.await_callback@1" => execute_async_await_callback(inputs, config),
         "async.poll_operation@1" => execute_async_poll_operation(inputs, config),
-        "async.complete_operation@1" => execute_async_complete_operation(inputs),
+        "async.complete_operation@1" => execute_async_complete_operation(inputs, config),
         "async.cancel_operation@1" => execute_async_cancel_operation(inputs, config),
         "async.expire_operation@1" => execute_async_expire_operation(inputs, config),
         "conversation.commit_turn@1" => execute_commit_turn(inputs),
@@ -694,13 +698,20 @@ fn execute_async_poll_operation(inputs: &Value, config: &Value) -> Result<Value,
     }))
 }
 
-fn execute_async_complete_operation(inputs: &Value) -> Result<Value, BlockError> {
+fn execute_async_complete_operation(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
     let operation = required_async_operation_input(inputs, "async.complete_operation@1")?;
     let operation_id = required_async_operation_id(operation, "async.complete_operation@1")?;
     let output = inputs.get("output").cloned().unwrap_or(Value::Null);
+    let external_effects =
+        parse_async_external_effects(config, "async.complete_operation@1")?;
 
     Ok(json!({
-        "result": async_operation_result_json(operation_id, "completed", Some(output), None),
+        "result": async_operation_result_json(
+            AsyncOperationResult::completed(operation_id)
+                .with_output(output)
+                .with_external_effects(external_effects),
+            None,
+        )?,
     }))
 }
 
@@ -711,9 +722,14 @@ fn execute_async_cancel_operation(inputs: &Value, config: &Value) -> Result<Valu
         .get("cancelledAtUnixMs")
         .or_else(|| config.get("cancelled_at_unix_ms"))
         .and_then(Value::as_u64);
+    let external_effects =
+        parse_async_external_effects(config, "async.cancel_operation@1")?;
 
     Ok(json!({
-        "result": async_operation_result_json(operation_id, "cancelled", None, completed_at_unix_ms),
+        "result": async_operation_result_json(
+            AsyncOperationResult::cancelled(operation_id).with_external_effects(external_effects),
+            completed_at_unix_ms,
+        )?,
     }))
 }
 
@@ -724,9 +740,14 @@ fn execute_async_expire_operation(inputs: &Value, config: &Value) -> Result<Valu
         .get("expiredAtUnixMs")
         .or_else(|| config.get("expired_at_unix_ms"))
         .and_then(Value::as_u64);
+    let external_effects =
+        parse_async_external_effects(config, "async.expire_operation@1")?;
 
     Ok(json!({
-        "result": async_operation_result_json(operation_id, "expired", None, completed_at_unix_ms),
+        "result": async_operation_result_json(
+            AsyncOperationResult::expired(operation_id).with_external_effects(external_effects),
+            completed_at_unix_ms,
+        )?,
     }))
 }
 
@@ -2039,22 +2060,128 @@ fn required_async_operation_id<'a>(
         })
 }
 
+fn parse_async_external_effects(
+    config: &Value,
+    block_label: &str,
+) -> Result<Vec<ExternalEffectRecord>, BlockError> {
+    let Some(raw_effects) = config
+        .get("externalEffects")
+        .or_else(|| config.get("external_effects"))
+    else {
+        return Ok(Vec::new());
+    };
+    let Some(raw_effects) = raw_effects.as_array() else {
+        return Err(BlockError::new(
+            format!("{block_label}.invalid_config"),
+            ErrorCategory::Configuration,
+            format!("{block_label} config.externalEffects must be an array"),
+            false,
+        ));
+    };
+    let mut effects = Vec::new();
+    for (index, effect) in raw_effects.iter().enumerate() {
+        let Some(effect) = effect.as_object() else {
+            return Err(BlockError::new(
+                format!("{block_label}.invalid_config"),
+                ErrorCategory::Configuration,
+                format!("{block_label} config.externalEffects[{index}] must be an object"),
+                false,
+            ));
+        };
+        let mut parsed = ExternalEffectRecord::new(
+            required_alias_object_str(
+                effect,
+                "effectId",
+                "effect_id",
+                &format!("{block_label}.invalid_config"),
+            )?,
+            required_object_str(effect, "target", &format!("{block_label}.invalid_config"))?,
+            required_object_str(effect, "operation", &format!("{block_label}.invalid_config"))?,
+            parse_tool_effect_outcome(required_object_str(
+                effect,
+                "outcome",
+                &format!("{block_label}.invalid_config"),
+            )?)
+            .map_err(|outcome| {
+                BlockError::new(
+                    format!("{block_label}.invalid_config"),
+                    ErrorCategory::Configuration,
+                    format!(
+                        "{block_label} config.externalEffects[{index}].outcome unsupported value {outcome:?}"
+                    ),
+                    false,
+                )
+            })?,
+        );
+        if let Some(idempotency_key) =
+            optional_alias_string(effect, "idempotencyKey", "idempotency_key")?
+        {
+            parsed = parsed.with_idempotency_key(idempotency_key);
+        }
+        if let Some(provider_effect_id) =
+            optional_alias_string(effect, "providerEffectId", "provider_effect_id")?
+        {
+            parsed = parsed.with_provider_effect_id(provider_effect_id);
+        }
+        effects.push(parsed);
+    }
+    Ok(effects)
+}
+
+fn parse_tool_effect_outcome(outcome: &str) -> Result<ToolEffectOutcome, &str> {
+    match outcome {
+        "no_external_effect" => Ok(ToolEffectOutcome::NoExternalEffect),
+        "committed" => Ok(ToolEffectOutcome::Committed),
+        "not_committed" => Ok(ToolEffectOutcome::NotCommitted),
+        "unknown" => Ok(ToolEffectOutcome::Unknown),
+        _ => Err(outcome),
+    }
+}
+
 fn async_operation_result_json(
-    operation_id: &str,
-    status: &str,
-    output: Option<Value>,
+    result: AsyncOperationResult,
     completed_at_unix_ms: Option<u64>,
-) -> Value {
-    json!({
-        "operation_id": operation_id,
+) -> Result<Value, BlockError> {
+    result.validate().map_err(|error| {
+        BlockError::new(
+            "async.operation_result.invalid_result",
+            ErrorCategory::Configuration,
+            format!("async operation result is invalid: {error:?}"),
+            false,
+        )
+    })?;
+    let status = match result.status {
+        AsyncOperationResultStatus::Completed => "completed",
+        AsyncOperationResultStatus::Failed => "failed",
+        AsyncOperationResultStatus::Cancelled => "cancelled",
+        AsyncOperationResultStatus::Expired => "expired",
+        AsyncOperationResultStatus::Incomplete => "incomplete",
+    };
+    Ok(json!({
+        "operation_id": result.operation_id,
         "status": status,
-        "output": output,
+        "output": result.output,
         "artifacts": [],
-        "diagnostics": [],
-        "metrics": [],
-        "checks": [],
-        "usage": [],
-        "external_effects": [],
+        "diagnostics": result.diagnostics,
+        "metrics": result.metrics,
+        "checks": result.checks,
+        "usage": result.usage,
+        "external_effects": result
+            .external_effects
+            .iter()
+            .map(external_effect_json)
+            .collect::<Vec<_>>(),
         "completed_at_unix_ms": completed_at_unix_ms,
+    }))
+}
+
+fn external_effect_json(effect: &ExternalEffectRecord) -> Value {
+    json!({
+        "effect_id": effect.effect_id,
+        "target": effect.target,
+        "operation": effect.operation,
+        "outcome": effect.outcome.as_str(),
+        "idempotency_key": effect.idempotency_key,
+        "provider_effect_id": effect.provider_effect_id,
     })
 }
