@@ -2,9 +2,9 @@ use graphblocks_runtime_core::application_event::{
     ApplicationProtocolEvent, ApplicationProtocolEventKind, ApplicationProtocolEventMetadata,
 };
 use graphblocks_runtime_core::callback_delivery::{
-    CallbackDeliveryResponse, CallbackDeliveryScheduler, CallbackDeliveryStatus,
-    CallbackFailurePolicy, CallbackRetryPolicy, CallbackSubscription, CallbackSubscriptionStatus,
-    EventFilter,
+    CallbackDeadLetter, CallbackDeliveryResponse, CallbackDeliveryScheduler,
+    CallbackDeliveryStatus, CallbackFailurePolicy, CallbackRetryPolicy, CallbackSubscription,
+    CallbackSubscriptionStatus, EventFilter,
 };
 use serde_json::json;
 
@@ -181,4 +181,75 @@ fn best_effort_delivery_drops_retryable_failures_without_dead_letter() {
 
     assert_eq!(failed.status, CallbackDeliveryStatus::Failed);
     assert_eq!(failed.next_retry_at_unix_ms, None);
+}
+
+#[test]
+fn dead_letter_redrive_preserves_original_delivery_identity_and_attempt_history() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(2, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let retried =
+        scheduler.record_response(delivery, CallbackDeliveryResponse::ServerError(503), 1_000);
+    let dead_lettered =
+        scheduler.record_response(retried, CallbackDeliveryResponse::ServerError(503), 1_100);
+
+    let dead_letter = CallbackDeadLetter::from_delivery(dead_lettered, 1_101)
+        .expect("dead-letter record is valid");
+    let redriven = scheduler
+        .redrive_dead_letter(&dead_letter, "operator:alice", "receiver recovered", 2_000)
+        .expect("redrive creates a new delivery attempt");
+
+    assert_eq!(dead_letter.original_delivery_id, "del_sub-1_event-1");
+    assert_eq!(dead_letter.event_id, "event-1");
+    assert_eq!(dead_letter.subscription_id, "sub-1");
+    assert_eq!(dead_letter.attempt_history, vec![1, 2]);
+    assert_eq!(redriven.delivery_id, "del_sub-1_event-1");
+    assert_eq!(redriven.event_id, "event-1");
+    assert_eq!(redriven.subscription_id, "sub-1");
+    assert_eq!(redriven.idempotency_key, "sub-1:event-1");
+    assert_eq!(redriven.attempt, 3);
+    assert_eq!(redriven.status, CallbackDeliveryStatus::Pending);
+    assert_eq!(redriven.redrive_count, 1);
+    assert_eq!(
+        redriven.last_redrive_operator.as_deref(),
+        Some("operator:alice")
+    );
+    assert_eq!(
+        redriven.last_redrive_reason.as_deref(),
+        Some("receiver recovered")
+    );
+}
+
+#[test]
+fn redrive_rejects_empty_operator_or_reason() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(1, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let dead_lettered =
+        scheduler.record_response(delivery, CallbackDeliveryResponse::ServerError(503), 1_000);
+    let dead_letter = CallbackDeadLetter::from_delivery(dead_lettered, 1_001)
+        .expect("dead-letter record is valid");
+
+    assert!(
+        scheduler
+            .redrive_dead_letter(&dead_letter, " ", "receiver recovered", 2_000)
+            .is_err()
+    );
+    assert!(
+        scheduler
+            .redrive_dead_letter(&dead_letter, "operator:alice", " ", 2_000)
+            .is_err()
+    );
 }

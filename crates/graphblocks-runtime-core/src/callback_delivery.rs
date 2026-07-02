@@ -175,6 +175,53 @@ pub struct CallbackDelivery {
     pub delivered_at_unix_ms: Option<u64>,
     pub acknowledged_at_unix_ms: Option<u64>,
     pub last_error: Option<String>,
+    pub redrive_count: u32,
+    pub last_redrive_operator: Option<String>,
+    pub last_redrive_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CallbackDeadLetter {
+    pub original_delivery_id: String,
+    pub subscription_id: String,
+    pub event_id: String,
+    pub run_id: String,
+    pub sequence: u64,
+    pub cursor: String,
+    pub idempotency_key: String,
+    pub failure_policy: CallbackFailurePolicy,
+    pub attempt_history: Vec<u32>,
+    pub last_error: Option<String>,
+    pub dead_lettered_at_unix_ms: u64,
+    pub redrive_count: u32,
+}
+
+impl CallbackDeadLetter {
+    pub fn from_delivery(
+        delivery: CallbackDelivery,
+        dead_lettered_at_unix_ms: u64,
+    ) -> Result<Self, CallbackDeliveryError> {
+        if delivery.status != CallbackDeliveryStatus::DeadLettered {
+            return Err(CallbackDeliveryError::InvalidDeliveryStatus {
+                delivery_id: delivery.delivery_id,
+                status: delivery.status,
+            });
+        }
+        Ok(Self {
+            original_delivery_id: delivery.delivery_id,
+            subscription_id: delivery.subscription_id,
+            event_id: delivery.event_id,
+            run_id: delivery.run_id,
+            sequence: delivery.sequence,
+            cursor: delivery.cursor,
+            idempotency_key: delivery.idempotency_key,
+            failure_policy: delivery.failure_policy,
+            attempt_history: (1..=delivery.attempt).collect(),
+            last_error: delivery.last_error,
+            dead_lettered_at_unix_ms,
+            redrive_count: delivery.redrive_count,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -214,7 +261,13 @@ pub enum CallbackDeliveryResponse {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CallbackDeliveryError {
-    EmptyField { field: String },
+    EmptyField {
+        field: String,
+    },
+    InvalidDeliveryStatus {
+        delivery_id: String,
+        status: CallbackDeliveryStatus,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -261,6 +314,9 @@ impl CallbackDeliveryScheduler {
             delivered_at_unix_ms: None,
             acknowledged_at_unix_ms: None,
             last_error: None,
+            redrive_count: 0,
+            last_redrive_operator: None,
+            last_redrive_reason: None,
         })
     }
 
@@ -311,6 +367,47 @@ impl CallbackDeliveryScheduler {
             }
         }
         delivery
+    }
+
+    pub fn redrive_dead_letter(
+        &self,
+        dead_letter: &CallbackDeadLetter,
+        operator: impl Into<String>,
+        reason: impl Into<String>,
+        _redriven_at_unix_ms: u64,
+    ) -> Result<CallbackDelivery, CallbackDeliveryError> {
+        let operator = operator.into();
+        if operator.trim().is_empty() {
+            return Err(CallbackDeliveryError::EmptyField {
+                field: "operator".to_owned(),
+            });
+        }
+        let reason = reason.into();
+        if reason.trim().is_empty() {
+            return Err(CallbackDeliveryError::EmptyField {
+                field: "reason".to_owned(),
+            });
+        }
+
+        Ok(CallbackDelivery {
+            delivery_id: dead_letter.original_delivery_id.clone(),
+            subscription_id: dead_letter.subscription_id.clone(),
+            event_id: dead_letter.event_id.clone(),
+            run_id: dead_letter.run_id.clone(),
+            sequence: dead_letter.sequence,
+            cursor: dead_letter.cursor.clone(),
+            attempt: dead_letter.attempt_history.last().copied().unwrap_or(0) + 1,
+            idempotency_key: dead_letter.idempotency_key.clone(),
+            failure_policy: dead_letter.failure_policy,
+            status: CallbackDeliveryStatus::Pending,
+            next_retry_at_unix_ms: None,
+            delivered_at_unix_ms: None,
+            acknowledged_at_unix_ms: None,
+            last_error: dead_letter.last_error.clone(),
+            redrive_count: dead_letter.redrive_count + 1,
+            last_redrive_operator: Some(operator),
+            last_redrive_reason: Some(reason),
+        })
     }
 
     fn retry_or_finish(

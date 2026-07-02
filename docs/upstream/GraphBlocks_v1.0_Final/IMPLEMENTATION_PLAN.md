@@ -233,9 +233,11 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   and a deterministic fuzz-style idempotency sequence.
 - `graphblocks-runtime-core::callback_delivery` now contains callback subscription filtering,
   deterministic delivery records, idempotency keys, success/duplicate acknowledgement handling,
-  bounded retry scheduling, best-effort failure handling, and dead-letter terminal state.
+  bounded retry scheduling, best-effort failure handling, dead-letter terminal state, and redrive
+  records that preserve original delivery identity, event identity, attempt history, operator, and
+  reason.
 - Durable storage, callback authentication adapters, real webhook delivery workers, dead-letter
-  redrive, budget-aware resume, and coordinator failover remain follow-on slices.
+  persistence, budget-aware resume, and coordinator failover remain follow-on slices.
 
 ### Package ownership
 
