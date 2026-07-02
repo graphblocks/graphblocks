@@ -312,6 +312,39 @@ def test_usage_ledger_totals_replace_provisional_with_reconciled_usage() -> None
     assert ledger.totals_for_run("run-1") == [_tokens("23")]
 
 
+def test_usage_ledger_rejects_multiple_reconciliations_for_same_source_record() -> None:
+    ledger = InMemoryUsageLedger()
+    provisional = ledger.append(
+        UsageRecord(
+            record_id="usage-provisional",
+            source="tokenizer_estimated",
+            confidence="estimated",
+            amounts=[_tokens("18")],
+            occurred_at="2026-06-22T00:00:00Z",
+            run_id="run-1",
+            attempt_id="attempt-1",
+            provider_response_id="resp-1",
+        )
+    )
+    first = ledger.reconcile(
+        provisional.record_id,
+        amounts=[_tokens("21")],
+        occurred_at="2026-06-22T00:05:00Z",
+        record_id="usage-reconciled-1",
+    )
+
+    with pytest.raises(UsageRecordConflictError, match="already has a reconciliation"):
+        ledger.reconcile(
+            provisional.record_id,
+            amounts=[_tokens("22")],
+            occurred_at="2026-06-22T00:06:00Z",
+            record_id="usage-reconciled-2",
+        )
+
+    assert ledger.records_for_run("run-1") == [provisional, first]
+    assert ledger.totals_for_run("run-1") == [_tokens("21")]
+
+
 def test_sqlite_usage_ledger_persists_records_across_reopen(tmp_path) -> None:
     path = tmp_path / "usage.sqlite3"
     record = UsageRecord(
@@ -408,6 +441,40 @@ def test_sqlite_usage_ledger_deduplicates_and_reconciles_late_usage() -> None:
     assert reconciled.execution_scope == "turn:turn-1/tool:call-1"
     assert reconciled.metadata == {"tool_call_id": "call-1", "tool_name": "ticket.create"}
     assert ledger.records_for_run("run-1") == [first, reconciled]
+    assert ledger.totals_for_run("run-1") == [_tokens("21")]
+    ledger.close()
+
+
+def test_sqlite_usage_ledger_rejects_multiple_reconciliations_for_same_source_record() -> None:
+    ledger = SQLiteUsageLedger.in_memory()
+    provisional = ledger.append(
+        UsageRecord(
+            record_id="usage-provisional",
+            source="tokenizer_estimated",
+            confidence="estimated",
+            amounts=[_tokens("18")],
+            occurred_at="2026-06-22T00:00:00Z",
+            run_id="run-1",
+            attempt_id="attempt-1",
+            provider_response_id="resp-1",
+        )
+    )
+    first = ledger.reconcile(
+        provisional.record_id,
+        amounts=[_tokens("21")],
+        occurred_at="2026-06-22T00:05:00Z",
+        record_id="usage-reconciled-1",
+    )
+
+    with pytest.raises(UsageRecordConflictError, match="already has a reconciliation"):
+        ledger.reconcile(
+            provisional.record_id,
+            amounts=[_tokens("22")],
+            occurred_at="2026-06-22T00:06:00Z",
+            record_id="usage-reconciled-2",
+        )
+
+    assert ledger.records_for_run("run-1") == [provisional, first]
     assert ledger.totals_for_run("run-1") == [_tokens("21")]
     ledger.close()
 

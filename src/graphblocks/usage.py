@@ -142,6 +142,12 @@ class InMemoryUsageLedger:
             if existing == record:
                 return existing
             raise UsageRecordConflictError(f"usage record {record.record_id!r} already exists")
+        if record.reconciliation_of is not None:
+            existing_reconciliation = self._reconciliation_for(record.reconciliation_of)
+            if existing_reconciliation is not None:
+                raise UsageRecordConflictError(
+                    f"usage record {record.reconciliation_of!r} already has a reconciliation"
+                )
         if record.provider_response_id is not None and record.reconciliation_of is None:
             dedupe_key = (record.provider_response_id, record.attempt_id)
             existing_id = self._provider_dedupe.get(dedupe_key)
@@ -152,6 +158,13 @@ class InMemoryUsageLedger:
         if record.provider_response_id is not None and record.reconciliation_of is None:
             self._provider_dedupe[(record.provider_response_id, record.attempt_id)] = record.record_id
         return record
+
+    def _reconciliation_for(self, source_record_id: str) -> UsageRecord | None:
+        for record_id in self._order:
+            record = self._records[record_id]
+            if record.reconciliation_of == source_record_id:
+                return record
+        return None
 
     def get(self, record_id: str) -> UsageRecord:
         record = self._records.get(record_id)
@@ -253,6 +266,13 @@ class SQLiteUsageLedger:
               AND reconciliation_of IS NULL
             """
         )
+        self._connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS usage_records_single_reconciliation
+            ON usage_records(reconciliation_of)
+            WHERE reconciliation_of IS NOT NULL
+            """
+        )
         self._connection.commit()
 
     @classmethod
@@ -271,6 +291,12 @@ class SQLiteUsageLedger:
             if existing == record:
                 return existing
             raise UsageRecordConflictError(f"usage record {record.record_id!r} already exists")
+        if record.reconciliation_of is not None:
+            existing_reconciliation = self._reconciliation_for(record.reconciliation_of)
+            if existing_reconciliation is not None:
+                raise UsageRecordConflictError(
+                    f"usage record {record.reconciliation_of!r} already has a reconciliation"
+                )
         if record.provider_response_id is not None and record.reconciliation_of is None:
             existing = self._provider_dedupe_record(record.provider_response_id, record.attempt_id)
             if existing is not None:
@@ -390,6 +416,13 @@ class SQLiteUsageLedger:
             metadata=dict(original.metadata),
         )
         return self.append(reconciled)
+
+    def _reconciliation_for(self, source_record_id: str) -> UsageRecord | None:
+        row = self._connection.execute(
+            "SELECT * FROM usage_records WHERE reconciliation_of = ? ORDER BY sequence LIMIT 1",
+            (source_record_id,),
+        ).fetchone()
+        return None if row is None else self._record_from_row(row)
 
     def _provider_dedupe_record(self, provider_response_id: str, attempt_id: str | None) -> UsageRecord | None:
         row = self._connection.execute(
