@@ -78,6 +78,7 @@ def test_server_route_manifest_matches_templated_run_paths() -> None:
     assert default_server_route_manifest().match("POST", "/runs/run-123/pause").endpoint.operation == "pause_run"
     assert default_server_route_manifest().match("POST", "/runs/run-123/resume").endpoint.operation == "resume_run"
     assert default_server_route_manifest().match("POST", "/runs/run-123/expire").endpoint.operation == "expire_run"
+    assert default_server_route_manifest().match("GET", "/runs/run-123/ws").endpoint.operation == "application_stream"
 
     endpoint = default_server_route_manifest().lookup("POST", "/runs/{run_id}/cancel")
     with pytest.raises(ValueError, match="server route path_params must be a mapping"):
@@ -475,6 +476,74 @@ def test_server_app_handles_health_auth_and_run_requests() -> None:
     assert payload["events"][0]["metadata"]["responseId"] == "response-server-1"
     assert graphblocks.GraphBlocksServerApp is GraphBlocksServerApp
     assert "ServerResponse" in graphblocks.__all__
+
+
+def test_server_app_accepted_invoke_returns_replayable_run_handle() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "server-accepted-run"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Accepted {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "ok"}},
+                    "runId": "run-accepted-1",
+                    "responseId": "response-accepted-1",
+                    "releaseId": "release-accepted-1",
+                    "responseMode": "accepted",
+                    "occurredAt": "2026-07-02T00:00:00Z",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == 202
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": True,
+        "runId": "run-accepted-1",
+        "status": "accepted",
+        "eventStream": "/runs/run-accepted-1/events",
+        "websocket": "/runs/run-accepted-1/ws",
+        "cancel": "/runs/run-accepted-1/cancel",
+        "initialCursor": "run-accepted-1:0",
+    }
+
+    attach = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-accepted-1/attach",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"lastCursor": "run-accepted-1:0"}).encode("utf-8"),
+        )
+    )
+
+    attach_payload = json.loads(attach.body.decode("utf-8"))
+    assert attach.status_code == 200
+    assert attach_payload["lastCursor"] == "run-accepted-1:2"
+    assert [event["kind"] for event in attach_payload["events"]] == ["RunStarted", "RunSucceeded"]
+    assert attach_payload["events"][1]["payload"]["outputs"] == {"prompt": "Accepted ok"}
 
 
 def test_server_app_handles_authenticated_cancel_request() -> None:

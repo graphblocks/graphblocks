@@ -374,6 +374,7 @@ def default_server_route_manifest() -> ServerRouteManifest:
             ),
             ServerEndpoint("POST", "/callbacks/{operation_id}", "http", "submit_async_callback", auth_required=True),
             ServerEndpoint("GET", "/runs/{run_id}/events", "sse", "application_events", auth_required=True),
+            ServerEndpoint("GET", "/runs/{run_id}/ws", "websocket", "application_stream", auth_required=True),
             ServerEndpoint("GET", "/runs/{run_id}/stream", "websocket", "application_stream", auth_required=True),
         )
     )
@@ -1433,6 +1434,13 @@ class GraphBlocksServerApp:
                 inputs = payload.get("inputs", {})
                 if not isinstance(inputs, dict):
                     raise ValueError("run request inputs must be a JSON object")
+                response_mode = _validate_non_empty_string(
+                    "run request",
+                    "responseMode",
+                    payload.get("responseMode", payload.get("response_mode", "sync")),
+                )
+                if response_mode not in {"sync", "accepted", "background"}:
+                    raise ValueError("run request responseMode must be one of sync, accepted, or background")
                 run_id = _validate_non_empty_string(
                     "run request",
                     "runId",
@@ -1533,6 +1541,19 @@ class GraphBlocksServerApp:
                     _freeze_json_value("application event stream", "event", event)
                     for event in events
                 )
+                if response_mode in {"accepted", "background"}:
+                    return ServerResponse.json(
+                        202,
+                        {
+                            "ok": True,
+                            "runId": result.run_id,
+                            "status": response_mode,
+                            "eventStream": f"/runs/{result.run_id}/events",
+                            "websocket": f"/runs/{result.run_id}/ws",
+                            "cancel": f"/runs/{result.run_id}/cancel",
+                            "initialCursor": f"{result.run_id}:0",
+                        },
+                    )
                 return ServerResponse.json(
                     200,
                     {
@@ -1772,7 +1793,9 @@ class GraphBlocksServerApp:
 
         replay_after_sequence = 0
         if last_cursor is not None:
-            if last_cursor not in sequence_by_cursor:
+            if last_cursor == f"{run_id}:0":
+                replay_after_sequence = 0
+            elif last_cursor not in sequence_by_cursor:
                 nearest_cursor = f"{run_id}:{min(sequence_by_cursor.values())}" if sequence_by_cursor else None
                 return ServerResponse.json(
                     409,
@@ -1786,7 +1809,8 @@ class GraphBlocksServerApp:
                         "lastSequence": last_sequence,
                     },
                 )
-            replay_after_sequence = sequence_by_cursor[last_cursor]
+            else:
+                replay_after_sequence = sequence_by_cursor[last_cursor]
 
         replayed_events = []
         for event in events:
@@ -1875,7 +1899,9 @@ class GraphBlocksServerApp:
             and not isinstance(sequence, bool)
         }
         if subscription.replay_from_cursor is not None:
-            if subscription.replay_from_cursor not in sequence_by_cursor:
+            if subscription.replay_from_cursor == f"{subscription.run_id}:0":
+                replay_after_sequence = 0
+            elif subscription.replay_from_cursor not in sequence_by_cursor:
                 last_sequence = self._last_event_sequence(events)
                 nearest_cursor = (
                     f"{subscription.run_id}:{min(sequence_by_cursor.values())}" if sequence_by_cursor else None
@@ -1892,7 +1918,8 @@ class GraphBlocksServerApp:
                         "lastSequence": last_sequence,
                     },
                 )
-            replay_after_sequence = sequence_by_cursor[subscription.replay_from_cursor]
+            else:
+                replay_after_sequence = sequence_by_cursor[subscription.replay_from_cursor]
 
         replayed_events: list[dict[str, object]] = []
         for event in events:

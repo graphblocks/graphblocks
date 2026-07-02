@@ -551,6 +551,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   recording run-control projections and reflecting the latest control state in `GetRunStatus`
   while preserving the authoritative event stream. Stored run-control projection records are
   immutable snapshots.
+- `graphblocks-server` `InvokeGraph` now honors `responseMode: accepted` and `background` by
+  returning a durable run handle with event stream, `/ws` websocket, cancel route, and initial
+  cursor while retaining authoritative run events for later attach/replay from that cursor.
 - `graphblocks-server` now exposes framework-neutral
   `POST /callbacks/deliveries/{delivery_id}/redrive` and
   `POST /callbacks/deliveries/{delivery_id}/dead-letter`
