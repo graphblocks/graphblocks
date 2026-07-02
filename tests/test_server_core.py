@@ -1866,6 +1866,8 @@ def test_server_app_acknowledges_subscription_event_without_dropping_events() ->
             "acknowledgedAt": "2026-07-02T00:00:00Z",
         },
     )
+    with pytest.raises(TypeError):
+        app.event_acks("run-ack-1", "sub-ack-1")[0]["cursor"] = "changed"
     assert [event["kind"] for event in json.loads(events.body.decode("utf-8"))["events"]] == [
         "RunStarted",
         "RunSucceeded",

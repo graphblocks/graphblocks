@@ -1886,11 +1886,11 @@ class GraphBlocksServerApp:
         event_id_text = str(metadata.get("eventId", event_id_text or ""))
         sequence = metadata.get("sequence")
         cursor_text = f"{run_id}:{sequence}" if isinstance(sequence, int) and not isinstance(sequence, bool) else cursor_text
-        record: dict[str, object] = {
+        record = _freeze_json_value("event ack record", "record", {
             "eventId": event_id_text,
             "cursor": cursor_text,
             "acknowledgedAt": acknowledged_at,
-        }
+        })
         key = (run_id, subscription_id)
         existing = self._acks_by_subscription.get(key, ())
         if record not in existing:

@@ -388,7 +388,8 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   subscription projections without deleting the authoritative event stream.
 - `graphblocks-server` now exposes the framework-neutral
   `POST /runs/{run_id}/subscriptions/{subscription_id}/ack` `AckEvent` route, recording event
-  acknowledgements by event id or cursor without mutating the authoritative event stream.
+  acknowledgements by event id or cursor without mutating the authoritative event stream. Stored
+  acknowledgement projection records are immutable snapshots.
 - `graphblocks-server` now exposes framework-neutral `POST /callbacks/register` and
   `DELETE /callbacks/{subscription_id}` `RegisterCallback`/`RevokeCallback` routes, storing
   callback delivery registration projections and replaying retained run-scoped matching events
