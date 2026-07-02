@@ -3,6 +3,69 @@ use std::collections::BTreeMap;
 use graphblocks_compiler::canonical::canonical_hash;
 use serde_json::{Value, json};
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PolicyValidationError {
+    EmptyField {
+        owner: &'static str,
+        field: &'static str,
+    },
+    EmptyCollectionItem {
+        owner: &'static str,
+        field: &'static str,
+    },
+    EmptyMappingKey {
+        owner: &'static str,
+        field: &'static str,
+    },
+    EmptyPolicyRuleCollection {
+        field: &'static str,
+    },
+}
+
+fn validate_non_empty_field(
+    owner: &'static str,
+    field: &'static str,
+    value: &str,
+) -> Result<(), PolicyValidationError> {
+    if value.trim().is_empty() {
+        return Err(PolicyValidationError::EmptyField { owner, field });
+    }
+    Ok(())
+}
+
+fn validate_optional_non_empty_field(
+    owner: &'static str,
+    field: &'static str,
+    value: Option<&String>,
+) -> Result<(), PolicyValidationError> {
+    if let Some(value) = value {
+        validate_non_empty_field(owner, field, value)?;
+    }
+    Ok(())
+}
+
+fn validate_string_collection(
+    owner: &'static str,
+    field: &'static str,
+    values: &[String],
+) -> Result<(), PolicyValidationError> {
+    if values.iter().any(|value| value.trim().is_empty()) {
+        return Err(PolicyValidationError::EmptyCollectionItem { owner, field });
+    }
+    Ok(())
+}
+
+fn validate_mapping_keys(
+    owner: &'static str,
+    field: &'static str,
+    values: &BTreeMap<String, Value>,
+) -> Result<(), PolicyValidationError> {
+    if values.keys().any(|key| key.trim().is_empty()) {
+        return Err(PolicyValidationError::EmptyMappingKey { owner, field });
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EnforcementPoint {
     Compile,
@@ -80,6 +143,15 @@ impl PrincipalRef {
         self
     }
 
+    pub fn validate(&self) -> Result<(), PolicyValidationError> {
+        validate_non_empty_field("principal", "principal_id", &self.principal_id)?;
+        validate_optional_non_empty_field("principal", "tenant_id", self.tenant_id.as_ref())?;
+        validate_string_collection("principal", "groups", &self.groups)?;
+        validate_string_collection("principal", "roles", &self.roles)?;
+        validate_mapping_keys("principal", "attributes", &self.attributes)?;
+        Ok(())
+    }
+
     fn digest_value(&self) -> Value {
         json!({
             "principal_id": self.principal_id,
@@ -122,6 +194,14 @@ impl ResourceRef {
     pub fn with_attribute(mut self, key: impl Into<String>, value: Value) -> Self {
         self.attributes.insert(key.into(), value);
         self
+    }
+
+    pub fn validate(&self) -> Result<(), PolicyValidationError> {
+        validate_non_empty_field("resource", "resource_id", &self.resource_id)?;
+        validate_optional_non_empty_field("resource", "resource_kind", self.resource_kind.as_ref())?;
+        validate_optional_non_empty_field("resource", "tenant_id", self.tenant_id.as_ref())?;
+        validate_mapping_keys("resource", "attributes", &self.attributes)?;
+        Ok(())
     }
 
     fn digest_value(&self) -> Value {
@@ -210,6 +290,13 @@ impl PolicyObligation {
         self
     }
 
+    pub fn validate(&self) -> Result<(), PolicyValidationError> {
+        validate_non_empty_field("policy obligation", "obligation_id", &self.obligation_id)?;
+        validate_non_empty_field("policy obligation", "obligation_type", &self.obligation_type)?;
+        validate_mapping_keys("policy obligation", "parameters", &self.parameters)?;
+        Ok(())
+    }
+
     fn digest_value(&self) -> Value {
         json!({
             "obligation_id": self.obligation_id,
@@ -267,6 +354,35 @@ impl PolicyRule {
     pub fn with_priority(mut self, priority: i32) -> Self {
         self.priority = priority;
         self
+    }
+
+    pub fn validate(&self) -> Result<(), PolicyValidationError> {
+        validate_non_empty_field("policy rule", "rule_id", &self.rule_id)?;
+        validate_string_collection("policy rule", "actions", &self.actions)?;
+        if self.actions.is_empty() {
+            return Err(PolicyValidationError::EmptyPolicyRuleCollection {
+                field: "actions",
+            });
+        }
+        validate_string_collection(
+            "policy rule",
+            "resource_selectors",
+            &self.resource_selectors,
+        )?;
+        if self.resource_selectors.is_empty() {
+            return Err(PolicyValidationError::EmptyPolicyRuleCollection {
+                field: "resource_selectors",
+            });
+        }
+        validate_string_collection(
+            "policy rule",
+            "principal_selectors",
+            &self.principal_selectors,
+        )?;
+        for obligation in &self.obligations {
+            obligation.validate()?;
+        }
+        Ok(())
     }
 
     fn digest_value(&self) -> Value {
@@ -351,15 +467,62 @@ impl PolicyBundle {
         self
     }
 
-    pub fn content_digest(&self) -> String {
-        canonical_hash(&json!({
+    pub fn validate(&self) -> Result<(), PolicyValidationError> {
+        validate_non_empty_field("policy bundle", "bundle_id", &self.bundle_id)?;
+        validate_non_empty_field("policy bundle", "version", &self.version)?;
+        validate_non_empty_field("policy bundle", "rule_language", &self.rule_language)?;
+        validate_optional_non_empty_field(
+            "policy bundle",
+            "external_evaluator_ref",
+            self.external_evaluator_ref.as_ref(),
+        )?;
+        validate_optional_non_empty_field(
+            "policy bundle",
+            "signature_ref",
+            self.signature_ref.as_ref(),
+        )?;
+        validate_string_collection(
+            "policy bundle",
+            "obligation_schema_versions",
+            &self.obligation_schema_versions,
+        )?;
+        if self.default_fail_modes.keys().any(|key| key.trim().is_empty()) {
+            return Err(PolicyValidationError::EmptyMappingKey {
+                owner: "policy bundle",
+                field: "default_fail_modes",
+            });
+        }
+        if self
+            .default_fail_modes
+            .values()
+            .any(|value| value.trim().is_empty())
+        {
+            return Err(PolicyValidationError::EmptyCollectionItem {
+                owner: "policy bundle",
+                field: "default_fail_modes",
+            });
+        }
+        for rule in &self.rules {
+            rule.validate()?;
+        }
+        Ok(())
+    }
+
+    pub fn try_content_digest(&self) -> Result<String, PolicyValidationError> {
+        self.validate()?;
+        Ok(canonical_hash(&json!({
             "version": self.version,
             "rule_language": self.rule_language,
             "rules": self.rules.iter().map(PolicyRule::digest_value).collect::<Vec<_>>(),
             "external_evaluator_ref": self.external_evaluator_ref,
             "obligation_schema_versions": self.obligation_schema_versions,
             "default_fail_modes": self.default_fail_modes,
-        }))
+        })))
+    }
+
+    pub fn content_digest(&self) -> String {
+        self.try_content_digest()
+            .expect("policy bundle must be valid before content digest calculation")
     }
 }
 
@@ -649,7 +812,39 @@ impl PolicyRequest {
         self
     }
 
-    pub fn with_input_digest(mut self) -> Self {
+    pub fn validate(&self) -> Result<(), PolicyValidationError> {
+        validate_non_empty_field("policy request", "request_id", &self.request_id)?;
+        validate_non_empty_field("policy request", "action", &self.action)?;
+        validate_non_empty_field("policy request", "occurred_at", &self.occurred_at)?;
+        self.resource.validate()?;
+        if let Some(principal) = &self.principal {
+            principal.validate()?;
+        }
+        if let Some(tenant) = &self.tenant {
+            tenant.validate()?;
+        }
+        validate_optional_non_empty_field("policy request", "release_id", self.release_id.as_ref())?;
+        validate_optional_non_empty_field(
+            "policy request",
+            "deployment_revision_id",
+            self.deployment_revision_id.as_ref(),
+        )?;
+        validate_optional_non_empty_field("policy request", "run_id", self.run_id.as_ref())?;
+        if let Some(atomic_unit) = &self.atomic_unit {
+            atomic_unit.validate()?;
+        }
+        validate_string_collection("policy request", "data_labels", &self.data_labels)?;
+        validate_mapping_keys("policy request", "attributes", &self.attributes)?;
+        validate_optional_non_empty_field(
+            "policy request",
+            "policy_snapshot_id",
+            self.policy_snapshot_id.as_ref(),
+        )?;
+        Ok(())
+    }
+
+    pub fn try_with_input_digest(mut self) -> Result<Self, PolicyValidationError> {
+        self.validate()?;
         let payload = json!({
             "enforcement_point": self.enforcement_point.as_str(),
             "action": self.action,
@@ -666,7 +861,12 @@ impl PolicyRequest {
             "policy_snapshot_id": self.policy_snapshot_id,
         });
         self.input_digest = canonical_hash(&payload);
-        self
+        Ok(self)
+    }
+
+    pub fn with_input_digest(self) -> Self {
+        self.try_with_input_digest()
+            .expect("policy request must be valid before input digest calculation")
     }
 }
 

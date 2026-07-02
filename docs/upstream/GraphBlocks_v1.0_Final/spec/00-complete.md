@@ -8009,6 +8009,9 @@ class PolicyRequest(BaseModel):
 ```
 
 `PolicyRequest.attributes`는 schema-registered allowlist여야 한다. Prompt, 문서 본문, tool result 같은 민감한 payload는 기본적으로 포함하지 않고 digest, `SourceRef`, `ArtifactRef`, classification만 전달한다.
+Policy request canonical hashing MUST validate referenced principal, resource, obligation, rule,
+and request mapping keys and identity fields before producing an input digest. Runtime APIs SHOULD
+offer a fallible digest-construction path for untrusted policy records.
 Builders for `before_tool_or_effect` policy requests MUST validate typed `ToolCall`, `ResolvedTool`,
 `PrincipalRef`, tool-call/resolved-tool identity consistency, and output-policy state mapping inputs
 before constructing or hashing the canonical request.

@@ -1,8 +1,9 @@
 use graphblocks_runtime_core::policy::{
     EnforcementPoint, EntitlementSnapshot, PolicyBundle, PolicyDecision, PolicyEffect,
     PolicyEnforcementRecord, PolicyEnforcementRecordError, PolicyFailMode, PolicyObligation,
-    PolicyProfile, PolicyRequest, PolicyRule, PolicyUnavailableError, PrincipalRef, ResourceRef,
-    RuleEffect, StaticPolicyEvaluator, resolve_policy_snapshot, unavailable_policy_decision,
+    PolicyProfile, PolicyRequest, PolicyRule, PolicyUnavailableError, PolicyValidationError,
+    PrincipalRef, ResourceRef, RuleEffect, StaticPolicyEvaluator, resolve_policy_snapshot,
+    unavailable_policy_decision,
 };
 use serde_json::json;
 
@@ -76,6 +77,101 @@ fn policy_request_digest_includes_atomic_unit_and_policy_snapshot() {
 
     assert_ne!(changed_snapshot.input_digest, request.input_digest);
     assert_ne!(changed_unit.input_digest, request.input_digest);
+}
+
+#[test]
+fn policy_request_rejects_invalid_reference_records_before_hashing() {
+    let blank_principal = PolicyRequest::new(
+        "req-1",
+        EnforcementPoint::BeforeToolOrEffect,
+        "tool.run",
+        ResourceRef::new("tool:search"),
+        "2026-06-23T00:00:00Z",
+    )
+    .with_principal(PrincipalRef::new(" "));
+    let blank_resource_attribute = PolicyRequest::new(
+        "req-2",
+        EnforcementPoint::BeforeToolOrEffect,
+        "tool.run",
+        ResourceRef::new("tool:search").with_attribute(" ", json!("internal")),
+        "2026-06-23T00:00:00Z",
+    );
+    let blank_request_attribute = PolicyRequest::new(
+        "req-3",
+        EnforcementPoint::BeforeToolOrEffect,
+        "tool.run",
+        ResourceRef::new("tool:search"),
+        "2026-06-23T00:00:00Z",
+    )
+    .with_attribute(" ", json!("generating"));
+
+    assert_eq!(
+        blank_principal.try_with_input_digest(),
+        Err(PolicyValidationError::EmptyField {
+            owner: "principal",
+            field: "principal_id",
+        })
+    );
+    assert_eq!(
+        blank_resource_attribute.try_with_input_digest(),
+        Err(PolicyValidationError::EmptyMappingKey {
+            owner: "resource",
+            field: "attributes",
+        })
+    );
+    assert_eq!(
+        blank_request_attribute.try_with_input_digest(),
+        Err(PolicyValidationError::EmptyMappingKey {
+            owner: "policy request",
+            field: "attributes",
+        })
+    );
+}
+
+#[test]
+fn policy_rule_and_obligation_validate_before_digest_participation() {
+    let invalid_rule = PolicyRule::new("rule-1", RuleEffect::Allow, [" "], ["tool"]);
+    let invalid_obligation =
+        PolicyObligation::new("obl-1", "capture_audit").with_parameter(" ", json!("strict"));
+
+    assert_eq!(
+        invalid_rule.validate(),
+        Err(PolicyValidationError::EmptyCollectionItem {
+            owner: "policy rule",
+            field: "actions",
+        })
+    );
+    assert_eq!(
+        invalid_obligation.validate(),
+        Err(PolicyValidationError::EmptyMappingKey {
+            owner: "policy obligation",
+            field: "parameters",
+        })
+    );
+}
+
+#[test]
+fn policy_bundle_rejects_invalid_rules_before_hashing() {
+    let invalid_rule = PolicyRule::new("rule-1", RuleEffect::Allow, ["tool.run"], [" "]);
+    let invalid_fail_mode =
+        PolicyBundle::new("bundle-1", "1.0.0", "graphblocks.declarative@1", [])
+            .with_default_fail_mode("before_tool_or_effect", " ");
+
+    assert_eq!(
+        PolicyBundle::new("bundle-1", "1.0.0", "graphblocks.declarative@1", [invalid_rule])
+            .try_content_digest(),
+        Err(PolicyValidationError::EmptyCollectionItem {
+            owner: "policy rule",
+            field: "resource_selectors",
+        })
+    );
+    assert_eq!(
+        invalid_fail_mode.try_content_digest(),
+        Err(PolicyValidationError::EmptyCollectionItem {
+            owner: "policy bundle",
+            field: "default_fail_modes",
+        })
+    );
 }
 
 #[test]
