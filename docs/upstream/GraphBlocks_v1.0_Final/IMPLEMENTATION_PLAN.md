@@ -354,6 +354,9 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
 - Deployment manifests now include a `CallbackIngressConfig` contract for async callback ingress
   routes, signature and anti-enumeration security, payload/rate limits, stable digests, and `GB6002`
   diagnostics when enabled callback ingress does not require signatures.
+- `graphblocks-kubernetes` now renders callback ingress manifest sets as a Service, Gateway API
+  `HTTPRoute`, and ingress-only `NetworkPolicy`, preserving signature, anti-enumeration, payload,
+  and rate-limit metadata without mutating any live cluster.
 - Server-level HTTP/TLS webhook client integration and multi-process coordinator failover execution
   remain follow-on slices.
 

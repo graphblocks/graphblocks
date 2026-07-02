@@ -616,6 +616,126 @@ def render_target_manifests(
     return KubernetesManifestSet(tuple(documents))
 
 
+def render_callback_ingress_manifests(
+    name: str,
+    callback_ingress: Mapping[str, object],
+    *,
+    service_name: str,
+    service_port: int = 8080,
+    parent_refs: Iterable[Mapping[str, object]] = (),
+    options: KubernetesRenderOptions | None = None,
+    include_network_policy: bool = True,
+) -> KubernetesManifestSet:
+    if not name.strip():
+        raise KubernetesAdapterError("callback ingress name must not be empty")
+    if not service_name.strip():
+        raise KubernetesAdapterError("callback ingress service_name must not be empty")
+    if not 1 <= service_port <= 65535:
+        raise KubernetesAdapterError("callback ingress service_port must be between 1 and 65535")
+    options = options or KubernetesRenderOptions()
+    config = _callback_ingress_contract(callback_ingress)
+    if not config["enabled"]:
+        return KubernetesManifestSet(())
+    security = config["security"]
+    if not security["require_signature"]:
+        raise KubernetesAdapterError("GB6002: enabled callback ingress must require signatures")
+
+    parent_refs = tuple(deepcopy(dict(parent_ref)) for parent_ref in parent_refs)
+    if not parent_refs:
+        raise KubernetesAdapterError("callback ingress HTTPRoute must declare at least one parentRef")
+
+    labels = _callback_ingress_labels(name, options)
+    annotations = _callback_ingress_annotations(config)
+    metadata = _object_metadata(name, options, labels, annotations)
+    service = {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": metadata,
+        "spec": {
+            "type": "ClusterIP",
+            "selector": {
+                "app.kubernetes.io/name": service_name,
+            },
+            "ports": [
+                {
+                    "name": "http",
+                    "port": service_port,
+                    "targetPort": service_port,
+                    "protocol": "TCP",
+                }
+            ],
+        },
+    }
+    route = {
+        "apiVersion": "gateway.networking.k8s.io/v1",
+        "kind": "HTTPRoute",
+        "metadata": deepcopy(metadata),
+        "spec": {
+            "parentRefs": list(parent_refs),
+            "rules": [
+                {
+                    "matches": [
+                        {
+                            "path": {
+                                "type": "PathPrefix",
+                                "value": _callback_route_path_prefix(route["path"]),
+                            }
+                        }
+                    ],
+                    "backendRefs": [
+                        {
+                            "name": name,
+                            "port": service_port,
+                        }
+                    ],
+                    "filters": [
+                        {
+                            "type": "RequestHeaderModifier",
+                            "requestHeaderModifier": {
+                                "set": [
+                                    {
+                                        "name": "GraphBlocks-Callback-Command",
+                                        "value": route["command"],
+                                    }
+                                ]
+                            },
+                        }
+                    ],
+                }
+                for route in config["routes"]
+            ],
+        },
+    }
+    documents = [service, route]
+    if include_network_policy:
+        documents.append(
+            {
+                "apiVersion": "networking.k8s.io/v1",
+                "kind": "NetworkPolicy",
+                "metadata": deepcopy(metadata),
+                "spec": {
+                    "podSelector": {
+                        "matchLabels": {
+                            "app.kubernetes.io/name": service_name,
+                        }
+                    },
+                    "policyTypes": ["Ingress"],
+                    "ingress": [
+                        {
+                            "ports": [
+                                {
+                                    "protocol": "TCP",
+                                    "port": service_port,
+                                }
+                            ]
+                        }
+                    ],
+                },
+            }
+        )
+    return KubernetesManifestSet(tuple(documents))
+
+
 def render_helm_chart(
     chart_name: str,
     manifest_set: KubernetesManifestSet,
@@ -683,6 +803,108 @@ def render_helm_chart(
     return HelmChartPackage(chart_name, tuple(files))
 
 
+def _callback_ingress_contract(callback_ingress: Mapping[str, object]) -> dict[str, object]:
+    if not isinstance(callback_ingress, Mapping):
+        raise KubernetesAdapterError("callback ingress config must be a mapping")
+    raw_enabled = callback_ingress.get("enabled", False)
+    if not isinstance(raw_enabled, bool):
+        raise KubernetesAdapterError("callback ingress enabled must be a boolean")
+    enabled = raw_enabled
+    raw_routes = callback_ingress.get("routes", ())
+    if not isinstance(raw_routes, Iterable) or isinstance(raw_routes, (str, bytes, Mapping)):
+        raise KubernetesAdapterError("callback ingress routes must be a list")
+    routes: list[dict[str, str]] = []
+    for raw_route in raw_routes:
+        if not isinstance(raw_route, Mapping):
+            raise KubernetesAdapterError("callback ingress route must be a mapping")
+        path = raw_route.get("path")
+        command = raw_route.get("command")
+        if not isinstance(path, str) or not path.strip():
+            raise KubernetesAdapterError("callback ingress route path must not be empty")
+        if not isinstance(command, str) or not command.strip():
+            raise KubernetesAdapterError("callback ingress route command must not be empty")
+        routes.append({"path": path, "command": command})
+    if enabled and not any(route["command"] == "SubmitAsyncCallback" for route in routes):
+        raise KubernetesAdapterError("enabled callback ingress requires a SubmitAsyncCallback route")
+
+    raw_security = callback_ingress.get("security", {})
+    if not isinstance(raw_security, Mapping):
+        raise KubernetesAdapterError("callback ingress security must be a mapping")
+    security = {
+        "require_signature": _bool_config(raw_security, "requireSignature", "require_signature", default=True),
+        "anti_enumeration": _bool_config(raw_security, "antiEnumeration", "anti_enumeration", default=True),
+    }
+    raw_limits = callback_ingress.get("limits", {})
+    if not isinstance(raw_limits, Mapping):
+        raise KubernetesAdapterError("callback ingress limits must be a mapping")
+    limits = {
+        "max_payload_bytes": _positive_int_config(
+            raw_limits,
+            "maxPayloadBytes",
+            "max_payload_bytes",
+            default=262_144,
+        ),
+        "max_requests_per_second": _positive_int_config(
+            raw_limits,
+            "maxRequestsPerSecond",
+            "max_requests_per_second",
+            default=100,
+        ),
+    }
+    return {
+        "enabled": enabled,
+        "routes": routes,
+        "security": security,
+        "limits": limits,
+    }
+
+
+def _bool_config(config: Mapping[str, object], camel: str, snake: str, *, default: bool) -> bool:
+    value = config.get(camel, config.get(snake, default))
+    if not isinstance(value, bool):
+        raise KubernetesAdapterError(f"callback ingress {camel} must be a boolean")
+    return value
+
+
+def _positive_int_config(config: Mapping[str, object], camel: str, snake: str, *, default: int) -> int:
+    value = config.get(camel, config.get(snake, default))
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise KubernetesAdapterError(f"callback ingress {camel} must be a positive integer")
+    return value
+
+
+def _callback_ingress_labels(name: str, options: KubernetesRenderOptions) -> dict[str, str]:
+    labels = {
+        **options.labels,
+        "app.kubernetes.io/component": "callback-gateway",
+        "app.kubernetes.io/managed-by": "graphblocks",
+        "app.kubernetes.io/name": name,
+    }
+    return {key: labels[key] for key in sorted(labels)}
+
+
+def _callback_ingress_annotations(config: Mapping[str, object]) -> dict[str, str]:
+    security = config["security"]
+    limits = config["limits"]
+    if not isinstance(security, Mapping) or not isinstance(limits, Mapping):
+        raise KubernetesAdapterError("callback ingress config is malformed")
+    annotations = {
+        "graphblocks.ai/anti-enumeration": str(security["anti_enumeration"]).lower(),
+        "graphblocks.ai/callback-ingress": "true",
+        "graphblocks.ai/max-payload-bytes": str(limits["max_payload_bytes"]),
+        "graphblocks.ai/max-requests-per-second": str(limits["max_requests_per_second"]),
+        "graphblocks.ai/require-signature": str(security["require_signature"]).lower(),
+    }
+    return {key: annotations[key] for key in sorted(annotations)}
+
+
+def _callback_route_path_prefix(path: str) -> str:
+    marker = "{operation_id}"
+    if marker in path:
+        return path.split(marker, 1)[0]
+    return path
+
+
 __all__ = [
     "HelmChartFile",
     "HelmChartPackage",
@@ -696,6 +918,7 @@ __all__ = [
     "KubernetesProtocol",
     "KubernetesRenderOptions",
     "KubernetesSecretEnv",
+    "render_callback_ingress_manifests",
     "render_rollout_manifests",
     "render_helm_chart",
     "render_target_deployment",

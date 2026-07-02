@@ -312,3 +312,132 @@ def test_kubernetes_adapter_renders_helm_chart_package(monkeypatch) -> None:
         "ghcr.io/acme/support-agent@sha256:runtime"
     )
     assert chart.content_digest().startswith("sha256:")
+
+
+def test_kubernetes_adapter_renders_callback_ingress_gateway_manifests(monkeypatch) -> None:
+    graphblocks_kubernetes = _import_kubernetes(monkeypatch)
+    options = graphblocks_kubernetes.KubernetesRenderOptions(
+        namespace="support",
+        labels={"app.kubernetes.io/part-of": "graphblocks"},
+    )
+
+    manifest_set = graphblocks_kubernetes.render_callback_ingress_manifests(
+        "callback-gateway",
+        {
+            "enabled": True,
+            "routes": [
+                {
+                    "path": "/v1/callbacks/{operation_id}",
+                    "command": "SubmitAsyncCallback",
+                }
+            ],
+            "security": {
+                "requireSignature": True,
+                "antiEnumeration": True,
+            },
+            "limits": {
+                "maxPayloadBytes": 262144,
+                "maxRequestsPerSecond": 100,
+            },
+        },
+        service_name="graphblocks-server",
+        service_port=8080,
+        parent_refs=[{"name": "graphblocks-public", "namespace": "gateways"}],
+        options=options,
+    )
+
+    service = manifest_set.by_kind("Service")[0]
+    route = manifest_set.by_kind("HTTPRoute")[0]
+    network_policy = manifest_set.by_kind("NetworkPolicy")[0]
+
+    assert service == {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {
+            "name": "callback-gateway",
+            "namespace": "support",
+            "labels": {
+                "app.kubernetes.io/component": "callback-gateway",
+                "app.kubernetes.io/managed-by": "graphblocks",
+                "app.kubernetes.io/name": "callback-gateway",
+                "app.kubernetes.io/part-of": "graphblocks",
+            },
+            "annotations": {
+                "graphblocks.ai/callback-ingress": "true",
+                "graphblocks.ai/max-payload-bytes": "262144",
+                "graphblocks.ai/max-requests-per-second": "100",
+                "graphblocks.ai/require-signature": "true",
+                "graphblocks.ai/anti-enumeration": "true",
+            },
+        },
+        "spec": {
+            "type": "ClusterIP",
+            "selector": {
+                "app.kubernetes.io/name": "graphblocks-server",
+            },
+            "ports": [
+                {
+                    "name": "http",
+                    "port": 8080,
+                    "targetPort": 8080,
+                    "protocol": "TCP",
+                }
+            ],
+        },
+    }
+    assert route["apiVersion"] == "gateway.networking.k8s.io/v1"
+    assert route["metadata"]["name"] == "callback-gateway"
+    assert route["spec"]["parentRefs"] == [{"name": "graphblocks-public", "namespace": "gateways"}]
+    assert route["spec"]["rules"] == [
+        {
+            "matches": [
+                {
+                    "path": {
+                        "type": "PathPrefix",
+                        "value": "/v1/callbacks/",
+                    }
+                }
+            ],
+            "backendRefs": [
+                {
+                    "name": "callback-gateway",
+                    "port": 8080,
+                }
+            ],
+            "filters": [
+                {
+                    "type": "RequestHeaderModifier",
+                    "requestHeaderModifier": {
+                        "set": [
+                            {
+                                "name": "GraphBlocks-Callback-Command",
+                                "value": "SubmitAsyncCallback",
+                            }
+                        ]
+                    },
+                }
+            ],
+        }
+    ]
+    assert network_policy["spec"]["policyTypes"] == ["Ingress"]
+    assert network_policy["spec"]["ingress"][0]["ports"] == [{"protocol": "TCP", "port": 8080}]
+    assert manifest_set.content_digest().startswith("sha256:")
+
+
+def test_kubernetes_callback_ingress_renderer_rejects_unsigned_enabled_ingress(monkeypatch) -> None:
+    graphblocks_kubernetes = _import_kubernetes(monkeypatch)
+
+    try:
+        graphblocks_kubernetes.render_callback_ingress_manifests(
+            "callback-gateway",
+            {
+                "enabled": True,
+                "routes": [{"path": "/v1/callbacks/{operation_id}", "command": "SubmitAsyncCallback"}],
+                "security": {"requireSignature": False},
+            },
+            service_name="graphblocks-server",
+        )
+    except graphblocks_kubernetes.KubernetesAdapterError as error:
+        assert "GB6002" in str(error)
+    else:
+        raise AssertionError("unsigned enabled callback ingress must be rejected")
