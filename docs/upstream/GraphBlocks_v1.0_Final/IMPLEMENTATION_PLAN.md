@@ -587,6 +587,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - `graphblocks-callbacks` now includes an in-memory receiver replay guard that records callback
   delivery/idempotency identity, accepts first deliveries, treats exact repeats as duplicates, and
   flags mutated idempotency-key reuse as a conflict.
+- `graphblocks-callbacks` now projects durable `ExternalCallbackReceived` receipt metadata from a
+  verified callback envelope and bounded/artifact-backed payload projection, preserving callback,
+  run, operation, node, attempt, idempotency, payload digest, verifier, and policy snapshot identity
+  for journal-before-resume flows without making callback delivery the source of truth.
 - `graphblocks-server` now exposes framework-neutral
   `POST /callbacks/deliveries/{delivery_id}/redrive` and
   `POST /callbacks/deliveries/{delivery_id}/dead-letter`

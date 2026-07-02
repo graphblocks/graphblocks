@@ -699,6 +699,84 @@ class CallbackEnvelope:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class ExternalCallbackReceipt:
+    callback_id: str
+    operation_id: str
+    run_id: str
+    node_id: str
+    attempt_id: str
+    provider_operation_id: str | None
+    idempotency_key: str
+    payload_projection: CallbackPayloadProjection
+    payload_digest: str
+    received_at: str
+    verified_by: str
+    policy_snapshot_id: str
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "callback_id",
+            "operation_id",
+            "run_id",
+            "node_id",
+            "attempt_id",
+            "idempotency_key",
+            "payload_digest",
+            "received_at",
+            "verified_by",
+            "policy_snapshot_id",
+        ):
+            _require_non_empty_string(field_name, getattr(self, field_name))
+        if self.provider_operation_id is not None:
+            _require_non_empty_string("provider_operation_id", self.provider_operation_id)
+        if not isinstance(self.payload_projection, CallbackPayloadProjection):
+            raise ValueError("payload_projection must be a CallbackPayloadProjection")
+        if self.payload_projection.payload_digest != self.payload_digest:
+            raise ValueError("payload_digest must match the payload projection")
+
+
+def record_external_callback_receipt(
+    envelope: CallbackEnvelope,
+    payload_projection: CallbackPayloadProjection,
+    *,
+    operation_id: str,
+    node_id: str,
+    attempt_id: str,
+    verified_by: str,
+    policy_snapshot_id: str,
+    received_at: str,
+    callback_id: str | None = None,
+    provider_operation_id: str | None = None,
+    idempotency_key: str | None = None,
+) -> ExternalCallbackReceipt:
+    if not isinstance(envelope, CallbackEnvelope):
+        raise ValueError("envelope must be a CallbackEnvelope")
+    if not isinstance(payload_projection, CallbackPayloadProjection):
+        raise ValueError("payload_projection must be a CallbackPayloadProjection")
+    expected_payload_digest = canonical_hash(envelope.payload)
+    if payload_projection.payload_digest != expected_payload_digest:
+        raise ValueError("payload_projection must match the envelope payload")
+    callback_id = envelope.delivery_id if callback_id is None else callback_id
+    idempotency_key = envelope.idempotency_key if idempotency_key is None else idempotency_key
+    if idempotency_key != envelope.idempotency_key:
+        raise ValueError("idempotency_key must match the envelope")
+    return ExternalCallbackReceipt(
+        callback_id=callback_id,
+        operation_id=operation_id,
+        run_id=envelope.run_id,
+        node_id=node_id,
+        attempt_id=attempt_id,
+        provider_operation_id=provider_operation_id,
+        idempotency_key=idempotency_key,
+        payload_projection=payload_projection,
+        payload_digest=payload_projection.payload_digest or "",
+        received_at=received_at,
+        verified_by=verified_by,
+        policy_snapshot_id=policy_snapshot_id,
+    )
+
+
 def sign_webhook_hmac_sha256(envelope: CallbackEnvelope, secret: bytes, *, timestamp: str | None = None) -> str:
     if not isinstance(secret, bytes) or not secret:
         raise ValueError("secret must be non-empty bytes")
@@ -827,11 +905,13 @@ __all__ = [
     "CallbackReplayGuard",
     "CallbackReplayRecord",
     "CallbackRetryPolicy",
+    "ExternalCallbackReceipt",
     "REQUIRED_WEBHOOK_HEADERS",
     "WebhookTargetSafety",
     "WebhookResponseDecision",
     "classify_webhook_response",
     "project_callback_payload",
+    "record_external_callback_receipt",
     "sign_webhook_hmac_sha256",
     "validate_webhook_target_url",
     "verify_webhook_headers_hmac_sha256",

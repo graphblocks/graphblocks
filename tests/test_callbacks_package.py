@@ -22,10 +22,12 @@ from graphblocks_callbacks import (  # noqa: E402
     CallbackPayloadProjection,
     CallbackReplayGuard,
     CallbackRetryPolicy,
+    ExternalCallbackReceipt,
     REQUIRED_WEBHOOK_HEADERS,
     WebhookTargetSafety,
     classify_webhook_response,
     project_callback_payload,
+    record_external_callback_receipt,
     validate_webhook_target_url,
     verify_webhook_headers_hmac_sha256,
     verify_webhook_headers_hmac_sha256_keyring,
@@ -575,3 +577,120 @@ def test_callback_replay_guard_rejects_mutated_idempotency_replay() -> None:
     assert conflict.conflict is True
     assert conflict.replay_record == accepted.replay_record
     assert conflict.incoming_digest != accepted.replay_record.envelope_digest
+
+
+def test_external_callback_receipt_projects_verified_callback_metadata() -> None:
+    envelope = CallbackEnvelope(
+        delivery_id="cb_001",
+        subscription_id="sub_001",
+        event_id="evt_callback_001",
+        run_id="run_coding_001",
+        sequence=77,
+        cursor="evt_callback_001",
+        type="ExternalCallbackReceived",
+        payload={"status": "completed", "checks": [{"name": "unit", "passed": True}]},
+        idempotency_key="op_ci_001:attempt_001:provider_001",
+        occurred_at="2026-07-02T00:00:00Z",
+        delivered_at="2026-07-02T00:00:01Z",
+        release_id="rel_001",
+        tenant_id="tenant_001",
+    )
+    projection = project_callback_payload(envelope.payload, max_inline_bytes=256)
+
+    receipt = record_external_callback_receipt(
+        envelope,
+        projection,
+        operation_id="op_ci_001",
+        node_id="waitCI",
+        attempt_id="attempt_001",
+        verified_by="hmac-sha256:key-current",
+        policy_snapshot_id="policy_001",
+        received_at="2026-07-02T00:00:02Z",
+        provider_operation_id="gh_123",
+    )
+
+    assert receipt == ExternalCallbackReceipt(
+        callback_id="cb_001",
+        operation_id="op_ci_001",
+        run_id="run_coding_001",
+        node_id="waitCI",
+        attempt_id="attempt_001",
+        provider_operation_id="gh_123",
+        idempotency_key="op_ci_001:attempt_001:provider_001",
+        payload_projection=projection,
+        payload_digest=projection.payload_digest,
+        received_at="2026-07-02T00:00:02Z",
+        verified_by="hmac-sha256:key-current",
+        policy_snapshot_id="policy_001",
+    )
+
+
+def test_external_callback_receipt_accepts_artifact_backed_large_payload() -> None:
+    artifact = ArtifactRef(
+        "artifact-callback-log",
+        "blob://callbacks/run-1/log.txt",
+        media_type="text/plain",
+        size_bytes=4096,
+        checksum="sha256:callback-log",
+    )
+    envelope = CallbackEnvelope(
+        delivery_id="cb_001",
+        subscription_id="sub_001",
+        event_id="evt_callback_001",
+        run_id="run_coding_001",
+        sequence=77,
+        cursor="evt_callback_001",
+        type="ExternalCallbackReceived",
+        payload={"log": "x" * 200},
+        idempotency_key="op_ci_001:attempt_001:provider_001",
+        occurred_at="2026-07-02T00:00:00Z",
+        delivered_at="2026-07-02T00:00:01Z",
+    )
+    projection = project_callback_payload(envelope.payload, max_inline_bytes=64, artifact=artifact)
+
+    receipt = record_external_callback_receipt(
+        envelope,
+        projection,
+        operation_id="op_ci_001",
+        node_id="waitCI",
+        attempt_id="attempt_001",
+        verified_by="hmac-sha256:key-current",
+        policy_snapshot_id="policy_001",
+        received_at="2026-07-02T00:00:02Z",
+    )
+
+    assert receipt.payload_projection.mode == "artifact_reference"
+    assert receipt.payload_projection.artifact == artifact
+    assert receipt.payload_digest == projection.payload_digest
+
+
+def test_external_callback_receipt_rejects_idempotency_key_mismatch() -> None:
+    envelope = CallbackEnvelope(
+        delivery_id="cb_001",
+        subscription_id="sub_001",
+        event_id="evt_callback_001",
+        run_id="run_coding_001",
+        sequence=77,
+        cursor="evt_callback_001",
+        type="ExternalCallbackReceived",
+        payload={"status": "completed"},
+        idempotency_key="op_ci_001:attempt_001:provider_001",
+        occurred_at="2026-07-02T00:00:00Z",
+        delivered_at="2026-07-02T00:00:01Z",
+    )
+    projection = project_callback_payload(envelope.payload, max_inline_bytes=256)
+
+    _assert_raises_value_error(
+        "idempotency_key must match the envelope",
+        lambda: record_external_callback_receipt(
+            envelope,
+            projection,
+            operation_id="op_ci_001",
+            node_id="waitCI",
+            attempt_id="attempt_001",
+            idempotency_key="different",
+            verified_by="hmac-sha256:key-current",
+            policy_snapshot_id="policy_001",
+            received_at="2026-07-02T00:00:02Z",
+        ),
+    )
