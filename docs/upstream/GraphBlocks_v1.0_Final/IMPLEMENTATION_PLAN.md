@@ -841,6 +841,14 @@ sandbox
 
 DuplexSession, transport, VAD authority, interruption classifier, playback ledger, provider realtime adapter를 별도 package에서 구현한다.
 
+### Current implementation slice
+
+- `graphblocks-runtime-core::voice` now includes the core duplex session contract, transport
+  metadata, VAD authority, interruption classifier, playback ledger, realtime session request, and
+  a pure `RealtimeProviderAdapter` projection that binds provider id, endpoint, auth secret ref,
+  defaults, options, and stable provider-session digests without adding a network client to
+  runtime-core.
+
 ### Durable unbounded stream (`GB-X3-DURABLE-STREAM`)
 
 offset, partition, watermark, late data, trigger, checkpoint barrier, idempotent sink commit이 필요한 경우에만 구현한다. 문서 ingestion의 finite per-item checkpoint와 혼동하지 않는다.

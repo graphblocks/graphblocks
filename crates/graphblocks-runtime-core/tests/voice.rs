@@ -3,8 +3,8 @@ use std::error::Error;
 
 use graphblocks_runtime_core::voice::{
     AudioFrame, DuplexSession, InterruptionClassifier, InterruptionKind, PlaybackEntry,
-    PlaybackLedger, PlaybackStatus, RealtimeSessionRequest, VadAuthority, VadDecisionKind,
-    VoiceContractError, VoiceSessionState, VoiceTransport, VoiceTransportKind,
+    PlaybackLedger, PlaybackStatus, RealtimeProviderAdapter, RealtimeSessionRequest, VadAuthority,
+    VadDecisionKind, VoiceContractError, VoiceSessionState, VoiceTransport, VoiceTransportKind,
 };
 
 #[test]
@@ -114,6 +114,101 @@ fn validation_errors_are_explicit() -> Result<(), Box<dyn Error>> {
     ));
     assert!(matches!(
         AudioFrame::new("mic", 1, 0, 20, 1.5),
+        Err(VoiceContractError::Invalid { .. })
+    ));
+    Ok(())
+}
+
+#[test]
+fn realtime_provider_adapter_builds_stable_provider_session_request() -> Result<(), Box<dyn Error>>
+{
+    let transport = VoiceTransport::new(
+        VoiceTransportKind::ProviderRealtime,
+        Some("wss://realtime.example.com/v1/sessions".to_owned()),
+        "pcm16",
+        24_000,
+        1,
+    )?;
+    let session = DuplexSession::new("session-voice-1", transport)?.begin_turn("turn-7")?;
+    let adapter = RealtimeProviderAdapter::new(
+        "openai-realtime",
+        "https://api.example.com/v1/realtime/sessions",
+        "secret://providers/openai",
+    )?
+    .with_default_model("gpt-realtime")
+    .with_default_instructions("Use voice-safe concise answers.")?
+    .with_option("voice", serde_json::json!("alloy"))?
+    .with_option("temperature", serde_json::json!(0.4))?;
+    let request = adapter.build_session_request(
+        session,
+        None,
+        None,
+        ["audio", "text"],
+        ["knowledge.search", "ticket.create"],
+    )?;
+    let envelope = request.provider_envelope();
+
+    assert_eq!(request.adapter_id, "openai-realtime");
+    assert_eq!(request.auth_secret_ref, "secret://providers/openai");
+    assert_eq!(envelope["provider"], "openai-realtime");
+    assert_eq!(envelope["endpoint"], "https://api.example.com/v1/realtime/sessions");
+    assert_eq!(envelope["authSecretRef"], "secret://providers/openai");
+    assert_eq!(envelope["request"]["model"], "gpt-realtime");
+    assert_eq!(
+        envelope["request"]["instructions"],
+        "Use voice-safe concise answers."
+    );
+    assert_eq!(
+        envelope["request"]["modalities"],
+        serde_json::json!(["audio", "text"])
+    );
+    assert_eq!(
+        envelope["request"]["tools"],
+        serde_json::json!(["knowledge.search", "ticket.create"])
+    );
+    assert_eq!(envelope["options"]["voice"], serde_json::json!("alloy"));
+    assert_eq!(
+        request.content_digest(),
+        "sha256:0450d3dc36db2cc56d14189f617d6abc44dbee5ff9aeacbcec8f07bd28ae5d6a"
+    );
+    Ok(())
+}
+
+#[test]
+fn realtime_provider_adapter_validates_identity_and_defaults() -> Result<(), Box<dyn Error>> {
+    assert!(matches!(
+        RealtimeProviderAdapter::new(
+            " ",
+            "https://api.example.com/v1/realtime/sessions",
+            "secret://provider"
+        ),
+        Err(VoiceContractError::Invalid { .. })
+    ));
+    assert!(matches!(
+        RealtimeProviderAdapter::new("provider", " ", "secret://provider"),
+        Err(VoiceContractError::Invalid { .. })
+    ));
+    assert!(matches!(
+        RealtimeProviderAdapter::new(
+            "provider",
+            "https://api.example.com/v1/realtime/sessions",
+            " "
+        ),
+        Err(VoiceContractError::Invalid { .. })
+    ));
+
+    let adapter = RealtimeProviderAdapter::new(
+        "provider",
+        "https://api.example.com/v1/realtime/sessions",
+        "secret://provider",
+    )?;
+    let session = DuplexSession::new(
+        "session-1",
+        VoiceTransport::websocket("wss://voice.example.com/session")?,
+    )?;
+
+    assert!(matches!(
+        adapter.build_session_request(session, None, None, ["audio"], [] as [&str; 0]),
         Err(VoiceContractError::Invalid { .. })
     ));
     Ok(())

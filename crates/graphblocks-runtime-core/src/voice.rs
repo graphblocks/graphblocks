@@ -743,3 +743,166 @@ impl RealtimeSessionRequest {
         })
     }
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RealtimeProviderAdapter {
+    pub adapter_id: String,
+    pub endpoint: String,
+    pub auth_secret_ref: String,
+    pub default_model: Option<String>,
+    pub default_instructions: Option<String>,
+    pub options: BTreeMap<String, Value>,
+}
+
+impl RealtimeProviderAdapter {
+    pub fn new(
+        adapter_id: impl Into<String>,
+        endpoint: impl Into<String>,
+        auth_secret_ref: impl Into<String>,
+    ) -> Result<Self, VoiceContractError> {
+        let adapter = Self {
+            adapter_id: adapter_id.into(),
+            endpoint: endpoint.into(),
+            auth_secret_ref: auth_secret_ref.into(),
+            default_model: None,
+            default_instructions: None,
+            options: BTreeMap::new(),
+        };
+        adapter.validate()?;
+        Ok(adapter)
+    }
+
+    pub fn with_default_model(mut self, model: impl Into<String>) -> Self {
+        self.default_model = Some(model.into());
+        self
+    }
+
+    pub fn with_default_instructions(
+        mut self,
+        instructions: impl Into<String>,
+    ) -> Result<Self, VoiceContractError> {
+        let instructions = instructions.into();
+        require_non_empty("default_instructions", &instructions)?;
+        self.default_instructions = Some(instructions);
+        Ok(self)
+    }
+
+    pub fn with_option(
+        mut self,
+        key: impl Into<String>,
+        value: Value,
+    ) -> Result<Self, VoiceContractError> {
+        let key = key.into();
+        require_non_empty("adapter option", &key)?;
+        self.options.insert(key, value);
+        Ok(self)
+    }
+
+    pub fn build_session_request<I, S, J, T>(
+        &self,
+        session: DuplexSession,
+        model: Option<String>,
+        instructions: Option<String>,
+        modalities: I,
+        tools: J,
+    ) -> Result<RealtimeProviderSessionRequest, VoiceContractError>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+        J: IntoIterator<Item = T>,
+        T: Into<String>,
+    {
+        self.validate()?;
+        let model = model
+            .or_else(|| self.default_model.clone())
+            .ok_or_else(|| VoiceContractError::Invalid {
+                field_name: "model",
+                message: "must be provided by request or adapter default".to_string(),
+            })?;
+        let instructions = instructions
+            .or_else(|| self.default_instructions.clone())
+            .ok_or_else(|| VoiceContractError::Invalid {
+                field_name: "instructions",
+                message: "must be provided by request or adapter default".to_string(),
+            })?;
+        let request = RealtimeSessionRequest::new(session, model, instructions)?
+            .with_modalities(modalities)?
+            .with_tools(tools)?;
+        RealtimeProviderSessionRequest::new(
+            self.adapter_id.clone(),
+            self.endpoint.clone(),
+            self.auth_secret_ref.clone(),
+            request,
+            self.options.clone(),
+        )
+    }
+
+    fn validate(&self) -> Result<(), VoiceContractError> {
+        require_non_empty("adapter_id", &self.adapter_id)?;
+        require_non_empty("endpoint", &self.endpoint)?;
+        require_non_empty("auth_secret_ref", &self.auth_secret_ref)?;
+        if let Some(model) = &self.default_model {
+            require_non_empty("default_model", model)?;
+        }
+        if let Some(instructions) = &self.default_instructions {
+            require_non_empty("default_instructions", instructions)?;
+        }
+        for key in self.options.keys() {
+            require_non_empty("adapter option", key)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RealtimeProviderSessionRequest {
+    pub adapter_id: String,
+    pub endpoint: String,
+    pub auth_secret_ref: String,
+    pub request: RealtimeSessionRequest,
+    pub options: BTreeMap<String, Value>,
+}
+
+impl RealtimeProviderSessionRequest {
+    pub fn new(
+        adapter_id: impl Into<String>,
+        endpoint: impl Into<String>,
+        auth_secret_ref: impl Into<String>,
+        request: RealtimeSessionRequest,
+        options: BTreeMap<String, Value>,
+    ) -> Result<Self, VoiceContractError> {
+        let provider_request = Self {
+            adapter_id: adapter_id.into(),
+            endpoint: endpoint.into(),
+            auth_secret_ref: auth_secret_ref.into(),
+            request,
+            options,
+        };
+        provider_request.validate()?;
+        Ok(provider_request)
+    }
+
+    fn validate(&self) -> Result<(), VoiceContractError> {
+        require_non_empty("adapter_id", &self.adapter_id)?;
+        require_non_empty("endpoint", &self.endpoint)?;
+        require_non_empty("auth_secret_ref", &self.auth_secret_ref)?;
+        for key in self.options.keys() {
+            require_non_empty("adapter option", key)?;
+        }
+        Ok(())
+    }
+
+    pub fn provider_envelope(&self) -> Value {
+        json!({
+            "provider": self.adapter_id,
+            "endpoint": self.endpoint,
+            "authSecretRef": self.auth_secret_ref,
+            "request": self.request.provider_contract(),
+            "options": self.options,
+        })
+    }
+
+    pub fn content_digest(&self) -> String {
+        canonical_hash(&self.provider_envelope())
+    }
+}

@@ -10,6 +10,15 @@ spec:
     durability: checkpointed
   voice:
     pipeline: {kind: realtime}
+    provider:
+      adapterId: openai-realtime
+      endpoint: https://api.example.com/v1/realtime/sessions
+      authSecretRef: secret://providers/openai-realtime
+      defaultModel: gpt-realtime
+      defaultInstructions: Use concise voice-safe answers.
+      options:
+        voice: alloy
+        temperature: 0.4
     turnDetection:
       authority: provider
       mode: semantic
@@ -28,6 +37,13 @@ spec:
     session:
       block: realtime.session@1
       bindings: {provider: realtime-provider}
+      config:
+        transport:
+          kind: provider_realtime
+          uri: wss://realtime.example.com/v1/sessions
+          codec: pcm16
+          sampleRateHz: 24000
+          channels: 1
     tools:
       block: tools.dispatch@1
       inputs: {calls: session.toolCalls}
