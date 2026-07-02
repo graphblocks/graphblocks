@@ -586,8 +586,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   retained matching events from the authoritative event stream after an optional cursor. Replay
   filters honor event type, visibility, node ID, operation ID, minimum severity, and
   `includeTerminalEvents` predicates. Nested event filter and delivery configs are immutable
-  snapshots and are thawed back to plain JSON for response payloads. Subscription and callback
-  registration projections validate the spec failure policy literals before storage.
+  snapshots and are thawed back to plain JSON for response payloads. Run-scoped subscription ids are
+  single-assignment and cannot overwrite an existing active or revoked projection. Subscription and
+  callback registration projections validate the spec failure policy literals before storage.
 - `graphblocks-server` now exposes the framework-neutral
   `DELETE /runs/{run_id}/subscriptions/{subscription_id}` `UnsubscribeEvents` route, revoking
   subscription projections without deleting the authoritative event stream. Revoked subscriptions

@@ -1877,6 +1877,98 @@ def test_server_app_subscribes_to_run_events_with_filtered_replay() -> None:
         app.subscriptions("run-subscribe-1")[0].delivery["options"]["priority"] = "high"  # type: ignore[index]
 
 
+def test_server_app_rejects_duplicate_subscription_id_without_overwrite() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "server-subscribe-duplicate"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Duplicate {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "ok"}},
+                    "runId": "run-subscribe-duplicate-1",
+                    "responseId": "response-subscribe-duplicate-1",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    first = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-subscribe-duplicate-1/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-duplicate-1",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-03T00:00:00Z",
+        )
+    )
+    duplicate = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-subscribe-duplicate-1/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-duplicate-1",
+                    "eventFilter": {"types": ["RunFailed"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "other-ide"},
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-03T00:00:05Z",
+        )
+    )
+
+    assert first.status_code == 201
+    assert duplicate.status_code == 409
+    assert json.loads(duplicate.body.decode("utf-8")) == {
+        "ok": False,
+        "runId": "run-subscribe-duplicate-1",
+        "subscriptionId": "sub-duplicate-1",
+        "state": "active",
+        "error": "subscription 'sub-duplicate-1' already exists for run 'run-subscribe-duplicate-1'",
+    }
+    assert app.subscriptions("run-subscribe-duplicate-1") == (
+        ServerEventSubscription(
+            subscription_id="sub-duplicate-1",
+            run_id="run-subscribe-duplicate-1",
+            event_filter={"types": ["RunSucceeded"]},
+            delivery={"kind": "local_callback", "callback_name": "ide"},
+            status="active",
+            failure_policy="retry_then_dead_letter",
+            created_at="2026-07-03T00:00:00Z",
+        ),
+    )
+
+
 def test_server_app_subscribes_from_accepted_run_initial_cursor() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     graph = {

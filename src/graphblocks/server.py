@@ -1222,6 +1222,20 @@ class GraphBlocksServerApp:
                     request=request,
                     ordinal=len(existing) + 1,
                 )
+                existing_subscription = self._subscription_for(run_id, subscription.subscription_id)
+                if existing_subscription is not None:
+                    return ServerResponse.json(
+                        409,
+                        {
+                            "ok": False,
+                            "runId": run_id,
+                            "subscriptionId": subscription.subscription_id,
+                            "state": existing_subscription.status,
+                            "error": (
+                                f"subscription {subscription.subscription_id!r} already exists for run {run_id!r}"
+                            ),
+                        },
+                    )
                 replay = self._subscription_replay(subscription, events)
                 if isinstance(replay, ServerResponse):
                     return replay
