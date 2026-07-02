@@ -11,6 +11,7 @@ pub mod conversation;
 pub mod deployment;
 pub mod document_parsers;
 pub mod documents;
+pub mod durable_stream;
 pub mod evaluation;
 pub mod exhaustion;
 pub mod ingestion;

@@ -853,6 +853,15 @@ DuplexSession, transport, VAD authority, interruption classifier, playback ledge
 
 offset, partition, watermark, late data, trigger, checkpoint barrier, idempotent sink commit이 필요한 경우에만 구현한다. 문서 ingestion의 finite per-item checkpoint와 혼동하지 않는다.
 
+### Current implementation slice
+
+- `graphblocks-runtime-core::durable_stream` now provides the first durable stream extension
+  primitives: source cursors and replay filtering, event-time watermarks with allowed lateness,
+  checkpoint barriers covering source cursors, operator state, pending effects, sink commits, plan
+  hash and schema versions, delivery guarantee literals, and an idempotent sink commit log that
+  accepts exact replays while rejecting mutated idempotency-key reuse. This remains a contract layer,
+  not a default stream engine dependency.
+
 ## 11. CI/CD와 품질 게이트
 
 모든 PR:
