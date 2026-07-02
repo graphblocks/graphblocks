@@ -7,7 +7,8 @@ use graphblocks_runtime_core::deployment::{
     PlacementRule, PlacementSelector, PromptLock, ReleaseLockRef, RevisionDecision,
     RolloutAnalysisResult, RolloutPlan, RolloutStep, SupplyChainLock, TerraformOutputRequirement,
     TerraformOutputRequirementSet, TerraformOutputValueKind, UpgradePolicy, WorkerAdmissionError,
-    WorkerAdmissionRequirement, WorkerAdvertisement, WorkloadKind,
+    WorkerAdmissionRequirement, WorkerAdvertisement, WorkerDrainPlan, WorkerDrainRoutingDecision,
+    WorkloadKind,
 };
 use serde_json::json;
 
@@ -1062,6 +1063,54 @@ fn upgrade_policy_migrates_compatible_durable_jobs_and_drains_realtime_on_old() 
             revision_id: "rev-old".to_owned(),
         }
     );
+}
+
+#[test]
+fn worker_drain_plan_routes_new_work_to_replacement_and_preserves_affinity() {
+    let plan = WorkerDrainPlan::new("worker-old", "worker-new")
+        .with_affinity("conversation-1", "worker-old")
+        .with_affinity("job-1", "worker-old");
+
+    assert_eq!(
+        plan.route("conversation-2", WorkloadKind::NewRequest),
+        WorkerDrainRoutingDecision::AdmitOnReplacement {
+            worker_id: "worker-new".to_owned(),
+        }
+    );
+    assert_eq!(
+        plan.route("conversation-1", WorkloadKind::Conversation),
+        WorkerDrainRoutingDecision::KeepAffinity {
+            worker_id: "worker-old".to_owned(),
+        }
+    );
+    assert_eq!(
+        plan.route("job-1", WorkloadKind::DurableJob),
+        WorkerDrainRoutingDecision::KeepAffinity {
+            worker_id: "worker-old".to_owned(),
+        }
+    );
+}
+
+#[test]
+fn worker_drain_plan_reports_when_drain_can_complete() {
+    let plan = WorkerDrainPlan::new("worker-old", "worker-new")
+        .with_affinity("conversation-1", "worker-old")
+        .with_affinity("job-1", "worker-old");
+
+    assert!(!plan.can_complete_drain(["conversation-1"]));
+    assert!(plan.can_complete_drain(["conversation-1", "job-1"]));
+    assert_eq!(
+        plan.plan_contract(),
+        json!({
+            "draining_worker_id": "worker-old",
+            "replacement_worker_id": "worker-new",
+            "affinities": [
+                {"affinity_key": "conversation-1", "worker_id": "worker-old"},
+                {"affinity_key": "job-1", "worker_id": "worker-old"}
+            ]
+        })
+    );
+    assert!(plan.content_digest().starts_with("sha256:"));
 }
 
 #[test]

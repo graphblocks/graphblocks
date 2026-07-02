@@ -751,6 +751,9 @@ sandbox
 - `TerraformOutputRequirementSet` now records required infrastructure outputs, produces stable
   requirement digests, and validates Terraform output maps for missing or type-mismatched values
   before they are bound into deployment configuration.
+- `WorkerDrainPlan` now blocks new work from draining workers by routing new admissions to a
+  replacement worker while preserving existing conversation/job affinity on the old worker until
+  those affinities complete.
 
 ## 9. Phase 6 — Adaptive Orchestration and Verified Work (`GB-X1-ORCHESTRATION`)
 

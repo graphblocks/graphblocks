@@ -1650,6 +1650,86 @@ impl UpgradePolicy {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WorkerDrainRoutingDecision {
+    AdmitOnReplacement { worker_id: String },
+    KeepAffinity { worker_id: String },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkerDrainPlan {
+    pub draining_worker_id: String,
+    pub replacement_worker_id: String,
+    pub affinities: BTreeMap<String, String>,
+}
+
+impl WorkerDrainPlan {
+    pub fn new(draining_worker_id: impl Into<String>, replacement_worker_id: impl Into<String>) -> Self {
+        Self {
+            draining_worker_id: draining_worker_id.into(),
+            replacement_worker_id: replacement_worker_id.into(),
+            affinities: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_affinity(
+        mut self,
+        affinity_key: impl Into<String>,
+        worker_id: impl Into<String>,
+    ) -> Self {
+        self.affinities.insert(affinity_key.into(), worker_id.into());
+        self
+    }
+
+    pub fn route(
+        &self,
+        affinity_key: &str,
+        workload_kind: WorkloadKind,
+    ) -> WorkerDrainRoutingDecision {
+        if !matches!(workload_kind, WorkloadKind::NewRequest)
+            && let Some(worker_id) = self.affinities.get(affinity_key)
+        {
+            return WorkerDrainRoutingDecision::KeepAffinity {
+                worker_id: worker_id.clone(),
+            };
+        }
+        WorkerDrainRoutingDecision::AdmitOnReplacement {
+            worker_id: self.replacement_worker_id.clone(),
+        }
+    }
+
+    pub fn can_complete_drain<I, S>(&self, completed_affinities: I) -> bool
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let completed = completed_affinities
+            .into_iter()
+            .map(|affinity| affinity.as_ref().to_owned())
+            .collect::<BTreeSet<_>>();
+        self.affinities
+            .keys()
+            .all(|affinity_key| completed.contains(affinity_key))
+    }
+
+    pub fn plan_contract(&self) -> Value {
+        json!({
+            "draining_worker_id": self.draining_worker_id,
+            "replacement_worker_id": self.replacement_worker_id,
+            "affinities": self.affinities.iter().map(|(affinity_key, worker_id)| {
+                json!({
+                    "affinity_key": affinity_key,
+                    "worker_id": worker_id,
+                })
+            }).collect::<Vec<_>>(),
+        })
+    }
+
+    pub fn content_digest(&self) -> String {
+        canonical_hash(&self.plan_contract())
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub enum ExecutionTargetKind {
     Service,
