@@ -105,6 +105,9 @@ graphblocks-cli
   rejects packages in categories listed by `excludedCategories`, while still allowing those
   integrations when explicitly requested outside the default closure; the doctor reports the same
   excluded-default closure issue as a catalog diagnostic.
+- Package manifest audit now normalizes PEP 508 direct-reference dependencies before applying
+  blocked dependency policy, so `name @ URL` and optional extra direct references cannot bypass the
+  license/vulnerability gate.
 
 ## 4. Phase 1 — Local Rust Runtime (`GB-C1-LOCAL-RUNTIME`)
 

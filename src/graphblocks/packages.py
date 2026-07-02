@@ -40,6 +40,18 @@ def _validate_string_tuple(owner: str, field_name: str, value: object) -> tuple[
     return items
 
 
+def _python_dependency_name(dependency: str) -> str:
+    dependency_name = dependency.strip().split(";", 1)[0].strip()
+    if "@" in dependency_name:
+        dependency_name = dependency_name.split("@", 1)[0].strip()
+    for marker in ("[", "~=", "==", ">=", "<=", "!=", ">", "<"):
+        marker_index = dependency_name.find(marker)
+        if marker_index > 0:
+            dependency_name = dependency_name[:marker_index]
+            break
+    return dependency_name.strip().lower().replace("_", "-")
+
+
 @dataclass(frozen=True, slots=True)
 class PackageLockEntry:
     distribution: str
@@ -724,13 +736,7 @@ def audit_package_manifests(
             for index, dependency in enumerate(dependencies):
                 if not isinstance(dependency, str):
                     continue
-                dependency_name = dependency.strip().split(";", 1)[0].strip()
-                for marker in ("[", "~=", "==", ">=", "<=", "!=", ">", "<"):
-                    marker_index = dependency_name.find(marker)
-                    if marker_index > 0:
-                        dependency_name = dependency_name[:marker_index]
-                        break
-                dependency_name = dependency_name.strip().lower().replace("_", "-")
+                dependency_name = _python_dependency_name(dependency)
                 if dependency_name in blocked_dependencies:
                     diagnostics.append(
                         Diagnostic(
@@ -748,13 +754,7 @@ def audit_package_manifests(
                 for index, dependency in enumerate(dependencies):
                     if not isinstance(dependency, str):
                         continue
-                    dependency_name = dependency.strip().split(";", 1)[0].strip()
-                    for marker in ("[", "~=", "==", ">=", "<=", "!=", ">", "<"):
-                        marker_index = dependency_name.find(marker)
-                        if marker_index > 0:
-                            dependency_name = dependency_name[:marker_index]
-                            break
-                    dependency_name = dependency_name.strip().lower().replace("_", "-")
+                    dependency_name = _python_dependency_name(dependency)
                     if dependency_name in blocked_dependencies:
                         diagnostics.append(
                             Diagnostic(
