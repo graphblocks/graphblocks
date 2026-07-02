@@ -5,6 +5,7 @@ pub mod audit;
 pub mod blob_store;
 pub mod budget;
 pub mod cancellation;
+pub mod callback_delivery;
 pub mod connectors;
 pub mod conversation;
 pub mod deployment;

@@ -231,8 +231,11 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
 - Focused tests include duplicate delivery, invalid callback schema, stale attempt fencing,
   callback-after-timeout/cancellation, concurrent duplicate callback racing, callback/cancel racing,
   and a deterministic fuzz-style idempotency sequence.
-- Durable storage, callback authentication adapters, webhook delivery queues, dead-letter redrive,
-  budget-aware resume, and coordinator failover remain follow-on slices.
+- `graphblocks-runtime-core::callback_delivery` now contains callback subscription filtering,
+  deterministic delivery records, idempotency keys, success/duplicate acknowledgement handling,
+  bounded retry scheduling, best-effort failure handling, and dead-letter terminal state.
+- Durable storage, callback authentication adapters, real webhook delivery workers, dead-letter
+  redrive, budget-aware resume, and coordinator failover remain follow-on slices.
 
 ### Package ownership
 
