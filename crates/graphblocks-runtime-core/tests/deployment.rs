@@ -5,7 +5,8 @@ use graphblocks_runtime_core::deployment::{
     ExecutionTargetKind, GraphRelease, GraphReleaseError, GraphReleaseGraph, ImageRef,
     KnowledgeBinding, PhysicalExecutionPlan, PlacementError, PlacementRule, PlacementSelector,
     PromptLock, ReleaseLockRef, RevisionDecision, RolloutAnalysisResult, RolloutPlan, RolloutStep,
-    SupplyChainLock, UpgradePolicy, WorkloadKind,
+    SupplyChainLock, UpgradePolicy, WorkerAdmissionError, WorkerAdmissionRequirement,
+    WorkerAdvertisement, WorkloadKind,
 };
 use serde_json::json;
 
@@ -478,6 +479,77 @@ fn placement_resolution_rejects_same_priority_conflicts() {
             target_ids: vec!["control".to_owned(), "doc-cpu".to_owned()],
         })
     );
+}
+
+#[test]
+fn worker_admission_rejects_incompatible_protocol_or_package_lock() {
+    let requirement = WorkerAdmissionRequirement::new("sandbox", "worker-protocol/1")
+        .with_package_lock_hash("sha256:package-a")
+        .with_required_capabilities(["code.exec", "tool.sandbox"]);
+    let wrong_protocol = WorkerAdvertisement::new("worker-1", "sandbox", "worker-protocol/2")
+        .with_package_lock_hash("sha256:package-a")
+        .with_capabilities(["code.exec", "tool.sandbox"]);
+    let wrong_package = WorkerAdvertisement::new("worker-2", "sandbox", "worker-protocol/1")
+        .with_package_lock_hash("sha256:package-b")
+        .with_capabilities(["code.exec", "tool.sandbox"]);
+
+    assert_eq!(
+        requirement.admit(&wrong_protocol),
+        Err(WorkerAdmissionError::ProtocolMismatch {
+            worker_id: "worker-1".to_owned(),
+            expected: "worker-protocol/1".to_owned(),
+            actual: "worker-protocol/2".to_owned(),
+        })
+    );
+    assert_eq!(
+        requirement.admit(&wrong_package),
+        Err(WorkerAdmissionError::PackageLockMismatch {
+            worker_id: "worker-2".to_owned(),
+            expected: "sha256:package-a".to_owned(),
+            actual: Some("sha256:package-b".to_owned()),
+        })
+    );
+}
+
+#[test]
+fn worker_admission_rejects_wrong_target_or_missing_capability() {
+    let requirement = WorkerAdmissionRequirement::new("document-cpu", "worker-protocol/1")
+        .with_required_capabilities(["document.parse.pdf", "document.normalize"]);
+    let wrong_target = WorkerAdvertisement::new("worker-1", "sandbox", "worker-protocol/1")
+        .with_capabilities(["document.parse.pdf", "document.normalize"]);
+    let missing_capability =
+        WorkerAdvertisement::new("worker-2", "document-cpu", "worker-protocol/1")
+            .with_capabilities(["document.parse.pdf"]);
+
+    assert_eq!(
+        requirement.admit(&wrong_target),
+        Err(WorkerAdmissionError::TargetMismatch {
+            worker_id: "worker-1".to_owned(),
+            expected: "document-cpu".to_owned(),
+            actual: "sandbox".to_owned(),
+        })
+    );
+    assert_eq!(
+        requirement.admit(&missing_capability),
+        Err(WorkerAdmissionError::MissingCapabilities {
+            worker_id: "worker-2".to_owned(),
+            missing: vec!["document.normalize".to_owned()],
+        })
+    );
+}
+
+#[test]
+fn worker_admission_accepts_matching_worker_advertisement() {
+    let requirement = WorkerAdmissionRequirement::new("rag-cpu", "worker-protocol/1")
+        .with_package_lock_hash("sha256:package")
+        .with_required_capabilities(["rag.context"]);
+    let worker = WorkerAdvertisement::new("worker-1", "rag-cpu", "worker-protocol/1")
+        .with_package_lock_hash("sha256:package")
+        .with_capabilities(["rag.context", "retrieval.local"]);
+
+    requirement
+        .admit(&worker)
+        .expect("compatible worker should be admitted");
 }
 
 #[test]

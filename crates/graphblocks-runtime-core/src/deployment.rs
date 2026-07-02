@@ -1757,6 +1757,178 @@ impl ExecutionTarget {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkerAdvertisement {
+    pub worker_id: String,
+    pub target_id: String,
+    pub protocol_version: String,
+    pub package_lock_hash: Option<String>,
+    pub capabilities: BTreeSet<String>,
+}
+
+impl WorkerAdvertisement {
+    pub fn new(
+        worker_id: impl Into<String>,
+        target_id: impl Into<String>,
+        protocol_version: impl Into<String>,
+    ) -> Self {
+        Self {
+            worker_id: worker_id.into(),
+            target_id: target_id.into(),
+            protocol_version: protocol_version.into(),
+            package_lock_hash: None,
+            capabilities: BTreeSet::new(),
+        }
+    }
+
+    pub fn with_package_lock_hash(mut self, package_lock_hash: impl Into<String>) -> Self {
+        self.package_lock_hash = Some(package_lock_hash.into());
+        self
+    }
+
+    pub fn with_capabilities<I, S>(mut self, capabilities: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.capabilities = capabilities.into_iter().map(Into::into).collect();
+        self
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkerAdmissionRequirement {
+    pub target_id: String,
+    pub protocol_version: String,
+    pub package_lock_hash: Option<String>,
+    pub required_capabilities: BTreeSet<String>,
+}
+
+impl WorkerAdmissionRequirement {
+    pub fn new(target_id: impl Into<String>, protocol_version: impl Into<String>) -> Self {
+        Self {
+            target_id: target_id.into(),
+            protocol_version: protocol_version.into(),
+            package_lock_hash: None,
+            required_capabilities: BTreeSet::new(),
+        }
+    }
+
+    pub fn with_package_lock_hash(mut self, package_lock_hash: impl Into<String>) -> Self {
+        self.package_lock_hash = Some(package_lock_hash.into());
+        self
+    }
+
+    pub fn with_required_capabilities<I, S>(mut self, capabilities: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.required_capabilities = capabilities.into_iter().map(Into::into).collect();
+        self
+    }
+
+    pub fn admit(&self, worker: &WorkerAdvertisement) -> Result<(), WorkerAdmissionError> {
+        if worker.target_id != self.target_id {
+            return Err(WorkerAdmissionError::TargetMismatch {
+                worker_id: worker.worker_id.clone(),
+                expected: self.target_id.clone(),
+                actual: worker.target_id.clone(),
+            });
+        }
+        if worker.protocol_version != self.protocol_version {
+            return Err(WorkerAdmissionError::ProtocolMismatch {
+                worker_id: worker.worker_id.clone(),
+                expected: self.protocol_version.clone(),
+                actual: worker.protocol_version.clone(),
+            });
+        }
+        if let Some(expected_package_lock_hash) = &self.package_lock_hash
+            && worker.package_lock_hash.as_ref() != Some(expected_package_lock_hash)
+        {
+            return Err(WorkerAdmissionError::PackageLockMismatch {
+                worker_id: worker.worker_id.clone(),
+                expected: expected_package_lock_hash.clone(),
+                actual: worker.package_lock_hash.clone(),
+            });
+        }
+        let missing = self
+            .required_capabilities
+            .difference(&worker.capabilities)
+            .cloned()
+            .collect::<Vec<_>>();
+        if !missing.is_empty() {
+            return Err(WorkerAdmissionError::MissingCapabilities {
+                worker_id: worker.worker_id.clone(),
+                missing,
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WorkerAdmissionError {
+    TargetMismatch {
+        worker_id: String,
+        expected: String,
+        actual: String,
+    },
+    ProtocolMismatch {
+        worker_id: String,
+        expected: String,
+        actual: String,
+    },
+    PackageLockMismatch {
+        worker_id: String,
+        expected: String,
+        actual: Option<String>,
+    },
+    MissingCapabilities {
+        worker_id: String,
+        missing: Vec<String>,
+    },
+}
+
+impl fmt::Display for WorkerAdmissionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TargetMismatch {
+                worker_id,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "worker {worker_id:?} advertises target {actual:?}, expected {expected:?}"
+            ),
+            Self::ProtocolMismatch {
+                worker_id,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "worker {worker_id:?} advertises protocol {actual:?}, expected {expected:?}"
+            ),
+            Self::PackageLockMismatch {
+                worker_id,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "worker {worker_id:?} advertises package lock {actual:?}, expected {expected:?}"
+            ),
+            Self::MissingCapabilities { worker_id, missing } => {
+                write!(
+                    formatter,
+                    "worker {worker_id:?} is missing required capabilities {missing:?}"
+                )
+            }
+        }
+    }
+}
+
+impl Error for WorkerAdmissionError {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DeploymentTargetProfileError {
     pub message: String,
 }

@@ -730,6 +730,13 @@ sandbox
 - old release의 conversation/job affinity를 보존하며 drain할 수 있다.
 - signed release와 physical plan hash가 모든 run provenance에 남는다.
 
+### Current implementation slice
+
+- `graphblocks-runtime-core::deployment` now includes a typed worker advertisement/admission
+  contract. `WorkerAdmissionRequirement` rejects live workers whose advertised target,
+  worker-protocol version, package lock hash, or required capabilities do not match the physical
+  execution requirement before remote execution is admitted.
+
 ## 9. Phase 6 — Adaptive Orchestration and Verified Work (`GB-X1-ORCHESTRATION`)
 
 ### 구현
