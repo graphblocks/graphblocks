@@ -600,8 +600,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `POST /runs/{run_id}/pause`, `POST /runs/{run_id}/resume`, and
   `POST /runs/{run_id}/expire` `CancelRun`/`PauseRun`/`ResumeRun`/`ExpireRun` routes,
   recording run-control projections and reflecting the latest control state in `GetRunStatus`
-  while preserving the authoritative event stream. Stored run-control projection records are
-  immutable snapshots.
+  while preserving the authoritative event stream. `CancelRun` projects terminal `cancelled`, and
+  both cancelled and expired controls set `completedAt` in status snapshots. Stored run-control
+  projection records are immutable snapshots.
 - `graphblocks-server` `InvokeGraph` now honors `responseMode: accepted` and `background` by
   returning a durable run handle with event stream, `/ws` websocket, cancel route, and initial
   cursor while retaining authoritative run events for later attach/replay from that cursor.

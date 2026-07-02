@@ -577,14 +577,14 @@ def test_server_app_handles_authenticated_cancel_request() -> None:
     assert json.loads(response.body.decode("utf-8")) == {
         "ok": True,
         "runId": "run-server-1",
-        "status": "cancel_requested",
+        "status": "cancelled",
         "reason": None,
         "lastCursor": "run-server-1:1",
     }
     assert app.run_controls("run-server-1") == (
         {
             "operation": "cancel_run",
-            "status": "cancel_requested",
+            "status": "cancelled",
             "reason": None,
             "occurredAt": "2026-06-24T00:00:03Z",
             "lastCursor": "run-server-1:1",
@@ -600,7 +600,9 @@ def test_server_app_handles_authenticated_cancel_request() -> None:
             requested_at="2026-06-24T00:00:04Z",
         )
     )
-    assert json.loads(status.body.decode("utf-8"))["state"] == "cancel_requested"
+    status_payload = json.loads(status.body.decode("utf-8"))
+    assert status_payload["state"] == "cancelled"
+    assert status_payload["completedAt"] == "2026-06-24T00:00:03Z"
 
 
 def test_server_app_records_run_control_projection_without_mutating_events() -> None:

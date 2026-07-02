@@ -1660,7 +1660,7 @@ class GraphBlocksServerApp:
             control_occurred_at = latest_control.get("occurredAt")
             if isinstance(control_occurred_at, str) and control_occurred_at:
                 updated_at = control_occurred_at
-                if control_status == "expired":
+                if control_status in {"cancelled", "expired"}:
                     completed_at = control_occurred_at
 
         payload: dict[str, object] = {
@@ -1687,7 +1687,7 @@ class GraphBlocksServerApp:
         occurred_at: str,
     ) -> ServerResponse:
         control_states = {
-            "cancel_run": "cancel_requested",
+            "cancel_run": "cancelled",
             "pause_run": "paused_operator",
             "resume_run": "resuming",
             "expire_run": "expired",
