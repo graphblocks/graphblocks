@@ -256,6 +256,8 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   idempotency key (`GB6003`), and missing callback schema (`GB6007`) in deterministic order.
 - Async operation configuration diagnostics now compare declared expected callback payload size to
   the configured ingestion limit and report oversized inline callback payloads as `GB6010`.
+- Async operation configuration diagnostics now report callback waits that can resume without
+  policy, budget, and release-compatibility re-evaluation as `GB6008`.
 - Callback resume admission can now pause after a durable callback receipt when budget policy
   denies continuation; the operation records `CallbackReceived`, emits a pause reason, and returns
   `should_resume = false`.

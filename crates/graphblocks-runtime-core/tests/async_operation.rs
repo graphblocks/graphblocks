@@ -120,6 +120,28 @@ fn async_operation_diagnostics_allow_callback_payload_within_limit() {
 }
 
 #[test]
+fn async_operation_diagnostics_report_resume_without_policy_reevaluation() {
+    let operation = waiting_operation().without_resume_policy_reevaluation();
+
+    let diagnostics = AsyncOperationConfigurationDiagnostic::for_operation(&operation);
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].code, "GB6008");
+    assert_eq!(diagnostics[0].field, "resume_policy_reevaluation");
+    assert!(diagnostics[0].message.contains("op-1"));
+}
+
+#[test]
+fn async_operation_diagnostics_require_resume_policy_reevaluation_by_default() {
+    let operation = waiting_operation();
+
+    assert_eq!(
+        AsyncOperationConfigurationDiagnostic::for_operation(&operation),
+        Vec::new()
+    );
+}
+
+#[test]
 fn external_callback_is_journaled_before_operation_can_resume() {
     let store = AsyncOperationStore::new();
     store

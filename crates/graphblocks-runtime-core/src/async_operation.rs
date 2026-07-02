@@ -67,6 +67,7 @@ pub struct AsyncOperation {
     pub expires_at_unix_ms: Option<u64>,
     pub completed_at_unix_ms: Option<u64>,
     pub expected_callback_payload_bytes: Option<usize>,
+    pub resume_policy_reevaluation: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -130,6 +131,18 @@ impl AsyncOperationConfigurationDiagnostic {
                 ),
             });
         }
+        if operation.state == AsyncOperationState::WaitingCallback
+            && !operation.resume_policy_reevaluation
+        {
+            diagnostics.push(Self {
+                code: "GB6008",
+                field: "resume_policy_reevaluation",
+                message: format!(
+                    "async operation {} can resume from callback without re-evaluating policy, budget, and release compatibility",
+                    operation.operation_id
+                ),
+            });
+        }
         diagnostics
     }
 }
@@ -162,6 +175,7 @@ impl AsyncOperation {
             expires_at_unix_ms: None,
             completed_at_unix_ms: None,
             expected_callback_payload_bytes: None,
+            resume_policy_reevaluation: true,
         }
     }
 
@@ -187,6 +201,11 @@ impl AsyncOperation {
         expected_callback_payload_bytes: usize,
     ) -> Self {
         self.expected_callback_payload_bytes = Some(expected_callback_payload_bytes);
+        self
+    }
+
+    pub fn without_resume_policy_reevaluation(mut self) -> Self {
+        self.resume_policy_reevaluation = false;
         self
     }
 
