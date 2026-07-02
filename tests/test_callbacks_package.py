@@ -22,12 +22,14 @@ from graphblocks_callbacks import (  # noqa: E402
     CallbackEnvelope,
     CallbackDeliveryProjection,
     CallbackPayloadProjection,
+    CallbackResumeDecision,
     CallbackReplayGuard,
     CallbackRetryPolicy,
     ExternalCallbackReceipt,
     REQUIRED_WEBHOOK_HEADERS,
     WebhookTargetSafety,
     classify_webhook_response,
+    evaluate_callback_resume,
     project_callback_payload,
     record_external_callback_receipt,
     validate_webhook_target_url,
@@ -624,6 +626,8 @@ def test_external_callback_receipt_projects_verified_callback_metadata() -> None
         received_at="2026-07-02T00:00:02Z",
         verified_by="hmac-sha256:key-current",
         policy_snapshot_id="policy_001",
+        release_id="rel_001",
+        tenant_id="tenant_001",
     )
 
 
@@ -755,3 +759,148 @@ def test_callback_endpoint_ref_requires_complete_resume_identity() -> None:
             tenant_id="tenant_001",
         ),
     )
+
+
+def test_callback_resume_admission_accepts_current_endpoint_receipt() -> None:
+    endpoint = CallbackEndpointRef(
+        endpoint_id="cbep_ci_001",
+        url="https://graphblocks.example.com/v1/callbacks/op_ci_001",
+        accepted_schema="schemas/CICallback@1",
+        auth=CallbackEndpointAuth(kind="hmac", secret_ref="secret://callbacks/ci"),
+        operation_id="op_ci_001",
+        run_id="run_coding_001",
+        node_id="waitCI",
+        attempt_id="attempt_001",
+        release_id="rel_001",
+        tenant_id="tenant_001",
+        expires_at="2026-07-02T00:30:00Z",
+    )
+    envelope = CallbackEnvelope(
+        delivery_id="cb_001",
+        subscription_id="sub_001",
+        event_id="evt_callback_001",
+        run_id="run_coding_001",
+        sequence=77,
+        cursor="evt_callback_001",
+        type="ExternalCallbackReceived",
+        payload={"status": "completed"},
+        idempotency_key="op_ci_001:attempt_001:provider_001",
+        occurred_at="2026-07-02T00:00:00Z",
+        delivered_at="2026-07-02T00:00:01Z",
+        release_id="rel_001",
+        tenant_id="tenant_001",
+    )
+    receipt = record_external_callback_receipt(
+        envelope,
+        project_callback_payload(envelope.payload, max_inline_bytes=256),
+        operation_id="op_ci_001",
+        node_id="waitCI",
+        attempt_id="attempt_001",
+        verified_by="hmac-sha256:key-current",
+        policy_snapshot_id="policy_001",
+        received_at="2026-07-02T00:00:02Z",
+    )
+
+    assert evaluate_callback_resume(endpoint, receipt, now="2026-07-02T00:00:03Z") == CallbackResumeDecision(
+        status="admitted",
+        can_resume=True,
+        reason="current_callback",
+        endpoint_binding_key="tenant_001:rel_001:run_coding_001:waitCI:attempt_001:op_ci_001",
+        receipt_binding_key="tenant_001:rel_001:run_coding_001:waitCI:attempt_001:op_ci_001",
+    )
+
+
+def test_callback_resume_admission_rejects_expired_endpoint() -> None:
+    endpoint = CallbackEndpointRef(
+        endpoint_id="cbep_ci_001",
+        url="https://graphblocks.example.com/v1/callbacks/op_ci_001",
+        accepted_schema="schemas/CICallback@1",
+        auth=CallbackEndpointAuth(kind="hmac", secret_ref="secret://callbacks/ci"),
+        operation_id="op_ci_001",
+        run_id="run_coding_001",
+        node_id="waitCI",
+        attempt_id="attempt_001",
+        release_id="rel_001",
+        tenant_id="tenant_001",
+        expires_at="2026-07-02T00:30:00Z",
+    )
+    envelope = CallbackEnvelope(
+        delivery_id="cb_001",
+        subscription_id="sub_001",
+        event_id="evt_callback_001",
+        run_id="run_coding_001",
+        sequence=77,
+        cursor="evt_callback_001",
+        type="ExternalCallbackReceived",
+        payload={"status": "completed"},
+        idempotency_key="op_ci_001:attempt_001:provider_001",
+        occurred_at="2026-07-02T00:00:00Z",
+        delivered_at="2026-07-02T00:00:01Z",
+        release_id="rel_001",
+        tenant_id="tenant_001",
+    )
+    receipt = record_external_callback_receipt(
+        envelope,
+        project_callback_payload(envelope.payload, max_inline_bytes=256),
+        operation_id="op_ci_001",
+        node_id="waitCI",
+        attempt_id="attempt_001",
+        verified_by="hmac-sha256:key-current",
+        policy_snapshot_id="policy_001",
+        received_at="2026-07-02T00:00:02Z",
+    )
+
+    decision = evaluate_callback_resume(endpoint, receipt, now="2026-07-02T00:30:01Z")
+
+    assert decision.status == "expired"
+    assert decision.can_resume is False
+    assert decision.reason == "callback_endpoint_expired"
+
+
+def test_callback_resume_admission_rejects_stale_attempt_receipt() -> None:
+    endpoint = CallbackEndpointRef(
+        endpoint_id="cbep_ci_001",
+        url="https://graphblocks.example.com/v1/callbacks/op_ci_001",
+        accepted_schema="schemas/CICallback@1",
+        auth=CallbackEndpointAuth(kind="hmac", secret_ref="secret://callbacks/ci"),
+        operation_id="op_ci_001",
+        run_id="run_coding_001",
+        node_id="waitCI",
+        attempt_id="attempt_002",
+        release_id="rel_001",
+        tenant_id="tenant_001",
+        expires_at="2026-07-02T00:30:00Z",
+    )
+    envelope = CallbackEnvelope(
+        delivery_id="cb_001",
+        subscription_id="sub_001",
+        event_id="evt_callback_001",
+        run_id="run_coding_001",
+        sequence=77,
+        cursor="evt_callback_001",
+        type="ExternalCallbackReceived",
+        payload={"status": "completed"},
+        idempotency_key="op_ci_001:attempt_001:provider_001",
+        occurred_at="2026-07-02T00:00:00Z",
+        delivered_at="2026-07-02T00:00:01Z",
+        release_id="rel_001",
+        tenant_id="tenant_001",
+    )
+    receipt = record_external_callback_receipt(
+        envelope,
+        project_callback_payload(envelope.payload, max_inline_bytes=256),
+        operation_id="op_ci_001",
+        node_id="waitCI",
+        attempt_id="attempt_001",
+        verified_by="hmac-sha256:key-current",
+        policy_snapshot_id="policy_001",
+        received_at="2026-07-02T00:00:02Z",
+    )
+
+    decision = evaluate_callback_resume(endpoint, receipt, now="2026-07-02T00:00:03Z")
+
+    assert decision.status == "stale"
+    assert decision.can_resume is False
+    assert decision.reason == "callback_binding_mismatch"
+    assert "attempt_002" in decision.endpoint_binding_key
+    assert "attempt_001" in decision.receipt_binding_key

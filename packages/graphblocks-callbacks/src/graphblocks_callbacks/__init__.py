@@ -786,6 +786,8 @@ class ExternalCallbackReceipt:
     received_at: str
     verified_by: str
     policy_snapshot_id: str
+    release_id: str = "local"
+    tenant_id: str | None = None
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -799,14 +801,30 @@ class ExternalCallbackReceipt:
             "received_at",
             "verified_by",
             "policy_snapshot_id",
+            "release_id",
         ):
             _require_non_empty_string(field_name, getattr(self, field_name))
+        if self.tenant_id is not None:
+            _require_non_empty_string("tenant_id", self.tenant_id)
         if self.provider_operation_id is not None:
             _require_non_empty_string("provider_operation_id", self.provider_operation_id)
         if not isinstance(self.payload_projection, CallbackPayloadProjection):
             raise ValueError("payload_projection must be a CallbackPayloadProjection")
         if self.payload_projection.payload_digest != self.payload_digest:
             raise ValueError("payload_digest must match the payload projection")
+
+    def binding_key(self) -> str:
+        tenant_id = "" if self.tenant_id is None else self.tenant_id
+        return ":".join(
+            (
+                tenant_id,
+                self.release_id,
+                self.run_id,
+                self.node_id,
+                self.attempt_id,
+                self.operation_id,
+            )
+        )
 
 
 def record_external_callback_receipt(
@@ -847,6 +865,65 @@ def record_external_callback_receipt(
         received_at=received_at,
         verified_by=verified_by,
         policy_snapshot_id=policy_snapshot_id,
+        release_id=envelope.release_id,
+        tenant_id=envelope.tenant_id,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class CallbackResumeDecision:
+    status: str
+    can_resume: bool
+    reason: str
+    endpoint_binding_key: str
+    receipt_binding_key: str
+
+    def __post_init__(self) -> None:
+        _require_non_empty_string("status", self.status)
+        if self.status not in {"admitted", "expired", "stale"}:
+            raise ValueError("status must be admitted, expired, or stale")
+        if not isinstance(self.can_resume, bool):
+            raise ValueError("can_resume must be a boolean")
+        for field_name in ("reason", "endpoint_binding_key", "receipt_binding_key"):
+            _require_non_empty_string(field_name, getattr(self, field_name))
+
+
+def evaluate_callback_resume(
+    endpoint: CallbackEndpointRef,
+    receipt: ExternalCallbackReceipt,
+    *,
+    now: str,
+) -> CallbackResumeDecision:
+    if not isinstance(endpoint, CallbackEndpointRef):
+        raise ValueError("endpoint must be a CallbackEndpointRef")
+    if not isinstance(receipt, ExternalCallbackReceipt):
+        raise ValueError("receipt must be an ExternalCallbackReceipt")
+    _require_non_empty_string("now", now)
+
+    endpoint_binding_key = endpoint.binding_key()
+    receipt_binding_key = receipt.binding_key()
+    if endpoint.expires_at is not None and _parse_utc_timestamp(now) > _parse_utc_timestamp(endpoint.expires_at):
+        return CallbackResumeDecision(
+            status="expired",
+            can_resume=False,
+            reason="callback_endpoint_expired",
+            endpoint_binding_key=endpoint_binding_key,
+            receipt_binding_key=receipt_binding_key,
+        )
+    if endpoint_binding_key != receipt_binding_key:
+        return CallbackResumeDecision(
+            status="stale",
+            can_resume=False,
+            reason="callback_binding_mismatch",
+            endpoint_binding_key=endpoint_binding_key,
+            receipt_binding_key=receipt_binding_key,
+        )
+    return CallbackResumeDecision(
+        status="admitted",
+        can_resume=True,
+        reason="current_callback",
+        endpoint_binding_key=endpoint_binding_key,
+        receipt_binding_key=receipt_binding_key,
     )
 
 
@@ -979,12 +1056,14 @@ __all__ = [
     "CallbackReplayDecision",
     "CallbackReplayGuard",
     "CallbackReplayRecord",
+    "CallbackResumeDecision",
     "CallbackRetryPolicy",
     "ExternalCallbackReceipt",
     "REQUIRED_WEBHOOK_HEADERS",
     "WebhookTargetSafety",
     "WebhookResponseDecision",
     "classify_webhook_response",
+    "evaluate_callback_resume",
     "project_callback_payload",
     "record_external_callback_receipt",
     "sign_webhook_hmac_sha256",
