@@ -1938,19 +1938,19 @@ class GraphBlocksServerApp:
         if existing:
             latest_control = existing[-1]
             current_status = latest_control.get("status")
+            if isinstance(current_status, str) and status == current_status:
+                return ServerResponse.json(
+                    200,
+                    {
+                        "ok": True,
+                        "runId": run_id,
+                        "status": current_status,
+                        "reason": latest_control.get("reason"),
+                        "lastCursor": latest_control.get("lastCursor"),
+                        "duplicate": True,
+                    },
+                )
             if isinstance(current_status, str) and current_status in terminal_control_states:
-                if status == current_status:
-                    return ServerResponse.json(
-                        200,
-                        {
-                            "ok": True,
-                            "runId": run_id,
-                            "status": current_status,
-                            "reason": latest_control.get("reason"),
-                            "lastCursor": latest_control.get("lastCursor"),
-                            "duplicate": True,
-                        },
-                    )
                 return ServerResponse.json(
                     409,
                     {

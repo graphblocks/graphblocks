@@ -917,6 +917,90 @@ def test_server_app_treats_repeated_terminal_control_as_idempotent() -> None:
     assert [control["status"] for control in app.run_controls("run-terminal-idempotent-1")] == ["cancelled"]
 
 
+def test_server_app_treats_repeated_non_terminal_control_as_idempotent() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-non-terminal-idempotent-1"] = (
+        {
+            "kind": "RunStarted",
+            "payload": {"runId": "run-non-terminal-idempotent-1"},
+            "metadata": {
+                "runId": "run-non-terminal-idempotent-1",
+                "sequence": 1,
+                "cursor": "run-non-terminal-idempotent-1:1",
+                "releaseId": "release-non-terminal-idempotent-1",
+                "occurredAt": "2026-07-02T00:00:00Z",
+            },
+        },
+    )
+    pause = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-non-terminal-idempotent-1/pause",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"reason": "operator_hold"}).encode("utf-8"),
+            requested_at="2026-07-02T00:00:01Z",
+        )
+    )
+    duplicate_pause = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-non-terminal-idempotent-1/pause",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"reason": "operator_hold_again"}).encode("utf-8"),
+            requested_at="2026-07-02T00:00:02Z",
+        )
+    )
+    resume = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-non-terminal-idempotent-1/resume",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            requested_at="2026-07-02T00:00:03Z",
+        )
+    )
+    duplicate_resume = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-non-terminal-idempotent-1/resume",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            requested_at="2026-07-02T00:00:04Z",
+        )
+    )
+
+    assert pause.status_code == 202
+    assert duplicate_pause.status_code == 200
+    assert json.loads(duplicate_pause.body.decode("utf-8")) == {
+        "ok": True,
+        "runId": "run-non-terminal-idempotent-1",
+        "status": "paused_operator",
+        "reason": "operator_hold",
+        "lastCursor": "run-non-terminal-idempotent-1:1",
+        "duplicate": True,
+    }
+    assert resume.status_code == 202
+    assert duplicate_resume.status_code == 200
+    assert json.loads(duplicate_resume.body.decode("utf-8")) == {
+        "ok": True,
+        "runId": "run-non-terminal-idempotent-1",
+        "status": "resuming",
+        "reason": None,
+        "lastCursor": "run-non-terminal-idempotent-1:1",
+        "duplicate": True,
+    }
+    assert [control["status"] for control in app.run_controls("run-non-terminal-idempotent-1")] == [
+        "paused_operator",
+        "resuming",
+    ]
+
+
 def test_server_app_accepts_authenticated_async_callback_submission() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
     app._events_by_run_id["run-1"] = (
