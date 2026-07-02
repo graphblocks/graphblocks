@@ -799,6 +799,94 @@ def test_server_app_rejects_run_control_for_missing_stream_or_malformed_reason()
     }
 
 
+def test_server_app_projects_typed_pause_wait_reason() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-pause-kind-1"] = (
+        {
+            "kind": "RunStarted",
+            "payload": {"runId": "run-pause-kind-1"},
+            "metadata": {
+                "runId": "run-pause-kind-1",
+                "sequence": 1,
+                "cursor": "run-pause-kind-1:1",
+                "releaseId": "release-pause-kind-1",
+                "occurredAt": "2026-07-02T00:00:00Z",
+            },
+        },
+    )
+
+    pause = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-pause-kind-1/pause",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"pauseKind": "budget", "reason": "quota_exhausted"}).encode("utf-8"),
+            requested_at="2026-07-02T00:00:01Z",
+        )
+    )
+    status = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-pause-kind-1",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            requested_at="2026-07-02T00:00:02Z",
+        )
+    )
+
+    assert pause.status_code == 202
+    assert json.loads(pause.body.decode("utf-8")) == {
+        "ok": True,
+        "runId": "run-pause-kind-1",
+        "status": "paused_budget",
+        "reason": "quota_exhausted",
+        "lastCursor": "run-pause-kind-1:1",
+    }
+    status_payload = json.loads(status.body.decode("utf-8"))
+    assert status_payload["state"] == "paused_budget"
+    assert status_payload["waitingOn"] == [{"kind": "budget", "reason": "quota_exhausted"}]
+    assert app.run_controls("run-pause-kind-1")[0]["status"] == "paused_budget"
+
+
+def test_server_app_rejects_unknown_pause_kind() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-pause-kind-invalid-1"] = (
+        {
+            "kind": "RunStarted",
+            "payload": {"runId": "run-pause-kind-invalid-1"},
+            "metadata": {
+                "runId": "run-pause-kind-invalid-1",
+                "sequence": 1,
+                "cursor": "run-pause-kind-invalid-1:1",
+                "releaseId": "release-pause-kind-invalid-1",
+                "occurredAt": "2026-07-02T00:00:00Z",
+            },
+        },
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-pause-kind-invalid-1/pause",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"pauseKind": "network"}).encode("utf-8"),
+            requested_at="2026-07-02T00:00:01Z",
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "run control request pauseKind must be one of operator, budget, policy, or callback_delivery",
+    }
+    assert app.run_controls("run-pause-kind-invalid-1") == ()
+
+
 def test_server_app_rejects_non_terminal_control_after_terminal_run_state() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     app._events_by_run_id["run-terminal-control-1"] = (

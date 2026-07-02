@@ -1925,6 +1925,12 @@ class GraphBlocksServerApp:
             "resume_run": "resuming",
             "expire_run": "expired",
         }
+        pause_states = {
+            "operator": "paused_operator",
+            "budget": "paused_budget",
+            "policy": "paused_policy",
+            "callback_delivery": "paused_callback_delivery",
+        }
         terminal_control_states = {
             "completed",
             "succeeded",
@@ -1934,6 +1940,20 @@ class GraphBlocksServerApp:
             "policy_stopped",
         }
         status = control_states[operation]
+        if operation == "pause_run":
+            pause_kind = payload.get("pauseKind", "operator")
+            if not isinstance(pause_kind, str) or pause_kind not in pause_states:
+                return ServerResponse.json(
+                    400,
+                    {
+                        "ok": False,
+                        "error": (
+                            "run control request pauseKind must be one of operator, budget, policy, or "
+                            "callback_delivery"
+                        ),
+                    },
+                )
+            status = pause_states[pause_kind]
         existing = self._run_controls_by_run_id.get(run_id, ())
         if existing:
             latest_control = existing[-1]
