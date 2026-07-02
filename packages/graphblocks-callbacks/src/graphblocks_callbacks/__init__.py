@@ -619,11 +619,15 @@ class CallbackDeadLetterRecord:
     def __post_init__(self) -> None:
         if not isinstance(self.delivery, CallbackDeliveryProjection):
             raise ValueError("delivery must be a CallbackDeliveryProjection")
+        if self.delivery.status != "dead_lettered":
+            raise ValueError("dead-letter record delivery must have dead_lettered status")
         object.__setattr__(
             self,
             "attempt_history",
             tuple(_positive_int("attempt_history item", item) for item in self.attempt_history),
         )
+        if self.delivery.attempt not in self.attempt_history:
+            raise ValueError("dead-letter record attempt_history must include delivery attempt")
         _require_non_empty_string("dead_lettered_at", self.dead_lettered_at)
         _require_non_empty_string("reason", self.reason)
 

@@ -17,6 +17,7 @@ if str(ROOT / "src") not in sys.path:
 
 from graphblocks import ArtifactRef  # noqa: E402
 from graphblocks_callbacks import (  # noqa: E402
+    CallbackDeadLetterRecord,
     CallbackEndpointAuth,
     CallbackEndpointRef,
     CallbackEnvelope,
@@ -438,6 +439,49 @@ def test_callback_dead_letter_redrive_creates_pending_delivery_without_new_event
     assert redriven.delivered_at is None
     assert redriven.acknowledged_at is None
     assert redriven.last_error == "operator redrive"
+
+
+def test_callback_dead_letter_record_rejects_inconsistent_delivery_state() -> None:
+    _assert_raises_value_error(
+        "dead-letter record delivery must have dead_lettered status",
+        lambda: CallbackDeadLetterRecord(
+            delivery=CallbackDeliveryProjection(
+                delivery_id="del_001",
+                subscription_id="sub_001",
+                event_id="evt_1042",
+                run_id="run_coding_001",
+                sequence=1042,
+                cursor="evt_1042",
+                attempt=2,
+                idempotency_key="sub_001:evt_1042",
+                status="failed",
+                last_error="receiver 503",
+            ),
+            attempt_history=(1, 2),
+            dead_lettered_at="2026-07-02T00:00:30Z",
+            reason="retry exhausted",
+        ),
+    )
+    _assert_raises_value_error(
+        "dead-letter record attempt_history must include delivery attempt",
+        lambda: CallbackDeadLetterRecord(
+            delivery=CallbackDeliveryProjection(
+                delivery_id="del_002",
+                subscription_id="sub_001",
+                event_id="evt_1042",
+                run_id="run_coding_001",
+                sequence=1042,
+                cursor="evt_1042",
+                attempt=3,
+                idempotency_key="sub_001:evt_1042:missing-attempt",
+                status="dead_lettered",
+                last_error="receiver 503",
+            ),
+            attempt_history=(1, 2),
+            dead_lettered_at="2026-07-02T00:00:30Z",
+            reason="retry exhausted",
+        ),
+    )
 
 
 def test_callback_delivery_projection_validates_timestamp_fields() -> None:
