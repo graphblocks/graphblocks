@@ -37,6 +37,12 @@ from .agent import (
     VALID_TOOL_FAILURE_POLICIES,
 )
 from .approval import ApprovalRecord, ApprovalRequest, ApprovalStatus, VALID_APPROVAL_STATUSES
+from .async_operation import (
+    AsyncOperationResult,
+    AsyncOperationResultStatus,
+    ExternalEffectRecord,
+    VALID_ASYNC_OPERATION_RESULT_STATUSES,
+)
 from .blob_store import (
     BlobKey,
     BlobListItem,
@@ -655,6 +661,8 @@ __all__ = [
     "ApprovalRequest",
     "ApprovalStatus",
     "ArtifactRef",
+    "AsyncOperationResult",
+    "AsyncOperationResultStatus",
     "AssetRevision",
     "Citation",
     "CitationSourceTrace",
@@ -733,6 +741,7 @@ __all__ = [
     "ExhaustionPolicy",
     "ExhaustionPolicyError",
     "EvidenceRef",
+    "ExternalEffectRecord",
     "ExecutionTarget",
     "ExecutionTargetKind",
     "FINAL_TOOL_RESULT_EVENT_STATUSES",
@@ -991,6 +1000,7 @@ __all__ = [
     "UsageSource",
     "UpgradePolicy",
     "VALID_APPROVAL_STATUSES",
+    "VALID_ASYNC_OPERATION_RESULT_STATUSES",
     "VALID_BUDGET_STATUSES",
     "VALID_COMPLETION_RESERVE_PURPOSES",
     "VALID_COMPLETION_RESERVE_STATUSES",

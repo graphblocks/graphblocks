@@ -382,6 +382,9 @@ nodes:
   even when an async operation result is `cancelled` or `incomplete`; stdlib async terminal blocks
   can project `externalEffects` config into the final result instead of dropping provider effect
   identity.
+- Python `graphblocks-core` now exposes the same authoring/schema facade for
+  `AsyncOperationResult`, `AsyncOperationResultStatus`, and `ExternalEffectRecord`, including
+  validation that provider effect identity is only attached to committed external effects.
 - `graphblocks-runtime-core::stdlib_runtime` now exposes deterministic `async.start_operation@1`
   and `async.await_callback@1` blocks so graph-level examples can start an external operation and
   checkpoint while waiting for callback without treating callback delivery as the source of truth.
