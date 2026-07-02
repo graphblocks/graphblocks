@@ -2068,6 +2068,7 @@ class GraphBlocksServerApp:
         payload: Mapping[str, object],
         requested_at: str,
     ) -> ServerResponse:
+        requested_at = _validate_iso_datetime("callback delivery control request", "requested_at", requested_at)
         delivery_id = _validate_non_empty_string("callback delivery control request", "delivery_id", delivery_id)
         operator = _validate_non_empty_string(
             "callback delivery control request",

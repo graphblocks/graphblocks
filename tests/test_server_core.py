@@ -4746,6 +4746,29 @@ def test_server_app_rejects_malformed_callback_delivery_control_request() -> Non
     assert app.callback_delivery_redrives("del-1") == ()
 
 
+def test_server_app_rejects_callback_delivery_control_with_invalid_timestamp() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("operator-1")}))
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/deliveries/del-invalid-time/redrive",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"operator": "operator-1", "reason": "retry requested"}).encode("utf-8"),
+            requested_at="not-a-date",
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "callback delivery control request requested_at must be an ISO datetime",
+    }
+    assert app.callback_delivery_redrives("del-invalid-time") == ()
+
+
 def test_server_app_reports_missing_run_events() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
 
