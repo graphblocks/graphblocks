@@ -1,10 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::path::Path;
+use std::sync::Mutex;
 
 use crate::application_event::{
     ApplicationProtocolEvent, ApplicationProtocolEventKind, ApplicationProtocolLog,
 };
 use hmac::{Hmac, Mac};
+use rusqlite::{Connection, params};
 use serde_json::{Value, json};
 use sha2::Sha256;
 
@@ -389,6 +392,128 @@ pub enum CallbackDeliveryError {
         delivery_id: String,
         status: CallbackDeliveryStatus,
     },
+    DeadLetterNotFound {
+        original_delivery_id: String,
+    },
+    Storage {
+        message: String,
+    },
+}
+
+#[derive(Debug)]
+pub struct SqliteCallbackDeadLetterStore {
+    connection: Mutex<Connection>,
+}
+
+impl SqliteCallbackDeadLetterStore {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, CallbackDeliveryError> {
+        let connection = Connection::open(path).map_err(callback_storage_error)?;
+        let store = Self {
+            connection: Mutex::new(connection),
+        };
+        store.initialize()?;
+        Ok(store)
+    }
+
+    pub fn open_in_memory() -> Result<Self, CallbackDeliveryError> {
+        let connection = Connection::open_in_memory().map_err(callback_storage_error)?;
+        let store = Self {
+            connection: Mutex::new(connection),
+        };
+        store.initialize()?;
+        Ok(store)
+    }
+
+    fn initialize(&self) -> Result<(), CallbackDeliveryError> {
+        let connection = self
+            .connection
+            .lock()
+            .expect("sqlite callback dead-letter store lock poisoned");
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS callback_dead_letters (
+                    original_delivery_id TEXT PRIMARY KEY,
+                    dead_letter_json TEXT NOT NULL
+                );
+                ",
+            )
+            .map_err(callback_storage_error)?;
+        Ok(())
+    }
+
+    pub fn insert_dead_letter(
+        &self,
+        dead_letter: CallbackDeadLetter,
+    ) -> Result<(), CallbackDeliveryError> {
+        let connection = self
+            .connection
+            .lock()
+            .expect("sqlite callback dead-letter store lock poisoned");
+        connection
+            .execute(
+                "
+                INSERT OR REPLACE INTO callback_dead_letters (
+                    original_delivery_id,
+                    dead_letter_json
+                )
+                VALUES (?, ?)
+                ",
+                params![
+                    &dead_letter.original_delivery_id,
+                    callback_storage_json(&dead_letter_to_value(&dead_letter))?,
+                ],
+            )
+            .map_err(callback_storage_error)?;
+        Ok(())
+    }
+
+    pub fn get_dead_letter(
+        &self,
+        original_delivery_id: &str,
+    ) -> Result<Option<CallbackDeadLetter>, CallbackDeliveryError> {
+        let connection = self
+            .connection
+            .lock()
+            .expect("sqlite callback dead-letter store lock poisoned");
+        let mut statement = connection
+            .prepare(
+                "
+                SELECT dead_letter_json
+                FROM callback_dead_letters
+                WHERE original_delivery_id = ?
+                ",
+            )
+            .map_err(callback_storage_error)?;
+        let mut rows = statement
+            .query(params![original_delivery_id])
+            .map_err(callback_storage_error)?;
+        let Some(row) = rows.next().map_err(callback_storage_error)? else {
+            return Ok(None);
+        };
+        let dead_letter_json = row.get::<_, String>(0).map_err(callback_storage_error)?;
+        dead_letter_from_value(callback_parse_json(&dead_letter_json)?).map(Some)
+    }
+
+    pub fn redrive_dead_letter(
+        &self,
+        scheduler: &CallbackDeliveryScheduler,
+        original_delivery_id: &str,
+        operator: impl Into<String>,
+        reason: impl Into<String>,
+        redriven_at_unix_ms: u64,
+    ) -> Result<CallbackDelivery, CallbackDeliveryError> {
+        let mut dead_letter = self.get_dead_letter(original_delivery_id)?.ok_or_else(|| {
+            CallbackDeliveryError::DeadLetterNotFound {
+                original_delivery_id: original_delivery_id.to_owned(),
+            }
+        })?;
+        let redriven =
+            scheduler.redrive_dead_letter(&dead_letter, operator, reason, redriven_at_unix_ms)?;
+        dead_letter.redrive_count = redriven.redrive_count;
+        self.insert_dead_letter(dead_letter)?;
+        Ok(redriven)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -938,6 +1063,140 @@ fn is_forbidden_ipv6(address: Ipv6Addr) -> bool {
         || address.is_unspecified()
         || matches!(address.segments()[0] & 0xfe00, 0xfc00)
         || matches!(address.segments()[0] & 0xffc0, 0xfe80)
+}
+
+fn dead_letter_to_value(dead_letter: &CallbackDeadLetter) -> Value {
+    json!({
+        "original_delivery_id": dead_letter.original_delivery_id,
+        "subscription_id": dead_letter.subscription_id,
+        "event_id": dead_letter.event_id,
+        "run_id": dead_letter.run_id,
+        "sequence": dead_letter.sequence,
+        "cursor": dead_letter.cursor,
+        "idempotency_key": dead_letter.idempotency_key,
+        "failure_policy": callback_failure_policy_as_str(dead_letter.failure_policy),
+        "attempt_history": dead_letter.attempt_history,
+        "last_error": dead_letter.last_error,
+        "dead_lettered_at_unix_ms": dead_letter.dead_lettered_at_unix_ms,
+        "redrive_count": dead_letter.redrive_count,
+    })
+}
+
+fn dead_letter_from_value(value: Value) -> Result<CallbackDeadLetter, CallbackDeliveryError> {
+    let attempt_history = value
+        .get("attempt_history")
+        .and_then(Value::as_array)
+        .ok_or_else(|| CallbackDeliveryError::Storage {
+            message: "stored callback dead letter has invalid attempt_history".to_owned(),
+        })?
+        .iter()
+        .map(|attempt| {
+            attempt
+                .as_u64()
+                .and_then(|attempt| u32::try_from(attempt).ok())
+                .ok_or_else(|| CallbackDeliveryError::Storage {
+                    message: "stored callback dead letter has invalid attempt".to_owned(),
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(CallbackDeadLetter {
+        original_delivery_id: callback_required_string(&value, "original_delivery_id")?,
+        subscription_id: callback_required_string(&value, "subscription_id")?,
+        event_id: callback_required_string(&value, "event_id")?,
+        run_id: callback_required_string(&value, "run_id")?,
+        sequence: callback_required_u64(&value, "sequence")?,
+        cursor: callback_required_string(&value, "cursor")?,
+        idempotency_key: callback_required_string(&value, "idempotency_key")?,
+        failure_policy: callback_failure_policy_from_str(&callback_required_string(
+            &value,
+            "failure_policy",
+        )?)?,
+        attempt_history,
+        last_error: callback_optional_string(&value, "last_error")?,
+        dead_lettered_at_unix_ms: callback_required_u64(&value, "dead_lettered_at_unix_ms")?,
+        redrive_count: callback_required_u64(&value, "redrive_count")?
+            .try_into()
+            .map_err(|_| CallbackDeliveryError::Storage {
+                message: "stored callback dead letter has oversized redrive_count".to_owned(),
+            })?,
+    })
+}
+
+fn callback_failure_policy_as_str(failure_policy: CallbackFailurePolicy) -> &'static str {
+    match failure_policy {
+        CallbackFailurePolicy::BestEffort => "best_effort",
+        CallbackFailurePolicy::RetryThenDeadLetter => "retry_then_dead_letter",
+        CallbackFailurePolicy::PauseRunOnFailure => "pause_run_on_failure",
+        CallbackFailurePolicy::FailRunOnFailure => "fail_run_on_failure",
+    }
+}
+
+fn callback_failure_policy_from_str(
+    failure_policy: &str,
+) -> Result<CallbackFailurePolicy, CallbackDeliveryError> {
+    match failure_policy {
+        "best_effort" => Ok(CallbackFailurePolicy::BestEffort),
+        "retry_then_dead_letter" => Ok(CallbackFailurePolicy::RetryThenDeadLetter),
+        "pause_run_on_failure" => Ok(CallbackFailurePolicy::PauseRunOnFailure),
+        "fail_run_on_failure" => Ok(CallbackFailurePolicy::FailRunOnFailure),
+        _ => Err(CallbackDeliveryError::Storage {
+            message: format!("unknown callback failure policy {failure_policy}"),
+        }),
+    }
+}
+
+fn callback_required_string(
+    value: &Value,
+    field: &'static str,
+) -> Result<String, CallbackDeliveryError> {
+    value
+        .get(field)
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| CallbackDeliveryError::Storage {
+            message: format!("stored callback dead letter has invalid {field}"),
+        })
+}
+
+fn callback_optional_string(
+    value: &Value,
+    field: &'static str,
+) -> Result<Option<String>, CallbackDeliveryError> {
+    match value.get(field) {
+        Some(Value::Null) | None => Ok(None),
+        Some(Value::String(value)) => Ok(Some(value.clone())),
+        _ => Err(CallbackDeliveryError::Storage {
+            message: format!("stored callback dead letter has invalid {field}"),
+        }),
+    }
+}
+
+fn callback_required_u64(value: &Value, field: &'static str) -> Result<u64, CallbackDeliveryError> {
+    value
+        .get(field)
+        .and_then(Value::as_u64)
+        .ok_or_else(|| CallbackDeliveryError::Storage {
+            message: format!("stored callback dead letter has invalid {field}"),
+        })
+}
+
+fn callback_storage_json(value: &Value) -> Result<String, CallbackDeliveryError> {
+    serde_json::to_string(value).map_err(|error| CallbackDeliveryError::Storage {
+        message: error.to_string(),
+    })
+}
+
+fn callback_parse_json(value: &str) -> Result<Value, CallbackDeliveryError> {
+    serde_json::from_str(value).map_err(|error| CallbackDeliveryError::Storage {
+        message: error.to_string(),
+    })
+}
+
+fn callback_storage_error(error: rusqlite::Error) -> CallbackDeliveryError {
+    CallbackDeliveryError::Storage {
+        message: error.to_string(),
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

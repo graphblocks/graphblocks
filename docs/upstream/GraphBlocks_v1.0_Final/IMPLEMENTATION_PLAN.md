@@ -275,6 +275,9 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   bounded retry scheduling, best-effort failure handling, dead-letter terminal state, and redrive
   records that preserve original delivery identity, event identity, attempt history, operator, and
   reason.
+- `SqliteCallbackDeadLetterStore` now persists callback dead-letter records across reopen and can
+  redrive them while preserving original delivery identity, idempotency key, attempt history, and
+  audit-visible redrive count.
 - Mandatory callback failure policies now map terminal delivery failures to explicit runtime
   actions: pause the run for `pause_run_on_failure`, fail the run for `fail_run_on_failure`, and
   avoid run terminal actions for ordinary retry/dead-letter subscriptions.
@@ -306,9 +309,9 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
 - Webhook delivery targets now enforce the specification's default `262144` byte payload limit
   before signing delivery envelopes, and tests cover explicit small-limit rejection for oversized
   callback projections.
-- Ed25519/mTLS/OIDC callback authentication adapters, real webhook delivery workers, callback
-  delivery/dead-letter persistence, DNS-time egress enforcement, and coordinator failover remain
-  follow-on slices.
+- Ed25519/mTLS/OIDC callback authentication adapters, real webhook delivery workers, full callback
+  delivery queue persistence, DNS-time egress enforcement, and coordinator failover remain follow-on
+  slices.
 
 ### Package ownership
 

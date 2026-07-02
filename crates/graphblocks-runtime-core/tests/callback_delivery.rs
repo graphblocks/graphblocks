@@ -6,10 +6,23 @@ use graphblocks_runtime_core::callback_delivery::{
     CallbackAuthoritativeUse, CallbackConfigurationDiagnostic, CallbackDeadLetter,
     CallbackDeliveryResponse, CallbackDeliveryRunAction, CallbackDeliveryScheduler,
     CallbackDeliveryStatus, CallbackFailurePolicy, CallbackRetryPolicy, CallbackSubscription,
-    CallbackSubscriptionStatus, EventFilter, OrderedDeliveryState, WebhookDeliveryTarget,
-    WebhookEgressPolicy, WebhookEndpointError, WebhookSignatureError, WebhookSigningConfig,
+    CallbackSubscriptionStatus, EventFilter, OrderedDeliveryState, SqliteCallbackDeadLetterStore,
+    WebhookDeliveryTarget, WebhookEgressPolicy, WebhookEndpointError, WebhookSignatureError,
+    WebhookSigningConfig,
 };
 use serde_json::json;
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+fn sqlite_callback_dead_letter_path(label: &str) -> PathBuf {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock is after unix epoch")
+        .as_nanos();
+    std::env::temp_dir().join(format!(
+        "graphblocks-callback-dead-letter-{label}-{unique}.sqlite3"
+    ))
+}
 
 fn protocol_event(
     event_id: &str,
@@ -396,6 +409,89 @@ fn redrive_rejects_empty_operator_or_reason() {
             .redrive_dead_letter(&dead_letter, "operator:alice", " ", 2_000)
             .is_err()
     );
+}
+
+#[test]
+fn sqlite_callback_dead_letter_store_persists_dead_letter_across_reopen() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(2, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let retried =
+        scheduler.record_response(delivery, CallbackDeliveryResponse::ServerError(503), 1_000);
+    let dead_lettered =
+        scheduler.record_response(retried, CallbackDeliveryResponse::ServerError(503), 1_100);
+    let dead_letter = CallbackDeadLetter::from_delivery(dead_lettered, 1_101)
+        .expect("dead-letter record is valid");
+    let path = sqlite_callback_dead_letter_path("persist");
+
+    {
+        let store = SqliteCallbackDeadLetterStore::open(&path).expect("store opens");
+        store
+            .insert_dead_letter(dead_letter.clone())
+            .expect("dead letter persists");
+    }
+
+    let store = SqliteCallbackDeadLetterStore::open(&path).expect("store reopens");
+    let loaded = store
+        .get_dead_letter("del_sub-1_event-1")
+        .expect("dead letter loads")
+        .expect("dead letter exists");
+
+    assert_eq!(loaded, dead_letter);
+    assert_eq!(loaded.attempt_history, vec![1, 2]);
+    assert_eq!(loaded.last_error.as_deref(), Some("server_error:503"));
+}
+
+#[test]
+fn sqlite_callback_dead_letter_store_redrives_after_reopen_and_updates_redrive_count() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(1, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let dead_lettered =
+        scheduler.record_response(delivery, CallbackDeliveryResponse::ServerError(503), 1_000);
+    let dead_letter = CallbackDeadLetter::from_delivery(dead_lettered, 1_001)
+        .expect("dead-letter record is valid");
+    let path = sqlite_callback_dead_letter_path("redrive");
+
+    {
+        let store = SqliteCallbackDeadLetterStore::open(&path).expect("store opens");
+        store
+            .insert_dead_letter(dead_letter)
+            .expect("dead letter persists");
+    }
+
+    let store = SqliteCallbackDeadLetterStore::open(&path).expect("store reopens");
+    let redriven = store
+        .redrive_dead_letter(
+            &scheduler,
+            "del_sub-1_event-1",
+            "operator:alice",
+            "receiver recovered",
+            2_000,
+        )
+        .expect("redrive succeeds after reopen");
+    let loaded = store
+        .get_dead_letter("del_sub-1_event-1")
+        .expect("dead letter loads")
+        .expect("dead letter remains for audit");
+
+    assert_eq!(redriven.delivery_id, "del_sub-1_event-1");
+    assert_eq!(redriven.idempotency_key, "sub-1:event-1");
+    assert_eq!(redriven.attempt, 2);
+    assert_eq!(redriven.redrive_count, 1);
+    assert_eq!(loaded.redrive_count, 1);
 }
 
 #[test]
