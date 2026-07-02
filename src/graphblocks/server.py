@@ -2175,11 +2175,22 @@ class GraphBlocksServerApp:
         })
         key = (run_id, subscription_id)
         existing = self._acks_by_subscription.get(key, ())
-        if not any(
-            ack.get("eventId") == event_id_text and ack.get("cursor") == cursor_text
-            for ack in existing
-        ):
-            self._acks_by_subscription[key] = (*existing, record)
+        for ack in existing:
+            if ack.get("eventId") == event_id_text and ack.get("cursor") == cursor_text:
+                return ServerResponse.json(
+                    200,
+                    {
+                        "ok": True,
+                        "runId": run_id,
+                        "subscriptionId": subscription_id,
+                        "eventId": event_id_text,
+                        "cursor": cursor_text,
+                        "status": "duplicate",
+                        "duplicate": True,
+                        "acknowledgedAt": ack.get("acknowledgedAt"),
+                    },
+                )
+        self._acks_by_subscription[key] = (*existing, record)
         return ServerResponse.json(
             202,
             {

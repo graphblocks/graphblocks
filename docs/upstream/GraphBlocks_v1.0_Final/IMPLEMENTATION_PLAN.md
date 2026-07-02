@@ -595,7 +595,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `POST /runs/{run_id}/subscriptions/{subscription_id}/ack` `AckEvent` route, recording event
   acknowledgements by event id or cursor without mutating the authoritative event stream. Stored
   acknowledgement projection records are immutable snapshots, and repeated acknowledgements for the
-  same event/cursor are idempotent.
+  same event/cursor return an explicit duplicate acknowledgement with the first acknowledgement
+  timestamp.
 - `graphblocks-server` now exposes framework-neutral `POST /callbacks/register` and
   `DELETE /callbacks/{subscription_id}` `RegisterCallback`/`RevokeCallback` routes, storing
   callback delivery registration projections and replaying retained run-scoped matching events

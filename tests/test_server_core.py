@@ -2537,7 +2537,17 @@ def test_server_app_deduplicates_repeated_subscription_ack_by_event_identity() -
     )
 
     assert first.status_code == 202
-    assert duplicate.status_code == 202
+    assert duplicate.status_code == 200
+    assert json.loads(duplicate.body.decode("utf-8")) == {
+        "ok": True,
+        "runId": "run-ack-idempotent-1",
+        "subscriptionId": "sub-ack-idempotent-1",
+        "eventId": "run-ack-idempotent-1:run-terminal",
+        "cursor": "run-ack-idempotent-1:2",
+        "status": "duplicate",
+        "duplicate": True,
+        "acknowledgedAt": "2026-07-02T00:00:00Z",
+    }
     assert app.event_acks("run-ack-idempotent-1", "sub-ack-idempotent-1") == (
         {
             "eventId": "run-ack-idempotent-1:run-terminal",
