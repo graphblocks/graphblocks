@@ -289,6 +289,97 @@ fn compile_graph_rejects_unknown_output_port() -> Result<(), String> {
 }
 
 #[test]
+fn compile_graph_reports_async_callback_amendment_diagnostics() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "async-callback-diagnostics"},
+        "spec": {
+            "nodes": {
+                "start": {
+                    "block": "async.start_operation@1",
+                    "config": {"callback": {"required": true}}
+                },
+                "agent": {"block": "agent.run@1"}
+            },
+            "execution": {
+                "lifetime": "background",
+                "clientConnectionRequired": true
+            },
+            "eventStream": {
+                "retention": "1h",
+                "reconnectReplayGuarantee": "24h"
+            },
+            "asyncOperations": {
+                "ci": {
+                    "kind": "ci_job",
+                    "timeout": "30m",
+                    "idempotencyKey": "$input.request_id",
+                    "callback": {
+                        "required": true,
+                        "schema": "schemas/CICallback@1",
+                        "expectedPayloadBytes": 524288,
+                        "maxPayloadBytes": 262144
+                    }
+                }
+            },
+            "callbackSubscriptions": [
+                {
+                    "subscriptionId": "sub-unsafe",
+                    "scope": "run",
+                    "scopeId": "run-1",
+                    "authoritativeFor": ["billing"],
+                    "delivery": {
+                        "kind": "webhook",
+                        "url": "http://127.0.0.1/events"
+                    }
+                },
+                {
+                    "subscriptionId": "sub-mandatory",
+                    "scope": "run",
+                    "scopeId": "run-1",
+                    "mandatory": true,
+                    "delivery": {
+                        "kind": "local_callback",
+                        "callbackName": "ide",
+                        "ordering": {"mode": "ordered", "scope": "run"}
+                    }
+                },
+                {
+                    "subscriptionId": "sub-fail",
+                    "scope": "run",
+                    "scopeId": "run-1",
+                    "failurePolicy": "fail_run_on_failure",
+                    "delivery": {
+                        "kind": "webhook",
+                        "url": "https://relay.example.com/events",
+                        "signing": {
+                            "algorithm": "hmac-sha256",
+                            "secretRef": "secret://relay"
+                        }
+                    }
+                }
+            ]
+        }
+    });
+
+    let plan = compile_graph(&graph);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "GB6001", "GB6003", "GB6007", "GB6008", "GB6015", "GB6016", "GB6005", "GB6009",
+            "GB6013", "GB6010", "GB6008", "GB6015", "GB6016", "GB6002", "GB6011", "GB6004",
+            "GB6006", "GB6012", "GB6014"
+        ]
+    );
+}
+
+#[test]
 fn compile_graph_rejects_catalog_port_type_mismatch() -> Result<(), String> {
     let catalog = BlockCatalog::from_blocks(&json!([
         {

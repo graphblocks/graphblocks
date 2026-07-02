@@ -287,6 +287,9 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   where stale callbacks could resume newer attempts, as `GB6015`, with shared compiler TCK coverage.
 - Async operation configuration diagnostics now report callback waits that can resume without run
   ownership lease or fencing protection as `GB6016`, with shared compiler TCK coverage.
+- The normative `graphblocks-compiler` Rust crate now emits the same `GB6001` through `GB6016`
+  async/callback diagnostics as the Python authoring facade and passes the shared compiler TCK for
+  these cases.
 - `SqliteAsyncOperationStore` now persists async operations, operation event journals, and external
   callback receipts across reopen, including idempotency-key duplicate detection after restart.
 - Callback receipt duplicate detection is now scoped by `(operation_id, idempotency_key)` in both

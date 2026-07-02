@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::net::IpAddr;
 
 use graphblocks_schema::SchemaId;
 use serde_json::{Map, Value};
@@ -68,6 +69,10 @@ const FORBIDDEN_TOOL_DEFINITION_FIELDS: [&str; 9] = [
     "provider_sdk",
     "implementation",
 ];
+const DEFAULT_CALLBACK_MAX_PAYLOAD_BYTES: u64 = 262_144;
+const MANDATORY_CALLBACK_FAILURE_POLICIES: [&str; 2] =
+    ["pause_run_on_failure", "fail_run_on_failure"];
+const ORDER_CAPABLE_CALLBACK_TARGETS: [&str; 3] = ["webhook", "websocket", "sse"];
 
 impl BlockCatalog {
     pub fn from_blocks(blocks: &Value) -> Result<Self, String> {
@@ -232,6 +237,598 @@ impl BlockCatalog {
 
     pub fn get(&self, block_id: &str) -> Option<&BlockDescriptor> {
         self.descriptors.get(block_id)
+    }
+}
+
+fn is_positive_integer(value: Option<&Value>) -> bool {
+    value.and_then(Value::as_u64).is_some_and(|value| value > 0)
+}
+
+fn positive_integer(value: Option<&Value>) -> Option<u64> {
+    value.and_then(Value::as_u64).filter(|value| *value > 0)
+}
+
+fn has_non_empty_string(value: Option<&Value>) -> bool {
+    value
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.trim().is_empty())
+}
+
+fn truthy_flag(config: &Map<String, Value>, names: &[&str]) -> bool {
+    names
+        .iter()
+        .any(|name| config.get(*name).and_then(Value::as_bool) == Some(true))
+}
+
+fn duration_milliseconds(value: Option<&Value>) -> Option<u64> {
+    match value {
+        Some(Value::Number(number)) => number.as_u64().filter(|value| *value > 0),
+        Some(Value::String(duration)) => {
+            let duration = duration.trim();
+            for (suffix, multiplier) in [
+                ("ms", 1_u64),
+                ("s", 1_000),
+                ("m", 60_000),
+                ("h", 3_600_000),
+                ("d", 86_400_000),
+            ] {
+                let Some(amount) = duration.strip_suffix(suffix) else {
+                    continue;
+                };
+                if amount.is_empty() || !amount.chars().all(|character| character.is_ascii_digit())
+                {
+                    return None;
+                }
+                let Ok(parsed) = amount.parse::<u64>() else {
+                    return None;
+                };
+                if parsed == 0 {
+                    return None;
+                }
+                return parsed.checked_mul(multiplier);
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn has_async_timeout(config: &Map<String, Value>) -> bool {
+    if is_positive_integer(
+        config
+            .get("timeout")
+            .or_else(|| config.get("timeoutMs"))
+            .or_else(|| config.get("timeout_ms"))
+            .or_else(|| config.get("deadline")),
+    ) || has_non_empty_string(
+        config
+            .get("timeout")
+            .or_else(|| config.get("timeoutMs"))
+            .or_else(|| config.get("timeout_ms"))
+            .or_else(|| config.get("deadline")),
+    ) {
+        return true;
+    }
+    config
+        .get("infiniteWait")
+        .or_else(|| config.get("infinite_wait"))
+        .and_then(Value::as_bool)
+        == Some(true)
+        || has_non_empty_string(
+            config
+                .get("infiniteWaitPolicy")
+                .or_else(|| config.get("infinite_wait_policy")),
+        )
+}
+
+fn has_async_idempotency_key(config: &Map<String, Value>) -> bool {
+    has_non_empty_string(
+        config
+            .get("idempotencyKey")
+            .or_else(|| config.get("idempotency_key")),
+    )
+}
+
+fn callback_config(config: &Map<String, Value>) -> Option<&Map<String, Value>> {
+    config.get("callback").and_then(Value::as_object)
+}
+
+fn callback_schema_required(config: &Map<String, Value>) -> bool {
+    match callback_config(config) {
+        Some(callback) => callback.get("required").and_then(Value::as_bool) != Some(false),
+        None => {
+            config.contains_key("callback")
+                || config.contains_key("callbackSchema")
+                || config.contains_key("callback_schema")
+        }
+    }
+}
+
+fn has_async_callback_schema(config: &Map<String, Value>) -> bool {
+    if let Some(callback) = callback_config(config)
+        && has_non_empty_string(
+            callback
+                .get("schema")
+                .or_else(|| callback.get("acceptedSchema"))
+                .or_else(|| callback.get("accepted_schema"))
+                .or_else(|| callback.get("expectedSchema"))
+                .or_else(|| callback.get("expected_schema")),
+        )
+    {
+        return true;
+    }
+    has_non_empty_string(
+        config
+            .get("callbackSchema")
+            .or_else(|| config.get("callback_schema")),
+    )
+}
+
+fn configured_positive_integer(config: &Map<String, Value>, names: &[&str]) -> Option<u64> {
+    names
+        .iter()
+        .find_map(|name| positive_integer(config.get(*name)))
+}
+
+fn has_async_resume_reevaluation(config: &Map<String, Value>) -> bool {
+    let resume = config.get("resume").and_then(Value::as_object);
+    let policy_ok = resume.is_some_and(|resume| {
+        truthy_flag(
+            resume,
+            &[
+                "requirePolicyReevaluation",
+                "require_policy_reevaluation",
+                "policyReevaluation",
+                "policy_reevaluation",
+            ],
+        )
+    }) || truthy_flag(
+        config,
+        &["requirePolicyReevaluation", "require_policy_reevaluation"],
+    );
+    let budget_ok = resume.is_some_and(|resume| {
+        truthy_flag(
+            resume,
+            &[
+                "requireBudgetReservation",
+                "require_budget_reservation",
+                "budgetReservation",
+                "budget_reservation",
+            ],
+        )
+    }) || truthy_flag(
+        config,
+        &["requireBudgetReservation", "require_budget_reservation"],
+    );
+    let release_ok = resume.is_some_and(|resume| {
+        truthy_flag(
+            resume,
+            &[
+                "requireReleaseCompatibility",
+                "require_release_compatibility",
+                "releaseCompatibility",
+                "release_compatibility",
+            ],
+        )
+    }) || truthy_flag(
+        config,
+        &[
+            "requireReleaseCompatibility",
+            "require_release_compatibility",
+        ],
+    );
+    policy_ok && budget_ok && release_ok
+}
+
+fn has_async_attempt_fencing(config: &Map<String, Value>) -> bool {
+    truthy_flag(
+        config,
+        &[
+            "attemptFencing",
+            "attempt_fencing",
+            "fencingTokenRequired",
+            "fencing_token_required",
+        ],
+    ) || callback_config(config).is_some_and(|callback| {
+        truthy_flag(
+            callback,
+            &[
+                "attemptFencing",
+                "attempt_fencing",
+                "fencingTokenRequired",
+                "fencing_token_required",
+            ],
+        )
+    })
+}
+
+fn has_async_ownership_fence(config: &Map<String, Value>) -> bool {
+    truthy_flag(
+        config,
+        &[
+            "ownershipFence",
+            "ownership_fence",
+            "runOwnershipLease",
+            "run_ownership_lease",
+        ],
+    ) || config
+        .get("resume")
+        .and_then(Value::as_object)
+        .is_some_and(|resume| {
+            truthy_flag(
+                resume,
+                &[
+                    "requireOwnershipFence",
+                    "require_ownership_fence",
+                    "ownershipFence",
+                    "ownership_fence",
+                    "runOwnershipLease",
+                    "run_ownership_lease",
+                ],
+            )
+        })
+}
+
+fn diagnose_async_operation_config(
+    diagnostics: &mut Vec<Diagnostic>,
+    config: &Map<String, Value>,
+    path: &str,
+) {
+    if !has_async_timeout(config) {
+        diagnostics.push(Diagnostic::error(
+            "GB6001",
+            "async operation callback waits require a timeout or explicit infinite-wait policy",
+            path,
+        ));
+    }
+    if !has_async_idempotency_key(config) {
+        diagnostics.push(Diagnostic::error(
+            "GB6003",
+            "async operation callbacks require an idempotency key",
+            path,
+        ));
+    }
+    if callback_schema_required(config) && !has_async_callback_schema(config) {
+        diagnostics.push(Diagnostic::error(
+            "GB6007",
+            "async operation callbacks require an expected callback schema",
+            format!("{path}.callback"),
+        ));
+    }
+    let expected_payload_bytes = callback_config(config)
+        .and_then(|callback| {
+            configured_positive_integer(
+                callback,
+                &[
+                    "expectedPayloadBytes",
+                    "expected_payload_bytes",
+                    "expectedMaxPayloadBytes",
+                    "expected_max_payload_bytes",
+                ],
+            )
+        })
+        .or_else(|| {
+            configured_positive_integer(
+                config,
+                &[
+                    "expectedPayloadBytes",
+                    "expected_payload_bytes",
+                    "expectedMaxPayloadBytes",
+                    "expected_max_payload_bytes",
+                ],
+            )
+        });
+    let max_payload_bytes = callback_config(config)
+        .and_then(|callback| {
+            configured_positive_integer(callback, &["maxPayloadBytes", "max_payload_bytes"])
+        })
+        .or_else(|| configured_positive_integer(config, &["maxPayloadBytes", "max_payload_bytes"]))
+        .unwrap_or(DEFAULT_CALLBACK_MAX_PAYLOAD_BYTES);
+    if expected_payload_bytes.is_some_and(|expected| expected > max_payload_bytes) {
+        diagnostics.push(Diagnostic::error(
+            "GB6010",
+            "async callback payload contract exceeds the configured inline payload limit",
+            format!("{path}.callback.maxPayloadBytes"),
+        ));
+    }
+    if !has_async_resume_reevaluation(config) {
+        diagnostics.push(Diagnostic::error(
+            "GB6008",
+            "callback resume must re-evaluate policy, budget, and release compatibility",
+            format!("{path}.resume"),
+        ));
+    }
+    if !has_async_attempt_fencing(config) {
+        diagnostics.push(Diagnostic::error(
+            "GB6015",
+            "async callbacks require attempt fencing so stale callbacks cannot resume newer attempts",
+            path,
+        ));
+    }
+    if !has_async_ownership_fence(config) {
+        diagnostics.push(Diagnostic::error(
+            "GB6016",
+            "callback resume requires run ownership lease or fencing protection",
+            format!("{path}.resume"),
+        ));
+    }
+}
+
+fn is_background_run(execution: &Map<String, Value>) -> bool {
+    execution
+        .get("runLifetime")
+        .or_else(|| execution.get("run_lifetime"))
+        .or_else(|| execution.get("lifetime"))
+        .or_else(|| execution.get("invocationMode"))
+        .or_else(|| execution.get("invocation_mode"))
+        .or_else(|| execution.get("responseMode"))
+        .or_else(|| execution.get("response_mode"))
+        .and_then(Value::as_str)
+        .is_some_and(|mode| matches!(mode, "accepted" | "background" | "job"))
+}
+
+fn execution_is_client_bound(execution: &Map<String, Value>) -> bool {
+    if truthy_flag(
+        execution,
+        &[
+            "clientConnectionRequired",
+            "client_connection_required",
+            "websocketRequired",
+            "websocket_required",
+            "processBound",
+            "process_bound",
+        ],
+    ) {
+        return true;
+    }
+    execution
+        .get("detach")
+        .and_then(Value::as_object)
+        .and_then(|detach| {
+            detach
+                .get("onClientDisconnect")
+                .or_else(|| detach.get("on_client_disconnect"))
+        })
+        .and_then(Value::as_str)
+        .is_some_and(|behavior| matches!(behavior, "cancel" | "cancel_run" | "client_connection"))
+}
+
+fn event_stream_is_replayable(event_stream: Option<&Map<String, Value>>) -> bool {
+    event_stream.is_some_and(|event_stream| {
+        truthy_flag(
+            event_stream,
+            &[
+                "replayable",
+                "cursorReplay",
+                "cursor_replay",
+                "authoritative",
+            ],
+        )
+    })
+}
+
+fn diagnose_background_execution_config(
+    diagnostics: &mut Vec<Diagnostic>,
+    execution: &Map<String, Value>,
+    event_stream: Option<&Map<String, Value>>,
+) {
+    if !is_background_run(execution) {
+        return;
+    }
+    if !event_stream_is_replayable(event_stream) {
+        diagnostics.push(Diagnostic::error(
+            "GB6005",
+            "background runs require a replayable ApplicationEventStream",
+            "$.spec.eventStream",
+        ));
+    }
+    if execution_is_client_bound(execution) {
+        diagnostics.push(Diagnostic::error(
+            "GB6009",
+            "background or job runs must not be bound to a single client connection",
+            "$.spec.execution",
+        ));
+    }
+    let Some(event_stream) = event_stream else {
+        return;
+    };
+    let retention = duration_milliseconds(
+        event_stream
+            .get("retention")
+            .or_else(|| event_stream.get("eventRetention"))
+            .or_else(|| event_stream.get("event_retention"))
+            .or_else(|| event_stream.get("retentionDuration"))
+            .or_else(|| event_stream.get("retention_duration")),
+    );
+    let replay_guarantee = duration_milliseconds(
+        event_stream
+            .get("reconnectReplayGuarantee")
+            .or_else(|| event_stream.get("reconnect_replay_guarantee"))
+            .or_else(|| event_stream.get("replayGuarantee"))
+            .or_else(|| event_stream.get("replay_guarantee")),
+    );
+    if let (Some(retention), Some(replay_guarantee)) = (retention, replay_guarantee)
+        && retention < replay_guarantee
+    {
+        diagnostics.push(Diagnostic::error(
+            "GB6013",
+            "event retention is shorter than the declared reconnect replay guarantee",
+            "$.spec.eventStream.retention",
+        ));
+    }
+}
+
+fn has_callback_signing(delivery: &Map<String, Value>) -> bool {
+    let Some(signing) = delivery.get("signing").and_then(Value::as_object) else {
+        return false;
+    };
+    signing
+        .get("algorithm")
+        .and_then(Value::as_str)
+        .is_some_and(|algorithm| matches!(algorithm, "hmac-sha256" | "ed25519"))
+        && has_non_empty_string(
+            signing
+                .get("secretRef")
+                .or_else(|| signing.get("secret_ref")),
+        )
+}
+
+fn callback_url_is_unsafe(url: Option<&Value>) -> bool {
+    let Some(url) = url.and_then(Value::as_str).map(str::trim) else {
+        return true;
+    };
+    let Some(rest) = url.strip_prefix("https://") else {
+        return true;
+    };
+    let authority = rest.split('/').next().unwrap_or_default();
+    if authority.is_empty() || authority.contains('@') {
+        return true;
+    }
+    let host = authority
+        .split(':')
+        .next()
+        .unwrap_or_default()
+        .trim_matches(['[', ']'])
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+    if host.is_empty()
+        || host == "localhost"
+        || host.ends_with(".localhost")
+        || host == "metadata.google.internal"
+    {
+        return true;
+    }
+    let Ok(address) = host.parse::<IpAddr>() else {
+        return false;
+    };
+    match address {
+        IpAddr::V4(address) => {
+            address.is_loopback()
+                || address.is_private()
+                || address.is_link_local()
+                || address.is_multicast()
+                || address.is_unspecified()
+        }
+        IpAddr::V6(address) => {
+            address.is_loopback()
+                || address.is_unique_local()
+                || address.is_unicast_link_local()
+                || address.is_multicast()
+                || address.is_unspecified()
+        }
+    }
+}
+
+fn has_callback_dead_letter_behavior(
+    config: &Map<String, Value>,
+    delivery: &Map<String, Value>,
+) -> bool {
+    config
+        .get("failurePolicy")
+        .or_else(|| config.get("failure_policy"))
+        .and_then(Value::as_str)
+        == Some("retry_then_dead_letter")
+        || has_non_empty_string(
+            config
+                .get("deadLetterPolicy")
+                .or_else(|| config.get("dead_letter_policy"))
+                .or_else(|| config.get("deadLetterRef"))
+                .or_else(|| config.get("dead_letter_ref"))
+                .or_else(|| delivery.get("deadLetterPolicy"))
+                .or_else(|| delivery.get("dead_letter_policy"))
+                .or_else(|| delivery.get("deadLetterRef"))
+                .or_else(|| delivery.get("dead_letter_ref")),
+        )
+        || config
+            .get("deadLetterPolicy")
+            .or_else(|| config.get("dead_letter_policy"))
+            .or_else(|| delivery.get("deadLetterPolicy"))
+            .or_else(|| delivery.get("dead_letter_policy"))
+            .is_some_and(Value::is_object)
+}
+
+fn diagnose_callback_subscription_config(
+    diagnostics: &mut Vec<Diagnostic>,
+    config: &Map<String, Value>,
+    path: &str,
+) {
+    let Some(delivery) = config.get("delivery").and_then(Value::as_object) else {
+        return;
+    };
+    let delivery_kind = delivery.get("kind").and_then(Value::as_str);
+    if delivery_kind == Some("webhook") {
+        if !has_callback_signing(delivery) {
+            diagnostics.push(Diagnostic::error(
+                "GB6002",
+                "webhook callback subscriptions require signing configuration",
+                format!("{path}.delivery.signing"),
+            ));
+        }
+        if callback_url_is_unsafe(delivery.get("url")) {
+            diagnostics.push(Diagnostic::error(
+                "GB6011",
+                "webhook callback endpoint is unsafe or forbidden by default egress policy",
+                format!("{path}.delivery.url"),
+            ));
+        }
+    }
+    if config.get("sourceOfTruth").and_then(Value::as_bool) == Some(true)
+        || config.get("source_of_truth").and_then(Value::as_bool) == Some(true)
+        || config
+            .get("authoritativeFor")
+            .or_else(|| config.get("authoritative_for"))
+            .is_some()
+    {
+        diagnostics.push(Diagnostic::error(
+            "GB6004",
+            "callback delivery must not be used as the source of truth for run correctness or accounting",
+            path,
+        ));
+    }
+
+    let failure_policy = config
+        .get("failurePolicy")
+        .or_else(|| config.get("failure_policy"))
+        .and_then(Value::as_str);
+    let mandatory = config.get("mandatory").and_then(Value::as_bool) == Some(true)
+        || delivery.get("mandatory").and_then(Value::as_bool) == Some(true)
+        || failure_policy.is_some_and(|failure_policy| {
+            MANDATORY_CALLBACK_FAILURE_POLICIES.contains(&failure_policy)
+        });
+    if mandatory && failure_policy.is_none() {
+        diagnostics.push(Diagnostic::error(
+            "GB6006",
+            "mandatory callback delivery requires retry, dead-letter, or fallback failure policy",
+            format!("{path}.failurePolicy"),
+        ));
+    }
+
+    let ordering = delivery
+        .get("ordering")
+        .and_then(Value::as_object)
+        .or_else(|| config.get("ordering").and_then(Value::as_object));
+    if ordering
+        .and_then(|ordering| ordering.get("mode"))
+        .and_then(Value::as_str)
+        == Some("ordered")
+        && !delivery_kind.is_some_and(|kind| ORDER_CAPABLE_CALLBACK_TARGETS.contains(&kind))
+    {
+        diagnostics.push(Diagnostic::error(
+            "GB6012",
+            "callback subscription requests ordered delivery on a target that cannot guarantee it",
+            format!("{path}.delivery.ordering"),
+        ));
+    }
+
+    if failure_policy
+        .is_some_and(|failure_policy| MANDATORY_CALLBACK_FAILURE_POLICIES.contains(&failure_policy))
+        && !has_callback_dead_letter_behavior(config, delivery)
+    {
+        diagnostics.push(Diagnostic::error(
+            "GB6014",
+            "mandatory callback failure policy requires dead-letter or fallback behavior",
+            format!("{path}.deadLetterPolicy"),
+        ));
     }
 }
 
@@ -409,6 +1006,37 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
                     format!("$.spec.nodes.{node_name}.block"),
                 ));
             }
+            if node
+                .get("block")
+                .and_then(Value::as_str)
+                .and_then(|block| block.split_once('@').map(|(block_type, _)| block_type))
+                .is_some_and(|block_type| {
+                    matches!(block_type, "async.start_operation" | "async.await_callback")
+                })
+            {
+                match node.get("config") {
+                    Some(Value::Object(config)) => {
+                        diagnose_async_operation_config(
+                            &mut diagnostics,
+                            config,
+                            &format!("$.spec.nodes.{node_name}.config"),
+                        );
+                    }
+                    Some(_) => diagnostics.push(Diagnostic::error(
+                        "InvalidAsyncOperation",
+                        "async operation node config must be a mapping",
+                        format!("$.spec.nodes.{node_name}.config"),
+                    )),
+                    None => {
+                        let empty_config = Map::new();
+                        diagnose_async_operation_config(
+                            &mut diagnostics,
+                            &empty_config,
+                            &format!("$.spec.nodes.{node_name}.config"),
+                        );
+                    }
+                }
+            }
             if node.contains_key("connection") && node.contains_key("bindings") {
                 diagnostics.push(Diagnostic::error(
                     "GB1006",
@@ -461,10 +1089,132 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
         }
     }
 
+    if let Some(Value::Object(execution)) = spec.and_then(|spec| spec.get("execution")) {
+        let event_stream = spec.and_then(|spec| {
+            spec.get("eventStream")
+                .or_else(|| spec.get("event_stream"))
+                .and_then(Value::as_object)
+        });
+        diagnose_background_execution_config(&mut diagnostics, execution, event_stream);
+    }
+
+    let async_operations_value = spec.and_then(|spec| {
+        spec.get("asyncOperations")
+            .map(|value| ("asyncOperations", value))
+            .or_else(|| {
+                spec.get("async_operations")
+                    .map(|value| ("async_operations", value))
+            })
+    });
+    match async_operations_value {
+        Some((async_operations_key, Value::Object(async_operations))) => {
+            for (operation_key, operation_config) in async_operations {
+                let operation_path = format!("$.spec.{async_operations_key}.{operation_key}");
+                let Some(operation_config) = operation_config.as_object() else {
+                    diagnostics.push(Diagnostic::error(
+                        "InvalidAsyncOperation",
+                        "async operation config must be a mapping",
+                        operation_path,
+                    ));
+                    continue;
+                };
+                diagnose_async_operation_config(
+                    &mut diagnostics,
+                    operation_config,
+                    &operation_path,
+                );
+            }
+        }
+        Some((async_operations_key, Value::Array(async_operations))) => {
+            for (operation_index, operation_config) in async_operations.iter().enumerate() {
+                let operation_path = format!("$.spec.{async_operations_key}[{operation_index}]");
+                let Some(operation_config) = operation_config.as_object() else {
+                    diagnostics.push(Diagnostic::error(
+                        "InvalidAsyncOperation",
+                        "async operation config must be a mapping",
+                        operation_path,
+                    ));
+                    continue;
+                };
+                diagnose_async_operation_config(
+                    &mut diagnostics,
+                    operation_config,
+                    &operation_path,
+                );
+            }
+        }
+        Some((async_operations_key, _)) => diagnostics.push(Diagnostic::error(
+            "InvalidAsyncOperation",
+            "asyncOperations must be a mapping or list",
+            format!("$.spec.{async_operations_key}"),
+        )),
+        None => {}
+    }
+
+    let callback_subscriptions_value = spec.and_then(|spec| {
+        spec.get("callbackSubscriptions")
+            .map(|value| ("callbackSubscriptions", value))
+            .or_else(|| {
+                spec.get("callback_subscriptions")
+                    .map(|value| ("callback_subscriptions", value))
+            })
+    });
+    match callback_subscriptions_value {
+        Some((callback_subscriptions_key, Value::Object(callback_subscriptions))) => {
+            for (subscription_key, subscription_config) in callback_subscriptions {
+                let subscription_path =
+                    format!("$.spec.{callback_subscriptions_key}.{subscription_key}");
+                let Some(subscription_config) = subscription_config.as_object() else {
+                    diagnostics.push(Diagnostic::error(
+                        "InvalidCallbackSubscription",
+                        "callback subscription config must be a mapping",
+                        subscription_path,
+                    ));
+                    continue;
+                };
+                diagnose_callback_subscription_config(
+                    &mut diagnostics,
+                    subscription_config,
+                    &subscription_path,
+                );
+            }
+        }
+        Some((callback_subscriptions_key, Value::Array(callback_subscriptions))) => {
+            for (subscription_index, subscription_config) in
+                callback_subscriptions.iter().enumerate()
+            {
+                let subscription_path =
+                    format!("$.spec.{callback_subscriptions_key}[{subscription_index}]");
+                let Some(subscription_config) = subscription_config.as_object() else {
+                    diagnostics.push(Diagnostic::error(
+                        "InvalidCallbackSubscription",
+                        "callback subscription config must be a mapping",
+                        subscription_path,
+                    ));
+                    continue;
+                };
+                diagnose_callback_subscription_config(
+                    &mut diagnostics,
+                    subscription_config,
+                    &subscription_path,
+                );
+            }
+        }
+        Some((callback_subscriptions_key, _)) => diagnostics.push(Diagnostic::error(
+            "InvalidCallbackSubscription",
+            "callbackSubscriptions must be a mapping or list",
+            format!("$.spec.{callback_subscriptions_key}"),
+        )),
+        None => {}
+    }
+
     let output_policy_value = spec.and_then(|spec| {
         spec.get("outputPolicy")
             .map(|value| ("outputPolicy", value))
-            .or_else(|| spec.get("output_policy").map(|value| ("output_policy", value)))
+            .or_else(|| {
+                spec.get("output_policy")
+                    .map(|value| ("output_policy", value))
+            })
     });
     let output_policy = match output_policy_value {
         Some((output_policy_key, Value::Object(output_policy))) => {
@@ -481,19 +1231,19 @@ pub fn compile_graph_with_catalog(document: &Value, block_catalog: &BlockCatalog
         None => None,
     };
 
-    let delivery = output_policy.and_then(|(output_policy_key, output_policy)| {
-        match output_policy.get("delivery") {
-            Some(Value::Object(delivery)) => Some(delivery),
-            Some(_) => {
-                diagnostics.push(Diagnostic::error(
-                    "InvalidOutputPolicy",
-                    "outputPolicy delivery must be a mapping",
-                    format!("$.spec.{output_policy_key}.delivery"),
-                ));
-                None
-            }
-            None => None,
+    let delivery = output_policy.and_then(|(output_policy_key, output_policy)| match output_policy
+        .get("delivery")
+    {
+        Some(Value::Object(delivery)) => Some(delivery),
+        Some(_) => {
+            diagnostics.push(Diagnostic::error(
+                "InvalidOutputPolicy",
+                "outputPolicy delivery must be a mapping",
+                format!("$.spec.{output_policy_key}.delivery"),
+            ));
+            None
         }
+        None => None,
     });
 
     if let Some(delivery) = delivery {
