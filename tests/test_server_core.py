@@ -647,6 +647,8 @@ def test_server_app_records_run_control_projection_without_mutating_events() -> 
             "lastCursor": "run-control-1:2",
         },
     )
+    with pytest.raises(TypeError):
+        app.run_controls("run-control-1")[0]["reason"] = "changed"
 
 
 def test_server_app_rejects_run_control_for_missing_stream_or_malformed_reason() -> None:
@@ -1372,6 +1374,8 @@ def test_server_app_detaches_from_run_without_cancelling_or_dropping_events() ->
             "lastCursor": "run-detach-1:2",
         },
     )
+    with pytest.raises(TypeError):
+        app.detachments("run-detach-1")[0]["reason"] = "changed"
     assert events.status_code == 200
     assert [event["kind"] for event in json.loads(events.body.decode("utf-8"))["events"]] == [
         "RunStarted",

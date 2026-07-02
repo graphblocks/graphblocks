@@ -1589,13 +1589,13 @@ class GraphBlocksServerApp:
         reason = payload.get("reason")
         if reason is not None:
             reason = _validate_non_empty_string("run control request", "reason", reason)
-        record: dict[str, object] = {
+        record = _freeze_json_value("run control record", "record", {
             "operation": operation,
             "status": status,
             "reason": reason,
             "occurredAt": occurred_at,
             "lastCursor": f"{run_id}:{self._last_event_sequence(events)}",
-        }
+        })
         existing = self._run_controls_by_run_id.get(run_id, ())
         self._run_controls_by_run_id[run_id] = (*existing, record)
         return ServerResponse.json(
@@ -1745,12 +1745,12 @@ class GraphBlocksServerApp:
         )
         last_sequence = self._last_event_sequence(events)
         last_cursor = f"{run_id}:{last_sequence}"
-        record: dict[str, object] = {
+        record = _freeze_json_value("detach record", "record", {
             "clientId": client_id,
             "reason": reason,
             "detachedAt": detached_at,
             "lastCursor": last_cursor,
-        }
+        })
         existing = self._detachments_by_run_id.get(run_id, ())
         self._detachments_by_run_id[run_id] = (*existing, record)
         return ServerResponse.json(

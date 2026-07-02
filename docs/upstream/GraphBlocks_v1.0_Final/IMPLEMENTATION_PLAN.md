@@ -377,7 +377,7 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   `CursorExpired` recovery metadata when the requested cursor is no longer retained.
 - `graphblocks-server` now exposes the framework-neutral `POST /runs/{run_id}/detach`
   `DetachFromRun` route, recording client detach projections while preserving the authoritative
-  event stream and current run status.
+  event stream and current run status. Stored detach projection records are immutable snapshots.
 - `graphblocks-server` now exposes the framework-neutral `POST /runs/{run_id}/subscriptions`
   `SubscribeEvents` route, recording run-scoped event subscription projections and replaying
   retained matching events from the authoritative event stream after an optional cursor.
@@ -395,6 +395,7 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   `POST /runs/{run_id}/resume`, and `POST /runs/{run_id}/expire`
   `PauseRun`/`ResumeRun`/`ExpireRun` routes, recording run-control projections and reflecting
   the latest control state in `GetRunStatus` while preserving the authoritative event stream.
+  Stored run-control projection records are immutable snapshots.
 - `graphblocks-server` now exposes framework-neutral
   `POST /callbacks/deliveries/{delivery_id}/redrive` and
   `POST /callbacks/deliveries/{delivery_id}/dead-letter`
