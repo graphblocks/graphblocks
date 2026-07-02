@@ -246,6 +246,8 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
 - Callback ingestion now enforces the specification's default `262144` byte payload limit before
   journaling or resume, and focused tests cover explicit small-limit rejection without operation
   state changes.
+- Async operation configuration diagnostics now report missing callback timeout (`GB6001`), missing
+  idempotency key (`GB6003`), and missing callback schema (`GB6007`) in deterministic order.
 - Callback resume admission can now pause after a durable callback receipt when budget policy
   denies continuation; the operation records `CallbackReceived`, emits a pause reason, and returns
   `should_resume = false`.

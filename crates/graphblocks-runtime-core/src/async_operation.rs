@@ -68,6 +68,52 @@ pub struct AsyncOperation {
     pub completed_at_unix_ms: Option<u64>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AsyncOperationConfigurationDiagnostic {
+    pub code: &'static str,
+    pub field: &'static str,
+    pub message: String,
+}
+
+impl AsyncOperationConfigurationDiagnostic {
+    pub fn for_operation(operation: &AsyncOperation) -> Vec<Self> {
+        let mut diagnostics = Vec::new();
+        if operation.state == AsyncOperationState::WaitingCallback
+            && operation.expires_at_unix_ms.is_none()
+        {
+            diagnostics.push(Self {
+                code: "GB6001",
+                field: "expires_at_unix_ms",
+                message: format!(
+                    "async operation {} waits for callback without a timeout",
+                    operation.operation_id
+                ),
+            });
+        }
+        if operation.idempotency_key.trim().is_empty() {
+            diagnostics.push(Self {
+                code: "GB6003",
+                field: "idempotency_key",
+                message: format!(
+                    "async operation {} does not define an idempotency key",
+                    operation.operation_id
+                ),
+            });
+        }
+        if operation.expected_schema.trim().is_empty() {
+            diagnostics.push(Self {
+                code: "GB6007",
+                field: "expected_schema",
+                message: format!(
+                    "async operation {} callback has no expected schema",
+                    operation.operation_id
+                ),
+            });
+        }
+        diagnostics
+    }
+}
+
 impl AsyncOperation {
     pub fn new(
         operation_id: impl Into<String>,

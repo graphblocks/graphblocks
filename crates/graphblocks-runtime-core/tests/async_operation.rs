@@ -2,8 +2,9 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 
 use graphblocks_runtime_core::async_operation::{
-    AsyncCallbackResumeDecision, AsyncCallbackSubmission, AsyncOperation, AsyncOperationError,
-    AsyncOperationEvent, AsyncOperationKind, AsyncOperationState, AsyncOperationStore,
+    AsyncCallbackResumeDecision, AsyncCallbackSubmission, AsyncOperation,
+    AsyncOperationConfigurationDiagnostic, AsyncOperationError, AsyncOperationEvent,
+    AsyncOperationKind, AsyncOperationState, AsyncOperationStore,
 };
 use graphblocks_runtime_core::tool_schema::{JsonSchema, JsonSchemaNode, ToolSchemaRegistry};
 use serde_json::json;
@@ -47,6 +48,42 @@ fn valid_submission(callback_id: &str, idempotency_key: &str) -> AsyncCallbackSu
         "hmac:callback-endpoint-1",
         "policy-snapshot-1",
     )
+}
+
+#[test]
+fn async_operation_diagnostics_report_missing_timeout_schema_and_idempotency() {
+    let mut operation = AsyncOperation::new(
+        "op-missing",
+        "run-1",
+        "node-ci",
+        "attempt-1",
+        AsyncOperationKind::CiJob,
+        "sha256:resume-token",
+        " ",
+        " ",
+        1_000,
+    )
+    .submitted("gha-run-1", 1_050);
+    operation.state = AsyncOperationState::WaitingCallback;
+
+    let diagnostics = AsyncOperationConfigurationDiagnostic::for_operation(&operation);
+    let codes = diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect::<Vec<_>>();
+
+    assert_eq!(codes, vec!["GB6001", "GB6003", "GB6007"]);
+    assert_eq!(diagnostics[0].field, "expires_at_unix_ms");
+    assert_eq!(diagnostics[1].field, "idempotency_key");
+    assert_eq!(diagnostics[2].field, "expected_schema");
+}
+
+#[test]
+fn async_operation_diagnostics_do_not_report_valid_waiting_operation() {
+    assert_eq!(
+        AsyncOperationConfigurationDiagnostic::for_operation(&waiting_operation()),
+        Vec::new()
+    );
 }
 
 #[test]
