@@ -116,6 +116,14 @@ def test_server_route_manifest_matches_subscribe_events_path() -> None:
     assert route_match.path_params == {"run_id": "run-123"}
 
 
+def test_server_route_manifest_matches_unsubscribe_events_path() -> None:
+    route_match = default_server_route_manifest().match("DELETE", "/runs/run-123/subscriptions/sub-123")
+
+    assert route_match.endpoint.operation == "unsubscribe_events"
+    assert route_match.endpoint.auth_required is True
+    assert route_match.path_params == {"run_id": "run-123", "subscription_id": "sub-123"}
+
+
 def test_server_route_manifest_matches_async_callback_ingress_path() -> None:
     route_match = default_server_route_manifest().match("POST", "/callbacks/op-ci-1")
 
@@ -1333,6 +1341,110 @@ def test_server_app_rejects_subscription_without_delivery_kind() -> None:
         "error": "server event subscription delivery.kind must not be empty",
     }
     assert app.subscriptions("run-subscribe-invalid-1") == ()
+
+
+def test_server_app_unsubscribes_without_dropping_events() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "server-unsubscribe"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Unsubscribe {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "ok"}},
+                    "runId": "run-unsubscribe-1",
+                    "responseId": "response-unsubscribe-1",
+                }
+            ).encode("utf-8"),
+        )
+    )
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-unsubscribe-1/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-unsubscribe-1",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="DELETE",
+            path="/runs/run-unsubscribe-1/subscriptions/sub-unsubscribe-1",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+        )
+    )
+    events = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-unsubscribe-1/events",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+        )
+    )
+
+    assert response.status_code == 202
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": True,
+        "runId": "run-unsubscribe-1",
+        "subscriptionId": "sub-unsubscribe-1",
+        "status": "revoked",
+    }
+    assert app.subscriptions("run-unsubscribe-1")[0].status == "revoked"
+    assert [event["kind"] for event in json.loads(events.body.decode("utf-8"))["events"]] == [
+        "RunStarted",
+        "RunSucceeded",
+    ]
+
+
+def test_server_app_reports_missing_subscription_on_unsubscribe() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+
+    missing_run = app.handle(
+        ServerRequest(
+            method="DELETE",
+            path="/runs/missing-run/subscriptions/sub-1",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+        )
+    )
+
+    assert missing_run.status_code == 404
+    assert json.loads(missing_run.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "run subscriptions not found for run 'missing-run'",
+    }
 
 
 def test_server_app_reports_missing_run_events() -> None:

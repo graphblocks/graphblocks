@@ -225,6 +225,13 @@ def default_server_route_manifest() -> ServerRouteManifest:
             ServerEndpoint("POST", "/runs/{run_id}/attach", "http", "attach_to_run", auth_required=True),
             ServerEndpoint("POST", "/runs/{run_id}/detach", "http", "detach_from_run", auth_required=True),
             ServerEndpoint("POST", "/runs/{run_id}/subscriptions", "http", "subscribe_events", auth_required=True),
+            ServerEndpoint(
+                "DELETE",
+                "/runs/{run_id}/subscriptions/{subscription_id}",
+                "http",
+                "unsubscribe_events",
+                auth_required=True,
+            ),
             ServerEndpoint("POST", "/runs/{run_id}/cancel", "http", "cancel_run", auth_required=True),
             ServerEndpoint("POST", "/callbacks/{operation_id}", "http", "submit_async_callback", auth_required=True),
             ServerEndpoint("GET", "/runs/{run_id}/events", "sse", "application_events", auth_required=True),
@@ -855,6 +862,42 @@ class GraphBlocksServerApp:
                         "error": str(error),
                     },
                 )
+        if route.operation == "unsubscribe_events":
+            run_id = route_match.path_params.get("run_id", "")
+            subscription_id = route_match.path_params.get("subscription_id", "")
+            subscriptions = self._subscriptions_by_run_id.get(run_id)
+            if subscriptions is None:
+                return ServerResponse.json(
+                    404,
+                    {
+                        "ok": False,
+                        "error": f"run subscriptions not found for run {run_id!r}",
+                    },
+                )
+            for index, subscription in enumerate(subscriptions):
+                if subscription.subscription_id == subscription_id:
+                    revoked = replace(subscription, status="revoked")
+                    self._subscriptions_by_run_id[run_id] = (
+                        *subscriptions[:index],
+                        revoked,
+                        *subscriptions[index + 1 :],
+                    )
+                    return ServerResponse.json(
+                        202,
+                        {
+                            "ok": True,
+                            "runId": run_id,
+                            "subscriptionId": subscription_id,
+                            "status": "revoked",
+                        },
+                    )
+            return ServerResponse.json(
+                404,
+                {
+                    "ok": False,
+                    "error": f"subscription {subscription_id!r} not found for run {run_id!r}",
+                },
+            )
         if route.operation == "submit_async_callback":
             try:
                 submission = ServerAsyncCallbackSubmission.from_request(
