@@ -124,6 +124,14 @@ def test_server_route_manifest_matches_unsubscribe_events_path() -> None:
     assert route_match.path_params == {"run_id": "run-123", "subscription_id": "sub-123"}
 
 
+def test_server_route_manifest_matches_ack_event_path() -> None:
+    route_match = default_server_route_manifest().match("POST", "/runs/run-123/subscriptions/sub-123/ack")
+
+    assert route_match.endpoint.operation == "ack_event"
+    assert route_match.endpoint.auth_required is True
+    assert route_match.path_params == {"run_id": "run-123", "subscription_id": "sub-123"}
+
+
 def test_server_route_manifest_matches_async_callback_ingress_path() -> None:
     route_match = default_server_route_manifest().match("POST", "/callbacks/op-ci-1")
 
@@ -1444,6 +1452,153 @@ def test_server_app_reports_missing_subscription_on_unsubscribe() -> None:
     assert json.loads(missing_run.body.decode("utf-8")) == {
         "ok": False,
         "error": "run subscriptions not found for run 'missing-run'",
+    }
+
+
+def test_server_app_acknowledges_subscription_event_without_dropping_events() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "server-ack"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Ack {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "ok"}},
+                    "runId": "run-ack-1",
+                    "responseId": "response-ack-1",
+                }
+            ).encode("utf-8"),
+        )
+    )
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-ack-1/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-ack-1",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-ack-1/subscriptions/sub-ack-1/ack",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"cursor": "run-ack-1:2"}).encode("utf-8"),
+            requested_at="2026-07-02T00:00:00Z",
+        )
+    )
+    events = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-ack-1/events",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+        )
+    )
+
+    assert response.status_code == 202
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": True,
+        "runId": "run-ack-1",
+        "subscriptionId": "sub-ack-1",
+        "eventId": "run-ack-1:run-terminal",
+        "cursor": "run-ack-1:2",
+        "status": "acknowledged",
+    }
+    assert app.event_acks("run-ack-1", "sub-ack-1") == (
+        {
+            "eventId": "run-ack-1:run-terminal",
+            "cursor": "run-ack-1:2",
+            "acknowledgedAt": "2026-07-02T00:00:00Z",
+        },
+    )
+    assert [event["kind"] for event in json.loads(events.body.decode("utf-8"))["events"]] == [
+        "RunStarted",
+        "RunSucceeded",
+    ]
+
+
+def test_server_app_rejects_ack_for_missing_event_or_subscription() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "server-ack-invalid"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Ack {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "ok"}},
+                    "runId": "run-ack-invalid-1",
+                    "responseId": "response-ack-invalid-1",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    missing_subscription = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-ack-invalid-1/subscriptions/missing-sub/ack",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"cursor": "run-ack-invalid-1:2"}).encode("utf-8"),
+        )
+    )
+
+    assert missing_subscription.status_code == 404
+    assert json.loads(missing_subscription.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "subscription 'missing-sub' not found for run 'run-ack-invalid-1'",
     }
 
 

@@ -226,6 +226,13 @@ def default_server_route_manifest() -> ServerRouteManifest:
             ServerEndpoint("POST", "/runs/{run_id}/detach", "http", "detach_from_run", auth_required=True),
             ServerEndpoint("POST", "/runs/{run_id}/subscriptions", "http", "subscribe_events", auth_required=True),
             ServerEndpoint(
+                "POST",
+                "/runs/{run_id}/subscriptions/{subscription_id}/ack",
+                "http",
+                "ack_event",
+                auth_required=True,
+            ),
+            ServerEndpoint(
                 "DELETE",
                 "/runs/{run_id}/subscriptions/{subscription_id}",
                 "http",
@@ -713,6 +720,11 @@ class GraphBlocksServerApp:
         init=False,
         repr=False,
     )
+    _acks_by_subscription: dict[tuple[str, str], tuple[dict[str, object], ...]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
 
     def handle(self, request: ServerRequest) -> ServerResponse:
         try:
@@ -898,6 +910,45 @@ class GraphBlocksServerApp:
                     "error": f"subscription {subscription_id!r} not found for run {run_id!r}",
                 },
             )
+        if route.operation == "ack_event":
+            try:
+                run_id = route_match.path_params.get("run_id", "")
+                subscription_id = route_match.path_params.get("subscription_id", "")
+                events = self._events_by_run_id.get(run_id)
+                if events is None:
+                    return ServerResponse.json(
+                        404,
+                        {
+                            "ok": False,
+                            "error": f"run event stream not found for ack run {run_id!r}",
+                        },
+                    )
+                if not self._has_subscription(run_id, subscription_id):
+                    return ServerResponse.json(
+                        404,
+                        {
+                            "ok": False,
+                            "error": f"subscription {subscription_id!r} not found for run {run_id!r}",
+                        },
+                    )
+                payload = json.loads(request.body.decode("utf-8") or "{}")
+                if not isinstance(payload, Mapping):
+                    raise ValueError("ack request body must be a JSON object")
+                return self._ack_event_response(
+                    run_id,
+                    subscription_id,
+                    events,
+                    payload,
+                    request.requested_at or _utc_now_iso(),
+                )
+            except (TypeError, ValueError, json.JSONDecodeError) as error:
+                return ServerResponse.json(
+                    400,
+                    {
+                        "ok": False,
+                        "error": str(error),
+                    },
+                )
         if route.operation == "submit_async_callback":
             try:
                 submission = ServerAsyncCallbackSubmission.from_request(
@@ -1148,6 +1199,11 @@ class GraphBlocksServerApp:
         run_id = _validate_non_empty_string("server event subscription", "run_id", run_id)
         return self._subscriptions_by_run_id.get(run_id, ())
 
+    def event_acks(self, run_id: str, subscription_id: str) -> tuple[dict[str, object], ...]:
+        run_id = _validate_non_empty_string("server event ack", "run_id", run_id)
+        subscription_id = _validate_non_empty_string("server event ack", "subscription_id", subscription_id)
+        return self._acks_by_subscription.get((run_id, subscription_id), ())
+
     def _run_status_payload(
         self,
         run_id: str,
@@ -1374,6 +1430,93 @@ class GraphBlocksServerApp:
         allowed_types = _validate_string_sequence("server event subscription", "event_filter.types", types)
         event_kind = event.get("kind")
         return isinstance(event_kind, str) and event_kind in allowed_types
+
+    def _has_subscription(self, run_id: str, subscription_id: str) -> bool:
+        return any(
+            subscription.subscription_id == subscription_id
+            for subscription in self._subscriptions_by_run_id.get(run_id, ())
+        )
+
+    def _ack_event_response(
+        self,
+        run_id: str,
+        subscription_id: str,
+        events: tuple[dict[str, object], ...],
+        payload: Mapping[str, object],
+        acknowledged_at: str,
+    ) -> ServerResponse:
+        event_id = payload.get("event_id", payload.get("eventId"))
+        cursor = payload.get("cursor")
+        if event_id is None and cursor is None:
+            raise ValueError("ack request requires event_id or cursor")
+        event_id_text = (
+            _validate_non_empty_string("ack request", "event_id", event_id)
+            if event_id is not None
+            else None
+        )
+        cursor_text = (
+            _validate_non_empty_string("ack request", "cursor", cursor)
+            if cursor is not None
+            else None
+        )
+        matched_event = self._find_event_for_ack(run_id, events, event_id_text, cursor_text)
+        if matched_event is None:
+            return ServerResponse.json(
+                404,
+                {
+                    "ok": False,
+                    "error": "acknowledged event not found in retained run events",
+                    "runId": run_id,
+                    "subscriptionId": subscription_id,
+                    "eventId": event_id_text,
+                    "cursor": cursor_text,
+                },
+            )
+        metadata = matched_event.get("metadata")
+        assert isinstance(metadata, Mapping)
+        event_id_text = str(metadata.get("eventId", event_id_text or ""))
+        sequence = metadata.get("sequence")
+        cursor_text = f"{run_id}:{sequence}" if isinstance(sequence, int) and not isinstance(sequence, bool) else cursor_text
+        record: dict[str, object] = {
+            "eventId": event_id_text,
+            "cursor": cursor_text,
+            "acknowledgedAt": acknowledged_at,
+        }
+        key = (run_id, subscription_id)
+        existing = self._acks_by_subscription.get(key, ())
+        if record not in existing:
+            self._acks_by_subscription[key] = (*existing, record)
+        return ServerResponse.json(
+            202,
+            {
+                "ok": True,
+                "runId": run_id,
+                "subscriptionId": subscription_id,
+                "eventId": event_id_text,
+                "cursor": cursor_text,
+                "status": "acknowledged",
+            },
+        )
+
+    def _find_event_for_ack(
+        self,
+        run_id: str,
+        events: tuple[dict[str, object], ...],
+        event_id: str | None,
+        cursor: str | None,
+    ) -> dict[str, object] | None:
+        for event in events:
+            metadata = event.get("metadata")
+            if not isinstance(metadata, Mapping):
+                continue
+            sequence = metadata.get("sequence")
+            event_cursor = f"{run_id}:{sequence}" if isinstance(sequence, int) and not isinstance(sequence, bool) else None
+            metadata_event_id = metadata.get("eventId")
+            if event_id is not None and metadata_event_id == event_id:
+                return event
+            if cursor is not None and event_cursor == cursor:
+                return event
+        return None
 
 
 class ServerProtocolVersionMismatchError(ValueError):
