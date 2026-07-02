@@ -263,6 +263,9 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   `ExternalCallbackRejected`, recording operation/run/attempt identity, policy snapshot, release,
   idempotency, verification, payload digest, and artifact ids without copying untrusted callback
   payload bodies into the audit log.
+- Observability now exposes typed names for the amendment's required async operation, callback
+  delivery, and run attach/detach/replay events, and `ObservabilityObservation` validates metric
+  labels against the low-cardinality rule including `operation_id`, `event_id`, and `delivery_id`.
 - `CallbackEndpointRef` and `CallbackEndpointAuth` now model callback ingress authentication for
   async operations, with bearer-token, `hmac-sha256`, Ed25519 verifier-boundary, mTLS
   client-identity, and OIDC/JWT verifier-boundary helpers that build `AsyncCallbackSubmission` only

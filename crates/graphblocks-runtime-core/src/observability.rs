@@ -188,6 +188,72 @@ impl fmt::Display for MetricLabelError {
 impl Error for MetricLabelError {}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ObservabilityEventName {
+    AsyncOperationStart,
+    AsyncOperationWait,
+    AsyncOperationCallbackReceived,
+    AsyncOperationResume,
+    CallbackDeliverySchedule,
+    CallbackDeliveryAttempt,
+    CallbackDeliverySuccess,
+    CallbackDeliveryFailure,
+    CallbackDeliveryDeadLetter,
+    RunAttach,
+    RunDetach,
+    RunReplay,
+}
+
+impl ObservabilityEventName {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::AsyncOperationStart => "async.operation.start",
+            Self::AsyncOperationWait => "async.operation.wait",
+            Self::AsyncOperationCallbackReceived => "async.operation.callback_received",
+            Self::AsyncOperationResume => "async.operation.resume",
+            Self::CallbackDeliverySchedule => "callback.delivery.schedule",
+            Self::CallbackDeliveryAttempt => "callback.delivery.attempt",
+            Self::CallbackDeliverySuccess => "callback.delivery.success",
+            Self::CallbackDeliveryFailure => "callback.delivery.failure",
+            Self::CallbackDeliveryDeadLetter => "callback.delivery.dead_letter",
+            Self::RunAttach => "run.attach",
+            Self::RunDetach => "run.detach",
+            Self::RunReplay => "run.replay",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ObservabilityObservation {
+    pub name: ObservabilityEventName,
+    pub labels: MetricLabelSet,
+    pub attributes: BTreeMap<String, Value>,
+}
+
+impl ObservabilityObservation {
+    pub fn new(name: ObservabilityEventName) -> Self {
+        Self {
+            name,
+            labels: MetricLabelSet::new(),
+            attributes: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_label(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.labels = self.labels.with_label(key, value);
+        self
+    }
+
+    pub fn with_attribute(mut self, key: impl Into<String>, value: Value) -> Self {
+        self.attributes.insert(key.into(), value);
+        self
+    }
+
+    pub fn validate_metric_labels(&self) -> Result<(), MetricLabelError> {
+        self.labels.validate_cardinality_budget()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CaptureMode {
     None,
     HashOnly,
@@ -786,6 +852,9 @@ fn is_forbidden_metric_label(label: &str) -> bool {
             | "trace_id"
             | "conversation_id"
             | "turn_id"
+            | "operation_id"
+            | "event_id"
+            | "delivery_id"
             | "user_id"
             | "document_id"
             | "chunk_id"

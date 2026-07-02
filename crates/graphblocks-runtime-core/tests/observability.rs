@@ -1,9 +1,9 @@
 use graphblocks_runtime_core::observability::{
     CaptureDecision, CaptureMode, DiagnosticBundle, DiagnosticBundleError,
     DiagnosticBundleRedaction, DiagnosticExcerpt, DiagnosticExcerptKind, GenerationObservation,
-    MetricLabelError, MetricLabelSet, RedactionRule, SpanTiming, TelemetryBuffer,
-    TelemetryBufferError, TelemetryEnqueueOutcome, TelemetryOnFull, TelemetryPriority,
-    TelemetryQueuePolicy, TelemetryRecord, TelemetryRecordKind,
+    MetricLabelError, MetricLabelSet, ObservabilityEventName, ObservabilityObservation,
+    RedactionRule, SpanTiming, TelemetryBuffer, TelemetryBufferError, TelemetryEnqueueOutcome,
+    TelemetryOnFull, TelemetryPriority, TelemetryQueuePolicy, TelemetryRecord, TelemetryRecordKind,
 };
 use serde_json::json;
 
@@ -71,6 +71,84 @@ fn metric_label_set_rejects_high_cardinality_labels() {
             labels: vec!["provider_response_id".to_owned(), "run_id".to_owned()],
         })
     );
+}
+
+#[test]
+fn async_and_callback_observation_names_match_spec_required_events() {
+    let events = [
+        ObservabilityEventName::AsyncOperationStart,
+        ObservabilityEventName::AsyncOperationWait,
+        ObservabilityEventName::AsyncOperationCallbackReceived,
+        ObservabilityEventName::AsyncOperationResume,
+        ObservabilityEventName::CallbackDeliverySchedule,
+        ObservabilityEventName::CallbackDeliveryAttempt,
+        ObservabilityEventName::CallbackDeliverySuccess,
+        ObservabilityEventName::CallbackDeliveryFailure,
+        ObservabilityEventName::CallbackDeliveryDeadLetter,
+        ObservabilityEventName::RunAttach,
+        ObservabilityEventName::RunDetach,
+        ObservabilityEventName::RunReplay,
+    ];
+
+    assert_eq!(
+        events
+            .iter()
+            .map(|event| event.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "async.operation.start",
+            "async.operation.wait",
+            "async.operation.callback_received",
+            "async.operation.resume",
+            "callback.delivery.schedule",
+            "callback.delivery.attempt",
+            "callback.delivery.success",
+            "callback.delivery.failure",
+            "callback.delivery.dead_letter",
+            "run.attach",
+            "run.detach",
+            "run.replay",
+        ]
+    );
+}
+
+#[test]
+fn async_observability_observation_rejects_high_cardinality_labels() {
+    let observation = ObservabilityObservation::new(ObservabilityEventName::AsyncOperationResume)
+        .with_label("operation_kind", "ci_job")
+        .with_label("run_id", "run-123")
+        .with_label("operation_id", "op-456")
+        .with_attribute("state", json!("resuming"));
+
+    assert_eq!(
+        observation.validate_metric_labels(),
+        Err(MetricLabelError::ForbiddenLabels {
+            labels: vec!["operation_id".to_owned(), "run_id".to_owned()],
+        })
+    );
+}
+
+#[test]
+fn callback_delivery_observation_accepts_low_cardinality_labels_and_attributes() {
+    let observation =
+        ObservabilityObservation::new(ObservabilityEventName::CallbackDeliveryFailure)
+            .with_label("target_kind", "webhook")
+            .with_label("failure_class", "server_error")
+            .with_attribute("attempt", json!(3));
+
+    observation
+        .validate_metric_labels()
+        .expect("low-cardinality labels are valid");
+    assert_eq!(observation.name.as_str(), "callback.delivery.failure");
+    assert_eq!(
+        observation
+            .labels
+            .labels
+            .get("target_kind")
+            .map(String::as_str),
+        Some("webhook")
+    );
+    assert_eq!(observation.attributes["attempt"], 3);
 }
 
 #[test]
