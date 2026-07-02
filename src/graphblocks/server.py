@@ -222,6 +222,7 @@ def default_server_route_manifest() -> ServerRouteManifest:
             ServerEndpoint("GET", "/runs", "http", "list_runs", auth_required=True),
             ServerEndpoint("POST", "/runs", "http", "invoke_graph", auth_required=True),
             ServerEndpoint("GET", "/runs/{run_id}", "http", "get_run_status", auth_required=True),
+            ServerEndpoint("POST", "/runs/{run_id}/attach", "http", "attach_to_run", auth_required=True),
             ServerEndpoint("POST", "/runs/{run_id}/cancel", "http", "cancel_run", auth_required=True),
             ServerEndpoint("POST", "/callbacks/{operation_id}", "http", "submit_async_callback", auth_required=True),
             ServerEndpoint("GET", "/runs/{run_id}/events", "sse", "application_events", auth_required=True),
@@ -631,6 +632,30 @@ class GraphBlocksServerApp:
                     },
                 )
             return ServerResponse.json(200, self._run_status_payload(run_id, events))
+        if route.operation == "attach_to_run":
+            try:
+                run_id = route_match.path_params.get("run_id", "")
+                events = self._events_by_run_id.get(run_id)
+                if events is None:
+                    return ServerResponse.json(
+                        404,
+                        {
+                            "ok": False,
+                            "error": f"run attach stream not found for run {run_id!r}",
+                        },
+                    )
+                payload = json.loads(request.body.decode("utf-8") or "{}")
+                if not isinstance(payload, Mapping):
+                    raise ValueError("attach request body must be a JSON object")
+                return self._attach_to_run_response(run_id, events, payload)
+            except (TypeError, ValueError, json.JSONDecodeError) as error:
+                return ServerResponse.json(
+                    400,
+                    {
+                        "ok": False,
+                        "error": str(error),
+                    },
+                )
         if route.operation == "submit_async_callback":
             try:
                 submission = ServerAsyncCallbackSubmission.from_request(
@@ -927,6 +952,75 @@ class GraphBlocksServerApp:
         if include_ok:
             return {"ok": True, **payload}
         return payload
+
+    def _attach_to_run_response(
+        self,
+        run_id: str,
+        events: tuple[dict[str, object], ...],
+        payload: Mapping[str, object],
+    ) -> ServerResponse:
+        last_cursor = payload.get("last_cursor", payload.get("lastCursor"))
+        if last_cursor is not None:
+            last_cursor = _validate_non_empty_string("attach request", "last_cursor", last_cursor)
+        capabilities = payload.get("capabilities", ())
+        if capabilities is None:
+            capabilities = ()
+        capabilities_tuple = _validate_string_sequence("attach request", "capabilities", capabilities)
+
+        sequence_by_cursor: dict[str, int] = {}
+        last_sequence = 0
+        for event in events:
+            metadata = event.get("metadata")
+            if not isinstance(metadata, Mapping):
+                continue
+            sequence = metadata.get("sequence")
+            if not isinstance(sequence, int) or isinstance(sequence, bool):
+                continue
+            cursor = f"{run_id}:{sequence}"
+            sequence_by_cursor[cursor] = sequence
+            if sequence > last_sequence:
+                last_sequence = sequence
+
+        replay_after_sequence = 0
+        if last_cursor is not None:
+            if last_cursor not in sequence_by_cursor:
+                nearest_cursor = f"{run_id}:{min(sequence_by_cursor.values())}" if sequence_by_cursor else None
+                return ServerResponse.json(
+                    409,
+                    {
+                        "ok": False,
+                        "error": "CursorExpired",
+                        "runId": run_id,
+                        "requestedCursor": last_cursor,
+                        "nearestAvailableCursor": nearest_cursor,
+                        "lastCursor": f"{run_id}:{last_sequence}",
+                        "lastSequence": last_sequence,
+                    },
+                )
+            replay_after_sequence = sequence_by_cursor[last_cursor]
+
+        replayed_events = []
+        for event in events:
+            metadata = event.get("metadata")
+            if not isinstance(metadata, Mapping):
+                continue
+            sequence = metadata.get("sequence")
+            if isinstance(sequence, int) and not isinstance(sequence, bool) and sequence > replay_after_sequence:
+                replayed_events.append(dict(event))
+
+        last_cursor_value = f"{run_id}:{last_sequence}"
+        return ServerResponse.json(
+            200,
+            {
+                "ok": True,
+                "runId": run_id,
+                "lastCursor": last_cursor_value,
+                "liveCursor": last_cursor_value,
+                "replayComplete": True,
+                "capabilities": list(capabilities_tuple),
+                "events": replayed_events,
+            },
+        )
 
 
 class ServerProtocolVersionMismatchError(ValueError):

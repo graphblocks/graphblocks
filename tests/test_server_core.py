@@ -91,6 +91,14 @@ def test_server_route_manifest_matches_run_status_path() -> None:
     assert route_match.path_params == {"run_id": "run-123"}
 
 
+def test_server_route_manifest_matches_attach_to_run_path() -> None:
+    route_match = default_server_route_manifest().match("POST", "/runs/run-123/attach")
+
+    assert route_match.endpoint.operation == "attach_to_run"
+    assert route_match.endpoint.auth_required is True
+    assert route_match.path_params == {"run_id": "run-123"}
+
+
 def test_server_route_manifest_matches_async_callback_ingress_path() -> None:
     route_match = default_server_route_manifest().match("POST", "/callbacks/op-ci-1")
 
@@ -819,6 +827,128 @@ def test_server_app_lists_run_statuses_from_authoritative_events() -> None:
                 "activeOperations": [],
             },
         ],
+    }
+
+
+def test_server_app_attaches_to_run_after_cursor() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "server-attach"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Attach {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "ok"}},
+                    "runId": "run-attach-1",
+                    "responseId": "response-attach-1",
+                    "releaseId": "release-attach-1",
+                    "occurredAt": "2026-07-02T00:00:00Z",
+                }
+            ).encode("utf-8"),
+        )
+    )
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-attach-1/attach",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "last_cursor": "run-attach-1:1",
+                    "capabilities": ["assistant_drafts", "retractions"],
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    payload = json.loads(response.body.decode("utf-8"))
+    assert response.status_code == 200
+    assert payload["ok"] is True
+    assert payload["runId"] == "run-attach-1"
+    assert payload["lastCursor"] == "run-attach-1:2"
+    assert payload["liveCursor"] == "run-attach-1:2"
+    assert payload["replayComplete"] is True
+    assert payload["capabilities"] == ["assistant_drafts", "retractions"]
+    assert [event["kind"] for event in payload["events"]] == ["RunSucceeded"]
+
+
+def test_server_app_reports_attach_cursor_expired_for_unknown_cursor() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "server-attach-expired"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Attach {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "ok"}},
+                    "runId": "run-attach-expired-1",
+                    "responseId": "response-attach-expired-1",
+                }
+            ).encode("utf-8"),
+        )
+    )
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-attach-expired-1/attach",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"lastCursor": "run-attach-expired-1:99"}).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == 409
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "CursorExpired",
+        "runId": "run-attach-expired-1",
+        "requestedCursor": "run-attach-expired-1:99",
+        "nearestAvailableCursor": "run-attach-expired-1:1",
+        "lastCursor": "run-attach-expired-1:2",
+        "lastSequence": 2,
     }
 
 
