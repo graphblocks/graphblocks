@@ -429,6 +429,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Callback resume admission also records policy-denied and release-incompatible resume decisions
   after durable callback receipt, preserving the journal-before-resume rule while preventing
   scheduler continuation.
+- Python `graphblocks-core` now exposes an immutable `AsyncOperation` schema facade with the
+  amendment states (`created`, `submitted`, `waiting_callback`, `callback_received`, `polling`,
+  `resuming`, and terminal states), callback/polling refs, expected schema, resume token hash,
+  idempotency key, timestamps, transition helpers, and JSON projection coverage.
 - `AsyncOperationResult` and `ExternalEffectRecord` now preserve committed external side effects
   even when an async operation result is `cancelled` or `incomplete`; stdlib async terminal blocks
   can project `externalEffects` config into the final result instead of dropping provider effect

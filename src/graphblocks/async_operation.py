@@ -7,7 +7,32 @@ from typing import Literal
 from .tools import ToolEffectOutcome, VALID_TOOL_EFFECT_OUTCOMES
 
 
+AsyncOperationStateValue = Literal[
+    "created",
+    "submitted",
+    "waiting_callback",
+    "callback_received",
+    "polling",
+    "resuming",
+    "completed",
+    "failed",
+    "cancelled",
+    "expired",
+]
 AsyncOperationResultStatusValue = Literal["completed", "failed", "cancelled", "expired", "incomplete"]
+
+
+class AsyncOperationState:
+    CREATED = "created"
+    SUBMITTED = "submitted"
+    WAITING_CALLBACK = "waiting_callback"
+    CALLBACK_RECEIVED = "callback_received"
+    POLLING = "polling"
+    RESUMING = "resuming"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    EXPIRED = "expired"
 
 
 class AsyncOperationResultStatus:
@@ -24,6 +49,30 @@ VALID_ASYNC_OPERATION_RESULT_STATUSES = frozenset({
     "cancelled",
     "expired",
     "incomplete",
+})
+VALID_ASYNC_OPERATION_STATES = frozenset({
+    "created",
+    "submitted",
+    "waiting_callback",
+    "callback_received",
+    "polling",
+    "resuming",
+    "completed",
+    "failed",
+    "cancelled",
+    "expired",
+})
+TERMINAL_ASYNC_OPERATION_STATES = frozenset({"completed", "failed", "cancelled", "expired"})
+VALID_ASYNC_OPERATION_KINDS = frozenset({
+    "tool",
+    "sandbox_task",
+    "ci_job",
+    "browser_task",
+    "workspace_trial",
+    "external_provider_job",
+    "document_job",
+    "research_task",
+    "custom",
 })
 
 
@@ -45,6 +94,20 @@ def _validate_status(value: object) -> AsyncOperationResultStatusValue:
     return status  # type: ignore[return-value]
 
 
+def _validate_operation_state(value: object) -> AsyncOperationStateValue:
+    state = _validate_non_empty_string("async operation", "state", value)
+    if state not in VALID_ASYNC_OPERATION_STATES:
+        raise ValueError("async operation state must be a valid async operation state")
+    return state  # type: ignore[return-value]
+
+
+def _validate_operation_kind(value: object) -> str:
+    kind = _validate_non_empty_string("async operation", "kind", value)
+    if kind not in VALID_ASYNC_OPERATION_KINDS:
+        raise ValueError("async operation kind must be a valid async operation kind")
+    return kind
+
+
 def _validate_effect_outcome(value: object) -> ToolEffectOutcome:
     outcome = _validate_non_empty_string("external effect", "outcome", value)
     if outcome not in VALID_TOOL_EFFECT_OUTCOMES:
@@ -52,6 +115,162 @@ def _validate_effect_outcome(value: object) -> ToolEffectOutcome:
             "external effect outcome must be one of no_external_effect, committed, not_committed, or unknown"
         )
     return outcome  # type: ignore[return-value]
+
+
+@dataclass(frozen=True, slots=True)
+class AsyncOperation:
+    operation_id: str
+    run_id: str
+    node_id: str
+    attempt_id: str
+    kind: str
+    state: AsyncOperationStateValue
+    expected_schema: str
+    resume_token_hash: str
+    idempotency_key: str
+    created_at: str
+    provider_operation_id: str | None = None
+    callback_ref: str | None = None
+    polling_ref: str | None = None
+    submitted_at: str | None = None
+    expires_at: str | None = None
+    completed_at: str | None = None
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "operation_id",
+            "run_id",
+            "node_id",
+            "attempt_id",
+            "expected_schema",
+            "resume_token_hash",
+            "idempotency_key",
+            "created_at",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _validate_non_empty_string("async operation", field_name, getattr(self, field_name)),
+            )
+        object.__setattr__(self, "kind", _validate_operation_kind(self.kind))
+        object.__setattr__(self, "state", _validate_operation_state(self.state))
+        for field_name in (
+            "provider_operation_id",
+            "callback_ref",
+            "polling_ref",
+            "submitted_at",
+            "expires_at",
+            "completed_at",
+        ):
+            value = getattr(self, field_name)
+            if value is not None:
+                object.__setattr__(
+                    self,
+                    field_name,
+                    _validate_non_empty_string("async operation", field_name, value),
+                )
+
+    @classmethod
+    def created(
+        cls,
+        *,
+        operation_id: str,
+        run_id: str,
+        node_id: str,
+        attempt_id: str,
+        kind: str,
+        expected_schema: str,
+        resume_token_hash: str,
+        idempotency_key: str,
+        created_at: str,
+        provider_operation_id: str | None = None,
+        callback_ref: str | None = None,
+        polling_ref: str | None = None,
+        expires_at: str | None = None,
+    ) -> AsyncOperation:
+        return cls(
+            operation_id=operation_id,
+            run_id=run_id,
+            node_id=node_id,
+            attempt_id=attempt_id,
+            kind=kind,
+            state="created",
+            provider_operation_id=provider_operation_id,
+            callback_ref=callback_ref,
+            polling_ref=polling_ref,
+            expected_schema=expected_schema,
+            resume_token_hash=resume_token_hash,
+            idempotency_key=idempotency_key,
+            created_at=created_at,
+            expires_at=expires_at,
+        )
+
+    def _replace_state(self, state: AsyncOperationStateValue, **changes: object) -> AsyncOperation:
+        if self.state in TERMINAL_ASYNC_OPERATION_STATES:
+            raise ValueError("async operation terminal state cannot transition")
+        return replace(self, state=state, **changes)
+
+    def mark_submitted(
+        self,
+        *,
+        submitted_at: str,
+        provider_operation_id: str | None = None,
+    ) -> AsyncOperation:
+        changes: dict[str, object] = {"submitted_at": submitted_at}
+        if provider_operation_id is not None:
+            changes["provider_operation_id"] = provider_operation_id
+        return self._replace_state("submitted", **changes)
+
+    def wait_for_callback(self) -> AsyncOperation:
+        if self.callback_ref is None:
+            raise ValueError("async operation callback_ref is required before waiting_callback")
+        return self._replace_state("waiting_callback")
+
+    def mark_callback_received(self, *, completed_at: str | None = None) -> AsyncOperation:
+        changes: dict[str, object] = {}
+        if completed_at is not None:
+            changes["completed_at"] = completed_at
+        return self._replace_state("callback_received", **changes)
+
+    def start_polling(self) -> AsyncOperation:
+        if self.polling_ref is None:
+            raise ValueError("async operation polling_ref is required before polling")
+        return self._replace_state("polling")
+
+    def mark_resuming(self) -> AsyncOperation:
+        return self._replace_state("resuming")
+
+    def complete(self, *, completed_at: str) -> AsyncOperation:
+        return self._replace_state("completed", completed_at=completed_at)
+
+    def fail(self, *, completed_at: str) -> AsyncOperation:
+        return self._replace_state("failed", completed_at=completed_at)
+
+    def cancel(self, *, completed_at: str) -> AsyncOperation:
+        return self._replace_state("cancelled", completed_at=completed_at)
+
+    def expire(self, *, completed_at: str) -> AsyncOperation:
+        return self._replace_state("expired", completed_at=completed_at)
+
+    def to_json(self) -> dict[str, object]:
+        return {
+            "operation_id": self.operation_id,
+            "run_id": self.run_id,
+            "node_id": self.node_id,
+            "attempt_id": self.attempt_id,
+            "kind": self.kind,
+            "state": self.state,
+            "provider_operation_id": self.provider_operation_id,
+            "callback_ref": self.callback_ref,
+            "polling_ref": self.polling_ref,
+            "resume_token_hash": self.resume_token_hash,
+            "idempotency_key": self.idempotency_key,
+            "expected_schema": self.expected_schema,
+            "created_at": self.created_at,
+            "submitted_at": self.submitted_at,
+            "expires_at": self.expires_at,
+            "completed_at": self.completed_at,
+        }
 
 
 @dataclass(frozen=True, slots=True)

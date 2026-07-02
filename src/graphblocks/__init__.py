@@ -38,8 +38,10 @@ from .agent import (
 )
 from .approval import ApprovalRecord, ApprovalRequest, ApprovalStatus, VALID_APPROVAL_STATUSES
 from .async_operation import (
+    AsyncOperation,
     AsyncOperationResult,
     AsyncOperationResultStatus,
+    AsyncOperationState,
     ExternalEffectRecord,
     VALID_ASYNC_OPERATION_RESULT_STATUSES,
 )
@@ -661,8 +663,10 @@ __all__ = [
     "ApprovalRequest",
     "ApprovalStatus",
     "ArtifactRef",
+    "AsyncOperation",
     "AsyncOperationResult",
     "AsyncOperationResultStatus",
+    "AsyncOperationState",
     "AssetRevision",
     "Citation",
     "CitationSourceTrace",
