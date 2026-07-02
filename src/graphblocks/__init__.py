@@ -482,6 +482,7 @@ from .review import (
 from .run_store import (
     InMemoryRunStore,
     RunDeploymentProvenance,
+    RunInvocationMode,
     RunRecord,
     RunTerminalStateError,
     SQLiteRunStore,
@@ -808,6 +809,7 @@ __all__ = [
     "RunOwnershipLease",
     "RunResult",
     "RunDeploymentProvenance",
+    "RunInvocationMode",
     "RunRecord",
     "RunTerminalStateError",
     "S3CompatibleBlobStore",

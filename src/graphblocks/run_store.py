@@ -11,6 +11,7 @@ from typing import Any, Literal
 from .evaluation import ModelVisibleToolRef
 
 
+RunInvocationMode = Literal["sync", "accepted", "background"]
 RunStatus = Literal[
     "created",
     "admitted",
@@ -71,6 +72,7 @@ VALID_RUN_STATUSES = frozenset({
     "expired",
     "policy_stopped",
 })
+VALID_RUN_INVOCATION_MODES = frozenset({"sync", "accepted", "background"})
 
 
 def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:
@@ -95,6 +97,14 @@ def _validate_json_object(owner: str, field_name: str, value: object) -> dict[st
         key_text = _validate_non_empty_string(owner, f"{field_name} key", key)
         snapshot[key_text] = deepcopy(item)
     return snapshot
+
+
+def _validate_invocation_mode(owner: str, value: object) -> RunInvocationMode:
+    if not isinstance(value, str):
+        raise ValueError(f"{owner} invocation_mode must be a string")
+    if value not in VALID_RUN_INVOCATION_MODES:
+        raise ValueError(f"invalid {owner} invocation_mode {value}")
+    return value  # type: ignore[return-value]
 
 
 class StateConflictError(RuntimeError):
@@ -174,6 +184,7 @@ class RunRecord:
     graph_hash: str
     inputs: dict[str, Any]
     deployment_provenance: RunDeploymentProvenance = field(default_factory=RunDeploymentProvenance)
+    invocation_mode: RunInvocationMode = "sync"
     status: RunStatus = "created"
     state: dict[str, Any] = field(default_factory=dict)
     state_revision: int = 0
@@ -185,6 +196,7 @@ class RunRecord:
         object.__setattr__(self, "inputs", _validate_json_object("run record", "inputs", self.inputs))
         if not isinstance(self.deployment_provenance, RunDeploymentProvenance):
             raise ValueError("run record deployment_provenance must be RunDeploymentProvenance")
+        object.__setattr__(self, "invocation_mode", _validate_invocation_mode("run record", self.invocation_mode))
         if self.status not in VALID_RUN_STATUSES:
             raise ValueError(f"invalid run record status {self.status}")
         object.__setattr__(self, "state", _validate_json_object("run record", "state", self.state))
@@ -209,12 +221,14 @@ class InMemoryRunStore:
         inputs: dict[str, Any],
         *,
         deployment_provenance: RunDeploymentProvenance | None = None,
+        invocation_mode: RunInvocationMode = "sync",
         model_visible_tools: Iterable[ModelVisibleToolRef] = (),
     ) -> RunRecord:
         _validate_non_empty_string("run store", "graph_hash", graph_hash)
         inputs = _validate_json_object("run store", "inputs", inputs)
         if deployment_provenance is not None and not isinstance(deployment_provenance, RunDeploymentProvenance):
             raise ValueError("run store deployment_provenance must be RunDeploymentProvenance")
+        invocation_mode = _validate_invocation_mode("run", invocation_mode)
         run_id = f"run-{self.next_id:06d}"
         self.next_id += 1
         record = RunRecord(
@@ -222,6 +236,7 @@ class InMemoryRunStore:
             graph_hash=graph_hash,
             inputs=deepcopy(inputs),
             deployment_provenance=deployment_provenance or RunDeploymentProvenance(),
+            invocation_mode=invocation_mode,
             model_visible_tools=tuple(model_visible_tools),
         )
         self.runs[run_id] = record
@@ -260,6 +275,7 @@ class InMemoryRunStore:
             graph_hash=current.graph_hash,
             inputs=deepcopy(current.inputs),
             deployment_provenance=current.deployment_provenance,
+            invocation_mode=current.invocation_mode,
             model_visible_tools=current.model_visible_tools,
             status=current.status,
             state=next_state,
@@ -282,6 +298,7 @@ class InMemoryRunStore:
             graph_hash=current.graph_hash,
             inputs=deepcopy(current.inputs),
             deployment_provenance=current.deployment_provenance,
+            invocation_mode=current.invocation_mode,
             model_visible_tools=tuple(tools),
             status=current.status,
             state=deepcopy(current.state),
@@ -302,6 +319,7 @@ class InMemoryRunStore:
             graph_hash=current.graph_hash,
             inputs=deepcopy(current.inputs),
             deployment_provenance=current.deployment_provenance,
+            invocation_mode=current.invocation_mode,
             model_visible_tools=current.model_visible_tools,
             status=status,
             state=deepcopy(current.state),
@@ -328,6 +346,7 @@ class SQLiteRunStore:
               graph_hash TEXT NOT NULL,
               inputs_json TEXT NOT NULL,
               deployment_provenance_json TEXT NOT NULL,
+              invocation_mode TEXT NOT NULL DEFAULT 'sync',
               model_visible_tools_json TEXT NOT NULL,
               status TEXT NOT NULL,
               state_json TEXT NOT NULL,
@@ -359,6 +378,8 @@ class SQLiteRunStore:
                 """,
                 (_model_visible_tools_json(()),),
             )
+        if "invocation_mode" not in columns:
+            self.connection.execute("ALTER TABLE runs ADD COLUMN invocation_mode TEXT NOT NULL DEFAULT 'sync'")
         self.connection.commit()
 
     def close(self) -> None:
@@ -370,12 +391,14 @@ class SQLiteRunStore:
         inputs: dict[str, Any],
         *,
         deployment_provenance: RunDeploymentProvenance | None = None,
+        invocation_mode: RunInvocationMode = "sync",
         model_visible_tools: Iterable[ModelVisibleToolRef] = (),
     ) -> RunRecord:
         _validate_non_empty_string("run store", "graph_hash", graph_hash)
         inputs = _validate_json_object("run store", "inputs", inputs)
         if deployment_provenance is not None and not isinstance(deployment_provenance, RunDeploymentProvenance):
             raise ValueError("run store deployment_provenance must be RunDeploymentProvenance")
+        invocation_mode = _validate_invocation_mode("run", invocation_mode)
         row = self.connection.execute("SELECT COALESCE(MAX(sequence), 0) + 1 FROM runs").fetchone()
         sequence = int(row[0])
         run_id = f"run-{sequence:06d}"
@@ -384,6 +407,7 @@ class SQLiteRunStore:
             graph_hash=graph_hash,
             inputs=deepcopy(inputs),
             deployment_provenance=deployment_provenance or RunDeploymentProvenance(),
+            invocation_mode=invocation_mode,
             model_visible_tools=tuple(model_visible_tools),
         )
         self.connection.execute(
@@ -394,12 +418,13 @@ class SQLiteRunStore:
               graph_hash,
               inputs_json,
               deployment_provenance_json,
+              invocation_mode,
               model_visible_tools_json,
               status,
               state_json,
               state_revision
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record.run_id,
@@ -407,6 +432,7 @@ class SQLiteRunStore:
                 record.graph_hash,
                 json.dumps(record.inputs, sort_keys=True, separators=(",", ":")),
                 _deployment_provenance_json(record.deployment_provenance),
+                record.invocation_mode,
                 _model_visible_tools_json(record.model_visible_tools),
                 record.status,
                 json.dumps(record.state, sort_keys=True, separators=(",", ":")),
@@ -425,6 +451,7 @@ class SQLiteRunStore:
               graph_hash,
               inputs_json,
               deployment_provenance_json,
+              invocation_mode,
               model_visible_tools_json,
               status,
               state_json,
@@ -443,6 +470,7 @@ class SQLiteRunStore:
             deployment_provenance=_parse_deployment_provenance_json(
                 str(row["deployment_provenance_json"] or "{}")
             ),
+            invocation_mode=str(row["invocation_mode"] or "sync"),
             model_visible_tools=_parse_model_visible_tools_json(
                 str(row["model_visible_tools_json"] or "[]")
             ),

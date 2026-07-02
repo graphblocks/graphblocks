@@ -340,8 +340,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `paused_operator`, `resuming`, and terminal `completed` and `expired`; SQLite persistence tests
   cover the new state strings.
 - `RunInvocationMode` now records `sync`, `accepted`, and `background` invocation mode in
-  `RunRecord`, persists the mode through SQLite, and builds accepted/background run handles with
-  event stream, websocket, cancel route, and initial cursor fields.
+  `RunRecord`; the Python run-store facade validates and persists the mode through SQLite migration,
+  and the server builds accepted/background run handles with event stream, websocket, cancel route,
+  and initial cursor fields.
 - Run invocation route diagnostics now report accepted/background routes without cursor-replayable
   event streams as `GB6005`, with shared compiler TCK coverage.
 - Run invocation route diagnostics now report accepted/background routes tied to

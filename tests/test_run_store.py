@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+import graphblocks
 from graphblocks.evaluation import ModelVisibleToolRef
 from graphblocks.run_store import (
     InMemoryRunStore,
@@ -46,6 +47,21 @@ def test_run_store_records_deployment_provenance_and_preserves_it_across_mutatio
     assert running.deployment_provenance == provenance
 
 
+def test_run_store_records_invocation_mode_and_preserves_it_across_mutations() -> None:
+    store = InMemoryRunStore()
+    accepted = store.create_run("sha256:test", {}, invocation_mode="accepted")
+    patched = store.patch_state(accepted.run_id, {"step": 1}, expected_revision=0)
+    running = store.set_status(accepted.run_id, "running")
+
+    assert accepted.invocation_mode == "accepted"
+    assert patched.invocation_mode == "accepted"
+    assert running.invocation_mode == "accepted"
+
+    background = store.create_run("sha256:test", {}, invocation_mode="background")
+    assert background.invocation_mode == "background"
+    assert "RunInvocationMode" in graphblocks.__all__
+
+
 def test_run_records_validate_identity_status_revision_and_payload_shapes() -> None:
     with pytest.raises(ValueError, match="run deployment provenance release_digest must not be empty"):
         RunDeploymentProvenance(release_digest=" ")
@@ -57,6 +73,8 @@ def test_run_records_validate_identity_status_revision_and_payload_shapes() -> N
         RunRecord("run-1", "sha256:test", [])  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="invalid run record status"):
         RunRecord("run-1", "sha256:test", {}, status="paused")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="invalid run record invocation_mode"):
+        RunRecord("run-1", "sha256:test", {}, invocation_mode="deferred")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="run record state_revision must be non-negative"):
         RunRecord("run-1", "sha256:test", {}, state_revision=-1)
     with pytest.raises(ValueError, match="run record model_visible_tools must be ModelVisibleToolRef"):
@@ -75,6 +93,8 @@ def test_run_store_validates_create_patch_status_and_copies_inputs() -> None:
         store.create_run(" ", {})
     with pytest.raises(ValueError, match="run store inputs must be an object"):
         store.create_run("sha256:test", [])  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="invalid run invocation mode"):
+        store.create_run("sha256:test", {}, invocation_mode="deferred")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="run store patch must be an object"):
         store.patch_state(record.run_id, [], expected_revision=0)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="run store expected_revision must be non-negative"):
@@ -260,6 +280,21 @@ def test_sqlite_run_store_persists_records_across_instances(tmp_path) -> None:
         _model_visible_tool("knowledge.search", "resolved-search", True),
         _model_visible_tool("ticket.create", "resolved-ticket", False),
     )
+
+
+def test_sqlite_run_store_persists_invocation_mode_across_instances(tmp_path) -> None:
+    database = tmp_path / "runs.sqlite3"
+    first = SQLiteRunStore(database)
+    accepted = first.create_run("sha256:accepted", {}, invocation_mode="accepted")
+    background = first.create_run("sha256:background", {}, invocation_mode="background")
+    first.patch_state(accepted.run_id, {"step": 1}, expected_revision=0)
+    first.set_status(background.run_id, "running")
+    first.close()
+
+    second = SQLiteRunStore(database)
+
+    assert second.get_run(accepted.run_id).invocation_mode == "accepted"
+    assert second.get_run(background.run_id).invocation_mode == "background"
 
 
 def test_sqlite_run_store_records_model_visible_tools_after_run_creation(tmp_path) -> None:
