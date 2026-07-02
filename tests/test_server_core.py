@@ -857,6 +857,66 @@ def test_server_app_rejects_non_terminal_control_after_terminal_run_state() -> N
     assert [control["status"] for control in app.run_controls("run-terminal-control-1")] == ["cancelled"]
 
 
+def test_server_app_treats_repeated_terminal_control_as_idempotent() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-terminal-idempotent-1"] = (
+        {
+            "kind": "RunStarted",
+            "payload": {"runId": "run-terminal-idempotent-1"},
+            "metadata": {
+                "runId": "run-terminal-idempotent-1",
+                "sequence": 1,
+                "cursor": "run-terminal-idempotent-1:1",
+                "releaseId": "release-terminal-idempotent-1",
+                "occurredAt": "2026-07-02T00:00:00Z",
+            },
+        },
+    )
+    first = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-terminal-idempotent-1/cancel",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            requested_at="2026-07-02T00:00:01Z",
+        )
+    )
+    duplicate = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-terminal-idempotent-1/cancel",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            requested_at="2026-07-02T00:00:02Z",
+        )
+    )
+    status = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-terminal-idempotent-1",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            requested_at="2026-07-02T00:00:03Z",
+        )
+    )
+
+    assert first.status_code == 202
+    assert duplicate.status_code == 200
+    assert json.loads(duplicate.body.decode("utf-8")) == {
+        "ok": True,
+        "runId": "run-terminal-idempotent-1",
+        "status": "cancelled",
+        "reason": None,
+        "lastCursor": "run-terminal-idempotent-1:1",
+        "duplicate": True,
+    }
+    assert json.loads(status.body.decode("utf-8"))["state"] == "cancelled"
+    assert [control["status"] for control in app.run_controls("run-terminal-idempotent-1")] == ["cancelled"]
+
+
 def test_server_app_accepts_authenticated_async_callback_submission() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
     app._events_by_run_id["run-1"] = (

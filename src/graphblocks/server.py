@@ -1728,15 +1728,32 @@ class GraphBlocksServerApp:
             "resume_run": "resuming",
             "expire_run": "expired",
         }
+        terminal_control_states = {
+            "completed",
+            "succeeded",
+            "failed",
+            "cancelled",
+            "expired",
+            "policy_stopped",
+        }
         status = control_states[operation]
         existing = self._run_controls_by_run_id.get(run_id, ())
         if existing:
-            current_status = existing[-1].get("status")
-            if (
-                isinstance(current_status, str)
-                and current_status in {"completed", "succeeded", "failed", "cancelled", "expired", "policy_stopped"}
-                and status != current_status
-            ):
+            latest_control = existing[-1]
+            current_status = latest_control.get("status")
+            if isinstance(current_status, str) and current_status in terminal_control_states:
+                if status == current_status:
+                    return ServerResponse.json(
+                        200,
+                        {
+                            "ok": True,
+                            "runId": run_id,
+                            "status": current_status,
+                            "reason": latest_control.get("reason"),
+                            "lastCursor": latest_control.get("lastCursor"),
+                            "duplicate": True,
+                        },
+                    )
                 return ServerResponse.json(
                     409,
                     {
