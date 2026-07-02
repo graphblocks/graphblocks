@@ -236,8 +236,11 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   bounded retry scheduling, best-effort failure handling, dead-letter terminal state, and redrive
   records that preserve original delivery identity, event identity, attempt history, operator, and
   reason.
-- Durable storage, callback authentication adapters, real webhook delivery workers, dead-letter
-  persistence, budget-aware resume, and coordinator failover remain follow-on slices.
+- Webhook delivery envelopes now support required GraphBlocks headers, canonical JSON signing,
+  `hmac-sha256` verification, replay-window enforcement, and header/body identity checks.
+- Durable storage, Ed25519/mTLS/OIDC callback authentication adapters, real webhook delivery
+  workers, dead-letter persistence, budget-aware resume, and coordinator failover remain follow-on
+  slices.
 
 ### Package ownership
 

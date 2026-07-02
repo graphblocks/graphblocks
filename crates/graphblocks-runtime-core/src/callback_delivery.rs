@@ -1,6 +1,11 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::application_event::{ApplicationProtocolEvent, ApplicationProtocolEventKind};
+use hmac::{Hmac, Mac};
+use serde_json::{Value, json};
+use sha2::Sha256;
+
+type HmacSha256 = Hmac<Sha256>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EventFilter {
@@ -268,6 +273,228 @@ pub enum CallbackDeliveryError {
         delivery_id: String,
         status: CallbackDeliveryStatus,
     },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WebhookSigningConfig {
+    pub secret_ref: String,
+    secret: Vec<u8>,
+    pub timestamp_header: String,
+    pub signature_header: String,
+    pub algorithm_header: String,
+    pub replay_window_ms: u64,
+}
+
+impl WebhookSigningConfig {
+    pub fn hmac_sha256(
+        secret_ref: impl Into<String>,
+        secret: impl AsRef<[u8]>,
+        replay_window_ms: u64,
+    ) -> Result<Self, WebhookSignatureError> {
+        let secret_ref = secret_ref.into();
+        if secret_ref.trim().is_empty() {
+            return Err(WebhookSignatureError::EmptyField {
+                field: "secret_ref".to_owned(),
+            });
+        }
+        let secret = secret.as_ref();
+        if secret.is_empty() {
+            return Err(WebhookSignatureError::EmptyField {
+                field: "secret".to_owned(),
+            });
+        }
+        Ok(Self {
+            secret_ref,
+            secret: secret.to_vec(),
+            timestamp_header: "GraphBlocks-Timestamp".to_owned(),
+            signature_header: "GraphBlocks-Signature".to_owned(),
+            algorithm_header: "GraphBlocks-Signature-Algorithm".to_owned(),
+            replay_window_ms,
+        })
+    }
+
+    pub fn sign_delivery(
+        &self,
+        delivery: &CallbackDelivery,
+        event: &ApplicationProtocolEvent,
+        delivered_at_unix_ms: u64,
+    ) -> Result<SignedWebhookDelivery, WebhookSignatureError> {
+        let body = json!({
+            "delivery_id": &delivery.delivery_id,
+            "subscription_id": &delivery.subscription_id,
+            "event_id": &delivery.event_id,
+            "run_id": &delivery.run_id,
+            "sequence": delivery.sequence,
+            "cursor": &delivery.cursor,
+            "type": event.kind.as_str(),
+            "payload": &event.payload,
+            "idempotency_key": &delivery.idempotency_key,
+            "occurred_at_unix_ms": event.metadata.occurred_at_unix_ms,
+            "delivered_at_unix_ms": delivered_at_unix_ms,
+            "protocol_version": &event.metadata.protocol_version,
+        });
+        let signature = self.compute_signature(delivered_at_unix_ms, &body)?;
+        let mut headers = BTreeMap::new();
+        headers.insert(
+            "GraphBlocks-Delivery-Id".to_owned(),
+            delivery.delivery_id.clone(),
+        );
+        headers.insert("GraphBlocks-Event-Id".to_owned(), delivery.event_id.clone());
+        headers.insert("GraphBlocks-Run-Id".to_owned(), delivery.run_id.clone());
+        headers.insert("GraphBlocks-Cursor".to_owned(), delivery.cursor.clone());
+        headers.insert(
+            "GraphBlocks-Idempotency-Key".to_owned(),
+            delivery.idempotency_key.clone(),
+        );
+        headers.insert(
+            self.timestamp_header.clone(),
+            delivered_at_unix_ms.to_string(),
+        );
+        headers.insert(self.signature_header.clone(), signature);
+        headers.insert(self.algorithm_header.clone(), "hmac-sha256".to_owned());
+
+        Ok(SignedWebhookDelivery { body, headers })
+    }
+
+    pub fn verify_signed_delivery(
+        &self,
+        signed: &SignedWebhookDelivery,
+        now_unix_ms: u64,
+    ) -> Result<(), WebhookSignatureError> {
+        let timestamp = signed
+            .headers
+            .get(&self.timestamp_header)
+            .ok_or_else(|| WebhookSignatureError::MissingHeader {
+                header: self.timestamp_header.clone(),
+            })?
+            .parse::<u64>()
+            .map_err(|_| WebhookSignatureError::InvalidTimestamp)?;
+        if now_unix_ms.abs_diff(timestamp) > self.replay_window_ms {
+            return Err(WebhookSignatureError::TimestampOutsideReplayWindow {
+                timestamp_unix_ms: timestamp,
+                now_unix_ms,
+                replay_window_ms: self.replay_window_ms,
+            });
+        }
+        let algorithm = signed.headers.get(&self.algorithm_header).ok_or_else(|| {
+            WebhookSignatureError::MissingHeader {
+                header: self.algorithm_header.clone(),
+            }
+        })?;
+        if algorithm != "hmac-sha256" {
+            return Err(WebhookSignatureError::UnsupportedAlgorithm {
+                algorithm: algorithm.clone(),
+            });
+        }
+        for (header, field) in [
+            ("GraphBlocks-Delivery-Id", "delivery_id"),
+            ("GraphBlocks-Event-Id", "event_id"),
+            ("GraphBlocks-Run-Id", "run_id"),
+            ("GraphBlocks-Cursor", "cursor"),
+            ("GraphBlocks-Idempotency-Key", "idempotency_key"),
+        ] {
+            let header_value =
+                signed
+                    .headers
+                    .get(header)
+                    .ok_or_else(|| WebhookSignatureError::MissingHeader {
+                        header: header.to_owned(),
+                    })?;
+            let body_value = signed
+                .body
+                .get(field)
+                .and_then(Value::as_str)
+                .ok_or_else(|| WebhookSignatureError::MissingBodyField {
+                    field: field.to_owned(),
+                })?;
+            if header_value != body_value {
+                return Err(WebhookSignatureError::HeaderBodyMismatch {
+                    header: header.to_owned(),
+                    field: field.to_owned(),
+                });
+            }
+        }
+        let expected = self.compute_signature(timestamp, &signed.body)?;
+        let signature = signed.headers.get(&self.signature_header).ok_or_else(|| {
+            WebhookSignatureError::MissingHeader {
+                header: self.signature_header.clone(),
+            }
+        })?;
+        if !constant_time_eq(signature.as_bytes(), expected.as_bytes()) {
+            return Err(WebhookSignatureError::SignatureMismatch);
+        }
+        Ok(())
+    }
+
+    fn compute_signature(
+        &self,
+        timestamp_unix_ms: u64,
+        body: &Value,
+    ) -> Result<String, WebhookSignatureError> {
+        let body = graphblocks_compiler::canonical::canonical_json(body);
+        let mut mac = HmacSha256::new_from_slice(&self.secret)
+            .map_err(|_| WebhookSignatureError::InvalidSecret)?;
+        mac.update(timestamp_unix_ms.to_string().as_bytes());
+        mac.update(b".");
+        mac.update(body.as_bytes());
+        Ok(hex_encode(&mac.finalize().into_bytes()))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SignedWebhookDelivery {
+    pub body: Value,
+    pub headers: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WebhookSignatureError {
+    EmptyField {
+        field: String,
+    },
+    MissingHeader {
+        header: String,
+    },
+    MissingBodyField {
+        field: String,
+    },
+    HeaderBodyMismatch {
+        header: String,
+        field: String,
+    },
+    InvalidTimestamp,
+    TimestampOutsideReplayWindow {
+        timestamp_unix_ms: u64,
+        now_unix_ms: u64,
+        replay_window_ms: u64,
+    },
+    UnsupportedAlgorithm {
+        algorithm: String,
+    },
+    SignatureMismatch,
+    InvalidBody,
+    InvalidSecret,
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    output
+}
+
+fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut diff = 0_u8;
+    for index in 0..left.len() {
+        diff |= left[index] ^ right[index];
+    }
+    diff == 0
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

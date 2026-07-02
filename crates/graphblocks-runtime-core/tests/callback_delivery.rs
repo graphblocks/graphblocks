@@ -4,7 +4,7 @@ use graphblocks_runtime_core::application_event::{
 use graphblocks_runtime_core::callback_delivery::{
     CallbackDeadLetter, CallbackDeliveryResponse, CallbackDeliveryScheduler,
     CallbackDeliveryStatus, CallbackFailurePolicy, CallbackRetryPolicy, CallbackSubscription,
-    CallbackSubscriptionStatus, EventFilter,
+    CallbackSubscriptionStatus, EventFilter, WebhookSignatureError, WebhookSigningConfig,
 };
 use serde_json::json;
 
@@ -251,5 +251,97 @@ fn redrive_rejects_empty_operator_or_reason() {
         scheduler
             .redrive_dead_letter(&dead_letter, "operator:alice", " ", 2_000)
             .is_err()
+    );
+}
+
+#[test]
+fn webhook_envelope_signing_adds_required_headers_and_verifies() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let signing =
+        WebhookSigningConfig::hmac_sha256("secret://callbacks/ide-relay", b"top-secret", 300)
+            .expect("signing config is valid");
+
+    let signed = signing
+        .sign_delivery(&delivery, &event, 2_000)
+        .expect("delivery signs");
+
+    assert_eq!(
+        signed
+            .headers
+            .get("GraphBlocks-Delivery-Id")
+            .map(String::as_str),
+        Some("del_sub-1_event-1")
+    );
+    assert_eq!(
+        signed
+            .headers
+            .get("GraphBlocks-Event-Id")
+            .map(String::as_str),
+        Some("event-1")
+    );
+    assert_eq!(
+        signed.headers.get("GraphBlocks-Run-Id").map(String::as_str),
+        Some("run-1")
+    );
+    assert_eq!(
+        signed
+            .headers
+            .get("GraphBlocks-Idempotency-Key")
+            .map(String::as_str),
+        Some("sub-1:event-1")
+    );
+    assert_eq!(
+        signed
+            .headers
+            .get("GraphBlocks-Signature-Algorithm")
+            .map(String::as_str),
+        Some("hmac-sha256")
+    );
+    signing
+        .verify_signed_delivery(&signed, 2_050)
+        .expect("fresh signature verifies");
+}
+
+#[test]
+fn webhook_signature_verification_rejects_stale_or_tampered_payloads() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let signing =
+        WebhookSigningConfig::hmac_sha256("secret://callbacks/ide-relay", b"top-secret", 300)
+            .expect("signing config is valid");
+    let mut signed = signing
+        .sign_delivery(&delivery, &event, 2_000)
+        .expect("delivery signs");
+
+    assert_eq!(
+        signing.verify_signed_delivery(&signed, 2_301),
+        Err(WebhookSignatureError::TimestampOutsideReplayWindow {
+            timestamp_unix_ms: 2_000,
+            now_unix_ms: 2_301,
+            replay_window_ms: 300,
+        })
+    );
+
+    signed
+        .headers
+        .insert("GraphBlocks-Signature".to_owned(), "00".repeat(32));
+    assert_eq!(
+        signing.verify_signed_delivery(&signed, 2_050),
+        Err(WebhookSignatureError::SignatureMismatch)
     );
 }
