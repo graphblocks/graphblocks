@@ -2225,18 +2225,32 @@ class GraphBlocksServerApp:
         payload = payload if isinstance(payload, Mapping) else {}
         if not self._event_payload_field_matches(payload, "visibility", event_filter.get("visibility")):
             return False
-        if not self._event_payload_field_matches(
-            payload,
-            "node_id",
-            event_filter.get("node_ids", event_filter.get("nodeIds")),
-        ):
-            return False
-        if not self._event_payload_field_matches(
-            payload,
-            "operation_id",
-            event_filter.get("operation_ids", event_filter.get("operationIds")),
-        ):
-            return False
+        node_filter = event_filter.get("node_ids", event_filter.get("nodeIds"))
+        if node_filter is not None:
+            allowed_nodes = _validate_string_sequence("server event subscription", "event_filter.node_ids", node_filter)
+            node_matches = False
+            for source in (event, payload):
+                for field_name in ("nodeId", "node_id"):
+                    value = source.get(field_name)
+                    if isinstance(value, str) and value in allowed_nodes:
+                        node_matches = True
+            if not node_matches:
+                return False
+        operation_filter = event_filter.get("operation_ids", event_filter.get("operationIds"))
+        if operation_filter is not None:
+            allowed_operations = _validate_string_sequence(
+                "server event subscription",
+                "event_filter.operation_ids",
+                operation_filter,
+            )
+            operation_matches = False
+            for source in (event, payload):
+                for field_name in ("operationId", "operation_id"):
+                    value = source.get(field_name)
+                    if isinstance(value, str) and value in allowed_operations:
+                        operation_matches = True
+            if not operation_matches:
+                return False
         severity_min = event_filter.get("severity_min", event_filter.get("severityMin"))
         if severity_min is None:
             pass

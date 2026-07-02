@@ -2439,6 +2439,51 @@ def test_server_app_subscription_replay_filters_visibility_node_operation_and_se
     assert [event["metadata"]["eventId"] for event in payload["events"]] == ["event-matching"]
 
 
+def test_server_app_subscription_replay_filters_top_level_node_and_operation_fields() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-subscribe-top-level-filter-1"] = (
+        {
+            "kind": "JobProgress",
+            "metadata": {"eventId": "event-wrong-operation", "sequence": 1},
+            "nodeId": "runChecks",
+            "operationId": "op-ci-other",
+            "payload": {"visibility": "operator", "severity": "error"},
+        },
+        {
+            "kind": "JobProgress",
+            "metadata": {"eventId": "event-matching", "sequence": 2},
+            "nodeId": "runChecks",
+            "operationId": "op-ci-1",
+            "payload": {"visibility": "operator", "severity": "error"},
+        },
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-subscribe-top-level-filter-1/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-filter-top-level-1",
+                    "eventFilter": {
+                        "types": ["JobProgress"],
+                        "nodeIds": ["runChecks"],
+                        "operationIds": ["op-ci-1"],
+                    },
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    payload = json.loads(response.body.decode("utf-8"))
+    assert response.status_code == 201
+    assert [event["metadata"]["eventId"] for event in payload["events"]] == ["event-matching"]
+
+
 def test_server_app_subscription_replay_includes_terminal_events_by_default() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     app._events_by_run_id["run-subscribe-terminal-1"] = (
