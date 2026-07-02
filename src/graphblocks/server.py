@@ -2223,8 +2223,20 @@ class GraphBlocksServerApp:
         event_kind = event.get("kind")
         payload = event.get("payload")
         payload = payload if isinstance(payload, Mapping) else {}
-        if not self._event_payload_field_matches(payload, "visibility", event_filter.get("visibility")):
-            return False
+        visibility_filter = event_filter.get("visibility")
+        if visibility_filter is not None:
+            allowed_visibility = _validate_string_sequence(
+                "server event subscription",
+                "event_filter.visibility",
+                visibility_filter,
+            )
+            visibility_matches = False
+            for source in (event, payload):
+                value = source.get("visibility")
+                if isinstance(value, str) and value in allowed_visibility:
+                    visibility_matches = True
+            if not visibility_matches:
+                return False
         node_filter = event_filter.get("node_ids", event_filter.get("nodeIds"))
         if node_filter is not None:
             allowed_nodes = _validate_string_sequence("server event subscription", "event_filter.node_ids", node_filter)
@@ -2280,22 +2292,6 @@ class GraphBlocksServerApp:
             return True
         allowed_types = _validate_string_sequence("server event subscription", "event_filter.types", types)
         return isinstance(event_kind, str) and event_kind in allowed_types
-
-    def _event_payload_field_matches(
-        self,
-        payload: Mapping[str, object],
-        field_name: str,
-        allowed_values: object,
-    ) -> bool:
-        if allowed_values is None:
-            return True
-        allowed = _validate_string_sequence(
-            "server event subscription",
-            f"event_filter.{field_name}",
-            allowed_values,
-        )
-        value = payload.get(field_name)
-        return isinstance(value, str) and value in allowed
 
     def _subscription_for(self, run_id: str, subscription_id: str) -> ServerEventSubscription | None:
         for subscription in self._subscriptions_by_run_id.get(run_id, ()):

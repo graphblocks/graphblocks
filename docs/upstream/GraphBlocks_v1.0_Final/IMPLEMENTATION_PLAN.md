@@ -593,9 +593,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `SubscribeEvents` route, recording run-scoped event subscription projections and replaying
   retained matching events from the authoritative event stream after an optional cursor. Replay
   filters honor event type, visibility, node ID, operation ID, minimum severity, and
-  `includeTerminalEvents` predicates. Node and operation filters match the specification's
-  top-level `nodeId`/`operationId` event fields and legacy payload fields. Nested event filter and
-  delivery configs are immutable snapshots and are thawed back to plain JSON for response payloads.
+  `includeTerminalEvents` predicates. Visibility, node, and operation filters match the
+  specification's top-level `visibility`, `nodeId`, and `operationId` event fields and legacy
+  payload fields. Nested event filter and delivery configs are immutable snapshots and are thawed
+  back to plain JSON for response payloads.
   Run-scoped subscription ids are single-assignment and cannot overwrite an existing active or
   revoked projection. Subscription and callback registration projections validate the spec failure
   policy literals before storage.

@@ -2484,6 +2484,45 @@ def test_server_app_subscription_replay_filters_top_level_node_and_operation_fie
     assert [event["metadata"]["eventId"] for event in payload["events"]] == ["event-matching"]
 
 
+def test_server_app_subscription_replay_filters_top_level_visibility_field() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-subscribe-top-level-visibility-1"] = (
+        {
+            "kind": "JobProgress",
+            "metadata": {"eventId": "event-internal", "sequence": 1},
+            "visibility": "internal",
+            "payload": {"severity": "error"},
+        },
+        {
+            "kind": "JobProgress",
+            "metadata": {"eventId": "event-operator", "sequence": 2},
+            "visibility": "operator",
+            "payload": {"severity": "error"},
+        },
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-subscribe-top-level-visibility-1/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-filter-top-level-visibility-1",
+                    "eventFilter": {"types": ["JobProgress"], "visibility": ["operator"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    payload = json.loads(response.body.decode("utf-8"))
+    assert response.status_code == 201
+    assert [event["metadata"]["eventId"] for event in payload["events"]] == ["event-operator"]
+
+
 def test_server_app_subscription_replay_includes_terminal_events_by_default() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     app._events_by_run_id["run-subscribe-terminal-1"] = (
