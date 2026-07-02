@@ -1327,6 +1327,20 @@ pub enum ApplicationProtocolReplayError {
     },
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum AttachToRunReplay {
+    Attached {
+        replayed_events: Vec<ApplicationProtocolEvent>,
+        live_cursor: Option<String>,
+    },
+    CursorExpired {
+        requested_cursor: String,
+        earliest_available_cursor: Option<String>,
+        last_cursor: Option<String>,
+        last_sequence: Option<u64>,
+    },
+}
+
 impl ApplicationProtocolLog {
     pub fn new() -> Self {
         Self::default()
@@ -1410,6 +1424,31 @@ impl ApplicationProtocolLog {
         }
 
         Ok(retained.iter().take(limit).cloned().collect())
+    }
+
+    pub fn attach_to_run(
+        &self,
+        last_cursor: Option<&str>,
+        replay_limit: usize,
+        retained_event_count: usize,
+    ) -> AttachToRunReplay {
+        match self.replay_after_retained(last_cursor, replay_limit, retained_event_count) {
+            Ok(replayed_events) => AttachToRunReplay::Attached {
+                replayed_events,
+                live_cursor: self.events.last().and_then(event_cursor),
+            },
+            Err(ApplicationProtocolReplayError::CursorExpired {
+                requested_cursor,
+                earliest_available_cursor,
+                last_cursor,
+                last_sequence,
+            }) => AttachToRunReplay::CursorExpired {
+                requested_cursor,
+                earliest_available_cursor,
+                last_cursor,
+                last_sequence,
+            },
+        }
     }
 
     pub fn len(&self) -> usize {

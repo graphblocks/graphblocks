@@ -262,6 +262,8 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
 - `ApplicationProtocolLog` now exposes retained-window replay with explicit `CursorExpired`
   semantics, including the requested cursor, nearest retained cursor, last cursor, and last
   sequence for reconnect/attach callers.
+- `AttachToRun` replay now has a typed runtime result that either returns retained missed events
+  and the live-stream cursor, or reports expired-cursor recovery metadata.
 - Webhook delivery targets now have default-deny endpoint validation for unsupported schemes,
   localhost, loopback, private RFC1918 ranges, link-local metadata addresses, and malformed hosts,
   with explicit host allowlisting for trusted development or private deployments.

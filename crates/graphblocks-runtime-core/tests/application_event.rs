@@ -4,6 +4,7 @@ use graphblocks_runtime_core::application_event::{
     ApplicationEventStreamState, ApplicationProtocolCapabilities, ApplicationProtocolError,
     ApplicationProtocolEvent, ApplicationProtocolEventKind, ApplicationProtocolEventMetadata,
     ApplicationProtocolLog, ApplicationProtocolReplayError, ApplicationProtocolStreamState,
+    AttachToRunReplay,
 };
 use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory};
 use graphblocks_runtime_core::output_policy::{
@@ -1906,6 +1907,68 @@ fn protocol_log_retained_replay_accepts_sequence_cursor_and_empty_log() {
             last_cursor: None,
             last_sequence: None,
         })
+    );
+}
+
+#[test]
+fn attach_to_run_replays_missed_events_then_reports_live_cursor() {
+    let mut log = ApplicationProtocolLog::new();
+    for sequence in 1..=3 {
+        log.append(
+            ApplicationProtocolEvent::new(
+                ApplicationProtocolEventKind::JobProgress,
+                protocol_event_metadata(
+                    &format!("event-{sequence}"),
+                    sequence,
+                    &format!("cursor-{sequence}"),
+                ),
+                json!({"message": sequence}),
+            )
+            .expect("event is valid"),
+        )
+        .expect("event appends");
+    }
+
+    let attach = log.attach_to_run(Some("cursor-1"), 10, 3);
+
+    assert_eq!(
+        attach,
+        AttachToRunReplay::Attached {
+            replayed_events: log.replay_after(Some("cursor-1"), 10),
+            live_cursor: Some("cursor-3".to_owned()),
+        }
+    );
+}
+
+#[test]
+fn attach_to_run_reports_expired_cursor_recovery_metadata() {
+    let mut log = ApplicationProtocolLog::new();
+    for sequence in 1..=4 {
+        log.append(
+            ApplicationProtocolEvent::new(
+                ApplicationProtocolEventKind::JobProgress,
+                protocol_event_metadata(
+                    &format!("event-{sequence}"),
+                    sequence,
+                    &format!("cursor-{sequence}"),
+                ),
+                json!({"message": sequence}),
+            )
+            .expect("event is valid"),
+        )
+        .expect("event appends");
+    }
+
+    let attach = log.attach_to_run(Some("cursor-1"), 10, 2);
+
+    assert_eq!(
+        attach,
+        AttachToRunReplay::CursorExpired {
+            requested_cursor: "cursor-1".to_owned(),
+            earliest_available_cursor: Some("cursor-3".to_owned()),
+            last_cursor: Some("cursor-4".to_owned()),
+            last_sequence: Some(4),
+        }
     );
 }
 
