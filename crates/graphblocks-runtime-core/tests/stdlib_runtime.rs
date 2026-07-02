@@ -441,14 +441,38 @@ fn rust_stdlib_async_blocks_start_and_await_callback_operation() -> Result<(), S
                         "expectedSchema": "schemas/CICallback@1",
                         "createdAtUnixMs": 1_000,
                         "submittedAtUnixMs": 1_050,
-                        "expiresAtUnixMs": 1_800
+                        "expiresAtUnixMs": 1_800,
+                        "timeoutMs": 800,
+                        "resume": {
+                            "requirePolicyReevaluation": true,
+                            "requireBudgetReservation": true,
+                            "requireReleaseCompatibility": true,
+                            "requireOwnershipFence": true
+                        },
+                        "attemptFencing": true
                     },
                     "inputs": {"subject": "$input.changeset"},
                     "outputs": {"operation": "waitCI.operation"}
                 },
                 "waitCI": {
                     "block": "async.await_callback@1",
-                    "config": {"checkpoint": true, "onTimeout": "fail"},
+                    "config": {
+                        "checkpoint": true,
+                        "onTimeout": "fail",
+                        "timeoutMs": 800,
+                        "idempotencyKey": "idem-op-ci-1",
+                        "resume": {
+                            "requirePolicyReevaluation": true,
+                            "requireBudgetReservation": true,
+                            "requireReleaseCompatibility": true,
+                            "requireOwnershipFence": true
+                        },
+                        "attemptFencing": true,
+                        "callback": {
+                            "required": true,
+                            "schema": "schemas/CICallback@1"
+                        }
+                    },
                     "inputs": {"operation": "startCI.operation"},
                     "outputs": {"wait": "$output.wait"}
                 }
@@ -626,7 +650,15 @@ fn async_start_config(operation_id: &str, node_id: &str) -> Value {
         "expectedSchema": "schemas/CICallback@1",
         "createdAtUnixMs": 1_000,
         "submittedAtUnixMs": 1_050,
-        "expiresAtUnixMs": 2_000
+        "expiresAtUnixMs": 2_000,
+        "timeoutMs": 1_000,
+        "resume": {
+            "requirePolicyReevaluation": true,
+            "requireBudgetReservation": true,
+            "requireReleaseCompatibility": true,
+            "requireOwnershipFence": true
+        },
+        "attemptFencing": true
     })
 }
 

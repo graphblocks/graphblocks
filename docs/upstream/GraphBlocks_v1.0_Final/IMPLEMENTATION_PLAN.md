@@ -240,6 +240,32 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   worker availability, callback authenticity, and idempotency state.
 - Large callback payloads are rejected or converted to `ArtifactRef`; callback payloads are always
   untrusted content.
+- A duplicate external callback is idempotent only when the reused idempotency key points to the
+  same logical callback receipt. Reusing an idempotency key with a different operation identity,
+  attempt, provider operation, payload digest, verification principal, or policy snapshot is an
+  `idempotency_conflict` rejection and MUST NOT overwrite the original receipt or resume the run.
+
+Example duplicate callback handling:
+
+```text
+first callback:
+  operation_id = op-1
+  idempotency_key = provider-delivery-1
+  payload_digest = sha256:aaa
+  result = ExternalCallbackReceived, resume eligible
+
+exact duplicate:
+  operation_id = op-1
+  idempotency_key = provider-delivery-1
+  payload_digest = sha256:aaa
+  result = duplicate acknowledgement, no second resume
+
+conflicting replay:
+  operation_id = op-1
+  idempotency_key = provider-delivery-1
+  payload_digest = sha256:bbb
+  result = ExternalCallbackRejected(idempotency_conflict:payload_digest), no overwrite, no resume
+```
 
 ### Current implementation slice
 
@@ -320,6 +346,9 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
 - Callback receipt duplicate detection is now scoped by `(operation_id, idempotency_key)` in both
   in-memory and SQLite async operation stores, so provider delivery keys reused by separate
   operations do not suppress valid callback receipts or resume signals.
+- Callback receipt duplicate detection now rejects idempotency-key conflicts when a replay mutates
+  callback identity or payload digest; in-memory, SQLite-reopen, and deterministic fuzz tests verify
+  that the original receipt remains authoritative and no second resume is produced.
 - Callback resume admission can now pause after a durable callback receipt when budget policy
   denies continuation; the operation records `CallbackReceived`, emits a pause reason, and returns
   `should_resume = false`.

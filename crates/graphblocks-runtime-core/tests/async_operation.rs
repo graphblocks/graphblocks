@@ -646,6 +646,74 @@ fn duplicate_callback_is_idempotent_and_does_not_resume_twice() {
 }
 
 #[test]
+fn callback_idempotency_key_conflict_rejects_mutated_payload_without_overwriting_receipt() {
+    let store = AsyncOperationStore::new();
+    store
+        .register(waiting_operation())
+        .expect("operation registers");
+    let registry = callback_schema_registry();
+
+    let first = store
+        .accept_callback(valid_submission("cb-1", "idem-cb-1"), &registry)
+        .expect("first callback is accepted");
+    let conflict = store.accept_callback(
+        AsyncCallbackSubmission::new(
+            "cb-conflict",
+            "op-1",
+            "run-1",
+            "node-ci",
+            "attempt-1",
+            "idem-cb-1",
+            json!({"status": "failed", "workflow_run_id": "gha-run-1"}),
+            1_201,
+            "hmac:callback-endpoint-1",
+            "policy-snapshot-1",
+        ),
+        &registry,
+    );
+    let duplicate = store
+        .accept_callback(valid_submission("cb-duplicate", "idem-cb-1"), &registry)
+        .expect("original duplicate remains idempotent");
+
+    assert!(first.should_resume);
+    assert_eq!(
+        conflict,
+        Err(AsyncOperationError::CallbackIdempotencyConflict {
+            operation_id: "op-1".to_owned(),
+            idempotency_key: "idem-cb-1".to_owned(),
+            field: "payload_digest".to_owned(),
+        })
+    );
+    assert!(duplicate.duplicate);
+    assert_eq!(duplicate.receipt.callback_id, "cb-1");
+    assert_eq!(
+        duplicate.receipt.payload,
+        json!({"status": "completed", "workflow_run_id": "gha-run-1"})
+    );
+    assert_eq!(
+        store
+            .events_for_operation("op-1")
+            .iter()
+            .filter(|event| matches!(event, AsyncOperationEvent::ExternalCallbackReceived { .. }))
+            .count(),
+        1
+    );
+    assert!(
+        store
+            .events_for_operation("op-1")
+            .iter()
+            .any(|event| matches!(
+                event,
+                AsyncOperationEvent::ExternalCallbackRejected {
+                    callback_id,
+                    reason,
+                    ..
+                } if callback_id == "cb-conflict" && reason == "idempotency_conflict:payload_digest"
+            ))
+    );
+}
+
+#[test]
 fn callback_idempotency_key_is_scoped_to_operation() {
     let store = AsyncOperationStore::new();
     store
@@ -1412,6 +1480,84 @@ fn callback_idempotency_fuzz_sequence_never_records_duplicate_receipts() {
 }
 
 #[test]
+fn callback_idempotency_conflict_fuzz_preserves_first_receipt() {
+    for seed in 0..64_u64 {
+        let store = AsyncOperationStore::new();
+        store
+            .register(waiting_operation())
+            .expect("operation registers");
+        let registry = callback_schema_registry();
+        let first = store
+            .accept_callback(
+                valid_submission(&format!("cb-fuzz-first-{seed}"), "idem-fuzz-conflict"),
+                &registry,
+            )
+            .expect("first callback is accepted");
+        let original_digest = first.receipt.payload_digest.clone();
+        let mut state = seed ^ 0x9e37_79b9_7f4a_7c15;
+
+        for index in 0..64 {
+            state = state
+                .wrapping_mul(2862933555777941757)
+                .wrapping_add(3037000493);
+            let payload = if state % 5 == 0 {
+                json!({"status": "completed", "workflow_run_id": "gha-run-1"})
+            } else {
+                json!({"status": format!("mutated-{index}"), "workflow_run_id": "gha-run-1"})
+            };
+            let result = store.accept_callback(
+                AsyncCallbackSubmission::new(
+                    format!("cb-fuzz-conflict-{seed}-{index}"),
+                    "op-1",
+                    "run-1",
+                    "node-ci",
+                    "attempt-1",
+                    "idem-fuzz-conflict",
+                    payload,
+                    1_300 + index,
+                    "hmac:callback-endpoint-1",
+                    "policy-snapshot-1",
+                ),
+                &registry,
+            );
+            match result {
+                Ok(accepted) => {
+                    assert!(accepted.duplicate, "seed {seed} index {index}");
+                    assert_eq!(accepted.receipt.payload_digest, original_digest);
+                }
+                Err(AsyncOperationError::CallbackIdempotencyConflict { field, .. }) => {
+                    assert_eq!(field, "payload_digest", "seed {seed} index {index}");
+                }
+                Err(error) => panic!("unexpected error for seed {seed} index {index}: {error:?}"),
+            }
+        }
+
+        let events = store.events_for_operation("op-1");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| {
+                    matches!(event, AsyncOperationEvent::ExternalCallbackReceived { .. })
+                })
+                .count(),
+            1,
+            "seed {seed} recorded more than one receipt"
+        );
+        assert_eq!(
+            store
+                .accept_callback(
+                    valid_submission("cb-fuzz-final-duplicate", "idem-fuzz-conflict"),
+                    &registry,
+                )
+                .expect("final original duplicate remains accepted")
+                .receipt
+                .payload_digest,
+            original_digest
+        );
+    }
+}
+
+#[test]
 fn sqlite_async_operation_store_persists_waiting_operation_across_reopen()
 -> Result<(), AsyncOperationError> {
     let path = sqlite_async_operation_path("waiting-reopen");
@@ -1465,6 +1611,61 @@ fn sqlite_async_operation_store_persists_callback_receipt_and_duplicate_guard_ac
         store.operation_state("op-1"),
         Some(AsyncOperationState::CallbackReceived)
     );
+    assert_eq!(
+        store
+            .events_for_operation("op-1")
+            .iter()
+            .filter(|event| matches!(event, AsyncOperationEvent::ExternalCallbackReceived { .. }))
+            .count(),
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn sqlite_async_operation_store_rejects_idempotency_conflict_after_reopen()
+-> Result<(), AsyncOperationError> {
+    let path = sqlite_async_operation_path("callback-idempotency-conflict");
+    {
+        let store = SqliteAsyncOperationStore::open(&path)?;
+        store.register(waiting_operation())?;
+        store.accept_callback(
+            valid_submission("cb-1", "idem-cb-1"),
+            &callback_schema_registry(),
+        )?;
+    }
+
+    let store = SqliteAsyncOperationStore::open(&path)?;
+    let conflict = store.accept_callback(
+        AsyncCallbackSubmission::new(
+            "cb-conflict",
+            "op-1",
+            "run-1",
+            "node-ci",
+            "attempt-1",
+            "idem-cb-1",
+            json!({"status": "failed", "workflow_run_id": "gha-run-1"}),
+            1_201,
+            "hmac:callback-endpoint-1",
+            "policy-snapshot-1",
+        ),
+        &callback_schema_registry(),
+    );
+    let duplicate = store.accept_callback(
+        valid_submission("cb-duplicate", "idem-cb-1"),
+        &callback_schema_registry(),
+    )?;
+
+    assert_eq!(
+        conflict,
+        Err(AsyncOperationError::CallbackIdempotencyConflict {
+            operation_id: "op-1".to_owned(),
+            idempotency_key: "idem-cb-1".to_owned(),
+            field: "payload_digest".to_owned(),
+        })
+    );
+    assert!(duplicate.duplicate);
+    assert_eq!(duplicate.receipt.callback_id, "cb-1");
     assert_eq!(
         store
             .events_for_operation("op-1")
@@ -1557,9 +1758,20 @@ fn sqlite_async_operation_store_persists_artifact_backed_callback_receipt_across
     }
 
     let store = SqliteAsyncOperationStore::open(&path)?;
-    let duplicate = store.accept_callback(
-        valid_submission("cb-duplicate", "idem-artifact"),
+    let mut duplicate_submission = valid_submission("cb-duplicate", "idem-artifact");
+    duplicate_submission.payload = json!({
+        "status": "completed",
+        "workflow_run_id": "gha-run-1",
+        "log": "x".repeat(512),
+    });
+    let duplicate = store.accept_callback_with_artifact_on_payload_limit(
+        duplicate_submission,
         &callback_schema_registry(),
+        AsyncCallbackIngestionLimits {
+            max_payload_bytes: 128,
+        },
+        CallbackArtifactRef::new("artifact-ci-log", "blob://callbacks/op-1/cb-artifact.json")
+            .with_media_type("application/json"),
     )?;
 
     assert!(duplicate.duplicate);

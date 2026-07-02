@@ -1113,6 +1113,11 @@ pub enum AsyncOperationError {
         max_payload_bytes: usize,
         actual_payload_bytes: usize,
     },
+    CallbackIdempotencyConflict {
+        operation_id: String,
+        idempotency_key: String,
+        field: String,
+    },
     Storage {
         message: String,
     },
@@ -1291,6 +1296,24 @@ impl AsyncOperationStore {
             .receipts_by_operation_and_idempotency
             .get(&receipt_key)
         {
+            if let Some(field) = callback_idempotency_conflict_field(receipt, &submission) {
+                inner
+                    .events_by_operation
+                    .entry(submission.operation_id.clone())
+                    .or_default()
+                    .push(AsyncOperationEvent::ExternalCallbackRejected {
+                        operation_id: submission.operation_id.clone(),
+                        callback_id: submission.callback_id,
+                        reason: format!("idempotency_conflict:{field}"),
+                        occurred_at_unix_ms: submission.received_at_unix_ms,
+                        verified_by: submission.verified_by,
+                    });
+                return Err(AsyncOperationError::CallbackIdempotencyConflict {
+                    operation_id: receipt_key.0,
+                    idempotency_key: receipt_key.1,
+                    field: field.to_owned(),
+                });
+            }
             return Ok(AcceptedCallback {
                 receipt: receipt.clone(),
                 duplicate: true,
@@ -1988,6 +2011,40 @@ impl SqliteAsyncOperationStore {
 
 fn callback_payload_size_bytes(payload: &Value) -> usize {
     graphblocks_compiler::canonical::canonical_json(payload).len()
+}
+
+fn callback_idempotency_conflict_field(
+    receipt: &ExternalCallbackReceived,
+    submission: &AsyncCallbackSubmission,
+) -> Option<&'static str> {
+    if receipt.operation_id != submission.operation_id {
+        return Some("operation_id");
+    }
+    if receipt.run_id != submission.run_id {
+        return Some("run_id");
+    }
+    if receipt.node_id != submission.node_id {
+        return Some("node_id");
+    }
+    if receipt.attempt_id != submission.attempt_id {
+        return Some("attempt_id");
+    }
+    if receipt.provider_operation_id != submission.provider_operation_id {
+        return Some("provider_operation_id");
+    }
+    if receipt.idempotency_key != submission.idempotency_key {
+        return Some("idempotency_key");
+    }
+    if receipt.payload_digest != canonical_hash(&submission.payload) {
+        return Some("payload_digest");
+    }
+    if receipt.verified_by != submission.verified_by {
+        return Some("verified_by");
+    }
+    if receipt.policy_snapshot_id != submission.policy_snapshot_id {
+        return Some("policy_snapshot_id");
+    }
+    None
 }
 
 fn migrate_callback_receipts_idempotency_scope(
