@@ -5,8 +5,9 @@ use graphblocks_runtime_core::deployment::{
     ExecutionTarget, ExecutionTargetKind, GraphRelease, GraphReleaseError, GraphReleaseGraph,
     ImageRef, KnowledgeBinding, KubernetesTargetRenderer, PhysicalExecutionPlan, PlacementError,
     PlacementRule, PlacementSelector, PromptLock, ReleaseLockRef, RevisionDecision,
-    RolloutAnalysisResult, RolloutPlan, RolloutStep, SupplyChainLock, UpgradePolicy,
-    WorkerAdmissionError, WorkerAdmissionRequirement, WorkerAdvertisement, WorkloadKind,
+    RolloutAnalysisResult, RolloutPlan, RolloutStep, SupplyChainLock, TerraformOutputRequirement,
+    TerraformOutputRequirementSet, TerraformOutputValueKind, UpgradePolicy, WorkerAdmissionError,
+    WorkerAdmissionRequirement, WorkerAdvertisement, WorkloadKind,
 };
 use serde_json::json;
 
@@ -489,6 +490,116 @@ fn deployment_target_coverage_reports_missing_image_role() {
             "path": "$.spec.targets",
             "message": "required production image role has no deployment target profile",
         })]
+    );
+}
+
+#[test]
+fn terraform_output_requirements_digest_is_stable_for_order() {
+    let left = TerraformOutputRequirementSet::new([
+        TerraformOutputRequirement::new(
+            "callback_gateway_url",
+            TerraformOutputValueKind::String,
+            "deployment.callbackIngress.url",
+        ),
+        TerraformOutputRequirement::new(
+            "worker_replicas",
+            TerraformOutputValueKind::Number,
+            "targets.document-cpu.replicas",
+        ),
+    ]);
+    let right = TerraformOutputRequirementSet::new([
+        TerraformOutputRequirement::new(
+            "worker_replicas",
+            TerraformOutputValueKind::Number,
+            "targets.document-cpu.replicas",
+        ),
+        TerraformOutputRequirement::new(
+            "callback_gateway_url",
+            TerraformOutputValueKind::String,
+            "deployment.callbackIngress.url",
+        ),
+    ]);
+
+    assert_eq!(left.content_digest(), right.content_digest());
+    assert_eq!(
+        left.requirement_contracts(),
+        vec![
+            json!({
+                "output_name": "callback_gateway_url",
+                "value_kind": "string",
+                "binds_to": "deployment.callbackIngress.url",
+                "required": true,
+            }),
+            json!({
+                "output_name": "worker_replicas",
+                "value_kind": "number",
+                "binds_to": "targets.document-cpu.replicas",
+                "required": true,
+            }),
+        ]
+    );
+}
+
+#[test]
+fn terraform_output_bridge_reports_missing_and_type_mismatched_outputs() {
+    let requirements = TerraformOutputRequirementSet::new([
+        TerraformOutputRequirement::new(
+            "callback_gateway_url",
+            TerraformOutputValueKind::String,
+            "deployment.callbackIngress.url",
+        ),
+        TerraformOutputRequirement::new(
+            "worker_replicas",
+            TerraformOutputValueKind::Number,
+            "targets.document-cpu.replicas",
+        ),
+    ]);
+
+    let result = requirements.validate_outputs(&json!({
+        "callback_gateway_url": 42,
+    }));
+
+    assert!(!result.ok());
+    assert_eq!(
+        result.issue_contracts(),
+        vec![
+            json!({
+                "code": "TerraformOutputTypeMismatch",
+                "output_name": "callback_gateway_url",
+                "binds_to": "deployment.callbackIngress.url",
+                "message": "Terraform output has the wrong value type",
+            }),
+            json!({
+                "code": "TerraformOutputMissing",
+                "output_name": "worker_replicas",
+                "binds_to": "targets.document-cpu.replicas",
+                "message": "required Terraform output is missing",
+            }),
+        ]
+    );
+}
+
+#[test]
+fn terraform_output_bridge_accepts_matching_outputs() {
+    let requirements = TerraformOutputRequirementSet::new([
+        TerraformOutputRequirement::new(
+            "callback_gateway_url",
+            TerraformOutputValueKind::String,
+            "deployment.callbackIngress.url",
+        ),
+        TerraformOutputRequirement::optional(
+            "worker_replicas",
+            TerraformOutputValueKind::Number,
+            "targets.document-cpu.replicas",
+        ),
+    ]);
+
+    assert!(
+        requirements
+            .validate_outputs(&json!({
+                "callback_gateway_url": "https://callbacks.example.com",
+            }))
+            .ok()
     );
 }
 

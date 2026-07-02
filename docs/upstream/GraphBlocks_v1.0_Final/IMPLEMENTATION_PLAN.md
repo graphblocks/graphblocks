@@ -748,6 +748,9 @@ sandbox
 - `KubernetesTargetRenderer` now projects deployment target profiles into deterministic Kubernetes
   `Deployment` manifests and emits `Service` manifests for service-style targets while preserving
   target id, image role, execution host, replica count, and package lock metadata.
+- `TerraformOutputRequirementSet` now records required infrastructure outputs, produces stable
+  requirement digests, and validates Terraform output maps for missing or type-mismatched values
+  before they are bound into deployment configuration.
 
 ## 9. Phase 6 — Adaptive Orchestration and Verified Work (`GB-X1-ORCHESTRATION`)
 

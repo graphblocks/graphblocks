@@ -2206,6 +2206,177 @@ impl KubernetesTargetRenderer {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub enum TerraformOutputValueKind {
+    String,
+    Number,
+    Bool,
+    Object,
+    Array,
+}
+
+impl TerraformOutputValueKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::String => "string",
+            Self::Number => "number",
+            Self::Bool => "bool",
+            Self::Object => "object",
+            Self::Array => "array",
+        }
+    }
+
+    fn matches_value(self, value: &Value) -> bool {
+        match self {
+            Self::String => value.is_string(),
+            Self::Number => value.is_number(),
+            Self::Bool => value.is_boolean(),
+            Self::Object => value.is_object(),
+            Self::Array => value.is_array(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TerraformOutputRequirement {
+    pub output_name: String,
+    pub value_kind: TerraformOutputValueKind,
+    pub binds_to: String,
+    pub required: bool,
+}
+
+impl TerraformOutputRequirement {
+    pub fn new(
+        output_name: impl Into<String>,
+        value_kind: TerraformOutputValueKind,
+        binds_to: impl Into<String>,
+    ) -> Self {
+        Self {
+            output_name: output_name.into(),
+            value_kind,
+            binds_to: binds_to.into(),
+            required: true,
+        }
+    }
+
+    pub fn optional(
+        output_name: impl Into<String>,
+        value_kind: TerraformOutputValueKind,
+        binds_to: impl Into<String>,
+    ) -> Self {
+        Self {
+            output_name: output_name.into(),
+            value_kind,
+            binds_to: binds_to.into(),
+            required: false,
+        }
+    }
+
+    fn requirement_contract(&self) -> Value {
+        json!({
+            "output_name": self.output_name,
+            "value_kind": self.value_kind.as_str(),
+            "binds_to": self.binds_to,
+            "required": self.required,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TerraformOutputIssue {
+    pub code: String,
+    pub output_name: String,
+    pub binds_to: String,
+    pub message: String,
+}
+
+impl TerraformOutputIssue {
+    pub fn issue_contract(&self) -> Value {
+        json!({
+            "code": self.code,
+            "output_name": self.output_name,
+            "binds_to": self.binds_to,
+            "message": self.message,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TerraformOutputValidationResult {
+    pub issues: Vec<TerraformOutputIssue>,
+}
+
+impl TerraformOutputValidationResult {
+    pub fn ok(&self) -> bool {
+        self.issues.is_empty()
+    }
+
+    pub fn issue_contracts(&self) -> Vec<Value> {
+        self.issues
+            .iter()
+            .map(TerraformOutputIssue::issue_contract)
+            .collect()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TerraformOutputRequirementSet {
+    pub requirements: Vec<TerraformOutputRequirement>,
+}
+
+impl TerraformOutputRequirementSet {
+    pub fn new<I>(requirements: I) -> Self
+    where
+        I: IntoIterator<Item = TerraformOutputRequirement>,
+    {
+        let mut requirements = requirements.into_iter().collect::<Vec<_>>();
+        requirements.sort_by(|left, right| left.output_name.cmp(&right.output_name));
+        Self { requirements }
+    }
+
+    pub fn requirement_contracts(&self) -> Vec<Value> {
+        self.requirements
+            .iter()
+            .map(TerraformOutputRequirement::requirement_contract)
+            .collect()
+    }
+
+    pub fn content_digest(&self) -> String {
+        canonical_hash(&json!({
+            "requirements": self.requirement_contracts(),
+        }))
+    }
+
+    pub fn validate_outputs(&self, outputs: &Value) -> TerraformOutputValidationResult {
+        let output_object = outputs.as_object();
+        let issues = self
+            .requirements
+            .iter()
+            .filter_map(|requirement| {
+                let value = output_object.and_then(|object| object.get(&requirement.output_name));
+                match value {
+                    None if requirement.required => Some(TerraformOutputIssue {
+                        code: "TerraformOutputMissing".to_owned(),
+                        output_name: requirement.output_name.clone(),
+                        binds_to: requirement.binds_to.clone(),
+                        message: "required Terraform output is missing".to_owned(),
+                    }),
+                    Some(value) if !requirement.value_kind.matches_value(value) => {
+                        Some(TerraformOutputIssue {
+                            code: "TerraformOutputTypeMismatch".to_owned(),
+                            output_name: requirement.output_name.clone(),
+                            binds_to: requirement.binds_to.clone(),
+                            message: "Terraform output has the wrong value type".to_owned(),
+                        })
+                    }
+                    _ => None,
+                }
+            })
+            .collect();
+        TerraformOutputValidationResult { issues }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DeploymentTargetCoverageIssue {
     pub code: String,
