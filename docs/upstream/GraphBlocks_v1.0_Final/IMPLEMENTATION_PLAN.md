@@ -241,9 +241,12 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
 - Callback subscriptions can schedule cursor replay from the authoritative `ApplicationProtocolLog`
   while applying the same event filters and deterministic delivery/idempotency metadata as live
   projection.
+- Webhook delivery targets now have default-deny endpoint validation for unsupported schemes,
+  localhost, loopback, private RFC1918 ranges, link-local metadata addresses, and malformed hosts,
+  with explicit host allowlisting for trusted development or private deployments.
 - Durable storage, Ed25519/mTLS/OIDC callback authentication adapters, real webhook delivery
-  workers, dead-letter persistence, budget-aware resume, and coordinator failover remain follow-on
-  slices.
+  workers, dead-letter persistence, budget-aware resume, DNS-time egress enforcement, and
+  coordinator failover remain follow-on slices.
 
 ### Package ownership
 

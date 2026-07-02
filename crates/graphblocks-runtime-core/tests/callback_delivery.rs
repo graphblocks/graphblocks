@@ -5,7 +5,8 @@ use graphblocks_runtime_core::application_event::{
 use graphblocks_runtime_core::callback_delivery::{
     CallbackDeadLetter, CallbackDeliveryResponse, CallbackDeliveryScheduler,
     CallbackDeliveryStatus, CallbackFailurePolicy, CallbackRetryPolicy, CallbackSubscription,
-    CallbackSubscriptionStatus, EventFilter, WebhookSignatureError, WebhookSigningConfig,
+    CallbackSubscriptionStatus, EventFilter, WebhookDeliveryTarget, WebhookEgressPolicy,
+    WebhookEndpointError, WebhookSignatureError, WebhookSigningConfig,
 };
 use serde_json::json;
 
@@ -434,5 +435,65 @@ fn subscription_replay_respects_limit_and_inactive_subscriptions() {
         scheduler
             .schedule_replay(&subscription, &log, 10)
             .is_empty()
+    );
+}
+
+#[test]
+fn webhook_target_rejects_forbidden_internal_endpoints_by_default() {
+    let policy = WebhookEgressPolicy::default_deny_internal();
+
+    for url in [
+        "http://localhost/callback",
+        "https://127.0.0.1/callback",
+        "https://10.0.0.8/callback",
+        "https://172.16.0.1/callback",
+        "https://192.168.1.10/callback",
+        "https://169.254.169.254/latest/meta-data",
+        "file:///tmp/callback",
+        "unix:///var/run/socket",
+    ] {
+        assert!(
+            matches!(
+                WebhookDeliveryTarget::new(url, &policy),
+                Err(WebhookEndpointError::UnsafeEndpoint { .. })
+                    | Err(WebhookEndpointError::UnsupportedScheme { .. })
+            ),
+            "{url} should be rejected"
+        );
+    }
+}
+
+#[test]
+fn webhook_target_accepts_public_https_and_explicit_allowlist() {
+    let policy = WebhookEgressPolicy::default_deny_internal();
+    let target =
+        WebhookDeliveryTarget::new("https://hooks.example.com/graphblocks/events", &policy)
+            .expect("public https endpoint is valid");
+
+    assert_eq!(target.url, "https://hooks.example.com/graphblocks/events");
+    assert_eq!(target.host, "hooks.example.com");
+    assert_eq!(target.scheme, "https");
+
+    let policy = WebhookEgressPolicy::default_deny_internal().with_allowed_host("localhost");
+    let local = WebhookDeliveryTarget::new("http://localhost:8080/events", &policy)
+        .expect("allowlisted local endpoint is valid");
+    assert_eq!(local.host, "localhost");
+}
+
+#[test]
+fn webhook_target_rejects_malformed_or_empty_urls() {
+    let policy = WebhookEgressPolicy::default_deny_internal();
+
+    assert_eq!(
+        WebhookDeliveryTarget::new(" ", &policy),
+        Err(WebhookEndpointError::EmptyUrl)
+    );
+    assert_eq!(
+        WebhookDeliveryTarget::new("https:///missing-host", &policy),
+        Err(WebhookEndpointError::MissingHost)
+    );
+    assert_eq!(
+        WebhookDeliveryTarget::new("not-a-url", &policy),
+        Err(WebhookEndpointError::MalformedUrl)
     );
 }

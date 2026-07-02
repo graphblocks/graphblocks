@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use crate::application_event::{
     ApplicationProtocolEvent, ApplicationProtocolEventKind, ApplicationProtocolLog,
@@ -292,6 +293,91 @@ pub enum CallbackDeliveryError {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WebhookEgressPolicy {
+    allowed_hosts: BTreeSet<String>,
+}
+
+impl WebhookEgressPolicy {
+    pub fn default_deny_internal() -> Self {
+        Self {
+            allowed_hosts: BTreeSet::new(),
+        }
+    }
+
+    pub fn with_allowed_host(mut self, host: impl Into<String>) -> Self {
+        self.allowed_hosts.insert(normalize_host(&host.into()));
+        self
+    }
+
+    fn host_allowed(&self, host: &str) -> bool {
+        self.allowed_hosts.contains(&normalize_host(host))
+    }
+}
+
+impl Default for WebhookEgressPolicy {
+    fn default() -> Self {
+        Self::default_deny_internal()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WebhookDeliveryTarget {
+    pub url: String,
+    pub scheme: String,
+    pub host: String,
+}
+
+impl WebhookDeliveryTarget {
+    pub fn new(
+        url: impl Into<String>,
+        policy: &WebhookEgressPolicy,
+    ) -> Result<Self, WebhookEndpointError> {
+        let url = url.into();
+        if url.trim().is_empty() {
+            return Err(WebhookEndpointError::EmptyUrl);
+        }
+        if url.trim() != url {
+            return Err(WebhookEndpointError::MalformedUrl);
+        }
+
+        let (scheme, rest) = url
+            .split_once("://")
+            .ok_or(WebhookEndpointError::MalformedUrl)?;
+        if !matches!(scheme, "http" | "https") {
+            return Err(WebhookEndpointError::UnsupportedScheme {
+                scheme: scheme.to_owned(),
+            });
+        }
+        let scheme = scheme.to_owned();
+        let authority = rest
+            .split(&['/', '?', '#'][..])
+            .next()
+            .ok_or(WebhookEndpointError::MissingHost)?;
+        if authority.is_empty() {
+            return Err(WebhookEndpointError::MissingHost);
+        }
+        let host = parse_authority_host(authority)?;
+        if host.is_empty() {
+            return Err(WebhookEndpointError::MissingHost);
+        }
+        if !policy.host_allowed(&host) && is_forbidden_webhook_host(&host) {
+            return Err(WebhookEndpointError::UnsafeEndpoint { host });
+        }
+
+        Ok(Self { url, scheme, host })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WebhookEndpointError {
+    EmptyUrl,
+    MalformedUrl,
+    MissingHost,
+    UnsupportedScheme { scheme: String },
+    UnsafeEndpoint { host: String },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WebhookSigningConfig {
     pub secret_ref: String,
     secret: Vec<u8>,
@@ -511,6 +597,66 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
         diff |= left[index] ^ right[index];
     }
     diff == 0
+}
+
+fn parse_authority_host(authority: &str) -> Result<String, WebhookEndpointError> {
+    if authority.contains('@') {
+        return Err(WebhookEndpointError::MalformedUrl);
+    }
+    if let Some(rest) = authority.strip_prefix('[') {
+        let (host, suffix) = rest
+            .split_once(']')
+            .ok_or(WebhookEndpointError::MalformedUrl)?;
+        if !suffix.is_empty() && !suffix.starts_with(':') {
+            return Err(WebhookEndpointError::MalformedUrl);
+        }
+        return Ok(normalize_host(host));
+    }
+
+    let host = authority
+        .split_once(':')
+        .map_or(authority, |(host, _port)| host);
+    if host.is_empty() || host.contains(':') {
+        return Err(WebhookEndpointError::MalformedUrl);
+    }
+    Ok(normalize_host(host))
+}
+
+fn normalize_host(host: &str) -> String {
+    host.trim_end_matches('.').to_ascii_lowercase()
+}
+
+fn is_forbidden_webhook_host(host: &str) -> bool {
+    let host = normalize_host(host);
+    if matches!(host.as_str(), "localhost" | "localhost.localdomain")
+        || host.ends_with(".localhost")
+    {
+        return true;
+    }
+
+    if let Ok(address) = host.parse::<IpAddr>() {
+        return match address {
+            IpAddr::V4(address) => is_forbidden_ipv4(address),
+            IpAddr::V6(address) => is_forbidden_ipv6(address),
+        };
+    }
+
+    false
+}
+
+fn is_forbidden_ipv4(address: Ipv4Addr) -> bool {
+    address.is_private()
+        || address.is_loopback()
+        || address.is_link_local()
+        || address.is_unspecified()
+        || address.octets()[0] == 0
+}
+
+fn is_forbidden_ipv6(address: Ipv6Addr) -> bool {
+    address.is_loopback()
+        || address.is_unspecified()
+        || matches!(address.segments()[0] & 0xfe00, 0xfc00)
+        || matches!(address.segments()[0] & 0xffc0, 0xfe80)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
