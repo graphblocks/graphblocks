@@ -240,6 +240,9 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
 - `RunOwnershipLease` now provides run-scoped coordinator ownership fencing in both in-memory and
   SQLite run stores, including active-lease rejection, stale epoch rejection, and failover after
   expiry.
+- Run state and status mutations now have lease-fenced APIs in both in-memory and SQLite run stores;
+  stale coordinators cannot patch run state or advance status after failover, and SQLite validates
+  the lease and mutation in one transaction.
 - `ApplicationCommandKind` now includes the async run, attach/replay, subscription, callback
   registration, callback ingestion, pause/resume/expire, redrive, and dead-letter command names
   from the amendment.
@@ -418,8 +421,7 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   projections while leaving durable callback queue/dead-letter authority in the runtime layer.
   Stored control projections are immutable snapshots so inspection callers cannot mutate redrive or
   dead-letter history after recording.
-- Server-level HTTP/TLS webhook client integration and multi-process coordinator failover execution
-  remain follow-on slices.
+- Server-level HTTP/TLS webhook client integration remains a follow-on slice.
 
 ### Package ownership
 

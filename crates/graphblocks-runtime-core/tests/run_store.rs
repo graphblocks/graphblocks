@@ -224,6 +224,149 @@ fn sqlite_run_store_persists_ownership_lease_across_reopen_and_allows_failover()
 }
 
 #[test]
+fn run_store_fenced_mutations_reject_stale_coordinator_after_failover() -> Result<(), RunStoreError>
+{
+    let mut store = InMemoryRunStore::new();
+    let record = store.create_run_with_invocation_mode(
+        "sha256:graph",
+        json!({}),
+        RunInvocationMode::Background,
+    );
+    let first = store.acquire_ownership_lease(&record.run_id, "coordinator-a", 1_000, 1_500)?;
+    let second = store.acquire_ownership_lease(&record.run_id, "coordinator-b", 1_501, 2_000)?;
+
+    assert_eq!(
+        store.patch_state_with_ownership_lease(
+            &record.run_id,
+            StatePatch::new(Some(0)).with(PatchOperation::set(["stale"], json!(true))),
+            &first.lease_id,
+            first.fencing_epoch,
+            1_600,
+        ),
+        Err(RunStoreError::RunOwnershipLeaseMismatch {
+            run_id: record.run_id.clone(),
+            expected_lease_id: second.lease_id.clone(),
+            actual_lease_id: first.lease_id.clone(),
+            expected_fencing_epoch: second.fencing_epoch,
+            actual_fencing_epoch: first.fencing_epoch,
+        })
+    );
+    assert_eq!(
+        store.set_status_with_ownership_lease(
+            &record.run_id,
+            RunStatus::Running,
+            &first.lease_id,
+            first.fencing_epoch,
+            1_600,
+        ),
+        Err(RunStoreError::RunOwnershipLeaseMismatch {
+            run_id: record.run_id.clone(),
+            expected_lease_id: second.lease_id.clone(),
+            actual_lease_id: first.lease_id,
+            expected_fencing_epoch: second.fencing_epoch,
+            actual_fencing_epoch: first.fencing_epoch,
+        })
+    );
+
+    let patched = store.patch_state_with_ownership_lease(
+        &record.run_id,
+        StatePatch::new(Some(0)).with(PatchOperation::set(["owner"], json!("coordinator-b"))),
+        &second.lease_id,
+        second.fencing_epoch,
+        1_700,
+    )?;
+    let running = store.set_status_with_ownership_lease(
+        &record.run_id,
+        RunStatus::Running,
+        &second.lease_id,
+        second.fencing_epoch,
+        1_700,
+    )?;
+
+    assert_eq!(patched.state["owner"], json!("coordinator-b"));
+    assert_eq!(running.status, RunStatus::Running);
+    assert_eq!(store.get_run(&record.run_id)?.state.get("stale"), None);
+    Ok(())
+}
+
+#[test]
+fn sqlite_run_store_fenced_mutations_reject_stale_coordinator_after_reopen() -> Result<(), String> {
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "graphblocks-sqlite-run-fenced-mutation-{}.sqlite3",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+
+    let (run_id, first, second) = {
+        let mut store = SqliteRunStore::open(&path).map_err(|error| format!("{error:?}"))?;
+        let record = store
+            .create_run_with_invocation_mode(
+                "sha256:graph",
+                json!({}),
+                RunInvocationMode::Background,
+            )
+            .map_err(|error| format!("{error:?}"))?;
+        let first = store
+            .acquire_ownership_lease(&record.run_id, "coordinator-a", 1_000, 1_500)
+            .map_err(|error| format!("{error:?}"))?;
+        let second = store
+            .acquire_ownership_lease(&record.run_id, "coordinator-b", 1_501, 2_000)
+            .map_err(|error| format!("{error:?}"))?;
+        (record.run_id, first, second)
+    };
+
+    let mut store = SqliteRunStore::open(&path).map_err(|error| format!("{error:?}"))?;
+    assert_eq!(
+        store
+            .patch_state_with_ownership_lease(
+                &run_id,
+                StatePatch::new(Some(0)).with(PatchOperation::set(["stale"], json!(true))),
+                &first.lease_id,
+                first.fencing_epoch,
+                1_600,
+            )
+            .map_err(|error| format!("{error:?}")),
+        Err(format!(
+            "RunOwnershipLeaseMismatch {{ run_id: \"{run_id}\", expected_lease_id: \"{}\", actual_lease_id: \"{}\", expected_fencing_epoch: {}, actual_fencing_epoch: {} }}",
+            second.lease_id, first.lease_id, second.fencing_epoch, first.fencing_epoch
+        ))
+    );
+    let patched = store
+        .patch_state_with_ownership_lease(
+            &run_id,
+            StatePatch::new(Some(0)).with(PatchOperation::set(["owner"], json!("coordinator-b"))),
+            &second.lease_id,
+            second.fencing_epoch,
+            1_700,
+        )
+        .map_err(|error| format!("{error:?}"))?;
+    let running = store
+        .set_status_with_ownership_lease(
+            &run_id,
+            RunStatus::Running,
+            &second.lease_id,
+            second.fencing_epoch,
+            1_700,
+        )
+        .map_err(|error| format!("{error:?}"))?;
+
+    assert_eq!(patched.state["owner"], json!("coordinator-b"));
+    assert_eq!(running.status, RunStatus::Running);
+    assert_eq!(
+        store
+            .get_run(&run_id)
+            .map_err(|error| format!("{error:?}"))?
+            .state
+            .get("stale"),
+        None
+    );
+
+    let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
+#[test]
 fn run_invocation_response_rejects_sync_or_empty_cursor() {
     let mut store = InMemoryRunStore::new();
     let sync = store.create_run("sha256:sync", json!({}));

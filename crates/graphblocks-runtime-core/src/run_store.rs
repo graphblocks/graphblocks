@@ -1083,6 +1083,23 @@ impl InMemoryRunStore {
         Ok(updated)
     }
 
+    pub fn set_status_with_ownership_lease(
+        &mut self,
+        run_id: impl AsRef<str>,
+        status: RunStatus,
+        lease_id: impl AsRef<str>,
+        fencing_epoch: u64,
+        now_unix_ms: u64,
+    ) -> Result<RunRecord, RunStoreError> {
+        self.validate_ownership_lease(
+            run_id.as_ref(),
+            lease_id.as_ref(),
+            fencing_epoch,
+            now_unix_ms,
+        )?;
+        self.set_status(run_id, status)
+    }
+
     pub fn record_model_visible_tools(
         &mut self,
         run_id: impl AsRef<str>,
@@ -1115,6 +1132,23 @@ impl InMemoryRunStore {
         let updated = record_with_state_patch(current, &patch)?;
         self.runs.insert(run_id.to_owned(), updated.clone());
         Ok(updated)
+    }
+
+    pub fn patch_state_with_ownership_lease(
+        &mut self,
+        run_id: impl AsRef<str>,
+        patch: StatePatch,
+        lease_id: impl AsRef<str>,
+        fencing_epoch: u64,
+        now_unix_ms: u64,
+    ) -> Result<RunRecord, RunStoreError> {
+        self.validate_ownership_lease(
+            run_id.as_ref(),
+            lease_id.as_ref(),
+            fencing_epoch,
+            now_unix_ms,
+        )?;
+        self.patch_state(run_id, patch)
     }
 
     pub fn acquire_ownership_lease(
@@ -1385,72 +1419,7 @@ impl SqliteRunStore {
     }
 
     pub fn get_run(&self, run_id: impl AsRef<str>) -> Result<RunRecord, RunStoreError> {
-        let run_id = run_id.as_ref();
-        let row = self
-            .connection
-            .query_row(
-                "
-                SELECT
-                    sequence,
-                    run_id,
-                    graph_hash,
-                    invocation_mode,
-                    inputs_json,
-                    deployment_provenance_json,
-                    model_visible_tools_json,
-                    status,
-                    state_json,
-                    state_revision
-                FROM runs
-                WHERE run_id = ?
-                ",
-                params![run_id],
-                |row| {
-                    Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
-                        row.get::<_, String>(4)?,
-                        row.get::<_, String>(5)?,
-                        row.get::<_, String>(6)?,
-                        row.get::<_, String>(7)?,
-                        row.get::<_, String>(8)?,
-                        row.get::<_, i64>(9)?,
-                    ))
-                },
-            )
-            .optional()
-            .map_err(storage_error)?;
-        let Some((
-            sequence,
-            run_id,
-            graph_hash,
-            invocation_mode,
-            inputs,
-            deployment_provenance,
-            model_visible_tools,
-            status,
-            state,
-            state_revision,
-        )) = row
-        else {
-            return Err(RunStoreError::NotFound {
-                run_id: run_id.to_owned(),
-            });
-        };
-        record_from_storage(
-            sequence,
-            run_id,
-            graph_hash,
-            invocation_mode,
-            inputs,
-            deployment_provenance,
-            model_visible_tools,
-            status,
-            state,
-            state_revision,
-        )
+        sqlite_get_run(&self.connection, run_id.as_ref())
     }
 
     pub fn set_status(
@@ -1466,6 +1435,45 @@ impl SqliteRunStore {
                 params![updated.status.as_str(), &updated.run_id],
             )
             .map_err(storage_error)?;
+        Ok(updated)
+    }
+
+    pub fn set_status_with_ownership_lease(
+        &mut self,
+        run_id: impl AsRef<str>,
+        status: RunStatus,
+        lease_id: impl AsRef<str>,
+        fencing_epoch: u64,
+        now_unix_ms: u64,
+    ) -> Result<RunRecord, RunStoreError> {
+        let run_id = run_id.as_ref();
+        let transaction = self.connection.transaction().map_err(storage_error)?;
+        let current_lease =
+            sqlite_load_run_ownership_lease(&transaction, run_id)?.ok_or_else(|| {
+                RunStoreError::RunOwnershipLeaseMismatch {
+                    run_id: run_id.to_owned(),
+                    expected_lease_id: String::new(),
+                    actual_lease_id: lease_id.as_ref().to_owned(),
+                    expected_fencing_epoch: 0,
+                    actual_fencing_epoch: fencing_epoch,
+                }
+            })?;
+        validate_run_ownership_lease(
+            run_id,
+            lease_id.as_ref(),
+            fencing_epoch,
+            now_unix_ms,
+            &current_lease,
+        )?;
+        let current = sqlite_get_run(&transaction, run_id)?;
+        let updated = record_with_status(&current, status)?;
+        transaction
+            .execute(
+                "UPDATE runs SET status = ? WHERE run_id = ?",
+                params![updated.status.as_str(), &updated.run_id],
+            )
+            .map_err(storage_error)?;
+        transaction.commit().map_err(storage_error)?;
         Ok(updated)
     }
 
@@ -1513,6 +1521,53 @@ impl SqliteRunStore {
                 ],
             )
             .map_err(storage_error)?;
+        Ok(updated)
+    }
+
+    pub fn patch_state_with_ownership_lease(
+        &mut self,
+        run_id: impl AsRef<str>,
+        patch: StatePatch,
+        lease_id: impl AsRef<str>,
+        fencing_epoch: u64,
+        now_unix_ms: u64,
+    ) -> Result<RunRecord, RunStoreError> {
+        let run_id = run_id.as_ref();
+        let transaction = self.connection.transaction().map_err(storage_error)?;
+        let current_lease =
+            sqlite_load_run_ownership_lease(&transaction, run_id)?.ok_or_else(|| {
+                RunStoreError::RunOwnershipLeaseMismatch {
+                    run_id: run_id.to_owned(),
+                    expected_lease_id: String::new(),
+                    actual_lease_id: lease_id.as_ref().to_owned(),
+                    expected_fencing_epoch: 0,
+                    actual_fencing_epoch: fencing_epoch,
+                }
+            })?;
+        validate_run_ownership_lease(
+            run_id,
+            lease_id.as_ref(),
+            fencing_epoch,
+            now_unix_ms,
+            &current_lease,
+        )?;
+        let current = sqlite_get_run(&transaction, run_id)?;
+        let updated = record_with_state_patch(&current, &patch)?;
+        transaction
+            .execute(
+                "
+                UPDATE runs
+                SET state_json = ?, state_revision = ?
+                WHERE run_id = ?
+                ",
+                params![
+                    storage_json(&updated.state)?,
+                    sqlite_u64_to_i64(updated.state_revision, "state revision")?,
+                    &updated.run_id,
+                ],
+            )
+            .map_err(storage_error)?;
+        transaction.commit().map_err(storage_error)?;
         Ok(updated)
     }
 
@@ -1618,6 +1673,73 @@ fn sqlite_load_run_ownership_lease(
             },
         )
         .transpose()
+}
+
+fn sqlite_get_run(connection: &Connection, run_id: &str) -> Result<RunRecord, RunStoreError> {
+    let row = connection
+        .query_row(
+            "
+            SELECT
+                sequence,
+                run_id,
+                graph_hash,
+                invocation_mode,
+                inputs_json,
+                deployment_provenance_json,
+                model_visible_tools_json,
+                status,
+                state_json,
+                state_revision
+            FROM runs
+            WHERE run_id = ?
+            ",
+            params![run_id],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, String>(8)?,
+                    row.get::<_, i64>(9)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(storage_error)?;
+    let Some((
+        sequence,
+        run_id,
+        graph_hash,
+        invocation_mode,
+        inputs,
+        deployment_provenance,
+        model_visible_tools,
+        status,
+        state,
+        state_revision,
+    )) = row
+    else {
+        return Err(RunStoreError::NotFound {
+            run_id: run_id.to_owned(),
+        });
+    };
+    record_from_storage(
+        sequence,
+        run_id,
+        graph_hash,
+        invocation_mode,
+        inputs,
+        deployment_provenance,
+        model_visible_tools,
+        status,
+        state,
+        state_revision,
+    )
 }
 
 fn sqlite_upsert_run_ownership_lease(
