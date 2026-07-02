@@ -11,10 +11,66 @@ from typing import Any, Literal
 from .evaluation import ModelVisibleToolRef
 
 
-RunStatus = Literal["created", "running", "succeeded", "failed", "cancelled", "policy_stopped"]
-MutableRunStatus = Literal["running", "succeeded", "failed", "cancelled", "policy_stopped"]
-TERMINAL_RUN_STATUSES = frozenset({"succeeded", "failed", "cancelled", "policy_stopped"})
-VALID_RUN_STATUSES = frozenset({"created", "running", "succeeded", "failed", "cancelled", "policy_stopped"})
+RunStatus = Literal[
+    "created",
+    "admitted",
+    "running",
+    "waiting_input",
+    "waiting_approval",
+    "waiting_review",
+    "waiting_callback",
+    "paused_budget",
+    "paused_callback_delivery",
+    "paused_policy",
+    "paused_operator",
+    "resuming",
+    "completed",
+    "succeeded",
+    "failed",
+    "cancelled",
+    "expired",
+    "policy_stopped",
+]
+MutableRunStatus = Literal[
+    "admitted",
+    "running",
+    "waiting_input",
+    "waiting_approval",
+    "waiting_review",
+    "waiting_callback",
+    "paused_budget",
+    "paused_callback_delivery",
+    "paused_policy",
+    "paused_operator",
+    "resuming",
+    "completed",
+    "succeeded",
+    "failed",
+    "cancelled",
+    "expired",
+    "policy_stopped",
+]
+TERMINAL_RUN_STATUSES = frozenset({"completed", "succeeded", "failed", "cancelled", "expired", "policy_stopped"})
+VALID_RUN_STATUSES = frozenset({
+    "created",
+    "admitted",
+    "running",
+    "waiting_input",
+    "waiting_approval",
+    "waiting_review",
+    "waiting_callback",
+    "paused_budget",
+    "paused_callback_delivery",
+    "paused_policy",
+    "paused_operator",
+    "resuming",
+    "completed",
+    "succeeded",
+    "failed",
+    "cancelled",
+    "expired",
+    "policy_stopped",
+})
 
 
 def _validate_non_empty_string(owner: str, field_name: str, value: object) -> str:

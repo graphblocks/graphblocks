@@ -185,6 +185,46 @@ def test_run_store_treats_policy_stopped_as_terminal_status() -> None:
         store.set_status(record.run_id, "failed")
 
 
+def test_run_store_accepts_durable_async_lifecycle_statuses() -> None:
+    mutable_statuses = (
+        "admitted",
+        "running",
+        "waiting_input",
+        "waiting_approval",
+        "waiting_review",
+        "waiting_callback",
+        "paused_budget",
+        "paused_callback_delivery",
+        "paused_policy",
+        "paused_operator",
+        "resuming",
+    )
+
+    for status in mutable_statuses:
+        store = InMemoryRunStore()
+        record = store.create_run("sha256:test", {})
+        updated = store.set_status(record.run_id, status)  # type: ignore[arg-type]
+        patched = store.patch_state(record.run_id, {"status": status}, expected_revision=0)
+
+        assert updated.status == status
+        assert patched.state == {"status": status}
+
+
+def test_run_store_treats_completed_and_expired_as_terminal_statuses() -> None:
+    for terminal_status in ("completed", "expired"):
+        store = InMemoryRunStore()
+        record = store.create_run("sha256:test", {})
+        terminal = store.set_status(record.run_id, terminal_status)  # type: ignore[arg-type]
+
+        assert terminal.status == terminal_status
+        with pytest.raises(RunTerminalStateError) as patch_error:
+            store.patch_state(record.run_id, {"late": True}, expected_revision=0)
+
+        assert patch_error.value.status == terminal_status
+        with pytest.raises(RunTerminalStateError):
+            store.set_status(record.run_id, "running")
+
+
 def test_sqlite_run_store_persists_records_across_instances(tmp_path) -> None:
     database = tmp_path / "runs.sqlite3"
     first = SQLiteRunStore(database)
@@ -320,6 +360,47 @@ def test_sqlite_run_store_treats_policy_stopped_as_terminal_status(tmp_path) -> 
     assert store.get_run(record.run_id).state == {}
     with pytest.raises(RunTerminalStateError):
         store.set_status(record.run_id, "running")
+
+
+def test_sqlite_run_store_persists_durable_async_lifecycle_statuses(tmp_path) -> None:
+    database = tmp_path / "runs.sqlite3"
+    first = SQLiteRunStore(database)
+    mutable_statuses = (
+        "admitted",
+        "waiting_input",
+        "waiting_approval",
+        "waiting_review",
+        "waiting_callback",
+        "paused_budget",
+        "paused_callback_delivery",
+        "paused_policy",
+        "paused_operator",
+        "resuming",
+    )
+
+    for index, status in enumerate(mutable_statuses, start=1):
+        record = first.create_run(f"sha256:test-{index}", {})
+        first.set_status(record.run_id, status)  # type: ignore[arg-type]
+    first.close()
+
+    second = SQLiteRunStore(database)
+    for index, status in enumerate(mutable_statuses, start=1):
+        assert second.get_run(f"run-{index:06d}").status == status
+
+
+def test_sqlite_run_store_treats_completed_and_expired_as_terminal_statuses(tmp_path) -> None:
+    for terminal_status in ("completed", "expired"):
+        store = SQLiteRunStore(tmp_path / f"runs-{terminal_status}.sqlite3")
+        record = store.create_run("sha256:test", {})
+        terminal = store.set_status(record.run_id, terminal_status)  # type: ignore[arg-type]
+
+        assert terminal.status == terminal_status
+        with pytest.raises(RunTerminalStateError) as patch_error:
+            store.patch_state(record.run_id, {"late": True}, expected_revision=0)
+
+        assert patch_error.value.status == terminal_status
+        with pytest.raises(RunTerminalStateError):
+            store.set_status(record.run_id, "running")
 
 
 def test_sqlite_run_store_allocates_monotonic_run_ids_after_reopen(tmp_path) -> None:
