@@ -7,8 +7,8 @@ use graphblocks_runtime_core::callback_delivery::{
     CallbackDeliveryResponse, CallbackDeliveryRunAction, CallbackDeliveryScheduler,
     CallbackDeliveryStatus, CallbackFailurePolicy, CallbackRetryPolicy, CallbackSubscription,
     CallbackSubscriptionStatus, EventFilter, OrderedDeliveryState, SqliteCallbackDeadLetterStore,
-    WebhookDeliveryTarget, WebhookEgressPolicy, WebhookEndpointError, WebhookSignatureError,
-    WebhookSigningConfig,
+    SqliteCallbackDeliveryQueue, WebhookDeliveryTarget, WebhookEgressPolicy, WebhookEndpointError,
+    WebhookSignatureError, WebhookSigningConfig,
 };
 use serde_json::json;
 use std::path::PathBuf;
@@ -21,6 +21,16 @@ fn sqlite_callback_dead_letter_path(label: &str) -> PathBuf {
         .as_nanos();
     std::env::temp_dir().join(format!(
         "graphblocks-callback-dead-letter-{label}-{unique}.sqlite3"
+    ))
+}
+
+fn sqlite_callback_delivery_queue_path(label: &str) -> PathBuf {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock is after unix epoch")
+        .as_nanos();
+    std::env::temp_dir().join(format!(
+        "graphblocks-callback-delivery-queue-{label}-{unique}.sqlite3"
     ))
 }
 
@@ -492,6 +502,73 @@ fn sqlite_callback_dead_letter_store_redrives_after_reopen_and_updates_redrive_c
     assert_eq!(redriven.attempt, 2);
     assert_eq!(redriven.redrive_count, 1);
     assert_eq!(loaded.redrive_count, 1);
+}
+
+#[test]
+fn sqlite_callback_delivery_queue_persists_pending_delivery_across_reopen() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let path = sqlite_callback_delivery_queue_path("pending");
+
+    {
+        let queue = SqliteCallbackDeliveryQueue::open(&path).expect("queue opens");
+        queue
+            .upsert_delivery(delivery.clone())
+            .expect("delivery persists");
+    }
+
+    let queue = SqliteCallbackDeliveryQueue::open(&path).expect("queue reopens");
+    let loaded = queue
+        .get_delivery("del_sub-1_event-1")
+        .expect("delivery loads")
+        .expect("delivery exists");
+    let due = queue
+        .due_deliveries(1_000, 10)
+        .expect("due deliveries load");
+
+    assert_eq!(loaded, delivery);
+    assert_eq!(due, vec![delivery]);
+}
+
+#[test]
+fn sqlite_callback_delivery_queue_persists_retry_schedule_across_reopen() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let retry =
+        scheduler.record_response(delivery, CallbackDeliveryResponse::ServerError(503), 1_000);
+    let path = sqlite_callback_delivery_queue_path("retry");
+
+    {
+        let queue = SqliteCallbackDeliveryQueue::open(&path).expect("queue opens");
+        queue
+            .upsert_delivery(retry.clone())
+            .expect("retry delivery persists");
+    }
+
+    let queue = SqliteCallbackDeliveryQueue::open(&path).expect("queue reopens");
+    let before_due = queue
+        .due_deliveries(1_099, 10)
+        .expect("due deliveries load");
+    let after_due = queue
+        .due_deliveries(1_100, 10)
+        .expect("due deliveries load");
+
+    assert!(before_due.is_empty());
+    assert_eq!(after_due, vec![retry]);
 }
 
 #[test]

@@ -405,6 +405,159 @@ pub struct SqliteCallbackDeadLetterStore {
     connection: Mutex<Connection>,
 }
 
+#[derive(Debug)]
+pub struct SqliteCallbackDeliveryQueue {
+    connection: Mutex<Connection>,
+}
+
+impl SqliteCallbackDeliveryQueue {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, CallbackDeliveryError> {
+        let connection = Connection::open(path).map_err(callback_storage_error)?;
+        let queue = Self {
+            connection: Mutex::new(connection),
+        };
+        queue.initialize()?;
+        Ok(queue)
+    }
+
+    pub fn open_in_memory() -> Result<Self, CallbackDeliveryError> {
+        let connection = Connection::open_in_memory().map_err(callback_storage_error)?;
+        let queue = Self {
+            connection: Mutex::new(connection),
+        };
+        queue.initialize()?;
+        Ok(queue)
+    }
+
+    fn initialize(&self) -> Result<(), CallbackDeliveryError> {
+        let connection = self
+            .connection
+            .lock()
+            .expect("sqlite callback delivery queue lock poisoned");
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS callback_deliveries (
+                    delivery_id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL,
+                    next_retry_at_unix_ms INTEGER,
+                    sequence INTEGER NOT NULL,
+                    delivery_json TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS callback_deliveries_due_idx
+                ON callback_deliveries(status, next_retry_at_unix_ms, sequence, delivery_id);
+                ",
+            )
+            .map_err(callback_storage_error)?;
+        Ok(())
+    }
+
+    pub fn upsert_delivery(&self, delivery: CallbackDelivery) -> Result<(), CallbackDeliveryError> {
+        let connection = self
+            .connection
+            .lock()
+            .expect("sqlite callback delivery queue lock poisoned");
+        connection
+            .execute(
+                "
+                INSERT INTO callback_deliveries (
+                    delivery_id,
+                    status,
+                    next_retry_at_unix_ms,
+                    sequence,
+                    delivery_json
+                )
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(delivery_id) DO UPDATE SET
+                    status = excluded.status,
+                    next_retry_at_unix_ms = excluded.next_retry_at_unix_ms,
+                    sequence = excluded.sequence,
+                    delivery_json = excluded.delivery_json
+                ",
+                params![
+                    &delivery.delivery_id,
+                    callback_delivery_status_as_str(delivery.status),
+                    optional_callback_u64_to_i64(
+                        delivery.next_retry_at_unix_ms,
+                        "callback delivery next retry",
+                    )?,
+                    callback_u64_to_i64(delivery.sequence, "callback delivery sequence")?,
+                    callback_storage_json(&delivery_to_value(&delivery))?,
+                ],
+            )
+            .map_err(callback_storage_error)?;
+        Ok(())
+    }
+
+    pub fn get_delivery(
+        &self,
+        delivery_id: &str,
+    ) -> Result<Option<CallbackDelivery>, CallbackDeliveryError> {
+        let connection = self
+            .connection
+            .lock()
+            .expect("sqlite callback delivery queue lock poisoned");
+        let mut statement = connection
+            .prepare(
+                "
+                SELECT delivery_json
+                FROM callback_deliveries
+                WHERE delivery_id = ?
+                ",
+            )
+            .map_err(callback_storage_error)?;
+        let mut rows = statement
+            .query(params![delivery_id])
+            .map_err(callback_storage_error)?;
+        let Some(row) = rows.next().map_err(callback_storage_error)? else {
+            return Ok(None);
+        };
+        let delivery_json = row.get::<_, String>(0).map_err(callback_storage_error)?;
+        delivery_from_value(callback_parse_json(&delivery_json)?).map(Some)
+    }
+
+    pub fn due_deliveries(
+        &self,
+        now_unix_ms: u64,
+        limit: usize,
+    ) -> Result<Vec<CallbackDelivery>, CallbackDeliveryError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let connection = self
+            .connection
+            .lock()
+            .expect("sqlite callback delivery queue lock poisoned");
+        let mut statement = connection
+            .prepare(
+                "
+                SELECT delivery_json
+                FROM callback_deliveries
+                WHERE status = ?
+                  AND (next_retry_at_unix_ms IS NULL OR next_retry_at_unix_ms <= ?)
+                ORDER BY sequence, delivery_id
+                LIMIT ?
+                ",
+            )
+            .map_err(callback_storage_error)?;
+        let rows = statement
+            .query_map(
+                params![
+                    callback_delivery_status_as_str(CallbackDeliveryStatus::Pending),
+                    callback_u64_to_i64(now_unix_ms, "callback delivery due time")?,
+                    callback_usize_to_i64(limit, "callback delivery due limit")?,
+                ],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(callback_storage_error)?;
+        rows.map(|row| {
+            delivery_from_value(callback_parse_json(&row.map_err(callback_storage_error)?)?)
+        })
+        .collect()
+    }
+}
+
 impl SqliteCallbackDeadLetterStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, CallbackDeliveryError> {
         let connection = Connection::open(path).map_err(callback_storage_error)?;
@@ -1082,6 +1235,53 @@ fn dead_letter_to_value(dead_letter: &CallbackDeadLetter) -> Value {
     })
 }
 
+fn delivery_to_value(delivery: &CallbackDelivery) -> Value {
+    json!({
+        "delivery_id": delivery.delivery_id,
+        "subscription_id": delivery.subscription_id,
+        "event_id": delivery.event_id,
+        "run_id": delivery.run_id,
+        "sequence": delivery.sequence,
+        "cursor": delivery.cursor,
+        "attempt": delivery.attempt,
+        "idempotency_key": delivery.idempotency_key,
+        "failure_policy": callback_failure_policy_as_str(delivery.failure_policy),
+        "status": callback_delivery_status_as_str(delivery.status),
+        "next_retry_at_unix_ms": delivery.next_retry_at_unix_ms,
+        "delivered_at_unix_ms": delivery.delivered_at_unix_ms,
+        "acknowledged_at_unix_ms": delivery.acknowledged_at_unix_ms,
+        "last_error": delivery.last_error,
+        "redrive_count": delivery.redrive_count,
+        "last_redrive_operator": delivery.last_redrive_operator,
+        "last_redrive_reason": delivery.last_redrive_reason,
+    })
+}
+
+fn delivery_from_value(value: Value) -> Result<CallbackDelivery, CallbackDeliveryError> {
+    Ok(CallbackDelivery {
+        delivery_id: callback_required_string(&value, "delivery_id")?,
+        subscription_id: callback_required_string(&value, "subscription_id")?,
+        event_id: callback_required_string(&value, "event_id")?,
+        run_id: callback_required_string(&value, "run_id")?,
+        sequence: callback_required_u64(&value, "sequence")?,
+        cursor: callback_required_string(&value, "cursor")?,
+        attempt: callback_required_u32(&value, "attempt")?,
+        idempotency_key: callback_required_string(&value, "idempotency_key")?,
+        failure_policy: callback_failure_policy_from_str(&callback_required_string(
+            &value,
+            "failure_policy",
+        )?)?,
+        status: callback_delivery_status_from_str(&callback_required_string(&value, "status")?)?,
+        next_retry_at_unix_ms: callback_optional_u64(&value, "next_retry_at_unix_ms")?,
+        delivered_at_unix_ms: callback_optional_u64(&value, "delivered_at_unix_ms")?,
+        acknowledged_at_unix_ms: callback_optional_u64(&value, "acknowledged_at_unix_ms")?,
+        last_error: callback_optional_string(&value, "last_error")?,
+        redrive_count: callback_required_u32(&value, "redrive_count")?,
+        last_redrive_operator: callback_optional_string(&value, "last_redrive_operator")?,
+        last_redrive_reason: callback_optional_string(&value, "last_redrive_reason")?,
+    })
+}
+
 fn dead_letter_from_value(value: Value) -> Result<CallbackDeadLetter, CallbackDeliveryError> {
     let attempt_history = value
         .get("attempt_history")
@@ -1121,6 +1321,37 @@ fn dead_letter_from_value(value: Value) -> Result<CallbackDeadLetter, CallbackDe
                 message: "stored callback dead letter has oversized redrive_count".to_owned(),
             })?,
     })
+}
+
+fn callback_delivery_status_as_str(status: CallbackDeliveryStatus) -> &'static str {
+    match status {
+        CallbackDeliveryStatus::Pending => "pending",
+        CallbackDeliveryStatus::Delivering => "delivering",
+        CallbackDeliveryStatus::Delivered => "delivered",
+        CallbackDeliveryStatus::Acknowledged => "acknowledged",
+        CallbackDeliveryStatus::Failed => "failed",
+        CallbackDeliveryStatus::DeadLettered => "dead_lettered",
+        CallbackDeliveryStatus::Cancelled => "cancelled",
+        CallbackDeliveryStatus::Expired => "expired",
+    }
+}
+
+fn callback_delivery_status_from_str(
+    status: &str,
+) -> Result<CallbackDeliveryStatus, CallbackDeliveryError> {
+    match status {
+        "pending" => Ok(CallbackDeliveryStatus::Pending),
+        "delivering" => Ok(CallbackDeliveryStatus::Delivering),
+        "delivered" => Ok(CallbackDeliveryStatus::Delivered),
+        "acknowledged" => Ok(CallbackDeliveryStatus::Acknowledged),
+        "failed" => Ok(CallbackDeliveryStatus::Failed),
+        "dead_lettered" => Ok(CallbackDeliveryStatus::DeadLettered),
+        "cancelled" => Ok(CallbackDeliveryStatus::Cancelled),
+        "expired" => Ok(CallbackDeliveryStatus::Expired),
+        _ => Err(CallbackDeliveryError::Storage {
+            message: format!("unknown callback delivery status {status}"),
+        }),
+    }
 }
 
 fn callback_failure_policy_as_str(failure_policy: CallbackFailurePolicy) -> &'static str {
@@ -1181,6 +1412,29 @@ fn callback_required_u64(value: &Value, field: &'static str) -> Result<u64, Call
         })
 }
 
+fn callback_required_u32(value: &Value, field: &'static str) -> Result<u32, CallbackDeliveryError> {
+    callback_required_u64(value, field)?
+        .try_into()
+        .map_err(|_| CallbackDeliveryError::Storage {
+            message: format!("stored callback value has oversized {field}"),
+        })
+}
+
+fn callback_optional_u64(
+    value: &Value,
+    field: &'static str,
+) -> Result<Option<u64>, CallbackDeliveryError> {
+    match value.get(field) {
+        Some(Value::Null) | None => Ok(None),
+        Some(value) => value
+            .as_u64()
+            .map(Some)
+            .ok_or_else(|| CallbackDeliveryError::Storage {
+                message: format!("stored callback value has invalid {field}"),
+            }),
+    }
+}
+
 fn callback_storage_json(value: &Value) -> Result<String, CallbackDeliveryError> {
     serde_json::to_string(value).map_err(|error| CallbackDeliveryError::Storage {
         message: error.to_string(),
@@ -1197,6 +1451,27 @@ fn callback_storage_error(error: rusqlite::Error) -> CallbackDeliveryError {
     CallbackDeliveryError::Storage {
         message: error.to_string(),
     }
+}
+
+fn callback_u64_to_i64(value: u64, label: &'static str) -> Result<i64, CallbackDeliveryError> {
+    i64::try_from(value).map_err(|_| CallbackDeliveryError::Storage {
+        message: format!("{label} exceeds sqlite integer range"),
+    })
+}
+
+fn optional_callback_u64_to_i64(
+    value: Option<u64>,
+    label: &'static str,
+) -> Result<Option<i64>, CallbackDeliveryError> {
+    value
+        .map(|value| callback_u64_to_i64(value, label))
+        .transpose()
+}
+
+fn callback_usize_to_i64(value: usize, label: &'static str) -> Result<i64, CallbackDeliveryError> {
+    i64::try_from(value).map_err(|_| CallbackDeliveryError::Storage {
+        message: format!("{label} exceeds sqlite integer range"),
+    })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
