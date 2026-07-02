@@ -502,6 +502,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Callback delivery response transitions now reject late receiver responses once a delivery is
   already terminal, preventing delivered, acknowledged, dead-lettered, cancelled, or expired
   delivery records from being rewritten by delayed network outcomes.
+- Callback delivery projections now validate retry, delivery, and acknowledgement timestamps as
+  ISO-8601 datetimes and reject acknowledgement timestamps that precede delivery timestamps.
 - Callback subscriptions can schedule cursor replay from the authoritative `ApplicationProtocolLog`
   while applying the same event filters and deterministic delivery/idempotency metadata as live
   projection.

@@ -63,6 +63,14 @@ def _parse_utc_timestamp(value: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
+def _parse_field_timestamp(field_name: str, value: str) -> datetime:
+    _require_non_empty_string(field_name, value)
+    try:
+        return _parse_utc_timestamp(value)
+    except ValueError:
+        raise ValueError(f"{field_name} must be an ISO-8601 datetime") from None
+
+
 def _require_non_empty_string(field_name: str, value: str) -> None:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{field_name} must be a non-empty string")
@@ -368,10 +376,18 @@ class CallbackDeliveryProjection:
         _require_non_empty_string("status", self.status)
         if self.status not in VALID_DELIVERY_STATUSES:
             raise ValueError("status must be a valid callback delivery status")
+        parsed_timestamps: dict[str, datetime] = {}
         for field_name in ("next_retry_at", "delivered_at", "acknowledged_at", "last_error"):
             value = getattr(self, field_name)
             if value is not None:
-                _require_non_empty_string(field_name, value)
+                if field_name == "last_error":
+                    _require_non_empty_string(field_name, value)
+                else:
+                    parsed_timestamps[field_name] = _parse_field_timestamp(field_name, value)
+        delivered_at = parsed_timestamps.get("delivered_at")
+        acknowledged_at = parsed_timestamps.get("acknowledged_at")
+        if delivered_at is not None and acknowledged_at is not None and acknowledged_at < delivered_at:
+            raise ValueError("acknowledged_at must not be before delivered_at")
 
     def mark_failed(self, error: str) -> CallbackDeliveryProjection:
         _require_non_empty_string("error", error)

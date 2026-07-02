@@ -440,6 +440,40 @@ def test_callback_dead_letter_redrive_creates_pending_delivery_without_new_event
     assert redriven.last_error == "operator redrive"
 
 
+def test_callback_delivery_projection_validates_timestamp_fields() -> None:
+    _assert_raises_value_error(
+        "next_retry_at must be an ISO-8601 datetime",
+        lambda: CallbackDeliveryProjection(
+            delivery_id="del_001",
+            subscription_id="sub_001",
+            event_id="evt_1042",
+            run_id="run_coding_001",
+            sequence=1042,
+            cursor="evt_1042",
+            attempt=1,
+            idempotency_key="sub_001:evt_1042",
+            status="pending",
+            next_retry_at="soon",
+        ),
+    )
+    _assert_raises_value_error(
+        "acknowledged_at must not be before delivered_at",
+        lambda: CallbackDeliveryProjection(
+            delivery_id="del_002",
+            subscription_id="sub_001",
+            event_id="evt_1042",
+            run_id="run_coding_001",
+            sequence=1042,
+            cursor="evt_1042",
+            attempt=1,
+            idempotency_key="sub_001:evt_1042:ack",
+            status="acknowledged",
+            delivered_at="2026-07-02T00:00:10Z",
+            acknowledged_at="2026-07-02T00:00:09Z",
+        ),
+    )
+
+
 def test_webhook_target_safety_allows_public_https_targets() -> None:
     safety = validate_webhook_target_url("https://callbacks.example.com/graphblocks/events")
 
