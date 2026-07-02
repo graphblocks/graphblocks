@@ -240,6 +240,8 @@ def default_server_route_manifest() -> ServerRouteManifest:
                 auth_required=True,
             ),
             ServerEndpoint("POST", "/runs/{run_id}/cancel", "http", "cancel_run", auth_required=True),
+            ServerEndpoint("POST", "/callbacks/register", "http", "register_callback", auth_required=True),
+            ServerEndpoint("DELETE", "/callbacks/{subscription_id}", "http", "revoke_callback", auth_required=True),
             ServerEndpoint("POST", "/callbacks/{operation_id}", "http", "submit_async_callback", auth_required=True),
             ServerEndpoint("GET", "/runs/{run_id}/events", "sse", "application_events", auth_required=True),
             ServerEndpoint("GET", "/runs/{run_id}/stream", "websocket", "application_stream", auth_required=True),
@@ -590,6 +592,141 @@ class ServerEventSubscription:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class ServerCallbackRegistration:
+    subscription_id: str
+    scope: str
+    scope_id: str
+    event_filter: Mapping[str, object]
+    delivery: Mapping[str, object]
+    status: str = "active"
+    failure_policy: str = "retry_then_dead_letter"
+    replay_from_cursor: str | None = None
+    created_at: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "subscription_id",
+            _validate_non_empty_string("server callback registration", "subscription_id", self.subscription_id),
+        )
+        object.__setattr__(
+            self,
+            "scope",
+            _validate_non_empty_string("server callback registration", "scope", self.scope),
+        )
+        object.__setattr__(
+            self,
+            "scope_id",
+            _validate_non_empty_string("server callback registration", "scope_id", self.scope_id),
+        )
+        if not isinstance(self.event_filter, Mapping):
+            raise ValueError("server callback registration event_filter must be a mapping")
+        if not isinstance(self.delivery, Mapping):
+            raise ValueError("server callback registration delivery must be a mapping")
+        event_filter = dict(self.event_filter)
+        delivery = dict(self.delivery)
+        if any(not isinstance(key, str) or not key.strip() for key in event_filter):
+            raise ValueError("server callback registration event_filter keys must be non-empty strings")
+        if any(not isinstance(key, str) or not key.strip() for key in delivery):
+            raise ValueError("server callback registration delivery keys must be non-empty strings")
+        _validate_non_empty_string(
+            "server callback registration",
+            "delivery.kind",
+            delivery.get("kind", ""),
+        )
+        object.__setattr__(self, "event_filter", MappingProxyType(event_filter))
+        object.__setattr__(self, "delivery", MappingProxyType(delivery))
+        object.__setattr__(
+            self,
+            "status",
+            _validate_non_empty_string("server callback registration", "status", self.status),
+        )
+        object.__setattr__(
+            self,
+            "failure_policy",
+            _validate_non_empty_string("server callback registration", "failure_policy", self.failure_policy),
+        )
+        if self.replay_from_cursor is not None:
+            object.__setattr__(
+                self,
+                "replay_from_cursor",
+                _validate_non_empty_string(
+                    "server callback registration",
+                    "replay_from_cursor",
+                    self.replay_from_cursor,
+                ),
+            )
+        if self.created_at != "":
+            object.__setattr__(
+                self,
+                "created_at",
+                _validate_non_empty_string("server callback registration", "created_at", self.created_at),
+            )
+
+    @classmethod
+    def from_request(cls, *, request: ServerRequest, ordinal: int) -> ServerCallbackRegistration:
+        body = json.loads(request.body.decode("utf-8") or "{}")
+        if not isinstance(body, Mapping):
+            raise ValueError("register callback request body must be a JSON object")
+        event_filter = body.get("event_filter", body.get("eventFilter", {}))
+        delivery = body.get("delivery", {})
+        if not isinstance(event_filter, Mapping):
+            raise ValueError("register callback request event_filter must be a JSON object")
+        if not isinstance(delivery, Mapping):
+            raise ValueError("register callback request delivery must be a JSON object")
+        subscription_id = body.get("subscription_id", body.get("subscriptionId"))
+        if subscription_id is None:
+            subscription_id = f"callback-sub-{ordinal:06d}"
+        replay_from_cursor = body.get("replay_from_cursor", body.get("replayFromCursor"))
+        failure_policy = body.get("failure_policy", body.get("failurePolicy", "retry_then_dead_letter"))
+        return cls(
+            subscription_id=_validate_non_empty_string(
+                "server callback registration",
+                "subscription_id",
+                subscription_id,
+            ),
+            scope=_validate_non_empty_string("server callback registration", "scope", body.get("scope", "")),
+            scope_id=_validate_non_empty_string(
+                "server callback registration",
+                "scope_id",
+                body.get("scope_id", body.get("scopeId", "")),
+            ),
+            event_filter=event_filter,
+            delivery=delivery,
+            failure_policy=_validate_non_empty_string(
+                "server callback registration",
+                "failure_policy",
+                failure_policy,
+            ),
+            replay_from_cursor=(
+                _validate_non_empty_string(
+                    "server callback registration",
+                    "replay_from_cursor",
+                    replay_from_cursor,
+                )
+                if replay_from_cursor is not None
+                else None
+            ),
+            created_at=request.requested_at or _utc_now_iso(),
+        )
+
+    def response_payload(self, replayed_events: list[dict[str, object]], last_cursor: str | None) -> dict[str, object]:
+        return {
+            "ok": True,
+            "subscriptionId": self.subscription_id,
+            "scope": self.scope,
+            "scopeId": self.scope_id,
+            "status": self.status,
+            "failurePolicy": self.failure_policy,
+            "replayFromCursor": self.replay_from_cursor,
+            "lastCursor": last_cursor,
+            "delivery": dict(self.delivery),
+            "eventFilter": dict(self.event_filter),
+            "events": replayed_events,
+        }
+
+
 def _optional_callback_string(body: Mapping[str, object], snake: str, camel: str) -> str | None:
     value = body.get(snake, body.get(camel))
     if value is None:
@@ -721,6 +858,11 @@ class GraphBlocksServerApp:
         repr=False,
     )
     _acks_by_subscription: dict[tuple[str, str], tuple[dict[str, object], ...]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
+    _callback_registrations: dict[str, ServerCallbackRegistration] = field(
         default_factory=dict,
         init=False,
         repr=False,
@@ -949,6 +1091,47 @@ class GraphBlocksServerApp:
                         "error": str(error),
                     },
                 )
+        if route.operation == "register_callback":
+            try:
+                registration = ServerCallbackRegistration.from_request(
+                    request=request,
+                    ordinal=len(self._callback_registrations) + 1,
+                )
+                replay = self._callback_registration_replay(registration)
+                if isinstance(replay, ServerResponse):
+                    return replay
+                replayed_events, last_cursor = replay
+                self._callback_registrations[registration.subscription_id] = registration
+                return ServerResponse.json(201, registration.response_payload(replayed_events, last_cursor))
+            except (TypeError, ValueError, json.JSONDecodeError) as error:
+                return ServerResponse.json(
+                    400,
+                    {
+                        "ok": False,
+                        "error": str(error),
+                    },
+                )
+        if route.operation == "revoke_callback":
+            subscription_id = route_match.path_params.get("subscription_id", "")
+            registration = self._callback_registrations.get(subscription_id)
+            if registration is None:
+                return ServerResponse.json(
+                    404,
+                    {
+                        "ok": False,
+                        "error": f"callback registration {subscription_id!r} not found",
+                    },
+                )
+            revoked = replace(registration, status="revoked")
+            self._callback_registrations[subscription_id] = revoked
+            return ServerResponse.json(
+                202,
+                {
+                    "ok": True,
+                    "subscriptionId": subscription_id,
+                    "status": "revoked",
+                },
+            )
         if route.operation == "submit_async_callback":
             try:
                 submission = ServerAsyncCallbackSubmission.from_request(
@@ -1203,6 +1386,9 @@ class GraphBlocksServerApp:
         run_id = _validate_non_empty_string("server event ack", "run_id", run_id)
         subscription_id = _validate_non_empty_string("server event ack", "subscription_id", subscription_id)
         return self._acks_by_subscription.get((run_id, subscription_id), ())
+
+    def callback_registrations(self) -> tuple[ServerCallbackRegistration, ...]:
+        return tuple(self._callback_registrations[key] for key in sorted(self._callback_registrations))
 
     def _run_status_payload(
         self,
@@ -1518,6 +1704,35 @@ class GraphBlocksServerApp:
                 return event
         return None
 
+    def _callback_registration_replay(
+        self,
+        registration: ServerCallbackRegistration,
+    ) -> tuple[list[dict[str, object]], str | None] | ServerResponse:
+        if registration.scope != "run":
+            return ([], None)
+        events = self._events_by_run_id.get(registration.scope_id)
+        if events is None:
+            return ServerResponse.json(
+                404,
+                {
+                    "ok": False,
+                    "error": f"run event stream not found for callback registration scope {registration.scope_id!r}",
+                },
+            )
+        subscription = ServerEventSubscription(
+            subscription_id=registration.subscription_id,
+            run_id=registration.scope_id,
+            event_filter=registration.event_filter,
+            delivery=registration.delivery,
+            failure_policy=registration.failure_policy,
+            replay_from_cursor=registration.replay_from_cursor,
+            created_at=registration.created_at,
+        )
+        replay = self._subscription_replay(subscription, events)
+        if isinstance(replay, ServerResponse):
+            return replay
+        return (replay, f"{registration.scope_id}:{self._last_event_sequence(events)}")
+
 
 class ServerProtocolVersionMismatchError(ValueError):
     def __init__(self, left: str, right: str) -> None:
@@ -1584,6 +1799,7 @@ __all__ = [
     "ServerAsyncCallbackSubmission",
     "ServerAuthHook",
     "ServerAuthRequest",
+    "ServerCallbackRegistration",
     "ServerEndpoint",
     "ServerEventSubscription",
     "ServerHealth",

@@ -71,10 +71,18 @@ def test_server_package_reexports_framework_neutral_contracts(monkeypatch) -> No
         event_filter={"types": ["RunSucceeded"]},
         delivery={"kind": "local_callback", "callback_name": "ide"},
     ).status == "active"
+    assert graphblocks_server.ServerCallbackRegistration(
+        subscription_id="callback-sub-1",
+        scope="run",
+        scope_id="run-1",
+        event_filter={"types": ["RunSucceeded"]},
+        delivery={"kind": "webhook", "url": "https://relay.example/events"},
+    ).status == "active"
     assert "ApplicationCommand" in graphblocks_server.__all__
     assert "ApplicationProtocolEvent" in graphblocks_server.__all__
     assert "ApplicationProtocolLog" in graphblocks_server.__all__
     assert "ServerAsyncCallbackSubmission" in graphblocks_server.__all__
+    assert "ServerCallbackRegistration" in graphblocks_server.__all__
     assert "ServerEventSubscription" in graphblocks_server.__all__
     assert "ServerResponse" in graphblocks_server.__all__
 

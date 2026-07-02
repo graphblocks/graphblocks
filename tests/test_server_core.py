@@ -11,6 +11,7 @@ from graphblocks.server import (
     GraphBlocksServerApp,
     ServerAsyncCallbackSubmission,
     ServerAuthRequest,
+    ServerCallbackRegistration,
     ServerEndpoint,
     ServerEventSubscription,
     ServerHealth,
@@ -130,6 +131,16 @@ def test_server_route_manifest_matches_ack_event_path() -> None:
     assert route_match.endpoint.operation == "ack_event"
     assert route_match.endpoint.auth_required is True
     assert route_match.path_params == {"run_id": "run-123", "subscription_id": "sub-123"}
+
+
+def test_server_route_manifest_matches_callback_registration_paths() -> None:
+    register_match = default_server_route_manifest().match("POST", "/callbacks/register")
+    revoke_match = default_server_route_manifest().match("DELETE", "/callbacks/callback-sub-1")
+
+    assert register_match.endpoint.operation == "register_callback"
+    assert register_match.endpoint.auth_required is True
+    assert revoke_match.endpoint.operation == "revoke_callback"
+    assert revoke_match.path_params == {"subscription_id": "callback-sub-1"}
 
 
 def test_server_route_manifest_matches_async_callback_ingress_path() -> None:
@@ -1600,6 +1611,143 @@ def test_server_app_rejects_ack_for_missing_event_or_subscription() -> None:
         "ok": False,
         "error": "subscription 'missing-sub' not found for run 'run-ack-invalid-1'",
     }
+
+
+def test_server_app_registers_and_revokes_callback_projection_with_run_replay() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "server-register-callback"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Register {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "ok"}},
+                    "runId": "run-register-callback-1",
+                    "responseId": "response-register-callback-1",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    registered = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/register",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "callback-sub-1",
+                    "scope": "run",
+                    "scopeId": "run-register-callback-1",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {"kind": "webhook", "url": "https://relay.example/events"},
+                    "replayFromCursor": "run-register-callback-1:1",
+                    "failurePolicy": "retry_then_dead_letter",
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-02T00:00:00Z",
+        )
+    )
+    revoked = app.handle(
+        ServerRequest(
+            method="DELETE",
+            path="/callbacks/callback-sub-1",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+        )
+    )
+    events = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-register-callback-1/events",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+        )
+    )
+
+    payload = json.loads(registered.body.decode("utf-8"))
+    assert registered.status_code == 201
+    assert payload["subscriptionId"] == "callback-sub-1"
+    assert payload["scope"] == "run"
+    assert payload["scopeId"] == "run-register-callback-1"
+    assert payload["lastCursor"] == "run-register-callback-1:2"
+    assert [event["kind"] for event in payload["events"]] == ["RunSucceeded"]
+    assert revoked.status_code == 202
+    assert json.loads(revoked.body.decode("utf-8")) == {
+        "ok": True,
+        "subscriptionId": "callback-sub-1",
+        "status": "revoked",
+    }
+    assert app.callback_registrations() == (
+        ServerCallbackRegistration(
+            subscription_id="callback-sub-1",
+            scope="run",
+            scope_id="run-register-callback-1",
+            event_filter={"types": ["RunSucceeded"]},
+            delivery={"kind": "webhook", "url": "https://relay.example/events"},
+            status="revoked",
+            failure_policy="retry_then_dead_letter",
+            replay_from_cursor="run-register-callback-1:1",
+            created_at="2026-07-02T00:00:00Z",
+        ),
+    )
+    assert [event["kind"] for event in json.loads(events.body.decode("utf-8"))["events"]] == [
+        "RunStarted",
+        "RunSucceeded",
+    ]
+
+
+def test_server_app_rejects_callback_registration_for_missing_run_scope() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/register",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "callback-sub-missing",
+                    "scope": "run",
+                    "scopeId": "missing-run",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {"kind": "webhook", "url": "https://relay.example/events"},
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == 404
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "run event stream not found for callback registration scope 'missing-run'",
+    }
+    assert app.callback_registrations() == ()
 
 
 def test_server_app_reports_missing_run_events() -> None:
