@@ -2305,6 +2305,36 @@ def test_server_app_rejects_callback_registration_for_missing_run_scope() -> Non
     assert app.callback_registrations() == ()
 
 
+def test_server_app_rejects_callback_registration_with_invalid_scope() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/register",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "callback-sub-invalid-scope",
+                    "scope": "workspace",
+                    "scopeId": "workspace-1",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {"kind": "webhook", "url": "https://relay.example/events"},
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "server callback registration scope must be one of run, conversation, project, tenant, or deployment",
+    }
+    assert app.callback_registrations() == ()
+
+
 def test_server_app_records_callback_delivery_redrive_and_dead_letter_projection() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("operator-1")}))
 

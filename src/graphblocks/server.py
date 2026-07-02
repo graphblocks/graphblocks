@@ -18,6 +18,13 @@ ServerTransport = Literal["http", "sse", "websocket"]
 ServerHealthStatus = Literal["healthy", "degraded", "unhealthy"]
 VALID_SERVER_TRANSPORTS = frozenset({"http", "sse", "websocket"})
 VALID_SERVER_HEALTH_STATUSES = frozenset({"healthy", "degraded", "unhealthy"})
+VALID_CALLBACK_SUBSCRIPTION_SCOPES = frozenset({
+    "run",
+    "conversation",
+    "project",
+    "tenant",
+    "deployment",
+})
 SERVER_EVENT_SEVERITY_RANKS = {
     "debug": 10,
     "info": 20,
@@ -62,6 +69,15 @@ def _validate_transport(value: object) -> ServerTransport:
     if transport not in VALID_SERVER_TRANSPORTS:
         raise ValueError("server transport must be one of http, sse, or websocket")
     return transport  # type: ignore[return-value]
+
+
+def _validate_callback_subscription_scope(value: object) -> str:
+    scope = _validate_non_empty_string("server callback registration", "scope", value)
+    if scope not in VALID_CALLBACK_SUBSCRIPTION_SCOPES:
+        raise ValueError(
+            "server callback registration scope must be one of run, conversation, project, tenant, or deployment"
+        )
+    return scope
 
 
 def _validate_string_mapping(
@@ -760,7 +776,7 @@ class ServerCallbackRegistration:
                 "subscription_id",
                 subscription_id,
             ),
-            scope=_validate_non_empty_string("server callback registration", "scope", body.get("scope", "")),
+            scope=_validate_callback_subscription_scope(body.get("scope", "")),
             scope_id=_validate_non_empty_string(
                 "server callback registration",
                 "scope_id",
