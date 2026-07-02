@@ -523,6 +523,107 @@ class CallbackDeadLetterRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class CallbackReplayRecord:
+    delivery_id: str
+    subscription_id: str
+    event_id: str
+    run_id: str
+    cursor: str
+    idempotency_key: str
+    envelope_digest: str
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "delivery_id",
+            "subscription_id",
+            "event_id",
+            "run_id",
+            "cursor",
+            "idempotency_key",
+            "envelope_digest",
+        ):
+            _require_non_empty_string(field_name, getattr(self, field_name))
+
+
+@dataclass(frozen=True, slots=True)
+class CallbackReplayDecision:
+    status: str
+    replay_record: CallbackReplayRecord
+    incoming_digest: str
+    duplicate: bool
+    conflict: bool
+
+    def __post_init__(self) -> None:
+        _require_non_empty_string("status", self.status)
+        if self.status not in {"accepted", "duplicate", "conflict"}:
+            raise ValueError("status must be accepted, duplicate, or conflict")
+        if not isinstance(self.replay_record, CallbackReplayRecord):
+            raise ValueError("replay_record must be a CallbackReplayRecord")
+        _require_non_empty_string("incoming_digest", self.incoming_digest)
+        if not isinstance(self.duplicate, bool):
+            raise ValueError("duplicate must be a boolean")
+        if not isinstance(self.conflict, bool):
+            raise ValueError("conflict must be a boolean")
+
+
+class CallbackReplayGuard:
+    def __init__(self, records: Mapping[str, CallbackReplayRecord] | None = None) -> None:
+        if records is None:
+            self._records: dict[str, CallbackReplayRecord] = {}
+            return
+        if not isinstance(records, Mapping):
+            raise ValueError("records must be a mapping")
+        self._records = {}
+        for key, record in records.items():
+            _require_non_empty_string("record key", key)
+            if not isinstance(record, CallbackReplayRecord):
+                raise ValueError("records values must be CallbackReplayRecord")
+            self._records[key] = record
+
+    def record(self, envelope: CallbackEnvelope) -> CallbackReplayDecision:
+        if not isinstance(envelope, CallbackEnvelope):
+            raise ValueError("envelope must be a CallbackEnvelope")
+        digest = envelope.payload_digest()
+        existing = self._records.get(envelope.idempotency_key)
+        if existing is None:
+            record = CallbackReplayRecord(
+                delivery_id=envelope.delivery_id,
+                subscription_id=envelope.subscription_id,
+                event_id=envelope.event_id,
+                run_id=envelope.run_id,
+                cursor=envelope.cursor,
+                idempotency_key=envelope.idempotency_key,
+                envelope_digest=digest,
+            )
+            self._records[envelope.idempotency_key] = record
+            return CallbackReplayDecision(
+                status="accepted",
+                replay_record=record,
+                incoming_digest=digest,
+                duplicate=False,
+                conflict=False,
+            )
+        if existing.envelope_digest == digest:
+            return CallbackReplayDecision(
+                status="duplicate",
+                replay_record=existing,
+                incoming_digest=digest,
+                duplicate=True,
+                conflict=False,
+            )
+        return CallbackReplayDecision(
+            status="conflict",
+            replay_record=existing,
+            incoming_digest=digest,
+            duplicate=False,
+            conflict=True,
+        )
+
+    def records(self) -> tuple[CallbackReplayRecord, ...]:
+        return tuple(self._records[key] for key in sorted(self._records))
+
+
+@dataclass(frozen=True, slots=True)
 class CallbackEnvelope:
     delivery_id: str
     subscription_id: str
@@ -722,6 +823,9 @@ __all__ = [
     "CallbackEnvelope",
     "CallbackPayloadProjection",
     "CallbackRedriveRecord",
+    "CallbackReplayDecision",
+    "CallbackReplayGuard",
+    "CallbackReplayRecord",
     "CallbackRetryPolicy",
     "REQUIRED_WEBHOOK_HEADERS",
     "WebhookTargetSafety",

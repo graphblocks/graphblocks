@@ -20,6 +20,7 @@ from graphblocks_callbacks import (  # noqa: E402
     CallbackEnvelope,
     CallbackDeliveryProjection,
     CallbackPayloadProjection,
+    CallbackReplayGuard,
     CallbackRetryPolicy,
     REQUIRED_WEBHOOK_HEADERS,
     WebhookTargetSafety,
@@ -508,3 +509,69 @@ def test_webhook_response_classification_rejects_invalid_status_codes_and_header
         "headers values must be strings",
         lambda: classify_webhook_response(429, headers={"Retry-After": object()}),  # type: ignore[dict-item]
     )
+
+
+def test_callback_replay_guard_accepts_first_delivery_and_marks_exact_replay_duplicate() -> None:
+    envelope = CallbackEnvelope(
+        delivery_id="del_001",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        sequence=1042,
+        cursor="evt_1042",
+        type="ReviewRequested",
+        payload={"subject": "changeset_abc"},
+        idempotency_key="sub_001:evt_1042",
+        occurred_at="2026-07-02T00:00:00Z",
+        delivered_at="2026-07-02T00:00:01Z",
+    )
+    guard = CallbackReplayGuard()
+
+    first = guard.record(envelope)
+    duplicate = guard.record(envelope)
+
+    assert first.status == "accepted"
+    assert first.duplicate is False
+    assert first.conflict is False
+    assert duplicate.status == "duplicate"
+    assert duplicate.duplicate is True
+    assert duplicate.replay_record == first.replay_record
+
+
+def test_callback_replay_guard_rejects_mutated_idempotency_replay() -> None:
+    first = CallbackEnvelope(
+        delivery_id="del_001",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        sequence=1042,
+        cursor="evt_1042",
+        type="ReviewRequested",
+        payload={"subject": "changeset_abc"},
+        idempotency_key="sub_001:evt_1042",
+        occurred_at="2026-07-02T00:00:00Z",
+        delivered_at="2026-07-02T00:00:01Z",
+    )
+    mutated = CallbackEnvelope(
+        delivery_id="del_002",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        sequence=1042,
+        cursor="evt_1042",
+        type="ReviewRequested",
+        payload={"subject": "mutated"},
+        idempotency_key="sub_001:evt_1042",
+        occurred_at="2026-07-02T00:00:02Z",
+        delivered_at="2026-07-02T00:00:03Z",
+    )
+    guard = CallbackReplayGuard()
+
+    accepted = guard.record(first)
+    conflict = guard.record(mutated)
+
+    assert accepted.status == "accepted"
+    assert conflict.status == "conflict"
+    assert conflict.conflict is True
+    assert conflict.replay_record == accepted.replay_record
+    assert conflict.incoming_digest != accepted.replay_record.envelope_digest

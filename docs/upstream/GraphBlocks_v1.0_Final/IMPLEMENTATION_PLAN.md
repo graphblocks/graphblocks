@@ -584,6 +584,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - `graphblocks-callbacks` HMAC helpers now support optional `GraphBlocks-Key-Id` emission and
   keyring verification so receivers can accept current and previous signing secrets during
   rotation while rejecting unknown key IDs.
+- `graphblocks-callbacks` now includes an in-memory receiver replay guard that records callback
+  delivery/idempotency identity, accepts first deliveries, treats exact repeats as duplicates, and
+  flags mutated idempotency-key reuse as a conflict.
 - `graphblocks-server` now exposes framework-neutral
   `POST /callbacks/deliveries/{delivery_id}/redrive` and
   `POST /callbacks/deliveries/{delivery_id}/dead-letter`
