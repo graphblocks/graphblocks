@@ -41,6 +41,7 @@ VALID_CALLBACK_DELIVERY_KINDS = frozenset({
     "email",
     "local_callback",
 })
+ORDER_CAPABLE_CALLBACK_TARGETS = frozenset({"webhook", "websocket", "sse"})
 VALID_EVENT_VISIBILITIES = frozenset({"client", "operator", "internal", "audit_only"})
 VALID_WEBHOOK_SIGNING_ALGORITHMS = frozenset({"hmac-sha256", "ed25519"})
 FORBIDDEN_WEBHOOK_HOSTS = frozenset({"localhost", "metadata.google.internal"})
@@ -142,6 +143,13 @@ def _validate_callback_delivery_target(owner: str, delivery: Mapping[str, object
         raise ValueError(
             f"{owner} delivery.kind must be one of webhook, websocket, sse, push_notification, email, or local_callback"
         )
+    ordering = delivery.get("ordering")
+    if (
+        isinstance(ordering, Mapping)
+        and ordering.get("mode") == "ordered"
+        and delivery_kind not in ORDER_CAPABLE_CALLBACK_TARGETS
+    ):
+        raise ValueError(f"{owner} delivery.ordering requests ordered delivery on an unsupported target")
     if delivery_kind != "webhook":
         return
     url = _validate_non_empty_string(owner, "delivery.url", delivery.get("url", ""))

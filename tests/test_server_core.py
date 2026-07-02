@@ -2501,6 +2501,51 @@ def test_server_app_rejects_duplicate_subscription_id_without_overwrite() -> Non
     )
 
 
+def test_server_app_rejects_impossible_ordered_event_subscription_delivery() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-subscribe-ordering-1"] = (
+        {
+            "kind": "RunStarted",
+            "payload": {"runId": "run-subscribe-ordering-1"},
+            "metadata": {
+                "runId": "run-subscribe-ordering-1",
+                "sequence": 1,
+                "cursor": "run-subscribe-ordering-1:1",
+                "releaseId": "release-subscribe-ordering-1",
+                "occurredAt": "2026-07-03T00:00:00Z",
+            },
+        },
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-subscribe-ordering-1/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-ordering-1",
+                    "eventFilter": {"types": ["RunStarted"]},
+                    "delivery": {
+                        "kind": "local_callback",
+                        "callback_name": "ide",
+                        "ordering": {"scope": "run", "mode": "ordered"},
+                    },
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "server event subscription delivery.ordering requests ordered delivery on an unsupported target",
+    }
+    assert app.subscriptions("run-subscribe-ordering-1") == ()
+
+
 def test_server_app_subscribes_from_accepted_run_initial_cursor() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     graph = {
@@ -4137,6 +4182,40 @@ def test_server_app_rejects_unsafe_webhook_callback_registration_target() -> Non
     assert json.loads(response.body.decode("utf-8")) == {
         "ok": False,
         "error": "server callback registration delivery.url is unsafe or forbidden by default egress policy",
+    }
+    assert app.callback_registrations() == ()
+
+
+def test_server_app_rejects_impossible_ordered_callback_registration_delivery() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/register",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "callback-sub-ordering",
+                    "scope": "tenant",
+                    "scopeId": "tenant-1",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {
+                        "kind": "local_callback",
+                        "callback_name": "ide",
+                        "ordering": {"scope": "run", "mode": "ordered"},
+                    },
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "server callback registration delivery.ordering requests ordered delivery on an unsupported target",
     }
     assert app.callback_registrations() == ()
 

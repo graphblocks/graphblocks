@@ -602,7 +602,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   Run-scoped subscription ids are single-assignment and cannot overwrite an existing active or
   revoked projection. Subscription replay cursors must belong to the subscribed run before retention
   lookup. Subscription and callback registration projections validate the spec failure policy
-  literals before storage.
+  literals before storage, and ordered delivery requests are rejected unless the target kind can
+  preserve run ordering.
 - `graphblocks-server` now exposes the framework-neutral
   `DELETE /runs/{run_id}/subscriptions/{subscription_id}` `UnsubscribeEvents` route, revoking
   subscription projections without deleting the authoritative event stream. Revoked subscriptions
@@ -623,7 +624,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   delivery configs are immutable snapshots and are thawed back to plain JSON for response payloads.
   Callback registration ids are single-assignment and cannot overwrite an existing active or
   revoked projection. Repeating `RevokeCallback` for an already revoked registration is idempotent
-  and does not rewrite the stored projection.
+  and does not rewrite the stored projection. Callback registrations share the same route-level
+  ordered delivery validation as run-scoped subscriptions.
 - `graphblocks-server` now exposes framework-neutral `POST /runs/{run_id}/cancel`,
   `POST /runs/{run_id}/pause`, `POST /runs/{run_id}/resume`, and
   `POST /runs/{run_id}/expire` `CancelRun`/`PauseRun`/`ResumeRun`/`ExpireRun` routes,
