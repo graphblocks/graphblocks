@@ -219,6 +219,7 @@ def default_server_route_manifest() -> ServerRouteManifest:
     return ServerRouteManifest(
         (
             ServerEndpoint("GET", "/health", "http", "health", auth_required=False),
+            ServerEndpoint("GET", "/runs", "http", "list_runs", auth_required=True),
             ServerEndpoint("POST", "/runs", "http", "invoke_graph", auth_required=True),
             ServerEndpoint("GET", "/runs/{run_id}", "http", "get_run_status", auth_required=True),
             ServerEndpoint("POST", "/runs/{run_id}/cancel", "http", "cancel_run", auth_required=True),
@@ -598,6 +599,17 @@ class GraphBlocksServerApp:
 
         if route.operation == "health":
             return ServerResponse.json(200, self.health.to_payload())
+        if route.operation == "list_runs":
+            return ServerResponse.json(
+                200,
+                {
+                    "ok": True,
+                    "runs": [
+                        self._run_status_payload(run_id, events, include_ok=False)
+                        for run_id, events in sorted(self._events_by_run_id.items())
+                    ],
+                },
+            )
         if route.operation == "cancel_run":
             return ServerResponse.json(
                 202,
@@ -861,7 +873,13 @@ class GraphBlocksServerApp:
         operation_id = _validate_non_empty_string("server async callback", "operation_id", operation_id)
         return self._callbacks_by_operation_id.get(operation_id, ())
 
-    def _run_status_payload(self, run_id: str, events: tuple[dict[str, object], ...]) -> dict[str, object]:
+    def _run_status_payload(
+        self,
+        run_id: str,
+        events: tuple[dict[str, object], ...],
+        *,
+        include_ok: bool = True,
+    ) -> dict[str, object]:
         last_sequence = 0
         release_id = ""
         started_at = ""
@@ -895,8 +913,7 @@ class GraphBlocksServerApp:
                 state = terminal_states[event_kind]
                 completed_at = updated_at
 
-        return {
-            "ok": True,
+        payload: dict[str, object] = {
             "runId": run_id,
             "state": state,
             "releaseId": release_id,
@@ -907,6 +924,9 @@ class GraphBlocksServerApp:
             "waitingOn": [],
             "activeOperations": [],
         }
+        if include_ok:
+            return {"ok": True, **payload}
+        return payload
 
 
 class ServerProtocolVersionMismatchError(ValueError):

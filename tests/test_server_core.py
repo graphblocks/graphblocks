@@ -35,6 +35,8 @@ def test_server_route_manifest_groups_routes_and_hashes_stably() -> None:
 
     assert [endpoint.operation for endpoint in left.by_transport("sse")] == ["application_events"]
     assert left.lookup("GET", "/health").operation == "health"
+    assert left.lookup("GET", "/runs").operation == "list_runs"
+    assert left.lookup("POST", "/runs").operation == "invoke_graph"
     assert left.lookup("GET", "/health").auth_required is False
     assert left.content_digest() == right.content_digest()
 
@@ -738,6 +740,85 @@ def test_server_app_reports_run_status_from_authoritative_events() -> None:
         "completedAt": "2026-07-02T00:00:00Z",
         "waitingOn": [],
         "activeOperations": [],
+    }
+
+
+def test_server_app_lists_run_statuses_from_authoritative_events() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "server-list-runs"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "List {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+    for index, run_id in enumerate(("run-list-2", "run-list-1"), start=1):
+        app.handle(
+            ServerRequest(
+                method="POST",
+                path="/runs",
+                headers={"Authorization": "Bearer token-1"},
+                query={},
+                cookies={},
+                body=json.dumps(
+                    {
+                        "graph": graph,
+                        "inputs": {"message": {"text": run_id}},
+                        "runId": run_id,
+                        "responseId": f"response-list-{index}",
+                        "releaseId": "release-list-1",
+                        "occurredAt": f"2026-07-02T00:00:0{index}Z",
+                    }
+                ).encode("utf-8"),
+            )
+        )
+
+    response = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+        )
+    )
+
+    payload = json.loads(response.body.decode("utf-8"))
+    assert response.status_code == 200
+    assert payload == {
+        "ok": True,
+        "runs": [
+            {
+                "runId": "run-list-1",
+                "state": "succeeded",
+                "releaseId": "release-list-1",
+                "lastCursor": "run-list-1:2",
+                "startedAt": "2026-07-02T00:00:02Z",
+                "updatedAt": "2026-07-02T00:00:02Z",
+                "completedAt": "2026-07-02T00:00:02Z",
+                "waitingOn": [],
+                "activeOperations": [],
+            },
+            {
+                "runId": "run-list-2",
+                "state": "succeeded",
+                "releaseId": "release-list-1",
+                "lastCursor": "run-list-2:2",
+                "startedAt": "2026-07-02T00:00:01Z",
+                "updatedAt": "2026-07-02T00:00:01Z",
+                "completedAt": "2026-07-02T00:00:01Z",
+                "waitingOn": [],
+                "activeOperations": [],
+            },
+        ],
     }
 
 

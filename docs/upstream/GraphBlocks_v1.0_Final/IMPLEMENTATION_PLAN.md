@@ -366,6 +366,8 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
 - `graphblocks-server` now also exposes the framework-neutral `GET /runs/{run_id}`
   `GetRunStatus` route, deriving status, release id, replay cursor, timestamps, wait reasons, and
   active operation projection from the authoritative stored application events.
+- `graphblocks-server` now exposes the framework-neutral `GET /runs` `ListRuns` route using the
+  same event-derived run status projection, keeping `POST /runs` reserved for `InvokeGraph`.
 - Server-level HTTP/TLS webhook client integration and multi-process coordinator failover execution
   remain follow-on slices.
 
