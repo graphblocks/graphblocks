@@ -3,11 +3,11 @@ use graphblocks_runtime_core::application_event::{
     ApplicationProtocolLog,
 };
 use graphblocks_runtime_core::callback_delivery::{
-    CallbackConfigurationDiagnostic, CallbackDeadLetter, CallbackDeliveryResponse,
-    CallbackDeliveryRunAction, CallbackDeliveryScheduler, CallbackDeliveryStatus,
-    CallbackFailurePolicy, CallbackRetryPolicy, CallbackSubscription, CallbackSubscriptionStatus,
-    EventFilter, OrderedDeliveryState, WebhookDeliveryTarget, WebhookEgressPolicy,
-    WebhookEndpointError, WebhookSignatureError, WebhookSigningConfig,
+    CallbackAuthoritativeUse, CallbackConfigurationDiagnostic, CallbackDeadLetter,
+    CallbackDeliveryResponse, CallbackDeliveryRunAction, CallbackDeliveryScheduler,
+    CallbackDeliveryStatus, CallbackFailurePolicy, CallbackRetryPolicy, CallbackSubscription,
+    CallbackSubscriptionStatus, EventFilter, OrderedDeliveryState, WebhookDeliveryTarget,
+    WebhookEgressPolicy, WebhookEndpointError, WebhookSignatureError, WebhookSigningConfig,
 };
 use serde_json::json;
 
@@ -791,4 +791,40 @@ fn callback_diagnostics_report_missing_dead_letter_policy_for_retrying_callbacks
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(diagnostics[0].code, "GB6014");
     assert_eq!(diagnostics[0].field, "failure_policy");
+}
+
+#[test]
+fn callback_diagnostics_report_callback_as_source_of_truth() {
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    )
+    .with_authoritative_use(CallbackAuthoritativeUse::Billing)
+    .with_authoritative_use(CallbackAuthoritativeUse::EffectCommit);
+
+    let diagnostics = CallbackConfigurationDiagnostic::subscription(&subscription);
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].code, "GB6004");
+    assert_eq!(diagnostics[0].field, "authoritative_uses");
+    assert!(
+        diagnostics[0].message.contains("billing"),
+        "diagnostic identifies the forbidden billing use"
+    );
+    assert!(
+        diagnostics[0].message.contains("effect_commit"),
+        "diagnostic identifies the forbidden effect commit use"
+    );
+}
+
+#[test]
+fn callback_diagnostics_allow_projection_only_subscriptions() {
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+
+    let diagnostics = CallbackConfigurationDiagnostic::subscription(&subscription);
+
+    assert!(diagnostics.is_empty());
 }

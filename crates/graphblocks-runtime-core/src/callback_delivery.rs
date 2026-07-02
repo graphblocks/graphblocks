@@ -77,6 +77,15 @@ pub enum CallbackSubscriptionStatus {
     Revoked,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum CallbackAuthoritativeUse {
+    RunCorrectness,
+    Billing,
+    Quota,
+    Audit,
+    EffectCommit,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CallbackSubscription {
     pub subscription_id: String,
@@ -91,6 +100,7 @@ pub struct CallbackSubscription {
     pub replay_from_cursor: Option<String>,
     pub failure_policy: CallbackFailurePolicy,
     pub ordered_delivery: bool,
+    pub authoritative_uses: BTreeSet<CallbackAuthoritativeUse>,
 }
 
 impl CallbackSubscription {
@@ -117,6 +127,7 @@ impl CallbackSubscription {
             replay_from_cursor: None,
             failure_policy,
             ordered_delivery: false,
+            authoritative_uses: BTreeSet::new(),
         };
         subscription.validate()?;
         Ok(subscription)
@@ -164,6 +175,11 @@ impl CallbackSubscription {
 
     pub fn with_ordered_delivery(mut self) -> Self {
         self.ordered_delivery = true;
+        self
+    }
+
+    pub fn with_authoritative_use(mut self, authoritative_use: CallbackAuthoritativeUse) -> Self {
+        self.authoritative_uses.insert(authoritative_use);
         self
     }
 
@@ -505,6 +521,28 @@ impl CallbackConfigurationDiagnostic {
                 field: "failure_policy",
                 message: format!(
                     "callback subscription {} uses mandatory failure policy without dead-letter behavior",
+                    subscription.subscription_id
+                ),
+            });
+        }
+        if !subscription.authoritative_uses.is_empty() {
+            let uses = subscription
+                .authoritative_uses
+                .iter()
+                .map(|authoritative_use| match authoritative_use {
+                    CallbackAuthoritativeUse::RunCorrectness => "run_correctness",
+                    CallbackAuthoritativeUse::Billing => "billing",
+                    CallbackAuthoritativeUse::Quota => "quota",
+                    CallbackAuthoritativeUse::Audit => "audit",
+                    CallbackAuthoritativeUse::EffectCommit => "effect_commit",
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            diagnostics.push(Self {
+                code: "GB6004",
+                field: "authoritative_uses",
+                message: format!(
+                    "callback subscription {} uses callback delivery as a source of truth for {uses}",
                     subscription.subscription_id
                 ),
             });
