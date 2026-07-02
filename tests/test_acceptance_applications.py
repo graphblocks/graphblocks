@@ -19,6 +19,11 @@ def _load_yaml(path: Path) -> dict[str, object]:
         return yaml.safe_load(stream)
 
 
+def _load_yaml_documents(path: Path) -> list[dict[str, object]]:
+    with path.open("r", encoding="utf-8") as stream:
+        return [document for document in yaml.safe_load_all(stream) if document is not None]
+
+
 def test_acceptance_manifest_covers_conformance_profile_applications(monkeypatch) -> None:
     graphblocks_testing = _import_testing(monkeypatch)
     manifest = graphblocks_testing.AcceptanceManifest.from_document(
@@ -60,6 +65,84 @@ def test_acceptance_manifest_entries_are_stable_contracts(monkeypatch) -> None:
         "description": "Federated enterprise RAG with dense and keyword retrieval, fusion, rerank, budgeted context, abstention, and citation checks.",
     }
     assert manifest.content_digest().startswith("sha256:")
+
+
+def test_coding_agent_background_callback_example_matches_async_contract() -> None:
+    application, graph, callback = _load_yaml_documents(
+        ROOT
+        / "docs"
+        / "upstream"
+        / "GraphBlocks_v1.0_Final"
+        / "examples"
+        / "11-coding-agent-background-callbacks.yaml"
+    )
+
+    assert application["kind"] == "Application"
+    assert application["metadata"]["name"] == "workspace-coding-agent"
+    assert set(application["spec"]["capabilities"]) >= {
+        "background_runs",
+        "cursor_replay",
+        "callback_subscription",
+        "reconnect_resume",
+    }
+    routes = {route["id"]: route for route in application["spec"]["routes"]}
+    assert routes["create-task"]["responseMode"] == "accepted"
+    assert routes["run-events"] == {
+        "id": "run-events",
+        "method": "GET",
+        "path": "/v1/runs/{run_id}/events",
+        "transport": "sse",
+        "cursorReplay": True,
+    }
+    assert routes["external-callback"] == {
+        "id": "external-callback",
+        "method": "POST",
+        "path": "/v1/callbacks/{operation_id}",
+        "command": "SubmitAsyncCallback",
+    }
+
+    assert graph["kind"] == "Graph"
+    assert graph["metadata"]["name"] == "coding-agent-task"
+    assert graph["spec"]["execution"] == {
+        "lifetime": "job",
+        "durability": "checkpointed",
+        "interaction": "incremental",
+    }
+    nodes = graph["spec"]["nodes"]
+    assert nodes["startCI"]["block"] == "async.start_operation@1"
+    assert nodes["startCI"]["config"]["callback"] == {
+        "required": True,
+        "schema": "schemas/CICallback@1",
+        "preCommitRace": {
+            "onEarlyCallback": "quarantine",
+            "quarantineTtl": "5m",
+            "onQuarantineExpired": "reject_without_resume",
+            "idempotencyKey": "provider_delivery_id",
+        },
+    }
+    assert nodes["startCI"]["config"]["timeout"] == "30m"
+    assert nodes["waitCI"] == {
+        "block": "async.await_callback@1",
+        "inputs": {"operation": "startCI.operation"},
+        "config": {"checkpoint": True, "onTimeout": "fail"},
+    }
+    assert nodes["commit"]["config"] == {
+        "concurrency": "compare_and_swap",
+        "requireCleanBase": True,
+    }
+
+    assert callback["type"] == "RegisterCallback"
+    assert callback["scope"] == "run"
+    assert callback["event_filter"]["types"] == [
+        "ReviewRequested",
+        "ApprovalRequested",
+        "BudgetExhausted",
+        "RunCompleted",
+        "RunFailed",
+    ]
+    assert callback["delivery"]["kind"] == "webhook"
+    assert callback["delivery"]["signing"]["algorithm"] == "hmac-sha256"
+    assert callback["delivery"]["retry_policy_ref"] == "webhook-standard"
 
 
 def test_acceptance_manifest_reports_missing_profile_application(monkeypatch) -> None:

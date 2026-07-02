@@ -567,6 +567,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - `examples/11-coding-agent-background-callbacks.yaml` now documents a concrete background coding
   agent application with accepted invocation, cursor replay, callback subscription, async CI
   operation start/wait, review, and CAS workspace commit.
+- The coding-agent background callback example is now covered by a documentation contract test
+  that loads its multi-document YAML and pins accepted invocation, SSE cursor replay, callback
+  ingress, pre-commit quarantine, await-callback checkpointing, CAS commit, and signed webhook
+  subscription semantics.
 
 ### Package ownership
 
