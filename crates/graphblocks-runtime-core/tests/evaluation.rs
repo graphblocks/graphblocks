@@ -1,10 +1,11 @@
 use graphblocks_runtime_core::evaluation::{
-    ChangeSet, CheckResult, CheckStatus, ConstraintOperator, GateConstraint, GateDecision,
-    MetricDirection, MetricObservation, ResourceSnapshotRef, ResultBundle, ReviewDecision,
-    ReviewRecord, RunProvenance, SloMeasurement, SloObjective, SloReportStatus, TrialResult,
-    WorkspaceCommitError, WorkspaceCommitRequest, WorkspaceHead, WorkspaceMutationPolicy,
-    evaluate_gate,
+    evaluate_gate, ChangeSet, CheckResult, CheckStatus, ConstraintOperator, GateConstraint,
+    GateDecision, MetricDirection, MetricObservation, ResourceSnapshotRef, ResultBundle,
+    ReviewDecision, ReviewRecord, RunProvenance, SloMeasurement, SloObjective, SloReportStatus,
+    TrialResult, WorkspaceCommitError, WorkspaceCommitRequest, WorkspaceHead,
+    WorkspaceMutationPolicy, WorkspaceTrialError, WorkspaceTrialPlan,
 };
+use graphblocks_runtime_core::orchestration::{LeasePool, LeaseRequest};
 use graphblocks_runtime_core::policy::PrincipalRef;
 use graphblocks_runtime_core::tool::{
     BlockToolImplementation, ToolBinding, ToolCatalog, ToolDefinition, ToolImplementation,
@@ -167,12 +168,21 @@ fn workspace_commit_applies_changeset_with_compare_and_swap_gate_and_review() {
         ],
         summary: Some("update implementation".to_string()),
     };
-    let mutation = WorkspaceMutationPolicy::new("policy-1", ["file"])
-        .evaluate(&change_set, &PrincipalRef::new("agent-1"), &[], &[], &[]);
+    let mutation = WorkspaceMutationPolicy::new("policy-1", ["file"]).evaluate(
+        &change_set,
+        &PrincipalRef::new("agent-1"),
+        &[],
+        &[],
+        &[],
+    );
     let gate = evaluate_gate(
         "quality",
         candidate.clone(),
-        &[CheckResult::new("unit", candidate.clone(), CheckStatus::Passed)],
+        &[CheckResult::new(
+            "unit",
+            candidate.clone(),
+            CheckStatus::Passed,
+        )],
         &[],
         Some(["unit"]),
         &[],
@@ -216,8 +226,12 @@ fn workspace_commit_rejects_stale_head_failed_gate_or_invalid_review() {
     };
 
     assert_eq!(
-        head.commit(WorkspaceCommitRequest::new("commit-stale", change_set.clone(), 6))
-            .expect_err("stale revision should fail"),
+        head.commit(WorkspaceCommitRequest::new(
+            "commit-stale",
+            change_set.clone(),
+            6
+        ))
+        .expect_err("stale revision should fail"),
         WorkspaceCommitError::StaleHead {
             expected_revision: 6,
             actual_revision: 7,
@@ -252,7 +266,11 @@ fn workspace_commit_rejects_stale_head_failed_gate_or_invalid_review() {
     let failed_gate = evaluate_gate(
         "quality",
         candidate.clone(),
-        &[CheckResult::new("unit", candidate.clone(), CheckStatus::Failed)],
+        &[CheckResult::new(
+            "unit",
+            candidate.clone(),
+            CheckStatus::Failed,
+        )],
         &[],
         Some(["unit"]),
         &[],
@@ -430,11 +448,9 @@ fn review_record_is_invalid_for_changed_subject_digest() {
 
     assert!(review.is_valid_for(&subject));
     assert!(!review.is_valid_for(&ResourceSnapshotRef::new("candidate-1", "sha256:new")));
-    assert!(
-        !review
-            .invalidate("2026-06-22T00:05:00Z")
-            .is_valid_for(&subject)
-    );
+    assert!(!review
+        .invalidate("2026-06-22T00:05:00Z")
+        .is_valid_for(&subject));
 }
 
 #[test]
@@ -582,4 +598,177 @@ fn trial_result_carries_gate_and_outcome() {
 
     assert_eq!(trial.gate, Some(gate));
     assert_eq!(trial.outcome, "accepted");
+}
+
+fn rtl_trial_inputs() -> (
+    ChangeSet,
+    CheckResult,
+    CheckResult,
+    graphblocks_runtime_core::orchestration::LeaseGrant,
+    ReviewRecord,
+) {
+    let base =
+        ResourceSnapshotRef::new("workspace", "sha256:rtl-base").with_resource_kind("workspace");
+    let candidate = ResourceSnapshotRef::new("workspace", "sha256:rtl-candidate")
+        .with_resource_kind("workspace");
+    let change_set = ChangeSet {
+        change_set_id: "changeset-rtl-1".to_owned(),
+        base,
+        candidate: candidate.clone(),
+        operations: vec![json!({
+            "op": "file.patch",
+            "resource_id": "rtl/pipeline.sv",
+            "resource_kind": "file",
+        })],
+        summary: Some("retime pipeline stage".to_owned()),
+    };
+    let lint = CheckResult::new("lint", candidate.clone(), CheckStatus::Passed)
+        .with_tool("processor_id", json!("verilator"));
+    let formal = CheckResult::new("formal", candidate.clone(), CheckStatus::Passed)
+        .with_tool("processor_id", json!("sby"));
+    let (_, lease) = LeasePool::new("formal-license", "eda.formal", 1)
+        .expect("lease pool is valid")
+        .acquire(
+            &LeaseRequest::new("formal-check", "trial:trial-rtl-1", "eda.formal"),
+            "lease-formal-1",
+            "2026-07-02T00:00:00Z",
+            "2026-07-02T00:30:00Z",
+        )
+        .expect("lease is granted");
+    let review = ReviewRecord::new(
+        "review-rtl-1",
+        candidate.clone(),
+        "sha256:rtl-candidate",
+        "rtl.owner",
+        PrincipalRef::new("reviewer-1"),
+        ReviewDecision::Accept,
+    )
+    .with_created_at("2026-07-02T00:20:00Z");
+
+    (change_set, lint, formal, lease, review)
+}
+
+#[test]
+fn workspace_trial_plan_builds_commit_request_from_verified_rtl_trial() {
+    let (change_set, lint, formal, lease, review) = rtl_trial_inputs();
+    let gate = evaluate_gate(
+        "rtl-quality",
+        change_set.candidate.clone(),
+        &[lint.clone(), formal.clone()],
+        &[],
+        Some(["lint", "formal"]),
+        &[],
+        Some("policy:rtl-quality".to_owned()),
+    );
+    let mutation = WorkspaceMutationPolicy::new("policy-1", ["file", "workspace"]).evaluate(
+        &change_set,
+        &PrincipalRef::new("optimizer-1"),
+        &["rtl.owner"],
+        &[],
+        &[],
+    );
+
+    let plan = WorkspaceTrialPlan::new("trial-rtl-1", change_set.clone(), 7)
+        .require_checks(["lint", "formal"])
+        .require_lease_kinds(["eda.formal"])
+        .require_review_scopes(["rtl.owner"])
+        .with_check(lint)
+        .with_check(formal)
+        .with_gate(gate.clone())
+        .with_mutation_decision(mutation.clone())
+        .with_lease(lease.clone())
+        .with_review(review.clone());
+    let request = plan
+        .to_commit_request("commit-rtl-1", "2026-07-02T00:25:00Z")
+        .expect("verified trial can create commit request");
+
+    assert_eq!(request.expected_base_revision, 7);
+    assert_eq!(request.change_set, change_set);
+    assert_eq!(request.gate, Some(gate));
+    assert_eq!(request.mutation_decision, Some(mutation));
+    assert_eq!(request.reviews, vec![review]);
+    assert_eq!(request.metadata["trial_id"], json!("trial-rtl-1"));
+    assert_eq!(request.metadata["lease_ids"], json!(["lease-formal-1"]));
+}
+
+#[test]
+fn workspace_trial_plan_rejects_missing_proof_before_commit_request() {
+    let (change_set, lint, formal, lease, review) = rtl_trial_inputs();
+    let gate = evaluate_gate(
+        "rtl-quality",
+        change_set.candidate.clone(),
+        &[lint.clone(), formal.clone()],
+        &[],
+        Some(["lint", "formal"]),
+        &[],
+        None,
+    );
+
+    let missing_lease = WorkspaceTrialPlan::new("trial-rtl-1", change_set.clone(), 7)
+        .require_checks(["lint", "formal"])
+        .require_lease_kinds(["eda.formal"])
+        .require_review_scopes(["rtl.owner"])
+        .with_check(lint.clone())
+        .with_check(formal.clone())
+        .with_gate(gate.clone())
+        .with_review(review.clone());
+    let failing_gate = WorkspaceTrialPlan::new("trial-rtl-1", change_set.clone(), 7)
+        .require_checks(["lint", "formal"])
+        .with_check(lint.clone())
+        .with_check(formal.clone())
+        .with_gate(evaluate_gate(
+            "rtl-quality",
+            change_set.candidate.clone(),
+            &[lint.clone(), formal.clone()],
+            &[MetricObservation::new("wns_ns", json!(-0.12))],
+            Some(["lint", "formal"]),
+            &[GateConstraint::new(
+                "wns_ns",
+                ConstraintOperator::AtLeast,
+                json!(0.0),
+            )],
+            None,
+        ))
+        .with_lease(lease.clone());
+    let stale_review = WorkspaceTrialPlan::new("trial-rtl-1", change_set.clone(), 7)
+        .require_checks(["lint"])
+        .require_review_scopes(["rtl.owner"])
+        .with_check(lint.clone())
+        .with_gate(evaluate_gate(
+            "rtl-quality",
+            change_set.candidate.clone(),
+            &[lint.clone()],
+            &[],
+            Some(["lint"]),
+            &[],
+            None,
+        ))
+        .with_review(ReviewRecord::new(
+            "review-stale",
+            ResourceSnapshotRef::new("workspace", "sha256:old-candidate"),
+            "sha256:old-candidate",
+            "rtl.owner",
+            PrincipalRef::new("reviewer-1"),
+            ReviewDecision::Accept,
+        ));
+
+    assert_eq!(
+        missing_lease.to_commit_request("commit-rtl-1", "2026-07-02T00:25:00Z"),
+        Err(WorkspaceTrialError::MissingLeaseKind {
+            resource_kind: "eda.formal".to_owned(),
+        })
+    );
+    assert_eq!(
+        failing_gate.to_commit_request("commit-rtl-1", "2026-07-02T00:25:00Z"),
+        Err(WorkspaceTrialError::GateNotPassed {
+            gate_id: "rtl-quality".to_owned(),
+            decision: GateDecision::Fail,
+        })
+    );
+    assert_eq!(
+        stale_review.to_commit_request("commit-rtl-1", "2026-07-02T00:25:00Z"),
+        Err(WorkspaceTrialError::MissingReviewScope {
+            scope: "rtl.owner".to_owned(),
+        })
+    );
 }

@@ -5,6 +5,7 @@ use std::fmt;
 use graphblocks_compiler::canonical::canonical_hash;
 use serde_json::{Value, json};
 
+use crate::orchestration::LeaseGrant;
 use crate::policy::PrincipalRef;
 use crate::tool::ResolvedTool;
 use crate::tool_result::ArtifactRef;
@@ -1124,6 +1125,293 @@ impl TrialResult {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct WorkspaceTrialPlan {
+    pub trial_id: String,
+    pub change_set: ChangeSet,
+    pub expected_base_revision: u64,
+    pub required_check_ids: Vec<String>,
+    pub required_lease_kinds: Vec<String>,
+    pub required_review_scopes: Vec<String>,
+    pub checks: Vec<CheckResult>,
+    pub gate: Option<GateResult>,
+    pub mutation_decision: Option<WorkspaceMutationDecision>,
+    pub leases: Vec<LeaseGrant>,
+    pub reviews: Vec<ReviewRecord>,
+}
+
+impl WorkspaceTrialPlan {
+    pub fn new(
+        trial_id: impl Into<String>,
+        change_set: ChangeSet,
+        expected_base_revision: u64,
+    ) -> Self {
+        Self {
+            trial_id: trial_id.into(),
+            change_set,
+            expected_base_revision,
+            required_check_ids: Vec::new(),
+            required_lease_kinds: Vec::new(),
+            required_review_scopes: Vec::new(),
+            checks: Vec::new(),
+            gate: None,
+            mutation_decision: None,
+            leases: Vec::new(),
+            reviews: Vec::new(),
+        }
+    }
+
+    pub fn require_checks<I, S>(mut self, check_ids: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.required_check_ids = sorted_unique(check_ids);
+        self
+    }
+
+    pub fn require_lease_kinds<I, S>(mut self, resource_kinds: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.required_lease_kinds = sorted_unique(resource_kinds);
+        self
+    }
+
+    pub fn require_review_scopes<I, S>(mut self, scopes: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.required_review_scopes = sorted_unique(scopes);
+        self
+    }
+
+    pub fn with_check(mut self, check: CheckResult) -> Self {
+        self.checks.push(check);
+        self
+    }
+
+    pub fn with_gate(mut self, gate: GateResult) -> Self {
+        self.gate = Some(gate);
+        self
+    }
+
+    pub fn with_mutation_decision(mut self, mutation_decision: WorkspaceMutationDecision) -> Self {
+        self.mutation_decision = Some(mutation_decision);
+        self
+    }
+
+    pub fn with_lease(mut self, lease: LeaseGrant) -> Self {
+        self.leases.push(lease);
+        self
+    }
+
+    pub fn with_review(mut self, review: ReviewRecord) -> Self {
+        self.reviews.push(review);
+        self
+    }
+
+    pub fn to_commit_request(
+        &self,
+        commit_id: impl Into<String>,
+        now: &str,
+    ) -> Result<WorkspaceCommitRequest, WorkspaceTrialError> {
+        self.validate_for_commit(now)?;
+        let mut request = WorkspaceCommitRequest::new(
+            commit_id,
+            self.change_set.clone(),
+            self.expected_base_revision,
+        )
+        .with_metadata("trial_id", json!(self.trial_id))
+        .with_metadata("lease_ids", json!(self.active_lease_ids(now)));
+
+        if let Some(mutation_decision) = &self.mutation_decision {
+            request = request.with_mutation_decision(mutation_decision.clone());
+        }
+        if let Some(gate) = &self.gate {
+            request = request.with_gate(gate.clone());
+        }
+        for review in self
+            .reviews
+            .iter()
+            .filter(|review| self.review_satisfies_commit(review))
+        {
+            request = request.with_review(review.clone());
+        }
+        Ok(request)
+    }
+
+    fn validate_for_commit(&self, now: &str) -> Result<(), WorkspaceTrialError> {
+        if self.trial_id.trim().is_empty() {
+            return Err(WorkspaceTrialError::EmptyField { field: "trial_id" });
+        }
+        for check_id in &self.required_check_ids {
+            let check = self
+                .checks
+                .iter()
+                .find(|check| check.check_id == *check_id)
+                .ok_or_else(|| WorkspaceTrialError::MissingCheck {
+                    check_id: check_id.clone(),
+                })?;
+            if check.subject != self.change_set.candidate {
+                return Err(WorkspaceTrialError::SubjectMismatch {
+                    field: format!("check:{check_id}"),
+                    expected_digest: self.change_set.candidate.digest.clone(),
+                    actual_digest: check.subject.digest.clone(),
+                });
+            }
+            if check.status != CheckStatus::Passed {
+                return Err(WorkspaceTrialError::CheckNotPassed {
+                    check_id: check_id.clone(),
+                    status: check.status,
+                });
+            }
+        }
+
+        let gate = self
+            .gate
+            .as_ref()
+            .ok_or(WorkspaceTrialError::MissingGate)?;
+        if gate.subject != self.change_set.candidate {
+            return Err(WorkspaceTrialError::SubjectMismatch {
+                field: "gate".to_owned(),
+                expected_digest: self.change_set.candidate.digest.clone(),
+                actual_digest: gate.subject.digest.clone(),
+            });
+        }
+        if gate.decision != GateDecision::Pass {
+            return Err(WorkspaceTrialError::GateNotPassed {
+                gate_id: gate.gate_id.clone(),
+                decision: gate.decision,
+            });
+        }
+
+        if let Some(mutation_decision) = &self.mutation_decision {
+            if !mutation_decision.allowed {
+                return Err(WorkspaceTrialError::MutationDenied {
+                    reason_codes: mutation_decision.reason_codes.clone(),
+                });
+            }
+        }
+
+        for resource_kind in &self.required_lease_kinds {
+            if !self.leases.iter().any(|lease| {
+                lease.resource_kind == *resource_kind
+                    && lease.holder == format!("trial:{}", self.trial_id)
+                    && lease.is_active_at(now)
+            }) {
+                return Err(WorkspaceTrialError::MissingLeaseKind {
+                    resource_kind: resource_kind.clone(),
+                });
+            }
+        }
+
+        for scope in &self.required_review_scopes {
+            if !self.reviews.iter().any(|review| {
+                review.scope == *scope
+                    && self.review_satisfies_commit(review)
+            }) {
+                return Err(WorkspaceTrialError::MissingReviewScope {
+                    scope: scope.clone(),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    fn review_satisfies_commit(&self, review: &ReviewRecord) -> bool {
+        matches!(
+            review.decision,
+            ReviewDecision::Accept | ReviewDecision::AcceptWithConditions
+        ) && review.is_valid_for(&self.change_set.candidate)
+    }
+
+    fn active_lease_ids(&self, now: &str) -> Vec<String> {
+        let mut lease_ids = self
+            .leases
+            .iter()
+            .filter(|lease| lease.is_active_at(now))
+            .map(|lease| lease.lease_id.clone())
+            .collect::<Vec<_>>();
+        lease_ids.sort();
+        lease_ids.dedup();
+        lease_ids
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum WorkspaceTrialError {
+    EmptyField {
+        field: &'static str,
+    },
+    MissingCheck {
+        check_id: String,
+    },
+    CheckNotPassed {
+        check_id: String,
+        status: CheckStatus,
+    },
+    MissingGate,
+    GateNotPassed {
+        gate_id: String,
+        decision: GateDecision,
+    },
+    MissingLeaseKind {
+        resource_kind: String,
+    },
+    MissingReviewScope {
+        scope: String,
+    },
+    MutationDenied {
+        reason_codes: Vec<String>,
+    },
+    SubjectMismatch {
+        field: String,
+        expected_digest: String,
+        actual_digest: String,
+    },
+}
+
+impl fmt::Display for WorkspaceTrialError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyField { field } => write!(formatter, "{field} must not be empty"),
+            Self::MissingCheck { check_id } => {
+                write!(formatter, "workspace trial is missing required check {check_id:?}")
+            }
+            Self::CheckNotPassed { check_id, status } => {
+                write!(formatter, "workspace trial check {check_id:?} did not pass: {status:?}")
+            }
+            Self::MissingGate => write!(formatter, "workspace trial is missing a gate result"),
+            Self::GateNotPassed { gate_id, decision } => {
+                write!(formatter, "workspace trial gate {gate_id:?} did not pass: {decision:?}")
+            }
+            Self::MissingLeaseKind { resource_kind } => {
+                write!(formatter, "workspace trial is missing active lease kind {resource_kind:?}")
+            }
+            Self::MissingReviewScope { scope } => {
+                write!(formatter, "workspace trial is missing valid review scope {scope:?}")
+            }
+            Self::MutationDenied { reason_codes } => {
+                write!(formatter, "workspace trial mutation denied: {reason_codes:?}")
+            }
+            Self::SubjectMismatch {
+                field,
+                expected_digest,
+                actual_digest,
+            } => write!(
+                formatter,
+                "workspace trial {field} subject mismatch: expected {expected_digest}, got {actual_digest}"
+            ),
+        }
+    }
+}
+
+impl Error for WorkspaceTrialError {}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReviewDecision {
     Accept,
@@ -1352,6 +1640,17 @@ fn numeric_value(value: &Value) -> Option<f64> {
         return Some(value);
     }
     value.as_str().and_then(|value| value.parse::<f64>().ok())
+}
+
+fn sorted_unique<I, S>(items: I) -> Vec<String>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
+    let mut items = items.into_iter().map(Into::into).collect::<Vec<_>>();
+    items.sort();
+    items.dedup();
+    items
 }
 
 fn artifact_value(artifact: &ArtifactRef) -> Value {

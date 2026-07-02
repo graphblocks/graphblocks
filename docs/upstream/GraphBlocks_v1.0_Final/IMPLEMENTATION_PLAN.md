@@ -828,6 +828,9 @@ sandbox
 - `WorkspaceHead::commit` now provides a compare-and-swap commit boundary for `ChangeSet`
   candidates, requiring the expected base revision/digest and rejecting denied mutations,
   non-passing gates, or stale/non-accepting reviews before advancing the workspace revision.
+- `WorkspaceTrialPlan` now materializes a commit request only after a verified trial has the
+  required passing checks, passing gate, active trial-scoped leases, allowed mutation decision, and
+  valid review scopes for the candidate digest.
 - `graphblocks-runtime-core::tui::TuiRunView` now projects `GetRunStatus` and `AttachToRun`
   replay results into duplicate-tolerant terminal rows, preserving cursor-expired recovery metadata
   without making the TUI the source of truth for run state.

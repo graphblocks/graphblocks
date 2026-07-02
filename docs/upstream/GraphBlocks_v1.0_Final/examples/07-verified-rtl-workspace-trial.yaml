@@ -59,14 +59,25 @@ spec:
       config:
         scope: design_intent
         invalidateOnSubjectChange: true
+    verifyTrial:
+      block: trial.plan_commit@1
+      inputs:
+        changeSet: select.changeSet
+        checks: select.checks
+        gate: select.gate
+        leases: select.leases
+        review: review.record
+      config:
+        requiredChecks: [lint, compile, regression, formal]
+        requiredLeaseKinds: [eda.formal]
+        requiredReviewScopes: [design_intent]
     commit:
       block: workspace.commit_changeset@1
-      when: review.accepted
+      when: verifyTrial.ready
       inputs:
         workspace: $input.workspace
         base: snapshot.value
-        changeSet: select.changeSet
-        review: review.record
+        request: verifyTrial.commitRequest
       config: {concurrency: compare_and_swap}
 ---
 apiVersion: graphblocks.ai/v1alpha3
@@ -110,3 +121,8 @@ spec:
     seal:
       block: trial.seal_result@1
       inputs: {gate: gate.result}
+      outputs:
+        changeSet: apply.changeSet
+        checks: [fast.results, formal.results, synthesis.results]
+        leases: [formal.lease, synthesis.lease]
+        gate: gate.result
