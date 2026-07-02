@@ -69,6 +69,7 @@ pub struct AsyncOperation {
     pub expected_callback_payload_bytes: Option<usize>,
     pub resume_policy_reevaluation: bool,
     pub callback_attempt_fencing: bool,
+    pub resume_ownership_fence: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -156,6 +157,18 @@ impl AsyncOperationConfigurationDiagnostic {
                 ),
             });
         }
+        if operation.state == AsyncOperationState::WaitingCallback
+            && !operation.resume_ownership_fence
+        {
+            diagnostics.push(Self {
+                code: "GB6016",
+                field: "resume_ownership_fence",
+                message: format!(
+                    "async operation {} can resume without run ownership lease or fencing protection",
+                    operation.operation_id
+                ),
+            });
+        }
         diagnostics
     }
 }
@@ -190,6 +203,7 @@ impl AsyncOperation {
             expected_callback_payload_bytes: None,
             resume_policy_reevaluation: true,
             callback_attempt_fencing: true,
+            resume_ownership_fence: true,
         }
     }
 
@@ -225,6 +239,11 @@ impl AsyncOperation {
 
     pub fn without_callback_attempt_fencing(mut self) -> Self {
         self.callback_attempt_fencing = false;
+        self
+    }
+
+    pub fn without_resume_ownership_fence(mut self) -> Self {
+        self.resume_ownership_fence = false;
         self
     }
 

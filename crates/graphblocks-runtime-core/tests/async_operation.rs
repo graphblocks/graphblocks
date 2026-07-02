@@ -164,6 +164,28 @@ fn async_operation_diagnostics_require_callback_attempt_fencing_by_default() {
 }
 
 #[test]
+fn async_operation_diagnostics_report_resume_without_ownership_fence() {
+    let operation = waiting_operation().without_resume_ownership_fence();
+
+    let diagnostics = AsyncOperationConfigurationDiagnostic::for_operation(&operation);
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].code, "GB6016");
+    assert_eq!(diagnostics[0].field, "resume_ownership_fence");
+    assert!(diagnostics[0].message.contains("op-1"));
+}
+
+#[test]
+fn async_operation_diagnostics_require_resume_ownership_fence_by_default() {
+    let operation = waiting_operation();
+
+    assert_eq!(
+        AsyncOperationConfigurationDiagnostic::for_operation(&operation),
+        Vec::new()
+    );
+}
+
+#[test]
 fn external_callback_is_journaled_before_operation_can_resume() {
     let store = AsyncOperationStore::new();
     store

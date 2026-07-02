@@ -260,6 +260,8 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   policy, budget, and release-compatibility re-evaluation as `GB6008`.
 - Async operation configuration diagnostics now report callback waits without attempt fencing,
   where stale callbacks could resume newer attempts, as `GB6015`.
+- Async operation configuration diagnostics now report callback waits that can resume without run
+  ownership lease or fencing protection as `GB6016`.
 - Callback resume admission can now pause after a durable callback receipt when budget policy
   denies continuation; the operation records `CallbackReceived`, emits a pause reason, and returns
   `should_resume = false`.
