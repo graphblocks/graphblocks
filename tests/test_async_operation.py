@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import math
 from collections.abc import Callable
 from contextlib import contextmanager
 
@@ -84,6 +85,48 @@ def test_async_operation_result_rejects_invalid_external_effect_records() -> Non
                 )
             ]
         )
+
+
+def test_async_operation_result_deep_copies_json_output_and_projection_sequences() -> None:
+    output = {"summary": {"passed": True, "checks": ["lint"]}}
+    artifacts = [{"artifact_id": "artifact-1", "uri": "blob://ci/log"}]
+    diagnostics = [{"code": "ci.warning", "message": "slow test"}]
+    metrics = [{"name": "duration_ms", "value": 128}]
+    checks = [{"name": "unit", "status": "passed"}]
+    usage = [{"kind": "ci_minutes", "amount": 2}]
+
+    result = graphblocks.AsyncOperationResult.completed(
+        "op-1",
+        output=output,
+    ).with_projections(
+        artifacts=artifacts,
+        diagnostics=diagnostics,
+        metrics=metrics,
+        checks=checks,
+        usage=usage,
+    )
+
+    output["summary"]["checks"].append("mutated")  # type: ignore[index, union-attr]
+    artifacts[0]["uri"] = "blob://ci/mutated"
+    projected = result.to_json()
+    projected["output"]["summary"]["checks"].append("caller-mutation")  # type: ignore[index, union-attr]
+    projected["artifacts"][0]["uri"] = "blob://ci/caller-mutation"  # type: ignore[index]
+
+    assert result.output == {"summary": {"passed": True, "checks": ("lint",)}}
+    assert result.artifacts == ({"artifact_id": "artifact-1", "uri": "blob://ci/log"},)
+    assert result.to_json()["output"] == {"summary": {"passed": True, "checks": ["lint"]}}
+    assert result.to_json()["artifacts"] == [{"artifact_id": "artifact-1", "uri": "blob://ci/log"}]
+
+
+def test_async_operation_result_rejects_non_json_output_and_projection_values() -> None:
+    with raises_value_error("async operation result output must contain only JSON values"):
+        graphblocks.AsyncOperationResult.completed("op-1", output=object())
+
+    with raises_value_error("async operation result output must not contain non-finite numbers"):
+        graphblocks.AsyncOperationResult.completed("op-1", output={"value": math.nan})
+
+    with raises_value_error("async operation result artifacts must contain only JSON values"):
+        graphblocks.AsyncOperationResult.completed("op-1").with_projections(artifacts=[{"bad": object()}])
 
 
 def test_async_operation_records_callback_wait_metadata_and_state_transitions() -> None:
@@ -339,6 +382,8 @@ def run_direct() -> None:
         test_async_operation_result_preserves_committed_effect_after_cancel,
         test_async_operation_result_preserves_committed_effect_after_incomplete_late_callback,
         test_async_operation_result_rejects_invalid_external_effect_records,
+        test_async_operation_result_deep_copies_json_output_and_projection_sequences,
+        test_async_operation_result_rejects_non_json_output_and_projection_values,
         test_async_operation_records_callback_wait_metadata_and_state_transitions,
         test_async_operation_records_polling_metadata_and_terminal_failure,
         test_async_operation_rejects_invalid_refs_and_transitions,

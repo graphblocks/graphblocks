@@ -449,6 +449,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Python `graphblocks-core` now exposes the same authoring/schema facade for
   `AsyncOperationResult`, `AsyncOperationResultStatus`, and `ExternalEffectRecord`, including
   validation that provider effect identity is only attached to committed external effects.
+- Python `AsyncOperationResult` now validates output, artifacts, diagnostics, metrics, checks, and
+  usage projections as strict JSON-compatible values, deep-freezes them on construction, and
+  returns thawed copies from `to_json()` so untrusted callback/result payloads cannot be mutated
+  after journaling.
 - `graphblocks-runtime-core::stdlib_runtime` now exposes deterministic `async.start_operation@1`
   and `async.await_callback@1` blocks so graph-level examples can start an external operation and
   checkpoint while waiting for callback without treating callback delivery as the source of truth.

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
+import math
 from typing import Literal
 
 from .tools import ToolEffectOutcome, VALID_TOOL_EFFECT_OUTCOMES
@@ -102,6 +104,35 @@ def _parse_iso_datetime(owner: str, field_name: str, value: str) -> datetime:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def _freeze_json_value(owner: str, field_name: str, value: object) -> object:
+    if value is None or isinstance(value, str) or isinstance(value, bool):
+        return value
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError(f"{owner} {field_name} must not contain non-finite numbers")
+        return value
+    if isinstance(value, list) or isinstance(value, tuple):
+        return tuple(_freeze_json_value(owner, field_name, item) for item in value)
+    if isinstance(value, dict):
+        frozen: dict[str, object] = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise ValueError(f"{owner} {field_name} must contain only string object keys")
+            frozen[key] = _freeze_json_value(owner, field_name, item)
+        return frozen
+    raise ValueError(f"{owner} {field_name} must contain only JSON values")
+
+
+def _thaw_json_value(value: object) -> object:
+    if isinstance(value, tuple):
+        return [_thaw_json_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _thaw_json_value(item) for key, item in value.items()}
+    return deepcopy(value)
 
 
 def _validate_status(value: object) -> AsyncOperationResultStatusValue:
@@ -411,11 +442,16 @@ class AsyncOperationResult:
             _validate_non_empty_string("async operation result", "operation_id", self.operation_id),
         )
         object.__setattr__(self, "status", _validate_status(self.status))
+        object.__setattr__(self, "output", _freeze_json_value("async operation result", "output", self.output))
         for field_name in ("artifacts", "diagnostics", "metrics", "checks", "usage"):
             value = getattr(self, field_name)
             if isinstance(value, str):
                 raise ValueError(f"async operation result {field_name} must be a sequence")
-            object.__setattr__(self, field_name, tuple(value))
+            object.__setattr__(
+                self,
+                field_name,
+                tuple(_freeze_json_value("async operation result", field_name, item) for item in value),
+            )
         object.__setattr__(self, "external_effects", tuple(self.external_effects))
         for effect in self.external_effects:
             if not isinstance(effect, ExternalEffectRecord):
@@ -451,6 +487,28 @@ class AsyncOperationResult:
     ) -> AsyncOperationResult:
         return replace(self, external_effects=tuple(external_effects))
 
+    def with_projections(
+        self,
+        *,
+        artifacts: Iterable[object] | None = None,
+        diagnostics: Iterable[object] | None = None,
+        metrics: Iterable[object] | None = None,
+        checks: Iterable[object] | None = None,
+        usage: Iterable[object] | None = None,
+    ) -> AsyncOperationResult:
+        changes: dict[str, object] = {}
+        if artifacts is not None:
+            changes["artifacts"] = tuple(artifacts)
+        if diagnostics is not None:
+            changes["diagnostics"] = tuple(diagnostics)
+        if metrics is not None:
+            changes["metrics"] = tuple(metrics)
+        if checks is not None:
+            changes["checks"] = tuple(checks)
+        if usage is not None:
+            changes["usage"] = tuple(usage)
+        return replace(self, **changes)
+
     def external_effect_was_committed(self) -> bool:
         return any(effect.outcome == "committed" for effect in self.external_effects)
 
@@ -458,11 +516,11 @@ class AsyncOperationResult:
         return {
             "operation_id": self.operation_id,
             "status": self.status,
-            "output": self.output,
-            "artifacts": list(self.artifacts),
-            "diagnostics": list(self.diagnostics),
-            "metrics": list(self.metrics),
-            "checks": list(self.checks),
-            "usage": list(self.usage),
+            "output": _thaw_json_value(self.output),
+            "artifacts": [_thaw_json_value(item) for item in self.artifacts],
+            "diagnostics": [_thaw_json_value(item) for item in self.diagnostics],
+            "metrics": [_thaw_json_value(item) for item in self.metrics],
+            "checks": [_thaw_json_value(item) for item in self.checks],
+            "usage": [_thaw_json_value(item) for item in self.usage],
             "external_effects": [effect.to_json() for effect in self.external_effects],
         }
