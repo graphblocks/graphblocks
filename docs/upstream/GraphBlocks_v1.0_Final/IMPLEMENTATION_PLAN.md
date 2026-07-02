@@ -293,6 +293,8 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
 - Callback delivery targets are now typed as webhook, WebSocket, SSE, push notification, email, or
   local callback variants, and ordered-delivery diagnostics use target capabilities instead of
   string-prefix inference.
+- Callback event filters now include visibility, node ID, operation ID, and minimum severity
+  predicates in addition to event type and terminal-event inclusion.
 - `SqliteCallbackDeadLetterStore` now persists callback dead-letter records across reopen and can
   redrive them while preserving original delivery identity, idempotency key, attempt history, and
   audit-visible redrive count.

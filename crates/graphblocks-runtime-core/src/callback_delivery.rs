@@ -16,6 +16,10 @@ type HmacSha256 = Hmac<Sha256>;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EventFilter {
     pub types: Option<BTreeSet<ApplicationProtocolEventKind>>,
+    pub visibility: Option<BTreeSet<String>>,
+    pub node_ids: Option<BTreeSet<String>>,
+    pub operation_ids: Option<BTreeSet<String>>,
+    pub severity_min: Option<String>,
     pub include_terminal_events: bool,
 }
 
@@ -23,6 +27,10 @@ impl EventFilter {
     pub fn new() -> Self {
         Self {
             types: None,
+            visibility: None,
+            node_ids: None,
+            operation_ids: None,
+            severity_min: None,
             include_terminal_events: true,
         }
     }
@@ -35,12 +43,69 @@ impl EventFilter {
         self
     }
 
+    pub fn with_visibility(
+        mut self,
+        visibility: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.visibility = Some(visibility.into_iter().map(Into::into).collect());
+        self
+    }
+
+    pub fn with_node_ids(mut self, node_ids: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.node_ids = Some(node_ids.into_iter().map(Into::into).collect());
+        self
+    }
+
+    pub fn with_operation_ids(
+        mut self,
+        operation_ids: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.operation_ids = Some(operation_ids.into_iter().map(Into::into).collect());
+        self
+    }
+
+    pub fn with_severity_min(
+        mut self,
+        severity_min: impl Into<String>,
+    ) -> Result<Self, CallbackDeliveryError> {
+        let severity_min = severity_min.into();
+        if severity_rank(&severity_min).is_none() {
+            return Err(CallbackDeliveryError::EmptyField {
+                field: "severity_min".to_owned(),
+            });
+        }
+        self.severity_min = Some(severity_min);
+        Ok(self)
+    }
+
     pub fn with_terminal_events(mut self, include_terminal_events: bool) -> Self {
         self.include_terminal_events = include_terminal_events;
         self
     }
 
     pub fn matches(&self, event: &ApplicationProtocolEvent) -> bool {
+        if !self.payload_field_matches(event, "visibility", &self.visibility)
+            || !self.payload_field_matches(event, "node_id", &self.node_ids)
+            || !self.payload_field_matches(event, "operation_id", &self.operation_ids)
+        {
+            return false;
+        }
+
+        if let Some(severity_min) = &self.severity_min {
+            let Some(event_severity) = event.payload.get("severity").and_then(Value::as_str) else {
+                return false;
+            };
+            let Some(event_rank) = severity_rank(event_severity) else {
+                return false;
+            };
+            let Some(min_rank) = severity_rank(severity_min) else {
+                return false;
+            };
+            if event_rank < min_rank {
+                return false;
+            }
+        }
+
         if self.include_terminal_events
             && matches!(
                 event.kind,
@@ -55,6 +120,21 @@ impl EventFilter {
         self.types
             .as_ref()
             .is_none_or(|types| types.contains(&event.kind))
+    }
+
+    fn payload_field_matches(
+        &self,
+        event: &ApplicationProtocolEvent,
+        field: &str,
+        allowed: &Option<BTreeSet<String>>,
+    ) -> bool {
+        allowed.as_ref().is_none_or(|allowed| {
+            event
+                .payload
+                .get(field)
+                .and_then(Value::as_str)
+                .is_some_and(|value| allowed.contains(value))
+        })
     }
 }
 
@@ -1521,6 +1601,18 @@ fn non_empty_target_field(value: String, field: &str) -> Result<String, Callback
         });
     }
     Ok(value)
+}
+
+fn severity_rank(severity: &str) -> Option<u8> {
+    match severity {
+        "debug" => Some(10),
+        "info" => Some(20),
+        "notice" => Some(30),
+        "warning" | "warn" => Some(40),
+        "error" => Some(50),
+        "critical" | "fatal" => Some(60),
+        _ => None,
+    }
 }
 
 fn is_forbidden_webhook_host(host: &str) -> bool {

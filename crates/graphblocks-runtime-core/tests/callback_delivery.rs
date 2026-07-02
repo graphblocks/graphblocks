@@ -111,6 +111,43 @@ fn subscription_filter_schedules_matching_and_terminal_events() {
 }
 
 #[test]
+fn subscription_filter_matches_visibility_node_operation_and_severity() {
+    let mut matching = protocol_event(
+        "event-ci-failed",
+        ApplicationProtocolEventKind::JobProgress,
+        11,
+    );
+    matching.payload = json!({
+        "message": "ci failed",
+        "visibility": "operator",
+        "node_id": "runChecks",
+        "operation_id": "op-ci-1",
+        "severity": "error"
+    });
+    let mut wrong_visibility = matching.clone();
+    wrong_visibility.metadata.event_id = "event-client".to_owned();
+    wrong_visibility.payload["visibility"] = json!("client");
+    let mut wrong_node = matching.clone();
+    wrong_node.metadata.event_id = "event-other-node".to_owned();
+    wrong_node.payload["node_id"] = json!("review");
+    let mut below_severity = matching.clone();
+    below_severity.metadata.event_id = "event-warning".to_owned();
+    below_severity.payload["severity"] = json!("warning");
+
+    let filter = EventFilter::new()
+        .with_visibility(["operator"])
+        .with_node_ids(["runChecks"])
+        .with_operation_ids(["op-ci-1"])
+        .with_severity_min("error")
+        .expect("severity is valid");
+
+    assert!(filter.matches(&matching));
+    assert!(!filter.matches(&wrong_visibility));
+    assert!(!filter.matches(&wrong_node));
+    assert!(!filter.matches(&below_severity));
+}
+
+#[test]
 fn inactive_or_expired_subscription_does_not_schedule_delivery() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
     let mut paused = subscription(
