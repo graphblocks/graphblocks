@@ -1086,6 +1086,28 @@ def test_package_lock_payload_and_digest_are_canonical() -> None:
     assert left.content_digest() == right.content_digest()
 
 
+def test_package_lock_rejects_selected_forbidden_transitive_dependency() -> None:
+    catalog = {
+        "catalogVersion": 1,
+        "specVersion": "1.0",
+        "defaultMetaPackage": {"distribution": "graphblocks", "dependencies": [], "excludedCategories": []},
+        "packages": [
+            {"distribution": "graphblocks", "default": True, "dependsOn": []},
+            {
+                "distribution": "graphblocks-documents",
+                "default": False,
+                "dependsOn": ["graphblocks-pdf"],
+                "forbiddenDependencies": ["pypdf"],
+            },
+            {"distribution": "graphblocks-pdf", "default": False, "dependsOn": ["pypdf"]},
+            {"distribution": "pypdf", "default": False, "dependsOn": []},
+        ],
+    }
+
+    with pytest.raises(ValueError, match="forbidden package dependency"):
+        build_package_lock(catalog, requested=("graphblocks-documents",), include_default=False)
+
+
 def test_package_lock_records_validate_identity_types_and_uniqueness() -> None:
     entry = PackageLockEntry(
         distribution="graphblocks-core",

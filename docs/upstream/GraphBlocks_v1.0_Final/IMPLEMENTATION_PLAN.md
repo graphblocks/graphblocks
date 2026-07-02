@@ -98,6 +98,9 @@ graphblocks-cli
   TCK runner, so downstream conformance tooling can exercise the same Python contract instead of
   relying on package-local tests only. TCK suite manifests now surface auxiliary suite fixtures such
   as `schema/typed-values.json` alongside the primary `cases.json`.
+- Package lock generation now validates selected dependency closures against each package's
+  `forbiddenDependencies`, so optional integration SDKs cannot enter a generated lock indirectly
+  through a transitive dependency.
 
 ## 4. Phase 1 — Local Rust Runtime (`GB-C1-LOCAL-RUNTIME`)
 

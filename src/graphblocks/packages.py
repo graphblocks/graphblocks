@@ -327,6 +327,20 @@ def build_package_lock(
             for dependency in reversed(dependencies):
                 stack.append((dependency, False))
 
+    for distribution in sorted(selected):
+        package = packages_by_distribution[distribution]
+        forbidden_dependencies = {
+            dependency
+            for dependency in package.get("forbiddenDependencies", [])
+            if isinstance(dependency, str) and dependency
+        }
+        selected_forbidden = sorted(forbidden_dependencies & selected)
+        if selected_forbidden:
+            raise ValueError(
+                "forbidden package dependency "
+                f"{selected_forbidden[0]!r} selected for package {distribution!r}"
+            )
+
     entries: list[PackageLockEntry] = []
     for distribution in sorted(selected):
         package = packages_by_distribution[distribution]
