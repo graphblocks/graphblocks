@@ -335,6 +335,73 @@ impl AsyncCallbackSubmission {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CallbackArtifactRef {
+    pub artifact_id: String,
+    pub uri: String,
+    pub media_type: Option<String>,
+    pub checksum: Option<String>,
+}
+
+impl CallbackArtifactRef {
+    pub fn new(artifact_id: impl Into<String>, uri: impl Into<String>) -> Self {
+        Self {
+            artifact_id: artifact_id.into(),
+            uri: uri.into(),
+            media_type: None,
+            checksum: None,
+        }
+    }
+
+    pub fn with_media_type(mut self, media_type: impl Into<String>) -> Self {
+        self.media_type = Some(media_type.into());
+        self
+    }
+
+    pub fn with_checksum(mut self, checksum: impl Into<String>) -> Self {
+        self.checksum = Some(checksum.into());
+        self
+    }
+
+    pub fn validate(&self) -> Result<(), AsyncOperationError> {
+        for (field, value) in [("artifact_id", &self.artifact_id), ("uri", &self.uri)] {
+            if value.trim().is_empty() {
+                return Err(AsyncOperationError::EmptyField {
+                    field: field.to_owned(),
+                });
+            }
+        }
+        if self
+            .media_type
+            .as_ref()
+            .is_some_and(|media_type| media_type.trim().is_empty())
+        {
+            return Err(AsyncOperationError::EmptyField {
+                field: "media_type".to_owned(),
+            });
+        }
+        if self
+            .checksum
+            .as_ref()
+            .is_some_and(|checksum| checksum.trim().is_empty())
+        {
+            return Err(AsyncOperationError::EmptyField {
+                field: "checksum".to_owned(),
+            });
+        }
+        Ok(())
+    }
+
+    pub fn canonical_value(&self) -> Value {
+        json!({
+            "artifact_id": self.artifact_id,
+            "uri": self.uri,
+            "media_type": self.media_type,
+            "checksum": self.checksum,
+        })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct CallbackEndpointRef {
     pub endpoint_id: String,
@@ -905,6 +972,7 @@ pub struct ExternalCallbackReceived {
     pub idempotency_key: String,
     pub payload: Value,
     pub payload_digest: String,
+    pub artifacts: Vec<CallbackArtifactRef>,
     pub received_at_unix_ms: u64,
     pub verified_by: String,
     pub policy_snapshot_id: String,
@@ -1141,6 +1209,34 @@ impl AsyncOperationStore {
         )
     }
 
+    pub fn accept_callback_with_artifact_on_payload_limit(
+        &self,
+        mut submission: AsyncCallbackSubmission,
+        registry: &ToolSchemaRegistry,
+        limits: AsyncCallbackIngestionLimits,
+        artifact: CallbackArtifactRef,
+    ) -> Result<AcceptedCallback, AsyncOperationError> {
+        validate_callback_submission_and_resume_decision(
+            &submission,
+            &AsyncCallbackResumeDecision::Resume,
+        )?;
+        let artifacts =
+            if callback_payload_size_bytes(&submission.payload) > limits.max_payload_bytes {
+                artifact.validate()?;
+                submission.payload =
+                    compact_callback_payload_with_artifact(&submission.payload, &artifact);
+                vec![artifact]
+            } else {
+                Vec::new()
+            };
+        self.accept_validated_callback_with_artifacts_and_resume_decision(
+            submission,
+            registry,
+            artifacts,
+            AsyncCallbackResumeDecision::Resume,
+        )
+    }
+
     fn accept_callback_with_limits_and_resume_decision(
         &self,
         submission: AsyncCallbackSubmission,
@@ -1148,62 +1244,7 @@ impl AsyncOperationStore {
         limits: AsyncCallbackIngestionLimits,
         resume_decision: AsyncCallbackResumeDecision,
     ) -> Result<AcceptedCallback, AsyncOperationError> {
-        for (field, value) in [
-            ("callback_id", &submission.callback_id),
-            ("operation_id", &submission.operation_id),
-            ("run_id", &submission.run_id),
-            ("node_id", &submission.node_id),
-            ("attempt_id", &submission.attempt_id),
-            ("idempotency_key", &submission.idempotency_key),
-            ("verified_by", &submission.verified_by),
-            ("policy_snapshot_id", &submission.policy_snapshot_id),
-        ] {
-            if value.is_empty() {
-                return Err(AsyncOperationError::EmptyField {
-                    field: field.to_owned(),
-                });
-            }
-        }
-        match &resume_decision {
-            AsyncCallbackResumeDecision::Resume => {}
-            AsyncCallbackResumeDecision::PauseBudget { reason } => {
-                if reason.trim().is_empty() {
-                    return Err(AsyncOperationError::EmptyField {
-                        field: "resume_pause_reason".to_owned(),
-                    });
-                }
-            }
-            AsyncCallbackResumeDecision::DenyPolicy {
-                decision_id,
-                reason,
-            } => {
-                if decision_id.trim().is_empty() {
-                    return Err(AsyncOperationError::EmptyField {
-                        field: "resume_policy_decision_id".to_owned(),
-                    });
-                }
-                if reason.trim().is_empty() {
-                    return Err(AsyncOperationError::EmptyField {
-                        field: "resume_policy_reason".to_owned(),
-                    });
-                }
-            }
-            AsyncCallbackResumeDecision::PauseReleaseIncompatible {
-                required_release_id,
-                available_release_id,
-            } => {
-                if required_release_id.trim().is_empty() {
-                    return Err(AsyncOperationError::EmptyField {
-                        field: "required_release_id".to_owned(),
-                    });
-                }
-                if available_release_id.trim().is_empty() {
-                    return Err(AsyncOperationError::EmptyField {
-                        field: "available_release_id".to_owned(),
-                    });
-                }
-            }
-        }
+        validate_callback_submission_and_resume_decision(&submission, &resume_decision)?;
 
         let payload_size = callback_payload_size_bytes(&submission.payload);
         if payload_size > limits.max_payload_bytes {
@@ -1215,13 +1256,19 @@ impl AsyncOperationStore {
             });
         }
 
-        self.accept_validated_callback_with_resume_decision(submission, registry, resume_decision)
+        self.accept_validated_callback_with_artifacts_and_resume_decision(
+            submission,
+            registry,
+            Vec::new(),
+            resume_decision,
+        )
     }
 
-    fn accept_validated_callback_with_resume_decision(
+    fn accept_validated_callback_with_artifacts_and_resume_decision(
         &self,
         submission: AsyncCallbackSubmission,
         registry: &ToolSchemaRegistry,
+        artifacts: Vec<CallbackArtifactRef>,
         resume_decision: AsyncCallbackResumeDecision,
     ) -> Result<AcceptedCallback, AsyncOperationError> {
         let mut inner = self
@@ -1333,6 +1380,7 @@ impl AsyncOperationStore {
             idempotency_key: submission.idempotency_key.clone(),
             payload_digest: canonical_hash(&submission.payload),
             payload: submission.payload,
+            artifacts,
             received_at_unix_ms: submission.received_at_unix_ms,
             verified_by: submission.verified_by,
             policy_snapshot_id: submission.policy_snapshot_id,
@@ -1684,6 +1732,28 @@ impl SqliteAsyncOperationStore {
         )
     }
 
+    pub fn accept_callback_with_artifact_on_payload_limit(
+        &self,
+        submission: AsyncCallbackSubmission,
+        registry: &ToolSchemaRegistry,
+        limits: AsyncCallbackIngestionLimits,
+        artifact: CallbackArtifactRef,
+    ) -> Result<AcceptedCallback, AsyncOperationError> {
+        let memory = self.load_memory_store()?;
+        let accepted = memory
+            .accept_callback_with_artifact_on_payload_limit(submission, registry, limits, artifact);
+        match &accepted {
+            Ok(accepted) if !accepted.duplicate => {
+                self.replace_with_memory_store(&memory)?;
+            }
+            Err(_) => {
+                self.replace_with_memory_store(&memory)?;
+            }
+            _ => {}
+        }
+        accepted
+    }
+
     fn accept_callback_with_limits_and_resume_decision(
         &self,
         submission: AsyncCallbackSubmission,
@@ -1902,6 +1972,90 @@ fn callback_payload_size_bytes(payload: &Value) -> usize {
     graphblocks_compiler::canonical::canonical_json(payload).len()
 }
 
+fn validate_callback_submission_and_resume_decision(
+    submission: &AsyncCallbackSubmission,
+    resume_decision: &AsyncCallbackResumeDecision,
+) -> Result<(), AsyncOperationError> {
+    for (field, value) in [
+        ("callback_id", &submission.callback_id),
+        ("operation_id", &submission.operation_id),
+        ("run_id", &submission.run_id),
+        ("node_id", &submission.node_id),
+        ("attempt_id", &submission.attempt_id),
+        ("idempotency_key", &submission.idempotency_key),
+        ("verified_by", &submission.verified_by),
+        ("policy_snapshot_id", &submission.policy_snapshot_id),
+    ] {
+        if value.is_empty() {
+            return Err(AsyncOperationError::EmptyField {
+                field: field.to_owned(),
+            });
+        }
+    }
+    match resume_decision {
+        AsyncCallbackResumeDecision::Resume => {}
+        AsyncCallbackResumeDecision::PauseBudget { reason } => {
+            if reason.trim().is_empty() {
+                return Err(AsyncOperationError::EmptyField {
+                    field: "resume_pause_reason".to_owned(),
+                });
+            }
+        }
+        AsyncCallbackResumeDecision::DenyPolicy {
+            decision_id,
+            reason,
+        } => {
+            if decision_id.trim().is_empty() {
+                return Err(AsyncOperationError::EmptyField {
+                    field: "resume_policy_decision_id".to_owned(),
+                });
+            }
+            if reason.trim().is_empty() {
+                return Err(AsyncOperationError::EmptyField {
+                    field: "resume_policy_reason".to_owned(),
+                });
+            }
+        }
+        AsyncCallbackResumeDecision::PauseReleaseIncompatible {
+            required_release_id,
+            available_release_id,
+        } => {
+            if required_release_id.trim().is_empty() {
+                return Err(AsyncOperationError::EmptyField {
+                    field: "required_release_id".to_owned(),
+                });
+            }
+            if available_release_id.trim().is_empty() {
+                return Err(AsyncOperationError::EmptyField {
+                    field: "available_release_id".to_owned(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn compact_callback_payload_with_artifact(
+    payload: &Value,
+    artifact: &CallbackArtifactRef,
+) -> Value {
+    let mut compact = serde_json::Map::new();
+    if let Some(object) = payload.as_object() {
+        for (key, value) in object {
+            if callback_payload_size_bytes(value) <= 256
+                && !matches!(
+                    key.as_str(),
+                    "log" | "logs" | "output" | "stdout" | "stderr"
+                )
+            {
+                compact.insert(key.clone(), value.clone());
+            }
+        }
+    }
+    compact.insert("artifact".to_owned(), artifact.canonical_value());
+    Value::Object(compact)
+}
+
 fn callback_auth_failed(endpoint_id: &str, reason: &str) -> AsyncOperationError {
     AsyncOperationError::CallbackAuthenticationFailed {
         endpoint_id: endpoint_id.to_owned(),
@@ -2012,6 +2166,7 @@ fn receipt_to_value(receipt: &ExternalCallbackReceived) -> Value {
         "idempotency_key": receipt.idempotency_key,
         "payload": receipt.payload,
         "payload_digest": receipt.payload_digest,
+        "artifacts": receipt.artifacts.iter().map(callback_artifact_to_value).collect::<Vec<_>>(),
         "received_at_unix_ms": receipt.received_at_unix_ms,
         "verified_by": receipt.verified_by,
         "policy_snapshot_id": receipt.policy_snapshot_id,
@@ -2034,10 +2189,41 @@ fn receipt_from_value(value: Value) -> Result<ExternalCallbackReceived, AsyncOpe
                 message: "stored callback receipt is missing payload".to_owned(),
             })?,
         payload_digest: required_string(&value, "payload_digest")?,
+        artifacts: callback_artifacts_from_value(value.get("artifacts"))?,
         received_at_unix_ms: required_u64(&value, "received_at_unix_ms")?,
         verified_by: required_string(&value, "verified_by")?,
         policy_snapshot_id: required_string(&value, "policy_snapshot_id")?,
     })
+}
+
+fn callback_artifact_to_value(artifact: &CallbackArtifactRef) -> Value {
+    artifact.canonical_value()
+}
+
+fn callback_artifacts_from_value(
+    value: Option<&Value>,
+) -> Result<Vec<CallbackArtifactRef>, AsyncOperationError> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let Some(items) = value.as_array() else {
+        return Err(AsyncOperationError::Storage {
+            message: "stored callback receipt artifacts must be a list".to_owned(),
+        });
+    };
+    items
+        .iter()
+        .map(|item| {
+            let artifact = CallbackArtifactRef {
+                artifact_id: required_string(item, "artifact_id")?,
+                uri: required_string(item, "uri")?,
+                media_type: optional_string(item, "media_type")?,
+                checksum: optional_string(item, "checksum")?,
+            };
+            artifact.validate()?;
+            Ok(artifact)
+        })
+        .collect()
 }
 
 fn event_to_value(event: &AsyncOperationEvent) -> Value {

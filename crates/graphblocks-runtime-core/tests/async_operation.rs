@@ -6,7 +6,7 @@ use graphblocks_runtime_core::async_operation::{
     AsyncCallbackIngestionLimits, AsyncCallbackResumeDecision, AsyncCallbackSubmission,
     AsyncOperation, AsyncOperationConfigurationDiagnostic, AsyncOperationError,
     AsyncOperationEvent, AsyncOperationKind, AsyncOperationState, AsyncOperationStore,
-    CallbackEndpointAuth, CallbackEndpointRef, SqliteAsyncOperationStore,
+    CallbackArtifactRef, CallbackEndpointAuth, CallbackEndpointRef, SqliteAsyncOperationStore,
 };
 use graphblocks_runtime_core::tool_schema::{JsonSchema, JsonSchemaNode, ToolSchemaRegistry};
 use serde_json::json;
@@ -697,6 +697,60 @@ fn callback_payload_limit_rejects_oversized_payload_before_journal_or_resume() {
 }
 
 #[test]
+fn oversized_callback_payload_can_be_converted_to_artifact_ref_before_journal() {
+    let store = AsyncOperationStore::new();
+    store
+        .register(waiting_operation())
+        .expect("operation registers");
+    let mut submission = valid_submission("cb-artifact", "idem-artifact");
+    submission.payload = json!({
+        "status": "completed",
+        "workflow_run_id": "gha-run-1",
+        "log": "x".repeat(512),
+    });
+
+    let accepted = store
+        .accept_callback_with_artifact_on_payload_limit(
+            submission,
+            &callback_schema_registry(),
+            AsyncCallbackIngestionLimits {
+                max_payload_bytes: 128,
+            },
+            CallbackArtifactRef::new("artifact-ci-log", "blob://callbacks/op-1/cb-artifact.json")
+                .with_media_type("application/json")
+                .with_checksum("sha256:callback-log"),
+        )
+        .expect("oversized callback can be stored as artifact ref");
+
+    assert!(accepted.should_resume);
+    assert_eq!(
+        accepted.receipt.payload,
+        json!({
+            "status": "completed",
+            "workflow_run_id": "gha-run-1",
+            "artifact": {
+                "artifact_id": "artifact-ci-log",
+                "uri": "blob://callbacks/op-1/cb-artifact.json",
+                "media_type": "application/json",
+                "checksum": "sha256:callback-log",
+            }
+        })
+    );
+    assert_eq!(
+        accepted.receipt.artifacts,
+        vec![
+            CallbackArtifactRef::new("artifact-ci-log", "blob://callbacks/op-1/cb-artifact.json")
+                .with_media_type("application/json")
+                .with_checksum("sha256:callback-log")
+        ]
+    );
+    assert_eq!(
+        store.operation_state("op-1"),
+        Some(AsyncOperationState::CallbackReceived)
+    );
+}
+
+#[test]
 fn callback_default_payload_limit_allows_normal_payload() {
     let store = AsyncOperationStore::new();
     store
@@ -1184,6 +1238,53 @@ fn sqlite_async_operation_store_persists_callback_receipt_and_duplicate_guard_ac
             .filter(|event| matches!(event, AsyncOperationEvent::ExternalCallbackReceived { .. }))
             .count(),
         1
+    );
+    Ok(())
+}
+
+#[test]
+fn sqlite_async_operation_store_persists_artifact_backed_callback_receipt_across_reopen()
+-> Result<(), AsyncOperationError> {
+    let path = sqlite_async_operation_path("callback-artifact-reopen");
+    {
+        let store = SqliteAsyncOperationStore::open(&path)?;
+        store.register(waiting_operation())?;
+        let mut submission = valid_submission("cb-artifact", "idem-artifact");
+        submission.payload = json!({
+            "status": "completed",
+            "workflow_run_id": "gha-run-1",
+            "log": "x".repeat(512),
+        });
+        store.accept_callback_with_artifact_on_payload_limit(
+            submission,
+            &callback_schema_registry(),
+            AsyncCallbackIngestionLimits {
+                max_payload_bytes: 128,
+            },
+            CallbackArtifactRef::new("artifact-ci-log", "blob://callbacks/op-1/cb-artifact.json")
+                .with_media_type("application/json"),
+        )?;
+    }
+
+    let store = SqliteAsyncOperationStore::open(&path)?;
+    let duplicate = store.accept_callback(
+        valid_submission("cb-duplicate", "idem-artifact"),
+        &callback_schema_registry(),
+    )?;
+
+    assert!(duplicate.duplicate);
+    assert_eq!(duplicate.receipt.callback_id, "cb-artifact");
+    assert_eq!(
+        duplicate.receipt.artifacts,
+        vec![
+            CallbackArtifactRef::new("artifact-ci-log", "blob://callbacks/op-1/cb-artifact.json")
+                .with_media_type("application/json")
+        ]
+    );
+    assert!(duplicate.receipt.payload.get("log").is_none());
+    assert_eq!(
+        duplicate.receipt.payload["artifact"]["artifact_id"],
+        "artifact-ci-log"
     );
     Ok(())
 }

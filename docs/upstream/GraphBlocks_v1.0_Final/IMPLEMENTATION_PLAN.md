@@ -255,6 +255,10 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
 - Callback ingestion now enforces the specification's default `262144` byte payload limit before
   journaling or resume, and focused tests cover explicit small-limit rejection without operation
   state changes.
+- Callback ingestion can also accept oversized callback payloads as artifact-backed receipts when
+  the caller supplies a `CallbackArtifactRef`; the runtime journals only compact callback metadata
+  plus the artifact reference, and SQLite persistence preserves the artifact-backed receipt across
+  reopen.
 - `CallbackEndpointRef` and `CallbackEndpointAuth` now model callback ingress authentication for
   async operations, with bearer-token, `hmac-sha256`, Ed25519 verifier-boundary, mTLS
   client-identity, and OIDC/JWT verifier-boundary helpers that build `AsyncCallbackSubmission` only
