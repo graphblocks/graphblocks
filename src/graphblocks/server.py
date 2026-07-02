@@ -1479,6 +1479,21 @@ class GraphBlocksServerApp:
                                 },
                             )
                         return ServerResponse.json(200, previous.duplicate_response_payload())
+                    if (
+                        previous.run_id is not None
+                        and submission.run_id is not None
+                        and (previous.run_id != submission.run_id or previous.attempt_id != submission.attempt_id)
+                    ):
+                        return ServerResponse.json(
+                            409,
+                            {
+                                "ok": False,
+                                "operationId": submission.operation_id,
+                                "runId": submission.run_id,
+                                "attemptId": submission.attempt_id,
+                                "error": "async callback operation is already bound to a different run attempt",
+                            },
+                        )
                 self._callbacks_by_operation_id[submission.operation_id] = (*existing, submission)
                 return ServerResponse.json(202, submission.response_payload())
             except (TypeError, ValueError, json.JSONDecodeError) as error:
