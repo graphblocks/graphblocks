@@ -220,6 +220,7 @@ def default_server_route_manifest() -> ServerRouteManifest:
         (
             ServerEndpoint("GET", "/health", "http", "health", auth_required=False),
             ServerEndpoint("POST", "/runs", "http", "invoke_graph", auth_required=True),
+            ServerEndpoint("GET", "/runs/{run_id}", "http", "get_run_status", auth_required=True),
             ServerEndpoint("POST", "/runs/{run_id}/cancel", "http", "cancel_run", auth_required=True),
             ServerEndpoint("POST", "/callbacks/{operation_id}", "http", "submit_async_callback", auth_required=True),
             ServerEndpoint("GET", "/runs/{run_id}/events", "sse", "application_events", auth_required=True),
@@ -606,6 +607,18 @@ class GraphBlocksServerApp:
                     "status": "cancel_requested",
                 },
             )
+        if route.operation == "get_run_status":
+            run_id = route_match.path_params.get("run_id", "")
+            events = self._events_by_run_id.get(run_id)
+            if events is None:
+                return ServerResponse.json(
+                    404,
+                    {
+                        "ok": False,
+                        "error": f"run status not found for run {run_id!r}",
+                    },
+                )
+            return ServerResponse.json(200, self._run_status_payload(run_id, events))
         if route.operation == "submit_async_callback":
             try:
                 submission = ServerAsyncCallbackSubmission.from_request(
@@ -847,6 +860,53 @@ class GraphBlocksServerApp:
     def callback_submissions(self, operation_id: str) -> tuple[ServerAsyncCallbackSubmission, ...]:
         operation_id = _validate_non_empty_string("server async callback", "operation_id", operation_id)
         return self._callbacks_by_operation_id.get(operation_id, ())
+
+    def _run_status_payload(self, run_id: str, events: tuple[dict[str, object], ...]) -> dict[str, object]:
+        last_sequence = 0
+        release_id = ""
+        started_at = ""
+        updated_at = ""
+        completed_at: str | None = None
+        state = "running"
+        terminal_states = {
+            "RunSucceeded": "succeeded",
+            "RunFailed": "failed",
+            "RunCancelled": "cancelled",
+            "RunPolicyStopped": "policy_stopped",
+        }
+
+        for index, event in enumerate(events):
+            metadata = event.get("metadata")
+            if not isinstance(metadata, Mapping):
+                continue
+            sequence = metadata.get("sequence")
+            if isinstance(sequence, int) and not isinstance(sequence, bool) and sequence > last_sequence:
+                last_sequence = sequence
+            occurred_at = metadata.get("occurredAt")
+            if isinstance(occurred_at, str) and occurred_at:
+                if index == 0:
+                    started_at = occurred_at
+                updated_at = occurred_at
+            event_release_id = metadata.get("releaseId")
+            if isinstance(event_release_id, str) and event_release_id:
+                release_id = event_release_id
+            event_kind = event.get("kind")
+            if isinstance(event_kind, str) and event_kind in terminal_states:
+                state = terminal_states[event_kind]
+                completed_at = updated_at
+
+        return {
+            "ok": True,
+            "runId": run_id,
+            "state": state,
+            "releaseId": release_id,
+            "lastCursor": f"{run_id}:{last_sequence}",
+            "startedAt": started_at,
+            "updatedAt": updated_at,
+            "completedAt": completed_at,
+            "waitingOn": [],
+            "activeOperations": [],
+        }
 
 
 class ServerProtocolVersionMismatchError(ValueError):

@@ -363,6 +363,9 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   submissions without recording them twice, and rejecting conflicting replays that reuse an
   idempotency key with different content while leaving durable journal/resume authority to the
   runtime.
+- `graphblocks-server` now also exposes the framework-neutral `GET /runs/{run_id}`
+  `GetRunStatus` route, deriving status, release id, replay cursor, timestamps, wait reasons, and
+  active operation projection from the authoritative stored application events.
 - Server-level HTTP/TLS webhook client integration and multi-process coordinator failover execution
   remain follow-on slices.
 

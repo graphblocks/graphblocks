@@ -81,6 +81,14 @@ def test_server_route_manifest_matches_templated_run_paths() -> None:
         ServerRouteMatch(endpoint, path_params={"run_id": object()})  # type: ignore[dict-item]
 
 
+def test_server_route_manifest_matches_run_status_path() -> None:
+    route_match = default_server_route_manifest().match("GET", "/runs/run-123")
+
+    assert route_match.endpoint.operation == "get_run_status"
+    assert route_match.endpoint.auth_required is True
+    assert route_match.path_params == {"run_id": "run-123"}
+
+
 def test_server_route_manifest_matches_async_callback_ingress_path() -> None:
     route_match = default_server_route_manifest().match("POST", "/callbacks/op-ci-1")
 
@@ -670,6 +678,69 @@ def test_server_app_serves_stored_run_events_after_invocation() -> None:
     assert payload["events"][0]["metadata"]["responseId"] == "response-events-1"
 
 
+def test_server_app_reports_run_status_from_authoritative_events() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "server-status"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Status {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "ok"}},
+                    "runId": "run-status-1",
+                    "responseId": "response-status-1",
+                    "releaseId": "release-status-1",
+                    "occurredAt": "2026-07-02T00:00:00Z",
+                }
+            ).encode("utf-8"),
+        )
+    )
+    response = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-status-1",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+        )
+    )
+
+    payload = json.loads(response.body.decode("utf-8"))
+    assert response.status_code == 200
+    assert payload == {
+        "ok": True,
+        "runId": "run-status-1",
+        "state": "succeeded",
+        "releaseId": "release-status-1",
+        "lastCursor": "run-status-1:2",
+        "startedAt": "2026-07-02T00:00:00Z",
+        "updatedAt": "2026-07-02T00:00:00Z",
+        "completedAt": "2026-07-02T00:00:00Z",
+        "waitingOn": [],
+        "activeOperations": [],
+    }
+
+
 def test_server_app_reports_missing_run_events() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
 
@@ -687,6 +758,22 @@ def test_server_app_reports_missing_run_events() -> None:
     assert json.loads(response.body.decode("utf-8")) == {
         "ok": False,
         "error": "run events not found for run 'missing-run'",
+    }
+
+    status_response = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/missing-run",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+        )
+    )
+
+    assert status_response.status_code == 404
+    assert json.loads(status_response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "run status not found for run 'missing-run'",
     }
 
 
