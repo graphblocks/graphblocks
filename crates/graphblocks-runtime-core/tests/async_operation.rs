@@ -142,6 +142,28 @@ fn async_operation_diagnostics_require_resume_policy_reevaluation_by_default() {
 }
 
 #[test]
+fn async_operation_diagnostics_report_stale_callback_can_resume() {
+    let operation = waiting_operation().without_callback_attempt_fencing();
+
+    let diagnostics = AsyncOperationConfigurationDiagnostic::for_operation(&operation);
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].code, "GB6015");
+    assert_eq!(diagnostics[0].field, "callback_attempt_fencing");
+    assert!(diagnostics[0].message.contains("op-1"));
+}
+
+#[test]
+fn async_operation_diagnostics_require_callback_attempt_fencing_by_default() {
+    let operation = waiting_operation();
+
+    assert_eq!(
+        AsyncOperationConfigurationDiagnostic::for_operation(&operation),
+        Vec::new()
+    );
+}
+
+#[test]
 fn external_callback_is_journaled_before_operation_can_resume() {
     let store = AsyncOperationStore::new();
     store
