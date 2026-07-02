@@ -6,6 +6,36 @@ use serde_json::{Map, Number, Value, json};
 use crate::evaluation::ModelVisibleToolRef;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RunInvocationMode {
+    Sync,
+    Accepted,
+    Background,
+}
+
+impl RunInvocationMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Sync => "sync",
+            Self::Accepted => "accepted",
+            Self::Background => "background",
+        }
+    }
+
+    fn from_str(value: &str) -> Option<Self> {
+        match value {
+            "sync" => Some(Self::Sync),
+            "accepted" => Some(Self::Accepted),
+            "background" => Some(Self::Background),
+            _ => None,
+        }
+    }
+
+    pub fn is_durable(self) -> bool {
+        matches!(self, Self::Accepted | Self::Background)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RunStatus {
     Created,
     Validating,
@@ -157,6 +187,7 @@ pub struct RunRecord {
     pub run_id: String,
     pub sequence: u64,
     pub graph_hash: String,
+    pub invocation_mode: RunInvocationMode,
     pub inputs: Value,
     pub deployment_provenance: RunDeploymentProvenance,
     pub model_visible_tools: Vec<ModelVisibleToolRef>,
@@ -167,8 +198,15 @@ pub struct RunRecord {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum RunStoreError {
+    EmptyField {
+        field: &'static str,
+    },
     NotFound {
         run_id: String,
+    },
+    InvalidInvocationMode {
+        run_id: String,
+        invocation_mode: RunInvocationMode,
     },
     StateConflict {
         run_id: String,
@@ -200,6 +238,48 @@ pub enum RunStoreError {
     Storage {
         message: String,
     },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RunInvocationResponse {
+    pub run_id: String,
+    pub status: String,
+    pub mode: RunInvocationMode,
+    pub event_stream: String,
+    pub websocket: String,
+    pub cancel: String,
+    pub initial_cursor: String,
+}
+
+impl RunInvocationResponse {
+    pub fn from_accepted_run(
+        run: &RunRecord,
+        base_path: impl AsRef<str>,
+        initial_cursor: impl Into<String>,
+    ) -> Result<Self, RunStoreError> {
+        if !run.invocation_mode.is_durable() {
+            return Err(RunStoreError::InvalidInvocationMode {
+                run_id: run.run_id.clone(),
+                invocation_mode: run.invocation_mode,
+            });
+        }
+        let initial_cursor = initial_cursor.into();
+        if initial_cursor.trim().is_empty() {
+            return Err(RunStoreError::EmptyField {
+                field: "initial_cursor",
+            });
+        }
+        let base_path = base_path.as_ref().trim_end_matches('/');
+        Ok(Self {
+            run_id: run.run_id.clone(),
+            status: "accepted".to_owned(),
+            mode: run.invocation_mode,
+            event_stream: format!("{base_path}/runs/{}/events", run.run_id),
+            websocket: format!("{base_path}/runs/{}/ws", run.run_id),
+            cancel: format!("{base_path}/runs/{}/cancel", run.run_id),
+            initial_cursor,
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -525,15 +605,31 @@ impl InMemoryRunStore {
         self.create_run_with_provenance(graph_hash, inputs, RunDeploymentProvenance::new())
     }
 
+    pub fn create_run_with_invocation_mode(
+        &mut self,
+        graph_hash: impl Into<String>,
+        inputs: Value,
+        invocation_mode: RunInvocationMode,
+    ) -> RunRecord {
+        self.create_run_with_invocation_provenance_and_mode(
+            graph_hash,
+            inputs,
+            invocation_mode,
+            RunDeploymentProvenance::new(),
+            Vec::new(),
+        )
+    }
+
     pub fn create_run_with_provenance(
         &mut self,
         graph_hash: impl Into<String>,
         inputs: Value,
         deployment_provenance: RunDeploymentProvenance,
     ) -> RunRecord {
-        self.create_run_with_invocation_provenance(
+        self.create_run_with_invocation_provenance_and_mode(
             graph_hash,
             inputs,
+            RunInvocationMode::Sync,
             deployment_provenance,
             Vec::new(),
         )
@@ -546,6 +642,23 @@ impl InMemoryRunStore {
         deployment_provenance: RunDeploymentProvenance,
         model_visible_tools: Vec<ModelVisibleToolRef>,
     ) -> RunRecord {
+        self.create_run_with_invocation_provenance_and_mode(
+            graph_hash,
+            inputs,
+            RunInvocationMode::Sync,
+            deployment_provenance,
+            model_visible_tools,
+        )
+    }
+
+    pub fn create_run_with_invocation_provenance_and_mode(
+        &mut self,
+        graph_hash: impl Into<String>,
+        inputs: Value,
+        invocation_mode: RunInvocationMode,
+        deployment_provenance: RunDeploymentProvenance,
+        model_visible_tools: Vec<ModelVisibleToolRef>,
+    ) -> RunRecord {
         let sequence = self.next_sequence;
         self.next_sequence += 1;
         let run_id = format!("run-{sequence:06}");
@@ -553,6 +666,7 @@ impl InMemoryRunStore {
             run_id: run_id.clone(),
             sequence,
             graph_hash: graph_hash.into(),
+            invocation_mode,
             inputs,
             deployment_provenance,
             model_visible_tools: sorted_model_visible_tools(model_visible_tools),
@@ -653,6 +767,7 @@ impl SqliteRunStore {
                     sequence INTEGER PRIMARY KEY,
                     run_id TEXT NOT NULL UNIQUE,
                     graph_hash TEXT NOT NULL,
+                    invocation_mode TEXT NOT NULL DEFAULT 'sync',
                     inputs_json TEXT NOT NULL,
                     deployment_provenance_json TEXT NOT NULL,
                     model_visible_tools_json TEXT NOT NULL,
@@ -705,6 +820,14 @@ impl SqliteRunStore {
                 )
                 .map_err(storage_error)?;
         }
+        if !columns.iter().any(|name| name == "invocation_mode") {
+            self.connection
+                .execute(
+                    "ALTER TABLE runs ADD COLUMN invocation_mode TEXT NOT NULL DEFAULT 'sync'",
+                    [],
+                )
+                .map_err(storage_error)?;
+        }
         Ok(())
     }
 
@@ -716,15 +839,31 @@ impl SqliteRunStore {
         self.create_run_with_provenance(graph_hash, inputs, RunDeploymentProvenance::new())
     }
 
+    pub fn create_run_with_invocation_mode(
+        &mut self,
+        graph_hash: impl Into<String>,
+        inputs: Value,
+        invocation_mode: RunInvocationMode,
+    ) -> Result<RunRecord, RunStoreError> {
+        self.create_run_with_invocation_provenance_and_mode(
+            graph_hash,
+            inputs,
+            invocation_mode,
+            RunDeploymentProvenance::new(),
+            Vec::new(),
+        )
+    }
+
     pub fn create_run_with_provenance(
         &mut self,
         graph_hash: impl Into<String>,
         inputs: Value,
         deployment_provenance: RunDeploymentProvenance,
     ) -> Result<RunRecord, RunStoreError> {
-        self.create_run_with_invocation_provenance(
+        self.create_run_with_invocation_provenance_and_mode(
             graph_hash,
             inputs,
+            RunInvocationMode::Sync,
             deployment_provenance,
             Vec::new(),
         )
@@ -734,6 +873,23 @@ impl SqliteRunStore {
         &mut self,
         graph_hash: impl Into<String>,
         inputs: Value,
+        deployment_provenance: RunDeploymentProvenance,
+        model_visible_tools: Vec<ModelVisibleToolRef>,
+    ) -> Result<RunRecord, RunStoreError> {
+        self.create_run_with_invocation_provenance_and_mode(
+            graph_hash,
+            inputs,
+            RunInvocationMode::Sync,
+            deployment_provenance,
+            model_visible_tools,
+        )
+    }
+
+    pub fn create_run_with_invocation_provenance_and_mode(
+        &mut self,
+        graph_hash: impl Into<String>,
+        inputs: Value,
+        invocation_mode: RunInvocationMode,
         deployment_provenance: RunDeploymentProvenance,
         model_visible_tools: Vec<ModelVisibleToolRef>,
     ) -> Result<RunRecord, RunStoreError> {
@@ -751,6 +907,7 @@ impl SqliteRunStore {
             run_id,
             sequence,
             graph_hash: graph_hash.into(),
+            invocation_mode,
             inputs,
             deployment_provenance,
             model_visible_tools: sorted_model_visible_tools(model_visible_tools),
@@ -765,6 +922,7 @@ impl SqliteRunStore {
                     sequence,
                     run_id,
                     graph_hash,
+                    invocation_mode,
                     inputs_json,
                     deployment_provenance_json,
                     model_visible_tools_json,
@@ -772,12 +930,13 @@ impl SqliteRunStore {
                     state_json,
                     state_revision
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ",
                 params![
                     sqlite_u64_to_i64(record.sequence, "run sequence")?,
                     &record.run_id,
                     &record.graph_hash,
+                    record.invocation_mode.as_str(),
                     storage_json(&record.inputs)?,
                     storage_json(&record.deployment_provenance.canonical_value())?,
                     storage_json(&model_visible_tools_value(&record.model_visible_tools))?,
@@ -801,6 +960,7 @@ impl SqliteRunStore {
                     sequence,
                     run_id,
                     graph_hash,
+                    invocation_mode,
                     inputs_json,
                     deployment_provenance_json,
                     model_visible_tools_json,
@@ -821,7 +981,8 @@ impl SqliteRunStore {
                         row.get::<_, String>(5)?,
                         row.get::<_, String>(6)?,
                         row.get::<_, String>(7)?,
-                        row.get::<_, i64>(8)?,
+                        row.get::<_, String>(8)?,
+                        row.get::<_, i64>(9)?,
                     ))
                 },
             )
@@ -831,6 +992,7 @@ impl SqliteRunStore {
             sequence,
             run_id,
             graph_hash,
+            invocation_mode,
             inputs,
             deployment_provenance,
             model_visible_tools,
@@ -847,6 +1009,7 @@ impl SqliteRunStore {
             sequence,
             run_id,
             graph_hash,
+            invocation_mode,
             inputs,
             deployment_provenance,
             model_visible_tools,
@@ -925,6 +1088,7 @@ fn record_from_storage(
     sequence: i64,
     run_id: String,
     graph_hash: String,
+    invocation_mode: String,
     inputs: String,
     deployment_provenance: String,
     model_visible_tools: String,
@@ -932,6 +1096,10 @@ fn record_from_storage(
     state: String,
     state_revision: i64,
 ) -> Result<RunRecord, RunStoreError> {
+    let invocation_mode =
+        RunInvocationMode::from_str(&invocation_mode).ok_or_else(|| RunStoreError::Storage {
+            message: format!("unknown stored run invocation mode {invocation_mode:?}"),
+        })?;
     let status = RunStatus::from_str(&status).ok_or_else(|| RunStoreError::Storage {
         message: format!("unknown stored run status {status:?}"),
     })?;
@@ -939,6 +1107,7 @@ fn record_from_storage(
         run_id,
         sequence: sqlite_i64_to_u64(sequence, "run sequence")?,
         graph_hash,
+        invocation_mode,
         inputs: parse_storage_json(&inputs)?,
         deployment_provenance: deployment_provenance_from_storage(&deployment_provenance)?,
         model_visible_tools: model_visible_tools_from_storage(&model_visible_tools)?,

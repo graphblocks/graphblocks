@@ -226,6 +226,9 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   `admitted`, `waiting_input`, `waiting_approval`, `waiting_review`, `waiting_callback`,
   `paused_budget`, `paused_policy`, `paused_operator`, `resuming`, and terminal `expired`; SQLite
   persistence tests cover the new state strings.
+- `RunInvocationMode` now records `sync`, `accepted`, and `background` invocation mode in
+  `RunRecord`, persists the mode through SQLite, and builds accepted/background run handles with
+  event stream, websocket, cancel route, and initial cursor fields.
 - `ApplicationCommandKind` now includes the async run, attach/replay, subscription, callback
   registration, callback ingestion, pause/resume/expire, redrive, and dead-letter command names
   from the amendment.

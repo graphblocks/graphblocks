@@ -1,8 +1,8 @@
 use graphblocks_runtime_core::{
     evaluation::ModelVisibleToolRef,
     run_store::{
-        InMemoryRunStore, PatchOperation, RunDeploymentProvenance, RunStatus, RunStoreError,
-        SqliteRunStore, StatePatch,
+        InMemoryRunStore, PatchOperation, RunDeploymentProvenance, RunInvocationMode,
+        RunInvocationResponse, RunStatus, RunStoreError, SqliteRunStore, StatePatch,
     },
 };
 use serde_json::json;
@@ -17,6 +17,7 @@ fn run_store_allocates_monotonic_run_snapshots() -> Result<(), RunStoreError> {
     assert_eq!(first.run_id, "run-000001");
     assert_eq!(first.sequence, 1);
     assert_eq!(first.graph_hash, "sha256:one");
+    assert_eq!(first.invocation_mode, RunInvocationMode::Sync);
     assert_eq!(first.inputs, json!({"message": "hello"}));
     assert_eq!(first.status, RunStatus::Created);
     assert_eq!(first.state, json!({}));
@@ -25,6 +26,60 @@ fn run_store_allocates_monotonic_run_snapshots() -> Result<(), RunStoreError> {
     assert_eq!(second.sequence, 2);
     assert_eq!(store.get_run("run-000001")?, first);
     Ok(())
+}
+
+#[test]
+fn run_store_records_invocation_mode_and_builds_accepted_handle() -> Result<(), RunStoreError> {
+    let mut store = InMemoryRunStore::new();
+
+    let accepted = store.create_run_with_invocation_mode(
+        "sha256:accepted",
+        json!({"task": "code"}),
+        RunInvocationMode::Accepted,
+    );
+    let background = store.create_run_with_invocation_mode(
+        "sha256:background",
+        json!({"task": "ingest"}),
+        RunInvocationMode::Background,
+    );
+    let handle = RunInvocationResponse::from_accepted_run(&accepted, "/v1", "evt_000000")
+        .expect("accepted run response is valid");
+
+    assert_eq!(accepted.invocation_mode, RunInvocationMode::Accepted);
+    assert_eq!(background.invocation_mode, RunInvocationMode::Background);
+    assert_eq!(handle.run_id, accepted.run_id);
+    assert_eq!(handle.status, "accepted");
+    assert_eq!(handle.mode, RunInvocationMode::Accepted);
+    assert_eq!(handle.event_stream, "/v1/runs/run-000001/events");
+    assert_eq!(handle.websocket, "/v1/runs/run-000001/ws");
+    assert_eq!(handle.cancel, "/v1/runs/run-000001/cancel");
+    assert_eq!(handle.initial_cursor, "evt_000000");
+    Ok(())
+}
+
+#[test]
+fn run_invocation_response_rejects_sync_or_empty_cursor() {
+    let mut store = InMemoryRunStore::new();
+    let sync = store.create_run("sha256:sync", json!({}));
+    let accepted = store.create_run_with_invocation_mode(
+        "sha256:accepted",
+        json!({}),
+        RunInvocationMode::Accepted,
+    );
+
+    assert_eq!(
+        RunInvocationResponse::from_accepted_run(&sync, "/v1", "evt_000000"),
+        Err(RunStoreError::InvalidInvocationMode {
+            run_id: sync.run_id,
+            invocation_mode: RunInvocationMode::Sync,
+        })
+    );
+    assert_eq!(
+        RunInvocationResponse::from_accepted_run(&accepted, "/v1", " "),
+        Err(RunStoreError::EmptyField {
+            field: "initial_cursor",
+        })
+    );
 }
 
 #[test]
@@ -331,7 +386,7 @@ fn sqlite_run_store_persists_runs_across_reopen() -> Result<(), String> {
             )
             .map_err(|error| format!("{error:?}"))?;
         let second = store
-            .create_run("sha256:two", json!({}))
+            .create_run_with_invocation_mode("sha256:two", json!({}), RunInvocationMode::Background)
             .map_err(|error| format!("{error:?}"))?;
         store
             .set_status(&first.run_id, RunStatus::Running)
@@ -347,6 +402,7 @@ fn sqlite_run_store_persists_runs_across_reopen() -> Result<(), String> {
         .map_err(|error| format!("{error:?}"))?;
     assert_eq!(first.sequence, 1);
     assert_eq!(first.graph_hash, "sha256:one");
+    assert_eq!(first.invocation_mode, RunInvocationMode::Sync);
     assert_eq!(first.inputs, json!({"message": "hello"}));
     assert_eq!(first.status, RunStatus::Running);
     assert_eq!(first.state, json!({}));
@@ -367,6 +423,10 @@ fn sqlite_run_store_persists_runs_across_reopen() -> Result<(), String> {
             model_visible_tool("ticket.create", "resolved-ticket", false),
         ]
     );
+    let second = store
+        .get_run("run-000002")
+        .map_err(|error| format!("{error:?}"))?;
+    assert_eq!(second.invocation_mode, RunInvocationMode::Background);
 
     let _ = std::fs::remove_file(&path);
     Ok(())
