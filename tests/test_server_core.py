@@ -1026,6 +1026,11 @@ def test_server_app_serves_stored_run_events_after_invocation() -> None:
     assert payload["runId"] == "run-events-1"
     assert [event["kind"] for event in payload["events"]] == ["RunStarted", "RunSucceeded"]
     assert payload["events"][0]["metadata"]["responseId"] == "response-events-1"
+    assert payload["events"][1]["payload"]["outputs"] == {"prompt": "Events ok"}
+    with pytest.raises(TypeError):
+        app._events_by_run_id["run-events-1"][0]["metadata"]["responseId"] = "changed"  # type: ignore[index]
+    with pytest.raises(TypeError):
+        app._events_by_run_id["run-events-1"][1]["payload"]["outputs"]["prompt"] = "changed"  # type: ignore[index]
 
 
 def test_server_app_reports_run_status_from_authoritative_events() -> None:

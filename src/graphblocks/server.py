@@ -112,6 +112,13 @@ def _thaw_json_value(value: object) -> object:
     return value
 
 
+def _response_json_object(value: object) -> dict[str, object]:
+    thawed = _thaw_json_value(value)
+    if not isinstance(thawed, dict):
+        raise ValueError("server response value must thaw to a JSON object")
+    return thawed
+
+
 @dataclass(frozen=True, slots=True)
 class ServerEndpoint:
     method: str
@@ -891,7 +898,7 @@ class GraphBlocksServerApp:
     auth_hook: ServerAuthHook | None = None
     health: ServerHealth = field(default_factory=lambda: ServerHealth("graphblocks-api"))
     registry: RuntimeRegistry = field(default_factory=stdlib_registry)
-    _events_by_run_id: dict[str, tuple[dict[str, object], ...]] = field(default_factory=dict, init=False, repr=False)
+    _events_by_run_id: dict[str, tuple[Mapping[str, object], ...]] = field(default_factory=dict, init=False, repr=False)
     _callbacks_by_operation_id: dict[str, tuple[ServerAsyncCallbackSubmission, ...]] = field(
         default_factory=dict,
         init=False,
@@ -1300,7 +1307,7 @@ class GraphBlocksServerApp:
                 {
                     "ok": True,
                     "runId": run_id,
-                    "events": [dict(event) for event in events],
+                    "events": [_response_json_object(event) for event in events],
                 },
             )
         if route.operation == "application_stream":
@@ -1334,7 +1341,7 @@ class GraphBlocksServerApp:
             last_sequence = 0
             for event in events:
                 metadata = event.get("metadata")
-                if isinstance(metadata, dict):
+                if isinstance(metadata, Mapping):
                     sequence = metadata.get("sequence", 0)
                     if isinstance(sequence, int) and sequence > last_sequence:
                         last_sequence = sequence
@@ -1349,7 +1356,7 @@ class GraphBlocksServerApp:
                         "cursor": f"{run_id}:{last_sequence}",
                         "eventCount": len(events),
                     },
-                    "events": [dict(event) for event in events],
+                    "events": [_response_json_object(event) for event in events],
                 },
             )
         if route.operation == "invoke_graph":
@@ -1459,7 +1466,10 @@ class GraphBlocksServerApp:
                     if event.tool_call_id is not None:
                         event_payload["toolCallId"] = event.tool_call_id
                     events.append(event_payload)
-                self._events_by_run_id[result.run_id] = tuple(dict(event) for event in events)
+                self._events_by_run_id[result.run_id] = tuple(
+                    _freeze_json_value("application event stream", "event", event)
+                    for event in events
+                )
                 return ServerResponse.json(
                     200,
                     {
@@ -1721,7 +1731,7 @@ class GraphBlocksServerApp:
                 continue
             sequence = metadata.get("sequence")
             if isinstance(sequence, int) and not isinstance(sequence, bool) and sequence > replay_after_sequence:
-                replayed_events.append(dict(event))
+                replayed_events.append(_response_json_object(event))
 
         last_cursor_value = f"{run_id}:{last_sequence}"
         return ServerResponse.json(
@@ -1829,10 +1839,10 @@ class GraphBlocksServerApp:
             if not isinstance(sequence, int) or isinstance(sequence, bool) or sequence <= replay_after_sequence:
                 continue
             if self._event_matches_subscription_filter(event, subscription.event_filter):
-                replayed_events.append(dict(event))
+                replayed_events.append(_response_json_object(event))
         return replayed_events
 
-    def _event_matches_subscription_filter(self, event: dict[str, object], event_filter: Mapping[str, object]) -> bool:
+    def _event_matches_subscription_filter(self, event: Mapping[str, object], event_filter: Mapping[str, object]) -> bool:
         types = event_filter.get("types")
         if types is None:
             return True

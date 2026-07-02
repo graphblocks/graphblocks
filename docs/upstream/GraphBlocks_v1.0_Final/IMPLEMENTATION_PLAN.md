@@ -370,6 +370,8 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
 - `graphblocks-server` now also exposes the framework-neutral `GET /runs/{run_id}`
   `GetRunStatus` route, deriving status, release id, replay cursor, timestamps, wait reasons, and
   active operation projection from the authoritative stored application events.
+- Stored server application events are immutable snapshots; `/events`, attach/replay, subscription
+  replay, and websocket snapshot responses thaw them back to plain JSON payloads.
 - `graphblocks-server` now exposes the framework-neutral `GET /runs` `ListRuns` route using the
   same event-derived run status projection, keeping `POST /runs` reserved for `InvokeGraph`.
 - `graphblocks-server` now exposes the framework-neutral `POST /runs/{run_id}/attach`
