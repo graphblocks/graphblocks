@@ -546,6 +546,85 @@ def test_server_app_accepted_invoke_returns_replayable_run_handle() -> None:
     assert attach_payload["events"][1]["payload"]["outputs"] == {"prompt": "Accepted ok"}
 
 
+def test_server_app_rejects_duplicate_invoke_run_id_without_overwriting_events() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "server-duplicate-run"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Duplicate {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+
+    first = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "first"}},
+                    "runId": "run-duplicate-1",
+                    "responseId": "response-duplicate-first",
+                    "occurredAt": "2026-07-02T00:00:00Z",
+                }
+            ).encode("utf-8"),
+        )
+    )
+    duplicate = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "second"}},
+                    "runId": "run-duplicate-1",
+                    "responseId": "response-duplicate-second",
+                    "occurredAt": "2026-07-02T00:00:01Z",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert first.status_code == 200
+    assert duplicate.status_code == 409
+    assert json.loads(duplicate.body.decode("utf-8")) == {
+        "ok": False,
+        "runId": "run-duplicate-1",
+        "error": "run 'run-duplicate-1' already exists",
+    }
+
+    attach = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-duplicate-1/attach",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"lastCursor": "run-duplicate-1:0"}).encode("utf-8"),
+        )
+    )
+    attach_payload = json.loads(attach.body.decode("utf-8"))
+    assert attach.status_code == 200
+    assert attach_payload["events"][0]["metadata"]["responseId"] == "response-duplicate-first"
+    assert attach_payload["events"][1]["payload"]["outputs"] == {"prompt": "Duplicate first"}
+
+
 def test_server_app_rejects_invoke_graph_with_invalid_occurred_timestamp() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     graph = {

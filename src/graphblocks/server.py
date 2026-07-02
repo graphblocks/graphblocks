@@ -1701,6 +1701,15 @@ class GraphBlocksServerApp:
                     "runId",
                     payload.get("runId", payload.get("run_id", "run-000001")),
                 )
+                if run_id in self._events_by_run_id:
+                    return ServerResponse.json(
+                        409,
+                        {
+                            "ok": False,
+                            "runId": run_id,
+                            "error": f"run {run_id!r} already exists",
+                        },
+                    )
                 response_id = _validate_non_empty_string(
                     "run request",
                     "responseId",
