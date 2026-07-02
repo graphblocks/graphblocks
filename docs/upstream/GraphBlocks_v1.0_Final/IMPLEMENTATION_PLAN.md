@@ -647,6 +647,7 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - `graphblocks-server` `InvokeGraph` now honors `responseMode: accepted` and `background` by
   returning a durable run handle with event stream, `/ws` websocket, cancel route, and initial
   cursor while retaining authoritative run events for later attach/replay from that cursor.
+  `InvokeGraph` validates event `occurredAt` timestamps as ISO datetimes before storing run events.
 - `SubscribeEvents` and `RegisterCallback` server projections now have coverage for replay from
   the accepted/background run handle's initial cursor, so event subscriptions and callback
   registrations can attach from the beginning without treating the initial cursor as expired.

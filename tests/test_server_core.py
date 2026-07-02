@@ -546,6 +546,60 @@ def test_server_app_accepted_invoke_returns_replayable_run_handle() -> None:
     assert attach_payload["events"][1]["payload"]["outputs"] == {"prompt": "Accepted ok"}
 
 
+def test_server_app_rejects_invoke_graph_with_invalid_occurred_timestamp() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "server-invalid-occurred-at"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Invalid {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "ok"}},
+                    "runId": "run-invalid-occurred-at-1",
+                    "responseId": "response-invalid-occurred-at-1",
+                    "occurredAt": "not-a-date",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "run request occurredAt must be an ISO datetime",
+    }
+    status = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-invalid-occurred-at-1",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+        )
+    )
+    assert status.status_code == 404
+
+
 def test_server_app_handles_authenticated_cancel_request() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     app._events_by_run_id["run-server-1"] = (

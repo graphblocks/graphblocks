@@ -1719,10 +1719,7 @@ class GraphBlocksServerApp:
                 occurred_at = payload.get("occurredAt", payload.get("occurred_at"))
                 if occurred_at is None:
                     occurred_at = _utc_now_iso()
-                if not isinstance(occurred_at, str):
-                    raise ValueError("run request occurredAt must be a string")
-                if not occurred_at.strip():
-                    raise ValueError("run request occurredAt must not be empty")
+                occurred_at = _validate_iso_datetime("run request", "occurredAt", occurred_at)
                 turn_id_value = payload.get("turnId", payload.get("turn_id"))
                 turn_id = (
                     _validate_non_empty_string("run request", "turnId", turn_id_value)
