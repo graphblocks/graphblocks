@@ -1096,6 +1096,73 @@ def test_server_app_rejects_async_callback_for_unknown_declared_run() -> None:
     assert app.callback_submissions("op-ci-unknown-run") == ()
 
 
+def test_server_app_rejects_async_callback_declared_run_without_attempt_fence() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
+    for index, body in enumerate(
+        (
+            {
+                "callback_id": "cb-fence-1",
+                "run_id": "run-callback-fence-1",
+                "node_id": "waitCI",
+                "payload": {"status": "completed"},
+            },
+            {
+                "callbackId": "cb-fence-2",
+                "runId": "run-callback-fence-2",
+                "nodeId": "waitCI",
+                "providerOperationId": "provider-ci-2",
+                "payload": {"status": "completed", "checks": [{"name": "unit", "passed": True}]},
+            },
+            {
+                "callback_id": "cb-fence-3",
+                "runId": "run-callback-fence-3",
+                "payload": {"status": "failed", "diagnostics": [{"message": "compile failed"}]},
+            },
+        ),
+        start=1,
+    ):
+        run_id = body.get("run_id", body.get("runId"))
+        assert isinstance(run_id, str)
+        app._events_by_run_id[run_id] = (
+            {
+                "kind": "RunStarted",
+                "payload": {"runId": run_id},
+                "metadata": {
+                    "runId": run_id,
+                    "sequence": 1,
+                    "cursor": f"{run_id}:1",
+                    "releaseId": "release-callback-fence-1",
+                    "occurredAt": "2026-07-03T00:00:00Z",
+                },
+            },
+        )
+        operation_id = f"op-ci-fence-{index}"
+
+        response = app.handle(
+            ServerRequest(
+                method="POST",
+                path=f"/callbacks/{operation_id}",
+                headers={
+                    "Authorization": "Bearer token-1",
+                    "GraphBlocks-Idempotency-Key": f"idem-callback-fence-{index}",
+                },
+                query={},
+                cookies={},
+                body=json.dumps(body).encode("utf-8"),
+                requested_at="2026-07-03T00:00:01Z",
+            )
+        )
+
+        assert response.status_code == 400
+        assert json.loads(response.body.decode("utf-8")) == {
+            "ok": False,
+            "operationId": operation_id,
+            "runId": run_id,
+            "error": "async callback attempt_id is required when run_id is declared",
+        }
+        assert app.callback_submissions(operation_id) == ()
+
+
 def test_server_app_deduplicates_async_callback_submission_by_idempotency_key() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
     request = ServerRequest(

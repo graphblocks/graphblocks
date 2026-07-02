@@ -1448,6 +1448,16 @@ class GraphBlocksServerApp:
                             "error": f"async callback run {submission.run_id!r} not found",
                         },
                     )
+                if submission.run_id is not None and submission.attempt_id is None:
+                    return ServerResponse.json(
+                        400,
+                        {
+                            "ok": False,
+                            "operationId": submission.operation_id,
+                            "runId": submission.run_id,
+                            "error": "async callback attempt_id is required when run_id is declared",
+                        },
+                    )
                 existing = self._callbacks_by_operation_id.get(submission.operation_id, ())
                 for previous in existing:
                     if previous.idempotency_key == submission.idempotency_key:
