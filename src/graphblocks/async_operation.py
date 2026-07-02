@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from typing import Literal
 
 from .tools import ToolEffectOutcome, VALID_TOOL_EFFECT_OUTCOMES
@@ -91,6 +92,16 @@ def _validate_non_empty_string(owner: str, field_name: str, value: object) -> st
     if not stripped:
         raise ValueError(f"{owner} {field_name} must not be empty")
     return stripped
+
+
+def _parse_iso_datetime(owner: str, field_name: str, value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        raise ValueError(f"{owner} {field_name} must be an ISO datetime") from None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _validate_status(value: object) -> AsyncOperationResultStatusValue:
@@ -193,6 +204,30 @@ class AsyncOperation:
             raise ValueError(f"async operation {self.state} state requires submitted_at")
         if self.state in TERMINAL_ASYNC_OPERATION_STATES and self.completed_at is None:
             raise ValueError("async operation terminal state requires completed_at")
+        created_at = _parse_iso_datetime("async operation", "created_at", self.created_at)
+        submitted_at = (
+            None
+            if self.submitted_at is None
+            else _parse_iso_datetime("async operation", "submitted_at", self.submitted_at)
+        )
+        completed_at = (
+            None
+            if self.completed_at is None
+            else _parse_iso_datetime("async operation", "completed_at", self.completed_at)
+        )
+        expires_at = (
+            None
+            if self.expires_at is None
+            else _parse_iso_datetime("async operation", "expires_at", self.expires_at)
+        )
+        if submitted_at is not None and submitted_at < created_at:
+            raise ValueError("async operation submitted_at must not be before created_at")
+        if completed_at is not None and completed_at < created_at:
+            raise ValueError("async operation completed_at must not be before created_at")
+        if submitted_at is not None and completed_at is not None and completed_at < submitted_at:
+            raise ValueError("async operation completed_at must not be before submitted_at")
+        if expires_at is not None and expires_at <= created_at:
+            raise ValueError("async operation expires_at must be after created_at")
 
     @classmethod
     def created(

@@ -267,6 +267,64 @@ def test_async_operation_rejects_state_timestamp_inconsistency() -> None:
         )
 
 
+def test_async_operation_rejects_invalid_timestamp_format_and_ordering() -> None:
+    with raises_value_error("async operation created_at must be an ISO datetime"):
+        graphblocks.AsyncOperation.created(
+            operation_id="op-ci-1",
+            run_id="run-1",
+            node_id="startCI",
+            attempt_id="attempt-1",
+            kind="ci_job",
+            expected_schema="schemas/CICallback@1",
+            resume_token_hash="sha256:resume",
+            idempotency_key="idem-ci-1",
+            created_at="later",
+        )
+
+    with raises_value_error("async operation submitted_at must not be before created_at"):
+        graphblocks.AsyncOperation.created(
+            operation_id="op-ci-1",
+            run_id="run-1",
+            node_id="startCI",
+            attempt_id="attempt-1",
+            kind="ci_job",
+            expected_schema="schemas/CICallback@1",
+            resume_token_hash="sha256:resume",
+            idempotency_key="idem-ci-1",
+            created_at="2026-07-02T00:00:00Z",
+        ).mark_submitted(submitted_at="2026-07-01T23:59:59Z")
+
+    with raises_value_error("async operation completed_at must not be before submitted_at"):
+        graphblocks.AsyncOperation.created(
+            operation_id="op-ci-1",
+            run_id="run-1",
+            node_id="startCI",
+            attempt_id="attempt-1",
+            kind="ci_job",
+            expected_schema="schemas/CICallback@1",
+            resume_token_hash="sha256:resume",
+            idempotency_key="idem-ci-1",
+            created_at="2026-07-02T00:00:00Z",
+            callback_ref="cbep-ci-1",
+        ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").wait_for_callback().mark_callback_received(
+            completed_at="2026-07-02T00:00:00Z"
+        )
+
+    with raises_value_error("async operation expires_at must be after created_at"):
+        graphblocks.AsyncOperation.created(
+            operation_id="op-ci-1",
+            run_id="run-1",
+            node_id="startCI",
+            attempt_id="attempt-1",
+            kind="ci_job",
+            expected_schema="schemas/CICallback@1",
+            resume_token_hash="sha256:resume",
+            idempotency_key="idem-ci-1",
+            created_at="2026-07-02T00:00:00Z",
+            expires_at="2026-07-02T00:00:00Z",
+        )
+
+
 def test_async_operation_result_exports_are_available() -> None:
     assert "AsyncOperation" in graphblocks.__all__
     assert "AsyncOperationState" in graphblocks.__all__
@@ -285,6 +343,7 @@ def run_direct() -> None:
         test_async_operation_records_polling_metadata_and_terminal_failure,
         test_async_operation_rejects_invalid_refs_and_transitions,
         test_async_operation_rejects_state_timestamp_inconsistency,
+        test_async_operation_rejects_invalid_timestamp_format_and_ordering,
         test_async_operation_result_exports_are_available,
     )
     for test in tests:
