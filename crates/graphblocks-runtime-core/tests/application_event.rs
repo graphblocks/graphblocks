@@ -3,7 +3,7 @@ use graphblocks_runtime_core::application_event::{
     ApplicationEventError, ApplicationEventKind, ApplicationEventMetadata,
     ApplicationEventStreamState, ApplicationProtocolCapabilities, ApplicationProtocolError,
     ApplicationProtocolEvent, ApplicationProtocolEventKind, ApplicationProtocolEventMetadata,
-    ApplicationProtocolLog, ApplicationProtocolStreamState,
+    ApplicationProtocolLog, ApplicationProtocolReplayError, ApplicationProtocolStreamState,
 };
 use graphblocks_runtime_core::outcome::{BlockError, ErrorCategory};
 use graphblocks_runtime_core::output_policy::{
@@ -1795,6 +1795,88 @@ fn protocol_log_suppresses_duplicate_event_ids_and_replays_after_cursor() {
     assert_eq!(log.len(), 2);
     assert_eq!(replay.len(), 1);
     assert_eq!(replay[0].metadata.event_id, "event-2");
+}
+
+#[test]
+fn protocol_log_retained_replay_reports_expired_cursor_with_nearest_available_cursor() {
+    let mut log = ApplicationProtocolLog::new();
+    for sequence in 1..=4 {
+        log.append(
+            ApplicationProtocolEvent::new(
+                ApplicationProtocolEventKind::JobProgress,
+                protocol_event_metadata(
+                    &format!("event-{sequence}"),
+                    sequence,
+                    &format!("cursor-{sequence}"),
+                ),
+                json!({"message": sequence}),
+            )
+            .expect("event is valid"),
+        )
+        .expect("event appends");
+    }
+
+    assert_eq!(
+        log.replay_after_retained(Some("cursor-1"), 10, 2),
+        Err(ApplicationProtocolReplayError::CursorExpired {
+            requested_cursor: "cursor-1".to_owned(),
+            earliest_available_cursor: Some("cursor-3".to_owned()),
+            last_cursor: Some("cursor-4".to_owned()),
+            last_sequence: Some(4),
+        })
+    );
+
+    let replay = log
+        .replay_after_retained(Some("cursor-3"), 10, 2)
+        .expect("retained cursor replays");
+    assert_eq!(
+        replay
+            .iter()
+            .map(|event| event.metadata.event_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["event-4"]
+    );
+}
+
+#[test]
+fn protocol_log_retained_replay_accepts_sequence_cursor_and_empty_log() {
+    let mut log = ApplicationProtocolLog::new();
+    for sequence in 1..=3 {
+        log.append(
+            ApplicationProtocolEvent::new(
+                ApplicationProtocolEventKind::JobProgress,
+                protocol_event_metadata(
+                    &format!("event-{sequence}"),
+                    sequence,
+                    &format!("cursor-{sequence}"),
+                ),
+                json!({"message": sequence}),
+            )
+            .expect("event is valid"),
+        )
+        .expect("event appends");
+    }
+
+    let replay = log
+        .replay_after_retained(Some("2"), 10, 2)
+        .expect("sequence cursor replays");
+    assert_eq!(
+        replay
+            .iter()
+            .map(|event| event.metadata.event_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["event-3"]
+    );
+
+    assert_eq!(
+        ApplicationProtocolLog::new().replay_after_retained(Some("cursor-1"), 10, 2),
+        Err(ApplicationProtocolReplayError::CursorExpired {
+            requested_cursor: "cursor-1".to_owned(),
+            earliest_available_cursor: None,
+            last_cursor: None,
+            last_sequence: None,
+        })
+    );
 }
 
 #[test]

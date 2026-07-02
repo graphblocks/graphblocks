@@ -1287,6 +1287,16 @@ pub struct ApplicationProtocolLog {
     last_sequence: Option<u64>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ApplicationProtocolReplayError {
+    CursorExpired {
+        requested_cursor: String,
+        earliest_available_cursor: Option<String>,
+        last_cursor: Option<String>,
+        last_sequence: Option<u64>,
+    },
+}
+
 impl ApplicationProtocolLog {
     pub fn new() -> Self {
         Self::default()
@@ -1334,6 +1344,44 @@ impl ApplicationProtocolLog {
             .collect()
     }
 
+    pub fn replay_after_retained(
+        &self,
+        cursor: Option<&str>,
+        limit: usize,
+        retained_event_count: usize,
+    ) -> Result<Vec<ApplicationProtocolEvent>, ApplicationProtocolReplayError> {
+        let retained_start = self.events.len().saturating_sub(retained_event_count);
+        let retained = &self.events[retained_start..];
+
+        if let Some(cursor) = cursor {
+            let full_index = self
+                .events
+                .iter()
+                .position(|event| event_matches_cursor(event, cursor));
+            match full_index {
+                Some(index) if index >= retained_start => {
+                    let retained_index = index - retained_start + 1;
+                    return Ok(retained
+                        .iter()
+                        .skip(retained_index)
+                        .take(limit)
+                        .cloned()
+                        .collect());
+                }
+                Some(_) | None => {
+                    return Err(ApplicationProtocolReplayError::CursorExpired {
+                        requested_cursor: cursor.to_owned(),
+                        earliest_available_cursor: retained.first().and_then(event_cursor),
+                        last_cursor: self.events.last().and_then(event_cursor),
+                        last_sequence: self.events.last().map(|event| event.metadata.sequence),
+                    });
+                }
+            }
+        }
+
+        Ok(retained.iter().take(limit).cloned().collect())
+    }
+
     pub fn len(&self) -> usize {
         self.events.len()
     }
@@ -1341,6 +1389,19 @@ impl ApplicationProtocolLog {
     pub fn is_empty(&self) -> bool {
         self.events.is_empty()
     }
+}
+
+fn event_matches_cursor(event: &ApplicationProtocolEvent, cursor: &str) -> bool {
+    event.metadata.cursor.as_deref() == Some(cursor)
+        || event.metadata.sequence.to_string() == cursor
+}
+
+fn event_cursor(event: &ApplicationProtocolEvent) -> Option<String> {
+    event
+        .metadata
+        .cursor
+        .clone()
+        .or_else(|| Some(event.metadata.sequence.to_string()))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
