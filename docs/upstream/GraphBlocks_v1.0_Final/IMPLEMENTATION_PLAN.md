@@ -567,6 +567,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - `graphblocks-callbacks` also exposes receiver-side HMAC-SHA256 header verification with required
   GraphBlocks webhook header checks, envelope identity checks, and replay-window enforcement for
   local tools, tests, and embedded receivers.
+- `graphblocks-callbacks` now includes dependency-free retry/dead-letter projection helpers:
+  bounded deterministic jittered backoff, immutable delivery projections, dead-letter conversion,
+  and redrive records that preserve original delivery identity, idempotency key, and attempt
+  history without creating application events.
 - `graphblocks-server` now exposes framework-neutral
   `POST /callbacks/deliveries/{delivery_id}/redrive` and
   `POST /callbacks/deliveries/{delivery_id}/dead-letter`

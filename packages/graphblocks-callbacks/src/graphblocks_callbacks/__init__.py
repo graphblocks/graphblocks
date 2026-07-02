@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hmac
 import json
 import math
@@ -21,10 +21,24 @@ REQUIRED_WEBHOOK_HEADERS = (
     "GraphBlocks-Signature",
     "GraphBlocks-Signature-Algorithm",
 )
+VALID_DELIVERY_STATUSES = frozenset({
+    "pending",
+    "delivering",
+    "delivered",
+    "acknowledged",
+    "failed",
+    "dead_lettered",
+    "cancelled",
+    "expired",
+})
 
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _format_utc_timestamp(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def _parse_utc_timestamp(value: str) -> datetime:
@@ -41,6 +55,18 @@ def _parse_utc_timestamp(value: str) -> datetime:
 def _require_non_empty_string(field_name: str, value: str) -> None:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{field_name} must be a non-empty string")
+
+
+def _non_negative_int(field_name: str, value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{field_name} must be a non-negative integer")
+    return value
+
+
+def _positive_int(field_name: str, value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"{field_name} must be a positive integer")
+    return value
 
 
 def _validate_json_value(value: object) -> None:
@@ -65,10 +91,230 @@ def _validate_json_value(value: object) -> None:
     raise ValueError("payload must contain only JSON values")
 
 
+def _deterministic_jitter_ms(seed: str, jitter_ms: int) -> int:
+    if jitter_ms == 0:
+        return 0
+    digest = canonical_hash({"seed": seed}).split(":", 1)[-1]
+    return int(digest[:8], 16) % (jitter_ms + 1)
+
+
 def _json_payload(value: Mapping[str, object]) -> dict[str, object]:
     _validate_json_value(dict(value))
     json.dumps(value, allow_nan=False)
     return deepcopy(dict(value))
+
+
+@dataclass(frozen=True, slots=True)
+class CallbackRetryPolicy:
+    max_attempts: int = 8
+    initial_delay_ms: int = 500
+    max_delay_ms: int = 30_000
+    jitter_ms: int = 250
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "max_attempts", _positive_int("max_attempts", self.max_attempts))
+        object.__setattr__(
+            self,
+            "initial_delay_ms",
+            _non_negative_int("initial_delay_ms", self.initial_delay_ms),
+        )
+        object.__setattr__(self, "max_delay_ms", _non_negative_int("max_delay_ms", self.max_delay_ms))
+        object.__setattr__(self, "jitter_ms", _non_negative_int("jitter_ms", self.jitter_ms))
+        if self.initial_delay_ms > self.max_delay_ms:
+            raise ValueError("initial_delay_ms must be less than or equal to max_delay_ms")
+
+    def delay_ms(self, *, delivery_id: str, attempt: int) -> int:
+        _require_non_empty_string("delivery_id", delivery_id)
+        attempt = _positive_int("attempt", attempt)
+        base = min(self.max_delay_ms, self.initial_delay_ms * (2 ** max(0, attempt - 1)))
+        jitter = _deterministic_jitter_ms(f"{delivery_id}:{attempt}", self.jitter_ms)
+        return min(self.max_delay_ms, base + jitter)
+
+
+@dataclass(frozen=True, slots=True)
+class CallbackDeliveryProjection:
+    delivery_id: str
+    subscription_id: str
+    event_id: str
+    run_id: str
+    sequence: int
+    cursor: str
+    attempt: int
+    idempotency_key: str
+    status: str = "pending"
+    next_retry_at: str | None = None
+    delivered_at: str | None = None
+    acknowledged_at: str | None = None
+    last_error: str | None = None
+
+    def __post_init__(self) -> None:
+        for field_name in ("delivery_id", "subscription_id", "event_id", "run_id", "cursor", "idempotency_key"):
+            _require_non_empty_string(field_name, getattr(self, field_name))
+        object.__setattr__(self, "sequence", _non_negative_int("sequence", self.sequence))
+        object.__setattr__(self, "attempt", _positive_int("attempt", self.attempt))
+        _require_non_empty_string("status", self.status)
+        if self.status not in VALID_DELIVERY_STATUSES:
+            raise ValueError("status must be a valid callback delivery status")
+        for field_name in ("next_retry_at", "delivered_at", "acknowledged_at", "last_error"):
+            value = getattr(self, field_name)
+            if value is not None:
+                _require_non_empty_string(field_name, value)
+
+    def mark_failed(self, error: str) -> CallbackDeliveryProjection:
+        _require_non_empty_string("error", error)
+        return CallbackDeliveryProjection(
+            delivery_id=self.delivery_id,
+            subscription_id=self.subscription_id,
+            event_id=self.event_id,
+            run_id=self.run_id,
+            sequence=self.sequence,
+            cursor=self.cursor,
+            attempt=self.attempt,
+            idempotency_key=self.idempotency_key,
+            status="failed",
+            next_retry_at=None,
+            delivered_at=self.delivered_at,
+            acknowledged_at=self.acknowledged_at,
+            last_error=error,
+        )
+
+    def schedule_retry(
+        self,
+        policy: CallbackRetryPolicy,
+        *,
+        failed_at: str,
+        error: str,
+    ) -> CallbackDeliveryProjection:
+        if self.status == "pending" and self.next_retry_at is not None:
+            return self
+        if self.attempt >= policy.max_attempts:
+            return self
+        _require_non_empty_string("error", error)
+        retry_attempt = self.attempt + 1
+        retry_at = _parse_utc_timestamp(failed_at) + timedelta(
+            milliseconds=policy.delay_ms(delivery_id=self.delivery_id, attempt=retry_attempt)
+        )
+        return CallbackDeliveryProjection(
+            delivery_id=self.delivery_id,
+            subscription_id=self.subscription_id,
+            event_id=self.event_id,
+            run_id=self.run_id,
+            sequence=self.sequence,
+            cursor=self.cursor,
+            attempt=retry_attempt,
+            idempotency_key=self.idempotency_key,
+            status="pending",
+            next_retry_at=_format_utc_timestamp(retry_at),
+            delivered_at=self.delivered_at,
+            acknowledged_at=self.acknowledged_at,
+            last_error=error,
+        )
+
+    def to_dead_letter(
+        self,
+        policy: CallbackRetryPolicy,
+        *,
+        dead_lettered_at: str,
+        reason: str,
+    ) -> CallbackDeadLetterRecord:
+        _require_non_empty_string("dead_lettered_at", dead_lettered_at)
+        _require_non_empty_string("reason", reason)
+        attempt_history = tuple(range(1, min(self.attempt, policy.max_attempts) + 1))
+        return CallbackDeadLetterRecord(
+            delivery=CallbackDeliveryProjection(
+                delivery_id=self.delivery_id,
+                subscription_id=self.subscription_id,
+                event_id=self.event_id,
+                run_id=self.run_id,
+                sequence=self.sequence,
+                cursor=self.cursor,
+                attempt=self.attempt,
+                idempotency_key=self.idempotency_key,
+                status="dead_lettered",
+                next_retry_at=None,
+                delivered_at=self.delivered_at,
+                acknowledged_at=self.acknowledged_at,
+                last_error=self.last_error,
+            ),
+            attempt_history=attempt_history,
+            dead_lettered_at=dead_lettered_at,
+            reason=reason,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CallbackRedriveRecord:
+    delivery_id: str
+    subscription_id: str
+    event_id: str
+    run_id: str
+    sequence: int
+    cursor: str
+    idempotency_key: str
+    attempt_history: tuple[int, ...]
+    operator_principal: str
+    reason: str
+    redriven_at: str
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "delivery_id",
+            "subscription_id",
+            "event_id",
+            "run_id",
+            "cursor",
+            "idempotency_key",
+            "operator_principal",
+            "reason",
+            "redriven_at",
+        ):
+            _require_non_empty_string(field_name, getattr(self, field_name))
+        object.__setattr__(self, "sequence", _non_negative_int("sequence", self.sequence))
+        object.__setattr__(
+            self,
+            "attempt_history",
+            tuple(_positive_int("attempt_history item", item) for item in self.attempt_history),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CallbackDeadLetterRecord:
+    delivery: CallbackDeliveryProjection
+    attempt_history: tuple[int, ...]
+    dead_lettered_at: str
+    reason: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.delivery, CallbackDeliveryProjection):
+            raise ValueError("delivery must be a CallbackDeliveryProjection")
+        object.__setattr__(
+            self,
+            "attempt_history",
+            tuple(_positive_int("attempt_history item", item) for item in self.attempt_history),
+        )
+        _require_non_empty_string("dead_lettered_at", self.dead_lettered_at)
+        _require_non_empty_string("reason", self.reason)
+
+    def redrive(
+        self,
+        *,
+        operator_principal: str,
+        reason: str,
+        redriven_at: str,
+    ) -> CallbackRedriveRecord:
+        return CallbackRedriveRecord(
+            delivery_id=self.delivery.delivery_id,
+            subscription_id=self.delivery.subscription_id,
+            event_id=self.delivery.event_id,
+            run_id=self.delivery.run_id,
+            sequence=self.delivery.sequence,
+            cursor=self.delivery.cursor,
+            idempotency_key=self.delivery.idempotency_key,
+            attempt_history=self.attempt_history,
+            operator_principal=operator_principal,
+            reason=reason,
+            redriven_at=redriven_at,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,7 +475,11 @@ def verify_webhook_headers_hmac_sha256(
 
 
 __all__ = [
+    "CallbackDeadLetterRecord",
+    "CallbackDeliveryProjection",
     "CallbackEnvelope",
+    "CallbackRedriveRecord",
+    "CallbackRetryPolicy",
     "REQUIRED_WEBHOOK_HEADERS",
     "sign_webhook_hmac_sha256",
     "verify_webhook_headers_hmac_sha256",

@@ -17,6 +17,8 @@ if str(ROOT / "src") not in sys.path:
 
 from graphblocks_callbacks import (  # noqa: E402
     CallbackEnvelope,
+    CallbackDeliveryProjection,
+    CallbackRetryPolicy,
     REQUIRED_WEBHOOK_HEADERS,
     verify_webhook_headers_hmac_sha256,
     verify_webhook_hmac_sha256,
@@ -239,3 +241,83 @@ def test_callback_webhook_header_verification_rejects_tampering_and_stale_timest
         now="2026-07-02T00:02:02Z",
         replay_window_seconds=60,
     )
+
+
+def test_callback_retry_policy_schedules_bounded_deterministic_backoff() -> None:
+    policy = CallbackRetryPolicy(
+        max_attempts=4,
+        initial_delay_ms=100,
+        max_delay_ms=1_000,
+        jitter_ms=25,
+    )
+    delivery = CallbackDeliveryProjection(
+        delivery_id="del_001",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        sequence=1042,
+        cursor="evt_1042",
+        attempt=1,
+        idempotency_key="sub_001:evt_1042",
+        status="failed",
+    )
+
+    first_retry = delivery.schedule_retry(
+        policy,
+        failed_at="2026-07-02T00:00:00Z",
+        error="receiver 503",
+    )
+    second_retry = first_retry.mark_failed("receiver 503").schedule_retry(
+        policy,
+        failed_at="2026-07-02T00:00:00Z",
+        error="receiver 503 again",
+    )
+
+    assert first_retry.status == "pending"
+    assert first_retry.attempt == 2
+    assert first_retry.next_retry_at == "2026-07-02T00:00:00.221Z"
+    assert first_retry.last_error == "receiver 503"
+    assert second_retry.attempt == 3
+    assert second_retry.next_retry_at == "2026-07-02T00:00:00.408Z"
+    assert first_retry.schedule_retry(
+        policy,
+        failed_at="2026-07-02T00:00:00Z",
+        error="receiver 503",
+    ) == first_retry
+
+
+def test_callback_dead_letter_and_redrive_preserve_delivery_identity_and_attempt_history() -> None:
+    policy = CallbackRetryPolicy(max_attempts=2, initial_delay_ms=100, max_delay_ms=1_000, jitter_ms=0)
+    delivery = CallbackDeliveryProjection(
+        delivery_id="del_001",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        sequence=1042,
+        cursor="evt_1042",
+        attempt=2,
+        idempotency_key="sub_001:evt_1042",
+        status="failed",
+        last_error="receiver 503",
+    )
+
+    dead_letter = delivery.to_dead_letter(
+        policy,
+        dead_lettered_at="2026-07-02T00:00:30Z",
+        reason="retry exhausted",
+    )
+    redrive = dead_letter.redrive(
+        operator_principal="operator-1",
+        reason="receiver fixed",
+        redriven_at="2026-07-02T00:01:00Z",
+    )
+
+    assert dead_letter.delivery.delivery_id == "del_001"
+    assert dead_letter.delivery.idempotency_key == "sub_001:evt_1042"
+    assert dead_letter.attempt_history == (1, 2)
+    assert redrive.delivery_id == "del_001"
+    assert redrive.event_id == "evt_1042"
+    assert redrive.subscription_id == "sub_001"
+    assert redrive.attempt_history == (1, 2)
+    assert redrive.operator_principal == "operator-1"
+    assert redrive.reason == "receiver fixed"
