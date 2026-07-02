@@ -19,6 +19,7 @@ from graphblocks.ingestion import (
 def test_root_facade_exports_ingestion_manifest_types() -> None:
     expected = {
         "IndexRecordRef",
+        "IngestionDeletePolicy",
         "IngestionError",
         "IngestionManifest",
         "IngestionStatus",
@@ -266,6 +267,41 @@ def test_ingestion_manifest_store_tombstone_marks_deleted_and_clears_current() -
     assert deleted.status == "deleted"
     assert store.current_for_asset("asset-1") is None
     assert store.get("manifest-1").status == "deleted"
+
+
+def test_ingestion_manifest_store_delete_hard_removes_manifest_and_current_pointer() -> None:
+    store = InMemoryIngestionManifestStore()
+    store.create_processing(_manifest("manifest-1", "rev-1"), "2026-06-22T00:01:00Z")
+    store.commit("manifest-1", None, None, (_index_record("rev-1"),), "2026-06-22T00:02:00Z")
+
+    deleted = store.delete("manifest-1", policy="hard", updated_at="2026-06-22T00:03:00Z")
+
+    assert deleted is None
+    assert store.current_for_asset("asset-1") is None
+    assert store.list_by_status("ready") == []
+    with pytest.raises(IngestionError, match="was not found"):
+        store.get("manifest-1")
+
+
+def test_ingestion_manifest_store_delete_tombstone_retains_manifest_snapshot() -> None:
+    store = InMemoryIngestionManifestStore()
+    store.create_processing(_manifest("manifest-1", "rev-1"), "2026-06-22T00:01:00Z")
+
+    deleted = store.delete("manifest-1", policy="tombstone", updated_at="2026-06-22T00:02:00Z")
+
+    assert deleted is not None
+    assert deleted.status == "deleted"
+    assert store.get("manifest-1").status == "deleted"
+
+
+def test_ingestion_manifest_store_rejects_invalid_delete_policy() -> None:
+    store = InMemoryIngestionManifestStore()
+    store.create_processing(_manifest("manifest-1", "rev-1"), "2026-06-22T00:01:00Z")
+
+    with pytest.raises(ValueError, match="policy must be tombstone or hard"):
+        store.delete("manifest-1", policy="archive", updated_at="2026-06-22T00:02:00Z")  # type: ignore[arg-type]
+
+    assert store.get("manifest-1").status == "processing"
 
 
 def test_ingestion_manifest_store_rejects_commit_after_tombstone() -> None:

@@ -485,6 +485,18 @@ resume, and resume without ownership fencing.
 - branch에서 `Absent`와 `Value(null)`이 구분된다.
 - conversation CAS conflict와 regenerate/branch가 결정론적으로 처리된다.
 
+### Current implementation slice
+
+- `graphblocks-core`/`graphblocks-documents` now expose document lineage primitives, parser
+  selection locks, local blob adapters, and ingestion manifests with ACL-gated publish records.
+- `InMemoryIngestionManifestStore` now distinguishes tombstone retention from hard delete via a
+  typed `IngestionDeletePolicy`: tombstone retains a deleted manifest snapshot while hard delete
+  removes the manifest and clears the current-asset pointer.
+- RAG primitives cover local chunk indexing, tombstone/hard delete propagation, context packs,
+  citation/source-trace resolution, answer grounding, abstention, fusion, and rerank projections.
+- Conversation primitives cover CAS, tombstone/hard delete retention, branch/regenerate lineage,
+  turn lifecycle, draft/retract semantics, and deterministic conflict handling.
+
 ## 6. Phase 3 — Policy, Usage, Budget, Evaluation (`GB-C3-GOVERNED-RUNTIME`)
 
 ### 구현

@@ -39,6 +39,7 @@ def test_documents_package_exposes_ingestion_manifest_facade(monkeypatch) -> Non
 
     for name in (
         "IndexRecordRef",
+        "IngestionDeletePolicy",
         "IngestionManifest",
         "IngestionStatus",
         "InMemoryIngestionManifestStore",

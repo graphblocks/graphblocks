@@ -175,6 +175,7 @@ from .documents import (
 from .ingestion import (
     InMemoryIngestionManifestStore,
     IndexRecordRef,
+    IngestionDeletePolicy,
     IngestionError,
     IngestionManifest,
     IngestionStatus,
@@ -772,6 +773,7 @@ __all__ = [
     "InputDependency",
     "InvalidBlobKeyError",
     "IndexRecordRef",
+    "IngestionDeletePolicy",
     "IngestionError",
     "IngestionManifest",
     "IngestionStatus",

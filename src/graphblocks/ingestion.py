@@ -7,6 +7,7 @@ from typing import Literal
 from .documents import ArtifactRef, AssetRevision, SourceAsset
 
 
+IngestionDeletePolicy = Literal["tombstone", "hard"]
 IngestionStatus = Literal["discovered", "processing", "ready", "failed", "superseded", "deleted"]
 JsonObject = dict[str, object]
 VALID_INGESTION_STATUSES = frozenset(
@@ -361,7 +362,25 @@ class InMemoryIngestionManifestStore:
         return _copy_ingestion_manifest(failed)
 
     def tombstone(self, manifest_id: str, updated_at: str) -> IngestionManifest:
+        deleted = self.delete(manifest_id, policy="tombstone", updated_at=updated_at)
+        assert deleted is not None
+        return deleted
+
+    def delete(
+        self,
+        manifest_id: str,
+        *,
+        policy: IngestionDeletePolicy = "tombstone",
+        updated_at: str,
+    ) -> IngestionManifest | None:
+        if policy not in {"tombstone", "hard"}:
+            raise ValueError("policy must be tombstone or hard")
         manifest = self._require_manifest(manifest_id)
+        if policy == "hard":
+            self._manifests.pop(manifest_id, None)
+            if self._current_by_asset.get(manifest.asset_id) == manifest_id:
+                self._current_by_asset.pop(manifest.asset_id, None)
+            return None
         if manifest.status == "deleted":
             return _copy_ingestion_manifest(manifest)
         deleted = _copy_ingestion_manifest(replace(manifest, status="deleted", error=None, updated_at=updated_at))
