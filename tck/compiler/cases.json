@@ -1386,14 +1386,53 @@
             "kind": "ci_job",
             "callback": {
               "required": true
+            },
+            "resume": {
+              "requirePolicyReevaluation": true,
+              "requireBudgetReservation": true,
+              "requireReleaseCompatibility": true,
+              "requireOwnershipFence": true
+            },
+            "attemptFencing": true
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:bab2b2edea68233721e81ea18841dd670f25fad7093b3f7e0b0ed86e3e8a8d9b",
+      "error_codes": ["GB6001", "GB6003", "GB6007"]
+    }
+  },
+  {
+    "name": "async_operation_missing_resume_and_fencing_contracts",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "async-operation-missing-resume-contracts"
+      },
+      "spec": {
+        "nodes": {
+          "agent": {
+            "block": "agent.run@1"
+          }
+        },
+        "asyncOperations": {
+          "ci": {
+            "kind": "ci_job",
+            "timeout": "30m",
+            "idempotencyKey": "$input.request_id",
+            "callback": {
+              "required": true,
+              "schema": "schemas/CICallback@1"
             }
           }
         }
       }
     },
     "expected": {
-      "graph_hash": "sha256:5fb55826d1f39be5c5bd9230f4d6df588586d0bdfcdda5e16819125168a80891",
-      "error_codes": ["GB6001", "GB6003", "GB6007"]
+      "graph_hash": "sha256:1f5714317007f9d13b837867140dcd021b935e7893f899e874b140ec8b3476fd",
+      "error_codes": ["GB6008", "GB6015", "GB6016"]
     }
   }
 ]

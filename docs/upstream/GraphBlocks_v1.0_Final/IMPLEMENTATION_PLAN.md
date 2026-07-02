@@ -280,11 +280,12 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
 - Async operation configuration diagnostics now compare declared expected callback payload size to
   the configured ingestion limit and report oversized inline callback payloads as `GB6010`.
 - Async operation configuration diagnostics now report callback waits that can resume without
-  policy, budget, and release-compatibility re-evaluation as `GB6008`.
+  policy, budget, and release-compatibility re-evaluation as `GB6008`, with shared compiler TCK
+  coverage.
 - Async operation configuration diagnostics now report callback waits without attempt fencing,
-  where stale callbacks could resume newer attempts, as `GB6015`.
+  where stale callbacks could resume newer attempts, as `GB6015`, with shared compiler TCK coverage.
 - Async operation configuration diagnostics now report callback waits that can resume without run
-  ownership lease or fencing protection as `GB6016`.
+  ownership lease or fencing protection as `GB6016`, with shared compiler TCK coverage.
 - `SqliteAsyncOperationStore` now persists async operations, operation event journals, and external
   callback receipts across reopen, including idempotency-key duplicate detection after restart.
 - Callback receipt duplicate detection is now scoped by `(operation_id, idempotency_key)` in both

@@ -102,11 +102,87 @@ def _has_async_callback_schema(config: dict[str, Any]) -> bool:
     return _has_non_empty_string(config.get("callbackSchema") or config.get("callback_schema"))
 
 
+def _truthy_config_flag(config: dict[str, Any], *names: str) -> bool:
+    return any(config.get(name) is True for name in names)
+
+
 def _callback_schema_required(config: dict[str, Any]) -> bool:
     callback = config.get("callback")
     if isinstance(callback, dict):
         return callback.get("required", True) is not False
     return "callback" in config or "callbackSchema" in config or "callback_schema" in config
+
+
+def _has_async_resume_reevaluation(config: dict[str, Any]) -> bool:
+    resume = config.get("resume")
+    if not isinstance(resume, dict):
+        resume = {}
+    policy_ok = _truthy_config_flag(
+        resume,
+        "requirePolicyReevaluation",
+        "require_policy_reevaluation",
+        "policyReevaluation",
+        "policy_reevaluation",
+    ) or _truthy_config_flag(
+        config,
+        "requirePolicyReevaluation",
+        "require_policy_reevaluation",
+    )
+    budget_ok = _truthy_config_flag(
+        resume,
+        "requireBudgetReservation",
+        "require_budget_reservation",
+        "budgetReservation",
+        "budget_reservation",
+    ) or _truthy_config_flag(
+        config,
+        "requireBudgetReservation",
+        "require_budget_reservation",
+    )
+    release_ok = _truthy_config_flag(
+        resume,
+        "requireReleaseCompatibility",
+        "require_release_compatibility",
+        "releaseCompatibility",
+        "release_compatibility",
+    ) or _truthy_config_flag(
+        config,
+        "requireReleaseCompatibility",
+        "require_release_compatibility",
+    )
+    return policy_ok and budget_ok and release_ok
+
+
+def _has_async_attempt_fencing(config: dict[str, Any]) -> bool:
+    callback = config.get("callback")
+    callback_config = callback if isinstance(callback, dict) else {}
+    return (
+        _truthy_config_flag(config, "attemptFencing", "attempt_fencing", "fencingTokenRequired", "fencing_token_required")
+        or _truthy_config_flag(
+            callback_config,
+            "attemptFencing",
+            "attempt_fencing",
+            "fencingTokenRequired",
+            "fencing_token_required",
+        )
+    )
+
+
+def _has_async_ownership_fence(config: dict[str, Any]) -> bool:
+    resume = config.get("resume")
+    resume_config = resume if isinstance(resume, dict) else {}
+    return (
+        _truthy_config_flag(config, "ownershipFence", "ownership_fence", "runOwnershipLease", "run_ownership_lease")
+        or _truthy_config_flag(
+            resume_config,
+            "requireOwnershipFence",
+            "require_ownership_fence",
+            "ownershipFence",
+            "ownership_fence",
+            "runOwnershipLease",
+            "run_ownership_lease",
+        )
+    )
 
 
 def _diagnose_async_operation_config(
@@ -136,6 +212,30 @@ def _diagnose_async_operation_config(
                 "GB6007",
                 "async operation callbacks require an expected callback schema",
                 f"{path}.callback",
+            )
+        )
+    if not _has_async_resume_reevaluation(config):
+        diagnostics.append(
+            Diagnostic(
+                "GB6008",
+                "callback resume must re-evaluate policy, budget, and release compatibility",
+                f"{path}.resume",
+            )
+        )
+    if not _has_async_attempt_fencing(config):
+        diagnostics.append(
+            Diagnostic(
+                "GB6015",
+                "async callbacks require attempt fencing so stale callbacks cannot resume newer attempts",
+                path,
+            )
+        )
+    if not _has_async_ownership_fence(config):
+        diagnostics.append(
+            Diagnostic(
+                "GB6016",
+                "callback resume requires run ownership lease or fencing protection",
+                f"{path}.resume",
             )
         )
 

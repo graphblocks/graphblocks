@@ -1167,6 +1167,13 @@ def test_compile_reports_async_operation_missing_timeout_idempotency_and_schema(
                 "ci": {
                     "kind": "ci_job",
                     "callback": {"required": True},
+                    "resume": {
+                        "requirePolicyReevaluation": True,
+                        "requireBudgetReservation": True,
+                        "requireReleaseCompatibility": True,
+                        "requireOwnershipFence": True,
+                    },
+                    "attemptFencing": True,
                 }
             },
         },
@@ -1188,6 +1195,13 @@ def test_compile_reports_async_start_operation_node_missing_callback_contracts()
                         "provider": "github-actions",
                         "operation": "workflow_dispatch",
                         "callback": {"required": True},
+                        "resume": {
+                            "requirePolicyReevaluation": True,
+                            "requireBudgetReservation": True,
+                            "requireReleaseCompatibility": True,
+                            "requireOwnershipFence": True,
+                        },
+                        "attemptFencing": True,
                     },
                 }
             },
@@ -1195,6 +1209,30 @@ def test_compile_reports_async_start_operation_node_missing_callback_contracts()
     }
 
     assert _error_codes(graph) == ["GB6001", "GB6003", "GB6007"]
+
+
+def test_compile_reports_async_operation_missing_resume_and_fencing_contracts() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "async-operation-missing-resume-contracts"},
+        "spec": {
+            "nodes": {"agent": {"block": "agent.run@1"}},
+            "asyncOperations": {
+                "ci": {
+                    "kind": "ci_job",
+                    "timeout": "30m",
+                    "idempotencyKey": "$input.request_id",
+                    "callback": {
+                        "required": True,
+                        "schema": "schemas/CICallback@1",
+                    },
+                }
+            },
+        },
+    }
+
+    assert _error_codes(graph) == ["GB6008", "GB6015", "GB6016"]
 
 
 def test_compile_allows_async_operation_with_timeout_idempotency_and_schema() -> None:
@@ -1215,6 +1253,13 @@ def test_compile_allows_async_operation_with_timeout_idempotency_and_schema() ->
                             "required": True,
                             "schema": "schemas/CICallback@1",
                         },
+                        "resume": {
+                            "requirePolicyReevaluation": True,
+                            "requireBudgetReservation": True,
+                            "requireReleaseCompatibility": True,
+                            "requireOwnershipFence": True,
+                        },
+                        "attemptFencing": True,
                     },
                 }
             },
@@ -1227,9 +1272,16 @@ def test_compile_allows_async_operation_with_timeout_idempotency_and_schema() ->
                         "required": True,
                         "schema": "schemas/CICallback@1",
                     },
+                    "resume": {
+                        "requirePolicyReevaluation": True,
+                        "requireBudgetReservation": True,
+                        "requireReleaseCompatibility": True,
+                        "requireOwnershipFence": True,
+                    },
+                    "attemptFencing": True,
                 }
             },
         },
     }
 
-    assert not {"GB6001", "GB6003", "GB6007"} & set(_error_codes(graph))
+    assert not {"GB6001", "GB6003", "GB6007", "GB6008", "GB6015", "GB6016"} & set(_error_codes(graph))
