@@ -290,6 +290,9 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   bounded retry scheduling, best-effort failure handling, dead-letter terminal state, and redrive
   records that preserve original delivery identity, event identity, attempt history, operator, and
   reason.
+- Callback delivery targets are now typed as webhook, WebSocket, SSE, push notification, email, or
+  local callback variants, and ordered-delivery diagnostics use target capabilities instead of
+  string-prefix inference.
 - `SqliteCallbackDeadLetterStore` now persists callback dead-letter records across reopen and can
   redrive them while preserving original delivery identity, idempotency key, attempt history, and
   audit-visible redrive count.

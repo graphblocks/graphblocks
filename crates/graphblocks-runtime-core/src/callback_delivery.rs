@@ -80,6 +80,134 @@ pub enum CallbackSubscriptionStatus {
     Revoked,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CallbackDeliveryTarget {
+    Webhook {
+        url: String,
+    },
+    WebSocket {
+        connection_id: String,
+        require_ack: bool,
+    },
+    Sse {
+        connection_id: String,
+        require_ack: bool,
+    },
+    PushNotification {
+        channel: String,
+    },
+    Email {
+        address: String,
+    },
+    LocalCallback {
+        callback_name: String,
+        process_bound: bool,
+    },
+}
+
+impl CallbackDeliveryTarget {
+    pub fn webhook(url: impl Into<String>) -> Self {
+        Self::Webhook { url: url.into() }
+    }
+
+    pub fn websocket(
+        connection_id: impl Into<String>,
+        require_ack: bool,
+    ) -> Result<Self, CallbackDeliveryError> {
+        let connection_id = non_empty_target_field(connection_id.into(), "connection_id")?;
+        Ok(Self::WebSocket {
+            connection_id,
+            require_ack,
+        })
+    }
+
+    pub fn sse(
+        connection_id: impl Into<String>,
+        require_ack: bool,
+    ) -> Result<Self, CallbackDeliveryError> {
+        let connection_id = non_empty_target_field(connection_id.into(), "connection_id")?;
+        Ok(Self::Sse {
+            connection_id,
+            require_ack,
+        })
+    }
+
+    pub fn push_notification(channel: impl Into<String>) -> Result<Self, CallbackDeliveryError> {
+        let channel = non_empty_target_field(channel.into(), "channel")?;
+        Ok(Self::PushNotification { channel })
+    }
+
+    pub fn email(address: impl Into<String>) -> Result<Self, CallbackDeliveryError> {
+        let address = non_empty_target_field(address.into(), "address")?;
+        Ok(Self::Email { address })
+    }
+
+    pub fn local_callback(
+        callback_name: impl Into<String>,
+        process_bound: bool,
+    ) -> Result<Self, CallbackDeliveryError> {
+        let callback_name = non_empty_target_field(callback_name.into(), "callback_name")?;
+        Ok(Self::LocalCallback {
+            callback_name,
+            process_bound,
+        })
+    }
+
+    pub fn parse_address(address: impl Into<String>) -> Result<Self, CallbackDeliveryError> {
+        let address = address.into();
+        let (kind, value) =
+            address
+                .split_once(':')
+                .ok_or_else(|| CallbackDeliveryError::EmptyField {
+                    field: "delivery_target".to_owned(),
+                })?;
+        match kind {
+            "webhook" => Ok(Self::webhook(non_empty_target_field(
+                value.to_owned(),
+                "url",
+            )?)),
+            "websocket" => Self::websocket(value, false),
+            "sse" => Self::sse(value, false),
+            "push" | "push_notification" => Self::push_notification(value),
+            "email" => Self::email(value),
+            "local_callback" => Self::local_callback(value, true),
+            _ => Ok(Self::LocalCallback {
+                callback_name: non_empty_target_field(address, "delivery_target")?,
+                process_bound: true,
+            }),
+        }
+    }
+
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Webhook { .. } => "webhook",
+            Self::WebSocket { .. } => "websocket",
+            Self::Sse { .. } => "sse",
+            Self::PushNotification { .. } => "push_notification",
+            Self::Email { .. } => "email",
+            Self::LocalCallback { .. } => "local_callback",
+        }
+    }
+
+    pub fn address(&self) -> String {
+        match self {
+            Self::Webhook { url } => format!("webhook:{url}"),
+            Self::WebSocket { connection_id, .. } => format!("websocket:{connection_id}"),
+            Self::Sse { connection_id, .. } => format!("sse:{connection_id}"),
+            Self::PushNotification { channel } => format!("push_notification:{channel}"),
+            Self::Email { address } => format!("email:{address}"),
+            Self::LocalCallback { callback_name, .. } => format!("local_callback:{callback_name}"),
+        }
+    }
+
+    pub fn supports_ordered_delivery(&self) -> bool {
+        matches!(
+            self,
+            Self::Webhook { .. } | Self::WebSocket { .. } | Self::Sse { .. }
+        )
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum CallbackAuthoritativeUse {
     RunCorrectness,
@@ -96,7 +224,7 @@ pub struct CallbackSubscription {
     pub scope: String,
     pub scope_id: String,
     pub event_filter: EventFilter,
-    pub delivery_target: String,
+    pub delivery_target: CallbackDeliveryTarget,
     pub status: CallbackSubscriptionStatus,
     pub created_at_unix_ms: u64,
     pub expires_at_unix_ms: Option<u64>,
@@ -118,13 +246,35 @@ impl CallbackSubscription {
         failure_policy: CallbackFailurePolicy,
         created_at_unix_ms: u64,
     ) -> Result<Self, CallbackDeliveryError> {
+        Self::new_with_target(
+            subscription_id,
+            owner,
+            scope,
+            scope_id,
+            event_filter,
+            CallbackDeliveryTarget::parse_address(delivery_target)?,
+            failure_policy,
+            created_at_unix_ms,
+        )
+    }
+
+    pub fn new_with_target(
+        subscription_id: impl Into<String>,
+        owner: impl Into<String>,
+        scope: impl Into<String>,
+        scope_id: impl Into<String>,
+        event_filter: EventFilter,
+        delivery_target: CallbackDeliveryTarget,
+        failure_policy: CallbackFailurePolicy,
+        created_at_unix_ms: u64,
+    ) -> Result<Self, CallbackDeliveryError> {
         let subscription = Self {
             subscription_id: subscription_id.into(),
             owner: owner.into(),
             scope: scope.into(),
             scope_id: scope_id.into(),
             event_filter,
-            delivery_target: delivery_target.into(),
+            delivery_target,
             status: CallbackSubscriptionStatus::Active,
             created_at_unix_ms,
             expires_at_unix_ms: None,
@@ -144,7 +294,6 @@ impl CallbackSubscription {
             ("owner", &self.owner),
             ("scope", &self.scope),
             ("scope_id", &self.scope_id),
-            ("delivery_target", &self.delivery_target),
         ] {
             if value.trim().is_empty() {
                 return Err(CallbackDeliveryError::EmptyField {
@@ -817,15 +966,15 @@ impl CallbackConfigurationDiagnostic {
     pub fn subscription(subscription: &CallbackSubscription) -> Vec<Self> {
         let mut diagnostics = Vec::new();
         if subscription.ordered_delivery
-            && !subscription.delivery_target.starts_with("webhook:")
-            && !subscription.delivery_target.starts_with("websocket:")
+            && !subscription.delivery_target.supports_ordered_delivery()
         {
             diagnostics.push(Self {
                 code: "GB6012",
                 field: "delivery.ordering",
                 message: format!(
                     "callback subscription {} requests ordered delivery for target {} that cannot guarantee ordering",
-                    subscription.subscription_id, subscription.delivery_target
+                    subscription.subscription_id,
+                    subscription.delivery_target.address()
                 ),
             });
         }
@@ -895,9 +1044,9 @@ impl CallbackConfigurationDiagnostic {
                 ),
             });
         }
-        if let Some(diagnostic) = endpoint_error
-            .and_then(|error| Self::webhook_endpoint_error(&subscription.delivery_target, error))
-        {
+        if let Some(diagnostic) = endpoint_error.and_then(|error| {
+            Self::webhook_endpoint_error(&subscription.delivery_target.address(), error)
+        }) {
             diagnostics.push(diagnostic);
         }
         diagnostics
@@ -1363,6 +1512,15 @@ fn parse_authority_host(authority: &str) -> Result<String, WebhookEndpointError>
 
 fn normalize_host(host: &str) -> String {
     host.trim_end_matches('.').to_ascii_lowercase()
+}
+
+fn non_empty_target_field(value: String, field: &str) -> Result<String, CallbackDeliveryError> {
+    if value.trim().is_empty() {
+        return Err(CallbackDeliveryError::EmptyField {
+            field: field.to_owned(),
+        });
+    }
+    Ok(value)
 }
 
 fn is_forbidden_webhook_host(host: &str) -> bool {

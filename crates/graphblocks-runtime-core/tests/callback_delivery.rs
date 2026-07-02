@@ -5,11 +5,11 @@ use graphblocks_runtime_core::application_event::{
 use graphblocks_runtime_core::callback_delivery::{
     CallbackAuthoritativeUse, CallbackConfigurationDiagnostic, CallbackDeadLetter,
     CallbackDeliveryResponse, CallbackDeliveryRunAction, CallbackDeliveryScheduler,
-    CallbackDeliveryStatus, CallbackFailurePolicy, CallbackRetryPolicy, CallbackSubscription,
-    CallbackSubscriptionStatus, EventFilter, OrderedDeliveryState, SqliteCallbackDeadLetterStore,
-    SqliteCallbackDeliveryQueue, WebhookDeliveryAttempt, WebhookDeliveryTarget,
-    WebhookDeliveryWorker, WebhookEgressPolicy, WebhookEndpointError, WebhookHttpResponse,
-    WebhookHttpTransport, WebhookSignatureError, WebhookSigningConfig,
+    CallbackDeliveryStatus, CallbackDeliveryTarget, CallbackFailurePolicy, CallbackRetryPolicy,
+    CallbackSubscription, CallbackSubscriptionStatus, EventFilter, OrderedDeliveryState,
+    SqliteCallbackDeadLetterStore, SqliteCallbackDeliveryQueue, WebhookDeliveryAttempt,
+    WebhookDeliveryTarget, WebhookDeliveryWorker, WebhookEgressPolicy, WebhookEndpointError,
+    WebhookHttpResponse, WebhookHttpTransport, WebhookSignatureError, WebhookSigningConfig,
 };
 use serde_json::json;
 use std::net::{IpAddr, Ipv4Addr};
@@ -1168,6 +1168,59 @@ fn webhook_target_rejects_malformed_or_empty_urls() {
             max_payload_bytes: 0
         })
     );
+}
+
+#[test]
+fn callback_delivery_targets_preserve_typed_contract_and_ordering_capability() {
+    let webhook = CallbackDeliveryTarget::webhook("https://hooks.example.com/events");
+    assert_eq!(webhook.kind(), "webhook");
+    assert_eq!(
+        webhook.address(),
+        "webhook:https://hooks.example.com/events"
+    );
+    assert!(webhook.supports_ordered_delivery());
+
+    let websocket =
+        CallbackDeliveryTarget::websocket("conn-1", true).expect("websocket target is valid");
+    assert_eq!(websocket.kind(), "websocket");
+    assert_eq!(websocket.address(), "websocket:conn-1");
+    assert!(websocket.supports_ordered_delivery());
+
+    let sse = CallbackDeliveryTarget::sse("stream-1", true).expect("sse target is valid");
+    assert_eq!(sse.kind(), "sse");
+    assert_eq!(sse.address(), "sse:stream-1");
+    assert!(sse.supports_ordered_delivery());
+
+    let local = CallbackDeliveryTarget::local_callback("test-hook", true)
+        .expect("local callback target is valid");
+    assert_eq!(local.kind(), "local_callback");
+    assert_eq!(local.address(), "local_callback:test-hook");
+    assert!(!local.supports_ordered_delivery());
+
+    let email = CallbackDeliveryTarget::email("ops@example.com").expect("email target is valid");
+    assert_eq!(email.kind(), "email");
+    assert_eq!(email.address(), "email:ops@example.com");
+    assert!(!email.supports_ordered_delivery());
+}
+
+#[test]
+fn callback_subscription_accepts_typed_delivery_target() {
+    let subscription = CallbackSubscription::new_with_target(
+        "sub-ws",
+        "principal:ide",
+        "run",
+        "run-1",
+        EventFilter::new(),
+        CallbackDeliveryTarget::websocket("conn-1", true).expect("target is valid"),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+        1_000,
+    )
+    .expect("subscription is valid")
+    .with_ordered_delivery();
+
+    assert_eq!(subscription.delivery_target.kind(), "websocket");
+    assert_eq!(subscription.delivery_target.address(), "websocket:conn-1");
+    assert!(CallbackConfigurationDiagnostic::subscription(&subscription).is_empty());
 }
 
 #[test]
