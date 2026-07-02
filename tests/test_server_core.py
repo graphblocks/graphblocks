@@ -2770,6 +2770,35 @@ def test_server_app_rejects_subscription_with_invalid_event_filter_before_replay
     assert app.subscriptions("run-subscribe-filter-invalid-1") == ()
 
 
+def test_server_app_rejects_subscription_with_invalid_visibility_filter() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-subscribe-visibility-invalid-1"] = ()
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-subscribe-visibility-invalid-1/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-visibility-invalid",
+                    "eventFilter": {"types": ["RunSucceeded"], "visibility": ["public"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "server event subscription event_filter.visibility must contain only client, operator, internal, or audit_only",
+    }
+    assert app.subscriptions("run-subscribe-visibility-invalid-1") == ()
+
+
 def test_server_app_unsubscribes_without_dropping_events() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     graph = {
@@ -3792,6 +3821,36 @@ def test_server_app_rejects_callback_registration_with_invalid_event_filter_befo
     assert json.loads(response.body.decode("utf-8")) == {
         "ok": False,
         "error": "server event subscription event_filter.include_terminal_events must be a boolean",
+    }
+    assert app.callback_registrations() == ()
+
+
+def test_server_app_rejects_callback_registration_with_invalid_visibility_filter() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/register",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "callback-sub-invalid-visibility",
+                    "scope": "tenant",
+                    "scopeId": "tenant-1",
+                    "eventFilter": {"types": ["RunSucceeded"], "visibility": ["public"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "server event subscription event_filter.visibility must contain only client, operator, internal, or audit_only",
     }
     assert app.callback_registrations() == ()
 

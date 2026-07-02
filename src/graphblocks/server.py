@@ -41,6 +41,7 @@ VALID_CALLBACK_DELIVERY_KINDS = frozenset({
     "email",
     "local_callback",
 })
+VALID_EVENT_VISIBILITIES = frozenset({"client", "operator", "internal", "audit_only"})
 VALID_WEBHOOK_SIGNING_ALGORITHMS = frozenset({"hmac-sha256", "ed25519"})
 FORBIDDEN_WEBHOOK_HOSTS = frozenset({"localhost", "metadata.google.internal"})
 SERVER_EVENT_SEVERITY_RANKS = {
@@ -219,7 +220,6 @@ def _freeze_json_value(owner: str, field_name: str, value: object) -> object:
 def _validate_server_event_filter(owner: str, event_filter: Mapping[str, object]) -> None:
     for source_key, field_name in (
         ("types", "types"),
-        ("visibility", "visibility"),
         ("node_ids", "node_ids"),
         ("nodeIds", "node_ids"),
         ("operation_ids", "operation_ids"),
@@ -227,6 +227,14 @@ def _validate_server_event_filter(owner: str, event_filter: Mapping[str, object]
     ):
         if source_key in event_filter:
             _validate_string_sequence(owner, f"event_filter.{field_name}", event_filter[source_key])
+
+    visibility = event_filter.get("visibility")
+    if visibility is not None:
+        visibility_values = _validate_string_sequence(owner, "event_filter.visibility", visibility)
+        if any(value not in VALID_EVENT_VISIBILITIES for value in visibility_values):
+            raise ValueError(
+                f"{owner} event_filter.visibility must contain only client, operator, internal, or audit_only"
+            )
 
     severity_min = event_filter.get("severity_min", event_filter.get("severityMin"))
     if severity_min is not None:

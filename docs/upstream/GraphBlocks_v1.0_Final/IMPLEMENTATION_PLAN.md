@@ -595,8 +595,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   filters honor event type, visibility, node ID, operation ID, minimum severity, and
   `includeTerminalEvents` predicates. Visibility, node, and operation filters match the
   specification's top-level `visibility`, `nodeId`, and `operationId` event fields and legacy
-  payload fields. Nested event filter and delivery configs are immutable snapshots and are thawed
-  back to plain JSON for response payloads.
+  payload fields. Visibility filters validate the specification's `client`, `operator`,
+  `internal`, and `audit_only` literals. Nested event filter and delivery configs are immutable
+  snapshots and are thawed back to plain JSON for response payloads.
   Run-scoped subscription ids are single-assignment and cannot overwrite an existing active or
   revoked projection. Subscription and callback registration projections validate the spec failure
   policy literals before storage.
