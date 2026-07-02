@@ -224,6 +224,7 @@ def default_server_route_manifest() -> ServerRouteManifest:
             ServerEndpoint("GET", "/runs/{run_id}", "http", "get_run_status", auth_required=True),
             ServerEndpoint("POST", "/runs/{run_id}/attach", "http", "attach_to_run", auth_required=True),
             ServerEndpoint("POST", "/runs/{run_id}/detach", "http", "detach_from_run", auth_required=True),
+            ServerEndpoint("POST", "/runs/{run_id}/subscriptions", "http", "subscribe_events", auth_required=True),
             ServerEndpoint("POST", "/runs/{run_id}/cancel", "http", "cancel_run", auth_required=True),
             ServerEndpoint("POST", "/callbacks/{operation_id}", "http", "submit_async_callback", auth_required=True),
             ServerEndpoint("GET", "/runs/{run_id}/events", "sse", "application_events", auth_required=True),
@@ -446,6 +447,135 @@ class ServerAsyncCallbackSubmission:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class ServerEventSubscription:
+    subscription_id: str
+    run_id: str
+    event_filter: Mapping[str, object]
+    delivery: Mapping[str, object]
+    status: str = "active"
+    failure_policy: str = "retry_then_dead_letter"
+    replay_from_cursor: str | None = None
+    created_at: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "subscription_id",
+            _validate_non_empty_string("server event subscription", "subscription_id", self.subscription_id),
+        )
+        object.__setattr__(
+            self,
+            "run_id",
+            _validate_non_empty_string("server event subscription", "run_id", self.run_id),
+        )
+        if not isinstance(self.event_filter, Mapping):
+            raise ValueError("server event subscription event_filter must be a mapping")
+        if not isinstance(self.delivery, Mapping):
+            raise ValueError("server event subscription delivery must be a mapping")
+        event_filter = dict(self.event_filter)
+        delivery = dict(self.delivery)
+        if any(not isinstance(key, str) or not key.strip() for key in event_filter):
+            raise ValueError("server event subscription event_filter keys must be non-empty strings")
+        if any(not isinstance(key, str) or not key.strip() for key in delivery):
+            raise ValueError("server event subscription delivery keys must be non-empty strings")
+        _validate_non_empty_string(
+            "server event subscription",
+            "delivery.kind",
+            delivery.get("kind", ""),
+        )
+        object.__setattr__(self, "event_filter", MappingProxyType(event_filter))
+        object.__setattr__(self, "delivery", MappingProxyType(delivery))
+        object.__setattr__(
+            self,
+            "status",
+            _validate_non_empty_string("server event subscription", "status", self.status),
+        )
+        object.__setattr__(
+            self,
+            "failure_policy",
+            _validate_non_empty_string("server event subscription", "failure_policy", self.failure_policy),
+        )
+        if self.replay_from_cursor is not None:
+            object.__setattr__(
+                self,
+                "replay_from_cursor",
+                _validate_non_empty_string(
+                    "server event subscription",
+                    "replay_from_cursor",
+                    self.replay_from_cursor,
+                ),
+            )
+        if self.created_at != "":
+            object.__setattr__(
+                self,
+                "created_at",
+                _validate_non_empty_string("server event subscription", "created_at", self.created_at),
+            )
+
+    @classmethod
+    def from_request(
+        cls,
+        *,
+        run_id: str,
+        request: ServerRequest,
+        ordinal: int,
+    ) -> ServerEventSubscription:
+        body = json.loads(request.body.decode("utf-8") or "{}")
+        if not isinstance(body, Mapping):
+            raise ValueError("subscribe request body must be a JSON object")
+        event_filter = body.get("event_filter", body.get("eventFilter", {}))
+        delivery = body.get("delivery", {})
+        if not isinstance(event_filter, Mapping):
+            raise ValueError("subscribe request event_filter must be a JSON object")
+        if not isinstance(delivery, Mapping):
+            raise ValueError("subscribe request delivery must be a JSON object")
+        subscription_id = body.get("subscription_id", body.get("subscriptionId"))
+        if subscription_id is None:
+            subscription_id = f"sub-{run_id}-{ordinal:06d}"
+        replay_from_cursor = body.get("replay_from_cursor", body.get("replayFromCursor"))
+        failure_policy = body.get("failure_policy", body.get("failurePolicy", "retry_then_dead_letter"))
+        return cls(
+            subscription_id=_validate_non_empty_string(
+                "server event subscription",
+                "subscription_id",
+                subscription_id,
+            ),
+            run_id=run_id,
+            event_filter=event_filter,
+            delivery=delivery,
+            failure_policy=_validate_non_empty_string(
+                "server event subscription",
+                "failure_policy",
+                failure_policy,
+            ),
+            replay_from_cursor=(
+                _validate_non_empty_string(
+                    "server event subscription",
+                    "replay_from_cursor",
+                    replay_from_cursor,
+                )
+                if replay_from_cursor is not None
+                else None
+            ),
+            created_at=request.requested_at or _utc_now_iso(),
+        )
+
+    def response_payload(self, replayed_events: list[dict[str, object]], last_cursor: str) -> dict[str, object]:
+        return {
+            "ok": True,
+            "subscriptionId": self.subscription_id,
+            "runId": self.run_id,
+            "status": self.status,
+            "failurePolicy": self.failure_policy,
+            "replayFromCursor": self.replay_from_cursor,
+            "lastCursor": last_cursor,
+            "delivery": dict(self.delivery),
+            "eventFilter": dict(self.event_filter),
+            "events": replayed_events,
+        }
+
+
 def _optional_callback_string(body: Mapping[str, object], snake: str, camel: str) -> str | None:
     value = body.get(snake, body.get(camel))
     if value is None:
@@ -571,6 +701,11 @@ class GraphBlocksServerApp:
         init=False,
         repr=False,
     )
+    _subscriptions_by_run_id: dict[str, tuple[ServerEventSubscription, ...]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
 
     def handle(self, request: ServerRequest) -> ServerResponse:
         try:
@@ -678,6 +813,40 @@ class GraphBlocksServerApp:
                 if not isinstance(payload, Mapping):
                     raise ValueError("detach request body must be a JSON object")
                 return self._detach_from_run_response(run_id, events, payload, request.requested_at or _utc_now_iso())
+            except (TypeError, ValueError, json.JSONDecodeError) as error:
+                return ServerResponse.json(
+                    400,
+                    {
+                        "ok": False,
+                        "error": str(error),
+                    },
+                )
+        if route.operation == "subscribe_events":
+            try:
+                run_id = route_match.path_params.get("run_id", "")
+                events = self._events_by_run_id.get(run_id)
+                if events is None:
+                    return ServerResponse.json(
+                        404,
+                        {
+                            "ok": False,
+                            "error": f"run event stream not found for subscription run {run_id!r}",
+                        },
+                    )
+                existing = self._subscriptions_by_run_id.get(run_id, ())
+                subscription = ServerEventSubscription.from_request(
+                    run_id=run_id,
+                    request=request,
+                    ordinal=len(existing) + 1,
+                )
+                replay = self._subscription_replay(subscription, events)
+                if isinstance(replay, ServerResponse):
+                    return replay
+                self._subscriptions_by_run_id[run_id] = (*existing, subscription)
+                return ServerResponse.json(
+                    201,
+                    subscription.response_payload(replay, f"{run_id}:{self._last_event_sequence(events)}"),
+                )
             except (TypeError, ValueError, json.JSONDecodeError) as error:
                 return ServerResponse.json(
                     400,
@@ -932,6 +1101,10 @@ class GraphBlocksServerApp:
         run_id = _validate_non_empty_string("server detach", "run_id", run_id)
         return self._detachments_by_run_id.get(run_id, ())
 
+    def subscriptions(self, run_id: str) -> tuple[ServerEventSubscription, ...]:
+        run_id = _validate_non_empty_string("server event subscription", "run_id", run_id)
+        return self._subscriptions_by_run_id.get(run_id, ())
+
     def _run_status_payload(
         self,
         run_id: str,
@@ -1106,6 +1279,59 @@ class GraphBlocksServerApp:
                     last_sequence = sequence
         return last_sequence
 
+    def _subscription_replay(
+        self,
+        subscription: ServerEventSubscription,
+        events: tuple[dict[str, object], ...],
+    ) -> list[dict[str, object]] | ServerResponse:
+        replay_after_sequence = 0
+        sequence_by_cursor = {
+            f"{subscription.run_id}:{sequence}": sequence
+            for event in events
+            if isinstance((metadata := event.get("metadata")), Mapping)
+            and isinstance((sequence := metadata.get("sequence")), int)
+            and not isinstance(sequence, bool)
+        }
+        if subscription.replay_from_cursor is not None:
+            if subscription.replay_from_cursor not in sequence_by_cursor:
+                last_sequence = self._last_event_sequence(events)
+                nearest_cursor = (
+                    f"{subscription.run_id}:{min(sequence_by_cursor.values())}" if sequence_by_cursor else None
+                )
+                return ServerResponse.json(
+                    409,
+                    {
+                        "ok": False,
+                        "error": "CursorExpired",
+                        "runId": subscription.run_id,
+                        "requestedCursor": subscription.replay_from_cursor,
+                        "nearestAvailableCursor": nearest_cursor,
+                        "lastCursor": f"{subscription.run_id}:{last_sequence}",
+                        "lastSequence": last_sequence,
+                    },
+                )
+            replay_after_sequence = sequence_by_cursor[subscription.replay_from_cursor]
+
+        replayed_events: list[dict[str, object]] = []
+        for event in events:
+            metadata = event.get("metadata")
+            if not isinstance(metadata, Mapping):
+                continue
+            sequence = metadata.get("sequence")
+            if not isinstance(sequence, int) or isinstance(sequence, bool) or sequence <= replay_after_sequence:
+                continue
+            if self._event_matches_subscription_filter(event, subscription.event_filter):
+                replayed_events.append(dict(event))
+        return replayed_events
+
+    def _event_matches_subscription_filter(self, event: dict[str, object], event_filter: Mapping[str, object]) -> bool:
+        types = event_filter.get("types")
+        if types is None:
+            return True
+        allowed_types = _validate_string_sequence("server event subscription", "event_filter.types", types)
+        event_kind = event.get("kind")
+        return isinstance(event_kind, str) and event_kind in allowed_types
+
 
 class ServerProtocolVersionMismatchError(ValueError):
     def __init__(self, left: str, right: str) -> None:
@@ -1173,6 +1399,7 @@ __all__ = [
     "ServerAuthHook",
     "ServerAuthRequest",
     "ServerEndpoint",
+    "ServerEventSubscription",
     "ServerHealth",
     "ServerHealthStatus",
     "ServerProtocolVersionMismatchError",

@@ -12,6 +12,7 @@ from graphblocks.server import (
     ServerAsyncCallbackSubmission,
     ServerAuthRequest,
     ServerEndpoint,
+    ServerEventSubscription,
     ServerHealth,
     ServerRequest,
     ServerResponse,
@@ -103,6 +104,14 @@ def test_server_route_manifest_matches_detach_from_run_path() -> None:
     route_match = default_server_route_manifest().match("POST", "/runs/run-123/detach")
 
     assert route_match.endpoint.operation == "detach_from_run"
+    assert route_match.endpoint.auth_required is True
+    assert route_match.path_params == {"run_id": "run-123"}
+
+
+def test_server_route_manifest_matches_subscribe_events_path() -> None:
+    route_match = default_server_route_manifest().match("POST", "/runs/run-123/subscriptions")
+
+    assert route_match.endpoint.operation == "subscribe_events"
     assert route_match.endpoint.auth_required is True
     assert route_match.path_params == {"run_id": "run-123"}
 
@@ -1116,6 +1125,214 @@ def test_server_app_rejects_detach_for_missing_run_or_client_id() -> None:
         "ok": False,
         "error": "detach request client_id must not be empty",
     }
+
+
+def test_server_app_subscribes_to_run_events_with_filtered_replay() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "server-subscribe"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Subscribe {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "ok"}},
+                    "runId": "run-subscribe-1",
+                    "responseId": "response-subscribe-1",
+                    "releaseId": "release-subscribe-1",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-subscribe-1/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscription_id": "sub-run-1",
+                    "event_filter": {"types": ["RunSucceeded"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                    "replay_from_cursor": "run-subscribe-1:1",
+                    "failure_policy": "best_effort",
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-02T00:00:00Z",
+        )
+    )
+
+    payload = json.loads(response.body.decode("utf-8"))
+    assert response.status_code == 201
+    assert payload["ok"] is True
+    assert payload["subscriptionId"] == "sub-run-1"
+    assert payload["runId"] == "run-subscribe-1"
+    assert payload["status"] == "active"
+    assert payload["failurePolicy"] == "best_effort"
+    assert payload["replayFromCursor"] == "run-subscribe-1:1"
+    assert payload["lastCursor"] == "run-subscribe-1:2"
+    assert payload["eventFilter"] == {"types": ["RunSucceeded"]}
+    assert payload["delivery"] == {"kind": "local_callback", "callback_name": "ide"}
+    assert [event["kind"] for event in payload["events"]] == ["RunSucceeded"]
+    assert app.subscriptions("run-subscribe-1") == (
+        ServerEventSubscription(
+            subscription_id="sub-run-1",
+            run_id="run-subscribe-1",
+            event_filter={"types": ["RunSucceeded"]},
+            delivery={"kind": "local_callback", "callback_name": "ide"},
+            status="active",
+            failure_policy="best_effort",
+            replay_from_cursor="run-subscribe-1:1",
+            created_at="2026-07-02T00:00:00Z",
+        ),
+    )
+
+
+def test_server_app_subscribe_events_reports_cursor_expired() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "server-subscribe-expired"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Subscribe {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "ok"}},
+                    "runId": "run-subscribe-expired-1",
+                    "responseId": "response-subscribe-expired-1",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-subscribe-expired-1/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-expired",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                    "replayFromCursor": "run-subscribe-expired-1:99",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == 409
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "CursorExpired",
+        "runId": "run-subscribe-expired-1",
+        "requestedCursor": "run-subscribe-expired-1:99",
+        "nearestAvailableCursor": "run-subscribe-expired-1:1",
+        "lastCursor": "run-subscribe-expired-1:2",
+        "lastSequence": 2,
+    }
+    assert app.subscriptions("run-subscribe-expired-1") == ()
+
+
+def test_server_app_rejects_subscription_without_delivery_kind() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "server-subscribe-invalid"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Subscribe {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "ok"}},
+                    "runId": "run-subscribe-invalid-1",
+                    "responseId": "response-subscribe-invalid-1",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-subscribe-invalid-1/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-invalid",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {},
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "server event subscription delivery.kind must not be empty",
+    }
+    assert app.subscriptions("run-subscribe-invalid-1") == ()
 
 
 def test_server_app_reports_missing_run_events() -> None:

@@ -374,6 +374,9 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
 - `graphblocks-server` now exposes the framework-neutral `POST /runs/{run_id}/detach`
   `DetachFromRun` route, recording client detach projections while preserving the authoritative
   event stream and current run status.
+- `graphblocks-server` now exposes the framework-neutral `POST /runs/{run_id}/subscriptions`
+  `SubscribeEvents` route, recording run-scoped event subscription projections and replaying
+  retained matching events from the authoritative event stream after an optional cursor.
 - Server-level HTTP/TLS webhook client integration and multi-process coordinator failover execution
   remain follow-on slices.
 

@@ -65,10 +65,17 @@ def test_server_package_reexports_framework_neutral_contracts(monkeypatch) -> No
         idempotency_key="idem-1",
         payload={"status": "completed"},
     ).response_payload()["status"] == "accepted"
+    assert graphblocks_server.ServerEventSubscription(
+        subscription_id="sub-1",
+        run_id="run-1",
+        event_filter={"types": ["RunSucceeded"]},
+        delivery={"kind": "local_callback", "callback_name": "ide"},
+    ).status == "active"
     assert "ApplicationCommand" in graphblocks_server.__all__
     assert "ApplicationProtocolEvent" in graphblocks_server.__all__
     assert "ApplicationProtocolLog" in graphblocks_server.__all__
     assert "ServerAsyncCallbackSubmission" in graphblocks_server.__all__
+    assert "ServerEventSubscription" in graphblocks_server.__all__
     assert "ServerResponse" in graphblocks_server.__all__
 
 
