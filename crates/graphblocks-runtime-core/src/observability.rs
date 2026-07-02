@@ -419,6 +419,99 @@ pub enum TelemetryRecordKind {
     RequiredEvaluationResult,
 }
 
+impl TelemetryRecordKind {
+    pub fn requires_durable_path(self) -> bool {
+        matches!(
+            self,
+            Self::RequiredAudit
+                | Self::UsageLedger
+                | Self::EffectTerminal
+                | Self::RunTerminal
+                | Self::RequiredEvaluationResult
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TelemetryExporterKind {
+    Otlp,
+    Langfuse,
+    Prometheus,
+    AuditLog,
+    UsageLedger,
+    DiagnosticBundle,
+    Custom,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TelemetryExporterReliability {
+    Durable,
+    Lossless,
+    Lossy,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TelemetryExporterRoute {
+    pub exporter_id: String,
+    pub kind: TelemetryExporterKind,
+    pub reliability: TelemetryExporterReliability,
+}
+
+impl TelemetryExporterRoute {
+    pub fn new(
+        exporter_id: impl Into<String>,
+        kind: TelemetryExporterKind,
+        reliability: TelemetryExporterReliability,
+    ) -> Self {
+        Self {
+            exporter_id: exporter_id.into(),
+            kind,
+            reliability,
+        }
+    }
+
+    pub fn validate_record_kind(
+        &self,
+        record_kind: TelemetryRecordKind,
+    ) -> Result<(), TelemetryExporterRouteError> {
+        if self.exporter_id.trim().is_empty() {
+            return Err(TelemetryExporterRouteError::EmptyExporterId);
+        }
+        if self.reliability == TelemetryExporterReliability::Lossy
+            && record_kind.requires_durable_path()
+        {
+            return Err(TelemetryExporterRouteError::LossyDurableRecord {
+                exporter_id: self.exporter_id.clone(),
+                kind: record_kind,
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TelemetryExporterRouteError {
+    EmptyExporterId,
+    LossyDurableRecord {
+        exporter_id: String,
+        kind: TelemetryRecordKind,
+    },
+}
+
+impl fmt::Display for TelemetryExporterRouteError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyExporterId => write!(formatter, "telemetry exporter id must not be empty"),
+            Self::LossyDurableRecord { exporter_id, kind } => write!(
+                formatter,
+                "telemetry exporter {exporter_id:?} is lossy and cannot export durable record kind {kind:?}"
+            ),
+        }
+    }
+}
+
+impl Error for TelemetryExporterRouteError {}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TelemetryQueuePolicy {
     pub max_items: usize,
@@ -765,14 +858,7 @@ impl TelemetryBuffer {
         &mut self,
         record: TelemetryRecord,
     ) -> Result<TelemetryEnqueueOutcome, TelemetryBufferError> {
-        if matches!(
-            record.kind,
-            TelemetryRecordKind::RequiredAudit
-                | TelemetryRecordKind::UsageLedger
-                | TelemetryRecordKind::EffectTerminal
-                | TelemetryRecordKind::RunTerminal
-                | TelemetryRecordKind::RequiredEvaluationResult
-        ) {
+        if record.kind.requires_durable_path() {
             return Err(TelemetryBufferError::RequiredDurablePath { kind: record.kind });
         }
 

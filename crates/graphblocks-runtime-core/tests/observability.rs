@@ -3,7 +3,9 @@ use graphblocks_runtime_core::observability::{
     DiagnosticBundleRedaction, DiagnosticExcerpt, DiagnosticExcerptKind, GenerationObservation,
     MetricLabelError, MetricLabelSet, ObservabilityEventName, ObservabilityObservation,
     RedactionRule, SpanTiming, TelemetryBuffer, TelemetryBufferError, TelemetryEnqueueOutcome,
-    TelemetryOnFull, TelemetryPriority, TelemetryQueuePolicy, TelemetryRecord, TelemetryRecordKind,
+    TelemetryExporterKind, TelemetryExporterReliability, TelemetryExporterRoute,
+    TelemetryExporterRouteError, TelemetryOnFull, TelemetryPriority, TelemetryQueuePolicy,
+    TelemetryRecord, TelemetryRecordKind,
 };
 use serde_json::json;
 
@@ -265,6 +267,63 @@ fn telemetry_buffer_rejects_required_durable_records() {
         Err(TelemetryBufferError::RequiredDurablePath {
             kind: TelemetryRecordKind::RequiredAudit,
         })
+    );
+}
+
+#[test]
+fn lossy_exporter_routes_reject_audit_and_usage_ledger_records() {
+    let route = TelemetryExporterRoute::new(
+        "otlp-best-effort",
+        TelemetryExporterKind::Otlp,
+        TelemetryExporterReliability::Lossy,
+    );
+
+    assert_eq!(
+        route.validate_record_kind(TelemetryRecordKind::RequiredAudit),
+        Err(TelemetryExporterRouteError::LossyDurableRecord {
+            exporter_id: "otlp-best-effort".to_owned(),
+            kind: TelemetryRecordKind::RequiredAudit,
+        })
+    );
+    assert_eq!(
+        route.validate_record_kind(TelemetryRecordKind::UsageLedger),
+        Err(TelemetryExporterRouteError::LossyDurableRecord {
+            exporter_id: "otlp-best-effort".to_owned(),
+            kind: TelemetryRecordKind::UsageLedger,
+        })
+    );
+    route
+        .validate_record_kind(TelemetryRecordKind::Span)
+        .expect("lossy exporter can receive ordinary telemetry");
+}
+
+#[test]
+fn durable_exporter_routes_accept_required_audit_and_usage_ledger_records() {
+    let route = TelemetryExporterRoute::new(
+        "audit-outbox",
+        TelemetryExporterKind::AuditLog,
+        TelemetryExporterReliability::Durable,
+    );
+
+    route
+        .validate_record_kind(TelemetryRecordKind::RequiredAudit)
+        .expect("durable route accepts audit records");
+    route
+        .validate_record_kind(TelemetryRecordKind::UsageLedger)
+        .expect("durable route accepts usage ledger records");
+}
+
+#[test]
+fn exporter_route_rejects_empty_identity() {
+    let route = TelemetryExporterRoute::new(
+        " ",
+        TelemetryExporterKind::Langfuse,
+        TelemetryExporterReliability::Lossy,
+    );
+
+    assert_eq!(
+        route.validate_record_kind(TelemetryRecordKind::Span),
+        Err(TelemetryExporterRouteError::EmptyExporterId)
     );
 }
 

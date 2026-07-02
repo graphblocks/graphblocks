@@ -691,6 +691,13 @@ interoperability: Haystack Component/Pipeline adapter
 - Langfuse/OTLP failure가 run을 실패시키지 않는다.
 - AuditLog와 UsageLedger는 lossy exporter를 사용하지 않는다.
 
+### Current implementation slice
+
+- `graphblocks-runtime-core::observability` now models telemetry exporter routes with explicit
+  reliability (`durable`, `lossless`, `lossy`) and rejects routing required durable records such as
+  `RequiredAudit` and `UsageLedger` to lossy OTLP/Langfuse-style projections while still allowing
+  ordinary spans and metrics on lossy exporters.
+
 ## 8. Phase 5 — Remote Workers, Release, Deployment (`GB-C4-PRODUCTION`)
 
 ### 구현
