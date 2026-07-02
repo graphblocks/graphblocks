@@ -1,3 +1,6 @@
+use std::error::Error;
+use std::fmt;
+
 use serde_json::Value;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -19,6 +22,88 @@ pub enum TypedValueError {
         expected: ValueEncoding,
         actual: ValueEncoding,
     },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RemoteBoundaryValuePolicyError {
+    NonSerializableInlineValue {
+        node_id: String,
+        port: String,
+        encoding: ValueEncoding,
+    },
+    InlineValueTooLarge {
+        node_id: String,
+        port: String,
+        size_bytes: usize,
+        max_inline_bytes: usize,
+    },
+}
+
+impl fmt::Display for RemoteBoundaryValuePolicyError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NonSerializableInlineValue {
+                node_id,
+                port,
+                encoding,
+            } => write!(
+                formatter,
+                "remote boundary value {node_id}.{port} uses non-serializable inline encoding {encoding:?}"
+            ),
+            Self::InlineValueTooLarge {
+                node_id,
+                port,
+                size_bytes,
+                max_inline_bytes,
+            } => write!(
+                formatter,
+                "remote boundary value {node_id}.{port} is {size_bytes} bytes, exceeding inline limit {max_inline_bytes}"
+            ),
+        }
+    }
+}
+
+impl Error for RemoteBoundaryValuePolicyError {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RemoteBoundaryValuePolicy {
+    pub max_inline_bytes: usize,
+}
+
+impl RemoteBoundaryValuePolicy {
+    pub fn new(max_inline_bytes: usize) -> Self {
+        Self { max_inline_bytes }
+    }
+
+    pub fn validate(
+        &self,
+        node_id: impl AsRef<str>,
+        port: impl AsRef<str>,
+        value: &TypedValue,
+    ) -> Result<(), RemoteBoundaryValuePolicyError> {
+        let node_id = node_id.as_ref();
+        let port = port.as_ref();
+        if value.encoding == ValueEncoding::ArtifactRef {
+            return Ok(());
+        }
+        if value.encoding == ValueEncoding::RawBytes {
+            return Err(RemoteBoundaryValuePolicyError::NonSerializableInlineValue {
+                node_id: node_id.to_owned(),
+                port: port.to_owned(),
+                encoding: value.encoding,
+            });
+        }
+        let size_bytes = value.payload.len();
+        if size_bytes > self.max_inline_bytes {
+            return Err(RemoteBoundaryValuePolicyError::InlineValueTooLarge {
+                node_id: node_id.to_owned(),
+                port: port.to_owned(),
+                size_bytes,
+                max_inline_bytes: self.max_inline_bytes,
+            });
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

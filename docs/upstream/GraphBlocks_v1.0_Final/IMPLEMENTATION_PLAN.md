@@ -736,6 +736,9 @@ sandbox
   contract. `WorkerAdmissionRequirement` rejects live workers whose advertised target,
   worker-protocol version, package lock hash, or required capabilities do not match the physical
   execution requirement before remote execution is admitted.
+- `graphblocks-runtime-core::typed_value` now includes `RemoteBoundaryValuePolicy`, which rejects
+  non-serializable inline raw bytes and oversized inline values at remote execution boundaries while
+  allowing large payloads to cross by `ArtifactRef`.
 
 ## 9. Phase 6 — Adaptive Orchestration and Verified Work (`GB-X1-ORCHESTRATION`)
 
