@@ -4,8 +4,9 @@ use graphblocks_runtime_core::observability::{
     MetricLabelError, MetricLabelSet, ObservabilityEventName, ObservabilityObservation,
     RedactionRule, SpanTiming, TelemetryBuffer, TelemetryBufferError, TelemetryEnqueueOutcome,
     TelemetryExporterKind, TelemetryExporterReliability, TelemetryExporterRoute,
-    TelemetryExporterRouteError, TelemetryOnFull, TelemetryPriority, TelemetryQueuePolicy,
-    TelemetryRecord, TelemetryRecordKind,
+    TelemetryExporterRouteError, TelemetryExportOutcome, TelemetryExportOutcomeError,
+    TelemetryOnFull, TelemetryPriority, TelemetryQueuePolicy, TelemetryRecord,
+    TelemetryRecordKind,
 };
 use serde_json::json;
 
@@ -324,6 +325,65 @@ fn exporter_route_rejects_empty_identity() {
     assert_eq!(
         route.validate_record_kind(TelemetryRecordKind::Span),
         Err(TelemetryExporterRouteError::EmptyExporterId)
+    );
+}
+
+#[test]
+fn telemetry_export_outcome_failure_is_non_fatal_to_run_correctness() {
+    let outcome =
+        TelemetryExportOutcome::failed("otlp", ["span-1", "metric-1"], "TimeoutError", true)
+            .expect("export failure is recorded as non-fatal");
+
+    assert_eq!(outcome.exporter_id, "otlp");
+    assert_eq!(outcome.status, "failed");
+    assert_eq!(outcome.record_ids, vec!["span-1", "metric-1"]);
+    assert_eq!(outcome.error_type.as_deref(), Some("TimeoutError"));
+    assert!(outcome.retryable);
+    assert_eq!(outcome.run_impact, "none");
+    assert_eq!(
+        outcome.contract_payload(),
+        json!({
+            "exporter_id": "otlp",
+            "status": "failed",
+            "record_ids": ["span-1", "metric-1"],
+            "error_type": "TimeoutError",
+            "retryable": true,
+            "run_impact": "none",
+        })
+    );
+}
+
+#[test]
+fn telemetry_export_outcome_rejects_run_correctness_impact() {
+    assert_eq!(
+        TelemetryExportOutcome::new(
+            "langfuse",
+            "failed",
+            ["gen-1"],
+            Some("TimeoutError"),
+            true,
+            "fail_run",
+        ),
+        Err(TelemetryExportOutcomeError::RunImpactNotAllowed {
+            exporter_id: "langfuse".to_owned(),
+            run_impact: "fail_run".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn telemetry_export_outcome_requires_identity_and_records() {
+    assert_eq!(
+        TelemetryExportOutcome::completed(" ", ["span-1"]),
+        Err(TelemetryExportOutcomeError::EmptyExporterId)
+    );
+    assert_eq!(
+        TelemetryExportOutcome::completed("otlp", [" "]),
+        Err(TelemetryExportOutcomeError::EmptyRecordId)
+    );
+    assert_eq!(
+        TelemetryExportOutcome::completed("otlp", std::iter::empty::<&str>()),
+        Err(TelemetryExportOutcomeError::MissingRecordIds)
     );
 }
 

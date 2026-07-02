@@ -749,6 +749,9 @@ interoperability: Haystack Component/Pipeline adapter
   reliability (`durable`, `lossless`, `lossy`) and rejects routing required durable records such as
   `RequiredAudit` and `UsageLedger` to lossy OTLP/Langfuse-style projections while still allowing
   ordinary spans and metrics on lossy exporters.
+- Runtime-core observability now records telemetry export outcomes with an explicit
+  `run_impact = none` contract. Exporter failures can be retryable and diagnostic, but any exporter
+  outcome that claims to fail, pause, bill, quota, or otherwise affect run correctness is rejected.
 
 ## 8. Phase 5 — Remote Workers, Release, Deployment (`GB-C4-PRODUCTION`)
 

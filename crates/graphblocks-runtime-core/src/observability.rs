@@ -513,6 +513,137 @@ impl fmt::Display for TelemetryExporterRouteError {
 impl Error for TelemetryExporterRouteError {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TelemetryExportOutcome {
+    pub exporter_id: String,
+    pub status: String,
+    pub record_ids: Vec<String>,
+    pub error_type: Option<String>,
+    pub retryable: bool,
+    pub run_impact: String,
+}
+
+impl TelemetryExportOutcome {
+    pub fn new(
+        exporter_id: impl Into<String>,
+        status: impl Into<String>,
+        record_ids: impl IntoIterator<Item = impl Into<String>>,
+        error_type: Option<impl Into<String>>,
+        retryable: bool,
+        run_impact: impl Into<String>,
+    ) -> Result<Self, TelemetryExportOutcomeError> {
+        let exporter_id = exporter_id.into();
+        if exporter_id.trim().is_empty() {
+            return Err(TelemetryExportOutcomeError::EmptyExporterId);
+        }
+        let status = status.into();
+        if status.trim().is_empty() {
+            return Err(TelemetryExportOutcomeError::EmptyStatus);
+        }
+        let record_ids = record_ids.into_iter().map(Into::into).collect::<Vec<_>>();
+        if record_ids.is_empty() {
+            return Err(TelemetryExportOutcomeError::MissingRecordIds);
+        }
+        if record_ids.iter().any(|record_id| record_id.trim().is_empty()) {
+            return Err(TelemetryExportOutcomeError::EmptyRecordId);
+        }
+        let run_impact = run_impact.into();
+        if run_impact != "none" {
+            return Err(TelemetryExportOutcomeError::RunImpactNotAllowed {
+                exporter_id,
+                run_impact,
+            });
+        }
+        Ok(Self {
+            exporter_id,
+            status,
+            record_ids,
+            error_type: error_type.map(Into::into),
+            retryable,
+            run_impact,
+        })
+    }
+
+    pub fn completed(
+        exporter_id: impl Into<String>,
+        record_ids: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Result<Self, TelemetryExportOutcomeError> {
+        Self::new(
+            exporter_id,
+            "completed",
+            record_ids,
+            Option::<String>::None,
+            false,
+            "none",
+        )
+    }
+
+    pub fn failed(
+        exporter_id: impl Into<String>,
+        record_ids: impl IntoIterator<Item = impl Into<String>>,
+        error_type: impl Into<String>,
+        retryable: bool,
+    ) -> Result<Self, TelemetryExportOutcomeError> {
+        Self::new(
+            exporter_id,
+            "failed",
+            record_ids,
+            Some(error_type),
+            retryable,
+            "none",
+        )
+    }
+
+    pub fn contract_payload(&self) -> Value {
+        json!({
+            "exporter_id": self.exporter_id,
+            "status": self.status,
+            "record_ids": self.record_ids,
+            "error_type": self.error_type,
+            "retryable": self.retryable,
+            "run_impact": self.run_impact,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TelemetryExportOutcomeError {
+    EmptyExporterId,
+    EmptyStatus,
+    MissingRecordIds,
+    EmptyRecordId,
+    RunImpactNotAllowed {
+        exporter_id: String,
+        run_impact: String,
+    },
+}
+
+impl fmt::Display for TelemetryExportOutcomeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyExporterId => write!(formatter, "telemetry exporter id must not be empty"),
+            Self::EmptyStatus => write!(formatter, "telemetry export status must not be empty"),
+            Self::MissingRecordIds => write!(
+                formatter,
+                "telemetry export outcome must include at least one record id"
+            ),
+            Self::EmptyRecordId => write!(
+                formatter,
+                "telemetry export outcome record ids must not be empty"
+            ),
+            Self::RunImpactNotAllowed {
+                exporter_id,
+                run_impact,
+            } => write!(
+                formatter,
+                "telemetry exporter {exporter_id:?} reported forbidden run impact {run_impact:?}"
+            ),
+        }
+    }
+}
+
+impl Error for TelemetryExportOutcomeError {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TelemetryQueuePolicy {
     pub max_items: usize,
     pub on_full: TelemetryOnFull,
