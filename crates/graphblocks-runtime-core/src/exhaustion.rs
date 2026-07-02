@@ -467,9 +467,13 @@ impl ExhaustionController {
         let permits_checkpoint_pause_safety_work =
             self.policy.preset == Some(ExhaustionPreset::CheckpointAndPause)
                 && matches!(work_kind, WorkKind::Checkpoint | WorkKind::Cleanup);
+        let permits_degraded_finalization =
+            self.policy.preset == Some(ExhaustionPreset::DegradeThenFinalize)
+                && matches!(work_kind, WorkKind::DeclaredFinalization | WorkKind::Cleanup);
         if work_epoch > self.admission_epoch
             && permit.is_none()
             && !permits_checkpoint_pause_safety_work
+            && !permits_degraded_finalization
         {
             match &self.continuation_permit {
                 Some(stored_permit) if !self.valid_permit(stored_permit) => {

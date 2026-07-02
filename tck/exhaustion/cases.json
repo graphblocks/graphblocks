@@ -132,6 +132,47 @@
     }
   },
   {
+    "name": "degrade_then_finalize_allows_best_effort_finalization_without_topup",
+    "policy": {
+      "preset": "degrade_then_finalize",
+      "unit": "run",
+      "continuation": {
+        "maxAdditionalSteps": 2
+      }
+    },
+    "atomicUnit": "run:1",
+    "admissionEpoch": 9,
+    "admissions": [
+      {
+        "workKind": "declared_finalization",
+        "workEpoch": 10,
+        "allowed": true,
+        "reason": "allowed"
+      },
+      {
+        "workKind": "cleanup",
+        "workEpoch": 11,
+        "allowed": true,
+        "reason": "allowed"
+      },
+      {
+        "workKind": "optional_task",
+        "workEpoch": 12,
+        "allowed": false,
+        "reason": "forbidden_work"
+      },
+      {
+        "workKind": "unreserved_provider_call",
+        "workEpoch": 12,
+        "allowed": false,
+        "reason": "new_work_denied"
+      }
+    ],
+    "expected": {
+      "usedAdditionalSteps": 2
+    }
+  },
+  {
     "name": "continuation_permit_profile_mismatch_is_denied",
     "policy": {
       "preset": "finish_current_turn",

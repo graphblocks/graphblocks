@@ -141,6 +141,50 @@ fn checkpoint_and_pause_still_honors_explicit_continuation_bounds() {
 }
 
 #[test]
+fn degrade_then_finalize_allows_best_effort_finalization_without_topup_permit() {
+    let policy = ExhaustionPolicy::from_preset(
+        ExhaustionPreset::DegradeThenFinalize,
+        ExhaustionUnit::Run,
+        None,
+    );
+    let mut controller = ExhaustionController::new(policy, "run:1", 9);
+
+    let finalization = controller.admit(WorkKind::DeclaredFinalization, 10, None);
+    let cleanup = controller.admit(WorkKind::Cleanup, 11, None);
+    let optional = controller.admit(WorkKind::OptionalTask, 12, None);
+    let effect = controller.admit(WorkKind::StateChangingEffect, 12, None);
+    let provider = controller.admit(WorkKind::UnreservedProviderCall, 12, None);
+
+    assert!(finalization.allowed);
+    assert_eq!(finalization.reason, "allowed");
+    assert!(cleanup.allowed);
+    assert_eq!(cleanup.reason, "allowed");
+    assert!(!optional.allowed);
+    assert_eq!(optional.reason, "forbidden_work");
+    assert!(!effect.allowed);
+    assert_eq!(effect.reason, "forbidden_work");
+    assert!(!provider.allowed);
+    assert_eq!(provider.reason, "new_work_denied");
+}
+
+#[test]
+fn degrade_then_finalize_still_honors_explicit_continuation_bounds() {
+    let policy = ExhaustionPolicy::from_preset(
+        ExhaustionPreset::DegradeThenFinalize,
+        ExhaustionUnit::Run,
+        Some(ContinuationEnvelope::new().with_max_additional_steps(1)),
+    );
+    let mut controller = ExhaustionController::new(policy, "run:1", 9);
+
+    let finalization = controller.admit(WorkKind::DeclaredFinalization, 10, None);
+    let cleanup = controller.admit(WorkKind::Cleanup, 11, None);
+
+    assert!(finalization.allowed);
+    assert!(!cleanup.allowed);
+    assert_eq!(cleanup.reason, "max_additional_steps_exceeded");
+}
+
+#[test]
 fn continuation_permit_must_match_atomic_unit_profile_and_epoch() {
     let policy = ExhaustionPolicy::from_preset(
         ExhaustionPreset::FinishCurrentTurn,
