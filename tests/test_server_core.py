@@ -479,6 +479,19 @@ def test_server_app_handles_health_auth_and_run_requests() -> None:
 
 def test_server_app_handles_authenticated_cancel_request() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-server-1"] = (
+        {
+            "kind": "RunStarted",
+            "payload": {"runId": "run-server-1"},
+            "metadata": {
+                "runId": "run-server-1",
+                "sequence": 1,
+                "cursor": "run-server-1:1",
+                "releaseId": "release-1",
+                "occurredAt": "2026-06-24T00:00:02Z",
+            },
+        },
+    )
 
     response = app.handle(
         ServerRequest(
@@ -496,7 +509,29 @@ def test_server_app_handles_authenticated_cancel_request() -> None:
         "ok": True,
         "runId": "run-server-1",
         "status": "cancel_requested",
+        "reason": None,
+        "lastCursor": "run-server-1:1",
     }
+    assert app.run_controls("run-server-1") == (
+        {
+            "operation": "cancel_run",
+            "status": "cancel_requested",
+            "reason": None,
+            "occurredAt": "2026-06-24T00:00:03Z",
+            "lastCursor": "run-server-1:1",
+        },
+    )
+    status = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-server-1",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            requested_at="2026-06-24T00:00:04Z",
+        )
+    )
+    assert json.loads(status.body.decode("utf-8"))["state"] == "cancel_requested"
 
 
 def test_server_app_records_run_control_projection_without_mutating_events() -> None:

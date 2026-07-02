@@ -1057,16 +1057,7 @@ class GraphBlocksServerApp:
                     ],
                 },
             )
-        if route.operation == "cancel_run":
-            return ServerResponse.json(
-                202,
-                {
-                    "ok": True,
-                    "runId": route_match.path_params.get("run_id", ""),
-                    "status": "cancel_requested",
-                },
-            )
-        if route.operation in {"pause_run", "resume_run", "expire_run"}:
+        if route.operation in {"cancel_run", "pause_run", "resume_run", "expire_run"}:
             try:
                 run_id = route_match.path_params.get("run_id", "")
                 events = self._events_by_run_id.get(run_id)
@@ -1675,6 +1666,7 @@ class GraphBlocksServerApp:
         occurred_at: str,
     ) -> ServerResponse:
         control_states = {
+            "cancel_run": "cancel_requested",
             "pause_run": "paused_operator",
             "resume_run": "resuming",
             "expire_run": "expired",

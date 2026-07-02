@@ -435,11 +435,12 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   without making callback delivery authoritative. Callback registration validates the specification
   scope literals (`run`, `conversation`, `project`, `tenant`, `deployment`). Nested event filter and
   delivery configs are immutable snapshots and are thawed back to plain JSON for response payloads.
-- `graphblocks-server` now exposes framework-neutral `POST /runs/{run_id}/pause`,
-  `POST /runs/{run_id}/resume`, and `POST /runs/{run_id}/expire`
-  `PauseRun`/`ResumeRun`/`ExpireRun` routes, recording run-control projections and reflecting
-  the latest control state in `GetRunStatus` while preserving the authoritative event stream.
-  Stored run-control projection records are immutable snapshots.
+- `graphblocks-server` now exposes framework-neutral `POST /runs/{run_id}/cancel`,
+  `POST /runs/{run_id}/pause`, `POST /runs/{run_id}/resume`, and
+  `POST /runs/{run_id}/expire` `CancelRun`/`PauseRun`/`ResumeRun`/`ExpireRun` routes,
+  recording run-control projections and reflecting the latest control state in `GetRunStatus`
+  while preserving the authoritative event stream. Stored run-control projection records are
+  immutable snapshots.
 - `graphblocks-server` now exposes framework-neutral
   `POST /callbacks/deliveries/{delivery_id}/redrive` and
   `POST /callbacks/deliveries/{delivery_id}/dead-letter`
