@@ -3315,6 +3315,61 @@ def test_server_app_rejects_ack_with_conflicting_event_id_and_cursor() -> None:
     assert app.event_acks("run-ack-conflict-1", "sub-ack-conflict-1") == ()
 
 
+def test_server_app_rejects_ack_for_event_outside_subscription_filter() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-ack-filter-1"] = (
+        {
+            "kind": "RunStarted",
+            "metadata": {"eventId": "evt-start", "sequence": 1},
+            "payload": {},
+        },
+        {
+            "kind": "JobProgress",
+            "metadata": {"eventId": "evt-progress", "sequence": 2},
+            "payload": {},
+        },
+    )
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-ack-filter-1/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-ack-filter-1",
+                    "eventFilter": {"types": ["JobProgress"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-ack-filter-1/subscriptions/sub-ack-filter-1/ack",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"eventId": "evt-start"}).encode("utf-8"),
+            requested_at="2026-07-03T00:00:00Z",
+        )
+    )
+
+    assert response.status_code == 409
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "runId": "run-ack-filter-1",
+        "subscriptionId": "sub-ack-filter-1",
+        "eventId": "evt-start",
+        "cursor": "run-ack-filter-1:1",
+        "error": "acknowledged event is not selected by the subscription filter",
+    }
+    assert app.event_acks("run-ack-filter-1", "sub-ack-filter-1") == ()
+
+
 def test_server_app_rejects_ack_for_missing_event_or_subscription() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     graph = {

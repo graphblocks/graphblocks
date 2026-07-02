@@ -611,7 +611,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   acknowledgement projection records are immutable snapshots, and repeated acknowledgements for the
   same event/cursor return an explicit duplicate acknowledgement with the first acknowledgement
   timestamp. When a request supplies both event id and cursor, both identifiers must resolve to the
-  same retained event before an acknowledgement is recorded.
+  same retained event before an acknowledgement is recorded. Acknowledged events must also match the
+  active subscription's event filter.
 - `graphblocks-server` now exposes framework-neutral `POST /callbacks/register` and
   `DELETE /callbacks/{subscription_id}` `RegisterCallback`/`RevokeCallback` routes, storing
   callback delivery registration projections and replaying retained run-scoped matching events
