@@ -799,6 +799,64 @@ def test_server_app_rejects_run_control_for_missing_stream_or_malformed_reason()
     }
 
 
+def test_server_app_rejects_non_terminal_control_after_terminal_run_state() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-terminal-control-1"] = (
+        {
+            "kind": "RunStarted",
+            "payload": {"runId": "run-terminal-control-1"},
+            "metadata": {
+                "runId": "run-terminal-control-1",
+                "sequence": 1,
+                "cursor": "run-terminal-control-1:1",
+                "releaseId": "release-terminal-control-1",
+                "occurredAt": "2026-07-02T00:00:00Z",
+            },
+        },
+    )
+    cancelled = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-terminal-control-1/cancel",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            requested_at="2026-07-02T00:00:01Z",
+        )
+    )
+    resume = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-terminal-control-1/resume",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            requested_at="2026-07-02T00:00:02Z",
+        )
+    )
+    status = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-terminal-control-1",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            requested_at="2026-07-02T00:00:03Z",
+        )
+    )
+
+    assert cancelled.status_code == 202
+    assert resume.status_code == 409
+    assert json.loads(resume.body.decode("utf-8")) == {
+        "ok": False,
+        "runId": "run-terminal-control-1",
+        "state": "cancelled",
+        "error": "run run-terminal-control-1 is terminal with state cancelled",
+    }
+    assert json.loads(status.body.decode("utf-8"))["state"] == "cancelled"
+    assert [control["status"] for control in app.run_controls("run-terminal-control-1")] == ["cancelled"]
+
+
 def test_server_app_accepts_authenticated_async_callback_submission() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
     app._events_by_run_id["run-1"] = (

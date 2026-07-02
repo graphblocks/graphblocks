@@ -1729,6 +1729,23 @@ class GraphBlocksServerApp:
             "expire_run": "expired",
         }
         status = control_states[operation]
+        existing = self._run_controls_by_run_id.get(run_id, ())
+        if existing:
+            current_status = existing[-1].get("status")
+            if (
+                isinstance(current_status, str)
+                and current_status in {"completed", "succeeded", "failed", "cancelled", "expired", "policy_stopped"}
+                and status != current_status
+            ):
+                return ServerResponse.json(
+                    409,
+                    {
+                        "ok": False,
+                        "runId": run_id,
+                        "state": current_status,
+                        "error": f"run {run_id} is terminal with state {current_status}",
+                    },
+                )
         reason = payload.get("reason")
         if reason is not None:
             reason = _validate_non_empty_string("run control request", "reason", reason)
@@ -1739,7 +1756,6 @@ class GraphBlocksServerApp:
             "occurredAt": occurred_at,
             "lastCursor": f"{run_id}:{self._last_event_sequence(events)}",
         })
-        existing = self._run_controls_by_run_id.get(run_id, ())
         self._run_controls_by_run_id[run_id] = (*existing, record)
         return ServerResponse.json(
             202,
