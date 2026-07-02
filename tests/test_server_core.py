@@ -2518,6 +2518,89 @@ def test_server_app_unsubscribes_without_dropping_events() -> None:
     ]
 
 
+def test_server_app_treats_repeated_unsubscribe_as_idempotent() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "server-unsubscribe-idempotent"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Unsubscribe {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "ok"}},
+                    "runId": "run-unsubscribe-idempotent-1",
+                    "responseId": "response-unsubscribe-idempotent-1",
+                }
+            ).encode("utf-8"),
+        )
+    )
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-unsubscribe-idempotent-1/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-unsubscribe-idempotent-1",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    first = app.handle(
+        ServerRequest(
+            method="DELETE",
+            path="/runs/run-unsubscribe-idempotent-1/subscriptions/sub-unsubscribe-idempotent-1",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+        )
+    )
+    duplicate = app.handle(
+        ServerRequest(
+            method="DELETE",
+            path="/runs/run-unsubscribe-idempotent-1/subscriptions/sub-unsubscribe-idempotent-1",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+        )
+    )
+
+    assert first.status_code == 202
+    assert duplicate.status_code == 200
+    assert json.loads(duplicate.body.decode("utf-8")) == {
+        "ok": True,
+        "runId": "run-unsubscribe-idempotent-1",
+        "subscriptionId": "sub-unsubscribe-idempotent-1",
+        "status": "revoked",
+        "duplicate": True,
+    }
+    assert len(app.subscriptions("run-unsubscribe-idempotent-1")) == 1
+    assert app.subscriptions("run-unsubscribe-idempotent-1")[0].status == "revoked"
+
+
 def test_server_app_rejects_ack_after_subscription_is_revoked() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     graph = {

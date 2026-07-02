@@ -1263,9 +1263,20 @@ class GraphBlocksServerApp:
                         "ok": False,
                         "error": f"run subscriptions not found for run {run_id!r}",
                     },
-                )
+            )
             for index, subscription in enumerate(subscriptions):
                 if subscription.subscription_id == subscription_id:
+                    if subscription.status == "revoked":
+                        return ServerResponse.json(
+                            200,
+                            {
+                                "ok": True,
+                                "runId": run_id,
+                                "subscriptionId": subscription_id,
+                                "status": "revoked",
+                                "duplicate": True,
+                            },
+                        )
                     revoked = replace(subscription, status="revoked")
                     self._subscriptions_by_run_id[run_id] = (
                         *subscriptions[:index],
