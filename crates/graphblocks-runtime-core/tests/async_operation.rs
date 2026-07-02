@@ -171,6 +171,66 @@ fn callback_schema_failure_and_stale_attempt_do_not_resume_run() {
 }
 
 #[test]
+fn callback_payload_limit_rejects_oversized_payload_before_journal_or_resume() {
+    let store = AsyncOperationStore::new();
+    store
+        .register(waiting_operation())
+        .expect("operation registers");
+    let mut submission = valid_submission("cb-oversized", "idem-oversized");
+    submission.payload = json!({
+        "status": "completed",
+        "workflow_run_id": "gha-run-1",
+        "log": "x".repeat(512),
+    });
+
+    assert!(matches!(
+        store.accept_callback_with_limits(
+            submission,
+            &callback_schema_registry(),
+            graphblocks_runtime_core::async_operation::AsyncCallbackIngestionLimits {
+                max_payload_bytes: 128
+            },
+        ),
+        Err(AsyncOperationError::CallbackPayloadTooLarge {
+            operation_id,
+            max_payload_bytes: 128,
+            actual_payload_bytes,
+        }) if operation_id == "op-1" && actual_payload_bytes > 128
+    ));
+    assert_eq!(
+        store.operation_state("op-1"),
+        Some(AsyncOperationState::WaitingCallback)
+    );
+    assert_eq!(
+        store
+            .events_for_operation("op-1")
+            .iter()
+            .filter(|event| matches!(event, AsyncOperationEvent::ExternalCallbackReceived { .. }))
+            .count(),
+        0
+    );
+}
+
+#[test]
+fn callback_default_payload_limit_allows_normal_payload() {
+    let store = AsyncOperationStore::new();
+    store
+        .register(waiting_operation())
+        .expect("operation registers");
+
+    let accepted = store
+        .accept_callback_with_limits(
+            valid_submission("cb-normal", "idem-normal"),
+            &callback_schema_registry(),
+            graphblocks_runtime_core::async_operation::AsyncCallbackIngestionLimits::default(),
+        )
+        .expect("normal callback is accepted");
+
+    assert!(accepted.should_resume);
+    assert!(!accepted.duplicate);
+}
+
+#[test]
 fn concurrent_duplicate_callbacks_have_one_resume_winner() {
     let store = Arc::new(AsyncOperationStore::new());
     store

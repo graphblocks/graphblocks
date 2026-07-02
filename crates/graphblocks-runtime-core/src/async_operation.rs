@@ -6,6 +6,23 @@ use serde_json::Value;
 
 use crate::tool_schema::{ToolSchemaRegistry, ToolSchemaValidationError};
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AsyncCallbackIngestionLimits {
+    pub max_payload_bytes: usize,
+}
+
+impl AsyncCallbackIngestionLimits {
+    pub const DEFAULT_MAX_PAYLOAD_BYTES: usize = 262_144;
+}
+
+impl Default for AsyncCallbackIngestionLimits {
+    fn default() -> Self {
+        Self {
+            max_payload_bytes: Self::DEFAULT_MAX_PAYLOAD_BYTES,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AsyncOperationKind {
     Tool,
@@ -280,6 +297,11 @@ pub enum AsyncOperationError {
         path: String,
         property: String,
     },
+    CallbackPayloadTooLarge {
+        operation_id: String,
+        max_payload_bytes: usize,
+        actual_payload_bytes: usize,
+    },
 }
 
 #[derive(Debug, Default)]
@@ -346,6 +368,19 @@ impl AsyncOperationStore {
         submission: AsyncCallbackSubmission,
         registry: &ToolSchemaRegistry,
     ) -> Result<AcceptedCallback, AsyncOperationError> {
+        self.accept_callback_with_limits(
+            submission,
+            registry,
+            AsyncCallbackIngestionLimits::default(),
+        )
+    }
+
+    pub fn accept_callback_with_limits(
+        &self,
+        submission: AsyncCallbackSubmission,
+        registry: &ToolSchemaRegistry,
+        limits: AsyncCallbackIngestionLimits,
+    ) -> Result<AcceptedCallback, AsyncOperationError> {
         for (field, value) in [
             ("callback_id", &submission.callback_id),
             ("operation_id", &submission.operation_id),
@@ -361,6 +396,15 @@ impl AsyncOperationStore {
                     field: field.to_owned(),
                 });
             }
+        }
+
+        let payload_size = callback_payload_size_bytes(&submission.payload);
+        if payload_size > limits.max_payload_bytes {
+            return Err(AsyncOperationError::CallbackPayloadTooLarge {
+                operation_id: submission.operation_id,
+                max_payload_bytes: limits.max_payload_bytes,
+                actual_payload_bytes: payload_size,
+            });
         }
 
         let mut inner = self
@@ -631,4 +675,8 @@ impl AsyncOperationStore {
             .get(operation_id)
             .map(|operation| operation.state)
     }
+}
+
+fn callback_payload_size_bytes(payload: &Value) -> usize {
+    graphblocks_compiler::canonical::canonical_json(payload).len()
 }
