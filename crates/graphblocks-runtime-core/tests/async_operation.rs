@@ -188,6 +188,73 @@ fn hmac_callback_endpoint_authenticates_and_rejects_replay_or_tampering() {
 }
 
 #[test]
+fn ed25519_callback_endpoint_authenticates_with_injected_verifier() {
+    let endpoint = CallbackEndpointRef::new(
+        "callback-endpoint-ed25519",
+        "https://graphblocks.example.com/v1/callbacks/op-1",
+        "schemas/CICallback@1",
+        CallbackEndpointAuth::ed25519(
+            "key://callbacks/op-1",
+            "public-key-1",
+            "GraphBlocks-Timestamp",
+            "GraphBlocks-Signature",
+            300_000,
+        )
+        .expect("ed25519 auth is valid"),
+    )
+    .expect("endpoint is valid");
+    let payload = json!({"workflow_run_id": "gha-run-1", "status": "completed"});
+    let mut headers = BTreeMap::new();
+    headers.insert("GraphBlocks-Timestamp".to_owned(), "1200".to_owned());
+    headers.insert("GraphBlocks-Signature".to_owned(), "sig-ok".to_owned());
+
+    let submission = endpoint
+        .authenticate_ed25519_and_build_submission(
+            "cb-1",
+            "op-1",
+            "run-1",
+            "node-ci",
+            "attempt-1",
+            "idem-cb-1",
+            payload.clone(),
+            1_250,
+            "policy-snapshot-1",
+            &headers,
+            |public_key, message, signature| {
+                assert_eq!(public_key, "public-key-1");
+                assert_eq!(signature, "sig-ok");
+                assert!(message.contains("\"status\":\"completed\""));
+                true
+            },
+        )
+        .expect("ed25519 signature authenticates");
+
+    assert_eq!(submission.verified_by, "ed25519:callback-endpoint-ed25519");
+    assert_eq!(submission.operation_id, "op-1");
+
+    headers.insert("GraphBlocks-Signature".to_owned(), "sig-bad".to_owned());
+    assert_eq!(
+        endpoint.authenticate_ed25519_and_build_submission(
+            "cb-2",
+            "op-1",
+            "run-1",
+            "node-ci",
+            "attempt-1",
+            "idem-cb-2",
+            payload,
+            1_250,
+            "policy-snapshot-1",
+            &headers,
+            |_public_key, _message, _signature| false,
+        ),
+        Err(AsyncOperationError::CallbackAuthenticationFailed {
+            endpoint_id: "callback-endpoint-ed25519".to_owned(),
+            reason: "signature_mismatch".to_owned(),
+        })
+    );
+}
+
+#[test]
 fn async_operation_diagnostics_report_missing_timeout_schema_and_idempotency() {
     let mut operation = AsyncOperation::new(
         "op-missing",

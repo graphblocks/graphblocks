@@ -429,6 +429,51 @@ impl CallbackEndpointRef {
             policy_snapshot_id,
         ))
     }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn authenticate_ed25519_and_build_submission(
+        &self,
+        callback_id: impl Into<String>,
+        operation_id: impl Into<String>,
+        run_id: impl Into<String>,
+        node_id: impl Into<String>,
+        attempt_id: impl Into<String>,
+        idempotency_key: impl Into<String>,
+        payload: Value,
+        received_at_unix_ms: u64,
+        policy_snapshot_id: impl Into<String>,
+        headers: &BTreeMap<String, String>,
+        verifier: impl FnOnce(&str, &str, &str) -> bool,
+    ) -> Result<AsyncCallbackSubmission, AsyncOperationError> {
+        if self
+            .expires_at_unix_ms
+            .is_some_and(|expires_at_unix_ms| received_at_unix_ms > expires_at_unix_ms)
+        {
+            return Err(AsyncOperationError::CallbackAuthenticationFailed {
+                endpoint_id: self.endpoint_id.clone(),
+                reason: "endpoint_expired".to_owned(),
+            });
+        }
+        let verified_by = self.auth.verify_ed25519(
+            &self.endpoint_id,
+            headers,
+            &payload,
+            received_at_unix_ms,
+            verifier,
+        )?;
+        Ok(AsyncCallbackSubmission::new(
+            callback_id,
+            operation_id,
+            run_id,
+            node_id,
+            attempt_id,
+            idempotency_key,
+            payload,
+            received_at_unix_ms,
+            verified_by,
+            policy_snapshot_id,
+        ))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -440,6 +485,13 @@ pub enum CallbackEndpointAuth {
     HmacSha256 {
         secret_ref: String,
         secret: Vec<u8>,
+        timestamp_header: String,
+        signature_header: String,
+        replay_window_ms: u64,
+    },
+    Ed25519 {
+        public_key_ref: String,
+        public_key: String,
         timestamp_header: String,
         signature_header: String,
         replay_window_ms: u64,
@@ -471,6 +523,24 @@ impl CallbackEndpointAuth {
             secret: secret.as_ref().to_vec(),
             timestamp_header: "GraphBlocks-Timestamp".to_owned(),
             signature_header: "GraphBlocks-Signature".to_owned(),
+            replay_window_ms,
+        };
+        auth.validate()?;
+        Ok(auth)
+    }
+
+    pub fn ed25519(
+        public_key_ref: impl Into<String>,
+        public_key: impl Into<String>,
+        timestamp_header: impl Into<String>,
+        signature_header: impl Into<String>,
+        replay_window_ms: u64,
+    ) -> Result<Self, AsyncOperationError> {
+        let auth = Self::Ed25519 {
+            public_key_ref: public_key_ref.into(),
+            public_key: public_key.into(),
+            timestamp_header: timestamp_header.into(),
+            signature_header: signature_header.into(),
             replay_window_ms,
         };
         auth.validate()?;
@@ -518,6 +588,32 @@ impl CallbackEndpointAuth {
                     return Err(AsyncOperationError::InvalidOperation {
                         operation_id: "callback_endpoint_auth".to_owned(),
                         reason: "hmac replay window must be greater than zero".to_owned(),
+                    });
+                }
+            }
+            Self::Ed25519 {
+                public_key_ref,
+                public_key,
+                timestamp_header,
+                signature_header,
+                replay_window_ms,
+            } => {
+                for (field, value) in [
+                    ("public_key_ref", public_key_ref),
+                    ("public_key", public_key),
+                    ("timestamp_header", timestamp_header),
+                    ("signature_header", signature_header),
+                ] {
+                    if value.trim().is_empty() {
+                        return Err(AsyncOperationError::EmptyField {
+                            field: field.to_owned(),
+                        });
+                    }
+                }
+                if *replay_window_ms == 0 {
+                    return Err(AsyncOperationError::InvalidOperation {
+                        operation_id: "callback_endpoint_auth".to_owned(),
+                        reason: "ed25519 replay window must be greater than zero".to_owned(),
                     });
                 }
             }
@@ -618,7 +714,47 @@ impl CallbackEndpointAuth {
             }
             Self::Mtls { .. } => Err(callback_auth_failed(endpoint_id, "mtls_not_bound")),
             Self::Oidc { .. } => Err(callback_auth_failed(endpoint_id, "oidc_not_bound")),
+            Self::Ed25519 { .. } => Err(callback_auth_failed(endpoint_id, "ed25519_not_bound")),
         }
+    }
+
+    fn verify_ed25519(
+        &self,
+        endpoint_id: &str,
+        headers: &BTreeMap<String, String>,
+        payload: &Value,
+        received_at_unix_ms: u64,
+        verifier: impl FnOnce(&str, &str, &str) -> bool,
+    ) -> Result<String, AsyncOperationError> {
+        let Self::Ed25519 {
+            public_key,
+            timestamp_header,
+            signature_header,
+            replay_window_ms,
+            ..
+        } = self
+        else {
+            return Err(callback_auth_failed(endpoint_id, "ed25519_not_configured"));
+        };
+        let timestamp = headers
+            .get(timestamp_header)
+            .ok_or_else(|| callback_auth_failed(endpoint_id, "timestamp_missing"))?
+            .parse::<u64>()
+            .map_err(|_| callback_auth_failed(endpoint_id, "timestamp_invalid"))?;
+        if received_at_unix_ms.abs_diff(timestamp) > *replay_window_ms {
+            return Err(callback_auth_failed(
+                endpoint_id,
+                "timestamp_outside_replay_window",
+            ));
+        }
+        let signature = headers
+            .get(signature_header)
+            .ok_or_else(|| callback_auth_failed(endpoint_id, "signature_missing"))?;
+        let message = callback_signature_message(timestamp, payload);
+        if !verifier(public_key, &message, signature) {
+            return Err(callback_auth_failed(endpoint_id, "signature_mismatch"));
+        }
+        Ok(format!("ed25519:{endpoint_id}"))
     }
 }
 
@@ -1642,16 +1778,22 @@ fn compute_callback_hmac_signature(
     timestamp_unix_ms: u64,
     payload: &Value,
 ) -> Result<String, AsyncOperationError> {
-    let body = graphblocks_compiler::canonical::canonical_json(payload);
     let mut mac =
         HmacSha256::new_from_slice(secret).map_err(|_| AsyncOperationError::InvalidOperation {
             operation_id: "callback_endpoint_auth".to_owned(),
             reason: "invalid hmac secret".to_owned(),
         })?;
-    mac.update(timestamp_unix_ms.to_string().as_bytes());
-    mac.update(b".");
-    mac.update(body.as_bytes());
+    let message = callback_signature_message(timestamp_unix_ms, payload);
+    mac.update(message.as_bytes());
     Ok(hex_encode(&mac.finalize().into_bytes()))
+}
+
+fn callback_signature_message(timestamp_unix_ms: u64, payload: &Value) -> String {
+    format!(
+        "{}.{}",
+        timestamp_unix_ms,
+        graphblocks_compiler::canonical::canonical_json(payload)
+    )
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
