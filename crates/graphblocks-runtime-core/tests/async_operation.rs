@@ -2,9 +2,9 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 
 use graphblocks_runtime_core::async_operation::{
-    AsyncCallbackResumeDecision, AsyncCallbackSubmission, AsyncOperation,
-    AsyncOperationConfigurationDiagnostic, AsyncOperationError, AsyncOperationEvent,
-    AsyncOperationKind, AsyncOperationState, AsyncOperationStore,
+    AsyncCallbackIngestionLimits, AsyncCallbackResumeDecision, AsyncCallbackSubmission,
+    AsyncOperation, AsyncOperationConfigurationDiagnostic, AsyncOperationError,
+    AsyncOperationEvent, AsyncOperationKind, AsyncOperationState, AsyncOperationStore,
 };
 use graphblocks_runtime_core::tool_schema::{JsonSchema, JsonSchemaNode, ToolSchemaRegistry};
 use serde_json::json;
@@ -82,6 +82,39 @@ fn async_operation_diagnostics_report_missing_timeout_schema_and_idempotency() {
 fn async_operation_diagnostics_do_not_report_valid_waiting_operation() {
     assert_eq!(
         AsyncOperationConfigurationDiagnostic::for_operation(&waiting_operation()),
+        Vec::new()
+    );
+}
+
+#[test]
+fn async_operation_diagnostics_report_callback_payload_larger_than_limit() {
+    let operation = waiting_operation().with_expected_callback_payload_bytes(4_096);
+
+    let diagnostics = AsyncOperationConfigurationDiagnostic::for_operation_with_limits(
+        &operation,
+        AsyncCallbackIngestionLimits {
+            max_payload_bytes: 1_024,
+        },
+    );
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].code, "GB6010");
+    assert_eq!(diagnostics[0].field, "expected_callback_payload_bytes");
+    assert!(diagnostics[0].message.contains("4096"));
+    assert!(diagnostics[0].message.contains("1024"));
+}
+
+#[test]
+fn async_operation_diagnostics_allow_callback_payload_within_limit() {
+    let operation = waiting_operation().with_expected_callback_payload_bytes(1_024);
+
+    assert_eq!(
+        AsyncOperationConfigurationDiagnostic::for_operation_with_limits(
+            &operation,
+            AsyncCallbackIngestionLimits {
+                max_payload_bytes: 1_024,
+            },
+        ),
         Vec::new()
     );
 }

@@ -66,6 +66,7 @@ pub struct AsyncOperation {
     pub submitted_at_unix_ms: Option<u64>,
     pub expires_at_unix_ms: Option<u64>,
     pub completed_at_unix_ms: Option<u64>,
+    pub expected_callback_payload_bytes: Option<usize>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -77,6 +78,13 @@ pub struct AsyncOperationConfigurationDiagnostic {
 
 impl AsyncOperationConfigurationDiagnostic {
     pub fn for_operation(operation: &AsyncOperation) -> Vec<Self> {
+        Self::for_operation_with_limits(operation, AsyncCallbackIngestionLimits::default())
+    }
+
+    pub fn for_operation_with_limits(
+        operation: &AsyncOperation,
+        limits: AsyncCallbackIngestionLimits,
+    ) -> Vec<Self> {
         let mut diagnostics = Vec::new();
         if operation.state == AsyncOperationState::WaitingCallback
             && operation.expires_at_unix_ms.is_none()
@@ -107,6 +115,18 @@ impl AsyncOperationConfigurationDiagnostic {
                 message: format!(
                     "async operation {} callback has no expected schema",
                     operation.operation_id
+                ),
+            });
+        }
+        if let Some(expected_callback_payload_bytes) = operation.expected_callback_payload_bytes
+            && expected_callback_payload_bytes > limits.max_payload_bytes
+        {
+            diagnostics.push(Self {
+                code: "GB6010",
+                field: "expected_callback_payload_bytes",
+                message: format!(
+                    "async operation {} may inline callback payloads of {expected_callback_payload_bytes} bytes above the configured {} byte limit",
+                    operation.operation_id, limits.max_payload_bytes
                 ),
             });
         }
@@ -141,6 +161,7 @@ impl AsyncOperation {
             submitted_at_unix_ms: None,
             expires_at_unix_ms: None,
             completed_at_unix_ms: None,
+            expected_callback_payload_bytes: None,
         }
     }
 
@@ -158,6 +179,14 @@ impl AsyncOperation {
     pub fn waiting_callback(mut self, expires_at_unix_ms: u64) -> Self {
         self.expires_at_unix_ms = Some(expires_at_unix_ms);
         self.state = AsyncOperationState::WaitingCallback;
+        self
+    }
+
+    pub fn with_expected_callback_payload_bytes(
+        mut self,
+        expected_callback_payload_bytes: usize,
+    ) -> Self {
+        self.expected_callback_payload_bytes = Some(expected_callback_payload_bytes);
         self
     }
 
