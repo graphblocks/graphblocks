@@ -25,6 +25,12 @@ VALID_CALLBACK_SUBSCRIPTION_SCOPES = frozenset({
     "tenant",
     "deployment",
 })
+VALID_CALLBACK_FAILURE_POLICIES = frozenset({
+    "best_effort",
+    "retry_then_dead_letter",
+    "pause_run_on_failure",
+    "fail_run_on_failure",
+})
 SERVER_EVENT_SEVERITY_RANKS = {
     "debug": 10,
     "info": 20,
@@ -78,6 +84,15 @@ def _validate_callback_subscription_scope(value: object) -> str:
             "server callback registration scope must be one of run, conversation, project, tenant, or deployment"
         )
     return scope
+
+
+def _validate_callback_failure_policy(value: object) -> str:
+    failure_policy = _validate_non_empty_string("server subscription", "failure_policy", value)
+    if failure_policy not in VALID_CALLBACK_FAILURE_POLICIES:
+        raise ValueError(
+            "server subscription failure_policy must be one of best_effort, retry_then_dead_letter, pause_run_on_failure, or fail_run_on_failure"
+        )
+    return failure_policy
 
 
 def _validate_string_mapping(
@@ -598,7 +613,7 @@ class ServerEventSubscription:
         object.__setattr__(
             self,
             "failure_policy",
-            _validate_non_empty_string("server event subscription", "failure_policy", self.failure_policy),
+            _validate_callback_failure_policy(self.failure_policy),
         )
         if self.replay_from_cursor is not None:
             object.__setattr__(
@@ -648,11 +663,7 @@ class ServerEventSubscription:
             run_id=run_id,
             event_filter=event_filter,
             delivery=delivery,
-            failure_policy=_validate_non_empty_string(
-                "server event subscription",
-                "failure_policy",
-                failure_policy,
-            ),
+            failure_policy=_validate_callback_failure_policy(failure_policy),
             replay_from_cursor=(
                 _validate_non_empty_string(
                     "server event subscription",
@@ -735,7 +746,7 @@ class ServerCallbackRegistration:
         object.__setattr__(
             self,
             "failure_policy",
-            _validate_non_empty_string("server callback registration", "failure_policy", self.failure_policy),
+            _validate_callback_failure_policy(self.failure_policy),
         )
         if self.replay_from_cursor is not None:
             object.__setattr__(
@@ -784,11 +795,7 @@ class ServerCallbackRegistration:
             ),
             event_filter=event_filter,
             delivery=delivery,
-            failure_policy=_validate_non_empty_string(
-                "server callback registration",
-                "failure_policy",
-                failure_policy,
-            ),
+            failure_policy=_validate_callback_failure_policy(failure_policy),
             replay_from_cursor=(
                 _validate_non_empty_string(
                     "server callback registration",

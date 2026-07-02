@@ -1815,6 +1815,36 @@ def test_server_app_rejects_subscription_without_delivery_kind() -> None:
     assert app.subscriptions("run-subscribe-invalid-1") == ()
 
 
+def test_server_app_rejects_subscription_with_invalid_failure_policy() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-subscribe-policy-1"] = ()
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-subscribe-policy-1/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-policy-invalid",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                    "failurePolicy": "retry_forever",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "server subscription failure_policy must be one of best_effort, retry_then_dead_letter, pause_run_on_failure, or fail_run_on_failure",
+    }
+    assert app.subscriptions("run-subscribe-policy-1") == ()
+
+
 def test_server_app_unsubscribes_without_dropping_events() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     graph = {
@@ -2331,6 +2361,37 @@ def test_server_app_rejects_callback_registration_with_invalid_scope() -> None:
     assert json.loads(response.body.decode("utf-8")) == {
         "ok": False,
         "error": "server callback registration scope must be one of run, conversation, project, tenant, or deployment",
+    }
+    assert app.callback_registrations() == ()
+
+
+def test_server_app_rejects_callback_registration_with_invalid_failure_policy() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/register",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "callback-sub-invalid-policy",
+                    "scope": "tenant",
+                    "scopeId": "tenant-1",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {"kind": "webhook", "url": "https://relay.example/events"},
+                    "failurePolicy": "retry_forever",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "server subscription failure_policy must be one of best_effort, retry_then_dead_letter, pause_run_on_failure, or fail_run_on_failure",
     }
     assert app.callback_registrations() == ()
 
