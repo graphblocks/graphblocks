@@ -442,6 +442,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - The Python `AsyncOperation` facade now validates ISO datetime syntax and ordering for
   `created_at`, `submitted_at`, `completed_at`, and `expires_at`, including offset-aware comparisons
   for submitted-before-created, completed-before-submitted, and non-positive expiry windows.
+- The Python `AsyncOperation` facade now rejects provider operation identity before submission, so
+  `provider_operation_id` cannot appear on a still-created operation record and provider invocation
+  remains separated from durable operation creation.
 - `AsyncOperationResult` and `ExternalEffectRecord` now preserve committed external side effects
   even when an async operation result is `cancelled` or `incomplete`; stdlib async terminal blocks
   can project `externalEffects` config into the final result instead of dropping provider effect

@@ -368,6 +368,22 @@ def test_async_operation_rejects_state_timestamp_inconsistency() -> None:
         )
 
 
+def test_async_operation_rejects_provider_identity_before_submission() -> None:
+    with raises_value_error("async operation provider_operation_id requires submitted_at"):
+        graphblocks.AsyncOperation.created(
+            operation_id="op-ci-1",
+            run_id="run-1",
+            node_id="startCI",
+            attempt_id="attempt-1",
+            kind="ci_job",
+            expected_schema="schemas/CICallback@1",
+            resume_token_hash="sha256:resume",
+            idempotency_key="idem-ci-1",
+            created_at="2026-07-02T00:00:00Z",
+            provider_operation_id="gha-run-1",
+        )
+
+
 def test_async_operation_rejects_invalid_timestamp_format_and_ordering() -> None:
     with raises_value_error("async operation created_at must be an ISO datetime"):
         graphblocks.AsyncOperation.created(
@@ -448,6 +464,7 @@ def run_direct() -> None:
         test_async_operation_records_polling_metadata_and_terminal_failure,
         test_async_operation_rejects_invalid_refs_and_transitions,
         test_async_operation_rejects_state_timestamp_inconsistency,
+        test_async_operation_rejects_provider_identity_before_submission,
         test_async_operation_rejects_invalid_timestamp_format_and_ordering,
         test_async_operation_result_exports_are_available,
     )

@@ -235,6 +235,8 @@ class AsyncOperation:
             raise ValueError(f"async operation {self.state} state requires submitted_at")
         if self.state in TERMINAL_ASYNC_OPERATION_STATES and self.completed_at is None:
             raise ValueError("async operation terminal state requires completed_at")
+        if self.provider_operation_id is not None and self.submitted_at is None:
+            raise ValueError("async operation provider_operation_id requires submitted_at")
         created_at = _parse_iso_datetime("async operation", "created_at", self.created_at)
         submitted_at = (
             None
