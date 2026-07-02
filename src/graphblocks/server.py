@@ -1977,6 +1977,7 @@ class GraphBlocksServerApp:
         payload: Mapping[str, object],
         occurred_at: str,
     ) -> ServerResponse:
+        occurred_at = _validate_iso_datetime("run control request", "occurred_at", occurred_at)
         control_states = {
             "cancel_run": "cancelled",
             "pause_run": "paused_operator",
