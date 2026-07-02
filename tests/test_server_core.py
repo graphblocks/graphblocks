@@ -1657,6 +1657,70 @@ def test_server_app_subscribes_to_run_events_with_filtered_replay() -> None:
         app.subscriptions("run-subscribe-1")[0].delivery["options"]["priority"] = "high"  # type: ignore[index]
 
 
+def test_server_app_subscribes_from_accepted_run_initial_cursor() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "server-subscribe-initial-cursor"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Initial {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+
+    accepted = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "cursor"}},
+                    "runId": "run-subscribe-initial-1",
+                    "responseId": "response-subscribe-initial-1",
+                    "responseMode": "accepted",
+                }
+            ).encode("utf-8"),
+        )
+    )
+    initial_cursor = json.loads(accepted.body.decode("utf-8"))["initialCursor"]
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-subscribe-initial-1/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-initial",
+                    "eventFilter": {"types": ["RunStarted", "RunSucceeded"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                    "replayFromCursor": initial_cursor,
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    payload = json.loads(response.body.decode("utf-8"))
+    assert response.status_code == 201
+    assert payload["replayFromCursor"] == "run-subscribe-initial-1:0"
+    assert payload["lastCursor"] == "run-subscribe-initial-1:2"
+    assert [event["kind"] for event in payload["events"]] == ["RunStarted", "RunSucceeded"]
+    assert payload["events"][1]["payload"]["outputs"] == {"prompt": "Initial cursor"}
+
+
 def test_server_app_subscription_replay_filters_visibility_node_operation_and_severity() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     app._events_by_run_id["run-subscribe-filter-1"] = (
@@ -2436,6 +2500,76 @@ def test_server_app_registers_and_revokes_callback_projection_with_run_replay() 
         "RunStarted",
         "RunSucceeded",
     ]
+
+
+def test_server_app_registers_callback_projection_from_accepted_run_initial_cursor() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "server-register-callback-initial"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Callback {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+
+    accepted = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "initial"}},
+                    "runId": "run-register-initial-1",
+                    "responseId": "response-register-initial-1",
+                    "responseMode": "accepted",
+                }
+            ).encode("utf-8"),
+        )
+    )
+    initial_cursor = json.loads(accepted.body.decode("utf-8"))["initialCursor"]
+
+    registered = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/register",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "callback-sub-initial",
+                    "scope": "run",
+                    "scopeId": "run-register-initial-1",
+                    "eventFilter": {"types": ["RunStarted", "RunSucceeded"]},
+                    "delivery": {
+                        "kind": "webhook",
+                        "url": "https://relay.example/events",
+                        "signing": {"algorithm": "hmac-sha256", "secret_ref": "secret://relay"},
+                    },
+                    "replayFromCursor": initial_cursor,
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    payload = json.loads(registered.body.decode("utf-8"))
+    assert registered.status_code == 201
+    assert payload["replayFromCursor"] == "run-register-initial-1:0"
+    assert payload["lastCursor"] == "run-register-initial-1:2"
+    assert [event["kind"] for event in payload["events"]] == ["RunStarted", "RunSucceeded"]
+    assert payload["events"][1]["payload"]["outputs"] == {"prompt": "Callback initial"}
 
 
 def test_server_app_rejects_callback_registration_for_missing_run_scope() -> None:
