@@ -11,7 +11,7 @@ from typing import Literal, Protocol
 from urllib.parse import urlparse
 
 from .application_event import ApplicationEvent, ApplicationEventMetadata
-from .canonical import canonical_hash
+from .canonical import canonical_dumps, canonical_hash
 from .policy import PrincipalRef
 from .runtime import InProcessRuntime, RuntimeRegistry, stdlib_registry
 
@@ -1027,6 +1027,7 @@ class GraphBlocksServerApp:
     auth_hook: ServerAuthHook | None = None
     health: ServerHealth = field(default_factory=lambda: ServerHealth("graphblocks-api"))
     registry: RuntimeRegistry = field(default_factory=stdlib_registry)
+    max_async_callback_payload_bytes: int = 262144
     _events_by_run_id: dict[str, tuple[Mapping[str, object], ...]] = field(default_factory=dict, init=False, repr=False)
     _callbacks_by_operation_id: dict[str, tuple[ServerAsyncCallbackSubmission, ...]] = field(
         default_factory=dict,
@@ -1068,6 +1069,14 @@ class GraphBlocksServerApp:
         init=False,
         repr=False,
     )
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.max_async_callback_payload_bytes, int)
+            or isinstance(self.max_async_callback_payload_bytes, bool)
+            or self.max_async_callback_payload_bytes < 1
+        ):
+            raise ValueError("server max_async_callback_payload_bytes must be a positive integer")
 
     def handle(self, request: ServerRequest) -> ServerResponse:
         try:
@@ -1438,6 +1447,18 @@ class GraphBlocksServerApp:
                     operation_id=route_match.path_params.get("operation_id", ""),
                     request=request,
                 )
+                payload_size_bytes = len(canonical_dumps(_thaw_json_value(submission.payload)).encode("utf-8"))
+                if payload_size_bytes > self.max_async_callback_payload_bytes:
+                    return ServerResponse.json(
+                        413,
+                        {
+                            "ok": False,
+                            "operationId": submission.operation_id,
+                            "payloadSizeBytes": payload_size_bytes,
+                            "maxPayloadBytes": self.max_async_callback_payload_bytes,
+                            "error": "async callback payload exceeds max payload bytes",
+                        },
+                    )
                 if submission.run_id is not None and submission.run_id not in self._events_by_run_id:
                     return ServerResponse.json(
                         404,

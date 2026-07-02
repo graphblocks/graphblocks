@@ -1525,6 +1525,32 @@ def test_server_app_rejects_malformed_async_callback_submission() -> None:
     }
 
 
+def test_server_app_rejects_oversized_async_callback_payload_before_storage() -> None:
+    app = GraphBlocksServerApp(max_async_callback_payload_bytes=32)
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/op-ci-large",
+            headers={"GraphBlocks-Idempotency-Key": "idem-callback-large"},
+            query={},
+            cookies={},
+            body=json.dumps({"callback_id": "cb-large", "payload": {"log": "x" * 64}}).encode("utf-8"),
+            requested_at="2026-07-03T00:00:00Z",
+        )
+    )
+
+    assert response.status_code == 413
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "operationId": "op-ci-large",
+        "payloadSizeBytes": 74,
+        "maxPayloadBytes": 32,
+        "error": "async callback payload exceeds max payload bytes",
+    }
+    assert app.callback_submissions("op-ci-large") == ()
+
+
 def test_server_app_serves_stored_run_events_after_invocation() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     graph = {

@@ -568,6 +568,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   run-attempt receipt, later callbacks for that operation cannot switch to a different run attempt.
   Callback ingress rejects run-scoped receipts when the authoritative run projection is already
   terminal, so late callbacks cannot appear resumable or create new stored resume receipts.
+  The server route enforces a configurable inline callback payload limit, defaulting to the
+  specification's `262144` bytes, before accepting or storing a callback receipt.
   Nested callback JSON payloads are deep-frozen at ingress so later caller mutation cannot
   corrupt stored callback receipts or idempotency comparisons.
 - `graphblocks-server` now also exposes the framework-neutral `GET /runs/{run_id}`
