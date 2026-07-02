@@ -431,6 +431,16 @@ class ServerAsyncCallbackSubmission:
             "status": "accepted",
         }
 
+    def duplicate_response_payload(self) -> dict[str, object]:
+        return {
+            "ok": True,
+            "operationId": self.operation_id,
+            "callbackId": self.callback_id,
+            "idempotencyKey": self.idempotency_key,
+            "status": "duplicate",
+            "duplicate": True,
+        }
+
 
 def _optional_callback_string(body: Mapping[str, object], snake: str, camel: str) -> str | None:
     value = body.get(snake, body.get(camel))
@@ -603,6 +613,9 @@ class GraphBlocksServerApp:
                     request=request,
                 )
                 existing = self._callbacks_by_operation_id.get(submission.operation_id, ())
+                for previous in existing:
+                    if previous.idempotency_key == submission.idempotency_key:
+                        return ServerResponse.json(200, previous.duplicate_response_payload())
                 self._callbacks_by_operation_id[submission.operation_id] = (*existing, submission)
                 return ServerResponse.json(202, submission.response_payload())
             except (TypeError, ValueError, json.JSONDecodeError) as error:

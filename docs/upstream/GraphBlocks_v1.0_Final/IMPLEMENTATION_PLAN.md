@@ -359,8 +359,9 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   and rate-limit metadata without mutating any live cluster.
 - `graphblocks-server` now exposes the framework-neutral `POST /callbacks/{operation_id}`
   `SubmitAsyncCallback` route and typed `ServerAsyncCallbackSubmission` contract, accepting
-  authenticated callback ingress signals with idempotency keys while leaving durable journal/resume
-  authority to the runtime.
+  authenticated callback ingress signals with idempotency keys, acknowledging duplicate callback
+  submissions without recording them twice, while leaving durable journal/resume authority to the
+  runtime.
 - Server-level HTTP/TLS webhook client integration and multi-process coordinator failover execution
   remain follow-on slices.
 

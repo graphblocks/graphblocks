@@ -470,6 +470,42 @@ def test_server_app_accepts_authenticated_async_callback_submission() -> None:
     )
 
 
+def test_server_app_deduplicates_async_callback_submission_by_idempotency_key() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
+    request = ServerRequest(
+        method="POST",
+        path="/callbacks/op-ci-1",
+        headers={"Authorization": "Bearer token-1", "GraphBlocks-Idempotency-Key": "idem-callback-1"},
+        query={},
+        cookies={},
+        body=json.dumps(
+            {
+                "callback_id": "cb-1",
+                "attempt_id": "attempt-1",
+                "run_id": "run-1",
+                "node_id": "waitCI",
+                "payload": {"status": "completed"},
+            }
+        ).encode("utf-8"),
+        requested_at="2026-07-02T00:00:00Z",
+    )
+
+    first = app.handle(request)
+    duplicate = app.handle(request)
+
+    assert first.status_code == 202
+    assert duplicate.status_code == 200
+    assert json.loads(duplicate.body.decode("utf-8")) == {
+        "ok": True,
+        "operationId": "op-ci-1",
+        "callbackId": "cb-1",
+        "idempotencyKey": "idem-callback-1",
+        "status": "duplicate",
+        "duplicate": True,
+    }
+    assert len(app.callback_submissions("op-ci-1")) == 1
+
+
 def test_server_app_rejects_malformed_async_callback_submission() -> None:
     app = GraphBlocksServerApp()
 
