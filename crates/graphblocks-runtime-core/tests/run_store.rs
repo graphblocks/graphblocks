@@ -205,6 +205,33 @@ fn run_invocation_diagnostics_allow_sync_client_connection_lifetime() {
 }
 
 #[test]
+fn run_invocation_diagnostics_report_retention_shorter_than_replay_guarantee() {
+    let config =
+        RunInvocationRouteConfig::new("coding-task-events", RunInvocationMode::Background, true)
+            .expect("route config is valid")
+            .with_event_retention_ms(3_600_000)
+            .with_replay_guarantee_ms(86_400_000);
+
+    let diagnostics = RunInvocationRouteDiagnostic::for_route(&config);
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].code, "GB6013");
+    assert_eq!(diagnostics[0].field, "event_retention_ms");
+    assert!(diagnostics[0].message.contains("coding-task-events"));
+}
+
+#[test]
+fn run_invocation_diagnostics_allow_retention_covering_replay_guarantee() {
+    let config =
+        RunInvocationRouteConfig::new("coding-task-events", RunInvocationMode::Background, true)
+            .expect("route config is valid")
+            .with_event_retention_ms(86_400_000)
+            .with_replay_guarantee_ms(3_600_000);
+
+    assert_eq!(RunInvocationRouteDiagnostic::for_route(&config), Vec::new());
+}
+
+#[test]
 fn run_store_records_deployment_provenance_and_preserves_it_across_mutations()
 -> Result<(), RunStoreError> {
     let mut store = InMemoryRunStore::new();

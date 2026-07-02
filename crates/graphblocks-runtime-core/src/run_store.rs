@@ -280,6 +280,8 @@ pub struct RunInvocationRouteConfig {
     pub invocation_mode: RunInvocationMode,
     pub cursor_replay: bool,
     pub lifetime: RunLifetime,
+    pub event_retention_ms: Option<u64>,
+    pub replay_guarantee_ms: Option<u64>,
 }
 
 impl RunInvocationRouteConfig {
@@ -301,11 +303,23 @@ impl RunInvocationRouteConfig {
                 RunInvocationMode::Accepted => RunLifetime::Job,
                 RunInvocationMode::Background => RunLifetime::Background,
             },
+            event_retention_ms: None,
+            replay_guarantee_ms: None,
         })
     }
 
     pub fn with_lifetime(mut self, lifetime: RunLifetime) -> Self {
         self.lifetime = lifetime;
+        self
+    }
+
+    pub fn with_event_retention_ms(mut self, event_retention_ms: u64) -> Self {
+        self.event_retention_ms = Some(event_retention_ms);
+        self
+    }
+
+    pub fn with_replay_guarantee_ms(mut self, replay_guarantee_ms: u64) -> Self {
+        self.replay_guarantee_ms = Some(replay_guarantee_ms);
         self
     }
 }
@@ -340,6 +354,19 @@ impl RunInvocationRouteDiagnostic {
                     route.route_id,
                     route.invocation_mode.as_str(),
                     route.lifetime.as_str()
+                ),
+            });
+        }
+        if let (Some(event_retention_ms), Some(replay_guarantee_ms)) =
+            (route.event_retention_ms, route.replay_guarantee_ms)
+            && event_retention_ms < replay_guarantee_ms
+        {
+            diagnostics.push(Self {
+                code: "GB6013",
+                field: "event_retention_ms",
+                message: format!(
+                    "run route {} retains events for {event_retention_ms}ms but declares a {replay_guarantee_ms}ms replay guarantee",
+                    route.route_id
                 ),
             });
         }

@@ -233,6 +233,8 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   event streams as `GB6005`.
 - Run invocation route diagnostics now report accepted/background routes tied to
   `client_connection` lifetime as `GB6009`.
+- Run invocation route diagnostics now compare declared event retention to reconnect/replay
+  guarantees and report insufficient retention as `GB6013`.
 - Run status snapshots now expose the protocol response shape with state, release id, last cursor,
   started/updated/completed timestamps, wait reasons, and active async operation ids.
 - `ApplicationCommandKind` now includes the async run, attach/replay, subscription, callback
