@@ -1,4 +1,6 @@
 use std::collections::BTreeMap;
+use std::error::Error;
+use std::fmt;
 
 use graphblocks_compiler::canonical::canonical_hash;
 use serde_json::{Value, json};
@@ -217,6 +219,241 @@ pub struct ChangeSet {
     pub operations: Vec<Value>,
     pub summary: Option<String>,
 }
+
+impl ChangeSet {
+    fn canonical_value(&self) -> Value {
+        json!({
+            "change_set_id": self.change_set_id,
+            "base": self.base.canonical_value(),
+            "candidate": self.candidate.canonical_value(),
+            "operations": self.operations,
+            "summary": self.summary,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkspaceHead {
+    pub workspace_id: String,
+    pub current: ResourceSnapshotRef,
+    pub revision: u64,
+}
+
+impl WorkspaceHead {
+    pub fn new(
+        workspace_id: impl Into<String>,
+        current: ResourceSnapshotRef,
+        revision: u64,
+    ) -> Self {
+        Self {
+            workspace_id: workspace_id.into(),
+            current,
+            revision,
+        }
+    }
+
+    pub fn commit(
+        &self,
+        request: WorkspaceCommitRequest,
+    ) -> Result<(Self, WorkspaceCommitRecord), WorkspaceCommitError> {
+        if request.expected_base_revision != self.revision
+            || request.change_set.base.digest != self.current.digest
+        {
+            return Err(WorkspaceCommitError::StaleHead {
+                expected_revision: request.expected_base_revision,
+                actual_revision: self.revision,
+                expected_digest: request.change_set.base.digest,
+                actual_digest: self.current.digest.clone(),
+            });
+        }
+        if !request
+            .mutation_decision
+            .as_ref()
+            .map(|decision| decision.allowed)
+            .unwrap_or(true)
+        {
+            return Err(WorkspaceCommitError::MutationDenied {
+                reason_codes: request
+                    .mutation_decision
+                    .map(|decision| decision.reason_codes)
+                    .unwrap_or_default(),
+            });
+        }
+        if let Some(gate) = &request.gate
+            && gate.decision != GateDecision::Pass
+        {
+            return Err(WorkspaceCommitError::GateNotPassed {
+                gate_id: gate.gate_id.clone(),
+                decision: gate.decision,
+            });
+        }
+        for review in &request.reviews {
+            if !matches!(
+                review.decision,
+                ReviewDecision::Accept | ReviewDecision::AcceptWithConditions
+            ) || !review.is_valid_for(&request.change_set.candidate)
+            {
+                return Err(WorkspaceCommitError::ReviewInvalid {
+                    review_id: review.review_id.clone(),
+                });
+            }
+        }
+
+        let new_revision = self.revision + 1;
+        let record = WorkspaceCommitRecord {
+            commit_id: request.commit_id,
+            workspace_id: self.workspace_id.clone(),
+            change_set_id: request.change_set.change_set_id.clone(),
+            previous: self.current.clone(),
+            candidate: request.change_set.candidate.clone(),
+            previous_revision: self.revision,
+            new_revision,
+            change_set: request.change_set,
+            gate: request.gate,
+            reviews: request.reviews,
+            metadata: request.metadata,
+        };
+        Ok((
+            Self {
+                workspace_id: self.workspace_id.clone(),
+                current: record.candidate.clone(),
+                revision: new_revision,
+            },
+            record,
+        ))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct WorkspaceCommitRequest {
+    pub commit_id: String,
+    pub change_set: ChangeSet,
+    pub expected_base_revision: u64,
+    pub mutation_decision: Option<WorkspaceMutationDecision>,
+    pub gate: Option<GateResult>,
+    pub reviews: Vec<ReviewRecord>,
+    pub metadata: BTreeMap<String, Value>,
+}
+
+impl WorkspaceCommitRequest {
+    pub fn new(
+        commit_id: impl Into<String>,
+        change_set: ChangeSet,
+        expected_base_revision: u64,
+    ) -> Self {
+        Self {
+            commit_id: commit_id.into(),
+            change_set,
+            expected_base_revision,
+            mutation_decision: None,
+            gate: None,
+            reviews: Vec::new(),
+            metadata: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_mutation_decision(mut self, mutation_decision: WorkspaceMutationDecision) -> Self {
+        self.mutation_decision = Some(mutation_decision);
+        self
+    }
+
+    pub fn with_gate(mut self, gate: GateResult) -> Self {
+        self.gate = Some(gate);
+        self
+    }
+
+    pub fn with_review(mut self, review: ReviewRecord) -> Self {
+        self.reviews.push(review);
+        self
+    }
+
+    pub fn with_metadata(mut self, key: impl Into<String>, value: Value) -> Self {
+        self.metadata.insert(key.into(), value);
+        self
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct WorkspaceCommitRecord {
+    pub commit_id: String,
+    pub workspace_id: String,
+    pub change_set_id: String,
+    pub previous: ResourceSnapshotRef,
+    pub candidate: ResourceSnapshotRef,
+    pub previous_revision: u64,
+    pub new_revision: u64,
+    pub change_set: ChangeSet,
+    pub gate: Option<GateResult>,
+    pub reviews: Vec<ReviewRecord>,
+    pub metadata: BTreeMap<String, Value>,
+}
+
+impl WorkspaceCommitRecord {
+    pub fn content_digest(&self) -> String {
+        canonical_hash(&json!({
+            "workspace_id": self.workspace_id,
+            "change_set_id": self.change_set_id,
+            "previous": self.previous.canonical_value(),
+            "candidate": self.candidate.canonical_value(),
+            "previous_revision": self.previous_revision,
+            "new_revision": self.new_revision,
+            "change_set": self.change_set.canonical_value(),
+            "gate": self.gate.as_ref().map(GateResult::canonical_value),
+            "reviews": self.reviews.iter().map(ReviewRecord::canonical_value).collect::<Vec<_>>(),
+            "metadata": self.metadata,
+        }))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum WorkspaceCommitError {
+    StaleHead {
+        expected_revision: u64,
+        actual_revision: u64,
+        expected_digest: String,
+        actual_digest: String,
+    },
+    MutationDenied {
+        reason_codes: Vec<String>,
+    },
+    GateNotPassed {
+        gate_id: String,
+        decision: GateDecision,
+    },
+    ReviewInvalid {
+        review_id: String,
+    },
+}
+
+impl fmt::Display for WorkspaceCommitError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::StaleHead {
+                expected_revision,
+                actual_revision,
+                expected_digest,
+                actual_digest,
+            } => write!(
+                formatter,
+                "workspace head is stale: expected {expected_digest}@{expected_revision}, actual {actual_digest}@{actual_revision}"
+            ),
+            Self::MutationDenied { reason_codes } => {
+                write!(formatter, "workspace mutation denied: {reason_codes:?}")
+            }
+            Self::GateNotPassed { gate_id, decision } => {
+                write!(
+                    formatter,
+                    "workspace commit gate {gate_id:?} did not pass: {decision:?}"
+                )
+            }
+            Self::ReviewInvalid { review_id } => {
+                write!(formatter, "workspace review {review_id:?} is not valid for commit")
+            }
+        }
+    }
+}
+
+impl Error for WorkspaceCommitError {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkspaceMutationDecision {
@@ -584,6 +821,16 @@ pub enum GateDecision {
     Inconclusive,
 }
 
+impl GateDecision {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Pass => "pass",
+            Self::Fail => "fail",
+            Self::Inconclusive => "inconclusive",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct GateResult {
     pub gate_id: String,
@@ -593,6 +840,20 @@ pub struct GateResult {
     pub violated_constraints: Vec<String>,
     pub metrics: Vec<MetricObservation>,
     pub policy_ref: Option<String>,
+}
+
+impl GateResult {
+    fn canonical_value(&self) -> Value {
+        json!({
+            "gate_id": self.gate_id,
+            "subject": self.subject.canonical_value(),
+            "decision": self.decision.as_str(),
+            "check_ids": self.check_ids,
+            "violated_constraints": self.violated_constraints,
+            "metrics": self.metrics.iter().map(MetricObservation::canonical_value).collect::<Vec<_>>(),
+            "policy_ref": self.policy_ref,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

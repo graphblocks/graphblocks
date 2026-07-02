@@ -799,6 +799,9 @@ sandbox
 - `TaskPlan::context_access_graph` now derives deterministic resource-conflict edges from declared
   task context access, serializing write/read and write/write access separately from
   model-authored task dependencies.
+- `WorkspaceHead::commit` now provides a compare-and-swap commit boundary for `ChangeSet`
+  candidates, requiring the expected base revision/digest and rejecting denied mutations,
+  non-passing gates, or stale/non-accepting reviews before advancing the workspace revision.
 
 ## 10. Phase 7 — Optional Extensions
 

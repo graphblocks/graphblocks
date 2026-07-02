@@ -2,7 +2,8 @@ use graphblocks_runtime_core::evaluation::{
     ChangeSet, CheckResult, CheckStatus, ConstraintOperator, GateConstraint, GateDecision,
     MetricDirection, MetricObservation, ResourceSnapshotRef, ResultBundle, ReviewDecision,
     ReviewRecord, RunProvenance, SloMeasurement, SloObjective, SloReportStatus, TrialResult,
-    WorkspaceMutationPolicy, evaluate_gate,
+    WorkspaceCommitError, WorkspaceCommitRequest, WorkspaceHead, WorkspaceMutationPolicy,
+    evaluate_gate,
 };
 use graphblocks_runtime_core::policy::PrincipalRef;
 use graphblocks_runtime_core::tool::{
@@ -148,6 +149,144 @@ fn workspace_mutation_policy_rejects_protected_snapshot_digest_change_without_op
     assert_eq!(
         decision.reason_codes,
         vec!["workspace.read_only_resource_changed"]
+    );
+}
+
+#[test]
+fn workspace_commit_applies_changeset_with_compare_and_swap_gate_and_review() {
+    let base = ResourceSnapshotRef::new("workspace", "sha256:base").with_resource_kind("workspace");
+    let candidate =
+        ResourceSnapshotRef::new("workspace", "sha256:candidate").with_resource_kind("workspace");
+    let head = WorkspaceHead::new("workspace", base.clone(), 7);
+    let change_set = ChangeSet {
+        change_set_id: "change-1".to_string(),
+        base: base.clone(),
+        candidate: candidate.clone(),
+        operations: vec![
+            json!({"op": "file.write", "resource_id": "src/lib.rs", "resource_kind": "file"}),
+        ],
+        summary: Some("update implementation".to_string()),
+    };
+    let mutation = WorkspaceMutationPolicy::new("policy-1", ["file"])
+        .evaluate(&change_set, &PrincipalRef::new("agent-1"), &[], &[], &[]);
+    let gate = evaluate_gate(
+        "quality",
+        candidate.clone(),
+        &[CheckResult::new("unit", candidate.clone(), CheckStatus::Passed)],
+        &[],
+        Some(["unit"]),
+        &[],
+        None,
+    );
+    let review = ReviewRecord::new(
+        "review-1",
+        candidate.clone(),
+        "sha256:candidate",
+        "quality",
+        PrincipalRef::new("reviewer-1"),
+        ReviewDecision::Accept,
+    );
+    let request = WorkspaceCommitRequest::new("commit-1", change_set, 7)
+        .with_mutation_decision(mutation)
+        .with_gate(gate)
+        .with_review(review);
+
+    let (updated, record) = head.commit(request).expect("commit should pass");
+
+    assert_eq!(updated.revision, 8);
+    assert_eq!(updated.current, candidate);
+    assert_eq!(record.previous_revision, 7);
+    assert_eq!(record.new_revision, 8);
+    assert_eq!(record.change_set_id, "change-1");
+    assert!(record.content_digest().starts_with("sha256:"));
+}
+
+#[test]
+fn workspace_commit_rejects_stale_head_failed_gate_or_invalid_review() {
+    let base = ResourceSnapshotRef::new("workspace", "sha256:base").with_resource_kind("workspace");
+    let candidate =
+        ResourceSnapshotRef::new("workspace", "sha256:candidate").with_resource_kind("workspace");
+    let head = WorkspaceHead::new("workspace", base.clone(), 7);
+    let change_set = ChangeSet {
+        change_set_id: "change-1".to_string(),
+        base: base.clone(),
+        candidate: candidate.clone(),
+        operations: Vec::new(),
+        summary: None,
+    };
+
+    assert_eq!(
+        head.commit(WorkspaceCommitRequest::new("commit-stale", change_set.clone(), 6))
+            .expect_err("stale revision should fail"),
+        WorkspaceCommitError::StaleHead {
+            expected_revision: 6,
+            actual_revision: 7,
+            expected_digest: "sha256:base".to_string(),
+            actual_digest: "sha256:base".to_string(),
+        }
+    );
+
+    let denied = WorkspaceMutationPolicy::new("policy-1", ["file"])
+        .with_denied_operation("file.delete")
+        .evaluate(
+            &ChangeSet {
+                operations: vec![json!({"op": "file.delete", "resource_id": "src/lib.rs", "resource_kind": "file"})],
+                ..change_set.clone()
+            },
+            &PrincipalRef::new("agent-1"),
+            &[],
+            &[],
+            &[],
+        );
+    assert_eq!(
+        head.commit(
+            WorkspaceCommitRequest::new("commit-denied", change_set.clone(), 7)
+                .with_mutation_decision(denied)
+        )
+        .expect_err("denied mutation should fail"),
+        WorkspaceCommitError::MutationDenied {
+            reason_codes: vec!["workspace.operation_denied".to_string()],
+        }
+    );
+
+    let failed_gate = evaluate_gate(
+        "quality",
+        candidate.clone(),
+        &[CheckResult::new("unit", candidate.clone(), CheckStatus::Failed)],
+        &[],
+        Some(["unit"]),
+        &[],
+        None,
+    );
+    assert_eq!(
+        head.commit(
+            WorkspaceCommitRequest::new("commit-failed-gate", change_set.clone(), 7)
+                .with_gate(failed_gate)
+        )
+        .expect_err("failed gate should fail"),
+        WorkspaceCommitError::GateNotPassed {
+            gate_id: "quality".to_string(),
+            decision: GateDecision::Fail,
+        }
+    );
+
+    let stale_review = ReviewRecord::new(
+        "review-1",
+        candidate.clone(),
+        "sha256:old",
+        "quality",
+        PrincipalRef::new("reviewer-1"),
+        ReviewDecision::Accept,
+    );
+    assert_eq!(
+        head.commit(
+            WorkspaceCommitRequest::new("commit-stale-review", change_set, 7)
+                .with_review(stale_review)
+        )
+        .expect_err("stale review should fail"),
+        WorkspaceCommitError::ReviewInvalid {
+            review_id: "review-1".to_string(),
+        }
     );
 }
 
