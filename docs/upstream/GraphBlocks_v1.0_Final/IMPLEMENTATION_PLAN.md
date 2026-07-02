@@ -297,6 +297,8 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
 - Callback subscriptions can now explicitly mark forbidden authoritative uses, and diagnostics
   report callback delivery used as a source of truth for run correctness, billing, quota, audit, or
   effect commit as `GB6004`.
+- Callback subscription diagnostics now report mandatory callback delivery without retry,
+  dead-letter, or fallback policy as `GB6006`.
 - Callback subscription diagnostics now report impossible ordered-delivery requests (`GB6012`) and
   mandatory callback failure policies without dead-letter behavior (`GB6014`).
 - Webhook delivery targets now enforce the specification's default `262144` byte payload limit

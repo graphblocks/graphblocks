@@ -101,6 +101,7 @@ pub struct CallbackSubscription {
     pub failure_policy: CallbackFailurePolicy,
     pub ordered_delivery: bool,
     pub authoritative_uses: BTreeSet<CallbackAuthoritativeUse>,
+    pub mandatory_delivery: bool,
 }
 
 impl CallbackSubscription {
@@ -128,6 +129,7 @@ impl CallbackSubscription {
             failure_policy,
             ordered_delivery: false,
             authoritative_uses: BTreeSet::new(),
+            mandatory_delivery: false,
         };
         subscription.validate()?;
         Ok(subscription)
@@ -175,6 +177,11 @@ impl CallbackSubscription {
 
     pub fn with_ordered_delivery(mut self) -> Self {
         self.ordered_delivery = true;
+        self
+    }
+
+    pub fn with_mandatory_delivery(mut self) -> Self {
+        self.mandatory_delivery = true;
         self
     }
 
@@ -509,6 +516,18 @@ impl CallbackConfigurationDiagnostic {
                 message: format!(
                     "callback subscription {} requests ordered delivery for target {} that cannot guarantee ordering",
                     subscription.subscription_id, subscription.delivery_target
+                ),
+            });
+        }
+        if subscription.mandatory_delivery
+            && subscription.failure_policy == CallbackFailurePolicy::BestEffort
+        {
+            diagnostics.push(Self {
+                code: "GB6006",
+                field: "failure_policy",
+                message: format!(
+                    "mandatory callback subscription {} has no retry, dead-letter, or fallback policy",
+                    subscription.subscription_id
                 ),
             });
         }

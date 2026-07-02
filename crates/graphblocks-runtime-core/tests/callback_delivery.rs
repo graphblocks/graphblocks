@@ -794,6 +794,33 @@ fn callback_diagnostics_report_missing_dead_letter_policy_for_retrying_callbacks
 }
 
 #[test]
+fn callback_diagnostics_report_mandatory_callback_without_failure_policy() {
+    let subscription = subscription(EventFilter::new(), CallbackFailurePolicy::BestEffort)
+        .with_mandatory_delivery();
+
+    let diagnostics = CallbackConfigurationDiagnostic::subscription(&subscription);
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].code, "GB6006");
+    assert_eq!(diagnostics[0].field, "failure_policy");
+    assert!(diagnostics[0].message.contains("sub-1"));
+}
+
+#[test]
+fn callback_diagnostics_allow_mandatory_retry_then_dead_letter() {
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    )
+    .with_mandatory_delivery();
+
+    assert_eq!(
+        CallbackConfigurationDiagnostic::subscription(&subscription),
+        Vec::new()
+    );
+}
+
+#[test]
 fn callback_diagnostics_report_callback_as_source_of_truth() {
     let subscription = subscription(
         EventFilter::new(),
