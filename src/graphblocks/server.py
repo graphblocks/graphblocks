@@ -1665,25 +1665,26 @@ class GraphBlocksServerApp:
 
         waiting_on: list[dict[str, object]] = []
         active_operations: list[str] = []
-        for operation_id in sorted(self._callbacks_by_operation_id):
-            submissions = self._callbacks_by_operation_id[operation_id]
-            if not submissions:
-                continue
-            submission = submissions[-1]
-            if submission.run_id != run_id:
-                continue
-            waiting: dict[str, object] = {
-                "kind": "callback",
-                "operationId": submission.operation_id,
-            }
-            if submission.node_id is not None:
-                waiting["nodeId"] = submission.node_id
-            if submission.attempt_id is not None:
-                waiting["attemptId"] = submission.attempt_id
-            waiting_on.append(waiting)
-            active_operations.append(submission.operation_id)
-        if waiting_on and state == "running":
-            state = "waiting_callback"
+        if state not in {"completed", "succeeded", "failed", "cancelled", "expired", "policy_stopped"}:
+            for operation_id in sorted(self._callbacks_by_operation_id):
+                submissions = self._callbacks_by_operation_id[operation_id]
+                if not submissions:
+                    continue
+                submission = submissions[-1]
+                if submission.run_id != run_id:
+                    continue
+                waiting: dict[str, object] = {
+                    "kind": "callback",
+                    "operationId": submission.operation_id,
+                }
+                if submission.node_id is not None:
+                    waiting["nodeId"] = submission.node_id
+                if submission.attempt_id is not None:
+                    waiting["attemptId"] = submission.attempt_id
+                waiting_on.append(waiting)
+                active_operations.append(submission.operation_id)
+            if waiting_on and state == "running":
+                state = "waiting_callback"
 
         payload: dict[str, object] = {
             "runId": run_id,

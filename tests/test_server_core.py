@@ -880,6 +880,69 @@ def test_server_app_accepts_authenticated_async_callback_submission() -> None:
     assert status_payload["activeOperations"] == ["op-ci-1"]
 
 
+def test_server_app_terminal_run_status_suppresses_active_callback_waits() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
+    app._events_by_run_id["run-1"] = (
+        {
+            "kind": "RunStarted",
+            "payload": {"runId": "run-1"},
+            "metadata": {
+                "runId": "run-1",
+                "sequence": 1,
+                "cursor": "run-1:1",
+                "releaseId": "release-1",
+                "occurredAt": "2026-07-02T00:00:00Z",
+            },
+        },
+    )
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/op-ci-1",
+            headers={"Authorization": "Bearer token-1", "GraphBlocks-Idempotency-Key": "idem-callback-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "callback_id": "cb-1",
+                    "attempt_id": "attempt-1",
+                    "run_id": "run-1",
+                    "node_id": "waitCI",
+                    "payload": {"status": "completed"},
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-02T00:00:01Z",
+        )
+    )
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-1/cancel",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            requested_at="2026-07-02T00:00:02Z",
+        )
+    )
+
+    status = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-1",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            requested_at="2026-07-02T00:00:03Z",
+        )
+    )
+    status_payload = json.loads(status.body.decode("utf-8"))
+
+    assert status_payload["state"] == "cancelled"
+    assert status_payload["completedAt"] == "2026-07-02T00:00:02Z"
+    assert status_payload["waitingOn"] == []
+    assert status_payload["activeOperations"] == []
+
+
 def test_server_app_deduplicates_async_callback_submission_by_idempotency_key() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
     request = ServerRequest(
