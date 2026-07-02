@@ -257,6 +257,9 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   bounded retry scheduling, best-effort failure handling, dead-letter terminal state, and redrive
   records that preserve original delivery identity, event identity, attempt history, operator, and
   reason.
+- Mandatory callback failure policies now map terminal delivery failures to explicit runtime
+  actions: pause the run for `pause_run_on_failure`, fail the run for `fail_run_on_failure`, and
+  avoid run terminal actions for ordinary retry/dead-letter subscriptions.
 - Ordered callback delivery now tracks the blocking delivery per subscription/run and prevents later
   events from scheduling until the prior delivery succeeds, is acknowledged, fails terminally,
   dead-letters, is cancelled, or expires.

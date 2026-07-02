@@ -4,10 +4,10 @@ use graphblocks_runtime_core::application_event::{
 };
 use graphblocks_runtime_core::callback_delivery::{
     CallbackConfigurationDiagnostic, CallbackDeadLetter, CallbackDeliveryResponse,
-    CallbackDeliveryScheduler, CallbackDeliveryStatus, CallbackFailurePolicy, CallbackRetryPolicy,
-    CallbackSubscription, CallbackSubscriptionStatus, EventFilter, OrderedDeliveryState,
-    WebhookDeliveryTarget, WebhookEgressPolicy, WebhookEndpointError, WebhookSignatureError,
-    WebhookSigningConfig,
+    CallbackDeliveryRunAction, CallbackDeliveryScheduler, CallbackDeliveryStatus,
+    CallbackFailurePolicy, CallbackRetryPolicy, CallbackSubscription, CallbackSubscriptionStatus,
+    EventFilter, OrderedDeliveryState, WebhookDeliveryTarget, WebhookEgressPolicy,
+    WebhookEndpointError, WebhookSignatureError, WebhookSigningConfig,
 };
 use serde_json::json;
 
@@ -184,6 +184,74 @@ fn best_effort_delivery_drops_retryable_failures_without_dead_letter() {
 
     assert_eq!(failed.status, CallbackDeliveryStatus::Failed);
     assert_eq!(failed.next_retry_at_unix_ms, None);
+}
+
+#[test]
+fn mandatory_callback_failure_policy_pauses_or_fails_run_after_terminal_failure() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(1, 100, 1_000));
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let pause_subscription =
+        subscription(EventFilter::new(), CallbackFailurePolicy::PauseRunOnFailure);
+    let fail_subscription =
+        subscription(EventFilter::new(), CallbackFailurePolicy::FailRunOnFailure);
+
+    let pause_delivery = scheduler
+        .schedule_event(&pause_subscription, &event)
+        .expect("delivery schedules");
+    let fail_delivery = scheduler
+        .schedule_event(&fail_subscription, &event)
+        .expect("delivery schedules");
+    let paused = scheduler.record_response(
+        pause_delivery,
+        CallbackDeliveryResponse::ClientError(403),
+        1_000,
+    );
+    let failed = scheduler.record_response(
+        fail_delivery,
+        CallbackDeliveryResponse::ClientError(403),
+        1_000,
+    );
+
+    assert_eq!(
+        scheduler.run_action_for_terminal_failure(&paused),
+        Some(CallbackDeliveryRunAction::PauseRun {
+            run_id: "run-1".to_owned(),
+            subscription_id: "sub-1".to_owned(),
+            delivery_id: "del_sub-1_event-1".to_owned(),
+            reason: "client_error:403".to_owned(),
+        })
+    );
+    assert_eq!(
+        scheduler.run_action_for_terminal_failure(&failed),
+        Some(CallbackDeliveryRunAction::FailRun {
+            run_id: "run-1".to_owned(),
+            subscription_id: "sub-1".to_owned(),
+            delivery_id: "del_sub-1_event-1".to_owned(),
+            reason: "client_error:403".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn retry_then_dead_letter_failure_does_not_force_run_terminal_action() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(1, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+
+    let dead_lettered =
+        scheduler.record_response(delivery, CallbackDeliveryResponse::ServerError(503), 1_000);
+
+    assert_eq!(dead_lettered.status, CallbackDeliveryStatus::DeadLettered);
+    assert_eq!(
+        scheduler.run_action_for_terminal_failure(&dead_lettered),
+        None
+    );
 }
 
 #[test]

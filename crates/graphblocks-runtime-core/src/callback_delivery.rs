@@ -231,6 +231,22 @@ pub struct CallbackDeadLetter {
     pub redrive_count: u32,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CallbackDeliveryRunAction {
+    PauseRun {
+        run_id: String,
+        subscription_id: String,
+        delivery_id: String,
+        reason: String,
+    },
+    FailRun {
+        run_id: String,
+        subscription_id: String,
+        delivery_id: String,
+        reason: String,
+    },
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct OrderedDeliveryState {
     blocking_by_subscription_run: BTreeMap<(String, String), CallbackDelivery>,
@@ -973,6 +989,40 @@ impl CallbackDeliveryScheduler {
             }
         }
         delivery
+    }
+
+    pub fn run_action_for_terminal_failure(
+        &self,
+        delivery: &CallbackDelivery,
+    ) -> Option<CallbackDeliveryRunAction> {
+        if !matches!(
+            delivery.status,
+            CallbackDeliveryStatus::Failed
+                | CallbackDeliveryStatus::DeadLettered
+                | CallbackDeliveryStatus::Cancelled
+                | CallbackDeliveryStatus::Expired
+        ) {
+            return None;
+        }
+        let reason = delivery
+            .last_error
+            .clone()
+            .unwrap_or_else(|| "callback_delivery_failed".to_owned());
+        match delivery.failure_policy {
+            CallbackFailurePolicy::PauseRunOnFailure => Some(CallbackDeliveryRunAction::PauseRun {
+                run_id: delivery.run_id.clone(),
+                subscription_id: delivery.subscription_id.clone(),
+                delivery_id: delivery.delivery_id.clone(),
+                reason,
+            }),
+            CallbackFailurePolicy::FailRunOnFailure => Some(CallbackDeliveryRunAction::FailRun {
+                run_id: delivery.run_id.clone(),
+                subscription_id: delivery.subscription_id.clone(),
+                delivery_id: delivery.delivery_id.clone(),
+                reason,
+            }),
+            CallbackFailurePolicy::BestEffort | CallbackFailurePolicy::RetryThenDeadLetter => None,
+        }
     }
 
     pub fn redrive_dead_letter(
