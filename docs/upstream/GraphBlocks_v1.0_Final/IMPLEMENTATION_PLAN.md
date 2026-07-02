@@ -230,11 +230,11 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   `RunRecord`, persists the mode through SQLite, and builds accepted/background run handles with
   event stream, websocket, cancel route, and initial cursor fields.
 - Run invocation route diagnostics now report accepted/background routes without cursor-replayable
-  event streams as `GB6005`.
+  event streams as `GB6005`, with shared compiler TCK coverage.
 - Run invocation route diagnostics now report accepted/background routes tied to
-  `client_connection` lifetime as `GB6009`.
+  `client_connection` lifetime as `GB6009`, with shared compiler TCK coverage.
 - Run invocation route diagnostics now compare declared event retention to reconnect/replay
-  guarantees and report insufficient retention as `GB6013`.
+  guarantees and report insufficient retention as `GB6013`, with shared compiler TCK coverage.
 - Run status snapshots now expose the protocol response shape with state, release id, last cursor,
   started/updated/completed timestamps, wait reasons, and active async operation ids.
 - `RunOwnershipLease` now provides run-scoped coordinator ownership fencing in both in-memory and
@@ -278,7 +278,8 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   top-level `asyncOperations` and `async.start_operation`/`async.await_callback` node configs, with
   shared compiler TCK coverage.
 - Async operation configuration diagnostics now compare declared expected callback payload size to
-  the configured ingestion limit and report oversized inline callback payloads as `GB6010`.
+  the configured ingestion limit and report oversized inline callback payloads as `GB6010`, with
+  shared compiler TCK coverage.
 - Async operation configuration diagnostics now report callback waits that can resume without
   policy, budget, and release-compatibility re-evaluation as `GB6008`, with shared compiler TCK
   coverage.

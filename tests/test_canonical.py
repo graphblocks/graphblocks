@@ -1372,3 +1372,96 @@ def test_compile_allows_safe_callback_subscription_contract() -> None:
     }
 
     assert not {"GB6002", "GB6004", "GB6006", "GB6011", "GB6012", "GB6014"} & set(_error_codes(graph))
+
+
+def test_compile_reports_background_run_replay_and_retention_diagnostics() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "background-run-missing-replay"},
+        "spec": {
+            "nodes": {"agent": {"block": "agent.run@1"}},
+            "execution": {
+                "lifetime": "background",
+                "clientConnectionRequired": True,
+            },
+            "eventStream": {
+                "retention": "1h",
+                "reconnectReplayGuarantee": "24h",
+            },
+        },
+    }
+
+    assert _error_codes(graph) == ["GB6005", "GB6009", "GB6013"]
+
+
+def test_compile_reports_oversized_async_callback_payload_contract() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "oversized-async-callback"},
+        "spec": {
+            "nodes": {"agent": {"block": "agent.run@1"}},
+            "asyncOperations": {
+                "ci": {
+                    "kind": "ci_job",
+                    "timeout": "30m",
+                    "idempotencyKey": "$input.request_id",
+                    "attemptFencing": True,
+                    "callback": {
+                        "required": True,
+                        "schema": "schemas/CICallback@1",
+                        "expectedPayloadBytes": 524288,
+                        "maxPayloadBytes": 262144,
+                    },
+                    "resume": {
+                        "requirePolicyReevaluation": True,
+                        "requireBudgetReservation": True,
+                        "requireReleaseCompatibility": True,
+                        "requireOwnershipFence": True,
+                    },
+                }
+            },
+        },
+    }
+
+    assert _error_codes(graph) == ["GB6010"]
+
+
+def test_compile_allows_background_run_with_replay_and_safe_payload_contracts() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "background-run-safe"},
+        "spec": {
+            "nodes": {"agent": {"block": "agent.run@1"}},
+            "execution": {"lifetime": "background"},
+            "eventStream": {
+                "replayable": True,
+                "retention": "14d",
+                "reconnectReplayGuarantee": "24h",
+            },
+            "asyncOperations": {
+                "ci": {
+                    "kind": "ci_job",
+                    "timeout": "30m",
+                    "idempotencyKey": "$input.request_id",
+                    "attemptFencing": True,
+                    "callback": {
+                        "required": True,
+                        "schema": "schemas/CICallback@1",
+                        "expectedPayloadBytes": 65536,
+                        "maxPayloadBytes": 262144,
+                    },
+                    "resume": {
+                        "requirePolicyReevaluation": True,
+                        "requireBudgetReservation": True,
+                        "requireReleaseCompatibility": True,
+                        "requireOwnershipFence": True,
+                    },
+                }
+            },
+        },
+    }
+
+    assert not {"GB6005", "GB6009", "GB6010", "GB6013"} & set(_error_codes(graph))

@@ -1495,5 +1495,75 @@
       "graph_hash": "sha256:d504853609423e0c256966ab111845fcef8b9753b2804fa4ae99e9001a670dfc",
       "error_codes": ["GB6002", "GB6011", "GB6004", "GB6006", "GB6012", "GB6014"]
     }
+  },
+  {
+    "name": "background_run_missing_replay_and_retention",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "background-run-missing-replay"
+      },
+      "spec": {
+        "nodes": {
+          "agent": {
+            "block": "agent.run@1"
+          }
+        },
+        "execution": {
+          "lifetime": "background",
+          "clientConnectionRequired": true
+        },
+        "eventStream": {
+          "retention": "1h",
+          "reconnectReplayGuarantee": "24h"
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:a5ce16644dbe5aeefed47ad21a7c941d8a5ffecebd04e298a84e935d6b9268b1",
+      "error_codes": ["GB6005", "GB6009", "GB6013"]
+    }
+  },
+  {
+    "name": "async_callback_payload_too_large",
+    "document": {
+      "apiVersion": "graphblocks.ai/v1alpha3",
+      "kind": "Graph",
+      "metadata": {
+        "name": "oversized-async-callback"
+      },
+      "spec": {
+        "nodes": {
+          "agent": {
+            "block": "agent.run@1"
+          }
+        },
+        "asyncOperations": {
+          "ci": {
+            "kind": "ci_job",
+            "timeout": "30m",
+            "idempotencyKey": "$input.request_id",
+            "attemptFencing": true,
+            "callback": {
+              "required": true,
+              "schema": "schemas/CICallback@1",
+              "expectedPayloadBytes": 524288,
+              "maxPayloadBytes": 262144
+            },
+            "resume": {
+              "requirePolicyReevaluation": true,
+              "requireBudgetReservation": true,
+              "requireReleaseCompatibility": true,
+              "requireOwnershipFence": true
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "graph_hash": "sha256:bd254b7a63a2f083bf2435e82e29a9f91a9743368508e7cf68a295e62feb6432",
+      "error_codes": ["GB6010"]
+    }
   }
 ]

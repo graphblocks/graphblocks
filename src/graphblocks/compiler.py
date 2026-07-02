@@ -46,6 +46,7 @@ FORBIDDEN_TOOL_DEFINITION_FIELDS = frozenset(
 MANDATORY_CALLBACK_FAILURE_POLICIES = frozenset({"pause_run_on_failure", "fail_run_on_failure"})
 ORDER_CAPABLE_CALLBACK_TARGETS = frozenset({"webhook", "websocket", "sse"})
 UNSAFE_CALLBACK_HOSTS = frozenset({"localhost", "metadata.google.internal"})
+DEFAULT_CALLBACK_MAX_PAYLOAD_BYTES = 262_144
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,8 +108,38 @@ def _has_async_callback_schema(config: dict[str, Any]) -> bool:
     return _has_non_empty_string(config.get("callbackSchema") or config.get("callback_schema"))
 
 
+def _configured_positive_integer(config: dict[str, Any], *names: str) -> int | None:
+    for name in names:
+        value = config.get(name)
+        if _is_positive_integer(value):
+            return value
+    return None
+
+
 def _truthy_config_flag(config: dict[str, Any], *names: str) -> bool:
     return any(config.get(name) is True for name in names)
+
+
+def _duration_milliseconds(value: object) -> int | None:
+    if _is_positive_integer(value):
+        return int(value)
+    if not isinstance(value, str):
+        return None
+    duration_text = value.strip()
+    duration_units = (
+        ("ms", 1),
+        ("s", 1_000),
+        ("m", 60_000),
+        ("h", 3_600_000),
+        ("d", 86_400_000),
+    )
+    for suffix, multiplier in duration_units:
+        if not duration_text.endswith(suffix):
+            continue
+        amount_text = duration_text[: -len(suffix)]
+        if amount_text.isascii() and amount_text.isdigit() and int(amount_text) > 0:
+            return int(amount_text) * multiplier
+    return None
 
 
 def _callback_schema_required(config: dict[str, Any]) -> bool:
@@ -195,6 +226,8 @@ def _diagnose_async_operation_config(
     config: dict[str, Any],
     path: str,
 ) -> None:
+    callback = config.get("callback")
+    callback_config = callback if isinstance(callback, dict) else {}
     if not _has_async_timeout(config):
         diagnostics.append(
             Diagnostic(
@@ -219,6 +252,36 @@ def _diagnose_async_operation_config(
                 f"{path}.callback",
             )
         )
+    expected_payload_bytes = _configured_positive_integer(
+        callback_config,
+        "expectedPayloadBytes",
+        "expected_payload_bytes",
+        "expectedMaxPayloadBytes",
+        "expected_max_payload_bytes",
+    ) or _configured_positive_integer(
+        config,
+        "expectedPayloadBytes",
+        "expected_payload_bytes",
+        "expectedMaxPayloadBytes",
+        "expected_max_payload_bytes",
+    )
+    max_payload_bytes = _configured_positive_integer(
+        callback_config,
+        "maxPayloadBytes",
+        "max_payload_bytes",
+    ) or _configured_positive_integer(
+        config,
+        "maxPayloadBytes",
+        "max_payload_bytes",
+    ) or DEFAULT_CALLBACK_MAX_PAYLOAD_BYTES
+    if expected_payload_bytes is not None and expected_payload_bytes > max_payload_bytes:
+        diagnostics.append(
+            Diagnostic(
+                "GB6010",
+                "async callback payload contract exceeds the configured inline payload limit",
+                f"{path}.callback.maxPayloadBytes",
+            )
+        )
     if not _has_async_resume_reevaluation(config):
         diagnostics.append(
             Diagnostic(
@@ -241,6 +304,97 @@ def _diagnose_async_operation_config(
                 "GB6016",
                 "callback resume requires run ownership lease or fencing protection",
                 f"{path}.resume",
+            )
+        )
+
+
+def _is_background_run(execution: dict[str, Any]) -> bool:
+    mode = (
+        execution.get("runLifetime")
+        or execution.get("run_lifetime")
+        or execution.get("lifetime")
+        or execution.get("invocationMode")
+        or execution.get("invocation_mode")
+        or execution.get("responseMode")
+        or execution.get("response_mode")
+    )
+    return mode in {"accepted", "background", "job"}
+
+
+def _execution_is_client_bound(execution: dict[str, Any]) -> bool:
+    if _truthy_config_flag(
+        execution,
+        "clientConnectionRequired",
+        "client_connection_required",
+        "websocketRequired",
+        "websocket_required",
+        "processBound",
+        "process_bound",
+    ):
+        return True
+    detach = execution.get("detach")
+    if isinstance(detach, dict):
+        disconnect_behavior = detach.get("onClientDisconnect") or detach.get("on_client_disconnect")
+        return disconnect_behavior in {"cancel", "cancel_run", "client_connection"}
+    return False
+
+
+def _event_stream_is_replayable(event_stream: dict[str, Any] | None) -> bool:
+    if event_stream is None:
+        return False
+    return _truthy_config_flag(
+        event_stream,
+        "replayable",
+        "cursorReplay",
+        "cursor_replay",
+        "authoritative",
+    )
+
+
+def _diagnose_background_execution_config(
+    diagnostics: list[Diagnostic],
+    execution: dict[str, Any],
+    event_stream: dict[str, Any] | None,
+) -> None:
+    if not _is_background_run(execution):
+        return
+    if not _event_stream_is_replayable(event_stream):
+        diagnostics.append(
+            Diagnostic(
+                "GB6005",
+                "background runs require a replayable ApplicationEventStream",
+                "$.spec.eventStream",
+            )
+        )
+    if _execution_is_client_bound(execution):
+        diagnostics.append(
+            Diagnostic(
+                "GB6009",
+                "background or job runs must not be bound to a single client connection",
+                "$.spec.execution",
+            )
+        )
+    if event_stream is None:
+        return
+    retention = _duration_milliseconds(
+        event_stream.get("retention")
+        or event_stream.get("eventRetention")
+        or event_stream.get("event_retention")
+        or event_stream.get("retentionDuration")
+        or event_stream.get("retention_duration")
+    )
+    replay_guarantee = _duration_milliseconds(
+        event_stream.get("reconnectReplayGuarantee")
+        or event_stream.get("reconnect_replay_guarantee")
+        or event_stream.get("replayGuarantee")
+        or event_stream.get("replay_guarantee")
+    )
+    if retention is not None and replay_guarantee is not None and retention < replay_guarantee:
+        diagnostics.append(
+            Diagnostic(
+                "GB6013",
+                "event retention is shorter than the declared reconnect replay guarantee",
+                "$.spec.eventStream.retention",
             )
         )
 
@@ -494,6 +648,16 @@ def compile_graph(document: dict[str, Any], block_catalog: BlockCatalog | None =
                     f"$.spec.nodes.{node_name}.flow.retry",
                 )
             )
+
+    execution = spec.get("execution")
+    if isinstance(execution, dict):
+        event_stream_key = "eventStream" if "eventStream" in spec else "event_stream"
+        event_stream = spec.get(event_stream_key)
+        _diagnose_background_execution_config(
+            diagnostics,
+            execution,
+            event_stream if isinstance(event_stream, dict) else None,
+        )
 
     async_operations_key = "asyncOperations" if "asyncOperations" in spec else "async_operations"
     async_operations = spec.get(async_operations_key)
