@@ -51,6 +51,22 @@ fn waiting_operation() -> AsyncOperation {
     .waiting_callback(2_000)
 }
 
+fn late_committed_waiting_operation() -> AsyncOperation {
+    AsyncOperation::new(
+        "op-1",
+        "run-1",
+        "node-ci",
+        "attempt-1",
+        AsyncOperationKind::CiJob,
+        "sha256:resume-token",
+        "idem-op-1",
+        "schemas/CICallback@1",
+        1_300,
+    )
+    .submitted("gha-run-1", 1_350)
+    .waiting_callback(2_000)
+}
+
 fn valid_submission(callback_id: &str, idempotency_key: &str) -> AsyncCallbackSubmission {
     AsyncCallbackSubmission::new(
         callback_id,
@@ -688,6 +704,49 @@ fn early_callback_is_quarantined_until_operation_registers() {
             .count(),
         1
     );
+}
+
+#[test]
+fn expired_early_callback_quarantine_is_not_replayed_after_operation_registers() {
+    let store = AsyncOperationStore::new();
+    store
+        .quarantine_callback_before_operation_commit(
+            valid_submission("cb-early-expired", "provider-delivery-expired"),
+            1_250,
+        )
+        .expect("early callback is quarantined");
+    store
+        .register(late_committed_waiting_operation())
+        .expect("operation is registered after callback ingress");
+
+    let accepted = store
+        .accept_quarantined_callbacks("op-1", &callback_schema_registry())
+        .expect("expired quarantine entry is discarded without resuming");
+
+    assert!(accepted.is_empty());
+    assert_eq!(store.quarantined_callback_count("op-1"), 0);
+    assert_eq!(
+        store.operation_state("op-1"),
+        Some(AsyncOperationState::WaitingCallback)
+    );
+    assert_eq!(
+        store
+            .events_for_operation("op-1")
+            .iter()
+            .filter(|event| matches!(event, AsyncOperationEvent::ExternalCallbackReceived { .. }))
+            .count(),
+        0
+    );
+    assert!(store.events_for_operation("op-1").iter().any(|event| {
+        matches!(
+            event,
+            AsyncOperationEvent::ExternalCallbackRejected {
+                callback_id,
+                reason,
+                ..
+            } if callback_id == "cb-early-expired" && reason == "quarantined_callback_expired"
+        )
+    }));
 }
 
 #[test]
@@ -2031,6 +2090,50 @@ fn sqlite_async_operation_store_persists_quarantined_callback_across_reopen()
         store.operation_state("op-1"),
         Some(AsyncOperationState::CallbackReceived)
     );
+    Ok(())
+}
+
+#[test]
+fn sqlite_async_operation_store_discards_expired_quarantined_callback_after_reopen()
+-> Result<(), AsyncOperationError> {
+    let path = sqlite_async_operation_path("callback-quarantine-expired-reopen");
+    {
+        let store = SqliteAsyncOperationStore::open(&path)?;
+        store.quarantine_callback_before_operation_commit(
+            valid_submission("cb-early-expired", "provider-delivery-expired"),
+            1_250,
+        )?;
+        assert_eq!(store.quarantined_callback_count("op-1"), 1);
+    }
+
+    let store = SqliteAsyncOperationStore::open(&path)?;
+    store.register(late_committed_waiting_operation())?;
+    let accepted = store.accept_quarantined_callbacks("op-1", &callback_schema_registry())?;
+
+    assert!(accepted.is_empty());
+    assert_eq!(store.quarantined_callback_count("op-1"), 0);
+    assert_eq!(
+        store.operation_state("op-1"),
+        Some(AsyncOperationState::WaitingCallback)
+    );
+    assert_eq!(
+        store
+            .events_for_operation("op-1")
+            .iter()
+            .filter(|event| matches!(event, AsyncOperationEvent::ExternalCallbackReceived { .. }))
+            .count(),
+        0
+    );
+    assert!(store.events_for_operation("op-1").iter().any(|event| {
+        matches!(
+            event,
+            AsyncOperationEvent::ExternalCallbackRejected {
+                callback_id,
+                reason,
+                ..
+            } if callback_id == "cb-early-expired" && reason == "quarantined_callback_expired"
+        )
+    }));
     Ok(())
 }
 

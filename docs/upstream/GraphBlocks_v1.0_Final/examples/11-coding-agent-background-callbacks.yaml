@@ -113,6 +113,7 @@ spec:
           preCommitRace:
             onEarlyCallback: quarantine
             quarantineTtl: 5m
+            onQuarantineExpired: reject_without_resume
             idempotencyKey: provider_delivery_id
         timeout: 30m
     waitCI:

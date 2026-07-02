@@ -1472,11 +1472,15 @@ impl AsyncOperationStore {
                 .inner
                 .lock()
                 .expect("async operation store lock poisoned");
-            if !inner.operations.contains_key(operation_id) {
+            let operation_created_at_unix_ms = if let Some(operation) =
+                inner.operations.get(operation_id)
+            {
+                operation.created_at_unix_ms
+            } else {
                 return Err(AsyncOperationError::OperationNotFound {
                     operation_id: operation_id.to_owned(),
                 });
-            }
+            };
             let keys = inner
                 .quarantined_callbacks
                 .keys()
@@ -1486,7 +1490,21 @@ impl AsyncOperationStore {
             let mut submissions = Vec::new();
             for key in keys {
                 if let Some(record) = inner.quarantined_callbacks.remove(&key) {
-                    submissions.push(record.submission);
+                    if record.expires_at_unix_ms <= operation_created_at_unix_ms {
+                        inner
+                            .events_by_operation
+                            .entry(operation_id.to_owned())
+                            .or_default()
+                            .push(AsyncOperationEvent::ExternalCallbackRejected {
+                                operation_id: record.submission.operation_id,
+                                callback_id: record.submission.callback_id,
+                                reason: "quarantined_callback_expired".to_owned(),
+                                occurred_at_unix_ms: record.expires_at_unix_ms,
+                                verified_by: record.submission.verified_by,
+                            });
+                    } else {
+                        submissions.push(record.submission);
+                    }
                 }
             }
             submissions
@@ -2158,13 +2176,12 @@ impl SqliteAsyncOperationStore {
         let memory = self.load_memory_store()?;
         let accepted = memory.accept_quarantined_callbacks(operation_id, registry);
         match &accepted {
-            Ok(callbacks) if !callbacks.is_empty() => {
+            Ok(_) => {
                 self.replace_with_memory_store(&memory)?;
             }
             Err(_) => {
                 self.replace_with_memory_store(&memory)?;
             }
-            _ => {}
         }
         accepted
     }

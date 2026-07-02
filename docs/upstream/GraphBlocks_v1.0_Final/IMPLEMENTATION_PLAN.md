@@ -413,6 +413,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   are keyed by `(operation_id, idempotency_key)`, persist across SQLite reopen, deduplicate
   repeated provider delivery attempts, and are consumed through the normal journal-before-resume
   callback admission path after operation registration.
+- Expired pre-operation quarantine entries are discarded instead of replayed after operation
+  registration; the runtime emits `ExternalCallbackRejected` metadata with
+  `quarantined_callback_expired`, leaves the operation in `WAITING_CALLBACK`, and does not produce
+  a resume signal. In-memory and SQLite tests cover this edge case.
 - Callback resume admission can now pause after a durable callback receipt when budget policy
   denies continuation; the operation records `CallbackReceived`, emits a pause reason, and returns
   `should_resume = false`.
