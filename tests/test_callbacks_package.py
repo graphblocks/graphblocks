@@ -633,6 +633,29 @@ def test_callback_payload_projection_rejects_oversized_payload_without_artifact_
     )
 
 
+def test_callback_payload_projection_rejects_inline_digest_mismatch() -> None:
+    _assert_raises_value_error(
+        "inline callback payload_digest must match payload",
+        lambda: CallbackPayloadProjection(
+            mode="inline",
+            payload={"status": "completed"},
+            payload_digest="sha256:wrong",
+            payload_size_bytes=22,
+        ),
+    )
+
+
+def test_callback_payload_projection_rejects_inline_size_mismatch() -> None:
+    _assert_raises_value_error(
+        "inline callback payload_size_bytes must match canonical payload size",
+        lambda: CallbackPayloadProjection(
+            mode="inline",
+            payload={"status": "completed"},
+            payload_size_bytes=999,
+        ),
+    )
+
+
 def test_webhook_response_classification_maps_receiver_statuses() -> None:
     assert classify_webhook_response(204).status == "delivered"
     assert classify_webhook_response(409).status == "acknowledged"

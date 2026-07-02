@@ -235,6 +235,13 @@ class CallbackPayloadProjection:
         if self.payload_digest is not None:
             _require_non_empty_string("payload_digest", self.payload_digest)
         object.__setattr__(self, "payload_size_bytes", _non_negative_int("payload_size_bytes", self.payload_size_bytes))
+        if self.mode == "inline":
+            canonical = canonical_dumps(self.payload).encode("utf-8")
+            expected_digest = canonical_hash(self.payload)
+            if self.payload_digest is not None and self.payload_digest != expected_digest:
+                raise ValueError("inline callback payload_digest must match payload")
+            if self.payload_size_bytes != len(canonical):
+                raise ValueError("inline callback payload_size_bytes must match canonical payload size")
         if self.mode == "inline" and self.artifact is not None:
             raise ValueError("inline callback payload projection must not include an artifact")
         if self.mode == "artifact_reference" and not isinstance(self.artifact, ArtifactRef):

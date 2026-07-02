@@ -243,6 +243,9 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   worker availability, callback authenticity, and idempotency state.
 - Large callback payloads are rejected or converted to `ArtifactRef`; callback payloads are always
   untrusted content.
+- Inline callback payload projections validate that any stored digest and canonical byte count
+  match the JSON payload. Artifact-backed projections keep the digest and size of the original
+  oversized payload while carrying only an `ArtifactRef` inline.
 - A duplicate external callback is idempotent only when the reused idempotency key points to the
   same logical callback receipt. Reusing an idempotency key with a different operation identity,
   attempt, provider operation, payload digest, verification principal, or policy snapshot is an
