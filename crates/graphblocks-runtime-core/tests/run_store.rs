@@ -540,6 +540,7 @@ fn run_store_supports_durable_async_lifecycle_statuses() -> Result<(), RunStoreE
         RunStatus::WaitingReview,
         RunStatus::WaitingCallback,
         RunStatus::PausedBudget,
+        RunStatus::PausedCallbackDelivery,
         RunStatus::PausedPolicy,
         RunStatus::PausedOperator,
         RunStatus::Resuming,
@@ -569,6 +570,9 @@ fn sqlite_run_store_persists_durable_async_lifecycle_statuses() -> Result<(), St
     let paused = store
         .create_run("sha256:paused", json!({}))
         .map_err(|error| format!("{error:?}"))?;
+    let paused_callback_delivery = store
+        .create_run("sha256:paused-callback-delivery", json!({}))
+        .map_err(|error| format!("{error:?}"))?;
     let expired = store
         .create_run("sha256:expired", json!({}))
         .map_err(|error| format!("{error:?}"))?;
@@ -578,6 +582,12 @@ fn sqlite_run_store_persists_durable_async_lifecycle_statuses() -> Result<(), St
         .map_err(|error| format!("{error:?}"))?;
     store
         .set_status(&paused.run_id, RunStatus::PausedBudget)
+        .map_err(|error| format!("{error:?}"))?;
+    store
+        .set_status(
+            &paused_callback_delivery.run_id,
+            RunStatus::PausedCallbackDelivery,
+        )
         .map_err(|error| format!("{error:?}"))?;
     store
         .set_status(&expired.run_id, RunStatus::Expired)
@@ -596,6 +606,13 @@ fn sqlite_run_store_persists_durable_async_lifecycle_statuses() -> Result<(), St
             .map_err(|error| format!("{error:?}"))?
             .status,
         RunStatus::PausedBudget
+    );
+    assert_eq!(
+        store
+            .get_run(&paused_callback_delivery.run_id)
+            .map_err(|error| format!("{error:?}"))?
+            .status,
+        RunStatus::PausedCallbackDelivery
     );
     assert_eq!(
         store
