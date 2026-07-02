@@ -256,8 +256,8 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   journaling or resume, and focused tests cover explicit small-limit rejection without operation
   state changes.
 - `CallbackEndpointRef` and `CallbackEndpointAuth` now model callback ingress authentication for
-  async operations, with bearer-token, `hmac-sha256`, and Ed25519 verifier-boundary helpers that
-  build `AsyncCallbackSubmission` only after authentication succeeds.
+  async operations, with bearer-token, `hmac-sha256`, Ed25519 verifier-boundary, and mTLS
+  client-identity helpers that build `AsyncCallbackSubmission` only after authentication succeeds.
 - Callback rejection paths now emit durable `ExternalCallbackRejected` metadata events for stale
   attempts, schema mismatches, and payload-limit failures without journaling rejected payload bodies;
   SQLite persistence covers these rejection events across reopen.
@@ -339,8 +339,8 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
 - `WebhookHttpTransport` now provides the runtime transport adapter boundary: DNS preflight,
   signed POST request construction, and spec-defined receiver status mapping are implemented
   without adding a default HTTP/TLS client dependency to `graphblocks-runtime-core`.
-- mTLS/OIDC callback authentication bindings, server-level HTTP/TLS webhook client integration,
-  and multi-process coordinator failover execution remain follow-on slices.
+- OIDC callback authentication bindings, server-level HTTP/TLS webhook client integration, and
+  multi-process coordinator failover execution remain follow-on slices.
 
 ### Package ownership
 

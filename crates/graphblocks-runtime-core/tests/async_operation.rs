@@ -255,6 +255,57 @@ fn ed25519_callback_endpoint_authenticates_with_injected_verifier() {
 }
 
 #[test]
+fn mtls_callback_endpoint_authenticates_with_bound_client_identity() {
+    let endpoint = CallbackEndpointRef::new(
+        "callback-endpoint-mtls",
+        "https://graphblocks.example.com/v1/callbacks/op-1",
+        "schemas/CICallback@1",
+        CallbackEndpointAuth::mtls("spiffe://tenant-a/provider/ci"),
+    )
+    .expect("endpoint is valid");
+    let headers = BTreeMap::new();
+
+    let submission = endpoint
+        .authenticate_mtls_and_build_submission(
+            "cb-1",
+            "op-1",
+            "run-1",
+            "node-ci",
+            "attempt-1",
+            "idem-cb-1",
+            json!({"status": "completed", "workflow_run_id": "gha-run-1"}),
+            1_250,
+            "policy-snapshot-1",
+            &headers,
+            Some("spiffe://tenant-a/provider/ci"),
+        )
+        .expect("mtls identity authenticates");
+
+    assert_eq!(submission.verified_by, "mtls:callback-endpoint-mtls");
+    assert_eq!(submission.operation_id, "op-1");
+
+    assert_eq!(
+        endpoint.authenticate_mtls_and_build_submission(
+            "cb-2",
+            "op-1",
+            "run-1",
+            "node-ci",
+            "attempt-1",
+            "idem-cb-2",
+            json!({"status": "completed", "workflow_run_id": "gha-run-1"}),
+            1_250,
+            "policy-snapshot-1",
+            &headers,
+            Some("spiffe://tenant-b/provider/ci"),
+        ),
+        Err(AsyncOperationError::CallbackAuthenticationFailed {
+            endpoint_id: "callback-endpoint-mtls".to_owned(),
+            reason: "mtls_identity_mismatch".to_owned(),
+        })
+    );
+}
+
+#[test]
 fn async_operation_diagnostics_report_missing_timeout_schema_and_idempotency() {
     let mut operation = AsyncOperation::new(
         "op-missing",

@@ -474,6 +474,47 @@ impl CallbackEndpointRef {
             policy_snapshot_id,
         ))
     }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn authenticate_mtls_and_build_submission(
+        &self,
+        callback_id: impl Into<String>,
+        operation_id: impl Into<String>,
+        run_id: impl Into<String>,
+        node_id: impl Into<String>,
+        attempt_id: impl Into<String>,
+        idempotency_key: impl Into<String>,
+        payload: Value,
+        received_at_unix_ms: u64,
+        policy_snapshot_id: impl Into<String>,
+        headers: &BTreeMap<String, String>,
+        client_identity: Option<&str>,
+    ) -> Result<AsyncCallbackSubmission, AsyncOperationError> {
+        if self
+            .expires_at_unix_ms
+            .is_some_and(|expires_at_unix_ms| received_at_unix_ms > expires_at_unix_ms)
+        {
+            return Err(AsyncOperationError::CallbackAuthenticationFailed {
+                endpoint_id: self.endpoint_id.clone(),
+                reason: "endpoint_expired".to_owned(),
+            });
+        }
+        let verified_by = self
+            .auth
+            .verify_mtls(&self.endpoint_id, headers, client_identity)?;
+        Ok(AsyncCallbackSubmission::new(
+            callback_id,
+            operation_id,
+            run_id,
+            node_id,
+            attempt_id,
+            idempotency_key,
+            payload,
+            received_at_unix_ms,
+            verified_by,
+            policy_snapshot_id,
+        ))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -545,6 +586,12 @@ impl CallbackEndpointAuth {
         };
         auth.validate()?;
         Ok(auth)
+    }
+
+    pub fn mtls(trusted_identity: impl Into<String>) -> Self {
+        Self::Mtls {
+            trusted_identity: trusted_identity.into(),
+        }
     }
 
     fn validate(&self) -> Result<(), AsyncOperationError> {
@@ -755,6 +802,28 @@ impl CallbackEndpointAuth {
             return Err(callback_auth_failed(endpoint_id, "signature_mismatch"));
         }
         Ok(format!("ed25519:{endpoint_id}"))
+    }
+
+    fn verify_mtls(
+        &self,
+        endpoint_id: &str,
+        headers: &BTreeMap<String, String>,
+        client_identity: Option<&str>,
+    ) -> Result<String, AsyncOperationError> {
+        let Self::Mtls { trusted_identity } = self else {
+            return Err(callback_auth_failed(endpoint_id, "mtls_not_configured"));
+        };
+        let client_identity = client_identity
+            .or_else(|| {
+                headers
+                    .get("GraphBlocks-Client-Identity")
+                    .map(String::as_str)
+            })
+            .ok_or_else(|| callback_auth_failed(endpoint_id, "mtls_identity_missing"))?;
+        if client_identity != trusted_identity {
+            return Err(callback_auth_failed(endpoint_id, "mtls_identity_mismatch"));
+        }
+        Ok(format!("mtls:{endpoint_id}"))
     }
 }
 
