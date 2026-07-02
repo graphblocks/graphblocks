@@ -517,6 +517,128 @@ def test_webhook_response_classification_rejects_invalid_status_codes_and_header
     )
 
 
+def test_callback_delivery_projection_applies_terminal_webhook_responses() -> None:
+    delivery = CallbackDeliveryProjection(
+        delivery_id="del_001",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        sequence=1042,
+        cursor="evt_1042",
+        attempt=1,
+        idempotency_key="sub_001:evt_1042",
+        status="delivering",
+    )
+
+    delivered = delivery.apply_webhook_response(
+        classify_webhook_response(204),
+        received_at="2026-07-02T00:00:00Z",
+        policy=CallbackRetryPolicy(max_attempts=4),
+    )
+    duplicate = delivery.apply_webhook_response(
+        classify_webhook_response(409),
+        received_at="2026-07-02T00:00:01Z",
+        policy=CallbackRetryPolicy(max_attempts=4),
+    )
+
+    assert delivered.status == "delivered"
+    assert delivered.delivered_at == "2026-07-02T00:00:00Z"
+    assert delivered.acknowledged_at is None
+    assert duplicate.status == "acknowledged"
+    assert duplicate.delivered_at == "2026-07-02T00:00:01Z"
+    assert duplicate.acknowledged_at == "2026-07-02T00:00:01Z"
+    assert duplicate.last_error is None
+
+
+def test_callback_delivery_projection_applies_retryable_webhook_responses() -> None:
+    delivery = CallbackDeliveryProjection(
+        delivery_id="del_001",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        sequence=1042,
+        cursor="evt_1042",
+        attempt=1,
+        idempotency_key="sub_001:evt_1042",
+        status="delivering",
+    )
+    policy = CallbackRetryPolicy(max_attempts=4, initial_delay_ms=100, max_delay_ms=1_000, jitter_ms=25)
+
+    rate_limited = delivery.apply_webhook_response(
+        classify_webhook_response(
+            429,
+            headers={"Retry-After": "15"},
+            received_at="2026-07-02T00:00:00Z",
+        ),
+        received_at="2026-07-02T00:00:00Z",
+        policy=policy,
+    )
+    receiver_error = delivery.apply_webhook_response(
+        classify_webhook_response(503),
+        received_at="2026-07-02T00:00:00Z",
+        policy=policy,
+    )
+
+    assert rate_limited.status == "pending"
+    assert rate_limited.attempt == 2
+    assert rate_limited.next_retry_at == "2026-07-02T00:00:15.000Z"
+    assert rate_limited.last_error == "rate_limited"
+    assert receiver_error.status == "pending"
+    assert receiver_error.attempt == 2
+    assert receiver_error.next_retry_at == "2026-07-02T00:00:00.221Z"
+    assert receiver_error.last_error == "receiver_error"
+
+
+def test_callback_delivery_projection_applies_non_retryable_webhook_response() -> None:
+    delivery = CallbackDeliveryProjection(
+        delivery_id="del_001",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        sequence=1042,
+        cursor="evt_1042",
+        attempt=1,
+        idempotency_key="sub_001:evt_1042",
+        status="delivering",
+    )
+
+    failed = delivery.apply_webhook_response(
+        classify_webhook_response(400),
+        received_at="2026-07-02T00:00:00Z",
+        policy=CallbackRetryPolicy(max_attempts=4),
+    )
+
+    assert failed.status == "failed"
+    assert failed.delivered_at == "2026-07-02T00:00:00Z"
+    assert failed.last_error == "non_retryable"
+
+
+def test_callback_delivery_projection_stops_retry_after_max_attempts() -> None:
+    delivery = CallbackDeliveryProjection(
+        delivery_id="del_001",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        sequence=1042,
+        cursor="evt_1042",
+        attempt=2,
+        idempotency_key="sub_001:evt_1042",
+        status="delivering",
+    )
+
+    exhausted = delivery.apply_webhook_response(
+        classify_webhook_response(503),
+        received_at="2026-07-02T00:00:00Z",
+        policy=CallbackRetryPolicy(max_attempts=2),
+    )
+
+    assert exhausted.status == "failed"
+    assert exhausted.attempt == 2
+    assert exhausted.next_retry_at is None
+    assert exhausted.delivered_at == "2026-07-02T00:00:00Z"
+    assert exhausted.last_error == "receiver_error"
+
+
 def test_callback_replay_guard_accepts_first_delivery_and_marks_exact_replay_duplicate() -> None:
     envelope = CallbackEnvelope(
         delivery_id="del_001",

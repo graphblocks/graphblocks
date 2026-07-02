@@ -416,6 +416,107 @@ class CallbackDeliveryProjection:
             last_error=error,
         )
 
+    def apply_webhook_response(
+        self,
+        decision: WebhookResponseDecision,
+        *,
+        received_at: str,
+        policy: CallbackRetryPolicy,
+    ) -> CallbackDeliveryProjection:
+        if not isinstance(decision, WebhookResponseDecision):
+            raise ValueError("decision must be a WebhookResponseDecision")
+        if not isinstance(policy, CallbackRetryPolicy):
+            raise ValueError("policy must be a CallbackRetryPolicy")
+        _require_non_empty_string("received_at", received_at)
+
+        if decision.status == "delivered":
+            return CallbackDeliveryProjection(
+                delivery_id=self.delivery_id,
+                subscription_id=self.subscription_id,
+                event_id=self.event_id,
+                run_id=self.run_id,
+                sequence=self.sequence,
+                cursor=self.cursor,
+                attempt=self.attempt,
+                idempotency_key=self.idempotency_key,
+                status="delivered",
+                delivered_at=received_at,
+            )
+        if decision.status == "acknowledged":
+            return CallbackDeliveryProjection(
+                delivery_id=self.delivery_id,
+                subscription_id=self.subscription_id,
+                event_id=self.event_id,
+                run_id=self.run_id,
+                sequence=self.sequence,
+                cursor=self.cursor,
+                attempt=self.attempt,
+                idempotency_key=self.idempotency_key,
+                status="acknowledged",
+                delivered_at=received_at,
+                acknowledged_at=received_at,
+            )
+        if decision.status == "gone":
+            return CallbackDeliveryProjection(
+                delivery_id=self.delivery_id,
+                subscription_id=self.subscription_id,
+                event_id=self.event_id,
+                run_id=self.run_id,
+                sequence=self.sequence,
+                cursor=self.cursor,
+                attempt=self.attempt,
+                idempotency_key=self.idempotency_key,
+                status="cancelled",
+                delivered_at=received_at,
+                last_error=decision.reason,
+            )
+        if decision.retry:
+            failed = self.mark_failed(decision.reason)
+            if self.attempt >= policy.max_attempts:
+                return CallbackDeliveryProjection(
+                    delivery_id=failed.delivery_id,
+                    subscription_id=failed.subscription_id,
+                    event_id=failed.event_id,
+                    run_id=failed.run_id,
+                    sequence=failed.sequence,
+                    cursor=failed.cursor,
+                    attempt=failed.attempt,
+                    idempotency_key=failed.idempotency_key,
+                    status="failed",
+                    delivered_at=received_at,
+                    last_error=decision.reason,
+                )
+            if decision.retry_after is not None:
+                return CallbackDeliveryProjection(
+                    delivery_id=self.delivery_id,
+                    subscription_id=self.subscription_id,
+                    event_id=self.event_id,
+                    run_id=self.run_id,
+                    sequence=self.sequence,
+                    cursor=self.cursor,
+                    attempt=self.attempt + 1,
+                    idempotency_key=self.idempotency_key,
+                    status="pending",
+                    next_retry_at=decision.retry_after,
+                    delivered_at=self.delivered_at,
+                    acknowledged_at=self.acknowledged_at,
+                    last_error=decision.reason,
+                )
+            return failed.schedule_retry(policy, failed_at=received_at, error=decision.reason)
+        return CallbackDeliveryProjection(
+            delivery_id=self.delivery_id,
+            subscription_id=self.subscription_id,
+            event_id=self.event_id,
+            run_id=self.run_id,
+            sequence=self.sequence,
+            cursor=self.cursor,
+            attempt=self.attempt,
+            idempotency_key=self.idempotency_key,
+            status="failed",
+            delivered_at=received_at,
+            last_error=decision.reason,
+        )
+
     def to_dead_letter(
         self,
         policy: CallbackRetryPolicy,

@@ -493,6 +493,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   reopen, preserving delivery status, idempotency keys, sequence ordering, and retry due times.
 - `WebhookDeliveryWorker` now processes due durable callback deliveries with signed webhook
   envelopes, an injected transport boundary, and persisted success/retry outcomes.
+- `CallbackDeliveryProjection` now exposes a response-transition helper that applies classified
+  webhook receiver responses to durable delivery state: 2xx marks delivered, 409 marks acknowledged,
+  429/5xx schedule bounded retries, and retry exhaustion remains failed without over-scheduling.
 - Callback subscriptions can schedule cursor replay from the authoritative `ApplicationProtocolLog`
   while applying the same event filters and deterministic delivery/idempotency metadata as live
   projection.
