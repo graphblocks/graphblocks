@@ -506,6 +506,95 @@ def test_server_app_deduplicates_async_callback_submission_by_idempotency_key() 
     assert len(app.callback_submissions("op-ci-1")) == 1
 
 
+def test_server_app_rejects_conflicting_async_callback_idempotency_replay() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
+
+    first = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/op-ci-1",
+            headers={"Authorization": "Bearer token-1", "GraphBlocks-Idempotency-Key": "idem-callback-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "callback_id": "cb-1",
+                    "attempt_id": "attempt-1",
+                    "payload": {"status": "completed"},
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-02T00:00:00Z",
+        )
+    )
+    conflict = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/op-ci-1",
+            headers={"Authorization": "Bearer token-1", "GraphBlocks-Idempotency-Key": "idem-callback-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "callback_id": "cb-2",
+                    "attempt_id": "attempt-1",
+                    "payload": {"status": "failed"},
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-02T00:00:01Z",
+        )
+    )
+
+    assert first.status_code == 202
+    assert conflict.status_code == 409
+    assert json.loads(conflict.body.decode("utf-8")) == {
+        "ok": False,
+        "operationId": "op-ci-1",
+        "idempotencyKey": "idem-callback-1",
+        "error": "async callback idempotency key was reused with different content",
+    }
+    assert len(app.callback_submissions("op-ci-1")) == 1
+
+
+def test_server_app_deduplicates_async_callback_sequence_deterministically() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
+    sequence = [
+        ("idem-callback-1", "cb-1", "completed"),
+        ("idem-callback-2", "cb-2", "completed"),
+        ("idem-callback-1", "cb-1", "completed"),
+        ("idem-callback-3", "cb-3", "failed"),
+        ("idem-callback-2", "cb-2", "completed"),
+        ("idem-callback-3", "cb-3", "failed"),
+    ]
+
+    statuses = []
+    for index, (idempotency_key, callback_id, status) in enumerate(sequence):
+        response = app.handle(
+            ServerRequest(
+                method="POST",
+                path="/callbacks/op-ci-1",
+                headers={"Authorization": "Bearer token-1", "GraphBlocks-Idempotency-Key": idempotency_key},
+                query={},
+                cookies={},
+                body=json.dumps(
+                    {
+                        "callback_id": callback_id,
+                        "attempt_id": "attempt-1",
+                        "payload": {"status": status},
+                    }
+                ).encode("utf-8"),
+                requested_at=f"2026-07-02T00:00:0{index}Z",
+            )
+        )
+        statuses.append(response.status_code)
+
+    assert statuses == [202, 202, 200, 202, 200, 200]
+    assert [submission.idempotency_key for submission in app.callback_submissions("op-ci-1")] == [
+        "idem-callback-1",
+        "idem-callback-2",
+        "idem-callback-3",
+    ]
+
+
 def test_server_app_rejects_malformed_async_callback_submission() -> None:
     app = GraphBlocksServerApp()
 

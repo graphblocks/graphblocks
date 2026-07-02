@@ -615,6 +615,23 @@ class GraphBlocksServerApp:
                 existing = self._callbacks_by_operation_id.get(submission.operation_id, ())
                 for previous in existing:
                     if previous.idempotency_key == submission.idempotency_key:
+                        if (
+                            previous.callback_id != submission.callback_id
+                            or dict(previous.payload) != dict(submission.payload)
+                            or previous.run_id != submission.run_id
+                            or previous.node_id != submission.node_id
+                            or previous.attempt_id != submission.attempt_id
+                            or previous.provider_operation_id != submission.provider_operation_id
+                        ):
+                            return ServerResponse.json(
+                                409,
+                                {
+                                    "ok": False,
+                                    "operationId": submission.operation_id,
+                                    "idempotencyKey": submission.idempotency_key,
+                                    "error": "async callback idempotency key was reused with different content",
+                                },
+                            )
                         return ServerResponse.json(200, previous.duplicate_response_payload())
                 self._callbacks_by_operation_id[submission.operation_id] = (*existing, submission)
                 return ServerResponse.json(202, submission.response_payload())
