@@ -599,6 +599,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   `ExternalCallbackReceived` receipt against the callback endpoint's tenant/release/run/node/
   attempt/operation fencing key and endpoint expiry, returning explicit admitted, expired, or stale
   decisions before any scheduler resume signal is represented.
+- Callback resume admission has deterministic fuzz coverage over tenant, release, run, node,
+  attempt, and operation identity mutations to protect the async callback path from stale-attempt
+  and wrong-scope resume regressions.
 - `graphblocks-server` now exposes framework-neutral
   `POST /callbacks/deliveries/{delivery_id}/redrive` and
   `POST /callbacks/deliveries/{delivery_id}/dead-letter`

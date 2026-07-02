@@ -904,3 +904,71 @@ def test_callback_resume_admission_rejects_stale_attempt_receipt() -> None:
     assert decision.reason == "callback_binding_mismatch"
     assert "attempt_002" in decision.endpoint_binding_key
     assert "attempt_001" in decision.receipt_binding_key
+
+
+def test_callback_resume_admission_deterministic_fuzz_rejects_identity_mutations() -> None:
+    rng = random.Random(6015)
+    fields = ("tenant_id", "release_id", "run_id", "node_id", "attempt_id", "operation_id")
+
+    for case in range(60):
+        base = {
+            "tenant_id": f"tenant_{case:03d}",
+            "release_id": f"rel_{case:03d}",
+            "run_id": f"run_{case:03d}",
+            "node_id": f"node_{case:03d}",
+            "attempt_id": f"attempt_{case:03d}",
+            "operation_id": f"op_{case:03d}",
+        }
+        endpoint = CallbackEndpointRef(
+            endpoint_id=f"cbep_{case:03d}",
+            url=f"https://graphblocks.example.com/v1/callbacks/op_{case:03d}",
+            accepted_schema="schemas/CICallback@1",
+            auth=CallbackEndpointAuth(kind="hmac", secret_ref="secret://callbacks/ci"),
+            expires_at="2026-07-02T00:30:00Z",
+            **base,
+        )
+        envelope = CallbackEnvelope(
+            delivery_id=f"cb_{case:03d}",
+            subscription_id="sub_fuzz",
+            event_id=f"evt_callback_{case:03d}",
+            run_id=base["run_id"],
+            sequence=case,
+            cursor=f"evt_callback_{case:03d}",
+            type="ExternalCallbackReceived",
+            payload={"status": "completed", "case": case},
+            idempotency_key=f"{base['operation_id']}:{base['attempt_id']}:provider",
+            occurred_at="2026-07-02T00:00:00Z",
+            delivered_at="2026-07-02T00:00:01Z",
+            release_id=base["release_id"],
+            tenant_id=base["tenant_id"],
+        )
+        receipt = record_external_callback_receipt(
+            envelope,
+            project_callback_payload(envelope.payload, max_inline_bytes=256),
+            operation_id=base["operation_id"],
+            node_id=base["node_id"],
+            attempt_id=base["attempt_id"],
+            verified_by="hmac-sha256:key-current",
+            policy_snapshot_id="policy_001",
+            received_at="2026-07-02T00:00:02Z",
+        )
+
+        assert evaluate_callback_resume(endpoint, receipt, now="2026-07-02T00:00:03Z").status == "admitted"
+
+        mutated_field = rng.choice(fields)
+        mutated = dict(base)
+        mutated[mutated_field] = f"{mutated[mutated_field]}_stale"
+        stale_endpoint = CallbackEndpointRef(
+            endpoint_id=f"cbep_stale_{case:03d}",
+            url=f"https://graphblocks.example.com/v1/callbacks/op_{case:03d}",
+            accepted_schema="schemas/CICallback@1",
+            auth=CallbackEndpointAuth(kind="hmac", secret_ref="secret://callbacks/ci"),
+            expires_at="2026-07-02T00:30:00Z",
+            **mutated,
+        )
+
+        stale = evaluate_callback_resume(stale_endpoint, receipt, now="2026-07-02T00:00:03Z")
+
+        assert stale.status == "stale"
+        assert stale.can_resume is False
+        assert stale.endpoint_binding_key != stale.receipt_binding_key
