@@ -172,6 +172,36 @@ def test_async_operation_rejects_invalid_refs_and_transitions() -> None:
             created_at="2026-07-02T00:00:00Z",
         ).start_polling()
 
+    with raises_value_error("async operation cannot transition from created to completed"):
+        graphblocks.AsyncOperation.created(
+            operation_id="op-ci-1",
+            run_id="run-1",
+            node_id="startCI",
+            attempt_id="attempt-1",
+            kind="ci_job",
+            expected_schema="schemas/CICallback@1",
+            resume_token_hash="sha256:resume",
+            idempotency_key="idem-ci-1",
+            created_at="2026-07-02T00:00:00Z",
+            callback_ref="cbep-ci-1",
+        ).complete(completed_at="2026-07-02T00:10:05Z")
+
+    with raises_value_error("async operation cannot transition from submitted to callback_received"):
+        graphblocks.AsyncOperation.created(
+            operation_id="op-ci-1",
+            run_id="run-1",
+            node_id="startCI",
+            attempt_id="attempt-1",
+            kind="ci_job",
+            expected_schema="schemas/CICallback@1",
+            resume_token_hash="sha256:resume",
+            idempotency_key="idem-ci-1",
+            created_at="2026-07-02T00:00:00Z",
+            callback_ref="cbep-ci-1",
+        ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").mark_callback_received(
+            completed_at="2026-07-02T00:10:00Z"
+        )
+
     completed = graphblocks.AsyncOperation.created(
         operation_id="op-ci-1",
         run_id="run-1",
@@ -183,7 +213,9 @@ def test_async_operation_rejects_invalid_refs_and_transitions() -> None:
         idempotency_key="idem-ci-1",
         created_at="2026-07-02T00:00:00Z",
         callback_ref="cbep-ci-1",
-    ).complete(completed_at="2026-07-02T00:10:05Z")
+    ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").wait_for_callback().mark_callback_received(
+        completed_at="2026-07-02T00:10:00Z"
+    ).mark_resuming().complete(completed_at="2026-07-02T00:10:05Z")
 
     with raises_value_error("async operation terminal state cannot transition"):
         completed.mark_resuming()

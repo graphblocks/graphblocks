@@ -63,6 +63,14 @@ VALID_ASYNC_OPERATION_STATES = frozenset({
     "expired",
 })
 TERMINAL_ASYNC_OPERATION_STATES = frozenset({"completed", "failed", "cancelled", "expired"})
+ASYNC_OPERATION_ALLOWED_TRANSITIONS = {
+    "created": frozenset({"submitted", "cancelled", "expired"}),
+    "submitted": frozenset({"waiting_callback", "polling", "cancelled", "expired"}),
+    "waiting_callback": frozenset({"callback_received", "cancelled", "expired"}),
+    "callback_received": frozenset({"resuming", "failed", "cancelled", "expired"}),
+    "polling": frozenset({"completed", "failed", "cancelled", "expired"}),
+    "resuming": frozenset({"completed", "failed", "cancelled", "expired"}),
+}
 VALID_ASYNC_OPERATION_KINDS = frozenset({
     "tool",
     "sandbox_task",
@@ -208,6 +216,8 @@ class AsyncOperation:
     def _replace_state(self, state: AsyncOperationStateValue, **changes: object) -> AsyncOperation:
         if self.state in TERMINAL_ASYNC_OPERATION_STATES:
             raise ValueError("async operation terminal state cannot transition")
+        if state not in ASYNC_OPERATION_ALLOWED_TRANSITIONS.get(self.state, frozenset()):
+            raise ValueError(f"async operation cannot transition from {self.state} to {state}")
         return replace(self, state=state, **changes)
 
     def mark_submitted(

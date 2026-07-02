@@ -433,6 +433,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   amendment states (`created`, `submitted`, `waiting_callback`, `callback_received`, `polling`,
   `resuming`, and terminal states), callback/polling refs, expected schema, resume token hash,
   idempotency key, timestamps, transition helpers, and JSON projection coverage.
+- The Python `AsyncOperation` facade now enforces the amendment state machine: callbacks must move
+  through `waiting_callback` before `callback_received`, polling must be explicit before terminal
+  poll results, and terminal operations cannot transition again.
 - `AsyncOperationResult` and `ExternalEffectRecord` now preserve committed external side effects
   even when an async operation result is `cancelled` or `incomplete`; stdlib async terminal blocks
   can project `externalEffects` config into the final result instead of dropping provider effect
