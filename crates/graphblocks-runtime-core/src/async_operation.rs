@@ -515,6 +515,47 @@ impl CallbackEndpointRef {
             policy_snapshot_id,
         ))
     }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn authenticate_oidc_and_build_submission(
+        &self,
+        callback_id: impl Into<String>,
+        operation_id: impl Into<String>,
+        run_id: impl Into<String>,
+        node_id: impl Into<String>,
+        attempt_id: impl Into<String>,
+        idempotency_key: impl Into<String>,
+        payload: Value,
+        received_at_unix_ms: u64,
+        policy_snapshot_id: impl Into<String>,
+        headers: &BTreeMap<String, String>,
+        verifier: impl FnOnce(&str, &str, &str) -> bool,
+    ) -> Result<AsyncCallbackSubmission, AsyncOperationError> {
+        if self
+            .expires_at_unix_ms
+            .is_some_and(|expires_at_unix_ms| received_at_unix_ms > expires_at_unix_ms)
+        {
+            return Err(AsyncOperationError::CallbackAuthenticationFailed {
+                endpoint_id: self.endpoint_id.clone(),
+                reason: "endpoint_expired".to_owned(),
+            });
+        }
+        let verified_by = self
+            .auth
+            .verify_oidc(&self.endpoint_id, headers, verifier)?;
+        Ok(AsyncCallbackSubmission::new(
+            callback_id,
+            operation_id,
+            run_id,
+            node_id,
+            attempt_id,
+            idempotency_key,
+            payload,
+            received_at_unix_ms,
+            verified_by,
+            policy_snapshot_id,
+        ))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -591,6 +632,13 @@ impl CallbackEndpointAuth {
     pub fn mtls(trusted_identity: impl Into<String>) -> Self {
         Self::Mtls {
             trusted_identity: trusted_identity.into(),
+        }
+    }
+
+    pub fn oidc(issuer: impl Into<String>, audience: impl Into<String>) -> Self {
+        Self::Oidc {
+            issuer: issuer.into(),
+            audience: audience.into(),
         }
     }
 
@@ -824,6 +872,25 @@ impl CallbackEndpointAuth {
             return Err(callback_auth_failed(endpoint_id, "mtls_identity_mismatch"));
         }
         Ok(format!("mtls:{endpoint_id}"))
+    }
+
+    fn verify_oidc(
+        &self,
+        endpoint_id: &str,
+        headers: &BTreeMap<String, String>,
+        verifier: impl FnOnce(&str, &str, &str) -> bool,
+    ) -> Result<String, AsyncOperationError> {
+        let Self::Oidc { issuer, audience } = self else {
+            return Err(callback_auth_failed(endpoint_id, "oidc_not_configured"));
+        };
+        let token = headers
+            .get("Authorization")
+            .and_then(|header| header.strip_prefix("Bearer "))
+            .ok_or_else(|| callback_auth_failed(endpoint_id, "authorization_missing"))?;
+        if !verifier(issuer, audience, token) {
+            return Err(callback_auth_failed(endpoint_id, "oidc_token_invalid"));
+        }
+        Ok(format!("oidc:{endpoint_id}"))
     }
 }
 

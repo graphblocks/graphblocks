@@ -306,6 +306,63 @@ fn mtls_callback_endpoint_authenticates_with_bound_client_identity() {
 }
 
 #[test]
+fn oidc_callback_endpoint_authenticates_with_injected_verifier() {
+    let endpoint = CallbackEndpointRef::new(
+        "callback-endpoint-oidc",
+        "https://graphblocks.example.com/v1/callbacks/op-1",
+        "schemas/CICallback@1",
+        CallbackEndpointAuth::oidc("https://issuer.example.com", "graphblocks-callbacks"),
+    )
+    .expect("endpoint is valid");
+    let mut headers = BTreeMap::new();
+    headers.insert("Authorization".to_owned(), "Bearer jwt-ok".to_owned());
+
+    let submission = endpoint
+        .authenticate_oidc_and_build_submission(
+            "cb-1",
+            "op-1",
+            "run-1",
+            "node-ci",
+            "attempt-1",
+            "idem-cb-1",
+            json!({"status": "completed", "workflow_run_id": "gha-run-1"}),
+            1_250,
+            "policy-snapshot-1",
+            &headers,
+            |issuer, audience, token| {
+                assert_eq!(issuer, "https://issuer.example.com");
+                assert_eq!(audience, "graphblocks-callbacks");
+                token == "jwt-ok"
+            },
+        )
+        .expect("oidc token authenticates");
+
+    assert_eq!(submission.verified_by, "oidc:callback-endpoint-oidc");
+    assert_eq!(submission.operation_id, "op-1");
+
+    headers.insert("Authorization".to_owned(), "Bearer jwt-bad".to_owned());
+    assert_eq!(
+        endpoint.authenticate_oidc_and_build_submission(
+            "cb-2",
+            "op-1",
+            "run-1",
+            "node-ci",
+            "attempt-1",
+            "idem-cb-2",
+            json!({"status": "completed", "workflow_run_id": "gha-run-1"}),
+            1_250,
+            "policy-snapshot-1",
+            &headers,
+            |_issuer, _audience, _token| false,
+        ),
+        Err(AsyncOperationError::CallbackAuthenticationFailed {
+            endpoint_id: "callback-endpoint-oidc".to_owned(),
+            reason: "oidc_token_invalid".to_owned(),
+        })
+    );
+}
+
+#[test]
 fn async_operation_diagnostics_report_missing_timeout_schema_and_idempotency() {
     let mut operation = AsyncOperation::new(
         "op-missing",
