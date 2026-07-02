@@ -319,8 +319,11 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
 - Webhook egress policy now validates DNS-resolved addresses before transport, rejecting public
   hostnames that resolve to loopback, private, link-local, metadata, or otherwise forbidden
   addresses unless the host is explicitly allowlisted.
-- Ed25519/mTLS/OIDC callback authentication adapters, concrete network webhook transport,
-  and multi-process coordinator failover execution remain follow-on slices.
+- `WebhookHttpTransport` now provides the runtime transport adapter boundary: DNS preflight,
+  signed POST request construction, and spec-defined receiver status mapping are implemented
+  without adding a default HTTP/TLS client dependency to `graphblocks-runtime-core`.
+- Ed25519/mTLS/OIDC callback authentication adapters, server-level HTTP/TLS webhook client
+  integration, and multi-process coordinator failover execution remain follow-on slices.
 
 ### Package ownership
 

@@ -8,8 +8,8 @@ use graphblocks_runtime_core::callback_delivery::{
     CallbackDeliveryStatus, CallbackFailurePolicy, CallbackRetryPolicy, CallbackSubscription,
     CallbackSubscriptionStatus, EventFilter, OrderedDeliveryState, SqliteCallbackDeadLetterStore,
     SqliteCallbackDeliveryQueue, WebhookDeliveryAttempt, WebhookDeliveryTarget,
-    WebhookDeliveryWorker, WebhookEgressPolicy, WebhookEndpointError, WebhookSignatureError,
-    WebhookSigningConfig,
+    WebhookDeliveryWorker, WebhookEgressPolicy, WebhookEndpointError, WebhookHttpResponse,
+    WebhookHttpTransport, WebhookSignatureError, WebhookSigningConfig,
 };
 use serde_json::json;
 use std::net::{IpAddr, Ipv4Addr};
@@ -673,6 +673,120 @@ fn webhook_delivery_worker_persists_retry_after_server_error() {
     assert_eq!(stored.attempt, 2);
     assert_eq!(stored.next_retry_at_unix_ms, Some(2_100));
     assert_eq!(stored.last_error.as_deref(), Some("server_error:503"));
+}
+
+#[test]
+fn webhook_http_transport_blocks_delivery_when_dns_resolution_is_unsafe() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let signing =
+        WebhookSigningConfig::hmac_sha256("secret://callbacks/ide-relay", b"top-secret", 300)
+            .expect("signing config is valid");
+    let target = WebhookDeliveryTarget::new(
+        "https://hooks.example.com/graphblocks/events",
+        &WebhookEgressPolicy::default_deny_internal(),
+    )
+    .expect("target is valid");
+    let signed = signing
+        .sign_delivery_for_target(&target, &delivery, &event, 2_000)
+        .expect("delivery signs");
+    let attempt = WebhookDeliveryAttempt {
+        target,
+        delivery,
+        signed,
+    };
+    let transport = WebhookHttpTransport::new(WebhookEgressPolicy::default_deny_internal());
+    let mut sent = false;
+
+    let response = transport.deliver_with(
+        &attempt,
+        |_| Ok::<Vec<IpAddr>, ()>(vec![IpAddr::V4(Ipv4Addr::new(169, 254, 169, 254))]),
+        |_| {
+            sent = true;
+            Ok::<WebhookHttpResponse, ()>(WebhookHttpResponse::new(200))
+        },
+    );
+
+    assert_eq!(response, CallbackDeliveryResponse::ClientError(403));
+    assert!(!sent, "unsafe DNS resolution must stop before send");
+}
+
+#[test]
+fn webhook_http_transport_maps_receiver_status_codes_to_delivery_responses() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let signing =
+        WebhookSigningConfig::hmac_sha256("secret://callbacks/ide-relay", b"top-secret", 300)
+            .expect("signing config is valid");
+    let target = WebhookDeliveryTarget::new(
+        "https://hooks.example.com/graphblocks/events",
+        &WebhookEgressPolicy::default_deny_internal(),
+    )
+    .expect("target is valid");
+    let signed = signing
+        .sign_delivery_for_target(&target, &delivery, &event, 2_000)
+        .expect("delivery signs");
+    let attempt = WebhookDeliveryAttempt {
+        target,
+        delivery,
+        signed,
+    };
+    let transport = WebhookHttpTransport::new(WebhookEgressPolicy::default_deny_internal());
+
+    for (status, retry_after_ms, expected) in [
+        (200, None, CallbackDeliveryResponse::Success),
+        (202, None, CallbackDeliveryResponse::Success),
+        (
+            409,
+            None,
+            CallbackDeliveryResponse::DuplicateAlreadyProcessed,
+        ),
+        (410, None, CallbackDeliveryResponse::TargetGone),
+        (
+            429,
+            Some(1_500),
+            CallbackDeliveryResponse::RateLimited {
+                retry_after_ms: Some(1_500),
+            },
+        ),
+        (503, None, CallbackDeliveryResponse::ServerError(503)),
+        (404, None, CallbackDeliveryResponse::ClientError(404)),
+    ] {
+        let response = transport.deliver_with(
+            &attempt,
+            |_| Ok::<Vec<IpAddr>, ()>(vec![IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10))]),
+            |request| {
+                assert_eq!(request.method, "POST");
+                assert_eq!(request.url, "https://hooks.example.com/graphblocks/events");
+                assert_eq!(
+                    request
+                        .headers
+                        .get("GraphBlocks-Delivery-Id")
+                        .map(String::as_str),
+                    Some("del_sub-1_event-1")
+                );
+                Ok::<WebhookHttpResponse, ()>(WebhookHttpResponse {
+                    status,
+                    retry_after_ms,
+                })
+            },
+        );
+        assert_eq!(response, expected);
+    }
 }
 
 #[test]

@@ -1134,6 +1134,79 @@ pub struct WebhookDeliveryAttempt {
     pub signed: SignedWebhookDelivery,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct WebhookHttpRequest {
+    pub url: String,
+    pub method: String,
+    pub headers: BTreeMap<String, String>,
+    pub body: Value,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WebhookHttpResponse {
+    pub status: u16,
+    pub retry_after_ms: Option<u64>,
+}
+
+impl WebhookHttpResponse {
+    pub fn new(status: u16) -> Self {
+        Self {
+            status,
+            retry_after_ms: None,
+        }
+    }
+
+    pub fn with_retry_after_ms(mut self, retry_after_ms: u64) -> Self {
+        self.retry_after_ms = Some(retry_after_ms);
+        self
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WebhookHttpTransport {
+    egress_policy: WebhookEgressPolicy,
+}
+
+impl WebhookHttpTransport {
+    pub fn new(egress_policy: WebhookEgressPolicy) -> Self {
+        Self { egress_policy }
+    }
+
+    pub fn deliver_with<R, S, ResolveError, SendError>(
+        &self,
+        attempt: &WebhookDeliveryAttempt,
+        mut resolve: R,
+        mut send: S,
+    ) -> CallbackDeliveryResponse
+    where
+        R: FnMut(&WebhookDeliveryTarget) -> Result<Vec<IpAddr>, ResolveError>,
+        S: FnMut(WebhookHttpRequest) -> Result<WebhookHttpResponse, SendError>,
+    {
+        let addresses = match resolve(&attempt.target) {
+            Ok(addresses) => addresses,
+            Err(_) => return CallbackDeliveryResponse::ServerError(599),
+        };
+        if self
+            .egress_policy
+            .validate_resolved_addresses(&attempt.target, addresses)
+            .is_err()
+        {
+            return CallbackDeliveryResponse::ClientError(403);
+        }
+
+        let request = WebhookHttpRequest {
+            url: attempt.target.url.clone(),
+            method: "POST".to_owned(),
+            headers: attempt.signed.headers.clone(),
+            body: attempt.signed.body.clone(),
+        };
+        match send(request) {
+            Ok(response) => webhook_http_response_to_delivery_response(response),
+            Err(_) => CallbackDeliveryResponse::ServerError(599),
+        }
+    }
+}
+
 pub struct WebhookDeliveryWorker<'a> {
     scheduler: &'a CallbackDeliveryScheduler,
     queue: &'a SqliteCallbackDeliveryQueue,
@@ -1323,6 +1396,22 @@ fn is_forbidden_ipv6(address: Ipv6Addr) -> bool {
         || address.is_unspecified()
         || matches!(address.segments()[0] & 0xfe00, 0xfc00)
         || matches!(address.segments()[0] & 0xffc0, 0xfe80)
+}
+
+fn webhook_http_response_to_delivery_response(
+    response: WebhookHttpResponse,
+) -> CallbackDeliveryResponse {
+    match response.status {
+        200..=299 => CallbackDeliveryResponse::Success,
+        409 => CallbackDeliveryResponse::DuplicateAlreadyProcessed,
+        410 => CallbackDeliveryResponse::TargetGone,
+        429 => CallbackDeliveryResponse::RateLimited {
+            retry_after_ms: response.retry_after_ms,
+        },
+        500..=599 => CallbackDeliveryResponse::ServerError(response.status),
+        400..=499 => CallbackDeliveryResponse::ClientError(response.status),
+        _ => CallbackDeliveryResponse::ServerError(response.status),
+    }
 }
 
 fn dead_letter_to_value(dead_letter: &CallbackDeadLetter) -> Value {
