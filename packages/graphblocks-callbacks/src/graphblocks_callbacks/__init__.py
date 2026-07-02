@@ -72,6 +72,27 @@ def _positive_int(field_name: str, value: object) -> int:
     return value
 
 
+def _validate_http_status_code(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 100 or value > 599:
+        raise ValueError("status_code must be a valid HTTP status")
+    return value
+
+
+def _string_headers(headers: Mapping[str, str] | None) -> dict[str, str]:
+    if headers is None:
+        return {}
+    if not isinstance(headers, Mapping):
+        raise ValueError("headers must be a mapping")
+    normalized: dict[str, str] = {}
+    for key, value in headers.items():
+        if not isinstance(key, str) or not key.strip():
+            raise ValueError("headers keys must be non-empty strings")
+        if not isinstance(value, str):
+            raise ValueError("headers values must be strings")
+        normalized[key.lower()] = value
+    return normalized
+
+
 def _validate_json_value(value: object) -> None:
     if value is None or isinstance(value, str) or isinstance(value, bool):
         return
@@ -105,6 +126,79 @@ def _json_payload(value: Mapping[str, object]) -> dict[str, object]:
     _validate_json_value(dict(value))
     json.dumps(value, allow_nan=False)
     return deepcopy(dict(value))
+
+
+def _retry_after_timestamp(headers: Mapping[str, str] | None, received_at: str | None) -> str | None:
+    retry_after = _string_headers(headers).get("retry-after")
+    if retry_after is None or not retry_after.strip():
+        return None
+    retry_after = retry_after.strip()
+    if retry_after.isdecimal():
+        seconds = _non_negative_int("Retry-After", int(retry_after))
+        received = _parse_utc_timestamp(_utc_now_iso() if received_at is None else received_at)
+        return _format_utc_timestamp(received + timedelta(seconds=seconds))
+    try:
+        return _format_utc_timestamp(_parse_utc_timestamp(retry_after))
+    except ValueError:
+        return None
+
+
+@dataclass(frozen=True, slots=True)
+class WebhookResponseDecision:
+    status_code: int
+    status: str
+    retry: bool
+    terminal: bool
+    reason: str
+    retry_after: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "status_code", _validate_http_status_code(self.status_code))
+        _require_non_empty_string("status", self.status)
+        if not isinstance(self.retry, bool):
+            raise ValueError("retry must be a boolean")
+        if not isinstance(self.terminal, bool):
+            raise ValueError("terminal must be a boolean")
+        _require_non_empty_string("reason", self.reason)
+        if self.retry_after is not None:
+            _require_non_empty_string("retry_after", self.retry_after)
+
+
+def classify_webhook_response(
+    status_code: int,
+    *,
+    headers: Mapping[str, str] | None = None,
+    received_at: str | None = None,
+) -> WebhookResponseDecision:
+    status_code = _validate_http_status_code(status_code)
+    normalized_headers = _string_headers(headers)
+    if received_at is not None:
+        _require_non_empty_string("received_at", received_at)
+
+    if 200 <= status_code <= 299:
+        return WebhookResponseDecision(status_code, "delivered", retry=False, terminal=True, reason="accepted")
+    if status_code == 409:
+        return WebhookResponseDecision(
+            status_code,
+            "acknowledged",
+            retry=False,
+            terminal=True,
+            reason="duplicate_already_processed",
+        )
+    if status_code == 410:
+        return WebhookResponseDecision(status_code, "gone", retry=False, terminal=True, reason="subscription_gone")
+    if status_code == 429:
+        return WebhookResponseDecision(
+            status_code,
+            "retry",
+            retry=True,
+            terminal=False,
+            reason="rate_limited",
+            retry_after=_retry_after_timestamp(normalized_headers, received_at),
+        )
+    if 500 <= status_code <= 599:
+        return WebhookResponseDecision(status_code, "retry", retry=True, terminal=False, reason="receiver_error")
+    return WebhookResponseDecision(status_code, "failed", retry=False, terminal=True, reason="non_retryable")
 
 
 @dataclass(frozen=True, slots=True)
@@ -594,6 +688,8 @@ __all__ = [
     "CallbackRetryPolicy",
     "REQUIRED_WEBHOOK_HEADERS",
     "WebhookTargetSafety",
+    "WebhookResponseDecision",
+    "classify_webhook_response",
     "project_callback_payload",
     "sign_webhook_hmac_sha256",
     "validate_webhook_target_url",

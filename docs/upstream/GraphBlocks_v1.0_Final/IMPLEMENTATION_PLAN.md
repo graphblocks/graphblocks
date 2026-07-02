@@ -578,6 +578,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - `graphblocks-callbacks` now provides callback payload projection helpers that canonicalize
   strict JSON payloads, keep bounded payloads inline with a digest, and require an `ArtifactRef`
   when payloads exceed the configured inline byte limit.
+- `graphblocks-callbacks` now maps webhook receiver HTTP responses into delivery decisions:
+  2xx delivered, 409 acknowledged duplicate, 410 gone, 429/5xx retry, and other 4xx terminal
+  failure, including `Retry-After` parsing for retry scheduling.
 - `graphblocks-server` now exposes framework-neutral
   `POST /callbacks/deliveries/{delivery_id}/redrive` and
   `POST /callbacks/deliveries/{delivery_id}/dead-letter`

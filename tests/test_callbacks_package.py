@@ -23,6 +23,7 @@ from graphblocks_callbacks import (  # noqa: E402
     CallbackRetryPolicy,
     REQUIRED_WEBHOOK_HEADERS,
     WebhookTargetSafety,
+    classify_webhook_response,
     project_callback_payload,
     validate_webhook_target_url,
     verify_webhook_headers_hmac_sha256,
@@ -406,4 +407,41 @@ def test_callback_payload_projection_rejects_oversized_payload_without_artifact_
     _assert_raises_value_error(
         "oversized callback payload requires an ArtifactRef",
         lambda: project_callback_payload({"log": "x" * 200}, max_inline_bytes=64),
+    )
+
+
+def test_webhook_response_classification_maps_receiver_statuses() -> None:
+    assert classify_webhook_response(204).status == "delivered"
+    assert classify_webhook_response(409).status == "acknowledged"
+    assert classify_webhook_response(410).status == "gone"
+    assert classify_webhook_response(400).status == "failed"
+    assert classify_webhook_response(503).status == "retry"
+
+    duplicate = classify_webhook_response(409)
+    assert duplicate.retry is False
+    assert duplicate.terminal is True
+    assert duplicate.reason == "duplicate_already_processed"
+
+
+def test_webhook_response_classification_parses_retry_after() -> None:
+    decision = classify_webhook_response(
+        429,
+        headers={"Retry-After": "15"},
+        received_at="2026-07-02T00:00:00Z",
+    )
+
+    assert decision.status == "retry"
+    assert decision.retry is True
+    assert decision.retry_after == "2026-07-02T00:00:15.000Z"
+    assert decision.reason == "rate_limited"
+
+
+def test_webhook_response_classification_rejects_invalid_status_codes_and_headers() -> None:
+    _assert_raises_value_error(
+        "status_code must be a valid HTTP status",
+        lambda: classify_webhook_response(99),
+    )
+    _assert_raises_value_error(
+        "headers values must be strings",
+        lambda: classify_webhook_response(429, headers={"Retry-After": object()}),  # type: ignore[dict-item]
     )
