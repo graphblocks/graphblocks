@@ -779,7 +779,7 @@ class ServerEventSubscription:
             object.__setattr__(
                 self,
                 "created_at",
-                _validate_non_empty_string("server event subscription", "created_at", self.created_at),
+                _validate_iso_datetime("server event subscription", "created_at", self.created_at),
             )
 
     @classmethod
@@ -913,7 +913,7 @@ class ServerCallbackRegistration:
             object.__setattr__(
                 self,
                 "created_at",
-                _validate_non_empty_string("server callback registration", "created_at", self.created_at),
+                _validate_iso_datetime("server callback registration", "created_at", self.created_at),
             )
 
     @classmethod

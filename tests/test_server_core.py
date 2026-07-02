@@ -3045,6 +3045,36 @@ def test_server_app_rejects_subscription_with_invalid_failure_policy() -> None:
     assert app.subscriptions("run-subscribe-policy-1") == ()
 
 
+def test_server_app_rejects_subscription_with_invalid_created_timestamp() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-subscribe-created-time-1"] = ()
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-subscribe-created-time-1/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-created-time-invalid",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                }
+            ).encode("utf-8"),
+            requested_at="not-a-date",
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "server event subscription created_at must be an ISO datetime",
+    }
+    assert app.subscriptions("run-subscribe-created-time-1") == ()
+
+
 def test_server_app_rejects_mandatory_subscription_without_retry_or_dead_letter_policy() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     app._events_by_run_id["run-subscribe-mandatory-1"] = ()
@@ -4251,6 +4281,37 @@ def test_server_app_rejects_callback_registration_with_invalid_failure_policy() 
     assert json.loads(response.body.decode("utf-8")) == {
         "ok": False,
         "error": "server subscription failure_policy must be one of best_effort, retry_then_dead_letter, pause_run_on_failure, or fail_run_on_failure",
+    }
+    assert app.callback_registrations() == ()
+
+
+def test_server_app_rejects_callback_registration_with_invalid_created_timestamp() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/register",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "callback-sub-created-time-invalid",
+                    "scope": "tenant",
+                    "scopeId": "tenant-1",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                }
+            ).encode("utf-8"),
+            requested_at="not-a-date",
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "server callback registration created_at must be an ISO datetime",
     }
     assert app.callback_registrations() == ()
 

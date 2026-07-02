@@ -606,7 +606,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   literals before storage, and ordered delivery requests are rejected unless the target kind can
   preserve run ordering. Mandatory delivery projections cannot use best-effort failure handling
   unless an explicit dead-letter configuration is supplied. Route validation rejects callback
-  delivery projections that mark themselves as a source of truth.
+  delivery projections that mark themselves as a source of truth. Subscription creation timestamps
+  are validated as ISO datetimes before storage.
 - `graphblocks-server` now exposes the framework-neutral
   `DELETE /runs/{run_id}/subscriptions/{subscription_id}` `UnsubscribeEvents` route, revoking
   subscription projections without deleting the authoritative event stream. Revoked subscriptions
@@ -629,8 +630,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   Callback registration ids are single-assignment and cannot overwrite an existing active or
   revoked projection. Repeating `RevokeCallback` for an already revoked registration is idempotent
   and does not rewrite the stored projection. Callback registrations share the same route-level
-  ordered delivery, mandatory failure-policy, and non-authoritative projection validation as
-  run-scoped subscriptions.
+  ordered delivery, mandatory failure-policy, non-authoritative projection, and creation timestamp
+  validation as run-scoped subscriptions.
 - `graphblocks-server` now exposes framework-neutral `POST /runs/{run_id}/cancel`,
   `POST /runs/{run_id}/pause`, `POST /runs/{run_id}/resume`, and
   `POST /runs/{run_id}/expire` `CancelRun`/`PauseRun`/`ResumeRun`/`ExpireRun` routes,
