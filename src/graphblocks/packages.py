@@ -300,9 +300,16 @@ def build_package_lock(
             roots.append(distribution)
 
     selected: set[str] = set()
+    default_selected: set[str] = set()
     visiting: set[str] = set()
+    excluded_categories = tuple(
+        category
+        for category in default_metapackage.get("excludedCategories", [])
+        if isinstance(category, str) and category
+    )
 
     for distribution in roots:
+        collecting_default = include_default and distribution == default_distribution
         stack: list[tuple[str, bool]] = [(distribution, False)]
         while stack:
             current, expanded = stack.pop()
@@ -314,6 +321,8 @@ def build_package_lock(
             if expanded:
                 visiting.discard(current)
                 selected.add(current)
+                if collecting_default:
+                    default_selected.add(current)
                 continue
             if current in visiting:
                 raise ValueError(f"package dependency cycle includes {current}")
@@ -341,6 +350,24 @@ def build_package_lock(
                 f"{selected_forbidden[0]!r} selected for package {distribution!r}"
             )
 
+    excluded_category_set = set(excluded_categories)
+    if excluded_category_set:
+        for distribution in sorted(default_selected):
+            package = packages_by_distribution[distribution]
+            categories: set[str] = set()
+            raw_category = package.get("category")
+            if isinstance(raw_category, str):
+                categories.add(raw_category)
+            raw_categories = package.get("categories", [])
+            if isinstance(raw_categories, list):
+                categories.update(category for category in raw_categories if isinstance(category, str))
+            blocked = sorted(categories & excluded_category_set)
+            if blocked:
+                raise ValueError(
+                    f"default package closure includes excluded category {blocked[0]!r} "
+                    f"from package {distribution!r}"
+                )
+
     entries: list[PackageLockEntry] = []
     for distribution in sorted(selected):
         package = packages_by_distribution[distribution]
@@ -366,11 +393,6 @@ def build_package_lock(
             )
         )
 
-    excluded_categories = tuple(
-        category
-        for category in default_metapackage.get("excludedCategories", [])
-        if isinstance(category, str) and category
-    )
     return PackageLock(
         catalog_version=int(catalog.get("catalogVersion", 0)),
         spec_version=str(catalog.get("specVersion", "")),

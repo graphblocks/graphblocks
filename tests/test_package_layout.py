@@ -1108,6 +1108,30 @@ def test_package_lock_rejects_selected_forbidden_transitive_dependency() -> None
         build_package_lock(catalog, requested=("graphblocks-documents",), include_default=False)
 
 
+def test_package_lock_rejects_default_closure_excluded_categories() -> None:
+    catalog = {
+        "catalogVersion": 1,
+        "specVersion": "1.0",
+        "defaultMetaPackage": {
+            "distribution": "graphblocks",
+            "dependencies": [],
+            "excludedCategories": ["model_provider"],
+        },
+        "packages": [
+            {"distribution": "graphblocks", "default": True, "dependsOn": ["graphblocks-openai"]},
+            {
+                "distribution": "graphblocks-openai",
+                "default": False,
+                "dependsOn": [],
+                "categories": ["model_provider"],
+            },
+        ],
+    }
+
+    with pytest.raises(ValueError, match="excluded category"):
+        build_package_lock(catalog, requested=(), include_default=True)
+
+
 def test_package_lock_records_validate_identity_types_and_uniqueness() -> None:
     entry = PackageLockEntry(
         distribution="graphblocks-core",

@@ -100,7 +100,9 @@ graphblocks-cli
   as `schema/typed-values.json` alongside the primary `cases.json`.
 - Package lock generation now validates selected dependency closures against each package's
   `forbiddenDependencies`, so optional integration SDKs cannot enter a generated lock indirectly
-  through a transitive dependency.
+  through a transitive dependency. Default metapackage lock generation also rejects packages in
+  categories listed by `excludedCategories`, while still allowing those integrations when explicitly
+  requested outside the default closure.
 
 ## 4. Phase 1 — Local Rust Runtime (`GB-C1-LOCAL-RUNTIME`)
 
