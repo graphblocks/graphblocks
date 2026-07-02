@@ -189,6 +189,79 @@ UnboundedPolicyHoldback
 
 Required TCK coverage includes incremental arguments not triggering execution, invalid arguments denied before admission, approval invalidated after argument mutation, independent reads running concurrently, conflicting writes serialized, policy abort denying pending tool calls, local delivery cutoff before late provider chunks, delayed chunks discarded after `OutputCutoff`, immediate draft producing incomplete/retracted events, `buffer_until_commit` exposing no rejected content, aborted responses not committing assistant messages, late usage reconciliation, and idempotency preservation across retry/cancellation.
 
+## 4.2 Amendment — Durable Async Runs and Callback Protocol (`GB-C1-ASYNC-CALLBACKS`)
+
+This amendment makes long-running GraphBlocks runs independent from any single client connection.
+`ApplicationEventStream` is the authoritative replayable stream; callback subscriptions are delivery
+projections; external callbacks are authenticated resume signals for `AsyncOperation`.
+
+### 구현
+
+- Add run invocation modes `sync`, `accepted`, and `background`. `accepted` and `background` return a
+  run handle immediately and persist cursor-replayable events.
+- Extend run lifecycle with `WAITING_CALLBACK`, `PAUSED_BUDGET`, `PAUSED_POLICY`,
+  `PAUSED_OPERATOR`, and `RESUMING`.
+- Add application protocol commands: `GetRunStatus`, `ListRuns`, `AttachToRun`, `DetachFromRun`,
+  `SubscribeEvents`, `UnsubscribeEvents`, `AckEvent`, `RegisterCallback`, `RevokeCallback`,
+  `SubmitAsyncCallback`, `PauseRun`, `ResumeRun`, `ExpireRun`, `RedriveCallbackDelivery`, and
+  `MoveCallbackToDeadLetter`.
+- Add schema/runtime models for `CallbackSubscription`, `EventFilter`, callback delivery targets,
+  `CallbackDelivery`, `CallbackEnvelope`, `AsyncOperation`, `CallbackEndpointRef`,
+  `ExternalCallbackReceived`, and `AsyncOperationResult`.
+- Add standard blocks: `async.start_operation`, `async.await_callback`, `async.poll_operation`,
+  `async.complete_operation`, `async.cancel_operation`, and `async.expire_operation`.
+- Callback ingestion must authenticate, check ownership and attempt fencing, validate idempotency
+  and schema, evaluate policy, journal `ExternalCallbackReceived`, update operation state, and only
+  then signal resume.
+- Callback delivery retry uses bounded exponential backoff with jitter and dead-letter preservation.
+  Exactly-once delivery is not promised.
+- Resume from callback re-evaluates policy, budget, release compatibility, ownership lease,
+  worker availability, callback authenticity, and idempotency state.
+- Large callback payloads are rejected or converted to `ArtifactRef`; callback payloads are always
+  untrusted content.
+
+### Package ownership
+
+- `graphblocks-core`: schema facades for events, callback subscriptions, deliveries,
+  async operations, and external callback receipts.
+- `graphblocks-runtime-core`: run lifecycle, event replay state, async operation state machine,
+  callback ingestion, journal-before-resume, idempotency, stale-attempt rejection.
+- `graphblocks-runtime-durable`: durable run store, cursor retention, coordinator failover,
+  ownership fencing, checkpoint/resume.
+- `graphblocks-callbacks`: optional webhook delivery, signing, retry, dead-letter, redrive, and
+  receiver verification helpers.
+- `graphblocks-server`: callback ingress routes, run event routes, SSE/WebSocket attach.
+- `graphblocks-policy` and `graphblocks-budget`: callback/resume policy and pause/resume budget
+  semantics.
+
+### Compiler diagnostics
+
+Add `GB6001` through `GB6016`: async wait without timeout, callback without authentication,
+missing idempotency key, callback as source of truth, background run without replay,
+mandatory callback without failure policy, missing callback schema, resume without policy
+re-evaluation, client-bound background run, oversized callback payload, unsafe callback endpoint,
+impossible ordering request, insufficient retention, missing dead-letter policy, stale callback can
+resume, and resume without ownership fencing.
+
+### Required conformance
+
+- background run continues after client disconnect.
+- client attaches with cursor and receives missed events.
+- expired cursor returns `CursorExpired` and current summary/status.
+- webhook delivery retries after 5xx and deduplicates by idempotency key.
+- webhook 409 duplicate can mark delivery acknowledged.
+- callback signature/schema failure does not resume run.
+- callback after timeout, cancellation, or newer retry attempt does not resume stale work.
+- callback receipt is journaled before resume.
+- coordinator failover resumes once.
+- budget exhaustion during wait records callback but pauses resume.
+- policy/release compatibility is re-evaluated on resume.
+- mandatory callback failure pauses or dead-letters according to policy.
+- large callback payload is rejected or converted to `ArtifactRef`.
+- dead-letter redrive does not create duplicate `ApplicationEvent`.
+- non-mandatory webhook outage does not block run completion.
+- external operation side-effect commit is preserved after cancellation.
+
 ## 5. Phase 2 — AI Core Profiles (`GB-C2-AI-APPLICATION`)
 
 ### Documents

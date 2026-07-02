@@ -10213,6 +10213,633 @@ rebalance
 poison item/dead-letter
 ```
 
+# 261. Durable Async Runs, Callback Subscriptions, and External Async Operations
+
+GraphBlocks SHALL support long-running AI tasks whose lifetime is independent of any single client
+connection. This is required for coding agents, remote sandbox runs, CI-backed checks, long-running
+document ingestion, research orchestration, browser/computer-use tasks, EDA verification jobs, and
+other delegated workflows.
+
+The specification distinguishes three concepts:
+
+```text
+ApplicationEventStream
+- authoritative replayable stream of client-visible run events
+
+CallbackSubscription
+- delivery mechanism that forwards selected events to external receivers
+
+AsyncOperation
+- external operation started by GraphBlocks and completed later by callback, polling, or timeout
+```
+
+A callback is a delivery mechanism or an authenticated resume signal. It is not the source of truth
+for execution correctness. The source of truth remains `ExecutionJournal`, `RunStore`,
+`ApplicationEventStream`, `AuditLog`, `UsageLedger`, `BudgetLedger`, and `EffectJournal`.
+Callback delivery failure MUST NOT corrupt run state, billing, quota accounting, audit records, or
+effect commit semantics.
+
+## 261.1 Background run invocation modes
+
+```python
+class RunInvocationMode(str, Enum):
+    SYNC = "sync"
+    ACCEPTED = "accepted"
+    BACKGROUND = "background"
+```
+
+`sync` keeps the client request open and attempts to return final output directly. `accepted`
+returns `run_id` immediately while the run continues in the background. `background` explicitly
+creates a durable run whose lifetime is independent of client connection; events are persisted and
+clients/webhook subscribers may attach and detach.
+
+Example route:
+
+```yaml
+routes:
+  - id: create-coding-task
+    method: POST
+    path: /v1/coding/tasks
+    command: InvokeGraph
+    graph: graphs/coding-agent-task
+    responseMode: accepted
+```
+
+Initial accepted response:
+
+```json
+{
+  "run_id": "run_123",
+  "status": "accepted",
+  "event_stream": "/v1/runs/run_123/events",
+  "websocket": "/v1/runs/run_123/ws",
+  "cancel": "/v1/runs/run_123/cancel",
+  "initial_cursor": "evt_000000"
+}
+```
+
+## 261.2 Run lifecycle additions
+
+Run states SHALL include:
+
+```text
+CREATED
+→ ADMITTED
+→ RUNNING
+→ WAITING_INPUT
+→ WAITING_APPROVAL
+→ WAITING_REVIEW
+→ WAITING_CALLBACK
+→ PAUSED_BUDGET
+→ PAUSED_POLICY
+→ PAUSED_OPERATOR
+→ RESUMING
+→ COMPLETED
+
+Terminal alternatives:
+→ FAILED
+→ CANCELLED
+→ EXPIRED
+→ POLICY_STOPPED
+```
+
+`WAITING_CALLBACK` means execution has been checkpointed and the scheduler is waiting for an
+external operation result. Required persisted state: `run_id`, `node_id`, `attempt_id`,
+`operation_id`, expected callback schema, `resume_token_hash`, deadline, policy snapshot, release,
+and budget state.
+
+`PAUSED_BUDGET` means budget policy chose checkpoint-and-pause rather than hard-stop. While paused,
+new task admission is denied, running atomic sections finish according to policy, no new external
+effects start, the `ApplicationEventStream` remains readable, and callback subscription delivery
+continues.
+
+`RESUMING` begins after callback, user input, approval, review, budget extension, or operator
+command makes progress possible. Before resuming, the runtime MUST re-evaluate release
+compatibility, run ownership lease, policy snapshot, principal/session validity when applicable,
+budget permits, target/worker availability, callback authenticity, and idempotency state.
+
+## 261.3 Authoritative ApplicationEventStream
+
+```python
+class ApplicationEvent(BaseModel):
+    event_id: str
+    run_id: str
+    sequence: int
+    cursor: str
+
+    type: str
+    payload: JsonValue
+
+    occurred_at: datetime
+
+    release_id: str
+    graph_id: str | None = None
+    node_id: str | None = None
+    turn_id: str | None = None
+    operation_id: str | None = None
+
+    visibility: Literal["client", "operator", "internal", "audit_only"] = "client"
+```
+
+`event_id` is globally unique, `sequence` is monotonically increasing per run, and `cursor` is
+stable and replayable within retention. Replay MAY be at-least-once; clients MUST deduplicate by
+`event_id` or `cursor`. Run correctness MUST NOT depend on callback delivery success. The stream
+MAY be exposed through SSE, WebSocket, HTTP long polling, local embedded callback, CLI attach, TUI
+attach, IDE attach, or webhook subscription. Only the event stream is authoritative; webhooks and
+local callbacks are projections.
+
+## 261.4 Application protocol commands
+
+The Application Protocol SHALL include:
+
+```text
+InvokeGraph
+GetRunStatus
+ListRuns
+AttachToRun
+DetachFromRun
+SubscribeEvents
+UnsubscribeEvents
+AckEvent
+RegisterCallback
+RevokeCallback
+SubmitAsyncCallback
+PauseRun
+ResumeRun
+CancelRun
+ExpireRun
+RedriveCallbackDelivery
+MoveCallbackToDeadLetter
+```
+
+`AttachToRun` accepts `run_id`, optional `last_cursor`, and client capabilities such as
+`assistant_drafts`, `retractions`, `artifact_preview`, `patch_preview`, `approval`, `review`,
+`budget_extension`, `background_notifications`, and `interrupt_resume`. If `last_cursor` is
+present, the runtime replays events after that cursor and then switches to live stream. Duplicate
+events are allowed and clients MUST deduplicate.
+
+`DetachFromRun` MUST NOT cancel a run unless it was explicitly created with
+`lifetime: client_connection`.
+
+`RunStatus` includes `run_id`, state, release, `last_cursor`, timestamps, wait reasons, and active
+operation ids.
+
+## 261.5 Callback subscriptions and delivery targets
+
+```python
+class CallbackSubscription(BaseModel):
+    subscription_id: str
+    owner: PrincipalRef
+
+    scope: Literal["run", "conversation", "project", "tenant", "deployment"]
+    scope_id: str
+
+    event_filter: EventFilter
+    delivery: CallbackDeliveryTarget
+
+    status: Literal["active", "paused", "expired", "revoked"]
+    created_at: datetime
+    expires_at: datetime | None = None
+    replay_from_cursor: str | None = None
+
+    failure_policy: Literal[
+        "best_effort",
+        "retry_then_dead_letter",
+        "pause_run_on_failure",
+        "fail_run_on_failure",
+    ] = "retry_then_dead_letter"
+```
+
+`EventFilter` may filter by event types, visibility, node ids, operation ids, severity, and whether
+terminal events are included. A filter MUST NOT grant visibility to events the subscriber is not
+authorized to read.
+
+Delivery targets include webhook, WebSocket, SSE, push notification, email notification, and local
+callback. Webhook targets MUST define signing, timeout, retry policy, max payload bytes, and headers.
+`local_callback` is permitted for development, embedded runtimes, tests, and local tools, but MUST
+NOT be the only delivery mechanism for production-durable background runs.
+
+Each event-to-subscriber attempt is represented by `CallbackDelivery` with `delivery_id`,
+`subscription_id`, event identity, run/cursor identity, attempt number, idempotency key, status,
+retry timestamps, acknowledgement timestamps, and last error. Delivery is at-least-once unless
+declared best-effort; exactly-once delivery MUST NOT be promised. Receivers MUST deduplicate by
+idempotency key. Retry MUST use bounded exponential backoff with jitter, and dead-lettering MUST
+preserve enough metadata for redrive.
+
+Webhook envelopes SHOULD contain delivery, subscription, event, run, cursor, type, payload,
+idempotency key, occurrence/delivery timestamps, release id, and tenant id. Required headers are
+`GraphBlocks-Delivery-Id`, `GraphBlocks-Event-Id`, `GraphBlocks-Run-Id`, `GraphBlocks-Cursor`,
+`GraphBlocks-Idempotency-Key`, `GraphBlocks-Timestamp`, `GraphBlocks-Signature`, and
+`GraphBlocks-Signature-Algorithm`.
+
+Receiver status semantics:
+
+```text
+2xx  delivery accepted
+409  duplicate already processed; runtime MAY mark acknowledged
+410  target gone; runtime SHOULD pause or revoke subscription
+429  retry with backoff
+5xx  retry according to policy
+other 4xx non-retryable unless policy says otherwise
+```
+
+## 261.6 AsyncOperation and external callback ingestion
+
+```python
+class AsyncOperation(BaseModel):
+    operation_id: str
+    run_id: str
+    node_id: str
+    attempt_id: str
+
+    kind: Literal[
+        "tool",
+        "sandbox_task",
+        "ci_job",
+        "browser_task",
+        "workspace_trial",
+        "external_provider_job",
+        "document_job",
+        "research_task",
+        "custom",
+    ]
+
+    provider_operation_id: str | None = None
+
+    state: Literal[
+        "created",
+        "submitted",
+        "waiting_callback",
+        "callback_received",
+        "polling",
+        "resuming",
+        "completed",
+        "failed",
+        "cancelled",
+        "expired",
+    ]
+
+    callback_ref: CallbackEndpointRef | None = None
+    polling_ref: PollingEndpointRef | None = None
+
+    resume_token_hash: str
+    idempotency_key: str
+    expected_schema: JsonSchemaRef
+
+    created_at: datetime
+    submitted_at: datetime | None = None
+    expires_at: datetime | None = None
+    completed_at: datetime | None = None
+```
+
+`operation_id` is globally unique and belongs to exactly one run attempt. State transitions are
+journaled. Callback payloads MUST be authenticated, schema-validated, idempotent, and fenced by
+attempt. Duplicate callbacks MUST NOT resume a run more than once. Stale callbacks MUST NOT update a
+newer attempt.
+
+Callback endpoint references MUST be specific enough to bind callback data to `operation_id`,
+`run_id`, `node_id`, `attempt_id`, release id, and tenant.
+
+When a callback is accepted, the runtime SHALL record `ExternalCallbackReceived` before resuming
+execution. Required processing order:
+
+```text
+1. Authenticate callback.
+2. Check tenant and operation ownership.
+3. Verify operation state.
+4. Check attempt/fencing token.
+5. Validate idempotency key.
+6. Validate payload schema.
+7. Evaluate callback ingestion policy.
+8. Write ExternalCallbackReceived to ExecutionJournal.
+9. Update AsyncOperation state.
+10. Signal scheduler to resume run.
+11. Return 202 Accepted.
+```
+
+The runtime MUST NOT resume a run before the callback receipt is durably recorded.
+
+Standard async blocks:
+
+```text
+async.start_operation
+async.await_callback
+async.poll_operation
+async.complete_operation
+async.cancel_operation
+async.expire_operation
+```
+
+Polling results MUST normalize into the same `AsyncOperationResult` model as callbacks. Results MUST
+be validated and policy-checked before downstream graph nodes consume them.
+
+## 261.7 Coding-agent and callback examples
+
+Application example:
+
+```yaml
+application:
+  id: workspace-coding-agent
+
+  surface:
+    kind: ide
+    protocol: graphblocks.app.v1
+
+  capabilities:
+    - background_runs
+    - cursor_replay
+    - callback_subscription
+    - approval
+    - review
+    - artifact_preview
+    - patch_preview
+    - run_cancellation
+    - budget_extension
+    - reconnect_resume
+
+  routes:
+    - id: create-task
+      method: POST
+      path: /v1/coding/tasks
+      command: InvokeGraph
+      graph: graphs/coding-agent-task
+      responseMode: accepted
+
+    - id: run-events
+      method: GET
+      path: /v1/runs/{run_id}/events
+      transport: sse
+      cursorReplay: true
+
+    - id: run-websocket
+      method: GET
+      path: /v1/runs/{run_id}/ws
+      transport: websocket
+
+    - id: external-callback
+      method: POST
+      path: /v1/callbacks/{operation_id}
+      command: SubmitAsyncCallback
+```
+
+External CI callback flow:
+
+```yaml
+nodes:
+  startCI:
+    block: async.start_operation
+    in:
+      changeset: proposePatch.changeset
+    config:
+      provider: github-actions
+      operation: workflow_dispatch
+      callback:
+        required: true
+        schema: schemas/CICallback@1
+      timeout: 30m
+
+  waitCI:
+    block: async.await_callback
+    in:
+      operation: startCI.operation
+    config:
+      checkpoint: true
+      onTimeout: fail
+
+  parseCI:
+    block: check.parse_result
+    in:
+      callback: waitCI.callback
+```
+
+Execution flow:
+
+```text
+GraphBlocks starts CI workflow.
+GraphBlocks records AsyncOperation.
+Run checkpoints and enters WAITING_CALLBACK.
+External system sends callback.
+GraphBlocks verifies signature, schema, idempotency, and fencing.
+GraphBlocks records ExternalCallbackReceived.
+Run resumes.
+CI result becomes CheckResult.
+```
+
+Callback subscription example:
+
+```json
+{
+  "type": "RegisterCallback",
+  "scope": "run",
+  "scope_id": "run_coding_001",
+  "event_filter": {
+    "types": [
+      "ReviewRequested",
+      "ApprovalRequested",
+      "BudgetExhausted",
+      "RunCompleted",
+      "RunFailed"
+    ]
+  },
+  "delivery": {
+    "kind": "webhook",
+    "url": "https://ide-relay.example.com/graphblocks/events",
+    "signing": {
+      "algorithm": "hmac-sha256",
+      "secret_ref": "secret://callbacks/ide-relay"
+    },
+    "retry_policy_ref": "webhook-standard"
+  }
+}
+```
+
+## 261.8 Policy, budget, security, and deployment
+
+Background runs and async operations MUST integrate with existing policy and budget models. During
+`WAITING_CALLBACK`, no additional model/tool budget is consumed by the suspended run. Reserved
+budget may be held, released, or converted to a resume reserve. External provider usage reported
+later MUST be reconciled. On resume, GraphBlocks MUST verify that the run is still allowed, tenant
+and entitlement are active, budget is available, release remains compatible, callback is not
+expired, operation is not cancelled, and policy snapshot is valid or migrated.
+
+External callbacks MUST be authenticated by HMAC, Ed25519, mTLS, OIDC/JWT bound to operation, or a
+provider-specific verified webhook signature. Unauthenticated callbacks MUST be rejected. Callbacks
+MUST include timestamp, nonce or delivery id, operation id, signature, and idempotency key. The
+runtime MUST reject callbacks outside replay window unless explicitly configured for delayed
+provider callbacks.
+
+Webhook targets and callback endpoints MUST obey deployment egress policy. Forbidden targets by
+default include localhost, link-local metadata services, cluster-internal control plane endpoints,
+private RFC1918 ranges unless allowlisted, `file://` URLs, and Unix socket URLs. Callback endpoints
+and subscriptions MUST be tenant/principal scoped; tenant A callbacks MUST NOT resume or observe
+tenant B runs. Callback payloads are untrusted and must pass schema validation, classification,
+secret/PII redaction, artifact extraction, prompt-injection labeling, and policy evaluation before
+use.
+
+Deployments supporting async callbacks SHALL define callback ingress with routes, signature
+requirements, anti-enumeration mode, payload limits, and request-rate limits. Kubernetes deployments
+MAY map callback ingress to Gateway API `HTTPRoute`, Service, NetworkPolicy, rate-limit middleware,
+and WAF policy. Callback workers MAY be separate from graph execution workers.
+
+## 261.9 Edge cases and required behavior
+
+Required behavior:
+
+```text
+client disconnects during background/job run
+- run continues; event stream persists; later attach with cursor is allowed
+
+client reconnects with retained cursor
+- replay events after cursor, then attach to live stream
+
+cursor expired
+- return CursorExpired with current RunStatus and nearest replay cursor when available
+
+duplicate webhook delivery
+- receiver deduplicates by idempotency_key; runtime may acknowledge 409 duplicate
+
+callback arrives twice
+- first valid callback records ExternalCallbackReceived; duplicate does not resume twice
+
+callback arrives after timeout or cancel
+- record receipt or rejection; do not resume expired/cancelled attempt
+
+callback arrives after retry created a new attempt
+- compare attempt_id and fencing token; stale callback cannot modify newer attempt
+
+callback arrives before AsyncOperation commit
+- commit operation before provider invocation whenever possible; otherwise quarantine pending callback
+
+callback delivery fails repeatedly
+- follow failure_policy: best_effort, retry_then_dead_letter, pause_run_on_failure, fail_run_on_failure
+
+mandatory callback failure
+- enter PAUSED_CALLBACK_DELIVERY and require audit event
+
+slow webhook receiver or retry storm
+- apply queue backpressure, bounded backoff with jitter, per-subscription concurrency, target rate limits, circuit breaker, and dead-letter exhaustion
+
+payload too large
+- reject or convert to ArtifactRef; do not inline oversized payload into ExecutionJournal
+
+schema/signature failure
+- reject, record audit/rejection, and do not resume run
+
+policy or release changes while suspended
+- evaluate current resume policy and release compatibility; pause for operator when incompatible
+
+coordinator failover
+- ownership lease fencing prevents double resume; callback receipt is journaled once
+
+budget exhausted while waiting
+- callback may be recorded, but execution resumes only after budget extension/reservation
+
+cancellation races with callback
+- ExecutionJournal sequence and ownership fencing determine winner
+
+external operation already committed side effects
+- EffectJournal records committed effect; compensation policy is evaluated
+
+dead-letter redrive
+- preserve original delivery/event/subscription ids, attempt history, operator principal, and reason; do not create duplicate ApplicationEvents
+```
+
+## 261.10 Diagnostics, conformance tests, and invariants
+
+Compiler/deployment diagnostics:
+
+```text
+GB6001 AsyncOperationWithoutTimeout
+GB6002 CallbackWithoutAuthentication
+GB6003 CallbackNotIdempotent
+GB6004 CallbackAsSourceOfTruth
+GB6005 BackgroundRunWithoutReplay
+GB6006 MandatoryCallbackNoFailurePolicy
+GB6007 ExternalCallbackSchemaMissing
+GB6008 ResumeWithoutPolicyReevaluation
+GB6009 ClientBoundRun
+GB6010 CallbackPayloadTooLarge
+GB6011 CallbackEndpointUnsafe
+GB6012 CallbackOrderingImpossible
+GB6013 CallbackRetentionTooShort
+GB6014 MissingDeadLetterPolicy
+GB6015 StaleCallbackCanResume
+GB6016 RunResumeWithoutOwnershipFence
+```
+
+Required conformance tests include background run continuation after disconnect, cursor attach/replay,
+expired cursor behavior, webhook retry/deduplication/409 acknowledgement, signature failure,
+schema failure, timeout/cancel/stale-attempt callback handling, journal-before-resume ordering,
+coordinator failover single-resume, budget/policy/release resume checks, mandatory callback failure,
+large payload handling, dead-letter redrive without duplicate events, non-mandatory webhook outage
+not blocking completion, and preserving external side-effect commit state after cancellation.
+
+Runtime invariants:
+
+1. A background run MUST NOT depend on a single client connection.
+2. ApplicationEventStream is authoritative; callback delivery is a projection.
+3. Callback delivery failure MUST NOT corrupt execution state.
+4. External callbacks MUST be authenticated, schema-validated, idempotent, and journaled before resume.
+5. Duplicate callbacks MUST NOT resume a run more than once.
+6. Stale callbacks MUST NOT update newer attempts.
+7. Callback ordering MUST NOT be assumed unless declared and enforced.
+8. Async operations MUST have timeout or explicit infinite-wait policy.
+9. A run MUST re-evaluate policy and budget before resuming from callback.
+10. Late provider usage MUST be reconciled even after cancel, timeout, or expiry.
+11. Callback payloads are untrusted content.
+12. Large callback outputs SHOULD use `ArtifactRef`, not inline payload.
+13. Run ownership fencing MUST protect callback resume in HA deployments.
+14. Event replay MUST be cursor-based and duplicate-tolerant.
+15. Exactly-once callback delivery MUST NOT be promised.
+
+Recommended default profiles:
+
+```yaml
+interactiveCodingAgent:
+  async:
+    runLifetime: background
+    eventRetention: 14d
+    callbackDelivery:
+      defaultPolicy: retry_then_dead_letter
+      maxAttempts: 12
+      maxPayloadBytes: 262144
+    asyncOperations:
+      defaultTimeout: 30m
+      staleCallbackPolicy: record_diagnostic_only
+    budget:
+      onExhausted: checkpoint_and_pause
+    resume:
+      requirePolicyReevaluation: true
+      requireBudgetReservation: true
+
+longDocumentIngestion:
+  async:
+    runLifetime: job
+    eventRetention: 30d
+    callbackDelivery:
+      defaultPolicy: best_effort
+    asyncOperations:
+      defaultTimeout: 6h
+      checkpoint: per_item
+    budget:
+      onExhausted: checkpoint_and_pause
+
+realtimeUiSession:
+  async:
+    runLifetime: session
+    eventRetention: 1h
+    callbackDelivery:
+      defaultPolicy: best_effort
+    detach:
+      onClientDisconnect: continue_for_grace_period
+      gracePeriod: 5m
+```
+
+Central design rule:
+
+> Runs outlive clients. Events are authoritative. Callbacks are durable projections or
+> authenticated resume signals, never the source of truth.
+
 # Appendix A. Package Catalog
 
 ## A.1 Core release train
