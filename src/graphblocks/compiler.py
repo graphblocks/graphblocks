@@ -414,6 +414,8 @@ def _callback_url_is_unsafe(url: object) -> bool:
     parsed = urlparse(url)
     if parsed.scheme != "https":
         return True
+    if parsed.username is not None or parsed.password is not None:
+        return True
     hostname = parsed.hostname
     if not hostname:
         return True

@@ -369,8 +369,8 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   localhost, loopback, private RFC1918 ranges, link-local metadata addresses, and malformed hosts,
   with explicit host allowlisting for trusted development or private deployments.
 - Callback configuration diagnostics now map unsigned webhook subscriptions to `GB6002` and unsafe
-  webhook endpoint failures to `GB6011` for compiler/deployment reporting, with shared compiler TCK
-  coverage.
+  webhook endpoint failures, including userinfo-bearing URLs, to `GB6011` for compiler/deployment
+  reporting, with shared compiler TCK coverage.
 - Callback subscriptions can now explicitly mark forbidden authoritative uses, and diagnostics
   report callback delivery used as a source of truth for run correctness, billing, quota, audit, or
   effect commit as `GB6004`, with shared compiler TCK coverage.
