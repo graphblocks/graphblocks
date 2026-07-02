@@ -203,6 +203,14 @@ impl InMemoryUsageLedger {
             });
         }
 
+        if let Some(reconciliation_of) = &record.reconciliation_of
+            && self.reconciliation_for(reconciliation_of).is_some()
+        {
+            return Err(UsageLedgerError::RecordConflict {
+                record_id: reconciliation_of.clone(),
+            });
+        }
+
         if record.reconciliation_of.is_none()
             && let Some(provider_response_id) = &record.provider_response_id
         {
@@ -282,6 +290,14 @@ impl InMemoryUsageLedger {
 
         self.append(reconciled)
     }
+
+    fn reconciliation_for(&self, source_record_id: &str) -> Option<UsageRecord> {
+        self.order
+            .iter()
+            .filter_map(|record_id| self.records.get(record_id))
+            .find(|record| record.reconciliation_of.as_deref() == Some(source_record_id))
+            .cloned()
+    }
 }
 
 pub struct SqliteUsageLedger {
@@ -338,6 +354,9 @@ impl SqliteUsageLedger {
                     WHERE provider_response_id IS NOT NULL
                         AND attempt_id IS NULL
                         AND reconciliation_of IS NULL;
+                CREATE UNIQUE INDEX IF NOT EXISTS usage_records_single_reconciliation
+                    ON usage_records(reconciliation_of)
+                    WHERE reconciliation_of IS NOT NULL;
                 ",
             )
             .map_err(usage_storage_error)?;
@@ -389,6 +408,14 @@ impl SqliteUsageLedger {
             }
             Err(UsageLedgerError::RecordNotFound { .. }) => {}
             Err(error) => return Err(error),
+        }
+
+        if let Some(reconciliation_of) = &record.reconciliation_of
+            && self.reconciliation_for(reconciliation_of)?.is_some()
+        {
+            return Err(UsageLedgerError::RecordConflict {
+                record_id: reconciliation_of.clone(),
+            });
         }
 
         if record.reconciliation_of.is_none()
@@ -557,6 +584,41 @@ impl SqliteUsageLedger {
         };
 
         self.append(reconciled)
+    }
+
+    fn reconciliation_for(
+        &self,
+        source_record_id: &str,
+    ) -> Result<Option<UsageRecord>, UsageLedgerError> {
+        self.connection
+            .query_row(
+                "
+                SELECT
+                    record_id,
+                    source,
+                    confidence,
+                    amounts_json,
+                    occurred_at_unix_ms,
+                    run_id,
+                    attempt_id,
+                    provider_response_id,
+                    pricing_ref,
+                    quota_window_id,
+                    execution_scope,
+                    reconciliation_of,
+                    metadata_json
+                FROM usage_records
+                WHERE reconciliation_of = ?
+                ORDER BY sequence
+                LIMIT 1
+                ",
+                params![source_record_id],
+                stored_usage_record_from_row,
+            )
+            .optional()
+            .map_err(usage_storage_error)?
+            .map(usage_record_from_storage)
+            .transpose()
     }
 
     fn provider_duplicate(

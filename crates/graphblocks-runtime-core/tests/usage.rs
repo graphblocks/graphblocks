@@ -383,6 +383,45 @@ fn usage_ledger_totals_replace_provisional_with_reconciled_usage() -> Result<(),
 }
 
 #[test]
+fn usage_ledger_rejects_multiple_reconciliations_for_same_source_record()
+-> Result<(), UsageLedgerError> {
+    let mut ledger = InMemoryUsageLedger::new();
+    let provisional = ledger.append(
+        UsageRecord::new(
+            "usage-provisional",
+            UsageSource::TokenizerEstimated,
+            UsageConfidence::Estimated,
+            [tokens(18)],
+            1_000,
+        )
+        .with_run_id("run-1")
+        .with_attempt_id("attempt-1")
+        .with_provider_response_id("resp-1"),
+    )?;
+    let first = ledger.reconcile(
+        "usage-provisional",
+        [tokens(21)],
+        1_500,
+        Some("usage-reconciled-1".to_string()),
+    )?;
+
+    assert_eq!(
+        ledger.reconcile(
+            "usage-provisional",
+            [tokens(22)],
+            1_600,
+            Some("usage-reconciled-2".to_string()),
+        ),
+        Err(UsageLedgerError::RecordConflict {
+            record_id: "usage-provisional".to_string()
+        })
+    );
+    assert_eq!(ledger.records_for_run("run-1"), vec![provisional, first]);
+    assert_eq!(ledger.totals_for_run("run-1"), vec![tokens(21)]);
+    Ok(())
+}
+
+#[test]
 fn sqlite_usage_ledger_persists_records_across_reopen() -> Result<(), UsageLedgerError> {
     let path = sqlite_usage_path("usage-persist");
     let record = UsageRecord::new(
@@ -675,5 +714,44 @@ fn sqlite_usage_ledger_totals_replace_provisional_with_reconciled_usage()
     )?;
 
     assert_eq!(ledger.totals_for_run("run-1")?, vec![tokens(23)]);
+    Ok(())
+}
+
+#[test]
+fn sqlite_usage_ledger_rejects_multiple_reconciliations_for_same_source_record()
+-> Result<(), UsageLedgerError> {
+    let mut ledger = SqliteUsageLedger::open_in_memory()?;
+    let provisional = ledger.append(
+        UsageRecord::new(
+            "usage-provisional",
+            UsageSource::TokenizerEstimated,
+            UsageConfidence::Estimated,
+            [tokens(18)],
+            1_000,
+        )
+        .with_run_id("run-1")
+        .with_attempt_id("attempt-1")
+        .with_provider_response_id("resp-1"),
+    )?;
+    let first = ledger.reconcile(
+        "usage-provisional",
+        [tokens(21)],
+        1_500,
+        Some("usage-reconciled-1".to_string()),
+    )?;
+
+    assert_eq!(
+        ledger.reconcile(
+            "usage-provisional",
+            [tokens(22)],
+            1_600,
+            Some("usage-reconciled-2".to_string()),
+        ),
+        Err(UsageLedgerError::RecordConflict {
+            record_id: "usage-provisional".to_string()
+        })
+    );
+    assert_eq!(ledger.records_for_run("run-1")?, vec![provisional, first]);
+    assert_eq!(ledger.totals_for_run("run-1")?, vec![tokens(21)]);
     Ok(())
 }

@@ -589,8 +589,8 @@ E. parallel task가 동시에 마지막 budget을 reserve
 ### Current implementation slice
 
 - `UsageLedger` reconciliation now enforces one final reconciliation per source usage record in
-  both in-memory and SQLite ledgers, preventing late provider usage from being double-counted by
-  multiple reconciled records for the same provisional measurement.
+  both Python and Rust in-memory/SQLite ledgers, preventing late provider usage from being
+  double-counted by multiple reconciled records for the same provisional measurement.
 
 ## 7. Phase 4 — Packaging, Integrations, Observability
 
