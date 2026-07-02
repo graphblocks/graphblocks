@@ -680,6 +680,7 @@ class TckSuiteManifest:
     suite_id: str
     path: str
     case_ids: tuple[str, ...]
+    auxiliary_paths: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.suite_id.strip():
@@ -689,19 +690,26 @@ class TckSuiteManifest:
         case_ids = tuple(str(case_id) for case_id in self.case_ids)
         if any(not case_id.strip() for case_id in case_ids):
             raise ValueError("TCK suite case ids must not be empty")
+        auxiliary_paths = tuple(str(path) for path in self.auxiliary_paths)
+        if any(not path.strip() for path in auxiliary_paths):
+            raise ValueError("TCK suite auxiliary paths must not be empty")
         object.__setattr__(self, "case_ids", case_ids)
+        object.__setattr__(self, "auxiliary_paths", tuple(sorted(auxiliary_paths)))
 
     @property
     def case_count(self) -> int:
         return len(self.case_ids)
 
     def manifest_contract(self) -> dict[str, object]:
-        return {
+        contract: dict[str, object] = {
             "suite_id": self.suite_id,
             "path": self.path,
             "case_count": self.case_count,
             "case_ids": list(self.case_ids),
         }
+        if self.auxiliary_paths:
+            contract["auxiliary_paths"] = list(self.auxiliary_paths)
+        return contract
 
     def content_digest(self) -> str:
         return canonical_hash(self.manifest_contract())
@@ -2168,6 +2176,11 @@ def load_tck_suite_manifests(root: str | Path) -> tuple[TckSuiteManifest, ...]:
                 suite_id=suite_id,
                 path=path.relative_to(root_path).as_posix(),
                 case_ids=tuple(case_ids),
+                auxiliary_paths=tuple(
+                    auxiliary_path.relative_to(root_path).as_posix()
+                    for auxiliary_path in sorted(path.parent.glob("*.json"))
+                    if auxiliary_path.name != "cases.json"
+                ),
             )
         )
     return tuple(manifests)

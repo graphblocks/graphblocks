@@ -795,6 +795,8 @@ def test_testing_package_discovers_all_shared_tck_suite_manifests(monkeypatch) -
         "competing_reservations_serialize_against_available_budget",
         "completion_reserve_allows_only_one_concurrent_spender",
     )
+    assert by_suite["schema"].auxiliary_paths == ("schema/typed-values.json",)
+    assert by_suite["schema"].manifest_contract()["auxiliary_paths"] == ["schema/typed-values.json"]
     assert by_suite["policy"].case_count >= 4
     assert by_suite["budget-race"].manifest_contract() == {
         "suite_id": "budget-race",
