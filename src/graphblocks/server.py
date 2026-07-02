@@ -18,6 +18,16 @@ ServerTransport = Literal["http", "sse", "websocket"]
 ServerHealthStatus = Literal["healthy", "degraded", "unhealthy"]
 VALID_SERVER_TRANSPORTS = frozenset({"http", "sse", "websocket"})
 VALID_SERVER_HEALTH_STATUSES = frozenset({"healthy", "degraded", "unhealthy"})
+SERVER_EVENT_SEVERITY_RANKS = {
+    "debug": 10,
+    "info": 20,
+    "notice": 30,
+    "warning": 40,
+    "warn": 40,
+    "error": 50,
+    "critical": 60,
+    "fatal": 60,
+}
 
 
 def _utc_now_iso() -> str:
@@ -1844,11 +1854,57 @@ class GraphBlocksServerApp:
 
     def _event_matches_subscription_filter(self, event: Mapping[str, object], event_filter: Mapping[str, object]) -> bool:
         types = event_filter.get("types")
-        if types is None:
+        if types is not None:
+            allowed_types = _validate_string_sequence("server event subscription", "event_filter.types", types)
+            event_kind = event.get("kind")
+            if not isinstance(event_kind, str) or event_kind not in allowed_types:
+                return False
+        payload = event.get("payload")
+        payload = payload if isinstance(payload, Mapping) else {}
+        if not self._event_payload_field_matches(payload, "visibility", event_filter.get("visibility")):
+            return False
+        if not self._event_payload_field_matches(
+            payload,
+            "node_id",
+            event_filter.get("node_ids", event_filter.get("nodeIds")),
+        ):
+            return False
+        if not self._event_payload_field_matches(
+            payload,
+            "operation_id",
+            event_filter.get("operation_ids", event_filter.get("operationIds")),
+        ):
+            return False
+        severity_min = event_filter.get("severity_min", event_filter.get("severityMin"))
+        if severity_min is None:
             return True
-        allowed_types = _validate_string_sequence("server event subscription", "event_filter.types", types)
-        event_kind = event.get("kind")
-        return isinstance(event_kind, str) and event_kind in allowed_types
+        severity_min_text = _validate_non_empty_string(
+            "server event subscription",
+            "event_filter.severity_min",
+            severity_min,
+        )
+        minimum_rank = SERVER_EVENT_SEVERITY_RANKS.get(severity_min_text)
+        event_severity = payload.get("severity")
+        if minimum_rank is None or not isinstance(event_severity, str):
+            return False
+        event_rank = SERVER_EVENT_SEVERITY_RANKS.get(event_severity)
+        return event_rank is not None and event_rank >= minimum_rank
+
+    def _event_payload_field_matches(
+        self,
+        payload: Mapping[str, object],
+        field_name: str,
+        allowed_values: object,
+    ) -> bool:
+        if allowed_values is None:
+            return True
+        allowed = _validate_string_sequence(
+            "server event subscription",
+            f"event_filter.{field_name}",
+            allowed_values,
+        )
+        value = payload.get(field_name)
+        return isinstance(value, str) and value in allowed
 
     def _has_subscription(self, run_id: str, subscription_id: str) -> bool:
         return any(

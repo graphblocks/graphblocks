@@ -1553,6 +1553,80 @@ def test_server_app_subscribes_to_run_events_with_filtered_replay() -> None:
         app.subscriptions("run-subscribe-1")[0].delivery["options"]["priority"] = "high"  # type: ignore[index]
 
 
+def test_server_app_subscription_replay_filters_visibility_node_operation_and_severity() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-subscribe-filter-1"] = (
+        {
+            "kind": "JobProgress",
+            "metadata": {"eventId": "event-warning", "sequence": 1},
+            "payload": {
+                "visibility": "operator",
+                "node_id": "runChecks",
+                "operation_id": "op-ci-1",
+                "severity": "warning",
+            },
+        },
+        {
+            "kind": "JobProgress",
+            "metadata": {"eventId": "event-client", "sequence": 2},
+            "payload": {
+                "visibility": "client",
+                "node_id": "runChecks",
+                "operation_id": "op-ci-1",
+                "severity": "error",
+            },
+        },
+        {
+            "kind": "JobProgress",
+            "metadata": {"eventId": "event-wrong-node", "sequence": 3},
+            "payload": {
+                "visibility": "operator",
+                "node_id": "review",
+                "operation_id": "op-ci-1",
+                "severity": "critical",
+            },
+        },
+        {
+            "kind": "JobProgress",
+            "metadata": {"eventId": "event-matching", "sequence": 4},
+            "payload": {
+                "visibility": "operator",
+                "node_id": "runChecks",
+                "operation_id": "op-ci-1",
+                "severity": "error",
+            },
+        },
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-subscribe-filter-1/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-filter-1",
+                    "eventFilter": {
+                        "types": ["JobProgress"],
+                        "visibility": ["operator"],
+                        "nodeIds": ["runChecks"],
+                        "operationIds": ["op-ci-1"],
+                        "severityMin": "error",
+                    },
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    payload = json.loads(response.body.decode("utf-8"))
+
+    assert response.status_code == 201
+    assert [event["metadata"]["eventId"] for event in payload["events"]] == ["event-matching"]
+
+
 def test_server_app_subscribe_events_reports_cursor_expired() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     graph = {
