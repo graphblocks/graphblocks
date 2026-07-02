@@ -33,6 +33,13 @@ VALID_DELIVERY_STATUSES = frozenset({
     "cancelled",
     "expired",
 })
+TERMINAL_DELIVERY_STATUSES = frozenset({
+    "delivered",
+    "acknowledged",
+    "dead_lettered",
+    "cancelled",
+    "expired",
+})
 VALID_CALLBACK_AUTH_KINDS = frozenset({"bearer", "hmac", "mtls", "oidc"})
 FORBIDDEN_WEBHOOK_HOSTS = frozenset({"localhost", "metadata.google.internal"})
 
@@ -428,6 +435,8 @@ class CallbackDeliveryProjection:
         if not isinstance(policy, CallbackRetryPolicy):
             raise ValueError("policy must be a CallbackRetryPolicy")
         _require_non_empty_string("received_at", received_at)
+        if self.status in TERMINAL_DELIVERY_STATUSES:
+            raise ValueError("terminal callback delivery cannot apply webhook response")
 
         if decision.status == "delivered":
             return CallbackDeliveryProjection(

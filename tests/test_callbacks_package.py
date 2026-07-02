@@ -639,6 +639,32 @@ def test_callback_delivery_projection_stops_retry_after_max_attempts() -> None:
     assert exhausted.last_error == "receiver_error"
 
 
+def test_callback_delivery_projection_rejects_webhook_response_after_terminal_state() -> None:
+    terminal_statuses = ("delivered", "acknowledged", "dead_lettered", "cancelled", "expired")
+
+    for status in terminal_statuses:
+        delivery = CallbackDeliveryProjection(
+            delivery_id=f"del_{status}",
+            subscription_id="sub_001",
+            event_id="evt_1042",
+            run_id="run_coding_001",
+            sequence=1042,
+            cursor="evt_1042",
+            attempt=1,
+            idempotency_key=f"sub_001:evt_1042:{status}",
+            status=status,
+        )
+
+        _assert_raises_value_error(
+            "terminal callback delivery cannot apply webhook response",
+            lambda delivery=delivery: delivery.apply_webhook_response(
+                classify_webhook_response(204),
+                received_at="2026-07-02T00:00:00Z",
+                policy=CallbackRetryPolicy(max_attempts=4),
+            ),
+        )
+
+
 def test_callback_replay_guard_accepts_first_delivery_and_marks_exact_replay_duplicate() -> None:
     envelope = CallbackEnvelope(
         delivery_id="del_001",

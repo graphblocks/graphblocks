@@ -496,6 +496,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - `CallbackDeliveryProjection` now exposes a response-transition helper that applies classified
   webhook receiver responses to durable delivery state: 2xx marks delivered, 409 marks acknowledged,
   429/5xx schedule bounded retries, and retry exhaustion remains failed without over-scheduling.
+- Callback delivery response transitions now reject late receiver responses once a delivery is
+  already terminal, preventing delivered, acknowledged, dead-lettered, cancelled, or expired
+  delivery records from being rewritten by delayed network outcomes.
 - Callback subscriptions can schedule cursor replay from the authoritative `ApplicationProtocolLog`
   while applying the same event filters and deterministic delivery/idempotency metadata as live
   projection.
