@@ -176,6 +176,26 @@ def test_testing_package_loads_shared_schema_tck_cases(monkeypatch) -> None:
     assert "load_schema_tck_cases" in graphblocks_testing.__all__
 
 
+def test_testing_package_loads_shared_typed_value_schema_tck_cases(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
+    graphblocks_testing = importlib.import_module("graphblocks_testing")
+
+    cases = graphblocks_testing.load_schema_typed_value_tck_cases(
+        ROOT / "tck" / "schema" / "typed-values.json"
+    )
+    report = graphblocks_testing.TckRunner(graphblocks_testing.stdlib_registry()).run_cases(cases)
+
+    assert [case.kind for case in cases] == ["schema"] * 3
+    assert any(not case.expected_ok for case in cases)
+    assert report.ok
+    assert {result.observed["valid"] for result in report.results} == {False, True}
+    assert any(
+        result.observed.get("canonical_json") == '{"schema":"schemas/Message@1","value":{"a":[true],"z":1}}'
+        for result in report.results
+    )
+    assert "load_schema_typed_value_tck_cases" in graphblocks_testing.__all__
+
+
 def test_testing_package_loads_shared_policy_tck_cases(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(ROOT / "packages" / "graphblocks-testing" / "src"))
     graphblocks_testing = importlib.import_module("graphblocks_testing")

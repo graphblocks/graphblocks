@@ -94,6 +94,9 @@ graphblocks-cli
   Python `graphblocks-core` and Rust `graphblocks-types`; Rust exposes canonical-value and
   canonical-JSON helpers backed by the normative compiler canonicalizer so Python/Rust parity is
   asserted on the same cases.
+- `graphblocks-testing` can load and run the typed-value schema fixture through the shared schema
+  TCK runner, so downstream conformance tooling can exercise the same Python contract instead of
+  relying on package-local tests only.
 
 ## 4. Phase 1 — Local Rust Runtime (`GB-C1-LOCAL-RUNTIME`)
 

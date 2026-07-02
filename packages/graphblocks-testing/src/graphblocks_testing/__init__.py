@@ -146,7 +146,7 @@ from graphblocks.run_store import (
     SQLiteRunStore,
     StateConflictError,
 )
-from graphblocks.schema import SchemaId, SchemaIdError
+from graphblocks.schema import SchemaId, SchemaIdError, TypedValue
 from graphblocks.server import ApplicationProtocolCapabilities
 from graphblocks.runtime import (
     CancellationToken,
@@ -282,9 +282,13 @@ class TckCase:
     expected_terminal_kind: str | None = None
     block_catalog: tuple[dict[str, object], ...] = field(default_factory=tuple)
     schema_id: str | None = None
+    schema_case_type: str = "schema_id"
+    schema_value: object | None = None
     expected_canonical_schema_id: str | None = None
     expected_schema_name: str | None = None
     expected_major_version: int | None = None
+    expected_canonical_value: dict[str, object] | None = None
+    expected_canonical_json: str | None = None
     expected_error: str | None = None
     policy_delivery: dict[str, object] = field(default_factory=dict)
     policy_operations: tuple[dict[str, object], ...] = field(default_factory=tuple)
@@ -424,6 +428,13 @@ class TckCase:
         if self.kind == "schema":
             if not isinstance(self.schema_id, str) or not self.schema_id.strip():
                 raise ValueError("schema TCK case requires schema_id")
+            if self.schema_case_type not in {"schema_id", "typed_value"}:
+                raise ValueError("schema TCK case_type must be schema_id or typed_value")
+            if self.schema_case_type == "typed_value" and self.expected_ok:
+                if self.expected_canonical_value is None:
+                    raise ValueError("typed value schema TCK case requires expected_canonical_value")
+                if not isinstance(self.expected_canonical_json, str) or not self.expected_canonical_json:
+                    raise ValueError("typed value schema TCK case requires expected_canonical_json")
             if self.expected_major_version is not None and self.expected_major_version <= 0:
                 raise ValueError("schema TCK expected_major_version must be positive")
 
@@ -478,19 +489,27 @@ class TckCase:
         case_id: str,
         schema_id: str,
         expected_ok: bool,
+        schema_case_type: str = "schema_id",
+        schema_value: object | None = None,
         expected_canonical_schema_id: str | None = None,
         expected_schema_name: str | None = None,
         expected_major_version: int | None = None,
+        expected_canonical_value: dict[str, object] | None = None,
+        expected_canonical_json: str | None = None,
         expected_error: str | None = None,
     ) -> TckCase:
         return cls(
             case_id=case_id,
             kind="schema",
             schema_id=schema_id,
+            schema_case_type=schema_case_type,
+            schema_value=schema_value,
             expected_ok=expected_ok,
             expected_canonical_schema_id=expected_canonical_schema_id,
             expected_schema_name=expected_schema_name,
             expected_major_version=expected_major_version,
+            expected_canonical_value=expected_canonical_value,
+            expected_canonical_json=expected_canonical_json,
             expected_error=expected_error,
         )
 
@@ -2077,6 +2096,51 @@ def load_schema_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
     return tuple(cases)
 
 
+def load_schema_typed_value_tck_cases(path: str | Path) -> tuple[TckCase, ...]:
+    raw_cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(raw_cases, list):
+        raise ValueError("typed value schema TCK root must be a list")
+    cases: list[TckCase] = []
+    for index, raw_case in enumerate(raw_cases):
+        if not isinstance(raw_case, Mapping):
+            raise ValueError(f"typed value schema TCK case {index} must be a mapping")
+        case_id = _first_mapping_value(raw_case, "name", "case_id", "caseId")
+        if not isinstance(case_id, str) or not case_id.strip():
+            raise ValueError(f"typed value schema TCK case {index} requires name")
+        schema_id = _first_mapping_value(raw_case, "schema", "schema_id", "schemaId")
+        if not isinstance(schema_id, str) or not schema_id.strip():
+            raise ValueError(f"typed value schema TCK case {case_id} requires schema")
+        if "value" not in raw_case:
+            raise ValueError(f"typed value schema TCK case {case_id} requires value")
+        expected = raw_case.get("expected")
+        if not isinstance(expected, Mapping):
+            raise ValueError(f"typed value schema TCK case {case_id} requires expected result")
+        expected_error = _first_mapping_value(expected, "error", "error_type", "errorType")
+        if expected_error is not None and not isinstance(expected_error, str):
+            raise ValueError(f"typed value schema TCK case {case_id} expected error must be a string")
+        expected_ok = expected_error is None
+        expected_canonical_value = _first_mapping_value(expected, "canonical_value", "canonicalValue")
+        if expected_ok and not isinstance(expected_canonical_value, Mapping):
+            raise ValueError(f"typed value schema TCK case {case_id} requires expected canonical_value")
+        expected_canonical_json = _first_mapping_value(expected, "canonical_json", "canonicalJson")
+        if expected_ok and not isinstance(expected_canonical_json, str):
+            raise ValueError(f"typed value schema TCK case {case_id} requires expected canonical_json")
+        canonical_value = dict(expected_canonical_value) if isinstance(expected_canonical_value, Mapping) else None
+        cases.append(
+            TckCase.schema(
+                case_id=case_id,
+                schema_id=schema_id,
+                schema_case_type="typed_value",
+                schema_value=raw_case["value"],
+                expected_ok=expected_ok,
+                expected_canonical_value=canonical_value,
+                expected_canonical_json=expected_canonical_json if isinstance(expected_canonical_json, str) else None,
+                expected_error=expected_error,
+            )
+        )
+    return tuple(cases)
+
+
 def load_tck_suite_manifests(root: str | Path) -> tuple[TckSuiteManifest, ...]:
     root_path = Path(root)
     if not root_path.is_dir():
@@ -2873,6 +2937,8 @@ class TckRunner:
         )
 
     def _run_schema_case(self, case: TckCase) -> TckResult:
+        if case.schema_case_type == "typed_value":
+            return self._run_schema_typed_value_case(case)
         try:
             schema_id = SchemaId.parse(case.schema_id or "")
             observed = {
@@ -2928,6 +2994,67 @@ class TckRunner:
                 {
                     "code": "SchemaErrorMismatch",
                     "message": "schema id error type did not match expected error",
+                    "path": "$.expected_error",
+                }
+            )
+        return TckResult(
+            case_id=case.case_id,
+            kind=case.kind,
+            status="passed" if not diagnostics else "failed",
+            diagnostics=tuple(diagnostics),
+            observed=observed,
+        )
+
+    def _run_schema_typed_value_case(self, case: TckCase) -> TckResult:
+        try:
+            typed_value = TypedValue.new(case.schema_id or "", case.schema_value)
+            observed = {
+                "valid": True,
+                "canonical_value": typed_value.canonical_value(),
+                "canonical_json": typed_value.to_json(),
+            }
+        except SchemaIdError as error:
+            observed = {
+                "valid": False,
+                "error": type(error).__name__,
+                "message": str(error),
+            }
+        diagnostics: list[dict[str, str]] = []
+        if observed["valid"] != case.expected_ok:
+            diagnostics.append(
+                {
+                    "code": "SchemaTypedValueValidityMismatch",
+                    "message": "typed value schema validity did not match expected result",
+                    "path": "$.expected_ok",
+                }
+            )
+        if (
+            case.expected_canonical_value is not None
+            and observed.get("canonical_value") != case.expected_canonical_value
+        ):
+            diagnostics.append(
+                {
+                    "code": "SchemaTypedValueCanonicalValueMismatch",
+                    "message": "typed value canonical envelope did not match expected value",
+                    "path": "$.expected_canonical_value",
+                }
+            )
+        if (
+            case.expected_canonical_json is not None
+            and observed.get("canonical_json") != case.expected_canonical_json
+        ):
+            diagnostics.append(
+                {
+                    "code": "SchemaTypedValueCanonicalJsonMismatch",
+                    "message": "typed value canonical JSON did not match expected value",
+                    "path": "$.expected_canonical_json",
+                }
+            )
+        if case.expected_error is not None and observed.get("error") != case.expected_error:
+            diagnostics.append(
+                {
+                    "code": "SchemaTypedValueErrorMismatch",
+                    "message": "typed value schema error type did not match expected error",
                     "path": "$.expected_error",
                 }
             )
@@ -9438,6 +9565,7 @@ __all__ = [
     "load_policy_tck_cases",
     "load_rag_tck_cases",
     "load_retry_tck_cases",
+    "load_schema_typed_value_tck_cases",
     "load_runtime_tck_cases",
     "load_schema_tck_cases",
     "load_sequence_tck_cases",
