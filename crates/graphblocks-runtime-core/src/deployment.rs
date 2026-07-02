@@ -2457,6 +2457,86 @@ impl KubernetesTargetRenderer {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HelmRenderedValues {
+    pub values: Value,
+}
+
+impl HelmRenderedValues {
+    pub fn content_digest(&self) -> String {
+        canonical_hash(&self.values)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HelmTargetRenderer {
+    pub release_name: String,
+    pub namespace: String,
+}
+
+impl HelmTargetRenderer {
+    pub fn new(release_name: impl Into<String>, namespace: impl Into<String>) -> Self {
+        Self {
+            release_name: release_name.into(),
+            namespace: namespace.into(),
+        }
+    }
+
+    pub fn render_target_set(
+        &self,
+        target_set: &DeploymentTargetProfileSet,
+        images_by_target_id: &BTreeMap<String, String>,
+    ) -> Result<HelmRenderedValues, DeploymentTargetProfileError> {
+        if self.release_name.trim().is_empty() {
+            return Err(DeploymentTargetProfileError::new(
+                "helm release name must not be empty",
+            ));
+        }
+        if self.namespace.trim().is_empty() {
+            return Err(DeploymentTargetProfileError::new(
+                "helm namespace must not be empty",
+            ));
+        }
+        let mut targets = target_set.targets.iter().collect::<Vec<_>>();
+        targets.sort_by(|left, right| left.target_id.cmp(&right.target_id));
+        let target_values = targets
+            .into_iter()
+            .map(|profile| {
+                let image = images_by_target_id
+                    .get(&profile.target_id)
+                    .ok_or_else(|| {
+                        DeploymentTargetProfileError::new(format!(
+                            "missing digest-pinned image for deployment target {:?}",
+                            profile.target_id
+                        ))
+                    })?
+                    .clone();
+                let target = profile.to_execution_target(image)?;
+                Ok(json!({
+                    "id": profile.target_id,
+                    "image_role": profile.image_role,
+                    "kind": profile.kind.as_str(),
+                    "execution_host": profile.execution_host,
+                    "image": target.image,
+                    "replicas": profile.default_replicas,
+                    "capabilities": profile.capabilities,
+                    "effects": profile.effects,
+                    "package_lock": profile.package_lock,
+                }))
+            })
+            .collect::<Result<Vec<_>, DeploymentTargetProfileError>>()?;
+        Ok(HelmRenderedValues {
+            values: json!({
+                "graphblocks": {
+                    "release_name": self.release_name,
+                    "namespace": self.namespace,
+                    "targets": target_values,
+                }
+            }),
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub enum TerraformOutputValueKind {
     String,

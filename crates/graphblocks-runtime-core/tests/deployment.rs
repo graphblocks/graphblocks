@@ -1,12 +1,15 @@
+use std::collections::BTreeMap;
+
 use graphblocks_runtime_core::deployment::{
     CallbackIngressConfig, DeploymentCondition, DeploymentEvent, DeploymentEventKind,
     DeploymentObservabilityContext, DeploymentRecoveryProfile, DeploymentRevision,
     DeploymentSloProfile, DeploymentSloReport, DeploymentTargetProfile, DeploymentTargetProfileSet,
     ExecutionTarget, ExecutionTargetKind, GraphRelease, GraphReleaseError, GraphReleaseGraph,
-    ImageRef, KnowledgeBinding, KubernetesTargetRenderer, PhysicalExecutionPlan, PlacementError,
-    PlacementRule, PlacementSelector, PromptLock, ReleaseLockRef, RemoteExecutionContext,
-    RemoteExecutionEnvelope, RemoteTraceContext, RevisionDecision, RolloutAnalysisResult,
-    RolloutPlan, RolloutStep, SupplyChainLock, TerraformOutputRequirement,
+    HelmTargetRenderer, ImageRef, KnowledgeBinding, KubernetesTargetRenderer,
+    PhysicalExecutionPlan, PlacementError, PlacementRule, PlacementSelector, PromptLock,
+    ReleaseLockRef, RemoteExecutionContext, RemoteExecutionEnvelope, RemoteTraceContext,
+    RevisionDecision, RolloutAnalysisResult, RolloutPlan, RolloutStep, SupplyChainLock,
+    TerraformOutputRequirement,
     TerraformOutputRequirementSet, TerraformOutputValueKind, UpgradePolicy, WorkerAdmissionError,
     WorkerAdmissionRequirement, WorkerAdvertisement, WorkerDrainPlan, WorkerDrainRoutingDecision,
     WorkloadKind,
@@ -436,6 +439,114 @@ fn kubernetes_renderer_projects_worker_pool_without_service() {
             {"name": "GRAPHBLOCKS_IMAGE_ROLE", "value": "document-cpu"},
             {"name": "GRAPHBLOCKS_EXECUTION_HOST", "value": "python_worker"}
         ])
+    );
+}
+
+#[test]
+fn helm_renderer_projects_target_set_to_stable_values() {
+    let target_set = DeploymentTargetProfileSet::new([
+        DeploymentTargetProfile::new(
+            "document-cpu",
+            "document-cpu",
+            ExecutionTargetKind::WorkerPool,
+            "python_worker",
+        )
+        .expect("profile is valid")
+        .with_capabilities(["document.parse.pdf"])
+        .with_default_replicas(3),
+        DeploymentTargetProfile::new(
+            "control",
+            "control-plane",
+            ExecutionTargetKind::Service,
+            "rust",
+        )
+        .expect("profile is valid")
+        .with_capabilities(["graph.coordinator"])
+        .with_effects(["network"])
+        .with_package_lock("locks/control.lock")
+        .with_default_replicas(2),
+    ]);
+    let images = BTreeMap::from([
+        (
+            "document-cpu".to_owned(),
+            "registry.example.com/gb/document@sha256:document".to_owned(),
+        ),
+        (
+            "control".to_owned(),
+            "registry.example.com/gb/control@sha256:control".to_owned(),
+        ),
+    ]);
+
+    let rendered = HelmTargetRenderer::new("gb-prod", "graphblocks")
+        .render_target_set(&target_set, &images)
+        .expect("helm values render");
+
+    assert_eq!(
+        rendered.values,
+        json!({
+            "graphblocks": {
+                "release_name": "gb-prod",
+                "namespace": "graphblocks",
+                "targets": [
+                    {
+                        "id": "control",
+                        "image_role": "control-plane",
+                        "kind": "service",
+                        "execution_host": "rust",
+                        "image": "registry.example.com/gb/control@sha256:control",
+                        "replicas": 2,
+                        "capabilities": ["graph.coordinator"],
+                        "effects": ["network"],
+                        "package_lock": "locks/control.lock"
+                    },
+                    {
+                        "id": "document-cpu",
+                        "image_role": "document-cpu",
+                        "kind": "worker_pool",
+                        "execution_host": "python_worker",
+                        "image": "registry.example.com/gb/document@sha256:document",
+                        "replicas": 3,
+                        "capabilities": ["document.parse.pdf"],
+                        "effects": [],
+                        "package_lock": null
+                    }
+                ]
+            }
+        })
+    );
+    assert!(rendered.content_digest().starts_with("sha256:"));
+}
+
+#[test]
+fn helm_renderer_rejects_missing_or_mutable_target_images() {
+    let target_set = DeploymentTargetProfileSet::new([DeploymentTargetProfile::new(
+        "control",
+        "control-plane",
+        ExecutionTargetKind::Service,
+        "rust",
+    )
+    .expect("profile is valid")]);
+    let renderer = HelmTargetRenderer::new("gb-prod", "graphblocks");
+
+    assert!(
+        renderer
+            .render_target_set(&target_set, &BTreeMap::new())
+            .expect_err("missing image is rejected")
+            .to_string()
+            .contains("missing digest-pinned image for deployment target")
+    );
+    assert!(
+        renderer
+            .render_target_set(
+                &target_set,
+                &BTreeMap::from([(
+                    "control".to_owned(),
+                    "registry.example.com/gb/control:latest".to_owned()
+                )]),
+            )
+            .expect_err("mutable image is rejected")
+            .to_string()
+            .contains("deployment target image must be digest-pinned")
     );
 }
 

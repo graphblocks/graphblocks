@@ -751,6 +751,9 @@ sandbox
 - `KubernetesTargetRenderer` now projects deployment target profiles into deterministic Kubernetes
   `Deployment` manifests and emits `Service` manifests for service-style targets while preserving
   target id, image role, execution host, replica count, and package lock metadata.
+- `HelmTargetRenderer` now projects the same deployment target profiles into deterministic
+  Helm values, requiring digest-pinned images for every target and exposing a stable values digest
+  for release/deployment provenance.
 - `TerraformOutputRequirementSet` now records required infrastructure outputs, produces stable
   requirement digests, and validates Terraform output maps for missing or type-mismatched values
   before they are bound into deployment configuration.
