@@ -316,9 +316,11 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
 - Webhook delivery targets now enforce the specification's default `262144` byte payload limit
   before signing delivery envelopes, and tests cover explicit small-limit rejection for oversized
   callback projections.
+- Webhook egress policy now validates DNS-resolved addresses before transport, rejecting public
+  hostnames that resolve to loopback, private, link-local, metadata, or otherwise forbidden
+  addresses unless the host is explicitly allowlisted.
 - Ed25519/mTLS/OIDC callback authentication adapters, concrete network webhook transport,
-  DNS-time egress enforcement, and multi-process coordinator failover execution remain follow-on
-  slices.
+  and multi-process coordinator failover execution remain follow-on slices.
 
 ### Package ownership
 

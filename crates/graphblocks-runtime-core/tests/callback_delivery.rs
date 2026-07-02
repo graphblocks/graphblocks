@@ -12,6 +12,7 @@ use graphblocks_runtime_core::callback_delivery::{
     WebhookSigningConfig,
 };
 use serde_json::json;
+use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -974,6 +975,59 @@ fn webhook_target_accepts_public_https_and_explicit_allowlist() {
     let local = WebhookDeliveryTarget::new("http://localhost:8080/events", &policy)
         .expect("allowlisted local endpoint is valid");
     assert_eq!(local.host, "localhost");
+}
+
+#[test]
+fn webhook_egress_policy_rejects_public_hostname_resolving_to_internal_addresses() {
+    let policy = WebhookEgressPolicy::default_deny_internal();
+    let target =
+        WebhookDeliveryTarget::new("https://hooks.example.com/graphblocks/events", &policy)
+            .expect("public hostname syntax is valid before DNS resolution");
+
+    assert_eq!(
+        policy.validate_resolved_addresses(
+            &target,
+            [
+                IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10)),
+                IpAddr::V4(Ipv4Addr::new(169, 254, 169, 254)),
+            ],
+        ),
+        Err(WebhookEndpointError::UnsafeResolvedAddress {
+            host: "hooks.example.com".to_owned(),
+            address: IpAddr::V4(Ipv4Addr::new(169, 254, 169, 254)),
+        })
+    );
+    assert_eq!(
+        policy.validate_resolved_addresses(&target, [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 4))],),
+        Err(WebhookEndpointError::UnsafeResolvedAddress {
+            host: "hooks.example.com".to_owned(),
+            address: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 4)),
+        })
+    );
+}
+
+#[test]
+fn webhook_egress_policy_allows_safe_resolved_addresses_and_explicit_host_allowlist() {
+    let policy = WebhookEgressPolicy::default_deny_internal();
+    let target =
+        WebhookDeliveryTarget::new("https://hooks.example.com/graphblocks/events", &policy)
+            .expect("public hostname is valid");
+
+    policy
+        .validate_resolved_addresses(
+            &target,
+            [
+                IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10)),
+                IpAddr::V4(Ipv4Addr::new(198, 51, 100, 8)),
+            ],
+        )
+        .expect("public resolved addresses are allowed");
+
+    let policy =
+        WebhookEgressPolicy::default_deny_internal().with_allowed_host("hooks.example.com");
+    policy
+        .validate_resolved_addresses(&target, [IpAddr::V4(Ipv4Addr::new(10, 0, 0, 4))])
+        .expect("explicit host allowlist permits private resolved addresses");
 }
 
 #[test]

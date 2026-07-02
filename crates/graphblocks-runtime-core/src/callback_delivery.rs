@@ -692,6 +692,31 @@ impl WebhookEgressPolicy {
         self
     }
 
+    pub fn validate_resolved_addresses(
+        &self,
+        target: &WebhookDeliveryTarget,
+        addresses: impl IntoIterator<Item = IpAddr>,
+    ) -> Result<(), WebhookEndpointError> {
+        if self.host_allowed(&target.host) {
+            return Ok(());
+        }
+
+        for address in addresses {
+            let unsafe_address = match address {
+                IpAddr::V4(address) => is_forbidden_ipv4(address),
+                IpAddr::V6(address) => is_forbidden_ipv6(address),
+            };
+            if unsafe_address {
+                return Err(WebhookEndpointError::UnsafeResolvedAddress {
+                    host: target.host.clone(),
+                    address,
+                });
+            }
+        }
+
+        Ok(())
+    }
+
     fn host_allowed(&self, host: &str) -> bool {
         self.allowed_hosts.contains(&normalize_host(host))
     }
@@ -777,6 +802,7 @@ pub enum WebhookEndpointError {
     MissingHost,
     UnsupportedScheme { scheme: String },
     UnsafeEndpoint { host: String },
+    UnsafeResolvedAddress { host: String, address: IpAddr },
     InvalidPayloadLimit { max_payload_bytes: usize },
 }
 
@@ -883,6 +909,13 @@ impl CallbackConfigurationDiagnostic {
                 code: "GB6011",
                 field: "delivery.url",
                 message: format!("callback webhook target {url} reaches forbidden host {host}"),
+            }),
+            WebhookEndpointError::UnsafeResolvedAddress { host, address } => Some(Self {
+                code: "GB6011",
+                field: "delivery.url",
+                message: format!(
+                    "callback webhook target {url} resolves {host} to forbidden address {address}"
+                ),
             }),
             WebhookEndpointError::UnsupportedScheme { scheme } => Some(Self {
                 code: "GB6011",
