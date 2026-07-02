@@ -400,6 +400,8 @@ projections; external callbacks are authenticated resume signals for `AsyncOpera
   `POST /callbacks/deliveries/{delivery_id}/dead-letter`
   `RedriveCallbackDelivery`/`MoveCallbackToDeadLetter` routes, recording operator and reason
   projections while leaving durable callback queue/dead-letter authority in the runtime layer.
+  Stored control projections are immutable snapshots so inspection callers cannot mutate redrive or
+  dead-letter history after recording.
 - Server-level HTTP/TLS webhook client integration and multi-process coordinator failover execution
   remain follow-on slices.
 

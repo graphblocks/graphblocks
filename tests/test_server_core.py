@@ -2104,6 +2104,10 @@ def test_server_app_records_callback_delivery_redrive_and_dead_letter_projection
             "status": "dead_letter_requested",
         },
     )
+    with pytest.raises(TypeError):
+        app.callback_delivery_redrives("del-1")[0]["reason"] = "changed"
+    with pytest.raises(TypeError):
+        app.callback_delivery_dead_letter_moves("del-1")[0]["reason"] = "changed"
 
 
 def test_server_app_rejects_malformed_callback_delivery_control_request() -> None:

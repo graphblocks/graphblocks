@@ -1632,13 +1632,13 @@ class GraphBlocksServerApp:
             if operation == "redrive_callback_delivery"
             else "dead_letter_requested"
         )
-        record: dict[str, object] = {
+        record = _freeze_json_value("callback delivery control record", "record", {
             "deliveryId": delivery_id,
             "operator": operator,
             "reason": reason,
             "requestedAt": requested_at,
             "status": status,
-        }
+        })
         if operation == "redrive_callback_delivery":
             existing = self._callback_delivery_redrives.get(delivery_id, ())
             self._callback_delivery_redrives[delivery_id] = (*existing, record)
