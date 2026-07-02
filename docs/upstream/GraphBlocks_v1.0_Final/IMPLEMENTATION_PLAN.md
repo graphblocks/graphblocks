@@ -566,6 +566,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   runtime. Callback submissions that declare a `run_id` must reference a retained run event stream
   and include an `attempt_id` fence before they are accepted; once an operation has an accepted
   run-attempt receipt, later callbacks for that operation cannot switch to a different run attempt.
+  Callback ingress rejects run-scoped receipts when the authoritative run projection is already
+  terminal, so late callbacks cannot appear resumable or create new stored resume receipts.
   Nested callback JSON payloads are deep-frozen at ingress so later caller mutation cannot
   corrupt stored callback receipts or idempotency comparisons.
 - `graphblocks-server` now also exposes the framework-neutral `GET /runs/{run_id}`

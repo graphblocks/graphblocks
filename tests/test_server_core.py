@@ -1316,6 +1316,64 @@ def test_server_app_rejects_stale_async_callback_attempt_for_existing_operation(
     assert app.callback_submissions("op-ci-1")[0].attempt_id == "attempt-2"
 
 
+def test_server_app_rejects_async_callback_for_terminal_declared_run() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
+    app._events_by_run_id["run-terminal-1"] = (
+        {
+            "kind": "RunStarted",
+            "payload": {"runId": "run-terminal-1"},
+            "metadata": {
+                "runId": "run-terminal-1",
+                "sequence": 1,
+                "cursor": "run-terminal-1:1",
+                "releaseId": "release-1",
+                "occurredAt": "2026-07-03T00:00:00Z",
+            },
+        },
+        {
+            "kind": "RunCancelled",
+            "payload": {"runId": "run-terminal-1", "reason": "client request"},
+            "metadata": {
+                "runId": "run-terminal-1",
+                "sequence": 2,
+                "cursor": "run-terminal-1:2",
+                "releaseId": "release-1",
+                "occurredAt": "2026-07-03T00:00:01Z",
+            },
+        },
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/op-ci-terminal-1",
+            headers={"Authorization": "Bearer token-1", "GraphBlocks-Idempotency-Key": "idem-callback-terminal"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "callback_id": "cb-terminal",
+                    "attempt_id": "attempt-1",
+                    "run_id": "run-terminal-1",
+                    "node_id": "waitCI",
+                    "payload": {"status": "completed"},
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-03T00:00:02Z",
+        )
+    )
+
+    assert response.status_code == 409
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "operationId": "op-ci-terminal-1",
+        "runId": "run-terminal-1",
+        "status": "cancelled",
+        "error": "async callback run is terminal and cannot be resumed",
+    }
+    assert app.callback_submissions("op-ci-terminal-1") == ()
+
+
 def test_server_app_deduplicates_async_callback_sequence_deterministically() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
     sequence = [

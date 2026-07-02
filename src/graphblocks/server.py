@@ -1458,6 +1458,24 @@ class GraphBlocksServerApp:
                             "error": "async callback attempt_id is required when run_id is declared",
                         },
                     )
+                if submission.run_id is not None:
+                    run_status = self._run_status_payload(
+                        submission.run_id,
+                        self._events_by_run_id[submission.run_id],
+                        include_ok=False,
+                    )
+                    state = run_status.get("state")
+                    if state in {"completed", "succeeded", "failed", "cancelled", "expired", "policy_stopped"}:
+                        return ServerResponse.json(
+                            409,
+                            {
+                                "ok": False,
+                                "operationId": submission.operation_id,
+                                "runId": submission.run_id,
+                                "status": state,
+                                "error": "async callback run is terminal and cannot be resumed",
+                            },
+                        )
                 existing = self._callbacks_by_operation_id.get(submission.operation_id, ())
                 for previous in existing:
                     if previous.idempotency_key == submission.idempotency_key:
