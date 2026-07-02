@@ -739,6 +739,9 @@ sandbox
 - `graphblocks-runtime-core::typed_value` now includes `RemoteBoundaryValuePolicy`, which rejects
   non-serializable inline raw bytes and oversized inline values at remote execution boundaries while
   allowing large payloads to cross by `ArtifactRef`.
+- `RemoteExecutionEnvelope` now records the remote target, worker, run/node/attempt/release ids,
+  trace context, policy snapshot, optional budget permit, and typed input payload digests as a
+  stable handoff contract before work crosses a remote worker boundary.
 - Remote boundary value validation now has deterministic compile/deployment diagnostics:
   `GB7001` for non-serializable inline encodings and `GB7002` for oversized inline values that
   should cross the boundary as artifact references.

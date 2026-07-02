@@ -4,6 +4,11 @@ use std::fmt;
 
 use graphblocks_compiler::canonical::canonical_hash;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
+
+use crate::typed_value::{
+    RemoteBoundaryValuePolicy, RemoteBoundaryValuePolicyError, TypedValue, ValueEncoding,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GraphReleaseGraph {
@@ -1664,7 +1669,10 @@ pub struct WorkerDrainPlan {
 }
 
 impl WorkerDrainPlan {
-    pub fn new(draining_worker_id: impl Into<String>, replacement_worker_id: impl Into<String>) -> Self {
+    pub fn new(
+        draining_worker_id: impl Into<String>,
+        replacement_worker_id: impl Into<String>,
+    ) -> Self {
         Self {
             draining_worker_id: draining_worker_id.into(),
             replacement_worker_id: replacement_worker_id.into(),
@@ -1728,6 +1736,169 @@ impl WorkerDrainPlan {
     pub fn content_digest(&self) -> String {
         canonical_hash(&self.plan_contract())
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RemoteTraceContext {
+    pub trace_id: String,
+    pub span_id: String,
+    pub parent_span_id: Option<String>,
+    pub baggage: BTreeMap<String, String>,
+}
+
+impl RemoteTraceContext {
+    pub fn new(trace_id: impl Into<String>, span_id: impl Into<String>) -> Self {
+        Self {
+            trace_id: trace_id.into(),
+            span_id: span_id.into(),
+            parent_span_id: None,
+            baggage: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_parent_span_id(mut self, parent_span_id: impl Into<String>) -> Self {
+        self.parent_span_id = Some(parent_span_id.into());
+        self
+    }
+
+    pub fn with_baggage(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.baggage.insert(key.into(), value.into());
+        self
+    }
+
+    fn canonical_value(&self) -> Value {
+        json!({
+            "trace_id": self.trace_id,
+            "span_id": self.span_id,
+            "parent_span_id": self.parent_span_id,
+            "baggage": self.baggage,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RemoteExecutionContext {
+    pub run_id: String,
+    pub node_id: String,
+    pub attempt_id: String,
+    pub release_id: String,
+    pub trace: RemoteTraceContext,
+    pub policy_snapshot_id: String,
+    pub budget_permit_id: Option<String>,
+}
+
+impl RemoteExecutionContext {
+    pub fn new(
+        run_id: impl Into<String>,
+        node_id: impl Into<String>,
+        attempt_id: impl Into<String>,
+        release_id: impl Into<String>,
+        trace: RemoteTraceContext,
+        policy_snapshot_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            run_id: run_id.into(),
+            node_id: node_id.into(),
+            attempt_id: attempt_id.into(),
+            release_id: release_id.into(),
+            trace,
+            policy_snapshot_id: policy_snapshot_id.into(),
+            budget_permit_id: None,
+        }
+    }
+
+    pub fn with_budget_permit_id(mut self, budget_permit_id: impl Into<String>) -> Self {
+        self.budget_permit_id = Some(budget_permit_id.into());
+        self
+    }
+
+    fn canonical_value(&self) -> Value {
+        json!({
+            "run_id": self.run_id,
+            "node_id": self.node_id,
+            "attempt_id": self.attempt_id,
+            "release_id": self.release_id,
+            "trace": self.trace.canonical_value(),
+            "policy_snapshot_id": self.policy_snapshot_id,
+            "budget_permit_id": self.budget_permit_id,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RemoteExecutionEnvelope {
+    pub envelope_id: String,
+    pub target_id: String,
+    pub worker_id: String,
+    pub context: RemoteExecutionContext,
+    pub inputs: BTreeMap<String, TypedValue>,
+}
+
+impl RemoteExecutionEnvelope {
+    pub fn new(
+        envelope_id: impl Into<String>,
+        target_id: impl Into<String>,
+        worker_id: impl Into<String>,
+        context: RemoteExecutionContext,
+    ) -> Self {
+        Self {
+            envelope_id: envelope_id.into(),
+            target_id: target_id.into(),
+            worker_id: worker_id.into(),
+            context,
+            inputs: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_input(mut self, port: impl Into<String>, value: TypedValue) -> Self {
+        self.inputs.insert(port.into(), value);
+        self
+    }
+
+    pub fn validate(
+        &self,
+        policy: &RemoteBoundaryValuePolicy,
+    ) -> Result<(), RemoteBoundaryValuePolicyError> {
+        for (port, value) in &self.inputs {
+            policy.validate(&self.context.node_id, port, value)?;
+        }
+        Ok(())
+    }
+
+    pub fn context_contract(&self) -> Value {
+        json!({
+            "target_id": self.target_id,
+            "worker_id": self.worker_id,
+            "context": self.context.canonical_value(),
+            "inputs": self.inputs.iter().map(|(port, value)| {
+                json!({
+                    "port": port,
+                    "schema_id": value.schema_id(),
+                    "schema_version": value.schema_version(),
+                    "encoding": value_encoding_name(value.encoding()),
+                    "payload_digest": payload_digest(value.payload()),
+                })
+            }).collect::<Vec<_>>(),
+        })
+    }
+
+    pub fn content_digest(&self) -> String {
+        canonical_hash(&self.context_contract())
+    }
+}
+
+fn value_encoding_name(encoding: ValueEncoding) -> &'static str {
+    match encoding {
+        ValueEncoding::Json => "json",
+        ValueEncoding::MessagePack => "messagepack",
+        ValueEncoding::ArrowIpc => "arrow_ipc",
+        ValueEncoding::RawBytes => "raw_bytes",
+        ValueEncoding::ArtifactRef => "artifact_ref",
+    }
+}
+
+fn payload_digest(payload: &[u8]) -> String {
+    format!("sha256:{:x}", Sha256::digest(payload))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]

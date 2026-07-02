@@ -4,11 +4,15 @@ use graphblocks_runtime_core::deployment::{
     DeploymentSloProfile, DeploymentSloReport, DeploymentTargetProfile, DeploymentTargetProfileSet,
     ExecutionTarget, ExecutionTargetKind, GraphRelease, GraphReleaseError, GraphReleaseGraph,
     ImageRef, KnowledgeBinding, KubernetesTargetRenderer, PhysicalExecutionPlan, PlacementError,
-    PlacementRule, PlacementSelector, PromptLock, ReleaseLockRef, RevisionDecision,
-    RolloutAnalysisResult, RolloutPlan, RolloutStep, SupplyChainLock, TerraformOutputRequirement,
+    PlacementRule, PlacementSelector, PromptLock, ReleaseLockRef, RemoteExecutionContext,
+    RemoteExecutionEnvelope, RemoteTraceContext, RevisionDecision, RolloutAnalysisResult,
+    RolloutPlan, RolloutStep, SupplyChainLock, TerraformOutputRequirement,
     TerraformOutputRequirementSet, TerraformOutputValueKind, UpgradePolicy, WorkerAdmissionError,
     WorkerAdmissionRequirement, WorkerAdvertisement, WorkerDrainPlan, WorkerDrainRoutingDecision,
     WorkloadKind,
+};
+use graphblocks_runtime_core::typed_value::{
+    RemoteBoundaryValuePolicy, RemoteBoundaryValuePolicyError, TypedValue, ValueEncoding,
 };
 use serde_json::json;
 
@@ -74,6 +78,71 @@ fn physical_plan_hash_is_stable_for_target_and_rule_order() {
         ));
 
     assert_eq!(left.plan_hash(), right.plan_hash());
+}
+
+#[test]
+fn remote_execution_envelope_digest_is_stable_and_carries_runtime_context() {
+    let context = RemoteExecutionContext::new(
+        "run-1",
+        "generate",
+        "attempt-1",
+        "release-1",
+        RemoteTraceContext::new("trace-1", "span-1")
+            .with_parent_span_id("root")
+            .with_baggage("tenant", "acme"),
+        "policy-snapshot-1",
+    )
+    .with_budget_permit_id("budget-permit-1");
+    let json_input = TypedValue::json("schemas/Prompt@1", 1, json!({"prompt": "hello"}))
+        .expect("json typed value");
+    let artifact_input = TypedValue::new(
+        "graphblocks.ai/ArtifactRef",
+        1,
+        ValueEncoding::ArtifactRef,
+        br#"{"artifact_id":"artifact-1","uri":"blob://inputs/1"}"#.to_vec(),
+    );
+    let left = RemoteExecutionEnvelope::new("env-1", "control", "worker-1", context.clone())
+        .with_input("artifact", artifact_input.clone())
+        .with_input("prompt", json_input.clone());
+    let right = RemoteExecutionEnvelope::new("env-2", "control", "worker-1", context.clone())
+        .with_input("prompt", json_input)
+        .with_input("artifact", artifact_input);
+
+    assert_eq!(left.context_contract(), right.context_contract());
+    assert_eq!(left.content_digest(), right.content_digest());
+    assert_eq!(left.context.policy_snapshot_id, "policy-snapshot-1");
+    assert_eq!(
+        left.context.budget_permit_id.as_deref(),
+        Some("budget-permit-1")
+    );
+    assert_eq!(left.context.trace.baggage["tenant"], "acme");
+}
+
+#[test]
+fn remote_execution_envelope_rejects_invalid_remote_boundary_inputs() {
+    let context = RemoteExecutionContext::new(
+        "run-1",
+        "generate",
+        "attempt-1",
+        "release-1",
+        RemoteTraceContext::new("trace-1", "span-1"),
+        "policy-snapshot-1",
+    );
+    let envelope = RemoteExecutionEnvelope::new("env-1", "control", "worker-1", context)
+        .with_input(
+            "prompt",
+            TypedValue::new("schemas/Prompt@1", 1, ValueEncoding::Json, vec![b'x'; 64]),
+        );
+
+    assert_eq!(
+        envelope.validate(&RemoteBoundaryValuePolicy::new(8)),
+        Err(RemoteBoundaryValuePolicyError::InlineValueTooLarge {
+            node_id: "generate".to_owned(),
+            port: "prompt".to_owned(),
+            size_bytes: 64,
+            max_inline_bytes: 8,
+        })
+    );
 }
 
 #[test]
