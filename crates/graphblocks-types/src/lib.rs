@@ -1,6 +1,6 @@
 use graphblocks_schema::{SchemaId, SchemaIdError};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TypedValue {
@@ -26,6 +26,17 @@ impl TypedValue {
 
     pub fn value(&self) -> &Value {
         &self.value
+    }
+
+    pub fn canonical_value(&self) -> Value {
+        json!({
+            "schema": self.schema.as_str(),
+            "value": self.value,
+        })
+    }
+
+    pub fn to_canonical_json(&self) -> String {
+        graphblocks_compiler::canonical::canonical_json(&self.canonical_value())
     }
 
     pub fn into_value(self) -> Value {

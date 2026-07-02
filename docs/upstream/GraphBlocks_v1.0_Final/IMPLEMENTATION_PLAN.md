@@ -86,6 +86,15 @@ graphblocks-cli
 - port mismatch, dead node, optional-output misuse, ambiguous binding을 compile 시 탐지한다.
 - plugin manifest를 import 없이 탐색하고 충돌을 결정론적으로 거부한다.
 
+### 현재 진행
+
+- Schema ID parsing is covered by the shared `tck/schema/cases.json` fixture on the Rust
+  `graphblocks-schema` side.
+- Typed value schema envelopes now use the shared `tck/schema/typed-values.json` fixture from both
+  Python `graphblocks-core` and Rust `graphblocks-types`; Rust exposes canonical-value and
+  canonical-JSON helpers backed by the normative compiler canonicalizer so Python/Rust parity is
+  asserted on the same cases.
+
 ## 4. Phase 1 — Local Rust Runtime (`GB-C1-LOCAL-RUNTIME`)
 
 ### 구현

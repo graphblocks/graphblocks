@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -49,6 +50,23 @@ def test_typed_value_preserves_schema_id_and_round_trips_canonical_json() -> Non
 def test_typed_value_rejects_invalid_schema_id() -> None:
     with pytest.raises(SchemaIdError, match="include a major version"):
         TypedValue.new("schemas/Message", {})
+
+
+def test_python_typed_value_matches_shared_tck_cases() -> None:
+    fixture = Path(__file__).resolve().parents[1] / "tck" / "schema" / "typed-values.json"
+    cases = json.loads(fixture.read_text(encoding="utf-8"))
+
+    for case in cases:
+        expected = case["expected"]
+        if "error" in expected:
+            with pytest.raises(SchemaIdError):
+                TypedValue.new(case["schema"], case["value"])
+            continue
+
+        value = TypedValue.new(case["schema"], case["value"])
+
+        assert value.canonical_value() == expected["canonical_value"], case["name"]
+        assert value.to_json() == expected["canonical_json"], case["name"]
 
 
 def test_schema_manifest_scans_schema_documents_deterministically(tmp_path: Path) -> None:

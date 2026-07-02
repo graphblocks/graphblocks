@@ -1,6 +1,7 @@
 use graphblocks_schema::SchemaIdError;
 use graphblocks_types::TypedValue;
 use serde_json::json;
+use serde_json::Value;
 
 #[test]
 fn typed_value_preserves_schema_id_and_round_trips_json() -> Result<(), Box<dyn std::error::Error>>
@@ -31,4 +32,52 @@ fn typed_value_rejects_invalid_schema_id() {
             .expect_err("schema id without a version must be rejected"),
         SchemaIdError::MissingVersion,
     );
+}
+
+#[test]
+fn typed_value_matches_shared_tck_cases() -> Result<(), Box<dyn std::error::Error>> {
+    let cases: Vec<Value> =
+        serde_json::from_str(include_str!("../../../tck/schema/typed-values.json"))?;
+
+    for case in cases {
+        let name = case
+            .get("name")
+            .and_then(Value::as_str)
+            .expect("case has a name");
+        let schema = case
+            .get("schema")
+            .and_then(Value::as_str)
+            .expect("case has a schema");
+        let value = case.get("value").cloned().expect("case has a value");
+        let expected = case
+            .get("expected")
+            .and_then(Value::as_object)
+            .expect("case has expected result");
+
+        let observed = TypedValue::new(schema, value);
+        if expected.contains_key("error") {
+            assert!(observed.is_err(), "{name}");
+            continue;
+        }
+
+        let observed = observed?;
+        let expected_canonical_value = expected
+            .get("canonical_value")
+            .expect("expected canonical value");
+        assert_eq!(
+            &observed.canonical_value(),
+            expected_canonical_value,
+            "{name}"
+        );
+        assert_eq!(
+            observed.to_canonical_json(),
+            expected
+                .get("canonical_json")
+                .and_then(Value::as_str)
+                .expect("expected canonical json"),
+            "{name}"
+        );
+    }
+
+    Ok(())
 }
