@@ -1120,6 +1120,17 @@ impl ExternalEffectRecord {
         }
         Ok(())
     }
+
+    pub fn protocol_value(&self) -> Value {
+        json!({
+            "effectId": self.effect_id,
+            "target": self.target,
+            "operation": self.operation,
+            "outcome": self.outcome.as_str(),
+            "idempotencyKey": self.idempotency_key,
+            "providerEffectId": self.provider_effect_id,
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1213,6 +1224,20 @@ impl AsyncOperationResult {
             }
         }
         Ok(())
+    }
+
+    pub fn protocol_value(&self) -> Value {
+        json!({
+            "operationId": self.operation_id,
+            "status": self.status.as_str(),
+            "output": self.output,
+            "artifacts": self.artifacts.iter().map(CallbackArtifactRef::canonical_value).collect::<Vec<_>>(),
+            "diagnostics": self.diagnostics,
+            "metrics": self.metrics,
+            "checks": self.checks,
+            "usage": self.usage,
+            "externalEffects": self.external_effects.iter().map(ExternalEffectRecord::protocol_value).collect::<Vec<_>>(),
+        })
     }
 }
 

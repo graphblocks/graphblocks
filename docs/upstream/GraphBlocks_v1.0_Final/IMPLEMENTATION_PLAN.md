@@ -488,7 +488,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   terminal blocks can project `externalEffects` config into the final result instead of dropping
   provider effect identity. Result projections reject duplicate `effect_id` and
   `provider_effect_id` values so audit and ledger consumers can treat each recorded local and
-  provider effect identity as single-assignment within the operation result.
+  provider effect identity as single-assignment within the operation result. The Rust runtime core
+  projects results to canonical protocol JSON with camelCase `externalEffects` entries for
+  downstream graph nodes and server adapters.
 - Python `graphblocks-core` now exposes the same authoring/schema facade for
   `AsyncOperationResult`, `AsyncOperationResultStatus`, and `ExternalEffectRecord`, including
   validation that provider effect identity is only attached to committed external effects.

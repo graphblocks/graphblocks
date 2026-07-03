@@ -1777,6 +1777,46 @@ fn cancelled_async_operation_result_preserves_committed_external_effect() {
 }
 
 #[test]
+fn async_operation_result_projects_protocol_json() {
+    let result = AsyncOperationResult::cancelled("op-1")
+        .with_output(json!({"status": "cancelled_after_commit"}))
+        .with_external_effects([
+            ExternalEffectRecord::new(
+                "effect-ticket-1",
+                "ticket-system",
+                "ticket.create",
+                ToolEffectOutcome::Committed,
+            )
+            .with_idempotency_key("idem-ticket-1")
+            .with_provider_effect_id("ticket-123"),
+        ]);
+
+    assert_eq!(
+        result.protocol_value(),
+        json!({
+            "operationId": "op-1",
+            "status": "cancelled",
+            "output": {"status": "cancelled_after_commit"},
+            "artifacts": [],
+            "diagnostics": [],
+            "metrics": [],
+            "checks": [],
+            "usage": [],
+            "externalEffects": [
+                {
+                    "effectId": "effect-ticket-1",
+                    "target": "ticket-system",
+                    "operation": "ticket.create",
+                    "outcome": "committed",
+                    "idempotencyKey": "idem-ticket-1",
+                    "providerEffectId": "ticket-123"
+                }
+            ]
+        })
+    );
+}
+
+#[test]
 fn incomplete_async_operation_result_preserves_committed_external_effect_after_late_callback() {
     let result = AsyncOperationResult::incomplete("op-1").with_external_effects([
         ExternalEffectRecord::new(
