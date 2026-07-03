@@ -593,9 +593,31 @@ fn execute_async_start_operation(inputs: &Value, config: &Value) -> Result<Value
         )?;
         operation = operation.submitted(provider_operation_id, submitted_at_unix_ms);
     }
-    if let Some(expires_at_unix_ms) =
-        optional_alias_u64(config, "expiresAtUnixMs", "expires_at_unix_ms")?
-    {
+    let expires_at_unix_ms =
+        if let Some(expires_at_unix_ms) =
+            optional_alias_u64(config, "expiresAtUnixMs", "expires_at_unix_ms")?
+        {
+            Some(expires_at_unix_ms)
+        } else {
+            optional_alias_duration_ms(
+                config,
+                &["timeoutMs", "timeout_ms", "timeout"],
+                "async.start_operation.invalid_config",
+                "async.start_operation@1 timeout must be a positive duration",
+            )?
+            .map(|timeout_ms| {
+                created_at_unix_ms.checked_add(timeout_ms).ok_or_else(|| {
+                    BlockError::new(
+                        "async.start_operation.invalid_config",
+                        ErrorCategory::Configuration,
+                        "async.start_operation@1 timeout exceeds timestamp range",
+                        false,
+                    )
+                })
+            })
+            .transpose()?
+        };
+    if let Some(expires_at_unix_ms) = expires_at_unix_ms {
         operation = operation.waiting_callback(expires_at_unix_ms);
     }
     operation.validate().map_err(|error| {
