@@ -815,6 +815,37 @@ def test_callback_dead_letter_record_rejects_inconsistent_delivery_state() -> No
     )
 
 
+def test_callback_dead_letter_preserves_delivery_attempt_after_policy_reduction() -> None:
+    delivery = CallbackDeliveryProjection(
+        delivery_id="del_001",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        sequence=1042,
+        cursor="evt_1042",
+        attempt=5,
+        idempotency_key="sub_001:evt_1042",
+        status="failed",
+        delivered_at="2026-07-02T00:00:10Z",
+        last_error="receiver unavailable",
+    )
+    policy = CallbackRetryPolicy(
+        max_attempts=3,
+        initial_delay_ms=100,
+        max_delay_ms=1_000,
+        jitter_ms=0,
+    )
+
+    dead_letter = delivery.to_dead_letter(
+        policy,
+        dead_lettered_at="2026-07-02T00:00:30Z",
+        reason="policy reduced after retries",
+    )
+
+    assert dead_letter.delivery.attempt == 5
+    assert dead_letter.attempt_history == (1, 2, 3, 4, 5)
+
+
 def test_callback_delivery_projection_validates_timestamp_fields() -> None:
     _assert_raises_value_error(
         "next_retry_at must be an ISO-8601 datetime",

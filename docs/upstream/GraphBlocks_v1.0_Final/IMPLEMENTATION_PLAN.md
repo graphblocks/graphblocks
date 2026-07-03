@@ -523,7 +523,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   without minting a new application event identity, preserving the original delivery, event,
   subscription, run, cursor, and idempotency identifiers while advancing the delivery attempt.
 - Callback dead-letter records now reject inconsistent projections whose wrapped delivery is not
-  `dead_lettered` or whose attempt history omits the dead-lettered delivery attempt.
+  `dead_lettered` or whose attempt history omits the dead-lettered delivery attempt. Dead-letter
+  projection preserves the actual delivery attempt history even if the retry policy was reduced
+  before the delivery moved to dead letter.
 - Mandatory callback failure policies now map terminal delivery failures to explicit runtime
   actions: pause the run for `pause_run_on_failure`, fail the run for `fail_run_on_failure`, and
   avoid run terminal actions for ordinary retry/dead-letter subscriptions.

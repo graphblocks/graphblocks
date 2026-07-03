@@ -597,7 +597,7 @@ class CallbackDeliveryProjection:
             self.delivered_at,
         ):
             raise ValueError("dead_lettered_at must not be before delivery delivered_at")
-        attempt_history = tuple(range(1, min(self.attempt, policy.max_attempts) + 1))
+        attempt_history = tuple(range(1, self.attempt + 1))
         return CallbackDeadLetterRecord(
             delivery=CallbackDeliveryProjection(
                 delivery_id=self.delivery_id,
