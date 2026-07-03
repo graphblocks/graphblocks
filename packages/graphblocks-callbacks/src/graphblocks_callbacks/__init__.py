@@ -566,8 +566,16 @@ class CallbackDeliveryProjection:
         dead_lettered_at: str,
         reason: str,
     ) -> CallbackDeadLetterRecord:
+        if not isinstance(policy, CallbackRetryPolicy):
+            raise ValueError("policy must be a CallbackRetryPolicy")
         _require_non_empty_string("dead_lettered_at", dead_lettered_at)
         _require_non_empty_string("reason", reason)
+        parsed_dead_lettered_at = _parse_field_timestamp("dead_lettered_at", dead_lettered_at)
+        if self.delivered_at is not None and parsed_dead_lettered_at < _parse_field_timestamp(
+            "delivery delivered_at",
+            self.delivered_at,
+        ):
+            raise ValueError("dead_lettered_at must not be before delivery delivered_at")
         attempt_history = tuple(range(1, min(self.attempt, policy.max_attempts) + 1))
         return CallbackDeadLetterRecord(
             delivery=CallbackDeliveryProjection(
@@ -645,7 +653,12 @@ class CallbackDeadLetterRecord:
         )
         if self.delivery.attempt not in self.attempt_history:
             raise ValueError("dead-letter record attempt_history must include delivery attempt")
-        _require_non_empty_string("dead_lettered_at", self.dead_lettered_at)
+        parsed_dead_lettered_at = _parse_field_timestamp("dead_lettered_at", self.dead_lettered_at)
+        if self.delivery.delivered_at is not None and parsed_dead_lettered_at < _parse_field_timestamp(
+            "delivery delivered_at",
+            self.delivery.delivered_at,
+        ):
+            raise ValueError("dead_lettered_at must not be before delivery delivered_at")
         _require_non_empty_string("reason", self.reason)
 
     def redrive(
@@ -655,6 +668,11 @@ class CallbackDeadLetterRecord:
         reason: str,
         redriven_at: str,
     ) -> CallbackRedriveRecord:
+        if _parse_field_timestamp("redriven_at", redriven_at) < _parse_field_timestamp(
+            "dead_lettered_at",
+            self.dead_lettered_at,
+        ):
+            raise ValueError("redriven_at must not be before dead_lettered_at")
         return CallbackRedriveRecord(
             delivery_id=self.delivery.delivery_id,
             subscription_id=self.delivery.subscription_id,
@@ -675,7 +693,11 @@ class CallbackDeadLetterRecord:
         redriven_at: str,
         reason: str,
     ) -> CallbackDeliveryProjection:
-        _require_non_empty_string("redriven_at", redriven_at)
+        if _parse_field_timestamp("redriven_at", redriven_at) < _parse_field_timestamp(
+            "dead_lettered_at",
+            self.dead_lettered_at,
+        ):
+            raise ValueError("redriven_at must not be before dead_lettered_at")
         _require_non_empty_string("reason", reason)
         next_attempt = max(self.attempt_history, default=self.delivery.attempt) + 1
         return CallbackDeliveryProjection(

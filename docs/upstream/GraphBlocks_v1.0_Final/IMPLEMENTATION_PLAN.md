@@ -677,7 +677,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   bounded deterministic jittered backoff, immutable delivery projections, dead-letter conversion,
   and redrive records that preserve original delivery identity, idempotency key, and attempt
   history without creating application events. Direct retry scheduling validates the retry policy
-  contract before reading scheduling fields.
+  contract before reading scheduling fields, and dead-letter/redrive projections reject timestamp
+  regressions relative to delivery and dead-letter records.
 - `graphblocks-callbacks` now exposes a dependency-free webhook target safety helper for callback
   delivery adapters, rejecting unsupported schemes, userinfo URLs, localhost/metadata hosts, and
   loopback/private/link-local/reserved IP destinations unless private targets are explicitly

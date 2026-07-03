@@ -572,6 +572,70 @@ def test_callback_dead_letter_redrive_creates_pending_delivery_without_new_event
     assert redriven.last_error == "operator redrive"
 
 
+def test_callback_dead_letter_rejects_timestamp_before_delivery() -> None:
+    policy = CallbackRetryPolicy(max_attempts=2, initial_delay_ms=100, max_delay_ms=1_000, jitter_ms=0)
+    delivery = CallbackDeliveryProjection(
+        delivery_id="del_001",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        sequence=1042,
+        cursor="evt_1042",
+        attempt=2,
+        idempotency_key="sub_001:evt_1042",
+        status="failed",
+        delivered_at="2026-07-02T00:00:10Z",
+        last_error="receiver 503",
+    )
+
+    _assert_raises_value_error(
+        "dead_lettered_at must not be before delivery delivered_at",
+        lambda: delivery.to_dead_letter(
+            policy,
+            dead_lettered_at="2026-07-02T00:00:09Z",
+            reason="retry exhausted",
+        ),
+    )
+
+
+def test_callback_dead_letter_redrive_rejects_timestamp_before_dead_letter() -> None:
+    policy = CallbackRetryPolicy(max_attempts=2, initial_delay_ms=100, max_delay_ms=1_000, jitter_ms=0)
+    delivery = CallbackDeliveryProjection(
+        delivery_id="del_001",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        sequence=1042,
+        cursor="evt_1042",
+        attempt=2,
+        idempotency_key="sub_001:evt_1042",
+        status="failed",
+        delivered_at="2026-07-02T00:00:10Z",
+        last_error="receiver 503",
+    )
+    dead_letter = delivery.to_dead_letter(
+        policy,
+        dead_lettered_at="2026-07-02T00:00:30Z",
+        reason="retry exhausted",
+    )
+
+    _assert_raises_value_error(
+        "redriven_at must not be before dead_lettered_at",
+        lambda: dead_letter.redrive_delivery(
+            redriven_at="2026-07-02T00:00:29Z",
+            reason="operator redrive",
+        ),
+    )
+    _assert_raises_value_error(
+        "redriven_at must not be before dead_lettered_at",
+        lambda: dead_letter.redrive(
+            operator_principal="operator-1",
+            reason="operator redrive",
+            redriven_at="2026-07-02T00:00:29Z",
+        ),
+    )
+
+
 def test_callback_dead_letter_record_rejects_inconsistent_delivery_state() -> None:
     _assert_raises_value_error(
         "dead-letter record delivery must have dead_lettered status",
