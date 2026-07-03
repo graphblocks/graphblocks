@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -1209,8 +1209,24 @@ impl AsyncOperationResult {
         for artifact in &self.artifacts {
             artifact.validate()?;
         }
+        let mut effect_ids = BTreeSet::new();
+        let mut provider_effect_ids = BTreeSet::new();
         for effect in &self.external_effects {
             effect.validate()?;
+            if !effect_ids.insert(effect.effect_id.as_str()) {
+                return Err(AsyncOperationError::InvalidOperation {
+                    operation_id: self.operation_id.clone(),
+                    reason: format!("duplicate external effect id {}", effect.effect_id),
+                });
+            }
+            if let Some(provider_effect_id) = &effect.provider_effect_id
+                && !provider_effect_ids.insert(provider_effect_id.as_str())
+            {
+                return Err(AsyncOperationError::InvalidOperation {
+                    operation_id: self.operation_id.clone(),
+                    reason: format!("duplicate provider effect id {provider_effect_id}"),
+                });
+            }
             if effect.provider_effect_id.is_some()
                 && effect.outcome != ToolEffectOutcome::Committed
             {
