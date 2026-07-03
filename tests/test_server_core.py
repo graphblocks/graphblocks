@@ -1734,6 +1734,18 @@ def test_server_app_rejects_stale_async_callback_attempt_for_existing_operation(
     }
     assert len(app.callback_submissions("op-ci-1")) == 1
     assert app.callback_submissions("op-ci-1")[0].attempt_id == "attempt-2"
+    assert app.async_callback_rejections("op-ci-1") == (
+        {
+            "operationId": "op-ci-1",
+            "callbackId": "cb-stale",
+            "idempotencyKey": "idem-callback-stale",
+            "runId": "run-1",
+            "nodeId": "waitCI",
+            "attemptId": "attempt-1",
+            "reason": "stale_attempt",
+            "receivedAt": "2026-07-03T00:00:02Z",
+        },
+    )
 
 
 def test_server_app_rejects_async_callback_for_different_node_on_existing_run_attempt() -> None:

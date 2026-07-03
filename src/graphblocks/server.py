@@ -758,6 +758,8 @@ class ServerAsyncCallbackRejection:
     reason: str
     received_at: str
     run_id: str | None = None
+    node_id: str | None = None
+    attempt_id: str | None = None
     status: str | None = None
 
     def __post_init__(self) -> None:
@@ -772,7 +774,7 @@ class ServerAsyncCallbackRejection:
             "received_at",
             _validate_iso_datetime("server async callback rejection", "received_at", self.received_at),
         )
-        for field_name in ("run_id", "status"):
+        for field_name in ("run_id", "node_id", "attempt_id", "status"):
             value = getattr(self, field_name)
             if value is not None:
                 object.__setattr__(
@@ -797,6 +799,22 @@ class ServerAsyncCallbackRejection:
             received_at=submission.received_at,
         )
 
+    @classmethod
+    def stale_attempt(
+        cls,
+        submission: ServerAsyncCallbackSubmission,
+    ) -> ServerAsyncCallbackRejection:
+        return cls(
+            operation_id=submission.operation_id,
+            callback_id=submission.callback_id,
+            idempotency_key=submission.idempotency_key,
+            run_id=submission.run_id,
+            node_id=submission.node_id,
+            attempt_id=submission.attempt_id,
+            reason="stale_attempt",
+            received_at=submission.received_at,
+        )
+
     def protocol_value(self) -> dict[str, object]:
         value: dict[str, object] = {
             "operationId": self.operation_id,
@@ -807,6 +825,10 @@ class ServerAsyncCallbackRejection:
         }
         if self.run_id is not None:
             value["runId"] = self.run_id
+        if self.node_id is not None:
+            value["nodeId"] = self.node_id
+        if self.attempt_id is not None:
+            value["attemptId"] = self.attempt_id
         if self.status is not None:
             value["status"] = self.status
         return value
@@ -1723,6 +1745,11 @@ class GraphBlocksServerApp:
                                 payload["attemptId"] = submission.attempt_id
                         return ServerResponse.json(409, payload)
                     if previous.attempt_id != submission.attempt_id:
+                        rejection = ServerAsyncCallbackRejection.stale_attempt(submission)
+                        self._async_callback_rejections_by_operation_id[submission.operation_id] = (
+                            *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
+                            rejection,
+                        )
                         payload = {
                             "ok": False,
                             "operationId": submission.operation_id,

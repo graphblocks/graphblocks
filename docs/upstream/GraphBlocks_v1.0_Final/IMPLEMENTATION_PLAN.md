@@ -634,7 +634,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   Callback ingress rejects run-scoped receipts when the authoritative run projection is already
   terminal, so late callbacks cannot appear resumable or create new stored resume receipts; the
   server now records a separate `ServerAsyncCallbackRejection` projection with callback,
-  idempotency, run, status, reason, and receipt timestamp for audit and inspection.
+  idempotency, run/node/attempt, terminal status when applicable, reason, and receipt timestamp
+  for terminal-run and stale-attempt rejection audit and inspection.
   The server route enforces a configurable inline callback payload limit, defaulting to the
   specification's `262144` bytes, before accepting or storing a callback receipt.
   Callback receipt timestamps are validated as ISO datetimes, and nested callback JSON payloads are
