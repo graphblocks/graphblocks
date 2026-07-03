@@ -76,7 +76,11 @@ def test_server_package_reexports_framework_neutral_contracts(monkeypatch) -> No
         scope="run",
         scope_id="run-1",
         event_filter={"types": ["RunSucceeded"]},
-        delivery={"kind": "webhook", "url": "https://relay.example/events"},
+        delivery={
+            "kind": "webhook",
+            "url": "https://relay.example/events",
+            "signing": {"algorithm": "hmac-sha256", "secret_ref": "secret://callbacks/relay"},
+        },
     ).status == "active"
     assert "ApplicationCommand" in graphblocks_server.__all__
     assert "ApplicationProtocolEvent" in graphblocks_server.__all__

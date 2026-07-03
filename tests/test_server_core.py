@@ -1805,6 +1805,122 @@ def test_server_app_rejects_async_callback_for_different_node_on_existing_run_at
     assert app.callback_submissions("op-ci-1")[0].node_id == "waitCI"
 
 
+def test_server_app_rejects_async_callback_scope_change_for_existing_operation() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
+    app._events_by_run_id["run-1"] = (
+        {
+            "kind": "RunStarted",
+            "payload": {"runId": "run-1"},
+            "metadata": {
+                "runId": "run-1",
+                "sequence": 1,
+                "cursor": "run-1:1",
+                "releaseId": "release-1",
+                "occurredAt": "2026-07-03T00:00:00Z",
+            },
+        },
+    )
+
+    unscoped_first = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/op-ci-unscoped-first",
+            headers={"Authorization": "Bearer token-1", "GraphBlocks-Idempotency-Key": "idem-callback-unscoped"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "callback_id": "cb-unscoped",
+                    "attempt_id": "attempt-1",
+                    "payload": {"status": "completed"},
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-03T00:00:01Z",
+        )
+    )
+    scoped_after_unscoped = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/op-ci-unscoped-first",
+            headers={"Authorization": "Bearer token-1", "GraphBlocks-Idempotency-Key": "idem-callback-scoped"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "callback_id": "cb-scoped",
+                    "attempt_id": "attempt-1",
+                    "run_id": "run-1",
+                    "node_id": "waitCI",
+                    "payload": {"status": "completed"},
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-03T00:00:02Z",
+        )
+    )
+
+    assert unscoped_first.status_code == 202
+    assert scoped_after_unscoped.status_code == 409
+    assert json.loads(scoped_after_unscoped.body.decode("utf-8")) == {
+        "ok": False,
+        "operationId": "op-ci-unscoped-first",
+        "runId": "run-1",
+        "attemptId": "attempt-1",
+        "error": "async callback operation scope cannot change after first receipt",
+    }
+    assert len(app.callback_submissions("op-ci-unscoped-first")) == 1
+    assert app.callback_submissions("op-ci-unscoped-first")[0].run_id is None
+
+    scoped_first = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/op-ci-scoped-first",
+            headers={"Authorization": "Bearer token-1", "GraphBlocks-Idempotency-Key": "idem-callback-scoped-first"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "callback_id": "cb-scoped-first",
+                    "attempt_id": "attempt-1",
+                    "run_id": "run-1",
+                    "node_id": "waitCI",
+                    "payload": {"status": "completed"},
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-03T00:00:03Z",
+        )
+    )
+    unscoped_after_scoped = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/op-ci-scoped-first",
+            headers={
+                "Authorization": "Bearer token-1",
+                "GraphBlocks-Idempotency-Key": "idem-callback-unscoped-after-scoped",
+            },
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "callback_id": "cb-unscoped-after-scoped",
+                    "attempt_id": "attempt-1",
+                    "payload": {"status": "completed"},
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-03T00:00:04Z",
+        )
+    )
+
+    assert scoped_first.status_code == 202
+    assert unscoped_after_scoped.status_code == 409
+    assert json.loads(unscoped_after_scoped.body.decode("utf-8")) == {
+        "ok": False,
+        "operationId": "op-ci-scoped-first",
+        "error": "async callback operation scope cannot change after first receipt",
+    }
+    assert len(app.callback_submissions("op-ci-scoped-first")) == 1
+    assert app.callback_submissions("op-ci-scoped-first")[0].run_id == "run-1"
+
+
 def test_server_app_rejects_async_callback_for_terminal_declared_run() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
     app._events_by_run_id["run-terminal-1"] = (

@@ -576,7 +576,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   runtime. Callback submissions that declare a `run_id` must reference a retained run event stream
   and include both `node_id` and `attempt_id` fences before they are accepted; once an operation
   has an accepted run-node-attempt receipt, later callbacks for that operation cannot switch to a
-  different run, node, or attempt.
+  different run, node, or attempt. An operation that first accepts an unscoped callback receipt
+  also cannot later become run-scoped, and a run-scoped operation cannot later accept unscoped
+  receipts under the same operation id.
   Callback ingress rejects run-scoped receipts when the authoritative run projection is already
   terminal, so late callbacks cannot appear resumable or create new stored resume receipts.
   The server route enforces a configurable inline callback payload limit, defaulting to the

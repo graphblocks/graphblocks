@@ -1619,6 +1619,17 @@ class GraphBlocksServerApp:
                                 },
                             )
                         return ServerResponse.json(200, previous.duplicate_response_payload())
+                    if (previous.run_id is None) != (submission.run_id is None):
+                        payload: dict[str, object] = {
+                            "ok": False,
+                            "operationId": submission.operation_id,
+                            "error": "async callback operation scope cannot change after first receipt",
+                        }
+                        if submission.run_id is not None:
+                            payload["runId"] = submission.run_id
+                        if submission.attempt_id is not None:
+                            payload["attemptId"] = submission.attempt_id
+                        return ServerResponse.json(409, payload)
                     if (
                         previous.run_id is not None
                         and submission.run_id is not None
