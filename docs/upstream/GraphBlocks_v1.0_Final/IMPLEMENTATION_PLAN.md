@@ -612,6 +612,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Webhook delivery targets now enforce the specification's default `262144` byte payload limit
   before signing delivery envelopes, and tests cover explicit small-limit rejection for oversized
   callback projections.
+- Webhook delivery workers now persist a `delivering` state after signing and before invoking the
+  transport adapter, so failover and operator inspection can distinguish in-flight attempts from
+  merely pending deliveries.
 - Webhook egress policy now validates DNS-resolved addresses before transport, rejecting public
   hostnames that resolve to loopback, private, link-local, metadata, or otherwise forbidden
   addresses unless the host is explicitly allowlisted. Empty DNS resolution results are treated as

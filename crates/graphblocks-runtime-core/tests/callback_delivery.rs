@@ -804,6 +804,46 @@ fn webhook_delivery_worker_signs_due_delivery_and_persists_success() {
 }
 
 #[test]
+fn webhook_delivery_worker_marks_delivery_in_flight_before_transport() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let queue = SqliteCallbackDeliveryQueue::open_in_memory().expect("queue opens");
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    queue.upsert_delivery(delivery).expect("delivery persists");
+    let signing =
+        WebhookSigningConfig::hmac_sha256("secret://callbacks/ide-relay", b"top-secret", 300)
+            .expect("signing config is valid");
+    let target = WebhookDeliveryTarget::new(
+        "https://hooks.example.com/graphblocks/events",
+        &WebhookEgressPolicy::default_deny_internal(),
+    )
+    .expect("target is valid");
+    let worker = WebhookDeliveryWorker::new(&scheduler, &queue, &target, &signing);
+
+    worker
+        .process_due(
+            2_000,
+            10,
+            |_| {
+                let in_flight = queue
+                    .get_delivery("del_sub-1_event-1")
+                    .expect("delivery loads during transport")
+                    .expect("delivery exists during transport");
+                assert_eq!(in_flight.status, CallbackDeliveryStatus::Delivering);
+                CallbackDeliveryResponse::Success
+            },
+            |_| Some(event.clone()),
+        )
+        .expect("worker processes due delivery");
+}
+
+#[test]
 fn webhook_delivery_worker_persists_retry_after_server_error() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
     let queue = SqliteCallbackDeliveryQueue::open_in_memory().expect("queue opens");

@@ -1544,15 +1544,19 @@ impl<'a> WebhookDeliveryWorker<'a> {
                 }
                 Err(error) => return Err(CallbackDeliveryError::WebhookSigning { error }),
             };
+            let mut in_flight = delivery;
+            in_flight.status = CallbackDeliveryStatus::Delivering;
+            in_flight.next_retry_at_unix_ms = None;
+            self.queue.upsert_delivery(in_flight.clone())?;
             let attempt = WebhookDeliveryAttempt {
                 target: self.target.clone(),
-                delivery: delivery.clone(),
+                delivery: in_flight.clone(),
                 signed,
             };
             let response = transport(&attempt);
             let updated = self
                 .scheduler
-                .record_response(delivery, response, now_unix_ms);
+                .record_response(in_flight, response, now_unix_ms);
             self.queue.upsert_delivery(updated)?;
             attempts += 1;
         }
