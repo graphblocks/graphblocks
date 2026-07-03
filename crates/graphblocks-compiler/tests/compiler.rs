@@ -420,6 +420,45 @@ fn compile_graph_reports_async_poll_operation_without_timeout() {
 }
 
 #[test]
+fn compile_graph_reports_async_poll_operation_with_zero_timeout() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "async-poll-zero-timeout-diagnostics"},
+        "spec": {
+            "nodes": {
+                "poll": {
+                    "block": "async.poll_operation@1",
+                    "config": {
+                        "timeoutMs": 0,
+                        "idempotencyKey": "$input.request_id",
+                        "callback": {"schema": "schemas/PollResult@1"},
+                        "resume": {
+                            "requirePolicyReevaluation": true,
+                            "requireBudgetReservation": true,
+                            "requireReleaseCompatibility": true,
+                            "requireOwnershipFence": true
+                        },
+                        "attemptFencing": true
+                    }
+                }
+            }
+        }
+    });
+
+    let plan = compile_graph(&graph);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["GB6001"]
+    );
+}
+
+#[test]
 fn compile_graph_rejects_catalog_port_type_mismatch() -> Result<(), String> {
     let catalog = BlockCatalog::from_blocks(&json!([
         {
