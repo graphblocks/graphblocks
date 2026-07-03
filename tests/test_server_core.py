@@ -1469,6 +1469,18 @@ def test_server_app_rejects_async_callback_for_unknown_declared_run() -> None:
         "error": "async callback run 'missing-run' not found",
     }
     assert app.callback_submissions("op-ci-unknown-run") == ()
+    assert app.async_callback_rejections("op-ci-unknown-run") == (
+        {
+            "operationId": "op-ci-unknown-run",
+            "callbackId": "cb-unknown-run",
+            "idempotencyKey": "idem-callback-unknown-run",
+            "runId": "missing-run",
+            "nodeId": "waitCI",
+            "attemptId": "attempt-1",
+            "reason": "unknown_run",
+            "receivedAt": "2026-07-03T00:00:00Z",
+        },
+    )
 
 
 def test_server_app_rejects_async_callback_declared_run_without_attempt_fence() -> None:

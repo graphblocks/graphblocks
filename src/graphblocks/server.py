@@ -800,6 +800,22 @@ class ServerAsyncCallbackRejection:
         )
 
     @classmethod
+    def unknown_run(
+        cls,
+        submission: ServerAsyncCallbackSubmission,
+    ) -> ServerAsyncCallbackRejection:
+        return cls(
+            operation_id=submission.operation_id,
+            callback_id=submission.callback_id,
+            idempotency_key=submission.idempotency_key,
+            run_id=submission.run_id,
+            node_id=submission.node_id,
+            attempt_id=submission.attempt_id,
+            reason="unknown_run",
+            received_at=submission.received_at,
+        )
+
+    @classmethod
     def stale_attempt(
         cls,
         submission: ServerAsyncCallbackSubmission,
@@ -1708,6 +1724,11 @@ class GraphBlocksServerApp:
                         },
                     )
                 if submission.run_id is not None and submission.run_id not in self._events_by_run_id:
+                    rejection = ServerAsyncCallbackRejection.unknown_run(submission)
+                    self._async_callback_rejections_by_operation_id[submission.operation_id] = (
+                        *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
+                        rejection,
+                    )
                     return ServerResponse.json(
                         404,
                         {
