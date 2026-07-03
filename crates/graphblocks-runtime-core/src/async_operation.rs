@@ -321,6 +321,15 @@ impl AsyncOperation {
                 reason: "completed_at precedes submitted_at".to_owned(),
             });
         }
+        if let (Some(completed_at_unix_ms), Some(expires_at_unix_ms)) =
+            (self.completed_at_unix_ms, self.expires_at_unix_ms)
+            && completed_at_unix_ms > expires_at_unix_ms
+        {
+            return Err(AsyncOperationError::InvalidOperation {
+                operation_id: self.operation_id.clone(),
+                reason: "completed_at exceeds expires_at".to_owned(),
+            });
+        }
 
         if let Some(expires_at_unix_ms) = self.expires_at_unix_ms
             && expires_at_unix_ms <= self.created_at_unix_ms

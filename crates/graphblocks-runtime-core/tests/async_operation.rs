@@ -649,6 +649,22 @@ fn async_operation_validate_rejects_out_of_order_state_timestamps() {
 }
 
 #[test]
+fn async_operation_validate_rejects_completion_after_expiration() {
+    let mut operation = waiting_operation();
+    operation.state = AsyncOperationState::Completed;
+    operation.expires_at_unix_ms = Some(1_900);
+    operation.completed_at_unix_ms = Some(2_000);
+
+    assert_eq!(
+        operation.validate(),
+        Err(AsyncOperationError::InvalidOperation {
+            operation_id: "op-1".to_owned(),
+            reason: "completed_at exceeds expires_at".to_owned(),
+        })
+    );
+}
+
+#[test]
 fn async_operation_diagnostics_report_resume_without_policy_reevaluation() {
     let operation = waiting_operation().without_resume_policy_reevaluation();
 
