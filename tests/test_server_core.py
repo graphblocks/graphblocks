@@ -1548,6 +1548,18 @@ def test_server_app_rejects_async_callback_declared_run_without_attempt_fence() 
             "error": "async callback attempt_id is required when run_id is declared",
         }
         assert app.callback_submissions(operation_id) == ()
+        expected_rejection = {
+            "operationId": operation_id,
+            "callbackId": f"cb-fence-{index}",
+            "idempotencyKey": f"idem-callback-fence-{index}",
+            "runId": run_id,
+            "reason": "missing_attempt_fence",
+            "receivedAt": "2026-07-03T00:00:01Z",
+        }
+        node_id = body.get("node_id", body.get("nodeId"))
+        if node_id is not None:
+            expected_rejection["nodeId"] = node_id
+        assert app.async_callback_rejections(operation_id) == (expected_rejection,)
 
 
 def test_server_app_rejects_async_callback_declared_run_without_node_fence() -> None:
@@ -1593,6 +1605,17 @@ def test_server_app_rejects_async_callback_declared_run_without_node_fence() -> 
         "error": "async callback node_id is required when run_id is declared",
     }
     assert app.callback_submissions("op-ci-node-fence-1") == ()
+    assert app.async_callback_rejections("op-ci-node-fence-1") == (
+        {
+            "operationId": "op-ci-node-fence-1",
+            "callbackId": "cb-node-fence",
+            "idempotencyKey": "idem-callback-node-fence",
+            "runId": "run-callback-node-fence-1",
+            "attemptId": "attempt-1",
+            "reason": "missing_node_fence",
+            "receivedAt": "2026-07-03T00:00:01Z",
+        },
+    )
 
 
 def test_server_app_deduplicates_async_callback_submission_by_idempotency_key() -> None:

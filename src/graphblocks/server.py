@@ -832,6 +832,36 @@ class ServerAsyncCallbackRejection:
         )
 
     @classmethod
+    def missing_attempt_fence(
+        cls,
+        submission: ServerAsyncCallbackSubmission,
+    ) -> ServerAsyncCallbackRejection:
+        return cls(
+            operation_id=submission.operation_id,
+            callback_id=submission.callback_id,
+            idempotency_key=submission.idempotency_key,
+            run_id=submission.run_id,
+            node_id=submission.node_id,
+            reason="missing_attempt_fence",
+            received_at=submission.received_at,
+        )
+
+    @classmethod
+    def missing_node_fence(
+        cls,
+        submission: ServerAsyncCallbackSubmission,
+    ) -> ServerAsyncCallbackRejection:
+        return cls(
+            operation_id=submission.operation_id,
+            callback_id=submission.callback_id,
+            idempotency_key=submission.idempotency_key,
+            run_id=submission.run_id,
+            attempt_id=submission.attempt_id,
+            reason="missing_node_fence",
+            received_at=submission.received_at,
+        )
+
+    @classmethod
     def stale_attempt(
         cls,
         submission: ServerAsyncCallbackSubmission,
@@ -1760,6 +1790,11 @@ class GraphBlocksServerApp:
                         },
                     )
                 if submission.run_id is not None and submission.attempt_id is None:
+                    rejection = ServerAsyncCallbackRejection.missing_attempt_fence(submission)
+                    self._async_callback_rejections_by_operation_id[submission.operation_id] = (
+                        *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
+                        rejection,
+                    )
                     return ServerResponse.json(
                         400,
                         {
@@ -1770,6 +1805,11 @@ class GraphBlocksServerApp:
                         },
                     )
                 if submission.run_id is not None and submission.node_id is None:
+                    rejection = ServerAsyncCallbackRejection.missing_node_fence(submission)
+                    self._async_callback_rejections_by_operation_id[submission.operation_id] = (
+                        *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
+                        rejection,
+                    )
                     return ServerResponse.json(
                         400,
                         {
