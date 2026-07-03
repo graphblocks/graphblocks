@@ -470,6 +470,18 @@ fn diagnose_async_operation_config(
             path,
         ));
     }
+    if config
+        .get("onTimeout")
+        .or_else(|| config.get("on_timeout"))
+        .and_then(Value::as_str)
+        .is_some_and(|on_timeout| !matches!(on_timeout, "fail" | "cancel" | "expire"))
+    {
+        diagnostics.push(Diagnostic::error(
+            "InvalidAsyncOperation",
+            "async await onTimeout must be one of fail, cancel, or expire",
+            format!("{path}.onTimeout"),
+        ));
+    }
     if !has_async_idempotency_key(config) {
         diagnostics.push(Diagnostic::error(
             "GB6003",

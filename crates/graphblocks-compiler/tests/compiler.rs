@@ -501,6 +501,46 @@ fn compile_graph_reports_async_poll_operation_with_invalid_string_timeout() {
 }
 
 #[test]
+fn compile_graph_reports_async_await_callback_with_unknown_on_timeout_policy() {
+    let graph = json!({
+        "apiVersion": GRAPH_API_VERSION,
+        "kind": "Graph",
+        "metadata": {"name": "async-await-invalid-on-timeout-diagnostics"},
+        "spec": {
+            "nodes": {
+                "wait": {
+                    "block": "async.await_callback@1",
+                    "config": {
+                        "timeout": "30m",
+                        "onTimeout": "continue_anyway",
+                        "idempotencyKey": "$input.request_id",
+                        "callback": {"schema": "schemas/CICallback@1"},
+                        "resume": {
+                            "requirePolicyReevaluation": true,
+                            "requireBudgetReservation": true,
+                            "requireReleaseCompatibility": true,
+                            "requireOwnershipFence": true
+                        },
+                        "attemptFencing": true
+                    }
+                }
+            }
+        }
+    });
+
+    let plan = compile_graph(&graph);
+
+    assert_eq!(
+        plan.diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == Severity::Error)
+            .map(|diagnostic| diagnostic.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["InvalidAsyncOperation"]
+    );
+}
+
+#[test]
 fn compile_graph_rejects_catalog_port_type_mismatch() -> Result<(), String> {
     let catalog = BlockCatalog::from_blocks(&json!([
         {

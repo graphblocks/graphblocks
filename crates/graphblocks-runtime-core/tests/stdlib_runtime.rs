@@ -623,20 +623,13 @@ fn rust_stdlib_async_await_callback_rejects_unknown_on_timeout_policy() -> Resul
             }
         }
     });
-    let result = run_graph(&graph, &json!({}))?;
+    let error = run_graph(&graph, &json!({}))
+        .expect_err("unknown await onTimeout policy should fail compiler diagnostics");
 
-    assert_eq!(result["status"], "failed");
-    let node_error_code = result["journal"]
-        .as_array()
-        .and_then(|journal| {
-            journal
-                .iter()
-                .find(|record| record["kind"].as_str() == Some("node_failed"))
-        })
-        .and_then(|record| record.pointer("/payload/code"))
-        .and_then(Value::as_str)
-        .ok_or_else(|| "missing await callback node failure".to_owned())?;
-    assert_eq!(node_error_code, "async.await_callback.invalid_config");
+    assert!(
+        error.contains("InvalidAsyncOperation"),
+        "unexpected compiler error: {error:?}",
+    );
     Ok(())
 }
 
