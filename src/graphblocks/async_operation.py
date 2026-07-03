@@ -265,6 +265,13 @@ class AsyncOperation:
             raise ValueError("async operation expires_at must be after created_at")
         if submitted_at is not None and expires_at is not None and expires_at <= submitted_at:
             raise ValueError("async operation expires_at must be after submitted_at")
+        if (
+            self.state == "callback_received"
+            and completed_at is not None
+            and expires_at is not None
+            and completed_at > expires_at
+        ):
+            raise ValueError("async operation callback receipt must not be after expires_at")
 
     @classmethod
     def created(
