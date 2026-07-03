@@ -1903,6 +1903,18 @@ def test_server_app_rejects_async_callback_scope_change_for_existing_operation()
     }
     assert len(app.callback_submissions("op-ci-unscoped-first")) == 1
     assert app.callback_submissions("op-ci-unscoped-first")[0].run_id is None
+    assert app.async_callback_rejections("op-ci-unscoped-first") == (
+        {
+            "operationId": "op-ci-unscoped-first",
+            "callbackId": "cb-scoped",
+            "idempotencyKey": "idem-callback-scoped",
+            "runId": "run-1",
+            "nodeId": "waitCI",
+            "attemptId": "attempt-1",
+            "reason": "scope_mismatch",
+            "receivedAt": "2026-07-03T00:00:02Z",
+        },
+    )
 
     scoped_first = app.handle(
         ServerRequest(
@@ -1953,6 +1965,16 @@ def test_server_app_rejects_async_callback_scope_change_for_existing_operation()
     }
     assert len(app.callback_submissions("op-ci-scoped-first")) == 1
     assert app.callback_submissions("op-ci-scoped-first")[0].run_id == "run-1"
+    assert app.async_callback_rejections("op-ci-scoped-first") == (
+        {
+            "operationId": "op-ci-scoped-first",
+            "callbackId": "cb-unscoped-after-scoped",
+            "idempotencyKey": "idem-callback-unscoped-after-scoped",
+            "attemptId": "attempt-1",
+            "reason": "scope_mismatch",
+            "receivedAt": "2026-07-03T00:00:04Z",
+        },
+    )
 
 
 def test_server_app_rejects_unscoped_async_callback_attempt_change_for_existing_operation() -> None:
