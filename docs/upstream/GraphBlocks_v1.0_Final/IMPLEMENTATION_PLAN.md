@@ -346,7 +346,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   durable async lifecycle states `admitted`, `waiting_input`, `waiting_approval`, `waiting_review`,
   `waiting_callback`, `paused_budget`, `paused_callback_delivery`, `paused_policy`,
   `paused_operator`, `resuming`, and terminal `completed` and `expired`; SQLite persistence tests
-  cover the new state strings.
+  cover the new state strings. Runtime status snapshots require explicit wait reasons for paused
+  callback delivery, so mandatory callback delivery pauses identify the delivery that must be
+  redriven, skipped, or dead-lettered.
 - `RunInvocationMode` now records `sync`, `accepted`, and `background` invocation mode in
   `RunRecord`; the Python run-store facade validates and persists the mode through SQLite migration,
   and the server builds accepted/background run handles with event stream, websocket, cancel route,

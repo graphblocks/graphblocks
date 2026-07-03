@@ -176,6 +176,39 @@ fn run_status_snapshot_requires_matching_wait_reason_for_paused_or_waiting_state
     assert_eq!(snapshot.state, RunStatus::PausedBudget);
     assert_eq!(snapshot.waiting_on.len(), 1);
     assert_eq!(snapshot.waiting_on[0].message.as_deref(), Some("quota_exhausted"));
+
+    let callback_delivery_record = store.create_run("sha256:callback-delivery", json!({}));
+    let paused_callback_delivery =
+        store.set_status(&callback_delivery_record.run_id, RunStatus::PausedCallbackDelivery)?;
+    assert_eq!(
+        RunStatusSnapshot::from_run(
+            &paused_callback_delivery,
+            "evt_000070",
+            3_000,
+            3_500,
+            None,
+            vec![],
+            vec![],
+        ),
+        Err(RunStoreError::InvalidRunStatusSnapshot {
+            run_id: paused_callback_delivery.run_id.clone(),
+            reason: "paused_callback_delivery requires callback delivery wait reason",
+        })
+    );
+    let snapshot = RunStatusSnapshot::from_run(
+        &paused_callback_delivery,
+        "evt_000071",
+        3_000,
+        3_500,
+        None,
+        vec![RunWaitReason::callback_delivery("del_001")?],
+        vec![],
+    )?;
+    assert_eq!(snapshot.state, RunStatus::PausedCallbackDelivery);
+    assert_eq!(
+        snapshot.waiting_on[0].message.as_deref(),
+        Some("del_001")
+    );
     Ok(())
 }
 

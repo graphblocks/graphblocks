@@ -464,6 +464,7 @@ pub enum RunWaitReasonKind {
     Approval,
     Review,
     Callback,
+    CallbackDelivery,
     Budget,
     Policy,
     Operator,
@@ -519,6 +520,10 @@ impl RunWaitReason {
         Self::message(RunWaitReasonKind::Budget, message)
     }
 
+    pub fn callback_delivery(delivery_id: impl Into<String>) -> Result<Self, RunStoreError> {
+        Self::message(RunWaitReasonKind::CallbackDelivery, delivery_id)
+    }
+
     pub fn policy(message: impl Into<String>) -> Result<Self, RunStoreError> {
         Self::message(RunWaitReasonKind::Policy, message)
     }
@@ -569,6 +574,7 @@ impl RunWaitReasonKind {
             Self::Approval => "approval",
             Self::Review => "review",
             Self::Callback => "callback",
+            Self::CallbackDelivery => "callback_delivery",
             Self::Budget => "budget",
             Self::Policy => "policy",
             Self::Operator => "operator",
@@ -682,6 +688,10 @@ impl RunStatusSnapshot {
             RunStatus::PausedBudget => Some((
                 RunWaitReasonKind::Budget,
                 "paused_budget requires budget wait reason",
+            )),
+            RunStatus::PausedCallbackDelivery => Some((
+                RunWaitReasonKind::CallbackDelivery,
+                "paused_callback_delivery requires callback delivery wait reason",
             )),
             RunStatus::PausedPolicy => Some((
                 RunWaitReasonKind::Policy,
