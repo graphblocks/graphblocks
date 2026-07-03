@@ -624,6 +624,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Runtime callback subscription construction now validates visibility filter literals against the
   specification's `client`, `operator`, `internal`, and `audit_only` set before storing a
   subscription projection.
+- Runtime callback subscription construction now validates scope literals against the specification's
+  `run`, `conversation`, `project`, `tenant`, and `deployment` set.
 - Webhook egress policy now validates DNS-resolved addresses before transport, rejecting public
   hostnames that resolve to loopback, private, link-local, metadata, or otherwise forbidden
   addresses unless the host is explicitly allowlisted. Empty DNS resolution results are treated as

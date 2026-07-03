@@ -171,6 +171,29 @@ fn callback_subscription_rejects_unknown_visibility_filter_literals() {
 }
 
 #[test]
+fn callback_subscription_rejects_unknown_scope_literals() {
+    let result = CallbackSubscription::new(
+        "sub-scope",
+        "principal:ide",
+        "workspace",
+        "workspace-1",
+        EventFilter::new(),
+        "webhook:ide-relay",
+        CallbackFailurePolicy::RetryThenDeadLetter,
+        900,
+    );
+
+    assert_eq!(
+        result,
+        Err(
+            graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::EmptyField {
+                field: "scope".to_owned(),
+            }
+        )
+    );
+}
+
+#[test]
 fn inactive_or_expired_subscription_does_not_schedule_delivery() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
     let mut paused = subscription(

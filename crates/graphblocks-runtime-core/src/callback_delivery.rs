@@ -381,6 +381,14 @@ impl CallbackSubscription {
                 });
             }
         }
+        if !matches!(
+            self.scope.as_str(),
+            "run" | "conversation" | "project" | "tenant" | "deployment"
+        ) {
+            return Err(CallbackDeliveryError::EmptyField {
+                field: "scope".to_owned(),
+            });
+        }
         if self
             .replay_from_cursor
             .as_ref()
