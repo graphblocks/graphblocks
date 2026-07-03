@@ -5208,6 +5208,36 @@ def test_server_app_rejects_mandatory_callback_registration_failure_policy_witho
     assert app.callback_registrations() == ()
 
 
+def test_server_app_accepts_mandatory_callback_registration_failure_policy_with_fallback_behavior() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/register",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "callback-sub-mandatory-policy-fallback",
+                    "scope": "tenant",
+                    "scopeId": "tenant-1",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                    "failurePolicy": "fail_run_on_failure",
+                    "fallbackPolicy": "operator_review",
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-03T00:00:00Z",
+        )
+    )
+
+    assert response.status_code == 201
+    assert json.loads(response.body.decode("utf-8"))["subscriptionId"] == "callback-sub-mandatory-policy-fallback"
+    assert app.callback_registrations()[0].failure_policy == "fail_run_on_failure"
+
+
 def test_server_app_rejects_authoritative_callback_registration_projection() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
 

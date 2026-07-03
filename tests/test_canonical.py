@@ -1402,6 +1402,36 @@ def test_compile_allows_safe_callback_subscription_contract() -> None:
     assert not {"GB6002", "GB6004", "GB6006", "GB6011", "GB6012", "GB6014"} & set(_error_codes(graph))
 
 
+def test_compile_allows_mandatory_callback_failure_policy_with_fallback_behavior() -> None:
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "fallback-callback-subscription"},
+        "spec": {
+            "nodes": {"agent": {"block": "agent.run@1"}},
+            "callbackSubscriptions": [
+                {
+                    "subscriptionId": "sub-fallback",
+                    "scope": "run",
+                    "scopeId": "run-1",
+                    "failurePolicy": "fail_run_on_failure",
+                    "fallbackPolicy": "operator_review",
+                    "delivery": {
+                        "kind": "webhook",
+                        "url": "https://relay.example.com/events",
+                        "signing": {
+                            "algorithm": "hmac-sha256",
+                            "secretRef": "secret://relay",
+                        },
+                    },
+                }
+            ],
+        },
+    }
+
+    assert "GB6014" not in _error_codes(graph)
+
+
 def test_compile_reports_background_run_replay_and_retention_diagnostics() -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",

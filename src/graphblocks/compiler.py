@@ -450,7 +450,22 @@ def _has_callback_dead_letter_behavior(config: dict[str, Any], delivery: dict[st
         or delivery.get("deadLetterRef")
         or delivery.get("dead_letter_ref")
     )
-    return _has_non_empty_string(dead_letter) or isinstance(dead_letter, dict)
+    fallback = (
+        config.get("fallbackPolicy")
+        or config.get("fallback_policy")
+        or config.get("fallbackRef")
+        or config.get("fallback_ref")
+        or delivery.get("fallbackPolicy")
+        or delivery.get("fallback_policy")
+        or delivery.get("fallbackRef")
+        or delivery.get("fallback_ref")
+    )
+    return (
+        _has_non_empty_string(dead_letter)
+        or isinstance(dead_letter, dict)
+        or _has_non_empty_string(fallback)
+        or isinstance(fallback, dict)
+    )
 
 
 def _diagnose_callback_subscription_config(

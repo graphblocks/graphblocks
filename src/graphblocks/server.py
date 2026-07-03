@@ -143,7 +143,22 @@ def _has_callback_dead_letter_config(config: Mapping[str, object], delivery: Map
         or delivery.get("deadLetterRef")
         or delivery.get("dead_letter_ref")
     )
-    return isinstance(dead_letter, Mapping) or (isinstance(dead_letter, str) and bool(dead_letter.strip()))
+    fallback = (
+        config.get("fallbackPolicy")
+        or config.get("fallback_policy")
+        or config.get("fallbackRef")
+        or config.get("fallback_ref")
+        or delivery.get("fallbackPolicy")
+        or delivery.get("fallback_policy")
+        or delivery.get("fallbackRef")
+        or delivery.get("fallback_ref")
+    )
+    return (
+        isinstance(dead_letter, Mapping)
+        or (isinstance(dead_letter, str) and bool(dead_letter.strip()))
+        or isinstance(fallback, Mapping)
+        or (isinstance(fallback, str) and bool(fallback.strip()))
+    )
 
 
 def _validate_mandatory_callback_policy(

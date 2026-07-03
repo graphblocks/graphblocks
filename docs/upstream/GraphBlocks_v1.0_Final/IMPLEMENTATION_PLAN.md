@@ -569,8 +569,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Callback subscription diagnostics now report mandatory callback delivery without retry,
   dead-letter, or fallback policy as `GB6006`, with shared compiler TCK coverage.
 - Callback subscription diagnostics now report impossible ordered-delivery requests (`GB6012`) and
-  mandatory callback failure policies without dead-letter behavior (`GB6014`), with shared compiler
-  TCK coverage.
+  mandatory callback failure policies without dead-letter or fallback behavior (`GB6014`), with
+  shared compiler TCK coverage.
 - Webhook delivery targets now enforce the specification's default `262144` byte payload limit
   before signing delivery envelopes, and tests cover explicit small-limit rejection for oversized
   callback projections.
@@ -672,7 +672,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   and does not rewrite the stored projection. Callback registrations share the same route-level
   ordered delivery, mandatory failure-policy, non-authoritative projection, and creation timestamp
   validation as run-scoped subscriptions; `pause_run_on_failure` and `fail_run_on_failure` are
-  treated as mandatory failure policies and require configured dead-letter or fallback behavior.
+  treated as mandatory failure policies and require configured dead-letter or fallback behavior via
+  `deadLetterPolicy`/`deadLetterRef` or `fallbackPolicy`/`fallbackRef` fields.
 - `graphblocks-server` now exposes framework-neutral `POST /runs/{run_id}/cancel`,
   `POST /runs/{run_id}/pause`, `POST /runs/{run_id}/resume`, and
   `POST /runs/{run_id}/expire` `CancelRun`/`PauseRun`/`ResumeRun`/`ExpireRun` routes,
