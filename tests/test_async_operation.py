@@ -176,6 +176,12 @@ def test_async_operation_result_rejects_non_json_output_and_projection_values() 
     with raises_value_error("async operation result artifacts must contain only JSON values"):
         graphblocks.AsyncOperationResult.completed("op-1").with_projections(artifacts=[{"bad": object()}])
 
+    with raises_value_error("async operation result metrics must be a sequence"):
+        graphblocks.AsyncOperationResult.completed("op-1").with_projections(metrics=object())  # type: ignore[arg-type]
+
+    with raises_value_error("async operation result checks must be a sequence"):
+        graphblocks.AsyncOperationResult.completed("op-1").with_projections(checks="unit")  # type: ignore[arg-type]
+
 
 def test_async_operation_result_projects_from_terminal_operation_state() -> None:
     completed_operation = graphblocks.AsyncOperation.created(

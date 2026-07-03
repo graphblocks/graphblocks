@@ -167,6 +167,15 @@ def _validate_effect_outcome(value: object) -> ToolEffectOutcome:
     return outcome  # type: ignore[return-value]
 
 
+def _projection_sequence(field_name: str, value: object) -> tuple[object, ...]:
+    if isinstance(value, str):
+        raise ValueError(f"async operation result {field_name} must be a sequence")
+    try:
+        return tuple(value)  # type: ignore[arg-type]
+    except TypeError:
+        raise ValueError(f"async operation result {field_name} must be a sequence") from None
+
+
 @dataclass(frozen=True, slots=True)
 class AsyncOperation:
     operation_id: str
@@ -481,9 +490,7 @@ class AsyncOperationResult:
         object.__setattr__(self, "status", _validate_status(self.status))
         object.__setattr__(self, "output", _freeze_json_value("async operation result", "output", self.output))
         for field_name in ("artifacts", "diagnostics", "metrics", "checks", "usage"):
-            value = getattr(self, field_name)
-            if isinstance(value, str):
-                raise ValueError(f"async operation result {field_name} must be a sequence")
+            value = _projection_sequence(field_name, getattr(self, field_name))
             object.__setattr__(
                 self,
                 field_name,
@@ -558,15 +565,15 @@ class AsyncOperationResult:
     ) -> AsyncOperationResult:
         changes: dict[str, object] = {}
         if artifacts is not None:
-            changes["artifacts"] = tuple(artifacts)
+            changes["artifacts"] = _projection_sequence("artifacts", artifacts)
         if diagnostics is not None:
-            changes["diagnostics"] = tuple(diagnostics)
+            changes["diagnostics"] = _projection_sequence("diagnostics", diagnostics)
         if metrics is not None:
-            changes["metrics"] = tuple(metrics)
+            changes["metrics"] = _projection_sequence("metrics", metrics)
         if checks is not None:
-            changes["checks"] = tuple(checks)
+            changes["checks"] = _projection_sequence("checks", checks)
         if usage is not None:
-            changes["usage"] = tuple(usage)
+            changes["usage"] = _projection_sequence("usage", usage)
         return replace(self, **changes)
 
     def external_effect_was_committed(self) -> bool:
