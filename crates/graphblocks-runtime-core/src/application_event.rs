@@ -799,11 +799,12 @@ impl ApplicationEventStreamState {
             return Some(event);
         }
 
-        let response_id = event
-            .payload
-            .get("response_id")
-            .and_then(Value::as_str)
-            .unwrap_or(&event.metadata.response_id);
+        if let Some(payload_response_id) = event.payload.get("response_id").and_then(Value::as_str)
+            && payload_response_id != event.metadata.response_id
+        {
+            return None;
+        }
+        let response_id = event.metadata.response_id.as_str();
         if self.cutoffs.contains_key(response_id) {
             if matches!(
                 event.kind,

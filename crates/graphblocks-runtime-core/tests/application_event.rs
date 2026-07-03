@@ -919,7 +919,12 @@ fn application_event_stream_state_discards_late_output_after_cutoff() {
     )
     .expect("output policy evaluation event is valid");
     let replacement_response = ApplicationEvent::output_policy_evaluation_started(
-        metadata(),
+        ApplicationEventMetadata {
+            event_id: "event-replacement-response".to_owned(),
+            response_id: "response-2".to_owned(),
+            sequence: 8,
+            ..metadata()
+        },
         &GenerationChunk::text("stream-1", "response-2", 1, "replacement"),
         "sha256:replacement",
     )
@@ -1110,6 +1115,52 @@ fn application_event_stream_state_discards_late_output_after_cutoff() {
             ApplicationEventKind::ToolResultPolicyStopped,
             ApplicationEventKind::ToolResultIncomplete,
         ]
+    );
+}
+
+#[test]
+fn application_event_stream_state_rejects_payload_response_id_mismatch_after_cutoff() {
+    let mut state = ApplicationEventStreamState::default();
+    let cutoff = OutputCutoff {
+        stream_id: "stream-1".to_owned(),
+        response_id: "response-1".to_owned(),
+        turn_id: Some("turn-1".to_owned()),
+        last_generated_sequence: 1,
+        last_policy_accepted_sequence: 0,
+        last_client_delivered_sequence: 0,
+        terminal_reason: TerminalReason::PolicyDenied,
+        draft_disposition: DraftDisposition::Retract,
+        durable_result: DurableResult::None,
+        policy_decision_id: Some("decision-abort".to_owned()),
+        occurred_at_unix_ms: 1_700_020,
+    };
+    let cutoff_events = ApplicationEvent::output_cutoff(metadata(), &cutoff)
+        .expect("output cutoff events are valid");
+    let forged_late_output = ApplicationEvent::new(
+        ApplicationEventKind::OutputPolicyEvaluationStarted,
+        metadata(),
+        json!({
+            "stream_id": "stream-1",
+            "response_id": "response-2",
+            "chunk_sequence": 2,
+            "input_digest": "sha256:late",
+            "chunk_text_bytes": 7,
+        }),
+    )
+    .expect("raw forged event envelope is valid");
+
+    assert_eq!(
+        state.accept(cutoff_events[0].clone()),
+        Some(cutoff_events[0].clone())
+    );
+    assert_eq!(state.accept(forged_late_output), None);
+    assert_eq!(
+        state
+            .accepted_events()
+            .iter()
+            .map(|event| event.kind)
+            .collect::<Vec<_>>(),
+        vec![ApplicationEventKind::OutputCutoff]
     );
 }
 
