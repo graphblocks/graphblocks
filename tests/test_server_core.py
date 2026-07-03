@@ -1973,6 +1973,119 @@ def test_server_app_serves_stored_run_events_after_invocation() -> None:
         app._events_by_run_id["run-events-1"][1]["payload"]["outputs"]["prompt"] = "changed"  # type: ignore[index]
 
 
+def test_server_app_replays_stored_run_events_after_cursor_query() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    graph = {
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "server-events-cursor"},
+        "spec": {
+            "nodes": {
+                "render": {
+                    "block": "prompt.render@1",
+                    "config": {"template": "Events {message.text}"},
+                    "inputs": {"message": "$input.message"},
+                    "outputs": {"prompt": "$output.prompt"},
+                }
+            }
+        },
+    }
+
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "graph": graph,
+                    "inputs": {"message": {"text": "cursor"}},
+                    "runId": "run-events-cursor-1",
+                    "responseId": "response-events-cursor-1",
+                }
+            ).encode("utf-8"),
+        )
+    )
+    response = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-events-cursor-1/events",
+            headers={"Authorization": "Bearer token-1"},
+            query={"cursor": "run-events-cursor-1:1"},
+            cookies={},
+        )
+    )
+
+    payload = json.loads(response.body.decode("utf-8"))
+    assert response.status_code == 200
+    assert payload["runId"] == "run-events-cursor-1"
+    assert payload["replayFromCursor"] == "run-events-cursor-1:1"
+    assert payload["lastCursor"] == "run-events-cursor-1:2"
+    assert [event["kind"] for event in payload["events"]] == ["RunSucceeded"]
+    assert payload["events"][0]["payload"]["outputs"] == {"prompt": "Events cursor"}
+
+
+def test_server_app_rejects_malformed_stored_event_cursor_query() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-events-cursor-format-1"] = (
+        {
+            "kind": "RunStarted",
+            "metadata": {"eventId": "evt-start", "sequence": 1},
+            "payload": {},
+        },
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-events-cursor-format-1/events",
+            headers={"Authorization": "Bearer token-1"},
+            query={"cursor": "run-events-cursor-format-1:not-a-sequence"},
+            cookies={},
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "application events cursor must use '<run_id>:<sequence>' with a non-negative integer sequence",
+    }
+
+
+def test_server_app_reports_stored_event_cursor_expired() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-events-cursor-expired-1"] = (
+        {
+            "kind": "RunStarted",
+            "metadata": {"eventId": "evt-start", "sequence": 1},
+            "payload": {},
+        },
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="GET",
+            path="/runs/run-events-cursor-expired-1/events",
+            headers={"Authorization": "Bearer token-1"},
+            query={"cursor": "run-events-cursor-expired-1:99"},
+            cookies={},
+        )
+    )
+
+    assert response.status_code == 409
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "CursorExpired",
+        "runId": "run-events-cursor-expired-1",
+        "requestedCursor": "run-events-cursor-expired-1:99",
+        "nearestAvailableCursor": "run-events-cursor-expired-1:1",
+        "lastCursor": "run-events-cursor-expired-1:1",
+        "lastSequence": 1,
+    }
+
+
 def test_server_app_reports_run_status_from_authoritative_events() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     graph = {

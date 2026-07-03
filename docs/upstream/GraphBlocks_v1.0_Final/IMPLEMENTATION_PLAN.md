@@ -580,7 +580,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   callback receipts do not appear resumable after cancellation, expiry, failure, or policy stop.
   Run-control pauses project operator, budget, policy, and callback-delivery wait reasons.
 - Stored server application events are immutable snapshots; `/events`, attach/replay, subscription
-  replay, and websocket snapshot responses thaw them back to plain JSON payloads.
+  replay, and websocket snapshot responses thaw them back to plain JSON payloads. The
+  `GET /runs/{run_id}/events` route honors a `cursor` query parameter for retained event replay,
+  returning only events after that cursor plus `lastCursor` metadata. Malformed event cursors are
+  rejected before retention lookup, and well-formed missing cursors return `CursorExpired`.
 - `graphblocks-server` now exposes the framework-neutral `GET /runs` `ListRuns` route using the
   same event-derived run status projection, keeping `POST /runs` reserved for `InvokeGraph`.
 - `graphblocks-server` now exposes the framework-neutral `POST /runs/{run_id}/attach`

@@ -1634,12 +1634,66 @@ class GraphBlocksServerApp:
                         "error": f"run events not found for run {run_id!r}",
                     },
                 )
+            try:
+                cursor = request.query.get("cursor")
+                if cursor is not None:
+                    cursor = _validate_run_cursor("application events", "cursor", run_id, cursor)
+                sequence_by_cursor: dict[str, int] = {}
+                last_sequence = 0
+                for event in events:
+                    metadata = event.get("metadata")
+                    if not isinstance(metadata, Mapping):
+                        continue
+                    sequence = metadata.get("sequence")
+                    if not isinstance(sequence, int) or isinstance(sequence, bool):
+                        continue
+                    event_cursor = f"{run_id}:{sequence}"
+                    sequence_by_cursor[event_cursor] = sequence
+                    if sequence > last_sequence:
+                        last_sequence = sequence
+                replay_after_sequence = 0
+                if cursor is not None:
+                    if cursor == f"{run_id}:0":
+                        replay_after_sequence = 0
+                    elif cursor not in sequence_by_cursor:
+                        nearest_cursor = f"{run_id}:{min(sequence_by_cursor.values())}" if sequence_by_cursor else None
+                        return ServerResponse.json(
+                            409,
+                            {
+                                "ok": False,
+                                "error": "CursorExpired",
+                                "runId": run_id,
+                                "requestedCursor": cursor,
+                                "nearestAvailableCursor": nearest_cursor,
+                                "lastCursor": f"{run_id}:{last_sequence}",
+                                "lastSequence": last_sequence,
+                            },
+                        )
+                    else:
+                        replay_after_sequence = sequence_by_cursor[cursor]
+            except ValueError as error:
+                return ServerResponse.json(
+                    400,
+                    {
+                        "ok": False,
+                        "error": str(error),
+                    },
+                )
             return ServerResponse.json(
                 200,
                 {
                     "ok": True,
                     "runId": run_id,
-                    "events": [_response_json_object(event) for event in events],
+                    "replayFromCursor": cursor,
+                    "lastCursor": f"{run_id}:{last_sequence}",
+                    "events": [
+                        _response_json_object(event)
+                        for event in events
+                        if isinstance((metadata := event.get("metadata")), Mapping)
+                        and isinstance((sequence := metadata.get("sequence")), int)
+                        and not isinstance(sequence, bool)
+                        and sequence > replay_after_sequence
+                    ],
                 },
             )
         if route.operation == "application_stream":
