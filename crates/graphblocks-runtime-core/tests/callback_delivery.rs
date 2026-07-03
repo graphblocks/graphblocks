@@ -745,6 +745,46 @@ fn sqlite_callback_delivery_queue_persists_retry_schedule_across_reopen() {
 }
 
 #[test]
+fn sqlite_callback_delivery_queue_recovers_in_flight_delivery_after_worker_restart() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let mut delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    delivery.status = CallbackDeliveryStatus::Delivering;
+    let path = sqlite_callback_delivery_queue_path("recover-in-flight");
+
+    {
+        let queue = SqliteCallbackDeliveryQueue::open(&path).expect("queue opens");
+        queue
+            .upsert_delivery(delivery.clone())
+            .expect("in-flight delivery persists");
+    }
+
+    let queue = SqliteCallbackDeliveryQueue::open(&path).expect("queue reopens");
+    let recovered = queue
+        .recover_in_flight_deliveries(2_000)
+        .expect("in-flight delivery recovers");
+    let due = queue
+        .due_deliveries(2_000, 10)
+        .expect("recovered delivery is due");
+
+    assert_eq!(recovered, 1);
+    assert_eq!(due.len(), 1);
+    assert_eq!(due[0].delivery_id, "del_sub-1_event-1");
+    assert_eq!(due[0].status, CallbackDeliveryStatus::Pending);
+    assert_eq!(due[0].next_retry_at_unix_ms, Some(2_000));
+    assert_eq!(
+        due[0].last_error.as_deref(),
+        Some("delivery_recovered_after_worker_restart")
+    );
+}
+
+#[test]
 fn webhook_delivery_worker_signs_due_delivery_and_persists_success() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
     let queue = SqliteCallbackDeliveryQueue::open_in_memory().expect("queue opens");
@@ -1617,11 +1657,9 @@ fn callback_diagnostics_map_unsafe_endpoint_to_compiler_code() {
 #[test]
 fn callback_diagnostics_map_userinfo_webhook_url_to_compiler_code() {
     let policy = WebhookEgressPolicy::default_deny_internal();
-    let endpoint_error = WebhookDeliveryTarget::new(
-        "https://token@hooks.example.com/events",
-        &policy,
-    )
-    .expect_err("userinfo-bearing webhook target is unsafe");
+    let endpoint_error =
+        WebhookDeliveryTarget::new("https://token@hooks.example.com/events", &policy)
+            .expect_err("userinfo-bearing webhook target is unsafe");
 
     let diagnostic = CallbackConfigurationDiagnostic::webhook_endpoint_error(
         "https://token@hooks.example.com/events",

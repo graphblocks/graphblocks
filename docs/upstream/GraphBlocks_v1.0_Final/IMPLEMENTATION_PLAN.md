@@ -615,6 +615,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Webhook delivery workers now persist a `delivering` state after signing and before invoking the
   transport adapter, so failover and operator inspection can distinguish in-flight attempts from
   merely pending deliveries.
+- Callback delivery queues can now recover persisted in-flight deliveries after worker restart by
+  requeuing them as due pending deliveries with an explicit recovery reason, preserving at-least-once
+  delivery semantics without claiming exactly-once delivery.
 - Webhook egress policy now validates DNS-resolved addresses before transport, rejecting public
   hostnames that resolve to loopback, private, link-local, metadata, or otherwise forbidden
   addresses unless the host is explicitly allowlisted. Empty DNS resolution results are treated as
