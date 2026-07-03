@@ -1341,6 +1341,40 @@ def test_server_app_accepts_authenticated_async_callback_submission() -> None:
     assert status_payload["activeOperations"] == ["op-ci-1"]
 
 
+def test_server_app_rejects_async_callback_when_required_authentication_is_unconfigured() -> None:
+    app = GraphBlocksServerApp(require_async_callback_authentication=True)
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/op-ci-auth-required",
+            headers={"GraphBlocks-Idempotency-Key": "idem-callback-auth-required"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "callback_id": "cb-auth-required",
+                    "attempt_id": "attempt-1",
+                    "payload": {"status": "completed"},
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-03T00:00:00Z",
+        )
+    )
+
+    assert response.status_code == 401
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "reasonCodes": ["auth.callback_authentication_required"],
+    }
+    assert app.callback_submissions("op-ci-auth-required") == ()
+
+
+def test_server_app_validates_async_callback_authentication_requirement_flag() -> None:
+    with pytest.raises(ValueError, match="server require_async_callback_authentication must be a boolean"):
+        GraphBlocksServerApp(require_async_callback_authentication="yes")  # type: ignore[arg-type]
+
+
 def test_server_app_terminal_run_status_suppresses_active_callback_waits() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
     app._events_by_run_id["run-1"] = (

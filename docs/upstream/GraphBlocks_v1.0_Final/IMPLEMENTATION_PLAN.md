@@ -573,7 +573,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   specification's `262144` bytes, before accepting or storing a callback receipt.
   Callback receipt timestamps are validated as ISO datetimes, and nested callback JSON payloads are
   deep-frozen at ingress so later caller mutation cannot corrupt stored callback receipts or
-  idempotency comparisons.
+  idempotency comparisons. Deployments can configure the server callback route to require an
+  installed authentication hook before `SubmitAsyncCallback` will parse, validate, or store a
+  callback receipt.
 - `graphblocks-server` now also exposes the framework-neutral `GET /runs/{run_id}`
   `GetRunStatus` route, deriving status, release id, replay cursor, timestamps, wait reasons, and
   active operation projection from the authoritative stored application events and accepted async

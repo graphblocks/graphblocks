@@ -1107,6 +1107,7 @@ class GraphBlocksServerApp:
     health: ServerHealth = field(default_factory=lambda: ServerHealth("graphblocks-api"))
     registry: RuntimeRegistry = field(default_factory=stdlib_registry)
     max_async_callback_payload_bytes: int = 262144
+    require_async_callback_authentication: bool = False
     _events_by_run_id: dict[str, tuple[Mapping[str, object], ...]] = field(default_factory=dict, init=False, repr=False)
     _callbacks_by_operation_id: dict[str, tuple[ServerAsyncCallbackSubmission, ...]] = field(
         default_factory=dict,
@@ -1156,6 +1157,8 @@ class GraphBlocksServerApp:
             or self.max_async_callback_payload_bytes < 1
         ):
             raise ValueError("server max_async_callback_payload_bytes must be a positive integer")
+        if not isinstance(self.require_async_callback_authentication, bool):
+            raise ValueError("server require_async_callback_authentication must be a boolean")
 
     def handle(self, request: ServerRequest) -> ServerResponse:
         try:
@@ -1522,6 +1525,14 @@ class GraphBlocksServerApp:
                     },
                 )
         if route.operation == "submit_async_callback":
+            if self.require_async_callback_authentication and self.auth_hook is None:
+                return ServerResponse.json(
+                    401,
+                    {
+                        "ok": False,
+                        "reasonCodes": ["auth.callback_authentication_required"],
+                    },
+                )
             try:
                 submission = ServerAsyncCallbackSubmission.from_request(
                     operation_id=route_match.path_params.get("operation_id", ""),
