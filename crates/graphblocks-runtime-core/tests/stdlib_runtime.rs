@@ -495,6 +495,75 @@ fn rust_stdlib_async_blocks_start_and_await_callback_operation() -> Result<(), S
 }
 
 #[test]
+fn rust_stdlib_async_await_callback_rejects_invalid_timeout_duration() -> Result<(), String> {
+    let graph = json!({
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "runtime-async-await-invalid-timeout"},
+        "spec": {
+            "interface": {
+                "outputs": {"wait": "graphblocks.ai/AsyncWait@1"}
+            },
+            "nodes": {
+                "startCI": {
+                    "block": "async.start_operation@1",
+                    "config": {
+                        "operationId": "op-ci-1",
+                        "runId": "run-coding-1",
+                        "nodeId": "startCI",
+                        "attemptId": "attempt-1",
+                        "kind": "ci_job",
+                        "providerOperationId": "gha-run-1",
+                        "resumeTokenHash": "sha256:resume-token",
+                        "idempotencyKey": "idem-op-ci-1",
+                        "expectedSchema": "schemas/CICallback@1",
+                        "createdAtUnixMs": 1_000,
+                        "submittedAtUnixMs": 1_050,
+                        "timeout": "30m",
+                        "resume": {
+                            "requirePolicyReevaluation": true,
+                            "requireBudgetReservation": true,
+                            "requireReleaseCompatibility": true,
+                            "requireOwnershipFence": true
+                        },
+                        "attemptFencing": true
+                    },
+                    "outputs": {"operation": "waitCI.operation"}
+                },
+                "waitCI": {
+                    "block": "async.await_callback@1",
+                    "config": {
+                        "timeout": "soon",
+                        "idempotencyKey": "idem-op-ci-1",
+                        "resume": {
+                            "requirePolicyReevaluation": true,
+                            "requireBudgetReservation": true,
+                            "requireReleaseCompatibility": true,
+                            "requireOwnershipFence": true
+                        },
+                        "attemptFencing": true,
+                        "callback": {
+                            "required": true,
+                            "schema": "schemas/CICallback@1"
+                        }
+                    },
+                    "inputs": {"operation": "startCI.operation"},
+                    "outputs": {"wait": "$output.wait"}
+                }
+            }
+        }
+    });
+    let error = run_graph(&graph, &json!({}))
+        .expect_err("invalid await timeout should fail compiler diagnostics");
+
+    assert!(
+        error.contains("GB6001"),
+        "unexpected compiler error: {error:?}",
+    );
+    Ok(())
+}
+
+#[test]
 fn rust_stdlib_async_start_operation_accepts_relative_timeout_duration() -> Result<(), String> {
     let graph = json!({
         "apiVersion": "graphblocks.ai/v1alpha3",
