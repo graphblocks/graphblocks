@@ -25,6 +25,7 @@ from graphblocks_callbacks import (  # noqa: E402
     CallbackPayloadProjection,
     CallbackResumeDecision,
     CallbackReplayGuard,
+    CallbackReplayRecord,
     CallbackRetryPolicy,
     ExternalCallbackReceipt,
     REQUIRED_WEBHOOK_HEADERS,
@@ -1126,6 +1127,45 @@ def test_callback_replay_guard_rejects_event_replay_with_changed_idempotency() -
     assert conflict.status == "conflict"
     assert conflict.conflict is True
     assert conflict.replay_record == accepted.replay_record
+
+
+def test_callback_replay_guard_rejects_conflicting_restored_records() -> None:
+    first = CallbackReplayRecord(
+        delivery_id="del_001",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        cursor="evt_1042",
+        idempotency_key="sub_001:evt_1042:first",
+        envelope_digest="sha256:first",
+    )
+    conflicting_delivery = CallbackReplayRecord(
+        delivery_id="del_001",
+        subscription_id="sub_002",
+        event_id="evt_2048",
+        run_id="run_coding_002",
+        cursor="evt_2048",
+        idempotency_key="sub_002:evt_2048",
+        envelope_digest="sha256:second",
+    )
+    conflicting_event = CallbackReplayRecord(
+        delivery_id="del_002",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        cursor="evt_1042",
+        idempotency_key="sub_001:evt_1042:second",
+        envelope_digest="sha256:third",
+    )
+
+    _assert_raises_value_error(
+        "records contain conflicting delivery_id identity",
+        lambda: CallbackReplayGuard({"first": first, "second": conflicting_delivery}),
+    )
+    _assert_raises_value_error(
+        "records contain conflicting subscription/event identity",
+        lambda: CallbackReplayGuard({"first": first, "third": conflicting_event}),
+    )
 
 
 def test_external_callback_receipt_projects_verified_callback_metadata() -> None:

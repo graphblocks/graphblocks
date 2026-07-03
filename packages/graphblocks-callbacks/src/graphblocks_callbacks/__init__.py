@@ -748,6 +748,14 @@ class CallbackReplayGuard:
             if not isinstance(record, CallbackReplayRecord):
                 raise ValueError("records values must be CallbackReplayRecord")
             self._records[key] = record
+            existing_delivery = self._records_by_delivery_id.get(record.delivery_id)
+            if existing_delivery is not None and existing_delivery != record:
+                raise ValueError("records contain conflicting delivery_id identity")
+            existing_subscription_event = self._records_by_subscription_event.get(
+                (record.subscription_id, record.event_id)
+            )
+            if existing_subscription_event is not None and existing_subscription_event != record:
+                raise ValueError("records contain conflicting subscription/event identity")
             self._records_by_delivery_id[record.delivery_id] = record
             self._records_by_subscription_event[(record.subscription_id, record.event_id)] = record
 
