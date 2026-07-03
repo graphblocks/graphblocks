@@ -765,8 +765,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   when payloads exceed the configured inline byte limit.
 - `graphblocks-callbacks` now maps webhook receiver HTTP responses into delivery decisions:
   2xx delivered, 409 acknowledged duplicate, 410 gone, 429/5xx retry, and other 4xx terminal
-  failure, including `Retry-After` parsing for retry scheduling. Absolute `Retry-After` values that
-  are already stale at receipt time are ignored so bounded retry policy remains authoritative.
+  failure, including `Retry-After` parsing and policy max-delay capping for retry scheduling.
+  Absolute `Retry-After` values that are already stale at receipt time are ignored so bounded retry
+  policy remains authoritative.
 - `graphblocks-callbacks` HMAC helpers now support optional `GraphBlocks-Key-Id` emission and
   keyring verification so receivers can accept current and previous signing secrets during
   rotation while rejecting unknown key IDs. Keyring verification validates replay-window policy

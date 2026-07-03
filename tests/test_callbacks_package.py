@@ -1170,7 +1170,7 @@ def test_callback_delivery_projection_applies_retryable_webhook_responses() -> N
 
     assert rate_limited.status == "pending"
     assert rate_limited.attempt == 2
-    assert rate_limited.next_retry_at == "2026-07-02T00:00:15.000Z"
+    assert rate_limited.next_retry_at == "2026-07-02T00:00:01.000Z"
     assert rate_limited.last_error == "rate_limited"
     assert receiver_error.status == "pending"
     assert receiver_error.attempt == 2

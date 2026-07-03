@@ -557,6 +557,11 @@ class CallbackDeliveryProjection:
                     last_error=decision.reason,
                 )
             if decision.retry_after is not None:
+                received = _parse_utc_timestamp(received_at)
+                retry_after = _parse_utc_timestamp(decision.retry_after)
+                retry_cap = received + timedelta(milliseconds=policy.max_delay_ms)
+                if retry_after > retry_cap:
+                    retry_after = retry_cap
                 return CallbackDeliveryProjection(
                     delivery_id=self.delivery_id,
                     subscription_id=self.subscription_id,
@@ -567,7 +572,7 @@ class CallbackDeliveryProjection:
                     attempt=self.attempt + 1,
                     idempotency_key=self.idempotency_key,
                     status="pending",
-                    next_retry_at=decision.retry_after,
+                    next_retry_at=_format_utc_timestamp(retry_after),
                     delivered_at=self.delivered_at,
                     acknowledged_at=self.acknowledged_at,
                     last_error=decision.reason,
