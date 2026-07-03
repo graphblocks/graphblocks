@@ -578,6 +578,21 @@ impl CallbackEndpointRef {
                 });
             }
         }
+        let required_binding_fields = [
+            self.operation_id.is_some(),
+            self.run_id.is_some(),
+            self.node_id.is_some(),
+            self.attempt_id.is_some(),
+            self.release_id.is_some(),
+        ];
+        if required_binding_fields.iter().any(|is_set| *is_set)
+            && !required_binding_fields.iter().all(|is_set| *is_set)
+        {
+            return Err(AsyncOperationError::InvalidOperation {
+                operation_id: self.endpoint_id.clone(),
+                reason: "callback endpoint binding must include operation_id, run_id, node_id, attempt_id, and release_id together".to_owned(),
+            });
+        }
         self.auth.validate()
     }
 

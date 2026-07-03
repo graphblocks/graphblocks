@@ -192,6 +192,29 @@ fn callback_endpoint_binds_submission_to_current_operation_identity() {
 }
 
 #[test]
+fn callback_endpoint_rejects_partial_operation_binding() {
+    let mut endpoint = CallbackEndpointRef::new(
+        "callback-endpoint-1",
+        "https://graphblocks.example.com/v1/callbacks/op-1",
+        "schemas/CICallback@1",
+        CallbackEndpointAuth::bearer("secret://callbacks/op-1", "top-secret"),
+    )
+    .expect("unbound endpoint remains valid");
+    endpoint.operation_id = Some("op-1".to_owned());
+    endpoint.run_id = Some("run-1".to_owned());
+    endpoint.node_id = Some("node-ci".to_owned());
+    endpoint.release_id = Some("release-1".to_owned());
+
+    assert_eq!(
+        endpoint.validate(),
+        Err(AsyncOperationError::InvalidOperation {
+            operation_id: "callback-endpoint-1".to_owned(),
+            reason: "callback endpoint binding must include operation_id, run_id, node_id, attempt_id, and release_id together".to_owned(),
+        })
+    );
+}
+
+#[test]
 fn hmac_callback_endpoint_authenticates_and_rejects_replay_or_tampering() {
     let auth = CallbackEndpointAuth::hmac_sha256("secret://callbacks/op-1", b"top-secret", 300_000)
         .expect("hmac auth is valid");
