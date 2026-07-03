@@ -1672,7 +1672,16 @@ def test_callback_endpoint_ref_binds_auth_schema_and_resume_fence_identity() -> 
     assert endpoint.auth == auth
     assert endpoint.operation_id == "op_ci_001"
     assert endpoint.attempt_id == "attempt_001"
-    assert endpoint.binding_key() == "tenant_001:rel_001:run_coding_001:waitCI:attempt_001:op_ci_001"
+    assert endpoint.binding_key() == canonical_hash(
+        {
+            "tenant_id": "tenant_001",
+            "release_id": "rel_001",
+            "run_id": "run_coding_001",
+            "node_id": "waitCI",
+            "attempt_id": "attempt_001",
+            "operation_id": "op_ci_001",
+        }
+    )
 
 
 def test_callback_endpoint_auth_requires_kind_specific_credentials() -> None:
@@ -1772,8 +1781,26 @@ def test_callback_resume_admission_accepts_current_endpoint_receipt() -> None:
         status="admitted",
         can_resume=True,
         reason="current_callback",
-        endpoint_binding_key="tenant_001:rel_001:run_coding_001:waitCI:attempt_001:op_ci_001",
-        receipt_binding_key="tenant_001:rel_001:run_coding_001:waitCI:attempt_001:op_ci_001",
+        endpoint_binding_key=canonical_hash(
+            {
+                "tenant_id": "tenant_001",
+                "release_id": "rel_001",
+                "run_id": "run_coding_001",
+                "node_id": "waitCI",
+                "attempt_id": "attempt_001",
+                "operation_id": "op_ci_001",
+            }
+        ),
+        receipt_binding_key=canonical_hash(
+            {
+                "tenant_id": "tenant_001",
+                "release_id": "rel_001",
+                "run_id": "run_coding_001",
+                "node_id": "waitCI",
+                "attempt_id": "attempt_001",
+                "operation_id": "op_ci_001",
+            }
+        ),
     )
 
 
@@ -1869,8 +1896,45 @@ def test_callback_resume_admission_rejects_stale_attempt_receipt() -> None:
     assert decision.status == "stale"
     assert decision.can_resume is False
     assert decision.reason == "callback_binding_mismatch"
-    assert "attempt_002" in decision.endpoint_binding_key
-    assert "attempt_001" in decision.receipt_binding_key
+    assert decision.endpoint_binding_key != decision.receipt_binding_key
+
+
+def test_callback_resume_binding_key_is_unambiguous_for_colon_containing_ids() -> None:
+    endpoint = CallbackEndpointRef(
+        endpoint_id="cbep_colon",
+        url="https://graphblocks.example.com/v1/callbacks/op",
+        accepted_schema="schemas/CICallback@1",
+        auth=CallbackEndpointAuth(kind="hmac", secret_ref="secret://callbacks/ci"),
+        operation_id="op",
+        run_id="run",
+        node_id="node",
+        attempt_id="attempt",
+        release_id="b:c",
+        tenant_id="a",
+        expires_at="2026-07-02T00:30:00Z",
+    )
+    receipt = ExternalCallbackReceipt(
+        callback_id="cb_colon",
+        operation_id="op",
+        run_id="run",
+        node_id="node",
+        attempt_id="attempt",
+        provider_operation_id=None,
+        idempotency_key="op:attempt:provider",
+        payload_projection=project_callback_payload({"status": "completed"}, max_inline_bytes=256),
+        payload_digest=canonical_hash({"status": "completed"}),
+        received_at="2026-07-02T00:00:02Z",
+        verified_by="hmac-sha256:key-current",
+        policy_snapshot_id="policy_001",
+        release_id="c",
+        tenant_id="a:b",
+    )
+
+    decision = evaluate_callback_resume(endpoint, receipt, now="2026-07-02T00:00:03Z")
+
+    assert decision.status == "stale"
+    assert decision.can_resume is False
+    assert decision.endpoint_binding_key != decision.receipt_binding_key
 
 
 def test_callback_resume_admission_deterministic_fuzz_rejects_identity_mutations() -> None:

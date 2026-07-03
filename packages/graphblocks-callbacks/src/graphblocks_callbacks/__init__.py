@@ -147,6 +147,27 @@ def _json_payload(value: Mapping[str, object]) -> dict[str, object]:
     return deepcopy(dict(value))
 
 
+def _callback_resume_binding_key(
+    *,
+    tenant_id: str | None,
+    release_id: str,
+    run_id: str,
+    node_id: str,
+    attempt_id: str,
+    operation_id: str,
+) -> str:
+    return canonical_hash(
+        {
+            "tenant_id": "" if tenant_id is None else tenant_id,
+            "release_id": release_id,
+            "run_id": run_id,
+            "node_id": node_id,
+            "attempt_id": attempt_id,
+            "operation_id": operation_id,
+        }
+    )
+
+
 def _retry_after_timestamp(headers: Mapping[str, str] | None, received_at: str | None) -> str | None:
     retry_after = _string_headers(headers).get("retry-after")
     if retry_after is None or not retry_after.strip():
@@ -896,15 +917,13 @@ class CallbackEndpointRef:
             _parse_field_timestamp("expires_at", self.expires_at)
 
     def binding_key(self) -> str:
-        return ":".join(
-            (
-                self.tenant_id,
-                self.release_id,
-                self.run_id,
-                self.node_id,
-                self.attempt_id,
-                self.operation_id,
-            )
+        return _callback_resume_binding_key(
+            tenant_id=self.tenant_id,
+            release_id=self.release_id,
+            run_id=self.run_id,
+            node_id=self.node_id,
+            attempt_id=self.attempt_id,
+            operation_id=self.operation_id,
         )
 
 
@@ -1031,16 +1050,13 @@ class ExternalCallbackReceipt:
             raise ValueError("payload_digest must match the payload projection")
 
     def binding_key(self) -> str:
-        tenant_id = "" if self.tenant_id is None else self.tenant_id
-        return ":".join(
-            (
-                tenant_id,
-                self.release_id,
-                self.run_id,
-                self.node_id,
-                self.attempt_id,
-                self.operation_id,
-            )
+        return _callback_resume_binding_key(
+            tenant_id=self.tenant_id,
+            release_id=self.release_id,
+            run_id=self.run_id,
+            node_id=self.node_id,
+            attempt_id=self.attempt_id,
+            operation_id=self.operation_id,
         )
 
 

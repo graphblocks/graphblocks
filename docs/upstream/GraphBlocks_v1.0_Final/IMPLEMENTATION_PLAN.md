@@ -730,6 +730,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   before key selection, rejects empty keyrings, and validates configured key IDs/secrets before
   parsing inbound headers, so invalid verifier configuration cannot be hidden by malformed headers
   or an unmatched key ID.
+- Callback resume admission in `graphblocks-callbacks` now compares canonical identity digests over
+  tenant, release, run, node, attempt, and operation fields instead of delimiter-joined strings, so
+  colon-containing IDs cannot collide and stale callbacks cannot resume a newer attempt.
 - `graphblocks-callbacks` now includes an in-memory receiver replay guard that records callback
   delivery/idempotency identity, accepts first deliveries, treats exact repeats as duplicates, and
   flags mutated idempotency-key, delivery-id, or subscription-event replays as conflicts. Restored
