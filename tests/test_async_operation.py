@@ -88,6 +88,28 @@ def test_async_operation_result_rejects_invalid_external_effect_records() -> Non
         )
 
 
+def test_async_operation_result_rejects_duplicate_external_effect_ids() -> None:
+    with raises_value_error("async operation result external_effects must not contain duplicate effect_id"):
+        graphblocks.AsyncOperationResult.cancelled("op-1").with_external_effects(
+            [
+                graphblocks.ExternalEffectRecord(
+                    effect_id="effect-ticket-1",
+                    target="ticket-system",
+                    operation="ticket.create",
+                    outcome="committed",
+                    provider_effect_id="ticket-123",
+                ),
+                graphblocks.ExternalEffectRecord(
+                    effect_id="effect-ticket-1",
+                    target="ticket-system",
+                    operation="ticket.create",
+                    outcome="committed",
+                    provider_effect_id="ticket-123",
+                ),
+            ]
+        )
+
+
 def test_async_operation_result_deep_copies_json_output_and_projection_sequences() -> None:
     output = {"summary": {"passed": True, "checks": ["lint"]}}
     artifacts = [{"artifact_id": "artifact-1", "uri": "blob://ci/log"}]
@@ -717,6 +739,7 @@ def run_direct() -> None:
         test_async_operation_result_preserves_committed_effect_after_cancel,
         test_async_operation_result_preserves_committed_effect_after_incomplete_late_callback,
         test_async_operation_result_rejects_invalid_external_effect_records,
+        test_async_operation_result_rejects_duplicate_external_effect_ids,
         test_async_operation_result_deep_copies_json_output_and_projection_sequences,
         test_async_operation_result_rejects_non_json_output_and_projection_values,
         test_async_operation_result_projects_from_terminal_operation_state,
