@@ -586,6 +586,8 @@ pub struct CallbackRetryPolicy {
 
 impl CallbackRetryPolicy {
     pub fn new(max_attempts: u32, base_delay_ms: u64, max_delay_ms: u64) -> Self {
+        let base_delay_ms = base_delay_ms.max(1);
+        let max_delay_ms = max_delay_ms.max(base_delay_ms);
         Self {
             max_attempts: max_attempts.max(1),
             base_delay_ms,

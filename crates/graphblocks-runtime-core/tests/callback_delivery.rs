@@ -199,12 +199,10 @@ fn webhook_server_errors_retry_then_dead_letter_with_bounded_backoff() {
     assert_eq!(retry_twice.next_retry_at_unix_ms, Some(1_300));
     assert_eq!(dead_lettered.status, CallbackDeliveryStatus::DeadLettered);
     assert_eq!(dead_lettered.attempt, 3);
-    assert!(
-        dead_lettered
-            .last_error
-            .as_deref()
-            .is_some_and(|error| { error.contains("server_error:503") })
-    );
+    assert!(dead_lettered
+        .last_error
+        .as_deref()
+        .is_some_and(|error| { error.contains("server_error:503") }));
 }
 
 #[test]
@@ -231,6 +229,16 @@ fn webhook_rate_limit_retry_after_is_capped_by_retry_policy() {
     assert_eq!(retry.attempt, 2);
     assert_eq!(retry.next_retry_at_unix_ms, Some(1_250));
     assert_eq!(retry.last_error.as_deref(), Some("rate_limited"));
+}
+
+#[test]
+fn callback_retry_policy_normalizes_zero_delays_to_positive_bound() {
+    let policy = CallbackRetryPolicy::new(3, 0, 0);
+
+    assert_eq!(policy.base_delay_ms, 1);
+    assert_eq!(policy.max_delay_ms, 1);
+    assert_eq!(policy.delay_for_attempt(1), 1);
+    assert_eq!(policy.delay_for_attempt(12), 1);
 }
 
 #[test]
@@ -502,16 +510,12 @@ fn redrive_rejects_empty_operator_or_reason() {
     let dead_letter = CallbackDeadLetter::from_delivery(dead_lettered, 1_001)
         .expect("dead-letter record is valid");
 
-    assert!(
-        scheduler
-            .redrive_dead_letter(&dead_letter, " ", "receiver recovered", 2_000)
-            .is_err()
-    );
-    assert!(
-        scheduler
-            .redrive_dead_letter(&dead_letter, "operator:alice", " ", 2_000)
-            .is_err()
-    );
+    assert!(scheduler
+        .redrive_dead_letter(&dead_letter, " ", "receiver recovered", 2_000)
+        .is_err());
+    assert!(scheduler
+        .redrive_dead_letter(&dead_letter, "operator:alice", " ", 2_000)
+        .is_err());
 }
 
 #[test]
@@ -1334,11 +1338,9 @@ fn subscription_replay_respects_limit_and_inactive_subscriptions() {
     assert_eq!(scheduler.schedule_replay(&subscription, &log, 2).len(), 2);
 
     subscription.status = CallbackSubscriptionStatus::Revoked;
-    assert!(
-        scheduler
-            .schedule_replay(&subscription, &log, 10)
-            .is_empty()
-    );
+    assert!(scheduler
+        .schedule_replay(&subscription, &log, 10)
+        .is_empty());
 }
 
 #[test]
