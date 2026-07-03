@@ -580,9 +580,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   already terminal at the runtime scheduler boundary, preventing delivered, acknowledged,
   dead-lettered, cancelled, or expired delivery records from being rewritten by delayed network
   outcomes.
-- The Rust callback retry policy constructor normalizes zero delay settings to a positive delay
-  floor, and scheduler retries use deterministic bounded jitter unless a receiver-provided
-  `Retry-After` delay is present.
+- The Rust callback retry policy constructor and Python callback helper normalize zero delay
+  settings to a positive delay floor, and scheduler retries use deterministic bounded jitter unless
+  a receiver-provided `Retry-After` delay is present.
 - Callback delivery projections now validate retry, delivery, and acknowledgement timestamps as
   ISO-8601 datetimes and reject acknowledgement timestamps that precede delivery timestamps.
 - Callback subscriptions can schedule cursor replay from the authoritative `ApplicationProtocolLog`

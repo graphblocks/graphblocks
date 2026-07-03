@@ -380,12 +380,16 @@ class CallbackRetryPolicy:
         object.__setattr__(
             self,
             "initial_delay_ms",
-            _non_negative_int("initial_delay_ms", self.initial_delay_ms),
+            max(1, _non_negative_int("initial_delay_ms", self.initial_delay_ms)),
         )
-        object.__setattr__(self, "max_delay_ms", _non_negative_int("max_delay_ms", self.max_delay_ms))
+        object.__setattr__(
+            self,
+            "max_delay_ms",
+            max(1, _non_negative_int("max_delay_ms", self.max_delay_ms)),
+        )
         object.__setattr__(self, "jitter_ms", _non_negative_int("jitter_ms", self.jitter_ms))
         if self.initial_delay_ms > self.max_delay_ms:
-            raise ValueError("initial_delay_ms must be less than or equal to max_delay_ms")
+            object.__setattr__(self, "max_delay_ms", self.initial_delay_ms)
 
     def delay_ms(self, *, delivery_id: str, attempt: int) -> int:
         _require_non_empty_string("delivery_id", delivery_id)

@@ -609,6 +609,15 @@ def test_callback_retry_policy_schedules_bounded_deterministic_backoff() -> None
     ) == first_retry
 
 
+def test_callback_retry_policy_normalizes_zero_delay_floor() -> None:
+    policy = CallbackRetryPolicy(max_attempts=4, initial_delay_ms=0, max_delay_ms=0, jitter_ms=0)
+
+    assert policy.initial_delay_ms == 1
+    assert policy.max_delay_ms == 1
+    assert policy.delay_ms(delivery_id="del_001", attempt=1) == 1
+    assert policy.delay_ms(delivery_id="del_001", attempt=8) == 1
+
+
 def test_callback_delivery_schedule_retry_validates_policy_type() -> None:
     delivery = CallbackDeliveryProjection(
         delivery_id="del_001",
