@@ -2022,6 +2022,10 @@ impl CallbackDeliveryScheduler {
         response: CallbackDeliveryResponse,
         now_unix_ms: u64,
     ) -> CallbackDelivery {
+        if callback_delivery_status_is_terminal(delivery.status) {
+            return delivery;
+        }
+
         match response {
             CallbackDeliveryResponse::Success => {
                 delivery.status = CallbackDeliveryStatus::Delivered;
@@ -2168,4 +2172,16 @@ impl CallbackDeliveryScheduler {
         delivery.next_retry_at_unix_ms = Some(now_unix_ms.saturating_add(delay_ms));
         delivery.last_error = Some(error);
     }
+}
+
+fn callback_delivery_status_is_terminal(status: CallbackDeliveryStatus) -> bool {
+    matches!(
+        status,
+        CallbackDeliveryStatus::Delivered
+            | CallbackDeliveryStatus::Acknowledged
+            | CallbackDeliveryStatus::Failed
+            | CallbackDeliveryStatus::DeadLettered
+            | CallbackDeliveryStatus::Cancelled
+            | CallbackDeliveryStatus::Expired
+    )
 }

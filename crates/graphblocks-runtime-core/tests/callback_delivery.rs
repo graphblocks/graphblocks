@@ -233,6 +233,34 @@ fn webhook_duplicate_and_success_responses_are_terminal_successes() {
 }
 
 #[test]
+fn late_receiver_response_does_not_mutate_terminal_delivery() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+
+    let delivered = scheduler.record_response(delivery, CallbackDeliveryResponse::Success, 1_000);
+    let after_late_error = scheduler.record_response(
+        delivered.clone(),
+        CallbackDeliveryResponse::ServerError(503),
+        1_250,
+    );
+    let after_late_duplicate = scheduler.record_response(
+        delivered.clone(),
+        CallbackDeliveryResponse::DuplicateAlreadyProcessed,
+        1_500,
+    );
+
+    assert_eq!(after_late_error, delivered);
+    assert_eq!(after_late_duplicate, delivered);
+}
+
+#[test]
 fn best_effort_delivery_drops_retryable_failures_without_dead_letter() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
     let subscription = subscription(EventFilter::new(), CallbackFailurePolicy::BestEffort);

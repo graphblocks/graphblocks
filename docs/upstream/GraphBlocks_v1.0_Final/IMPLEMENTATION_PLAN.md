@@ -534,8 +534,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   webhook receiver responses to durable delivery state: 2xx marks delivered, 409 marks acknowledged,
   429/5xx schedule bounded retries, and retry exhaustion remains failed without over-scheduling.
 - Callback delivery response transitions now reject late receiver responses once a delivery is
-  already terminal, preventing delivered, acknowledged, dead-lettered, cancelled, or expired
-  delivery records from being rewritten by delayed network outcomes.
+  already terminal at the runtime scheduler boundary, preventing delivered, acknowledged,
+  dead-lettered, cancelled, or expired delivery records from being rewritten by delayed network
+  outcomes.
 - Callback delivery projections now validate retry, delivery, and acknowledgement timestamps as
   ISO-8601 datetimes and reject acknowledgement timestamps that precede delivery timestamps.
 - Callback subscriptions can schedule cursor replay from the authoritative `ApplicationProtocolLog`
