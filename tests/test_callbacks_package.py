@@ -34,6 +34,7 @@ from graphblocks_callbacks import (  # noqa: E402
     evaluate_callback_resume,
     project_callback_payload,
     record_external_callback_receipt,
+    sign_webhook_hmac_sha256,
     validate_webhook_target_url,
     verify_webhook_headers_hmac_sha256,
     verify_webhook_headers_hmac_sha256_keyring,
@@ -185,6 +186,10 @@ def test_callback_envelope_validates_timestamp_fields() -> None:
     _assert_raises_value_error(
         "timestamp must be an ISO-8601 datetime",
         lambda: envelope.unsigned_headers(timestamp="later"),
+    )
+    _assert_raises_value_error(
+        "timestamp must be an ISO-8601 datetime",
+        lambda: sign_webhook_hmac_sha256(envelope, b"callback-secret", timestamp="later"),
     )
 
 

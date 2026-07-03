@@ -1168,7 +1168,7 @@ def sign_webhook_hmac_sha256(envelope: CallbackEnvelope, secret: bytes, *, times
     if not isinstance(secret, bytes) or not secret:
         raise ValueError("secret must be non-empty bytes")
     timestamp = envelope.delivered_at if timestamp is None else timestamp
-    _require_non_empty_string("timestamp", timestamp)
+    _parse_field_timestamp("timestamp", timestamp)
     body = timestamp.encode("utf-8") + b"." + envelope.canonical_body()
     return hmac.digest(secret, body, "sha256").hex()
 
@@ -1202,7 +1202,10 @@ def verify_webhook_hmac_sha256(
     timestamp: str | None = None,
 ) -> bool:
     _require_non_empty_string("signature", signature)
-    expected = sign_webhook_hmac_sha256(envelope, secret, timestamp=timestamp)
+    try:
+        expected = sign_webhook_hmac_sha256(envelope, secret, timestamp=timestamp)
+    except ValueError:
+        return False
     return hmac.compare_digest(expected, signature)
 
 
