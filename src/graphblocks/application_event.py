@@ -159,6 +159,21 @@ ApplicationCommandKind = Literal[
     "OpenArtifact",
     "SetBreakpoint",
     "RequestSnapshot",
+    "GetRunStatus",
+    "ListRuns",
+    "AttachToRun",
+    "DetachFromRun",
+    "SubscribeEvents",
+    "UnsubscribeEvents",
+    "AckEvent",
+    "RegisterCallback",
+    "RevokeCallback",
+    "SubmitAsyncCallback",
+    "PauseRun",
+    "ResumeRun",
+    "ExpireRun",
+    "RedriveCallbackDelivery",
+    "MoveCallbackToDeadLetter",
 ]
 
 APPLICATION_COMMAND_KINDS: tuple[ApplicationCommandKind, ...] = (
@@ -175,6 +190,21 @@ APPLICATION_COMMAND_KINDS: tuple[ApplicationCommandKind, ...] = (
     "OpenArtifact",
     "SetBreakpoint",
     "RequestSnapshot",
+    "GetRunStatus",
+    "ListRuns",
+    "AttachToRun",
+    "DetachFromRun",
+    "SubscribeEvents",
+    "UnsubscribeEvents",
+    "AckEvent",
+    "RegisterCallback",
+    "RevokeCallback",
+    "SubmitAsyncCallback",
+    "PauseRun",
+    "ResumeRun",
+    "ExpireRun",
+    "RedriveCallbackDelivery",
+    "MoveCallbackToDeadLetter",
 )
 
 ApplicationProtocolEventKind = Literal[
