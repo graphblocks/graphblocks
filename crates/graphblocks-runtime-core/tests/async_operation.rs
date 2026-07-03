@@ -1953,6 +1953,44 @@ fn callback_after_cancellation_records_late_callback_without_committing_result()
 }
 
 #[test]
+fn callback_after_completion_records_late_callback_without_resume() {
+    let store = AsyncOperationStore::new();
+    let mut operation = waiting_operation();
+    operation.state = AsyncOperationState::Completed;
+    operation.completed_at_unix_ms = Some(1_500);
+    store.register(operation).expect("completed operation registers");
+
+    let accepted = store
+        .accept_callback(
+            valid_submission("cb-completed-late", "idem-completed-late"),
+            &callback_schema_registry(),
+        )
+        .expect("completed callback is recorded for diagnostics");
+
+    assert!(!accepted.should_resume);
+    assert_eq!(
+        store.operation_state("op-1"),
+        Some(AsyncOperationState::Completed)
+    );
+    assert_eq!(
+        store
+            .events_for_operation("op-1")
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    AsyncOperationEvent::LateExternalCallbackReceived {
+                        terminal_state: AsyncOperationState::Completed,
+                        ..
+                    }
+                )
+            })
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn cancelled_async_operation_result_preserves_committed_external_effect() {
     let result = AsyncOperationResult::cancelled("op-1").with_external_effects([
         ExternalEffectRecord::new(

@@ -1905,7 +1905,10 @@ impl AsyncOperationStore {
 
         if matches!(
             operation_state,
-            AsyncOperationState::Expired | AsyncOperationState::Cancelled
+            AsyncOperationState::Completed
+                | AsyncOperationState::Failed
+                | AsyncOperationState::Cancelled
+                | AsyncOperationState::Expired
         ) {
             inner
                 .events_by_operation
