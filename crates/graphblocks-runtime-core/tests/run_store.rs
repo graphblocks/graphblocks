@@ -98,6 +98,45 @@ fn run_status_snapshot_reports_waiting_callback_and_active_operations() -> Resul
 }
 
 #[test]
+fn waiting_callback_snapshot_requires_callback_wait_metadata() -> Result<(), RunStoreError> {
+    let mut store = InMemoryRunStore::new();
+    let record = store.create_run("sha256:graph", json!({"task": "ci"}));
+    let waiting = store.set_status(&record.run_id, RunStatus::WaitingCallback)?;
+
+    assert_eq!(
+        RunStatusSnapshot::from_run(
+            &waiting,
+            "evt_000042",
+            1_000,
+            1_500,
+            None,
+            vec![],
+            vec!["op-ci-1".to_owned()],
+        ),
+        Err(RunStoreError::InvalidRunStatusSnapshot {
+            run_id: waiting.run_id.clone(),
+            reason: "waiting_callback requires callback wait reason",
+        })
+    );
+    assert_eq!(
+        RunStatusSnapshot::from_run(
+            &waiting,
+            "evt_000043",
+            1_000,
+            1_600,
+            None,
+            vec![RunWaitReason::callback("op-ci-1", Some("waitCI"))?],
+            vec![],
+        ),
+        Err(RunStoreError::InvalidRunStatusSnapshot {
+            run_id: waiting.run_id,
+            reason: "waiting_callback operation must be active",
+        })
+    );
+    Ok(())
+}
+
+#[test]
 fn run_status_snapshot_validates_terminal_completion_and_nonterminal_completion() {
     let mut store = InMemoryRunStore::new();
     let record = store.create_run("sha256:graph", json!({}));

@@ -358,7 +358,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Run invocation route diagnostics now compare declared event retention to reconnect/replay
   guarantees and report insufficient retention as `GB6013`, with shared compiler TCK coverage.
 - Run status snapshots now expose the protocol response shape with state, release id, last cursor,
-  started/updated/completed timestamps, wait reasons, and active async operation ids.
+  started/updated/completed timestamps, wait reasons, and active async operation ids. A
+  `waiting_callback` snapshot must include a callback wait reason whose operation is still listed
+  as active, preventing misleading status projections that omit the suspended external operation.
 - `RunOwnershipLease` now provides run-scoped coordinator ownership fencing in both in-memory and
   SQLite run stores, including active-lease rejection, stale epoch rejection, and failover after
   expiry.

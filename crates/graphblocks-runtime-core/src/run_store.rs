@@ -568,6 +568,32 @@ impl RunStatusSnapshot {
                 field: "active_operations",
             });
         }
+        if run.status == RunStatus::WaitingCallback {
+            let callback_operation_ids: Vec<&str> = waiting_on
+                .iter()
+                .filter_map(|reason| {
+                    (reason.kind == RunWaitReasonKind::Callback)
+                        .then_some(reason.operation_id.as_deref())
+                        .flatten()
+                })
+                .filter(|operation_id| !operation_id.trim().is_empty())
+                .collect();
+            if callback_operation_ids.is_empty() {
+                return Err(RunStoreError::InvalidRunStatusSnapshot {
+                    run_id: run.run_id.clone(),
+                    reason: "waiting_callback requires callback wait reason",
+                });
+            }
+            if callback_operation_ids
+                .iter()
+                .any(|operation_id| !active_operations.iter().any(|active| active == operation_id))
+            {
+                return Err(RunStoreError::InvalidRunStatusSnapshot {
+                    run_id: run.run_id.clone(),
+                    reason: "waiting_callback operation must be active",
+                });
+            }
+        }
 
         let mut active_operations = active_operations;
         active_operations.sort();
