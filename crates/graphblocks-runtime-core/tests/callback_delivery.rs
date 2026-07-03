@@ -260,6 +260,25 @@ fn inactive_or_expired_subscription_does_not_schedule_delivery() {
 }
 
 #[test]
+fn run_scoped_subscription_does_not_receive_other_run_events() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = CallbackSubscription::new(
+        "sub-run-2",
+        "principal:ide",
+        "run",
+        "run-2",
+        EventFilter::new(),
+        "webhook:ide-relay",
+        CallbackFailurePolicy::RetryThenDeadLetter,
+        900,
+    )
+    .expect("subscription is valid");
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::RunStarted, 1);
+
+    assert!(scheduler.schedule_event(&subscription, &event).is_none());
+}
+
+#[test]
 fn webhook_server_errors_retry_then_dead_letter_with_bounded_backoff() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 250));
     let subscription = subscription(

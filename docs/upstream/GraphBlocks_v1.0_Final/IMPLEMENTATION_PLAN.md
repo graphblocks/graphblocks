@@ -630,6 +630,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   target construction cannot bypass non-empty URL checks.
 - Runtime callback event filters now match both spec camelCase `nodeId`/`operationId` payload
   fields and legacy snake_case `node_id`/`operation_id` payload fields.
+- Runtime run-scoped callback subscriptions now enforce `scope_id` against each application event's
+  `run_id` before scheduling delivery.
 - Webhook egress policy now validates DNS-resolved addresses before transport, rejecting public
   hostnames that resolve to loopback, private, link-local, metadata, or otherwise forbidden
   addresses unless the host is explicitly allowlisted. Empty DNS resolution results are treated as

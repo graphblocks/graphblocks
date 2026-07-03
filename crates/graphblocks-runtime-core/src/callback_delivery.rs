@@ -457,6 +457,7 @@ impl CallbackSubscription {
 
     pub fn can_receive(&self, event: &ApplicationProtocolEvent) -> bool {
         self.status == CallbackSubscriptionStatus::Active
+            && (self.scope != "run" || self.scope_id == event.metadata.run_id)
             && self
                 .expires_at_unix_ms
                 .is_none_or(|expires_at| event.metadata.occurred_at_unix_ms <= expires_at)
