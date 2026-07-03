@@ -768,6 +768,25 @@ def test_async_operation_rejects_polling_completion_after_expiry() -> None:
         )
 
 
+def test_async_operation_rejects_callback_completion_after_expiry() -> None:
+    with raises_value_error("async operation callback completion must not be after expires_at"):
+        graphblocks.AsyncOperation.created(
+            operation_id="op-ci-1",
+            run_id="run-1",
+            node_id="startCI",
+            attempt_id="attempt-1",
+            kind="ci_job",
+            expected_schema="schemas/CICallback@1",
+            resume_token_hash="sha256:resume",
+            idempotency_key="idem-ci-1",
+            created_at="2026-07-02T00:00:00Z",
+            callback_ref="cbep-ci-1",
+            expires_at="2026-07-02T00:30:00Z",
+        ).mark_submitted(submitted_at="2026-07-02T00:00:01Z").wait_for_callback().mark_callback_received(
+            completed_at="2026-07-02T00:29:59Z"
+        ).mark_resuming().complete(completed_at="2026-07-02T00:30:01Z")
+
+
 def test_async_operation_requires_callback_receipt_timestamp() -> None:
     with raises_value_error("async operation callback_received state requires completed_at"):
         graphblocks.AsyncOperation.created(
@@ -818,6 +837,7 @@ def run_direct() -> None:
         test_async_operation_rejects_invalid_timestamp_format_and_ordering,
         test_async_operation_rejects_callback_receipt_after_expiry,
         test_async_operation_rejects_polling_completion_after_expiry,
+        test_async_operation_rejects_callback_completion_after_expiry,
         test_async_operation_requires_callback_receipt_timestamp,
         test_async_operation_result_exports_are_available,
     )
