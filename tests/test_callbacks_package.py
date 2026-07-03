@@ -30,6 +30,7 @@ from graphblocks_callbacks import (  # noqa: E402
     CallbackRetryPolicy,
     ExternalCallbackReceipt,
     REQUIRED_WEBHOOK_HEADERS,
+    WebhookResponseDecision,
     WebhookTargetSafety,
     classify_webhook_response,
     evaluate_callback_resume,
@@ -1185,6 +1186,37 @@ def test_callback_delivery_projection_applies_retryable_webhook_responses() -> N
     assert receiver_error.attempt == 2
     assert receiver_error.next_retry_at == "2026-07-02T00:00:00.221Z"
     assert receiver_error.last_error == "receiver_error"
+
+
+def test_callback_delivery_projection_ignores_stale_manual_retry_after() -> None:
+    delivery = CallbackDeliveryProjection(
+        delivery_id="del_001",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        sequence=1042,
+        cursor="evt_1042",
+        attempt=1,
+        idempotency_key="sub_001:evt_1042",
+        status="delivering",
+    )
+
+    retry = delivery.apply_webhook_response(
+        WebhookResponseDecision(
+            status_code=429,
+            status="rate_limited",
+            retry=True,
+            terminal=False,
+            reason="rate_limited",
+            retry_after="2026-07-01T23:59:59Z",
+        ),
+        received_at="2026-07-02T00:00:00Z",
+        policy=CallbackRetryPolicy(max_attempts=4, initial_delay_ms=100, max_delay_ms=1_000, jitter_ms=25),
+    )
+
+    assert retry.status == "pending"
+    assert retry.attempt == 2
+    assert retry.next_retry_at == "2026-07-02T00:00:00.221Z"
 
 
 def test_callback_delivery_projection_applies_non_retryable_webhook_response() -> None:
