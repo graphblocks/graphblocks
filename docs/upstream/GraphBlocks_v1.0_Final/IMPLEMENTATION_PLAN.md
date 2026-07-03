@@ -453,8 +453,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   expiry deadlines that are already elapsed by submission time. `callback_received` records require
   a durable receipt timestamp, and that timestamp is rejected once it falls after the operation
   expiry boundary, so late callbacks cannot be projected as resumable operation state. Polling
-  and callback-backed terminal completions also reject `completed_at` values after `expires_at`,
-  preventing late provider results from being projected as successful operation completion.
+  and callback-backed terminal completions or failures also reject `completed_at` values after
+  `expires_at`, preventing late provider results from being projected as current operation outcomes.
 - The Python `AsyncOperation` facade now rejects provider operation identity before submission, so
   `provider_operation_id` cannot appear on a still-created operation record and provider invocation
   remains separated from durable operation creation.
