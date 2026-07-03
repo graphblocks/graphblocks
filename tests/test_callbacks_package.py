@@ -828,6 +828,17 @@ def test_webhook_response_classification_parses_retry_after() -> None:
     assert decision.reason == "rate_limited"
 
 
+def test_webhook_response_classification_ignores_past_retry_after() -> None:
+    decision = classify_webhook_response(
+        429,
+        headers={"Retry-After": "2026-07-01T23:59:59Z"},
+        received_at="2026-07-02T00:00:00Z",
+    )
+
+    assert decision.status == "retry"
+    assert decision.retry_after is None
+
+
 def test_webhook_response_classification_rejects_invalid_status_codes_and_headers() -> None:
     _assert_raises_value_error(
         "status_code must be a valid HTTP status",

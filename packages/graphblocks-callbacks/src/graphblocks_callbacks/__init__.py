@@ -157,9 +157,13 @@ def _retry_after_timestamp(headers: Mapping[str, str] | None, received_at: str |
         received = _parse_utc_timestamp(_utc_now_iso() if received_at is None else received_at)
         return _format_utc_timestamp(received + timedelta(seconds=seconds))
     try:
-        return _format_utc_timestamp(_parse_utc_timestamp(retry_after))
+        retry_at = _parse_utc_timestamp(retry_after)
     except ValueError:
         return None
+    received = _parse_utc_timestamp(_utc_now_iso() if received_at is None else received_at)
+    if retry_at <= received:
+        return None
+    return _format_utc_timestamp(retry_at)
 
 
 @dataclass(frozen=True, slots=True)
