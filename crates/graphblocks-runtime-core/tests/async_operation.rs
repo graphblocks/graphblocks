@@ -665,6 +665,34 @@ fn async_operation_validate_rejects_completion_after_expiration() {
 }
 
 #[test]
+fn async_operation_validate_rejects_callback_received_without_valid_receipt_time() {
+    let mut missing_receipt_time = waiting_operation();
+    missing_receipt_time.state = AsyncOperationState::CallbackReceived;
+    missing_receipt_time.completed_at_unix_ms = None;
+
+    assert_eq!(
+        missing_receipt_time.validate(),
+        Err(AsyncOperationError::InvalidOperation {
+            operation_id: "op-1".to_owned(),
+            reason: "callback_received operations require completed_at".to_owned(),
+        })
+    );
+
+    let mut receipt_after_expiry = waiting_operation();
+    receipt_after_expiry.state = AsyncOperationState::CallbackReceived;
+    receipt_after_expiry.expires_at_unix_ms = Some(1_900);
+    receipt_after_expiry.completed_at_unix_ms = Some(2_000);
+
+    assert_eq!(
+        receipt_after_expiry.validate(),
+        Err(AsyncOperationError::InvalidOperation {
+            operation_id: "op-1".to_owned(),
+            reason: "completed_at exceeds expires_at".to_owned(),
+        })
+    );
+}
+
+#[test]
 fn async_operation_diagnostics_report_resume_without_policy_reevaluation() {
     let operation = waiting_operation().without_resume_policy_reevaluation();
 

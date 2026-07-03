@@ -289,6 +289,14 @@ impl AsyncOperation {
                 reason: "non-created operations require submitted_at".to_owned(),
             });
         }
+        if self.state == AsyncOperationState::CallbackReceived
+            && self.completed_at_unix_ms.is_none()
+        {
+            return Err(AsyncOperationError::InvalidOperation {
+                operation_id: self.operation_id.clone(),
+                reason: "callback_received operations require completed_at".to_owned(),
+            });
+        }
         if let Some(submitted_at_unix_ms) = self.submitted_at_unix_ms
             && submitted_at_unix_ms < self.created_at_unix_ms
         {
