@@ -206,6 +206,7 @@ APPLICATION_COMMAND_KINDS: tuple[ApplicationCommandKind, ...] = (
     "RedriveCallbackDelivery",
     "MoveCallbackToDeadLetter",
 )
+APPLICATION_PROTOCOL_TCK_COMMAND_KINDS: tuple[ApplicationCommandKind, ...] = APPLICATION_COMMAND_KINDS
 
 ApplicationProtocolEventKind = Literal[
     "RunStarted",

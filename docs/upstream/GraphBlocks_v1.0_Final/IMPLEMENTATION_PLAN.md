@@ -369,7 +369,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   registration, callback ingestion, pause/resume/expire, redrive, and dead-letter command names
   from the amendment. The Python application protocol facade exports the same command tuple and
   accepts these commands in `ApplicationCommand`; the shared application-protocol TCK now asserts
-  the amended command set.
+  the amended command set. Python also exports a TCK command-kind view that is checked against the
+  shared `tck/application-protocol/cases.json` fixture so facade drift is caught by the same
+  contract file as the Rust harness.
 - `graphblocks-runtime-core::async_operation` now contains the in-memory `AsyncOperation` and
   callback ingestion state machine for the first TDD slice.
 - Implemented behavior covers operation registration, submitted-to-waiting journal entries,
