@@ -1825,6 +1825,18 @@ def test_server_app_rejects_async_callback_for_different_node_on_existing_run_at
     }
     assert len(app.callback_submissions("op-ci-1")) == 1
     assert app.callback_submissions("op-ci-1")[0].node_id == "waitCI"
+    assert app.async_callback_rejections("op-ci-1") == (
+        {
+            "operationId": "op-ci-1",
+            "callbackId": "cb-wrong-node",
+            "idempotencyKey": "idem-callback-wrong-node",
+            "runId": "run-1",
+            "nodeId": "otherWait",
+            "attemptId": "attempt-1",
+            "reason": "node_mismatch",
+            "receivedAt": "2026-07-03T00:00:02Z",
+        },
+    )
 
 
 def test_server_app_rejects_async_callback_scope_change_for_existing_operation() -> None:

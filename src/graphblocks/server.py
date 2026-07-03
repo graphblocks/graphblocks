@@ -831,6 +831,22 @@ class ServerAsyncCallbackRejection:
             received_at=submission.received_at,
         )
 
+    @classmethod
+    def node_mismatch(
+        cls,
+        submission: ServerAsyncCallbackSubmission,
+    ) -> ServerAsyncCallbackRejection:
+        return cls(
+            operation_id=submission.operation_id,
+            callback_id=submission.callback_id,
+            idempotency_key=submission.idempotency_key,
+            run_id=submission.run_id,
+            node_id=submission.node_id,
+            attempt_id=submission.attempt_id,
+            reason="node_mismatch",
+            received_at=submission.received_at,
+        )
+
     def protocol_value(self) -> dict[str, object]:
         value: dict[str, object] = {
             "operationId": self.operation_id,
@@ -1801,6 +1817,11 @@ class GraphBlocksServerApp:
                         and submission.run_id is not None
                         and previous.node_id != submission.node_id
                     ):
+                        rejection = ServerAsyncCallbackRejection.node_mismatch(submission)
+                        self._async_callback_rejections_by_operation_id[submission.operation_id] = (
+                            *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
+                            rejection,
+                        )
                         return ServerResponse.json(
                             409,
                             {
