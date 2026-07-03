@@ -169,6 +169,23 @@ def test_callback_envelope_validates_timestamp_fields() -> None:
             delivered_at="2026-07-02T00:00:09Z",
         ),
     )
+    envelope = CallbackEnvelope(
+        delivery_id="del_003",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        sequence=1042,
+        cursor="evt_1042",
+        type="ReviewRequested",
+        payload={"subject": "changeset_abc"},
+        idempotency_key="sub_001:evt_1042:headers",
+        occurred_at="2026-07-02T00:00:00Z",
+        delivered_at="2026-07-02T00:00:01Z",
+    )
+    _assert_raises_value_error(
+        "timestamp must be an ISO-8601 datetime",
+        lambda: envelope.unsigned_headers(timestamp="later"),
+    )
 
 
 def test_callback_envelope_deterministic_fuzz_signatures_survive_reordering_and_mutation() -> None:

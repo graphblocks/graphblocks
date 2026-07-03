@@ -977,7 +977,7 @@ class CallbackEnvelope:
 
     def unsigned_headers(self, *, timestamp: str | None = None) -> dict[str, str]:
         timestamp = self.delivered_at if timestamp is None else timestamp
-        _require_non_empty_string("timestamp", timestamp)
+        _parse_field_timestamp("timestamp", timestamp)
         return {
             "GraphBlocks-Delivery-Id": self.delivery_id,
             "GraphBlocks-Event-Id": self.event_id,
@@ -1230,7 +1230,10 @@ def verify_webhook_headers_hmac_sha256(
         if not isinstance(value, str) or not value.strip():
             return False
 
-    expected = envelope.unsigned_headers(timestamp=normalized["graphblocks-timestamp"])
+    try:
+        expected = envelope.unsigned_headers(timestamp=normalized["graphblocks-timestamp"])
+    except ValueError:
+        return False
     for header, value in expected.items():
         if normalized.get(header.lower()) != value:
             return False
