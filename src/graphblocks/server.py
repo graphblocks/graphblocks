@@ -172,6 +172,8 @@ def _webhook_url_is_unsafe(url: str) -> bool:
         return True
     if parsed.scheme == "secret":
         return False
+    if parsed.username is not None or parsed.password is not None:
+        return True
     host = parsed.hostname
     if host is None:
         return True
