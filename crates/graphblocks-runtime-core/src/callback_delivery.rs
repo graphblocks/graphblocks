@@ -1421,6 +1421,9 @@ impl WebhookHttpTransport {
             Ok(addresses) => addresses,
             Err(_) => return CallbackDeliveryResponse::ServerError(599),
         };
+        if addresses.is_empty() {
+            return CallbackDeliveryResponse::ServerError(599);
+        }
         if self
             .egress_policy
             .validate_resolved_addresses(&attempt.target, addresses)

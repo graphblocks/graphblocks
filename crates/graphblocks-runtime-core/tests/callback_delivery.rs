@@ -784,6 +784,49 @@ fn webhook_http_transport_blocks_delivery_when_dns_resolution_is_unsafe() {
 }
 
 #[test]
+fn webhook_http_transport_retries_when_dns_resolution_returns_no_addresses() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let signing =
+        WebhookSigningConfig::hmac_sha256("secret://callbacks/ide-relay", b"top-secret", 300)
+            .expect("signing config is valid");
+    let target = WebhookDeliveryTarget::new(
+        "https://hooks.example.com/graphblocks/events",
+        &WebhookEgressPolicy::default_deny_internal(),
+    )
+    .expect("target is valid");
+    let signed = signing
+        .sign_delivery_for_target(&target, &delivery, &event, 2_000)
+        .expect("delivery signs");
+    let attempt = WebhookDeliveryAttempt {
+        target,
+        delivery,
+        signed,
+    };
+    let transport = WebhookHttpTransport::new(WebhookEgressPolicy::default_deny_internal());
+    let mut sent = false;
+
+    let response = transport.deliver_with(
+        &attempt,
+        |_| Ok::<Vec<IpAddr>, ()>(Vec::new()),
+        |_| {
+            sent = true;
+            Ok::<WebhookHttpResponse, ()>(WebhookHttpResponse::new(200))
+        },
+    );
+
+    assert_eq!(response, CallbackDeliveryResponse::ServerError(599));
+    assert!(!sent, "empty DNS resolution must stop before send");
+}
+
+#[test]
 fn webhook_http_transport_maps_receiver_status_codes_to_delivery_responses() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
     let subscription = subscription(

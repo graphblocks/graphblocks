@@ -588,7 +588,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   callback projections.
 - Webhook egress policy now validates DNS-resolved addresses before transport, rejecting public
   hostnames that resolve to loopback, private, link-local, metadata, or otherwise forbidden
-  addresses unless the host is explicitly allowlisted.
+  addresses unless the host is explicitly allowlisted. Empty DNS resolution results are treated as
+  retryable transport failures and stop before request construction.
 - `WebhookHttpTransport` now provides the runtime transport adapter boundary: DNS preflight,
   signed POST request construction, and spec-defined receiver status mapping are implemented
   without adding a default HTTP/TLS client dependency to `graphblocks-runtime-core`.
