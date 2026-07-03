@@ -4,13 +4,15 @@ build-backend = "hatchling.build"
 
 [project]
 name = "graphblocks"
-version = "0.1.0"
-description = "Provider-neutral default GraphBlocks metapackage"
+version = "0.0.1"
+description = "Reserved alpha metapackage for GraphBlocks"
+readme = "METAPACKAGE.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 authors = [
   { name = "GraphBlocks contributors" },
 ]
+keywords = ["ai", "workflow", "rag", "graph", "runtime", "contracts"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
@@ -19,18 +21,13 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
 ]
-dependencies = [
-  "graphblocks-core~=1.0",
-  "graphblocks-runtime~=1.0",
-  "graphblocks-stdlib~=1.0",
-  "graphblocks-documents~=1.0",
-  "graphblocks-rag~=1.0",
-  "graphblocks-conversation~=1.0",
-  "graphblocks-policy~=1.0",
-  "graphblocks-budget~=1.0",
-  "graphblocks-usage~=1.0",
-  "graphblocks-cli~=1.0",
-]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/graphblocks/graphblocks"
+Documentation = "https://github.com/graphblocks/graphblocks/tree/main/docs"
+Source = "https://github.com/graphblocks/graphblocks"
+Issues = "https://github.com/graphblocks/graphblocks/issues"
 
 [tool.hatch.build.targets.wheel]
 only-include = ["METAPACKAGE.md"]

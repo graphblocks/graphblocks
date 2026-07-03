@@ -1,0 +1,31 @@
+{
+  "name": "graphblocks",
+  "version": "0.0.1",
+  "description": "Reserved alpha package for GraphBlocks",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/graphblocks/graphblocks#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/graphblocks/graphblocks.git",
+    "directory": "packages/graphblocks-npm"
+  },
+  "bugs": {
+    "url": "https://github.com/graphblocks/graphblocks/issues"
+  },
+  "keywords": [
+    "ai",
+    "workflow",
+    "rag",
+    "graph",
+    "runtime",
+    "contracts"
+  ],
+  "main": "index.js",
+  "files": [
+    "index.js",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

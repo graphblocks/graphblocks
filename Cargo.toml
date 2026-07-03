@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "crates/graphblocks",
   "crates/graphblocks-flow",
   "crates/graphblocks-telemetry",
   "crates/graphblocks-cli-native",

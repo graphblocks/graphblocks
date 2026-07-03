@@ -1,0 +1,18 @@
+[package]
+name = "graphblocks"
+version = "0.0.1"
+description = "Reserved alpha crate for GraphBlocks"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository = "https://github.com/graphblocks/graphblocks"
+homepage = "https://github.com/graphblocks/graphblocks"
+documentation = "https://docs.rs/graphblocks"
+readme = "README.md"
+keywords = ["ai", "workflow", "graph", "runtime"]
+categories = ["development-tools"]
+
+[dependencies]
+
+[lints]
+workspace = true
