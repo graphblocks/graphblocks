@@ -471,6 +471,29 @@ def test_callback_retry_policy_schedules_bounded_deterministic_backoff() -> None
     ) == first_retry
 
 
+def test_callback_delivery_schedule_retry_validates_policy_type() -> None:
+    delivery = CallbackDeliveryProjection(
+        delivery_id="del_001",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        sequence=1042,
+        cursor="evt_1042",
+        attempt=1,
+        idempotency_key="sub_001:evt_1042",
+        status="failed",
+    )
+
+    _assert_raises_value_error(
+        "policy must be a CallbackRetryPolicy",
+        lambda: delivery.schedule_retry(
+            object(),  # type: ignore[arg-type]
+            failed_at="2026-07-02T00:00:00Z",
+            error="receiver 503",
+        ),
+    )
+
+
 def test_callback_dead_letter_and_redrive_preserve_delivery_identity_and_attempt_history() -> None:
     policy = CallbackRetryPolicy(max_attempts=2, initial_delay_ms=100, max_delay_ms=1_000, jitter_ms=0)
     delivery = CallbackDeliveryProjection(

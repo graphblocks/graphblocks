@@ -429,6 +429,8 @@ class CallbackDeliveryProjection:
         failed_at: str,
         error: str,
     ) -> CallbackDeliveryProjection:
+        if not isinstance(policy, CallbackRetryPolicy):
+            raise ValueError("policy must be a CallbackRetryPolicy")
         if self.status == "pending" and self.next_retry_at is not None:
             return self
         if self.attempt >= policy.max_attempts:
