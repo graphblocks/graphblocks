@@ -683,7 +683,15 @@ fn execute_async_poll_operation(inputs: &Value, config: &Value) -> Result<Value,
     let timeout_ms = config
         .get("timeoutMs")
         .or_else(|| config.get("timeout_ms"))
-        .and_then(Value::as_u64);
+        .and_then(Value::as_u64)
+        .ok_or_else(|| {
+            BlockError::new(
+                "async.poll_operation.missing_timeout",
+                ErrorCategory::Configuration,
+                "async.poll_operation@1 requires timeoutMs",
+                false,
+            )
+        })?;
     let mut polling_operation = operation.clone();
     polling_operation["state"] = json!("polling");
 

@@ -662,6 +662,53 @@ fn rust_stdlib_runtime_matches_shared_runtime_tck_cases() -> Result<(), String> 
     Ok(())
 }
 
+#[test]
+fn rust_stdlib_async_poll_operation_requires_timeout() -> Result<(), String> {
+    let graph = json!({
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "runtime-async-poll-timeout-required"},
+        "spec": {
+            "interface": {
+                "outputs": {
+                    "poll": "graphblocks.ai/AsyncPoll@1"
+                }
+            },
+            "nodes": {
+                "startPoll": {
+                    "block": "async.start_operation@1",
+                    "config": async_start_config("op-poll", "node-poll"),
+                    "outputs": {"operation": "poll.operation"}
+                },
+                "poll": {
+                    "block": "async.poll_operation@1",
+                    "config": {"intervalMs": 30_000, "maxIntervalMs": 300_000},
+                    "inputs": {"operation": "startPoll.operation"},
+                    "outputs": {"poll": "$output.poll"}
+                }
+            }
+        }
+    });
+    let result = run_graph(&graph, &json!({}))?;
+
+    assert_eq!(result["status"], "failed");
+    let node_error = result["journal"]
+        .as_array()
+        .and_then(|journal| {
+            journal
+                .iter()
+                .find(|record| record["kind"].as_str() == Some("node_failed"))
+        })
+        .and_then(|record| record.pointer("/payload/message"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| "missing async poll node failure".to_owned())?;
+    assert!(
+        node_error.contains("async.poll_operation@1 requires timeoutMs"),
+        "unexpected node error: {node_error:?}",
+    );
+    Ok(())
+}
+
 fn async_start_config(operation_id: &str, node_id: &str) -> Value {
     json!({
         "operationId": operation_id,
