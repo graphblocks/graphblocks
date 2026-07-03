@@ -602,6 +602,30 @@ impl CallbackRetryPolicy {
             .saturating_mul(multiplier)
             .min(self.max_delay_ms)
     }
+
+    pub fn delay_for_attempt_with_jitter(self, attempt: u32, jitter_key: &str) -> u64 {
+        let base_delay_ms = self.delay_for_attempt(attempt);
+        let remaining_delay_ms = self.max_delay_ms.saturating_sub(base_delay_ms);
+        if remaining_delay_ms == 0 {
+            return base_delay_ms;
+        }
+
+        let jitter_window_ms = remaining_delay_ms.min(base_delay_ms).max(1);
+        let mut hash = 14_695_981_039_346_656_037_u64;
+        for byte in jitter_key
+            .as_bytes()
+            .iter()
+            .copied()
+            .chain(attempt.to_le_bytes())
+        {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(1_099_511_628_211);
+        }
+        let jitter_ms = (hash % jitter_window_ms) + 1;
+        base_delay_ms
+            .saturating_add(jitter_ms)
+            .min(self.max_delay_ms)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2207,8 +2231,11 @@ impl CallbackDeliveryScheduler {
         delivery.attempt += 1;
         delivery.status = CallbackDeliveryStatus::Pending;
         let delay_ms = retry_after_ms
-            .unwrap_or_else(|| self.retry_policy.delay_for_attempt(delivery.attempt - 1))
-            .min(self.retry_policy.max_delay_ms);
+            .map(|retry_after_ms| retry_after_ms.min(self.retry_policy.max_delay_ms))
+            .unwrap_or_else(|| {
+                self.retry_policy
+                    .delay_for_attempt_with_jitter(delivery.attempt - 1, &delivery.idempotency_key)
+            });
         delivery.next_retry_at_unix_ms = Some(now_unix_ms.saturating_add(delay_ms));
         delivery.last_error = Some(error);
     }

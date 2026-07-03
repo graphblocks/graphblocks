@@ -193,10 +193,14 @@ fn webhook_server_errors_retry_then_dead_letter_with_bounded_backoff() {
 
     assert_eq!(retry_once.status, CallbackDeliveryStatus::Pending);
     assert_eq!(retry_once.attempt, 2);
-    assert_eq!(retry_once.next_retry_at_unix_ms, Some(1_100));
+    assert!(retry_once
+        .next_retry_at_unix_ms
+        .is_some_and(|retry_at| { retry_at > 1_100 && retry_at <= 1_200 }));
     assert_eq!(retry_twice.status, CallbackDeliveryStatus::Pending);
     assert_eq!(retry_twice.attempt, 3);
-    assert_eq!(retry_twice.next_retry_at_unix_ms, Some(1_300));
+    assert!(retry_twice
+        .next_retry_at_unix_ms
+        .is_some_and(|retry_at| { retry_at > 1_300 && retry_at <= 1_350 }));
     assert_eq!(dead_lettered.status, CallbackDeliveryStatus::DeadLettered);
     assert_eq!(dead_lettered.attempt, 3);
     assert!(dead_lettered
@@ -239,6 +243,20 @@ fn callback_retry_policy_normalizes_zero_delays_to_positive_bound() {
     assert_eq!(policy.max_delay_ms, 1);
     assert_eq!(policy.delay_for_attempt(1), 1);
     assert_eq!(policy.delay_for_attempt(12), 1);
+}
+
+#[test]
+fn callback_retry_policy_adds_deterministic_bounded_jitter() {
+    let policy = CallbackRetryPolicy::new(3, 100, 250);
+    let first = policy.delay_for_attempt_with_jitter(1, "sub-1:event-1");
+    let replay = policy.delay_for_attempt_with_jitter(1, "sub-1:event-1");
+    let second = policy.delay_for_attempt_with_jitter(2, "sub-1:event-1");
+
+    assert_eq!(first, replay);
+    assert!(first > policy.delay_for_attempt(1));
+    assert!(first <= 200);
+    assert!(second > policy.delay_for_attempt(2));
+    assert!(second <= policy.max_delay_ms);
 }
 
 #[test]
@@ -712,11 +730,14 @@ fn sqlite_callback_delivery_queue_persists_retry_schedule_across_reopen() {
     }
 
     let queue = SqliteCallbackDeliveryQueue::open(&path).expect("queue reopens");
+    let retry_at = retry
+        .next_retry_at_unix_ms
+        .expect("retry delivery has a retry timestamp");
     let before_due = queue
-        .due_deliveries(1_099, 10)
+        .due_deliveries(retry_at - 1, 10)
         .expect("due deliveries load");
     let after_due = queue
-        .due_deliveries(1_100, 10)
+        .due_deliveries(retry_at, 10)
         .expect("due deliveries load");
 
     assert!(before_due.is_empty());
@@ -821,7 +842,9 @@ fn webhook_delivery_worker_persists_retry_after_server_error() {
     assert_eq!(attempts, 1);
     assert_eq!(stored.status, CallbackDeliveryStatus::Pending);
     assert_eq!(stored.attempt, 2);
-    assert_eq!(stored.next_retry_at_unix_ms, Some(2_100));
+    assert!(stored
+        .next_retry_at_unix_ms
+        .is_some_and(|retry_at| { retry_at > 2_100 && retry_at <= 2_200 }));
     assert_eq!(stored.last_error.as_deref(), Some("server_error:503"));
 }
 
