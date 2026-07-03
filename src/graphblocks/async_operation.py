@@ -491,12 +491,19 @@ class AsyncOperationResult:
             )
         object.__setattr__(self, "external_effects", tuple(self.external_effects))
         effect_ids: set[str] = set()
+        provider_effect_ids: set[str] = set()
         for effect in self.external_effects:
             if not isinstance(effect, ExternalEffectRecord):
                 raise ValueError("async operation result external_effects entries must be ExternalEffectRecord")
             if effect.effect_id in effect_ids:
                 raise ValueError("async operation result external_effects must not contain duplicate effect_id")
             effect_ids.add(effect.effect_id)
+            if effect.provider_effect_id is not None:
+                if effect.provider_effect_id in provider_effect_ids:
+                    raise ValueError(
+                        "async operation result external_effects must not contain duplicate provider_effect_id"
+                    )
+                provider_effect_ids.add(effect.provider_effect_id)
             if effect.provider_effect_id is not None and effect.outcome != "committed":
                 raise ValueError(
                     f"external effect {effect.effect_id} has provider identity but no committed external effect"
