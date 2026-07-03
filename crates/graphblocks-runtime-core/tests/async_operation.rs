@@ -486,6 +486,24 @@ fn async_operation_diagnostics_report_missing_timeout_schema_and_idempotency() {
 }
 
 #[test]
+fn async_operation_diagnostics_report_polling_wait_without_timeout() {
+    let mut operation = waiting_operation();
+    operation.state = AsyncOperationState::Polling;
+    operation.expires_at_unix_ms = None;
+
+    let diagnostics = AsyncOperationConfigurationDiagnostic::for_operation(&operation);
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].code, "GB6001");
+    assert_eq!(diagnostics[0].field, "expires_at_unix_ms");
+    assert!(
+        diagnostics[0]
+            .message
+            .contains("async operation op-1 polling wait has no timeout")
+    );
+}
+
+#[test]
 fn async_operation_diagnostics_do_not_report_valid_waiting_operation() {
     assert_eq!(
         AsyncOperationConfigurationDiagnostic::for_operation(&waiting_operation()),

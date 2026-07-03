@@ -96,15 +96,23 @@ impl AsyncOperationConfigurationDiagnostic {
         limits: AsyncCallbackIngestionLimits,
     ) -> Vec<Self> {
         let mut diagnostics = Vec::new();
-        if operation.state == AsyncOperationState::WaitingCallback
-            && operation.expires_at_unix_ms.is_none()
+        if operation.expires_at_unix_ms.is_none()
+            && matches!(
+                operation.state,
+                AsyncOperationState::WaitingCallback | AsyncOperationState::Polling
+            )
         {
+            let wait_kind = match operation.state {
+                AsyncOperationState::WaitingCallback => "callback",
+                AsyncOperationState::Polling => "polling",
+                _ => unreachable!("matches limited to async wait states"),
+            };
             diagnostics.push(Self {
                 code: "GB6001",
                 field: "expires_at_unix_ms",
                 message: format!(
-                    "async operation {} waits for callback without a timeout",
-                    operation.operation_id
+                    "async operation {} {wait_kind} wait has no timeout",
+                    operation.operation_id,
                 ),
             });
         }
