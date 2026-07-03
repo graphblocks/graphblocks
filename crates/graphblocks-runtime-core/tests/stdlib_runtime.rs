@@ -564,6 +564,83 @@ fn rust_stdlib_async_await_callback_rejects_invalid_timeout_duration() -> Result
 }
 
 #[test]
+fn rust_stdlib_async_await_callback_rejects_unknown_on_timeout_policy() -> Result<(), String> {
+    let graph = json!({
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "runtime-async-await-invalid-on-timeout"},
+        "spec": {
+            "interface": {
+                "outputs": {"wait": "graphblocks.ai/AsyncWait@1"}
+            },
+            "nodes": {
+                "startCI": {
+                    "block": "async.start_operation@1",
+                    "config": {
+                        "operationId": "op-ci-1",
+                        "runId": "run-coding-1",
+                        "nodeId": "startCI",
+                        "attemptId": "attempt-1",
+                        "kind": "ci_job",
+                        "providerOperationId": "gha-run-1",
+                        "resumeTokenHash": "sha256:resume-token",
+                        "idempotencyKey": "idem-op-ci-1",
+                        "expectedSchema": "schemas/CICallback@1",
+                        "createdAtUnixMs": 1_000,
+                        "submittedAtUnixMs": 1_050,
+                        "timeout": "30m",
+                        "resume": {
+                            "requirePolicyReevaluation": true,
+                            "requireBudgetReservation": true,
+                            "requireReleaseCompatibility": true,
+                            "requireOwnershipFence": true
+                        },
+                        "attemptFencing": true
+                    },
+                    "outputs": {"operation": "waitCI.operation"}
+                },
+                "waitCI": {
+                    "block": "async.await_callback@1",
+                    "config": {
+                        "timeout": "30m",
+                        "onTimeout": "continue_anyway",
+                        "idempotencyKey": "idem-op-ci-1",
+                        "resume": {
+                            "requirePolicyReevaluation": true,
+                            "requireBudgetReservation": true,
+                            "requireReleaseCompatibility": true,
+                            "requireOwnershipFence": true
+                        },
+                        "attemptFencing": true,
+                        "callback": {
+                            "required": true,
+                            "schema": "schemas/CICallback@1"
+                        }
+                    },
+                    "inputs": {"operation": "startCI.operation"},
+                    "outputs": {"wait": "$output.wait"}
+                }
+            }
+        }
+    });
+    let result = run_graph(&graph, &json!({}))?;
+
+    assert_eq!(result["status"], "failed");
+    let node_error_code = result["journal"]
+        .as_array()
+        .and_then(|journal| {
+            journal
+                .iter()
+                .find(|record| record["kind"].as_str() == Some("node_failed"))
+        })
+        .and_then(|record| record.pointer("/payload/code"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| "missing await callback node failure".to_owned())?;
+    assert_eq!(node_error_code, "async.await_callback.invalid_config");
+    Ok(())
+}
+
+#[test]
 fn rust_stdlib_async_start_operation_accepts_relative_timeout_duration() -> Result<(), String> {
     let graph = json!({
         "apiVersion": "graphblocks.ai/v1alpha3",

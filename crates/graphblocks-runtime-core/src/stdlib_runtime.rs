@@ -679,6 +679,14 @@ fn execute_async_await_callback(inputs: &Value, config: &Value) -> Result<Value,
         .or_else(|| config.get("on_timeout"))
         .and_then(Value::as_str)
         .unwrap_or("fail");
+    if !matches!(on_timeout, "fail" | "cancel" | "expire") {
+        return Err(BlockError::new(
+            "async.await_callback.invalid_config",
+            ErrorCategory::Configuration,
+            "async.await_callback@1 onTimeout must be one of fail, cancel, or expire",
+            false,
+        ));
+    }
     let timeout_ms = config
         .as_object()
         .map(|config| {
