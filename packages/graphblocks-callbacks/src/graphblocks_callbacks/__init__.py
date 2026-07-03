@@ -1275,6 +1275,8 @@ def verify_webhook_headers_hmac_sha256_keyring(
         raise ValueError("replay_window_seconds must be a non-negative integer")
     if not isinstance(secrets_by_key_id, Mapping):
         raise ValueError("secrets_by_key_id must be a mapping")
+    if not secrets_by_key_id:
+        raise ValueError("secrets_by_key_id must contain at least one key")
     try:
         normalized = _string_headers(headers)
     except ValueError:

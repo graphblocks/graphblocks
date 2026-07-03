@@ -704,7 +704,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - `graphblocks-callbacks` HMAC helpers now support optional `GraphBlocks-Key-Id` emission and
   keyring verification so receivers can accept current and previous signing secrets during
   rotation while rejecting unknown key IDs. Keyring verification validates replay-window policy
-  before key selection so invalid verifier configuration cannot be hidden by an unmatched key ID.
+  before key selection and rejects empty keyrings, so invalid verifier configuration cannot be
+  hidden by an unmatched key ID.
 - `graphblocks-callbacks` now includes an in-memory receiver replay guard that records callback
   delivery/idempotency identity, accepts first deliveries, treats exact repeats as duplicates, and
   flags mutated idempotency-key, delivery-id, or subscription-event replays as conflicts. Restored
