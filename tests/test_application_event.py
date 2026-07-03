@@ -10,6 +10,7 @@ from graphblocks import (
     APPLICATION_COMMAND_KINDS,
     APPLICATION_PROTOCOL_TCK_COMMAND_KINDS,
     APPLICATION_PROTOCOL_EVENT_KINDS,
+    APPLICATION_PROTOCOL_TCK_EVENT_KINDS,
     ApplicationEvent,
     ApplicationEventError,
     ApplicationEventKind,
@@ -302,6 +303,13 @@ def test_python_command_kinds_match_shared_application_protocol_tck() -> None:
     kind_sets = next(case for case in cases if case["name"] == "application_protocol_kind_sets_match_contract")
     assert APPLICATION_PROTOCOL_TCK_COMMAND_KINDS == tuple(kind_sets["expected"]["commands"])
     assert APPLICATION_COMMAND_KINDS == APPLICATION_PROTOCOL_TCK_COMMAND_KINDS
+
+
+def test_python_event_kinds_match_shared_application_protocol_tck() -> None:
+    cases = json.loads((ROOT / "tck/application-protocol/cases.json").read_text())
+    kind_sets = next(case for case in cases if case["name"] == "application_protocol_kind_sets_match_contract")
+    assert APPLICATION_PROTOCOL_TCK_EVENT_KINDS == tuple(kind_sets["expected"]["events"])
+    assert APPLICATION_PROTOCOL_EVENT_KINDS == APPLICATION_PROTOCOL_TCK_EVENT_KINDS
 
 
 def test_application_protocol_payloads_deep_copy_nested_values() -> None:

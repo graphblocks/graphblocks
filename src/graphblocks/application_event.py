@@ -267,6 +267,7 @@ APPLICATION_PROTOCOL_EVENT_KINDS: tuple[ApplicationProtocolEventKind, ...] = (
     "RunFailed",
     "RunCancelled",
 )
+APPLICATION_PROTOCOL_TCK_EVENT_KINDS: tuple[ApplicationProtocolEventKind, ...] = APPLICATION_PROTOCOL_EVENT_KINDS
 
 
 class ApplicationEventError(RuntimeError):
