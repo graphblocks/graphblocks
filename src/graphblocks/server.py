@@ -2514,7 +2514,7 @@ class GraphBlocksServerApp:
             else None
         )
         cursor_text = (
-            _validate_non_empty_string("ack request", "cursor", cursor)
+            _validate_run_cursor("ack request", "cursor", run_id, cursor)
             if cursor is not None
             else None
         )

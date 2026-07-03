@@ -4062,6 +4062,106 @@ def test_server_app_acknowledges_subscription_event_without_dropping_events() ->
     ]
 
 
+def test_server_app_rejects_ack_cursor_for_different_run() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-ack-cursor-scope-1"] = (
+        {
+            "kind": "RunSucceeded",
+            "metadata": {
+                "eventId": "evt-terminal",
+                "runId": "run-ack-cursor-scope-1",
+                "sequence": 2,
+            },
+            "payload": {},
+        },
+    )
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-ack-cursor-scope-1/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-ack-cursor-scope",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-ack-cursor-scope-1/subscriptions/sub-ack-cursor-scope/ack",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"cursor": "other-run:2"}).encode("utf-8"),
+            requested_at="2026-07-03T00:00:00Z",
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "ack request cursor must belong to run 'run-ack-cursor-scope-1'",
+    }
+    assert app.event_acks("run-ack-cursor-scope-1", "sub-ack-cursor-scope") == ()
+
+
+def test_server_app_rejects_malformed_ack_cursor() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-ack-cursor-format-1"] = (
+        {
+            "kind": "RunSucceeded",
+            "metadata": {
+                "eventId": "evt-terminal",
+                "runId": "run-ack-cursor-format-1",
+                "sequence": 2,
+            },
+            "payload": {},
+        },
+    )
+    app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-ack-cursor-format-1/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-ack-cursor-format",
+                    "eventFilter": {"types": ["RunSucceeded"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-ack-cursor-format-1/subscriptions/sub-ack-cursor-format/ack",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"cursor": "run-ack-cursor-format-1:not-a-sequence"}).encode("utf-8"),
+            requested_at="2026-07-03T00:00:00Z",
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "ack request cursor must use '<run_id>:<sequence>' with a non-negative integer sequence",
+    }
+    assert app.event_acks("run-ack-cursor-format-1", "sub-ack-cursor-format") == ()
+
+
 def test_server_app_deduplicates_repeated_subscription_ack_by_event_identity() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     graph = {
