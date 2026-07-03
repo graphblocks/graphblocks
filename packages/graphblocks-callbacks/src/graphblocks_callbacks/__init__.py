@@ -40,6 +40,13 @@ TERMINAL_DELIVERY_STATUSES = frozenset({
     "cancelled",
     "expired",
 })
+TERMINAL_FAILURE_DELIVERY_STATUSES = frozenset({"failed", "dead_lettered", "cancelled", "expired"})
+VALID_CALLBACK_FAILURE_POLICIES = frozenset({
+    "best_effort",
+    "retry_then_dead_letter",
+    "pause_run_on_failure",
+    "fail_run_on_failure",
+})
 VALID_CALLBACK_AUTH_KINDS = frozenset({"bearer", "hmac", "mtls", "oidc"})
 FORBIDDEN_WEBHOOK_HOSTS = frozenset({"localhost", "metadata.google.internal"})
 
@@ -618,6 +625,60 @@ class CallbackDeliveryProjection:
             dead_lettered_at=dead_lettered_at,
             reason=reason,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class CallbackDeliveryFailureAction:
+    action: str
+    run_id: str
+    delivery_id: str
+    reason: str
+    terminal_delivery: bool
+
+    def __post_init__(self) -> None:
+        _require_non_empty_string("action", self.action)
+        if self.action not in {"none", "pause_run", "fail_run"}:
+            raise ValueError("action must be none, pause_run, or fail_run")
+        _require_non_empty_string("run_id", self.run_id)
+        _require_non_empty_string("delivery_id", self.delivery_id)
+        _require_non_empty_string("reason", self.reason)
+        if not isinstance(self.terminal_delivery, bool):
+            raise ValueError("terminal_delivery must be a boolean")
+
+
+def evaluate_callback_delivery_failure_action(
+    delivery: CallbackDeliveryProjection,
+    failure_policy: str,
+) -> CallbackDeliveryFailureAction:
+    if not isinstance(delivery, CallbackDeliveryProjection):
+        raise ValueError("delivery must be a CallbackDeliveryProjection")
+    _require_non_empty_string("failure_policy", failure_policy)
+    if failure_policy not in VALID_CALLBACK_FAILURE_POLICIES:
+        raise ValueError(
+            "failure_policy must be best_effort, retry_then_dead_letter, pause_run_on_failure, or fail_run_on_failure"
+        )
+    reason = delivery.last_error or delivery.status
+    if delivery.status not in TERMINAL_FAILURE_DELIVERY_STATUSES:
+        return CallbackDeliveryFailureAction(
+            action="none",
+            run_id=delivery.run_id,
+            delivery_id=delivery.delivery_id,
+            reason="delivery_not_terminal",
+            terminal_delivery=False,
+        )
+    if failure_policy == "pause_run_on_failure":
+        action = "pause_run"
+    elif failure_policy == "fail_run_on_failure":
+        action = "fail_run"
+    else:
+        action = "none"
+    return CallbackDeliveryFailureAction(
+        action=action,
+        run_id=delivery.run_id,
+        delivery_id=delivery.delivery_id,
+        reason=reason,
+        terminal_delivery=True,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1329,6 +1390,7 @@ def verify_webhook_headers_hmac_sha256_keyring(
 
 __all__ = [
     "CallbackDeadLetterRecord",
+    "CallbackDeliveryFailureAction",
     "CallbackDeliveryProjection",
     "CallbackEndpointAuth",
     "CallbackEndpointRef",
@@ -1345,6 +1407,7 @@ __all__ = [
     "WebhookTargetSafety",
     "WebhookResponseDecision",
     "classify_webhook_response",
+    "evaluate_callback_delivery_failure_action",
     "evaluate_callback_resume",
     "project_callback_payload",
     "record_external_callback_receipt",

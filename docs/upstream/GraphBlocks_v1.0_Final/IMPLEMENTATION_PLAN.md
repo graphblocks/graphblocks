@@ -528,7 +528,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   before the delivery moved to dead letter.
 - Mandatory callback failure policies now map terminal delivery failures to explicit runtime
   actions: pause the run for `pause_run_on_failure`, fail the run for `fail_run_on_failure`, and
-  avoid run terminal actions for ordinary retry/dead-letter subscriptions.
+  avoid run terminal actions for ordinary retry/dead-letter subscriptions. `graphblocks-callbacks`
+  exposes this as a typed delivery-failure action decision so runtimes can apply the policy without
+  reinterpreting raw delivery status strings.
 - Ordered callback delivery now tracks the blocking delivery per subscription/run and prevents later
   events from scheduling until the prior delivery succeeds, is acknowledged, fails terminally,
   dead-letters, is cancelled, or expires.

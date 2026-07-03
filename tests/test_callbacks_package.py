@@ -18,6 +18,7 @@ if str(ROOT / "src") not in sys.path:
 from graphblocks import ArtifactRef, canonical_dumps, canonical_hash  # noqa: E402
 from graphblocks_callbacks import (  # noqa: E402
     CallbackDeadLetterRecord,
+    CallbackDeliveryFailureAction,
     CallbackEndpointAuth,
     CallbackEndpointRef,
     CallbackEnvelope,
@@ -32,6 +33,7 @@ from graphblocks_callbacks import (  # noqa: E402
     WebhookTargetSafety,
     classify_webhook_response,
     evaluate_callback_resume,
+    evaluate_callback_delivery_failure_action,
     project_callback_payload,
     record_external_callback_receipt,
     sign_webhook_hmac_sha256,
@@ -1198,6 +1200,67 @@ def test_callback_delivery_projection_applies_non_retryable_webhook_response() -
     assert failed.status == "failed"
     assert failed.delivered_at == "2026-07-02T00:00:00Z"
     assert failed.last_error == "non_retryable"
+
+
+def test_callback_delivery_failure_action_maps_mandatory_failure_policies() -> None:
+    failed = CallbackDeliveryProjection(
+        delivery_id="del_001",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        sequence=1042,
+        cursor="evt_1042",
+        attempt=2,
+        idempotency_key="sub_001:evt_1042",
+        status="failed",
+        delivered_at="2026-07-02T00:00:00Z",
+        last_error="receiver_error",
+    )
+
+    assert evaluate_callback_delivery_failure_action(failed, "pause_run_on_failure") == CallbackDeliveryFailureAction(
+        action="pause_run",
+        run_id="run_coding_001",
+        delivery_id="del_001",
+        reason="receiver_error",
+        terminal_delivery=True,
+    )
+    assert evaluate_callback_delivery_failure_action(failed, "fail_run_on_failure") == CallbackDeliveryFailureAction(
+        action="fail_run",
+        run_id="run_coding_001",
+        delivery_id="del_001",
+        reason="receiver_error",
+        terminal_delivery=True,
+    )
+    assert evaluate_callback_delivery_failure_action(failed, "retry_then_dead_letter") == CallbackDeliveryFailureAction(
+        action="none",
+        run_id="run_coding_001",
+        delivery_id="del_001",
+        reason="receiver_error",
+        terminal_delivery=True,
+    )
+
+
+def test_callback_delivery_failure_action_ignores_non_terminal_delivery() -> None:
+    pending = CallbackDeliveryProjection(
+        delivery_id="del_001",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        sequence=1042,
+        cursor="evt_1042",
+        attempt=2,
+        idempotency_key="sub_001:evt_1042",
+        status="pending",
+        last_error="receiver_error",
+    )
+
+    assert evaluate_callback_delivery_failure_action(pending, "fail_run_on_failure") == CallbackDeliveryFailureAction(
+        action="none",
+        run_id="run_coding_001",
+        delivery_id="del_001",
+        reason="delivery_not_terminal",
+        terminal_delivery=False,
+    )
 
 
 def test_callback_delivery_projection_stops_retry_after_max_attempts() -> None:
