@@ -542,6 +542,38 @@ impl RunWaitReason {
             message: Some(message),
         })
     }
+
+    pub fn protocol_value(&self) -> Value {
+        let mut value = Map::new();
+        value.insert("kind".to_owned(), Value::String(self.kind.as_str().to_owned()));
+        if let Some(node_id) = &self.node_id {
+            value.insert("nodeId".to_owned(), Value::String(node_id.clone()));
+        }
+        if let Some(operation_id) = &self.operation_id {
+            value.insert(
+                "operationId".to_owned(),
+                Value::String(operation_id.clone()),
+            );
+        }
+        if let Some(message) = &self.message {
+            value.insert("reason".to_owned(), Value::String(message.clone()));
+        }
+        Value::Object(value)
+    }
+}
+
+impl RunWaitReasonKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Input => "input",
+            Self::Approval => "approval",
+            Self::Review => "review",
+            Self::Callback => "callback",
+            Self::Budget => "budget",
+            Self::Policy => "policy",
+            Self::Operator => "operator",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -686,6 +718,20 @@ impl RunStatusSnapshot {
             completed_at_unix_ms,
             waiting_on,
             active_operations,
+        })
+    }
+
+    pub fn protocol_value(&self) -> Value {
+        json!({
+            "runId": self.run_id,
+            "state": self.state.as_str(),
+            "releaseId": self.release_id,
+            "lastCursor": self.last_cursor,
+            "startedAtUnixMs": self.started_at_unix_ms,
+            "updatedAtUnixMs": self.updated_at_unix_ms,
+            "completedAtUnixMs": self.completed_at_unix_ms,
+            "waitingOn": self.waiting_on.iter().map(RunWaitReason::protocol_value).collect::<Vec<_>>(),
+            "activeOperations": self.active_operations,
         })
     }
 }

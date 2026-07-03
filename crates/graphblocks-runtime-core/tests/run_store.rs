@@ -180,6 +180,48 @@ fn run_status_snapshot_requires_matching_wait_reason_for_paused_or_waiting_state
 }
 
 #[test]
+fn run_status_snapshot_projects_protocol_json() -> Result<(), RunStoreError> {
+    let mut store = InMemoryRunStore::new();
+    let record = store.create_run_with_provenance(
+        "sha256:graph",
+        json!({}),
+        RunDeploymentProvenance::new().with_release_digest("release-2026-07-03"),
+    );
+    let waiting = store.set_status(&record.run_id, RunStatus::WaitingCallback)?;
+    let snapshot = RunStatusSnapshot::from_run(
+        &waiting,
+        "evt_000070",
+        1_000,
+        1_500,
+        None,
+        vec![RunWaitReason::callback("op-ci-1", Some("waitCI"))?],
+        vec!["op-ci-1".to_owned()],
+    )?;
+
+    assert_eq!(
+        snapshot.protocol_value(),
+        json!({
+            "runId": "run-000001",
+            "state": "waiting_callback",
+            "releaseId": "release-2026-07-03",
+            "lastCursor": "evt_000070",
+            "startedAtUnixMs": 1_000,
+            "updatedAtUnixMs": 1_500,
+            "completedAtUnixMs": null,
+            "waitingOn": [
+                {
+                    "kind": "callback",
+                    "operationId": "op-ci-1",
+                    "nodeId": "waitCI"
+                }
+            ],
+            "activeOperations": ["op-ci-1"]
+        })
+    );
+    Ok(())
+}
+
+#[test]
 fn run_status_snapshot_validates_terminal_completion_and_nonterminal_completion() {
     let mut store = InMemoryRunStore::new();
     let record = store.create_run("sha256:graph", json!({}));
