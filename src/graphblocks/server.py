@@ -1627,6 +1627,17 @@ class GraphBlocksServerApp:
                         }
                         if submission.run_id is not None:
                             payload["runId"] = submission.run_id
+                            if submission.attempt_id is not None:
+                                payload["attemptId"] = submission.attempt_id
+                        return ServerResponse.json(409, payload)
+                    if previous.attempt_id != submission.attempt_id:
+                        payload = {
+                            "ok": False,
+                            "operationId": submission.operation_id,
+                            "error": "async callback operation is already bound to a different run attempt",
+                        }
+                        if submission.run_id is not None:
+                            payload["runId"] = submission.run_id
                         if submission.attempt_id is not None:
                             payload["attemptId"] = submission.attempt_id
                         return ServerResponse.json(409, payload)

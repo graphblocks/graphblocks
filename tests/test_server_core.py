@@ -1921,6 +1921,56 @@ def test_server_app_rejects_async_callback_scope_change_for_existing_operation()
     assert app.callback_submissions("op-ci-scoped-first")[0].run_id == "run-1"
 
 
+def test_server_app_rejects_unscoped_async_callback_attempt_change_for_existing_operation() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
+
+    first = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/op-ci-unscoped-attempt",
+            headers={"Authorization": "Bearer token-1", "GraphBlocks-Idempotency-Key": "idem-callback-attempt-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "callback_id": "cb-attempt-1",
+                    "attempt_id": "attempt-1",
+                    "payload": {"status": "completed"},
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-03T00:00:01Z",
+        )
+    )
+    changed_attempt = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/callbacks/op-ci-unscoped-attempt",
+            headers={"Authorization": "Bearer token-1", "GraphBlocks-Idempotency-Key": "idem-callback-attempt-2"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "callback_id": "cb-attempt-2",
+                    "attempt_id": "attempt-2",
+                    "payload": {"status": "completed"},
+                }
+            ).encode("utf-8"),
+            requested_at="2026-07-03T00:00:02Z",
+        )
+    )
+
+    assert first.status_code == 202
+    assert changed_attempt.status_code == 409
+    assert json.loads(changed_attempt.body.decode("utf-8")) == {
+        "ok": False,
+        "operationId": "op-ci-unscoped-attempt",
+        "attemptId": "attempt-2",
+        "error": "async callback operation is already bound to a different run attempt",
+    }
+    assert len(app.callback_submissions("op-ci-unscoped-attempt")) == 1
+    assert app.callback_submissions("op-ci-unscoped-attempt")[0].attempt_id == "attempt-1"
+
+
 def test_server_app_rejects_async_callback_for_terminal_declared_run() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("callback-relay")}))
     app._events_by_run_id["run-terminal-1"] = (

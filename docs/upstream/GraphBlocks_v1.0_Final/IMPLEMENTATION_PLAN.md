@@ -382,6 +382,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   callback-after-timeout/cancellation, concurrent duplicate callback racing, callback/cancel racing,
   whitespace-only operation registration and callback identity rejection at endpoint and store
   boundaries, and a deterministic fuzz-style idempotency sequence.
+- The Python server facade rejects callback scope changes and attempt changes for an existing async
+  operation before recording another callback, including unscoped callback submissions that still
+  carry an operation attempt fence.
 - Callback ingestion now enforces the specification's default `262144` byte payload limit before
   journaling or resume, and focused tests cover explicit small-limit rejection without operation
   state changes.
