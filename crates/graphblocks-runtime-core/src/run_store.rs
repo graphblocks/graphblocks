@@ -646,6 +646,12 @@ impl RunStatusSnapshot {
                 field: "active_operations",
             });
         }
+        if run.status.is_terminal() && (!waiting_on.is_empty() || !active_operations.is_empty()) {
+            return Err(RunStoreError::InvalidRunStatusSnapshot {
+                run_id: run.run_id.clone(),
+                reason: "terminal run cannot expose wait reasons or active operations",
+            });
+        }
         if run.status == RunStatus::WaitingCallback {
             let callback_operation_ids: Vec<&str> = waiting_on
                 .iter()

@@ -282,6 +282,31 @@ fn run_status_snapshot_validates_terminal_completion_and_nonterminal_completion(
 }
 
 #[test]
+fn terminal_run_status_snapshot_rejects_wait_reasons_and_active_operations()
+-> Result<(), RunStoreError> {
+    let mut store = InMemoryRunStore::new();
+    let record = store.create_run("sha256:graph", json!({}));
+    let cancelled = store.set_status(&record.run_id, RunStatus::Cancelled)?;
+
+    assert_eq!(
+        RunStatusSnapshot::from_run(
+            &cancelled,
+            "evt_3",
+            1_000,
+            1_400,
+            Some(1_500),
+            vec![RunWaitReason::callback("op-ci-1", Some("waitCI"))?],
+            vec!["op-ci-1".to_owned()],
+        ),
+        Err(RunStoreError::InvalidRunStatusSnapshot {
+            run_id: cancelled.run_id,
+            reason: "terminal run cannot expose wait reasons or active operations",
+        })
+    );
+    Ok(())
+}
+
+#[test]
 fn run_store_ownership_lease_fences_stale_coordinator_after_failover() -> Result<(), RunStoreError>
 {
     let mut store = InMemoryRunStore::new();
