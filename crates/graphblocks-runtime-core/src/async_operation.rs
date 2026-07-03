@@ -277,6 +277,18 @@ impl AsyncOperation {
                 reason: "waiting callback operations require an expiration".to_owned(),
             });
         }
+        if self.state == AsyncOperationState::Created && self.provider_operation_id.is_some() {
+            return Err(AsyncOperationError::InvalidOperation {
+                operation_id: self.operation_id.clone(),
+                reason: "created operations cannot have provider_operation_id".to_owned(),
+            });
+        }
+        if self.state != AsyncOperationState::Created && self.submitted_at_unix_ms.is_none() {
+            return Err(AsyncOperationError::InvalidOperation {
+                operation_id: self.operation_id.clone(),
+                reason: "non-created operations require submitted_at".to_owned(),
+            });
+        }
         if self.completed_at_unix_ms.is_none() {
             let terminal_state = match self.state {
                 AsyncOperationState::Completed => Some("completed"),

@@ -556,6 +556,64 @@ fn async_operation_validate_rejects_terminal_state_without_completed_at() {
 }
 
 #[test]
+fn async_operation_validate_rejects_inconsistent_state_timestamps_and_provider_identity() {
+    let mut created_with_provider = AsyncOperation::new(
+        "op-created",
+        "run-1",
+        "node-ci",
+        "attempt-1",
+        AsyncOperationKind::CiJob,
+        "sha256:resume-token",
+        "idem-op-created",
+        "schemas/CICallback@1",
+        1_000,
+    );
+    created_with_provider.provider_operation_id = Some("gha-run-1".to_owned());
+
+    assert_eq!(
+        created_with_provider.validate(),
+        Err(AsyncOperationError::InvalidOperation {
+            operation_id: "op-created".to_owned(),
+            reason: "created operations cannot have provider_operation_id".to_owned(),
+        })
+    );
+
+    for state in [
+        AsyncOperationState::Submitted,
+        AsyncOperationState::WaitingCallback,
+        AsyncOperationState::CallbackReceived,
+        AsyncOperationState::Polling,
+        AsyncOperationState::Resuming,
+        AsyncOperationState::Completed,
+        AsyncOperationState::Failed,
+        AsyncOperationState::Cancelled,
+        AsyncOperationState::Expired,
+    ] {
+        let mut operation = waiting_operation();
+        operation.state = state;
+        operation.submitted_at_unix_ms = None;
+        if matches!(
+            state,
+            AsyncOperationState::Completed
+                | AsyncOperationState::Failed
+                | AsyncOperationState::Cancelled
+                | AsyncOperationState::Expired
+        ) {
+            operation.completed_at_unix_ms = Some(2_000);
+        }
+
+        assert_eq!(
+            operation.validate(),
+            Err(AsyncOperationError::InvalidOperation {
+                operation_id: "op-1".to_owned(),
+                reason: "non-created operations require submitted_at".to_owned(),
+            }),
+            "state {state:?}"
+        );
+    }
+}
+
+#[test]
 fn async_operation_diagnostics_report_resume_without_policy_reevaluation() {
     let operation = waiting_operation().without_resume_policy_reevaluation();
 
