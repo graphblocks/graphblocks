@@ -1038,6 +1038,70 @@ fn webhook_target_rejects_oversized_signed_payload_before_delivery() {
 }
 
 #[test]
+fn webhook_delivery_worker_persists_oversized_payload_failure() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let queue = SqliteCallbackDeliveryQueue::open_in_memory().expect("queue opens");
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = ApplicationProtocolEvent::new(
+        ApplicationProtocolEventKind::ReviewRequested,
+        ApplicationProtocolEventMetadata {
+            event_id: "event-oversized".to_owned(),
+            protocol_version: "graphblocks.app.v1".to_owned(),
+            run_id: "run-1".to_owned(),
+            turn_id: None,
+            sequence: 11,
+            cursor: Some("cursor-11".to_owned()),
+            occurred_at_unix_ms: 1_011,
+        },
+        json!({"message": "x".repeat(512)}),
+    )
+    .expect("event is valid");
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    queue.upsert_delivery(delivery).expect("delivery persists");
+    let signing =
+        WebhookSigningConfig::hmac_sha256("secret://callbacks/ide-relay", b"top-secret", 300)
+            .expect("signing config is valid");
+    let target = WebhookDeliveryTarget::new(
+        "https://hooks.example.com/graphblocks/events",
+        &WebhookEgressPolicy::default_deny_internal(),
+    )
+    .expect("target is valid")
+    .with_max_payload_bytes(128)
+    .expect("payload limit is valid");
+    let worker = WebhookDeliveryWorker::new(&scheduler, &queue, &target, &signing);
+
+    let attempts = worker
+        .process_due(
+            2_000,
+            10,
+            |_| panic!("oversized payload must not be sent"),
+            |_| Some(event.clone()),
+        )
+        .expect("worker records oversized payload failure");
+    let stored = queue
+        .get_delivery("del_sub-1_event-oversized")
+        .expect("delivery loads")
+        .expect("delivery exists");
+
+    assert_eq!(attempts, 1);
+    assert_eq!(stored.status, CallbackDeliveryStatus::Failed);
+    assert_eq!(stored.next_retry_at_unix_ms, None);
+    assert!(
+        stored
+            .last_error
+            .as_deref()
+            .is_some_and(|error| error.contains("payload_too_large")),
+        "unexpected error: {:?}",
+        stored.last_error
+    );
+}
+
+#[test]
 fn webhook_target_default_payload_limit_allows_normal_signed_payload() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
     let subscription = subscription(

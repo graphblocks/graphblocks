@@ -564,7 +564,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - `SqliteCallbackDeliveryQueue` now persists pending and retry-scheduled callback deliveries across
   reopen, preserving delivery status, idempotency keys, sequence ordering, and retry due times.
 - `WebhookDeliveryWorker` now processes due durable callback deliveries with signed webhook
-  envelopes, an injected transport boundary, and persisted success/retry outcomes.
+  envelopes, an injected transport boundary, and persisted success/retry outcomes. If the signed
+  envelope exceeds the target payload limit, the worker records a terminal delivery failure with a
+  payload-limit diagnostic and does not call the transport.
 - `CallbackDeliveryProjection` now exposes a response-transition helper that applies classified
   webhook receiver responses to durable delivery state: 2xx marks delivered, 409 marks acknowledged,
   429/5xx schedule bounded retries, and retry exhaustion remains failed without over-scheduling.

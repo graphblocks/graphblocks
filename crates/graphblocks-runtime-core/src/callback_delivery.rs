@@ -1486,10 +1486,29 @@ impl<'a> WebhookDeliveryWorker<'a> {
                     event_id: delivery.event_id.clone(),
                 }
             })?;
-            let signed = self
-                .signing
-                .sign_delivery_for_target(self.target, &delivery, &event, now_unix_ms)
-                .map_err(|error| CallbackDeliveryError::WebhookSigning { error })?;
+            let signed = match self.signing.sign_delivery_for_target(
+                self.target,
+                &delivery,
+                &event,
+                now_unix_ms,
+            ) {
+                Ok(signed) => signed,
+                Err(WebhookSignatureError::PayloadTooLarge {
+                    max_payload_bytes,
+                    actual_payload_bytes,
+                }) => {
+                    let mut updated = delivery;
+                    updated.status = CallbackDeliveryStatus::Failed;
+                    updated.next_retry_at_unix_ms = None;
+                    updated.last_error = Some(format!(
+                        "payload_too_large:{actual_payload_bytes}>{max_payload_bytes}"
+                    ));
+                    self.queue.upsert_delivery(updated)?;
+                    attempts += 1;
+                    continue;
+                }
+                Err(error) => return Err(CallbackDeliveryError::WebhookSigning { error }),
+            };
             let attempt = WebhookDeliveryAttempt {
                 target: self.target.clone(),
                 delivery: delivery.clone(),
