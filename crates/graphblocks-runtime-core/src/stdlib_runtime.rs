@@ -679,6 +679,18 @@ fn execute_async_await_callback(inputs: &Value, config: &Value) -> Result<Value,
         .or_else(|| config.get("on_timeout"))
         .and_then(Value::as_str)
         .unwrap_or("fail");
+    let timeout_ms = config
+        .as_object()
+        .map(|config| {
+            optional_alias_duration_ms(
+                config,
+                &["timeoutMs", "timeout_ms", "timeout"],
+                "async.await_callback.invalid_config",
+                "async.await_callback@1 timeout must be a positive duration",
+            )
+        })
+        .transpose()?
+        .flatten();
 
     Ok(json!({
         "wait": {
@@ -686,6 +698,7 @@ fn execute_async_await_callback(inputs: &Value, config: &Value) -> Result<Value,
             "operation": operation,
             "checkpoint": checkpoint,
             "onTimeout": on_timeout,
+            "timeoutMs": timeout_ms,
         }
     }))
 }

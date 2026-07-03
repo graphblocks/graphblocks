@@ -459,7 +459,7 @@ fn rust_stdlib_async_blocks_start_and_await_callback_operation() -> Result<(), S
                     "config": {
                         "checkpoint": true,
                         "onTimeout": "fail",
-                        "timeoutMs": 800,
+                        "timeout": "800ms",
                         "idempotencyKey": "idem-op-ci-1",
                         "resume": {
                             "requirePolicyReevaluation": true,
@@ -490,6 +490,7 @@ fn rust_stdlib_async_blocks_start_and_await_callback_operation() -> Result<(), S
     assert_eq!(result["outputs"]["wait"]["operation"]["kind"], "ci_job");
     assert_eq!(result["outputs"]["wait"]["checkpoint"], true);
     assert_eq!(result["outputs"]["wait"]["onTimeout"], "fail");
+    assert_eq!(result["outputs"]["wait"]["timeoutMs"], 800);
     Ok(())
 }
 
