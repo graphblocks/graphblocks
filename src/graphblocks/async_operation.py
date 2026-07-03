@@ -239,6 +239,10 @@ class AsyncOperation:
             raise ValueError("async operation terminal state requires completed_at")
         if self.state == "callback_received" and self.completed_at is None:
             raise ValueError("async operation callback_received state requires completed_at")
+        if self.state in {"waiting_callback", "callback_received"} and self.callback_ref is None:
+            raise ValueError(f"async operation {self.state} state requires callback_ref")
+        if self.state == "polling" and self.polling_ref is None:
+            raise ValueError("async operation polling state requires polling_ref")
         if self.provider_operation_id is not None and self.submitted_at is None:
             raise ValueError("async operation provider_operation_id requires submitted_at")
         created_at = _parse_iso_datetime("async operation", "created_at", self.created_at)

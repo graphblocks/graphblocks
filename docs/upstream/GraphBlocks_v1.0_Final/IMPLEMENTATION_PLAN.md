@@ -442,7 +442,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   idempotency key, timestamps, transition helpers, and JSON projection coverage.
 - The Python `AsyncOperation` facade now enforces the amendment state machine: callbacks must move
   through `waiting_callback` before `callback_received`, polling must be explicit before terminal
-  poll results, and terminal operations cannot transition again.
+  poll results, terminal operations cannot transition again, and direct construction rejects
+  callback/polling wait states that omit their required callback or polling reference.
 - The Python `AsyncOperation` facade now validates state/timestamp consistency: non-created states
   require `submitted_at`, terminal states require `completed_at`, and `created` records cannot
   already carry submitted or completed timestamps.
