@@ -194,6 +194,29 @@ fn callback_subscription_rejects_unknown_scope_literals() {
 }
 
 #[test]
+fn callback_subscription_rejects_empty_typed_webhook_target_url() {
+    let result = CallbackSubscription::new_with_target(
+        "sub-empty-webhook",
+        "principal:ide",
+        "run",
+        "run-1",
+        EventFilter::new(),
+        CallbackDeliveryTarget::webhook(" "),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+        900,
+    );
+
+    assert_eq!(
+        result,
+        Err(
+            graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::EmptyField {
+                field: "url".to_owned(),
+            }
+        )
+    );
+}
+
+#[test]
 fn inactive_or_expired_subscription_does_not_schedule_delivery() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
     let mut paused = subscription(

@@ -389,6 +389,13 @@ impl CallbackSubscription {
                 field: "scope".to_owned(),
             });
         }
+        if let CallbackDeliveryTarget::Webhook { url } = &self.delivery_target {
+            if url.trim().is_empty() {
+                return Err(CallbackDeliveryError::EmptyField {
+                    field: "url".to_owned(),
+                });
+            }
+        }
         if self
             .replay_from_cursor
             .as_ref()
