@@ -618,6 +618,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Callback delivery queues can now recover persisted in-flight deliveries after worker restart by
   requeuing them as due pending deliveries with an explicit recovery reason, preserving at-least-once
   delivery semantics without claiming exactly-once delivery.
+- Callback delivery queues can now cancel pending deliveries for a revoked subscription while
+  leaving in-flight deliveries unchanged, matching the subscription-revocation rule that active
+  sends may finish but no queued work should be newly delivered.
 - Webhook egress policy now validates DNS-resolved addresses before transport, rejecting public
   hostnames that resolve to loopback, private, link-local, metadata, or otherwise forbidden
   addresses unless the host is explicitly allowlisted. Empty DNS resolution results are treated as

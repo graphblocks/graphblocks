@@ -785,6 +785,48 @@ fn sqlite_callback_delivery_queue_recovers_in_flight_delivery_after_worker_resta
 }
 
 #[test]
+fn sqlite_callback_delivery_queue_cancels_pending_subscription_deliveries() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let first = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let second = protocol_event("event-2", ApplicationProtocolEventKind::ReviewRequested, 2);
+    let pending = scheduler
+        .schedule_event(&subscription, &first)
+        .expect("first delivery schedules");
+    let mut in_flight = scheduler
+        .schedule_event(&subscription, &second)
+        .expect("second delivery schedules");
+    in_flight.status = CallbackDeliveryStatus::Delivering;
+    let queue = SqliteCallbackDeliveryQueue::open_in_memory().expect("queue opens");
+    queue
+        .upsert_delivery(pending)
+        .expect("pending delivery persists");
+    queue
+        .upsert_delivery(in_flight)
+        .expect("in-flight delivery persists");
+
+    let cancelled = queue
+        .cancel_pending_for_subscription("sub-1", "subscription_revoked")
+        .expect("pending deliveries cancel");
+    let pending = queue
+        .get_delivery("del_sub-1_event-1")
+        .expect("pending delivery loads")
+        .expect("pending delivery exists");
+    let in_flight = queue
+        .get_delivery("del_sub-1_event-2")
+        .expect("in-flight delivery loads")
+        .expect("in-flight delivery exists");
+
+    assert_eq!(cancelled, 1);
+    assert_eq!(pending.status, CallbackDeliveryStatus::Cancelled);
+    assert_eq!(pending.last_error.as_deref(), Some("subscription_revoked"));
+    assert_eq!(in_flight.status, CallbackDeliveryStatus::Delivering);
+}
+
+#[test]
 fn webhook_delivery_worker_signs_due_delivery_and_persists_success() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
     let queue = SqliteCallbackDeliveryQueue::open_in_memory().expect("queue opens");

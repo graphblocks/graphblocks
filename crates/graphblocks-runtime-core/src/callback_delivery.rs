@@ -884,6 +884,88 @@ impl SqliteCallbackDeliveryQueue {
 
         Ok(deliveries.len())
     }
+
+    pub fn cancel_pending_for_subscription(
+        &self,
+        subscription_id: &str,
+        reason: impl Into<String>,
+    ) -> Result<usize, CallbackDeliveryError> {
+        if subscription_id.trim().is_empty() {
+            return Err(CallbackDeliveryError::EmptyField {
+                field: "subscription_id".to_owned(),
+            });
+        }
+        let reason = reason.into();
+        if reason.trim().is_empty() {
+            return Err(CallbackDeliveryError::EmptyField {
+                field: "reason".to_owned(),
+            });
+        }
+
+        let connection = self
+            .connection
+            .lock()
+            .expect("sqlite callback delivery queue lock poisoned");
+        let mut deliveries = Vec::new();
+        {
+            let mut statement = connection
+                .prepare(
+                    "
+                    SELECT delivery_json
+                    FROM callback_deliveries
+                    WHERE status = ?
+                    ORDER BY sequence, delivery_id
+                    ",
+                )
+                .map_err(callback_storage_error)?;
+            let rows = statement
+                .query_map(
+                    params![callback_delivery_status_as_str(
+                        CallbackDeliveryStatus::Pending
+                    )],
+                    |row| row.get::<_, String>(0),
+                )
+                .map_err(callback_storage_error)?;
+            for row in rows {
+                let mut delivery = delivery_from_value(callback_parse_json(
+                    &row.map_err(callback_storage_error)?,
+                )?)?;
+                if delivery.subscription_id == subscription_id {
+                    delivery.status = CallbackDeliveryStatus::Cancelled;
+                    delivery.next_retry_at_unix_ms = None;
+                    delivery.last_error = Some(reason.clone());
+                    deliveries.push(delivery);
+                }
+            }
+        }
+
+        for delivery in &deliveries {
+            connection
+                .execute(
+                    "
+                    UPDATE callback_deliveries
+                    SET status = ?,
+                        next_retry_at_unix_ms = ?,
+                        sequence = ?,
+                        delivery_json = ?
+                    WHERE delivery_id = ?
+                    ",
+                    params![
+                        callback_delivery_status_as_str(delivery.status),
+                        optional_callback_u64_to_i64(
+                            delivery.next_retry_at_unix_ms,
+                            "callback delivery next retry",
+                        )?,
+                        callback_u64_to_i64(delivery.sequence, "callback delivery sequence")?,
+                        callback_storage_json(&delivery_to_value(delivery))?,
+                        &delivery.delivery_id,
+                    ],
+                )
+                .map_err(callback_storage_error)?;
+        }
+
+        Ok(deliveries.len())
+    }
 }
 
 impl SqliteCallbackDeadLetterStore {
