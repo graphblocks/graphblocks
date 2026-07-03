@@ -542,7 +542,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   predicates in addition to event type and terminal-event inclusion.
 - `SqliteCallbackDeadLetterStore` now persists callback dead-letter records across reopen and can
   redrive them while preserving original delivery identity, idempotency key, attempt history, and
-  audit-visible redrive count.
+  audit-visible redrive count. Repeated redrives append each redriven attempt to the durable
+  attempt history so operator redrive audits cannot reuse an attempt number after restart.
 - Callback dead-letter records can now project an operator redrive back into a pending delivery
   without minting a new application event identity, preserving the original delivery, event,
   subscription, run, cursor, and idempotency identifiers while advancing the delivery attempt.

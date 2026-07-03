@@ -572,6 +572,61 @@ fn sqlite_callback_dead_letter_store_redrives_after_reopen_and_updates_redrive_c
 }
 
 #[test]
+fn sqlite_callback_dead_letter_store_redrive_persists_attempt_history() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(1, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new(),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    );
+    let event = protocol_event("event-1", ApplicationProtocolEventKind::ReviewRequested, 1);
+    let delivery = scheduler
+        .schedule_event(&subscription, &event)
+        .expect("delivery schedules");
+    let dead_lettered =
+        scheduler.record_response(delivery, CallbackDeliveryResponse::ServerError(503), 1_000);
+    let dead_letter = CallbackDeadLetter::from_delivery(dead_lettered, 1_001)
+        .expect("dead-letter record is valid");
+    let path = sqlite_callback_dead_letter_path("redrive-history");
+
+    {
+        let store = SqliteCallbackDeadLetterStore::open(&path).expect("store opens");
+        store
+            .insert_dead_letter(dead_letter)
+            .expect("dead letter persists");
+        let first = store
+            .redrive_dead_letter(
+                &scheduler,
+                "del_sub-1_event-1",
+                "operator:alice",
+                "receiver recovered",
+                2_000,
+            )
+            .expect("first redrive succeeds");
+        assert_eq!(first.attempt, 2);
+    }
+
+    let store = SqliteCallbackDeadLetterStore::open(&path).expect("store reopens");
+    let second = store
+        .redrive_dead_letter(
+            &scheduler,
+            "del_sub-1_event-1",
+            "operator:bob",
+            "second redrive",
+            3_000,
+        )
+        .expect("second redrive succeeds");
+    let loaded = store
+        .get_dead_letter("del_sub-1_event-1")
+        .expect("dead letter loads")
+        .expect("dead letter remains for audit");
+
+    assert_eq!(second.attempt, 3);
+    assert_eq!(second.redrive_count, 2);
+    assert_eq!(loaded.redrive_count, 2);
+    assert_eq!(loaded.attempt_history, vec![1, 2, 3]);
+}
+
+#[test]
 fn sqlite_callback_delivery_queue_persists_pending_delivery_across_reopen() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
     let subscription = subscription(

@@ -899,6 +899,7 @@ impl SqliteCallbackDeadLetterStore {
         let redriven =
             scheduler.redrive_dead_letter(&dead_letter, operator, reason, redriven_at_unix_ms)?;
         dead_letter.redrive_count = redriven.redrive_count;
+        dead_letter.attempt_history.push(redriven.attempt);
         self.insert_dead_letter(dead_letter)?;
         Ok(redriven)
     }
