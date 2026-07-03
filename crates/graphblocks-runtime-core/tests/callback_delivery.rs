@@ -1086,6 +1086,45 @@ fn subscription_replay_schedules_matching_events_after_cursor() {
 }
 
 #[test]
+fn ordered_subscription_replay_schedules_only_first_unblocked_event() {
+    let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
+    let subscription = subscription(
+        EventFilter::new().with_types([ApplicationProtocolEventKind::JobProgress]),
+        CallbackFailurePolicy::RetryThenDeadLetter,
+    )
+    .with_ordered_delivery();
+    let mut log = ApplicationProtocolLog::new();
+    log.append(protocol_event(
+        "event-1",
+        ApplicationProtocolEventKind::JobProgress,
+        1,
+    ))
+    .expect("event appends");
+    log.append(protocol_event(
+        "event-2",
+        ApplicationProtocolEventKind::JobProgress,
+        2,
+    ))
+    .expect("event appends");
+    log.append(protocol_event(
+        "event-3",
+        ApplicationProtocolEventKind::JobProgress,
+        3,
+    ))
+    .expect("event appends");
+
+    let deliveries = scheduler.schedule_replay(&subscription, &log, 10);
+
+    assert_eq!(
+        deliveries
+            .iter()
+            .map(|delivery| delivery.event_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["event-1"]
+    );
+}
+
+#[test]
 fn subscription_replay_respects_limit_and_inactive_subscriptions() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
     let mut subscription = subscription(

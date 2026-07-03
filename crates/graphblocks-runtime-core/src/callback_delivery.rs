@@ -2010,10 +2010,24 @@ impl CallbackDeliveryScheduler {
             return Vec::new();
         }
 
-        log.replay_after(subscription.replay_from_cursor.as_deref(), limit)
-            .iter()
-            .filter_map(|event| self.schedule_event(subscription, event))
-            .collect()
+        let replayed = log.replay_after(subscription.replay_from_cursor.as_deref(), limit);
+        if !subscription.ordered_delivery {
+            return replayed
+                .iter()
+                .filter_map(|event| self.schedule_event(subscription, event))
+                .collect();
+        }
+
+        let mut ordering = OrderedDeliveryState::new();
+        let mut deliveries = Vec::new();
+        for event in replayed {
+            match self.schedule_ordered_event(subscription, &event, &mut ordering) {
+                Some(Some(delivery)) => deliveries.push(delivery),
+                Some(None) => break,
+                None => {}
+            }
+        }
+        deliveries
     }
 
     pub fn record_response(

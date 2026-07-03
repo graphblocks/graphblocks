@@ -533,7 +533,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   reinterpreting raw delivery status strings.
 - Ordered callback delivery now tracks the blocking delivery per subscription/run and prevents later
   events from scheduling until the prior delivery succeeds, is acknowledged, fails terminally,
-  dead-letters, is cancelled, or expires.
+  dead-letters, is cancelled, or expires. Replay scheduling uses the same ordered gate so retained
+  events for an ordered subscription enqueue only the first currently unblocked delivery for a run.
 - Webhook delivery envelopes now support required GraphBlocks headers, canonical JSON signing,
   `hmac-sha256` verification, replay-window enforcement, and header/body identity checks.
 - Callback envelopes now validate `occurred_at` and `delivered_at` as ISO-8601 timestamps and
