@@ -1049,8 +1049,11 @@ def record_external_callback_receipt(
     payload_projection: CallbackPayloadProjection,
     *,
     operation_id: str,
+    run_id: str | None = None,
     node_id: str,
     attempt_id: str,
+    release_id: str | None = None,
+    tenant_id: str | None = None,
     verified_by: str,
     policy_snapshot_id: str,
     received_at: str,
@@ -1070,6 +1073,18 @@ def record_external_callback_receipt(
         envelope.delivered_at,
     ):
         raise ValueError("received_at must not be before envelope delivered_at")
+    if run_id is not None:
+        _require_non_empty_string("run_id", run_id)
+        if run_id != envelope.run_id:
+            raise ValueError("run_id must match the envelope")
+    if release_id is not None:
+        _require_non_empty_string("release_id", release_id)
+        if release_id != envelope.release_id:
+            raise ValueError("release_id must match the envelope")
+    if tenant_id is not None:
+        _require_non_empty_string("tenant_id", tenant_id)
+        if tenant_id != envelope.tenant_id:
+            raise ValueError("tenant_id must match the envelope")
     callback_id = envelope.delivery_id if callback_id is None else callback_id
     idempotency_key = envelope.idempotency_key if idempotency_key is None else idempotency_key
     if idempotency_key != envelope.idempotency_key:
