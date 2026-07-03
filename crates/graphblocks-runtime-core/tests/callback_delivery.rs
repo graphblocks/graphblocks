@@ -148,6 +148,29 @@ fn subscription_filter_matches_visibility_node_operation_and_severity() {
 }
 
 #[test]
+fn callback_subscription_rejects_unknown_visibility_filter_literals() {
+    let result = CallbackSubscription::new(
+        "sub-visibility",
+        "principal:ide",
+        "run",
+        "run-1",
+        EventFilter::new().with_visibility(["private"]),
+        "webhook:ide-relay",
+        CallbackFailurePolicy::RetryThenDeadLetter,
+        900,
+    );
+
+    assert_eq!(
+        result,
+        Err(
+            graphblocks_runtime_core::callback_delivery::CallbackDeliveryError::EmptyField {
+                field: "event_filter.visibility".to_owned(),
+            }
+        )
+    );
+}
+
+#[test]
 fn inactive_or_expired_subscription_does_not_schedule_delivery() {
     let scheduler = CallbackDeliveryScheduler::new(CallbackRetryPolicy::new(3, 100, 1_000));
     let mut paused = subscription(

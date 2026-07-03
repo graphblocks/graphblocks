@@ -621,6 +621,9 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - Callback delivery queues can now cancel pending deliveries for a revoked subscription while
   leaving in-flight deliveries unchanged, matching the subscription-revocation rule that active
   sends may finish but no queued work should be newly delivered.
+- Runtime callback subscription construction now validates visibility filter literals against the
+  specification's `client`, `operator`, `internal`, and `audit_only` set before storing a
+  subscription projection.
 - Webhook egress policy now validates DNS-resolved addresses before transport, rejecting public
   hostnames that resolve to loopback, private, link-local, metadata, or otherwise forbidden
   addresses unless the host is explicitly allowlisted. Empty DNS resolution results are treated as

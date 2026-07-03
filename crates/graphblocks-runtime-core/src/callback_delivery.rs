@@ -390,6 +390,18 @@ impl CallbackSubscription {
                 field: "replay_from_cursor".to_owned(),
             });
         }
+        if self.event_filter.visibility.as_ref().is_some_and(|values| {
+            values.iter().any(|value| {
+                !matches!(
+                    value.as_str(),
+                    "client" | "operator" | "internal" | "audit_only"
+                )
+            })
+        }) {
+            return Err(CallbackDeliveryError::EmptyField {
+                field: "event_filter.visibility".to_owned(),
+            });
+        }
         Ok(())
     }
 
