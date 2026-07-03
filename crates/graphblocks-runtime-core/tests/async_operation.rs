@@ -1124,6 +1124,30 @@ fn callback_schema_failure_and_stale_attempt_do_not_resume_run() {
         "hmac:callback-endpoint-1",
         "policy-snapshot-1",
     );
+    let wrong_run = AsyncCallbackSubmission::new(
+        "cb-wrong-run",
+        "op-1",
+        "run-other",
+        "node-ci",
+        "attempt-1",
+        "idem-wrong-run",
+        json!({"status": "completed", "workflow_run_id": "gha-run-1"}),
+        1_201,
+        "hmac:callback-endpoint-1",
+        "policy-snapshot-1",
+    );
+    let wrong_node = AsyncCallbackSubmission::new(
+        "cb-wrong-node",
+        "op-1",
+        "run-1",
+        "node-other",
+        "attempt-1",
+        "idem-wrong-node",
+        json!({"status": "completed", "workflow_run_id": "gha-run-1"}),
+        1_202,
+        "hmac:callback-endpoint-1",
+        "policy-snapshot-1",
+    );
 
     assert_eq!(
         store.accept_callback(stale_attempt, &callback_schema_registry()),
@@ -1138,6 +1162,24 @@ fn callback_schema_failure_and_stale_attempt_do_not_resume_run() {
         Err(AsyncOperationError::CallbackSchemaInvalid { .. })
     ));
     assert_eq!(
+        store.accept_callback(wrong_run, &callback_schema_registry()),
+        Err(AsyncOperationError::OperationIdentityMismatch {
+            operation_id: "op-1".to_owned(),
+            field: "run_id".to_owned(),
+            expected: "run-1".to_owned(),
+            actual: "run-other".to_owned(),
+        })
+    );
+    assert_eq!(
+        store.accept_callback(wrong_node, &callback_schema_registry()),
+        Err(AsyncOperationError::OperationIdentityMismatch {
+            operation_id: "op-1".to_owned(),
+            field: "node_id".to_owned(),
+            expected: "node-ci".to_owned(),
+            actual: "node-other".to_owned(),
+        })
+    );
+    assert_eq!(
         store.operation_state("op-1"),
         Some(AsyncOperationState::WaitingCallback)
     );
@@ -1147,7 +1189,7 @@ fn callback_schema_failure_and_stale_attempt_do_not_resume_run() {
             .iter()
             .filter(|event| matches!(event, AsyncOperationEvent::ExternalCallbackRejected { .. }))
             .count(),
-        2
+        4
     );
     assert!(events.iter().any(|event| matches!(
         event,
@@ -1164,6 +1206,22 @@ fn callback_schema_failure_and_stale_attempt_do_not_resume_run() {
             reason,
             ..
         } if callback_id == "cb-invalid" && reason == "schema_invalid"
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AsyncOperationEvent::ExternalCallbackRejected {
+            callback_id,
+            reason,
+            ..
+        } if callback_id == "cb-wrong-run" && reason == "identity_mismatch:run_id"
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AsyncOperationEvent::ExternalCallbackRejected {
+            callback_id,
+            reason,
+            ..
+        } if callback_id == "cb-wrong-node" && reason == "identity_mismatch:node_id"
     )));
 }
 
@@ -2323,6 +2381,22 @@ fn sqlite_async_operation_store_persists_callback_rejection_events_across_reopen
             store.accept_callback(submission, &callback_schema_registry()),
             Err(AsyncOperationError::CallbackSchemaInvalid { .. })
         ));
+        let wrong_run = AsyncCallbackSubmission::new(
+            "cb-wrong-run",
+            "op-1",
+            "run-other",
+            "node-ci",
+            "attempt-1",
+            "idem-wrong-run",
+            json!({"status": "completed", "workflow_run_id": "gha-run-1"}),
+            1_201,
+            "hmac:callback-endpoint-1",
+            "policy-snapshot-1",
+        );
+        assert!(matches!(
+            store.accept_callback(wrong_run, &callback_schema_registry()),
+            Err(AsyncOperationError::OperationIdentityMismatch { .. })
+        ));
     }
 
     let store = SqliteAsyncOperationStore::open(&path)?;
@@ -2339,6 +2413,19 @@ fn sqlite_async_operation_store_persists_callback_rejection_events_across_reopen
         } if operation_id == "op-1"
             && callback_id == "cb-invalid"
             && reason == "schema_invalid"
+            && verified_by == "hmac:callback-endpoint-1"
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AsyncOperationEvent::ExternalCallbackRejected {
+            operation_id,
+            callback_id,
+            reason,
+            verified_by,
+            ..
+        } if operation_id == "op-1"
+            && callback_id == "cb-wrong-run"
+            && reason == "identity_mismatch:run_id"
             && verified_by == "hmac:callback-endpoint-1"
     )));
     assert_eq!(

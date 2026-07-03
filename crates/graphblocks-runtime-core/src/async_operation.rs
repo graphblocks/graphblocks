@@ -1674,6 +1674,17 @@ impl AsyncOperationStore {
             })?;
 
         if operation.run_id != submission.run_id {
+            inner
+                .events_by_operation
+                .entry(submission.operation_id.clone())
+                .or_default()
+                .push(AsyncOperationEvent::ExternalCallbackRejected {
+                    operation_id: operation.operation_id.clone(),
+                    callback_id: submission.callback_id,
+                    reason: "identity_mismatch:run_id".to_owned(),
+                    occurred_at_unix_ms: submission.received_at_unix_ms,
+                    verified_by: submission.verified_by,
+                });
             return Err(AsyncOperationError::OperationIdentityMismatch {
                 operation_id: operation.operation_id,
                 field: "run_id".to_owned(),
@@ -1682,6 +1693,17 @@ impl AsyncOperationStore {
             });
         }
         if operation.node_id != submission.node_id {
+            inner
+                .events_by_operation
+                .entry(submission.operation_id.clone())
+                .or_default()
+                .push(AsyncOperationEvent::ExternalCallbackRejected {
+                    operation_id: operation.operation_id.clone(),
+                    callback_id: submission.callback_id,
+                    reason: "identity_mismatch:node_id".to_owned(),
+                    occurred_at_unix_ms: submission.received_at_unix_ms,
+                    verified_by: submission.verified_by,
+                });
             return Err(AsyncOperationError::OperationIdentityMismatch {
                 operation_id: operation.operation_id,
                 field: "node_id".to_owned(),
