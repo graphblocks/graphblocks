@@ -368,7 +368,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - `ApplicationCommandKind` now includes the async run, attach/replay, subscription, callback
   registration, callback ingestion, pause/resume/expire, redrive, and dead-letter command names
   from the amendment. The Python application protocol facade exports the same command tuple and
-  accepts these commands in `ApplicationCommand`.
+  accepts these commands in `ApplicationCommand`; the shared application-protocol TCK now asserts
+  the amended command set.
 - `graphblocks-runtime-core::async_operation` now contains the in-memory `AsyncOperation` and
   callback ingestion state machine for the first TDD slice.
 - Implemented behavior covers operation registration, submitted-to-waiting journal entries,

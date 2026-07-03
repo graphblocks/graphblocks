@@ -16,7 +16,22 @@
         "SelectCandidate",
         "OpenArtifact",
         "SetBreakpoint",
-        "RequestSnapshot"
+        "RequestSnapshot",
+        "GetRunStatus",
+        "ListRuns",
+        "AttachToRun",
+        "DetachFromRun",
+        "SubscribeEvents",
+        "UnsubscribeEvents",
+        "AckEvent",
+        "RegisterCallback",
+        "RevokeCallback",
+        "SubmitAsyncCallback",
+        "PauseRun",
+        "ResumeRun",
+        "ExpireRun",
+        "RedriveCallbackDelivery",
+        "MoveCallbackToDeadLetter"
       ],
       "events": [
         "RunStarted",
