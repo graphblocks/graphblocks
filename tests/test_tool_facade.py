@@ -1378,6 +1378,15 @@ def test_before_tool_or_effect_policy_request_validates_boundary_inputs() -> Non
             {"output_policy_state": "policy_stopped"},
             "before-tool policy request output_policy_state must be a mapping",
         ),
+        (
+            {
+                "output_policy_state": {
+                    "response_id": "response-2",
+                    "response_status": "policy_stopped",
+                }
+            },
+            "before-tool policy request output_policy_state response_id does not match tool call response_id",
+        ),
     )
 
     for overrides, message in cases:
@@ -1438,6 +1447,15 @@ def test_tool_admission_validates_typed_boundary_inputs() -> None:
         (
             {"output_policy_state": "policy_stopped"},
             "tool admission output_policy_state must be a mapping",
+        ),
+        (
+            {
+                "output_policy_state": {
+                    "response_id": "response-2",
+                    "response_status": "policy_stopped",
+                }
+            },
+            "tool admission output_policy_state response_id does not match tool call response_id",
         ),
     )
 

@@ -1280,8 +1280,11 @@ def admit_tool_call(
         raise ToolAdmissionError("tool admission policy_decision must be a PolicyDecision")
     if call.status != "validated":
         raise ToolAdmissionError(f"tool call {call.tool_call_id} is {call.status}, not validated")
-    if output_policy_state is not None and not isinstance(output_policy_state, Mapping):
-        raise ToolAdmissionError("tool admission output_policy_state must be a mapping")
+    _validate_output_policy_state_for_response(
+        output_policy_state,
+        call.response_id,
+        owner="tool admission",
+    )
     if _output_policy_state_is_stopped(output_policy_state):
         raise ToolAdmissionError(
             f"response {call.response_id} is policy stopped; "
@@ -1382,6 +1385,23 @@ def _output_policy_state_is_stopped(output_policy_state: Mapping[str, object] | 
         if output_policy_state.get(field_name) == "policy_stopped":
             return True
     return False
+
+
+def _validate_output_policy_state_for_response(
+    output_policy_state: Mapping[str, object] | None,
+    response_id: str,
+    *,
+    owner: str,
+) -> None:
+    if output_policy_state is None:
+        return
+    if not isinstance(output_policy_state, Mapping):
+        raise ToolAdmissionError(f"{owner} output_policy_state must be a mapping")
+    state_response_id = output_policy_state.get("response_id")
+    if state_response_id is not None and state_response_id != response_id:
+        raise ToolAdmissionError(
+            f"{owner} output_policy_state response_id does not match tool call response_id"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -2260,8 +2280,11 @@ def build_before_tool_or_effect_policy_request(
         raise ToolAdmissionError("before-tool policy request resolved_tool must be a ResolvedTool")
     if not isinstance(principal, PrincipalRef):
         raise ToolAdmissionError("before-tool policy request principal must be a PrincipalRef")
-    if output_policy_state is not None and not isinstance(output_policy_state, Mapping):
-        raise ToolAdmissionError("before-tool policy request output_policy_state must be a mapping")
+    _validate_output_policy_state_for_response(
+        output_policy_state,
+        call.response_id,
+        owner="before-tool policy request",
+    )
     if call.resolved_tool_id != resolved_tool.resolved_tool_id:
         raise ToolAdmissionError("tool call references a different resolved tool")
     attributes: dict[str, object] = {
