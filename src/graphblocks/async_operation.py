@@ -243,6 +243,15 @@ class AsyncOperation:
             raise ValueError(f"async operation {self.state} state requires callback_ref")
         if self.state == "polling" and self.polling_ref is None:
             raise ValueError("async operation polling state requires polling_ref")
+        if (
+            self.state in {"waiting_callback", "callback_received", "polling"}
+            and self.expires_at is None
+            and self.infinite_wait_policy is None
+        ):
+            wait_kind = "polling" if self.state == "polling" else self.state
+            raise ValueError(
+                f"async operation {wait_kind} state requires expires_at or explicit infinite_wait_policy"
+            )
         if self.provider_operation_id is not None and self.submitted_at is None:
             raise ValueError("async operation provider_operation_id requires submitted_at")
         created_at = _parse_iso_datetime("async operation", "created_at", self.created_at)

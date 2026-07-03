@@ -423,6 +423,40 @@ def test_async_operation_rejects_direct_wait_states_without_required_refs() -> N
         )
 
 
+def test_async_operation_rejects_direct_unbounded_wait_states() -> None:
+    with raises_value_error("async operation waiting_callback state requires expires_at or explicit infinite_wait_policy"):
+        graphblocks.AsyncOperation(
+            operation_id="op-ci-1",
+            run_id="run-1",
+            node_id="startCI",
+            attempt_id="attempt-1",
+            kind="ci_job",
+            state="waiting_callback",
+            expected_schema="schemas/CICallback@1",
+            resume_token_hash="sha256:resume",
+            idempotency_key="idem-ci-1",
+            callback_ref="cbep-ci-1",
+            created_at="2026-07-02T00:00:00Z",
+            submitted_at="2026-07-02T00:00:01Z",
+        )
+
+    with raises_value_error("async operation polling state requires expires_at or explicit infinite_wait_policy"):
+        graphblocks.AsyncOperation(
+            operation_id="op-batch-1",
+            run_id="run-1",
+            node_id="waitBatch",
+            attempt_id="attempt-1",
+            kind="external_provider_job",
+            state="polling",
+            expected_schema="schemas/BatchResult@1",
+            resume_token_hash="sha256:resume",
+            idempotency_key="idem-batch-1",
+            polling_ref="poll-batch-1",
+            created_at="2026-07-02T00:00:00Z",
+            submitted_at="2026-07-02T00:00:01Z",
+        )
+
+
 def test_async_operation_rejects_provider_identity_before_submission() -> None:
     with raises_value_error("async operation provider_operation_id requires submitted_at"):
         graphblocks.AsyncOperation.created(
@@ -692,6 +726,7 @@ def run_direct() -> None:
         test_async_operation_rejects_invalid_refs_and_transitions,
         test_async_operation_rejects_state_timestamp_inconsistency,
         test_async_operation_rejects_direct_wait_states_without_required_refs,
+        test_async_operation_rejects_direct_unbounded_wait_states,
         test_async_operation_rejects_provider_identity_before_submission,
         test_async_operation_rejects_unbounded_callback_and_polling_waits,
         test_async_operation_accepts_explicit_infinite_wait_policy,
