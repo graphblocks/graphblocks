@@ -1,8 +1,14 @@
 # GraphBlocks
 
-GraphBlocks is a provider-neutral contract toolkit for authoring and validating
-GraphBlocks graph, binding, application, plugin, package, deployment, policy,
-runtime, and conformance documents.
+Don't reinvent wheel.
+
+GraphBlocks is a provider-neutral contract layer for AI applications. It gives
+teams a shared way to describe graphs, bindings, packages, policies, runtime
+behavior, and conformance without forcing one model provider, vector database,
+document parser, server framework, or deployment platform.
+
+Use the tools you already trust. Use GraphBlocks to make their contracts
+portable, testable, and governable.
 
 This repository starts from the upstream v1.0 architecture bundle in
 `docs/upstream/GraphBlocks_v1.0_Final`. The implementation follows the
@@ -16,6 +22,20 @@ The Rust workspace owns the normative compiler/runtime mechanics:
 binding crate `graphblocks-python`. Python `graphblocks-core` is the
 authoring/schema facade and must match the Rust compiler TCK results and
 canonical hashes.
+
+## Documentation
+
+- [Documentation overview](docs/README.md)
+- [Getting started](docs/getting-started.md)
+- [Core concepts](docs/concepts.md)
+- [Runtime model](docs/runtime.md)
+- [Package model](docs/packages.md)
+- [Conformance and TCK](docs/conformance.md)
+
+The upstream architecture bundle is preserved under
+`docs/upstream/GraphBlocks_v1.0_Final` as a reference source. The top-level
+documentation is the maintainer-facing and user-facing guide for this
+implementation.
 
 ## Install for development
 
