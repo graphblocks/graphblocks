@@ -2306,6 +2306,15 @@ def test_server_app_rejects_oversized_async_callback_payload_before_storage() ->
         "error": "async callback payload exceeds max payload bytes",
     }
     assert app.callback_submissions("op-ci-large") == ()
+    assert app.async_callback_rejections("op-ci-large") == (
+        {
+            "operationId": "op-ci-large",
+            "callbackId": "cb-large",
+            "idempotencyKey": "idem-callback-large",
+            "reason": "payload_too_large",
+            "receivedAt": "2026-07-03T00:00:00Z",
+        },
+    )
 
 
 def test_server_app_serves_stored_run_events_after_invocation() -> None:

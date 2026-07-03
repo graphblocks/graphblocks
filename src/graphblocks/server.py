@@ -816,6 +816,22 @@ class ServerAsyncCallbackRejection:
         )
 
     @classmethod
+    def payload_too_large(
+        cls,
+        submission: ServerAsyncCallbackSubmission,
+    ) -> ServerAsyncCallbackRejection:
+        return cls(
+            operation_id=submission.operation_id,
+            callback_id=submission.callback_id,
+            idempotency_key=submission.idempotency_key,
+            run_id=submission.run_id,
+            node_id=submission.node_id,
+            attempt_id=submission.attempt_id,
+            reason="payload_too_large",
+            received_at=submission.received_at,
+        )
+
+    @classmethod
     def stale_attempt(
         cls,
         submission: ServerAsyncCallbackSubmission,
@@ -1713,6 +1729,11 @@ class GraphBlocksServerApp:
                 )
                 payload_size_bytes = len(canonical_dumps(_thaw_json_value(submission.payload)).encode("utf-8"))
                 if payload_size_bytes > self.max_async_callback_payload_bytes:
+                    rejection = ServerAsyncCallbackRejection.payload_too_large(submission)
+                    self._async_callback_rejections_by_operation_id[submission.operation_id] = (
+                        *self._async_callback_rejections_by_operation_id.get(submission.operation_id, ()),
+                        rejection,
+                    )
                     return ServerResponse.json(
                         413,
                         {
