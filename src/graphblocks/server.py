@@ -100,6 +100,19 @@ def _validate_iso_datetime(owner: str, field_name: str, value: object) -> str:
     return timestamp
 
 
+def _validate_run_cursor(owner: str, field_name: str, run_id: str, value: object) -> str:
+    cursor = _validate_non_empty_string(owner, field_name, value)
+    prefix = f"{run_id}:"
+    if not cursor.startswith(prefix):
+        raise ValueError(f"{owner} {field_name} must belong to run {run_id!r}")
+    sequence_text = cursor[len(prefix) :]
+    if not sequence_text.isdecimal():
+        raise ValueError(
+            f"{owner} {field_name} must use '<run_id>:<sequence>' with a non-negative integer sequence"
+        )
+    return cursor
+
+
 def _validate_callback_subscription_scope(value: object) -> str:
     scope = _validate_non_empty_string("server callback registration", "scope", value)
     if scope not in VALID_CALLBACK_SUBSCRIPTION_SCOPES:
@@ -2137,9 +2150,7 @@ class GraphBlocksServerApp:
     ) -> ServerResponse:
         last_cursor = payload.get("last_cursor", payload.get("lastCursor"))
         if last_cursor is not None:
-            last_cursor = _validate_non_empty_string("attach request", "last_cursor", last_cursor)
-            if not last_cursor.startswith(f"{run_id}:"):
-                raise ValueError(f"attach request last_cursor must belong to run {run_id!r}")
+            last_cursor = _validate_run_cursor("attach request", "last_cursor", run_id, last_cursor)
         capabilities = payload.get("capabilities", ())
         if capabilities is None:
             capabilities = ()
@@ -2283,10 +2294,12 @@ class GraphBlocksServerApp:
             and not isinstance(sequence, bool)
         }
         if subscription.replay_from_cursor is not None:
-            if not subscription.replay_from_cursor.startswith(f"{subscription.run_id}:"):
-                raise ValueError(
-                    f"server event subscription replay_from_cursor must belong to run {subscription.run_id!r}"
-                )
+            _validate_run_cursor(
+                "server event subscription",
+                "replay_from_cursor",
+                subscription.run_id,
+                subscription.replay_from_cursor,
+            )
             if subscription.replay_from_cursor == f"{subscription.run_id}:0":
                 replay_after_sequence = 0
             elif subscription.replay_from_cursor not in sequence_by_cursor:

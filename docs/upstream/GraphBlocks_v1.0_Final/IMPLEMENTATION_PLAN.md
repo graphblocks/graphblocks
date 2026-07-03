@@ -586,7 +586,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
 - `graphblocks-server` now exposes the framework-neutral `POST /runs/{run_id}/attach`
   `AttachToRun` route, replaying stored events after a supplied cursor and returning explicit
   `CursorExpired` recovery metadata when the requested cursor is no longer retained. Attach cursors
-  must belong to the target run; wrong-run cursors are rejected before retention lookup.
+  must belong to the target run and use a non-negative integer sequence; malformed or wrong-run
+  cursors are rejected before retention lookup.
 - `graphblocks-server` now exposes the framework-neutral `POST /runs/{run_id}/detach`
   `DetachFromRun` route, recording client detach projections while preserving the authoritative
   event stream and current run status. Stored detach projection records are immutable snapshots,
@@ -603,11 +604,12 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   snapshots and are thawed back to plain JSON for response payloads.
   Run-scoped subscription ids are single-assignment and cannot overwrite an existing active or
   revoked projection. Subscription replay cursors must belong to the subscribed run before retention
-  lookup. Subscription and callback registration projections validate the spec failure policy
-  literals before storage, and ordered delivery requests are rejected unless the target kind can
-  preserve run ordering. Mandatory delivery projections cannot use best-effort failure handling
-  unless an explicit dead-letter configuration is supplied. Route validation rejects callback
-  delivery projections that mark themselves as a source of truth. Subscription creation timestamps
+  lookup and must use a non-negative integer sequence. Subscription and callback registration
+  projections validate the spec failure policy literals before storage, and ordered delivery
+  requests are rejected unless the target kind can preserve run ordering. Mandatory delivery
+  projections cannot use best-effort failure handling unless an explicit dead-letter configuration
+  is supplied. Route validation rejects callback delivery projections that mark themselves as a
+  source of truth. Subscription creation timestamps
   are validated as ISO datetimes before storage.
 - `graphblocks-server` now exposes the framework-neutral
   `DELETE /runs/{run_id}/subscriptions/{subscription_id}` `UnsubscribeEvents` route, revoking

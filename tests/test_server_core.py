@@ -2265,6 +2265,34 @@ def test_server_app_rejects_attach_cursor_for_different_run() -> None:
     }
 
 
+def test_server_app_rejects_malformed_attach_cursor() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-attach-cursor-format-1"] = (
+        {
+            "kind": "RunStarted",
+            "metadata": {"eventId": "evt-start", "sequence": 1},
+            "payload": {},
+        },
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-attach-cursor-format-1/attach",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps({"lastCursor": "run-attach-cursor-format-1:not-a-sequence"}).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": "attach request last_cursor must use '<run_id>:<sequence>' with a non-negative integer sequence",
+    }
+
+
 def test_server_app_detaches_from_run_without_cancelling_or_dropping_events() -> None:
     app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
     graph = {
@@ -3158,6 +3186,45 @@ def test_server_app_rejects_subscription_replay_cursor_for_different_run() -> No
         "error": "server event subscription replay_from_cursor must belong to run 'run-subscribe-cursor-scope-1'",
     }
     assert app.subscriptions("run-subscribe-cursor-scope-1") == ()
+
+
+def test_server_app_rejects_malformed_subscription_replay_cursor() -> None:
+    app = GraphBlocksServerApp(auth_hook=StaticBearerAuthHook({"token-1": PrincipalRef("user-1")}))
+    app._events_by_run_id["run-subscribe-cursor-format-1"] = (
+        {
+            "kind": "RunStarted",
+            "metadata": {"eventId": "evt-start", "sequence": 1},
+            "payload": {},
+        },
+    )
+
+    response = app.handle(
+        ServerRequest(
+            method="POST",
+            path="/runs/run-subscribe-cursor-format-1/subscriptions",
+            headers={"Authorization": "Bearer token-1"},
+            query={},
+            cookies={},
+            body=json.dumps(
+                {
+                    "subscriptionId": "sub-cursor-format",
+                    "eventFilter": {"types": ["RunStarted"]},
+                    "delivery": {"kind": "local_callback", "callback_name": "ide"},
+                    "replayFromCursor": "run-subscribe-cursor-format-1:not-a-sequence",
+                }
+            ).encode("utf-8"),
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body.decode("utf-8")) == {
+        "ok": False,
+        "error": (
+            "server event subscription replay_from_cursor must use '<run_id>:<sequence>' "
+            "with a non-negative integer sequence"
+        ),
+    }
+    assert app.subscriptions("run-subscribe-cursor-format-1") == ()
 
 
 def test_server_app_rejects_subscription_without_delivery_kind() -> None:
