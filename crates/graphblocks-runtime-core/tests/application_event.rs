@@ -1165,6 +1165,32 @@ fn application_event_stream_state_rejects_payload_response_id_mismatch_after_cut
 }
 
 #[test]
+fn application_event_stream_state_rejects_output_cutoff_payload_response_id_mismatch() {
+    let mut state = ApplicationEventStreamState::default();
+    let forged_cutoff = ApplicationEvent::new(
+        ApplicationEventKind::OutputCutoff,
+        metadata(),
+        json!({
+            "stream_id": "stream-1",
+            "response_id": "response-2",
+            "turn_id": "turn-1",
+            "last_generated_sequence": 1,
+            "last_policy_accepted_sequence": 0,
+            "last_client_delivered_sequence": 0,
+            "terminal_reason": "policy_denied",
+            "draft_disposition": "retract",
+            "durable_result": "none",
+            "policy_decision_id": "decision-abort",
+            "occurred_at_unix_ms": 1_700_020,
+        }),
+    )
+    .expect("raw forged cutoff envelope is valid");
+
+    assert_eq!(state.accept(forged_cutoff), None);
+    assert!(state.accepted_events().is_empty());
+}
+
+#[test]
 fn tool_result_events_map_to_standard_tool_application_events() {
     let completed = ToolResult::completed("call-1", [ContentPart::text("done")], 1_000, 1_050);
     let failed = ToolResult::failed(

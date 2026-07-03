@@ -741,11 +741,13 @@ impl ApplicationEventStreamState {
         if event.kind == ApplicationEventKind::OutputCutoff {
             let cutoff = {
                 let payload = &event.payload;
-                let response_id = payload
-                    .get("response_id")
-                    .and_then(Value::as_str)
-                    .unwrap_or(&event.metadata.response_id)
-                    .to_owned();
+                if let Some(payload_response_id) =
+                    payload.get("response_id").and_then(Value::as_str)
+                    && payload_response_id != event.metadata.response_id
+                {
+                    return None;
+                }
+                let response_id = event.metadata.response_id.clone();
                 if self.cutoffs.contains_key(&response_id) {
                     return None;
                 }
