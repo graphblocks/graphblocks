@@ -478,6 +478,18 @@ pub struct RunWaitReason {
 }
 
 impl RunWaitReason {
+    pub fn input(message: impl Into<String>) -> Result<Self, RunStoreError> {
+        Self::message(RunWaitReasonKind::Input, message)
+    }
+
+    pub fn approval(message: impl Into<String>) -> Result<Self, RunStoreError> {
+        Self::message(RunWaitReasonKind::Approval, message)
+    }
+
+    pub fn review(message: impl Into<String>) -> Result<Self, RunStoreError> {
+        Self::message(RunWaitReasonKind::Review, message)
+    }
+
     pub fn callback(
         operation_id: impl Into<String>,
         node_id: Option<impl Into<String>>,
@@ -500,6 +512,34 @@ impl RunWaitReason {
             node_id,
             operation_id: Some(operation_id),
             message: None,
+        })
+    }
+
+    pub fn budget(message: impl Into<String>) -> Result<Self, RunStoreError> {
+        Self::message(RunWaitReasonKind::Budget, message)
+    }
+
+    pub fn policy(message: impl Into<String>) -> Result<Self, RunStoreError> {
+        Self::message(RunWaitReasonKind::Policy, message)
+    }
+
+    pub fn operator(message: impl Into<String>) -> Result<Self, RunStoreError> {
+        Self::message(RunWaitReasonKind::Operator, message)
+    }
+
+    fn message(
+        kind: RunWaitReasonKind,
+        message: impl Into<String>,
+    ) -> Result<Self, RunStoreError> {
+        let message = message.into();
+        if message.trim().is_empty() {
+            return Err(RunStoreError::EmptyField { field: "message" });
+        }
+        Ok(Self {
+            kind,
+            node_id: None,
+            operation_id: None,
+            message: Some(message),
         })
     }
 }
@@ -593,6 +633,39 @@ impl RunStatusSnapshot {
                     reason: "waiting_callback operation must be active",
                 });
             }
+        }
+        if let Some((kind, reason)) = match run.status {
+            RunStatus::WaitingInput => Some((
+                RunWaitReasonKind::Input,
+                "waiting_input requires input wait reason",
+            )),
+            RunStatus::WaitingApproval => Some((
+                RunWaitReasonKind::Approval,
+                "waiting_approval requires approval wait reason",
+            )),
+            RunStatus::WaitingReview => Some((
+                RunWaitReasonKind::Review,
+                "waiting_review requires review wait reason",
+            )),
+            RunStatus::PausedBudget => Some((
+                RunWaitReasonKind::Budget,
+                "paused_budget requires budget wait reason",
+            )),
+            RunStatus::PausedPolicy => Some((
+                RunWaitReasonKind::Policy,
+                "paused_policy requires policy wait reason",
+            )),
+            RunStatus::PausedOperator => Some((
+                RunWaitReasonKind::Operator,
+                "paused_operator requires operator wait reason",
+            )),
+            _ => None,
+        } && !waiting_on.iter().any(|wait_reason| wait_reason.kind == kind)
+        {
+            return Err(RunStoreError::InvalidRunStatusSnapshot {
+                run_id: run.run_id.clone(),
+                reason,
+            });
         }
 
         let mut active_operations = active_operations;

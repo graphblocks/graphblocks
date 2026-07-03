@@ -137,6 +137,49 @@ fn waiting_callback_snapshot_requires_callback_wait_metadata() -> Result<(), Run
 }
 
 #[test]
+fn run_status_snapshot_requires_matching_wait_reason_for_paused_or_waiting_states()
+    -> Result<(), RunStoreError>
+{
+    let mut store = InMemoryRunStore::new();
+    let approval_record = store.create_run("sha256:approval", json!({}));
+    let waiting_approval =
+        store.set_status(&approval_record.run_id, RunStatus::WaitingApproval)?;
+
+    assert_eq!(
+        RunStatusSnapshot::from_run(
+            &waiting_approval,
+            "evt_000050",
+            1_000,
+            1_500,
+            None,
+            vec![],
+            vec![],
+        ),
+        Err(RunStoreError::InvalidRunStatusSnapshot {
+            run_id: waiting_approval.run_id,
+            reason: "waiting_approval requires approval wait reason",
+        })
+    );
+
+    let budget_record = store.create_run("sha256:budget", json!({}));
+    let paused_budget = store.set_status(&budget_record.run_id, RunStatus::PausedBudget)?;
+    let snapshot = RunStatusSnapshot::from_run(
+        &paused_budget,
+        "evt_000060",
+        2_000,
+        2_500,
+        None,
+        vec![RunWaitReason::budget("quota_exhausted")?],
+        vec![],
+    )?;
+
+    assert_eq!(snapshot.state, RunStatus::PausedBudget);
+    assert_eq!(snapshot.waiting_on.len(), 1);
+    assert_eq!(snapshot.waiting_on[0].message.as_deref(), Some("quota_exhausted"));
+    Ok(())
+}
+
+#[test]
 fn run_status_snapshot_validates_terminal_completion_and_nonterminal_completion() {
     let mut store = InMemoryRunStore::new();
     let record = store.create_run("sha256:graph", json!({}));
