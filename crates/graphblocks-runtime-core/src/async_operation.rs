@@ -1781,13 +1781,24 @@ impl AsyncOperationStore {
             });
         }
 
-        let operation = inner
-            .operations
-            .get(&submission.operation_id)
-            .cloned()
-            .ok_or_else(|| AsyncOperationError::OperationNotFound {
-                operation_id: submission.operation_id.clone(),
-            })?;
+        let operation = if let Some(operation) = inner.operations.get(&submission.operation_id) {
+            operation.clone()
+        } else {
+            inner
+                .events_by_operation
+                .entry(submission.operation_id.clone())
+                .or_default()
+                .push(AsyncOperationEvent::ExternalCallbackRejected {
+                    operation_id: submission.operation_id.clone(),
+                    callback_id: submission.callback_id,
+                    reason: "operation_not_found".to_owned(),
+                    occurred_at_unix_ms: submission.received_at_unix_ms,
+                    verified_by: submission.verified_by,
+                });
+            return Err(AsyncOperationError::OperationNotFound {
+                operation_id: submission.operation_id,
+            });
+        };
 
         if operation.run_id != submission.run_id {
             inner

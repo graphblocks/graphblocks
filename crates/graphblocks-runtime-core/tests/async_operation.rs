@@ -911,6 +911,46 @@ fn callback_for_non_waiting_operation_is_rejected_with_audit_event() {
 }
 
 #[test]
+fn callback_for_unknown_operation_is_rejected_with_audit_event() {
+    let store = AsyncOperationStore::new();
+    let submission = AsyncCallbackSubmission::new(
+        "cb-unknown-operation",
+        "op-missing",
+        "run-1",
+        "node-ci",
+        "attempt-1",
+        "idem-unknown-operation",
+        json!({"status": "completed", "workflow_run_id": "gha-run-1"}),
+        1_200,
+        "hmac:callback-endpoint-1",
+        "policy-snapshot-1",
+    );
+
+    assert_eq!(
+        store.accept_callback(submission, &callback_schema_registry()),
+        Err(AsyncOperationError::OperationNotFound {
+            operation_id: "op-missing".to_owned(),
+        })
+    );
+    assert!(store
+        .events_for_operation("op-missing")
+        .iter()
+        .any(|event| matches!(
+            event,
+            AsyncOperationEvent::ExternalCallbackRejected {
+                operation_id,
+                callback_id,
+                reason,
+                verified_by,
+                ..
+            } if operation_id == "op-missing"
+                && callback_id == "cb-unknown-operation"
+                && reason == "operation_not_found"
+                && verified_by == "hmac:callback-endpoint-1"
+        )));
+}
+
+#[test]
 fn early_callback_is_quarantined_until_operation_registers() {
     let store = AsyncOperationStore::new();
     let quarantined = store
