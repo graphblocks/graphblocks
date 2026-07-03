@@ -1575,6 +1575,29 @@ fn callback_diagnostics_map_unsafe_endpoint_to_compiler_code() {
 }
 
 #[test]
+fn callback_diagnostics_map_userinfo_webhook_url_to_compiler_code() {
+    let policy = WebhookEgressPolicy::default_deny_internal();
+    let endpoint_error = WebhookDeliveryTarget::new(
+        "https://token@hooks.example.com/events",
+        &policy,
+    )
+    .expect_err("userinfo-bearing webhook target is unsafe");
+
+    let diagnostic = CallbackConfigurationDiagnostic::webhook_endpoint_error(
+        "https://token@hooks.example.com/events",
+        &endpoint_error,
+    )
+    .expect("userinfo-bearing endpoint maps to a diagnostic");
+
+    assert_eq!(diagnostic.code, "GB6011");
+    assert_eq!(diagnostic.field, "delivery.url");
+    assert!(
+        diagnostic.message.contains("userinfo"),
+        "diagnostic should identify the unsafe userinfo component"
+    );
+}
+
+#[test]
 fn callback_diagnostics_report_impossible_ordering_for_unordered_targets() {
     let subscription = CallbackSubscription::new(
         "sub-local",

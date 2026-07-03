@@ -1056,6 +1056,7 @@ pub enum WebhookEndpointError {
     EmptyUrl,
     MalformedUrl,
     MissingHost,
+    UserInfoUnsupported { host: String },
     UnsupportedScheme { scheme: String },
     UnsafeEndpoint { host: String },
     UnsafeResolvedAddress { host: String, address: IpAddr },
@@ -1177,6 +1178,13 @@ impl CallbackConfigurationDiagnostic {
                 code: "GB6011",
                 field: "delivery.url",
                 message: format!("callback webhook target {url} uses forbidden scheme {scheme}"),
+            }),
+            WebhookEndpointError::UserInfoUnsupported { host } => Some(Self {
+                code: "GB6011",
+                field: "delivery.url",
+                message: format!(
+                    "callback webhook target {url} contains unsupported userinfo before host {host}"
+                ),
             }),
             _ => None,
         }
@@ -1623,8 +1631,20 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
 }
 
 fn parse_authority_host(authority: &str) -> Result<String, WebhookEndpointError> {
-    if authority.contains('@') {
-        return Err(WebhookEndpointError::MalformedUrl);
+    if let Some((_userinfo, host_port)) = authority.rsplit_once('@') {
+        let host = if host_port.is_empty() {
+            String::new()
+        } else if let Some(rest) = host_port.strip_prefix('[') {
+            rest.split_once(']')
+                .map(|(host, _suffix)| normalize_host(host))
+                .unwrap_or_else(|| host_port.to_owned())
+        } else {
+            host_port
+                .split_once(':')
+                .map_or(host_port, |(host, _port)| host)
+                .to_owned()
+        };
+        return Err(WebhookEndpointError::UserInfoUnsupported { host });
     }
     if let Some(rest) = authority.strip_prefix('[') {
         let (host, suffix) = rest
