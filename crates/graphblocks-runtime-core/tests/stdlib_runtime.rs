@@ -516,7 +516,20 @@ fn rust_stdlib_async_blocks_poll_complete_cancel_and_expire_operations() -> Resu
                 },
                 "poll": {
                     "block": "async.poll_operation@1",
-                    "config": {"intervalMs": 30_000, "maxIntervalMs": 300_000, "timeoutMs": 7_200_000},
+                    "config": {
+                        "intervalMs": 30_000,
+                        "maxIntervalMs": 300_000,
+                        "timeoutMs": 7_200_000,
+                        "idempotencyKey": "idem-op-poll",
+                        "callback": {"schema": "schemas/PollResult@1"},
+                        "resume": {
+                            "requirePolicyReevaluation": true,
+                            "requireBudgetReservation": true,
+                            "requireReleaseCompatibility": true,
+                            "requireOwnershipFence": true
+                        },
+                        "attemptFencing": true
+                    },
                     "inputs": {"operation": "startPoll.operation"},
                     "outputs": {"poll": "$output.poll"}
                 },
@@ -689,23 +702,61 @@ fn rust_stdlib_async_poll_operation_requires_timeout() -> Result<(), String> {
             }
         }
     });
+    let error = run_graph(&graph, &json!({}))
+        .expect_err("unbounded async poll should fail compiler diagnostics");
+    assert!(
+        error.contains("GB6001"),
+        "unexpected compiler error: {error:?}",
+    );
+    Ok(())
+}
+
+#[test]
+fn rust_stdlib_async_poll_operation_accepts_duration_strings() -> Result<(), String> {
+    let graph = json!({
+        "apiVersion": "graphblocks.ai/v1alpha3",
+        "kind": "Graph",
+        "metadata": {"name": "runtime-async-poll-duration-strings"},
+        "spec": {
+            "interface": {
+                "outputs": {
+                    "poll": "graphblocks.ai/AsyncPoll@1"
+                }
+            },
+            "nodes": {
+                "startPoll": {
+                    "block": "async.start_operation@1",
+                    "config": async_start_config("op-poll", "node-poll"),
+                    "outputs": {"operation": "poll.operation"}
+                },
+                "poll": {
+                    "block": "async.poll_operation@1",
+                    "config": {
+                        "interval": "30s",
+                        "maxInterval": "5m",
+                        "timeout": "2h",
+                        "idempotencyKey": "idem-op-poll",
+                        "callback": {"schema": "schemas/PollResult@1"},
+                        "resume": {
+                            "requirePolicyReevaluation": true,
+                            "requireBudgetReservation": true,
+                            "requireReleaseCompatibility": true,
+                            "requireOwnershipFence": true
+                        },
+                        "attemptFencing": true
+                    },
+                    "inputs": {"operation": "startPoll.operation"},
+                    "outputs": {"poll": "$output.poll"}
+                }
+            }
+        }
+    });
     let result = run_graph(&graph, &json!({}))?;
 
-    assert_eq!(result["status"], "failed");
-    let node_error = result["journal"]
-        .as_array()
-        .and_then(|journal| {
-            journal
-                .iter()
-                .find(|record| record["kind"].as_str() == Some("node_failed"))
-        })
-        .and_then(|record| record.pointer("/payload/message"))
-        .and_then(Value::as_str)
-        .ok_or_else(|| "missing async poll node failure".to_owned())?;
-    assert!(
-        node_error.contains("async.poll_operation@1 requires timeoutMs"),
-        "unexpected node error: {node_error:?}",
-    );
+    assert_eq!(result["status"], "succeeded");
+    assert_eq!(result["outputs"]["poll"]["intervalMs"], 30_000);
+    assert_eq!(result["outputs"]["poll"]["maxIntervalMs"], 300_000);
+    assert_eq!(result["outputs"]["poll"]["timeoutMs"], 7_200_000);
     Ok(())
 }
 

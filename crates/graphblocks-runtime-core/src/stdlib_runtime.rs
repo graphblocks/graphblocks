@@ -670,20 +670,34 @@ fn execute_async_await_callback(inputs: &Value, config: &Value) -> Result<Value,
 
 fn execute_async_poll_operation(inputs: &Value, config: &Value) -> Result<Value, BlockError> {
     let operation = required_async_operation_input(inputs, "async.poll_operation@1")?;
-    let interval_ms = config
-        .get("intervalMs")
-        .or_else(|| config.get("interval_ms"))
-        .and_then(Value::as_u64)
-        .unwrap_or(30_000);
-    let max_interval_ms = config
-        .get("maxIntervalMs")
-        .or_else(|| config.get("max_interval_ms"))
-        .and_then(Value::as_u64)
+    let Some(config) = config.as_object() else {
+        return Err(BlockError::new(
+            "async.poll_operation.invalid_config",
+            ErrorCategory::Configuration,
+            "async.poll_operation@1 config must be an object",
+            false,
+        ));
+    };
+    let interval_ms = optional_alias_duration_ms(
+        config,
+        &["intervalMs", "interval_ms", "interval"],
+        "async.poll_operation.invalid_config",
+        "async.poll_operation@1 interval must be a positive duration",
+    )?
+    .unwrap_or(30_000);
+    let max_interval_ms = optional_alias_duration_ms(
+        config,
+        &["maxIntervalMs", "max_interval_ms", "maxInterval", "max_interval"],
+        "async.poll_operation.invalid_config",
+        "async.poll_operation@1 maxInterval must be a positive duration",
+    )?
         .unwrap_or(interval_ms);
-    let timeout_ms = config
-        .get("timeoutMs")
-        .or_else(|| config.get("timeout_ms"))
-        .and_then(Value::as_u64)
+    let timeout_ms = optional_alias_duration_ms(
+        config,
+        &["timeoutMs", "timeout_ms", "timeout"],
+        "async.poll_operation.missing_timeout",
+        "async.poll_operation@1 timeoutMs must be a positive duration",
+    )?
         .ok_or_else(|| {
             BlockError::new(
                 "async.poll_operation.missing_timeout",
@@ -1757,6 +1771,51 @@ fn optional_alias_u64(
             })
         })
         .transpose()
+}
+
+fn optional_alias_duration_ms(
+    object: &serde_json::Map<String, Value>,
+    fields: &[&str],
+    code: impl Into<String>,
+    message: &'static str,
+) -> Result<Option<u64>, BlockError> {
+    let code = code.into();
+    let Some(value) = fields
+        .iter()
+        .find_map(|field| object.get(*field).filter(|value| !value.is_null()))
+    else {
+        return Ok(None);
+    };
+    if let Some(duration_ms) = value.as_u64().filter(|duration_ms| *duration_ms > 0) {
+        return Ok(Some(duration_ms));
+    }
+    if let Some(text) = value.as_str() {
+        let text = text.trim();
+        for (suffix, multiplier) in [
+            ("ms", 1_u64),
+            ("s", 1_000),
+            ("m", 60_000),
+            ("h", 3_600_000),
+            ("d", 86_400_000),
+        ] {
+            let Some(amount) = text.strip_suffix(suffix) else {
+                continue;
+            };
+            if amount.as_bytes().iter().all(u8::is_ascii_digit)
+                && let Ok(amount) = amount.parse::<u64>()
+                && amount > 0
+                && let Some(duration_ms) = amount.checked_mul(multiplier)
+            {
+                return Ok(Some(duration_ms));
+            }
+        }
+    }
+    Err(BlockError::new(
+        code,
+        ErrorCategory::Configuration,
+        message,
+        false,
+    ))
 }
 
 fn parse_string_map(
