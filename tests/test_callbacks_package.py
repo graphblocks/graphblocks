@@ -450,6 +450,34 @@ def test_callback_webhook_hmac_keyring_accepts_previous_key_during_rotation() ->
     )
 
 
+def test_callback_webhook_hmac_keyring_validates_replay_window_before_key_selection() -> None:
+    envelope = CallbackEnvelope(
+        delivery_id="del_001",
+        subscription_id="sub_001",
+        event_id="evt_1042",
+        run_id="run_coding_001",
+        sequence=1042,
+        cursor="evt_1042",
+        type="ReviewRequested",
+        payload={"subject": "changeset_abc"},
+        idempotency_key="sub_001:evt_1042",
+        occurred_at="2026-07-02T00:00:00Z",
+        delivered_at="2026-07-02T00:00:01Z",
+    )
+    headers = webhook_headers_hmac_sha256(envelope, b"old-secret", key_id="missing")
+
+    _assert_raises_value_error(
+        "replay_window_seconds must be a non-negative integer",
+        lambda: verify_webhook_headers_hmac_sha256_keyring(
+            envelope,
+            headers,
+            {"current": b"callback-secret"},
+            now="2026-07-02T00:00:31Z",
+            replay_window_seconds=-1,
+        ),
+    )
+
+
 def test_callback_retry_policy_schedules_bounded_deterministic_backoff() -> None:
     policy = CallbackRetryPolicy(
         max_attempts=4,

@@ -1267,6 +1267,12 @@ def verify_webhook_headers_hmac_sha256_keyring(
     now: str | None = None,
     replay_window_seconds: int = 300,
 ) -> str | None:
+    if (
+        isinstance(replay_window_seconds, bool)
+        or not isinstance(replay_window_seconds, int)
+        or replay_window_seconds < 0
+    ):
+        raise ValueError("replay_window_seconds must be a non-negative integer")
     if not isinstance(secrets_by_key_id, Mapping):
         raise ValueError("secrets_by_key_id must be a mapping")
     try:
