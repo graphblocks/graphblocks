@@ -463,11 +463,11 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   deterministic fuzz coverage for deadline/policy combinations. Directly constructed wait states
   enforce the same boundary so rehydrated operation records cannot bypass the helper path.
 - `AsyncOperationResult` and `ExternalEffectRecord` now preserve committed external side effects
-  even when an async operation result is `cancelled` or `incomplete`; stdlib async terminal blocks
-  can project `externalEffects` config into the final result instead of dropping provider effect
-  identity. Result projections reject duplicate `effect_id` and `provider_effect_id` values so audit
-  and ledger consumers can treat each recorded local and provider effect identity as
-  single-assignment within the operation result.
+  even when an async operation result is `cancelled`, `expired`, or `incomplete`; stdlib async
+  terminal blocks can project `externalEffects` config into the final result instead of dropping
+  provider effect identity. Result projections reject duplicate `effect_id` and
+  `provider_effect_id` values so audit and ledger consumers can treat each recorded local and
+  provider effect identity as single-assignment within the operation result.
 - Python `graphblocks-core` now exposes the same authoring/schema facade for
   `AsyncOperationResult`, `AsyncOperationResultStatus`, and `ExternalEffectRecord`, including
   validation that provider effect identity is only attached to committed external effects.

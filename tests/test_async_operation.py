@@ -65,6 +65,32 @@ def test_async_operation_result_preserves_committed_effect_after_incomplete_late
     assert result.to_json()["external_effects"][0]["provider_effect_id"] == "gha-run-1"
 
 
+def test_async_operation_result_preserves_committed_effect_after_timeout() -> None:
+    result = graphblocks.AsyncOperationResult.expired("op-1").with_external_effects(
+        [
+            graphblocks.ExternalEffectRecord(
+                effect_id="effect-batch-1",
+                target="batch-provider",
+                operation="batch.run",
+                outcome="committed",
+                idempotency_key="idem-batch-1",
+                provider_effect_id="batch-123",
+            )
+        ]
+    )
+
+    assert result.status == "expired"
+    assert result.external_effect_was_committed() is True
+    assert result.to_json()["external_effects"][0] == {
+        "effect_id": "effect-batch-1",
+        "target": "batch-provider",
+        "operation": "batch.run",
+        "outcome": "committed",
+        "idempotency_key": "idem-batch-1",
+        "provider_effect_id": "batch-123",
+    }
+
+
 def test_async_operation_result_rejects_invalid_external_effect_records() -> None:
     with raises_value_error("external effect effect_id must not be empty"):
         graphblocks.ExternalEffectRecord(
@@ -853,6 +879,7 @@ def run_direct() -> None:
     tests: tuple[Callable[[], None], ...] = (
         test_async_operation_result_preserves_committed_effect_after_cancel,
         test_async_operation_result_preserves_committed_effect_after_incomplete_late_callback,
+        test_async_operation_result_preserves_committed_effect_after_timeout,
         test_async_operation_result_rejects_invalid_external_effect_records,
         test_async_operation_result_rejects_duplicate_external_effect_ids,
         test_async_operation_result_rejects_duplicate_provider_effect_ids,
