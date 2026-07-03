@@ -148,6 +148,30 @@ fn subscription_filter_matches_visibility_node_operation_and_severity() {
 }
 
 #[test]
+fn subscription_filter_matches_camel_case_node_and_operation_payload_fields() {
+    let mut matching = protocol_event(
+        "event-ci-camel-case",
+        ApplicationProtocolEventKind::JobProgress,
+        12,
+    );
+    matching.payload = json!({
+        "message": "ci failed",
+        "visibility": "operator",
+        "nodeId": "runChecks",
+        "operationId": "op-ci-1",
+        "severity": "error"
+    });
+    let filter = EventFilter::new()
+        .with_visibility(["operator"])
+        .with_node_ids(["runChecks"])
+        .with_operation_ids(["op-ci-1"])
+        .with_severity_min("error")
+        .expect("severity is valid");
+
+    assert!(filter.matches(&matching));
+}
+
+#[test]
 fn callback_subscription_rejects_unknown_visibility_filter_literals() {
     let result = CallbackSubscription::new(
         "sub-visibility",

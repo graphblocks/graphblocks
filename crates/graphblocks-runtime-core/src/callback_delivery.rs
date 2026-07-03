@@ -84,9 +84,13 @@ impl EventFilter {
     }
 
     pub fn matches(&self, event: &ApplicationProtocolEvent) -> bool {
-        if !self.payload_field_matches(event, "visibility", &self.visibility)
-            || !self.payload_field_matches(event, "node_id", &self.node_ids)
-            || !self.payload_field_matches(event, "operation_id", &self.operation_ids)
+        if !self.payload_field_matches(event, &["visibility"], &self.visibility)
+            || !self.payload_field_matches(event, &["node_id", "nodeId"], &self.node_ids)
+            || !self.payload_field_matches(
+                event,
+                &["operation_id", "operationId"],
+                &self.operation_ids,
+            )
         {
             return false;
         }
@@ -125,15 +129,17 @@ impl EventFilter {
     fn payload_field_matches(
         &self,
         event: &ApplicationProtocolEvent,
-        field: &str,
+        fields: &[&str],
         allowed: &Option<BTreeSet<String>>,
     ) -> bool {
         allowed.as_ref().is_none_or(|allowed| {
-            event
-                .payload
-                .get(field)
-                .and_then(Value::as_str)
-                .is_some_and(|value| allowed.contains(value))
+            fields.iter().any(|field| {
+                event
+                    .payload
+                    .get(*field)
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| allowed.contains(value))
+            })
         })
     }
 }
