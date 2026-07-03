@@ -435,7 +435,8 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   these cases. `async.poll_operation@1` node configs participate in the same `GB6001` timeout
   diagnostics as callback-backed async waits, and timeout fields must parse to positive durations
   rather than merely being non-empty strings. Async wait `onTimeout` actions are also validated at
-  compile time as `fail`, `cancel`, or `expire`.
+  compile time as `fail`, `cancel`, or `expire`, and poll `interval`/`maxInterval` duration fields
+  are rejected before runtime when they are zero or unparsable.
 - `SqliteAsyncOperationStore` now persists async operations, operation event journals, and external
   callback receipts across reopen, including idempotency-key duplicate detection after restart.
 - Callback receipt duplicate detection is now scoped by `(operation_id, idempotency_key)` in both

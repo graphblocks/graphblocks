@@ -310,6 +310,20 @@ fn has_async_timeout(config: &Map<String, Value>) -> bool {
         )
 }
 
+fn invalid_optional_duration_field<'a>(
+    config: &'a Map<String, Value>,
+    names: &[&'a str],
+) -> Option<&'a str> {
+    names
+        .iter()
+        .find(|name| {
+            config
+                .get(**name)
+                .is_some_and(|value| duration_milliseconds(Some(value)).is_none())
+        })
+        .copied()
+}
+
 fn has_async_idempotency_key(config: &Map<String, Value>) -> bool {
     has_non_empty_string(
         config
@@ -481,6 +495,24 @@ fn diagnose_async_operation_config(
             "async await onTimeout must be one of fail, cancel, or expire",
             format!("{path}.onTimeout"),
         ));
+    }
+    for (field, names) in [
+        (
+            "interval",
+            ["interval", "intervalMs", "interval_ms"].as_slice(),
+        ),
+        (
+            "maxInterval",
+            ["maxInterval", "max_interval", "maxIntervalMs", "max_interval_ms"].as_slice(),
+        ),
+    ] {
+        if invalid_optional_duration_field(config, names).is_some() {
+            diagnostics.push(Diagnostic::error(
+                "InvalidAsyncOperation",
+                format!("async operation {field} must be a positive duration"),
+                format!("{path}.{field}"),
+            ));
+        }
     }
     if !has_async_idempotency_key(config) {
         diagnostics.push(Diagnostic::error(
