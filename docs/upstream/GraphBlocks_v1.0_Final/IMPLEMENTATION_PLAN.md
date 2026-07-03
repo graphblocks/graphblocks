@@ -166,6 +166,9 @@ Message
 - `ApplicationEventStream` cutoff enforcement treats event metadata `response_id` as authoritative
   and rejects events whose payload `response_id` disagrees, preventing malformed late deltas from
   bypassing an `OutputCutoff` by claiming a replacement response in the payload.
+- tool admission validates response-scoped output policy state before applying it; an output-policy
+  state object that names a different `response_id` is rejected instead of stopping or authorizing
+  another response's tool call.
 - pending tool call draft는 model output이므로 output policy pipeline을 통과해야 하며, aborted response의 non-admitted call은 denied 상태가 된다.
 - standard application events에 tool lifecycle events, output policy evaluation events, `OutputCutoff`, `AssistantIncomplete`, `AssistantRetracted`를 추가한다.
 

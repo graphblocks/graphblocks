@@ -154,11 +154,10 @@ impl ToolAdmission {
                 actual: context.call.name.clone(),
             });
         }
-        if context
-            .output_policy_state
-            .as_ref()
-            .is_some_and(|state| !state.is_object())
-        {
+        if !output_policy_state_is_valid_for_response(
+            context.output_policy_state.as_ref(),
+            &context.call.response_id,
+        ) {
             return Err(ToolAdmissionError::InvalidOutputPolicyState);
         }
 
@@ -225,10 +224,10 @@ impl ToolAdmission {
                 status: request.call.status,
             });
         }
-        if request
-            .output_policy_state
-            .is_some_and(|state| !state.is_object())
-        {
+        if !output_policy_state_is_valid_for_response(
+            request.output_policy_state,
+            &request.call.response_id,
+        ) {
             return Err(ToolAdmissionError::InvalidOutputPolicyState);
         }
         if output_policy_state_is_stopped(request.output_policy_state) {
@@ -401,4 +400,17 @@ fn output_policy_state_is_stopped(output_policy_state: Option<&Value>) -> bool {
     ["response_status", "status", "terminal_state"]
         .iter()
         .any(|field| state.get(*field).and_then(Value::as_str) == Some("policy_stopped"))
+}
+
+fn output_policy_state_is_valid_for_response(
+    output_policy_state: Option<&Value>,
+    response_id: &str,
+) -> bool {
+    let Some(Value::Object(state)) = output_policy_state else {
+        return output_policy_state.is_none();
+    };
+    state
+        .get("response_id")
+        .and_then(Value::as_str)
+        .is_none_or(|state_response_id| state_response_id == response_id)
 }

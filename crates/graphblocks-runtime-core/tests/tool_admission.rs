@@ -222,6 +222,22 @@ fn before_tool_or_effect_policy_request_rejects_invalid_boundary_inputs() {
         }),
         Err(ToolAdmissionError::InvalidOutputPolicyState)
     );
+
+    assert_eq!(
+        ToolAdmission::before_tool_or_effect_policy_request(ToolPolicyRequestContext {
+            request_id: "policy-req-1",
+            call: &call,
+            resolved_tool: &resolved_tool,
+            principal: PrincipalRef::new("user-1"),
+            occurred_at: "2026-06-23T00:00:00Z",
+            run_id: None,
+            output_policy_state: Some(json!({
+                "response_id": "response-2",
+                "response_status": "policy_stopped",
+            })),
+        }),
+        Err(ToolAdmissionError::InvalidOutputPolicyState)
+    );
 }
 
 #[test]
@@ -248,6 +264,34 @@ fn admission_rejects_tool_call_after_response_policy_stop() {
         Err(ToolAdmissionError::ResponsePolicyStopped {
             response_id: "response-1".to_owned()
         }),
+    );
+}
+
+#[test]
+fn admission_rejects_output_policy_state_for_different_response() {
+    let resolved_tool = resolved_process_tool();
+    let call = process_call(&resolved_tool);
+    let schemas = process_schema_registry();
+    let policy_decision = allow_tool_policy_decision();
+    let output_policy_state = json!({
+        "response_id": "response-2",
+        "response_status": "policy_stopped",
+    });
+
+    assert_eq!(
+        ToolAdmission::admit(ToolAdmissionRequest {
+            call,
+            resolved_tool: &resolved_tool,
+            schema_registry: &schemas,
+            policy_decision: &policy_decision,
+            expected_policy_input_digest: &policy_decision.input_digest,
+            output_policy_state: Some(&output_policy_state),
+            approval: None,
+            principal_id: "user-1",
+            idempotency_key: Some("idem-1".to_owned()),
+            admitted_at_unix_ms: 1_200,
+        }),
+        Err(ToolAdmissionError::InvalidOutputPolicyState),
     );
 }
 
