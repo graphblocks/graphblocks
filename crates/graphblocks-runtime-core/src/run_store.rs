@@ -646,6 +646,17 @@ impl RunStatusSnapshot {
                 field: "active_operations",
             });
         }
+        let mut sorted_active_operations = active_operations.clone();
+        sorted_active_operations.sort();
+        if sorted_active_operations
+            .windows(2)
+            .any(|window| window[0] == window[1])
+        {
+            return Err(RunStoreError::InvalidRunStatusSnapshot {
+                run_id: run.run_id.clone(),
+                reason: "active operations must not contain duplicates",
+            });
+        }
         if run.status.is_terminal() && (!waiting_on.is_empty() || !active_operations.is_empty()) {
             return Err(RunStoreError::InvalidRunStatusSnapshot {
                 run_id: run.run_id.clone(),
@@ -716,9 +727,7 @@ impl RunStatusSnapshot {
             });
         }
 
-        let mut active_operations = active_operations;
-        active_operations.sort();
-        active_operations.dedup();
+        let active_operations = sorted_active_operations;
 
         Ok(Self {
             run_id: run.run_id.clone(),

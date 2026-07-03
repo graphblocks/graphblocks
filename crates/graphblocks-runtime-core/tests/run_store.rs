@@ -137,6 +137,30 @@ fn waiting_callback_snapshot_requires_callback_wait_metadata() -> Result<(), Run
 }
 
 #[test]
+fn run_status_snapshot_rejects_duplicate_active_operations() -> Result<(), RunStoreError> {
+    let mut store = InMemoryRunStore::new();
+    let record = store.create_run("sha256:graph", json!({"task": "ci"}));
+    let waiting = store.set_status(&record.run_id, RunStatus::WaitingCallback)?;
+
+    assert_eq!(
+        RunStatusSnapshot::from_run(
+            &waiting,
+            "evt_000044",
+            1_000,
+            1_600,
+            None,
+            vec![RunWaitReason::callback("op-ci-1", Some("waitCI"))?],
+            vec!["op-ci-1".to_owned(), "op-ci-1".to_owned()],
+        ),
+        Err(RunStoreError::InvalidRunStatusSnapshot {
+            run_id: waiting.run_id,
+            reason: "active operations must not contain duplicates",
+        })
+    );
+    Ok(())
+}
+
+#[test]
 fn run_status_snapshot_requires_matching_wait_reason_for_paused_or_waiting_states()
     -> Result<(), RunStoreError>
 {

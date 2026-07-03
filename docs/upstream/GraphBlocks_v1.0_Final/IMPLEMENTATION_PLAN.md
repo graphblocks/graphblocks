@@ -683,7 +683,7 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   callback submissions. Terminal run states suppress active callback wait projections so late
   callback receipts do not appear resumable after cancellation, expiry, failure, or policy stop.
   Runtime run status snapshots now reject terminal projections that still expose wait reasons or
-  active operations.
+  active operations, and reject duplicate active operation ids instead of silently collapsing them.
   Run-control pauses project operator, budget, policy, and callback-delivery wait reasons.
 - Stored server application events are immutable snapshots; `/events`, attach/replay, subscription
   replay, and websocket snapshot responses thaw them back to plain JSON payloads. The
