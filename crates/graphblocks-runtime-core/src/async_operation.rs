@@ -484,6 +484,12 @@ pub struct CallbackEndpointRef {
     pub url: String,
     pub accepted_schema: String,
     pub auth: CallbackEndpointAuth,
+    pub operation_id: Option<String>,
+    pub run_id: Option<String>,
+    pub node_id: Option<String>,
+    pub attempt_id: Option<String>,
+    pub release_id: Option<String>,
+    pub tenant_id: Option<String>,
     pub expires_at_unix_ms: Option<u64>,
 }
 
@@ -499,6 +505,42 @@ impl CallbackEndpointRef {
             url: url.into(),
             accepted_schema: accepted_schema.into(),
             auth,
+            operation_id: None,
+            run_id: None,
+            node_id: None,
+            attempt_id: None,
+            release_id: None,
+            tenant_id: None,
+            expires_at_unix_ms: None,
+        };
+        endpoint.validate()?;
+        Ok(endpoint)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_bound(
+        endpoint_id: impl Into<String>,
+        url: impl Into<String>,
+        accepted_schema: impl Into<String>,
+        auth: CallbackEndpointAuth,
+        operation_id: impl Into<String>,
+        run_id: impl Into<String>,
+        node_id: impl Into<String>,
+        attempt_id: impl Into<String>,
+        release_id: impl Into<String>,
+        tenant_id: Option<impl Into<String>>,
+    ) -> Result<Self, AsyncOperationError> {
+        let endpoint = Self {
+            endpoint_id: endpoint_id.into(),
+            url: url.into(),
+            accepted_schema: accepted_schema.into(),
+            auth,
+            operation_id: Some(operation_id.into()),
+            run_id: Some(run_id.into()),
+            node_id: Some(node_id.into()),
+            attempt_id: Some(attempt_id.into()),
+            release_id: Some(release_id.into()),
+            tenant_id: tenant_id.map(Into::into),
             expires_at_unix_ms: None,
         };
         endpoint.validate()?;
@@ -522,7 +564,75 @@ impl CallbackEndpointRef {
                 });
             }
         }
+        for (field, value) in [
+            ("operation_id", &self.operation_id),
+            ("run_id", &self.run_id),
+            ("node_id", &self.node_id),
+            ("attempt_id", &self.attempt_id),
+            ("release_id", &self.release_id),
+            ("tenant_id", &self.tenant_id),
+        ] {
+            if value.as_ref().is_some_and(|value| value.trim().is_empty()) {
+                return Err(AsyncOperationError::EmptyField {
+                    field: field.to_owned(),
+                });
+            }
+        }
         self.auth.validate()
+    }
+
+    pub fn binding_key(&self) -> String {
+        callback_resume_binding_key(
+            self.tenant_id.as_deref(),
+            self.release_id.as_deref().unwrap_or(""),
+            self.run_id.as_deref().unwrap_or(""),
+            self.node_id.as_deref().unwrap_or(""),
+            self.attempt_id.as_deref().unwrap_or(""),
+            self.operation_id.as_deref().unwrap_or(""),
+        )
+    }
+
+    pub fn receipt_binding_key(&self, submission: &AsyncCallbackSubmission) -> String {
+        callback_resume_binding_key(
+            self.tenant_id.as_deref(),
+            self.release_id.as_deref().unwrap_or(""),
+            &submission.run_id,
+            &submission.node_id,
+            &submission.attempt_id,
+            &submission.operation_id,
+        )
+    }
+
+    fn validate_bound_submission_identity(
+        &self,
+        submission: &AsyncCallbackSubmission,
+    ) -> Result<(), AsyncOperationError> {
+        for (field, expected, actual) in [
+            (
+                "operation_id",
+                self.operation_id.as_deref(),
+                submission.operation_id.as_str(),
+            ),
+            ("run_id", self.run_id.as_deref(), submission.run_id.as_str()),
+            (
+                "node_id",
+                self.node_id.as_deref(),
+                submission.node_id.as_str(),
+            ),
+            (
+                "attempt_id",
+                self.attempt_id.as_deref(),
+                submission.attempt_id.as_str(),
+            ),
+        ] {
+            if expected.is_some_and(|expected| expected != actual) {
+                return Err(AsyncOperationError::CallbackAuthenticationFailed {
+                    endpoint_id: self.endpoint_id.clone(),
+                    reason: format!("callback_binding_mismatch:{field}"),
+                });
+            }
+        }
+        Ok(())
     }
 
     pub fn sign_callback_headers(
@@ -572,6 +682,7 @@ impl CallbackEndpointRef {
             policy_snapshot_id,
         );
         validate_callback_submission_identity(&submission)?;
+        self.validate_bound_submission_identity(&submission)?;
         Ok(submission)
     }
 
@@ -619,6 +730,7 @@ impl CallbackEndpointRef {
             policy_snapshot_id,
         );
         validate_callback_submission_identity(&submission)?;
+        self.validate_bound_submission_identity(&submission)?;
         Ok(submission)
     }
 
@@ -662,6 +774,7 @@ impl CallbackEndpointRef {
             policy_snapshot_id,
         );
         validate_callback_submission_identity(&submission)?;
+        self.validate_bound_submission_identity(&submission)?;
         Ok(submission)
     }
 
@@ -705,6 +818,7 @@ impl CallbackEndpointRef {
             policy_snapshot_id,
         );
         validate_callback_submission_identity(&submission)?;
+        self.validate_bound_submission_identity(&submission)?;
         Ok(submission)
     }
 }
@@ -2723,6 +2837,24 @@ fn callback_submission_idempotency_conflict_field(
         return Some("policy_snapshot_id");
     }
     None
+}
+
+fn callback_resume_binding_key(
+    tenant_id: Option<&str>,
+    release_id: &str,
+    run_id: &str,
+    node_id: &str,
+    attempt_id: &str,
+    operation_id: &str,
+) -> String {
+    canonical_hash(&json!({
+        "tenant_id": tenant_id.unwrap_or(""),
+        "release_id": release_id,
+        "run_id": run_id,
+        "node_id": node_id,
+        "attempt_id": attempt_id,
+        "operation_id": operation_id,
+    }))
 }
 
 fn migrate_callback_receipts_idempotency_scope(

@@ -135,6 +135,63 @@ fn bearer_callback_endpoint_authenticates_and_builds_submission() {
 }
 
 #[test]
+fn callback_endpoint_binds_submission_to_current_operation_identity() {
+    let endpoint = CallbackEndpointRef::new_bound(
+        "callback-endpoint-1",
+        "https://graphblocks.example.com/v1/callbacks/op-1",
+        "schemas/CICallback@1",
+        CallbackEndpointAuth::bearer("secret://callbacks/op-1", "top-secret"),
+        "op-1",
+        "run-1",
+        "node-ci",
+        "attempt-1",
+        "release-1",
+        Some("tenant-1"),
+    )
+    .expect("endpoint is valid");
+    let binding_key = endpoint.binding_key();
+    let mut headers = BTreeMap::new();
+    headers.insert("Authorization".to_owned(), "Bearer top-secret".to_owned());
+
+    let submission = endpoint
+        .authenticate_and_build_submission(
+            "cb-1",
+            "op-1",
+            "run-1",
+            "node-ci",
+            "attempt-1",
+            "idem-cb-1",
+            json!({"status": "completed", "workflow_run_id": "gha-run-1"}),
+            1_200,
+            "policy-snapshot-1",
+            &headers,
+        )
+        .expect("matching callback identity authenticates");
+
+    assert_eq!(endpoint.binding_key(), binding_key);
+    assert_eq!(endpoint.receipt_binding_key(&submission), binding_key);
+
+    assert_eq!(
+        endpoint.authenticate_and_build_submission(
+            "cb-stale",
+            "op-1",
+            "run-1",
+            "node-ci",
+            "attempt-old",
+            "idem-cb-stale",
+            json!({"status": "completed", "workflow_run_id": "gha-run-1"}),
+            1_201,
+            "policy-snapshot-1",
+            &headers,
+        ),
+        Err(AsyncOperationError::CallbackAuthenticationFailed {
+            endpoint_id: "callback-endpoint-1".to_owned(),
+            reason: "callback_binding_mismatch:attempt_id".to_owned(),
+        })
+    );
+}
+
+#[test]
 fn hmac_callback_endpoint_authenticates_and_rejects_replay_or_tampering() {
     let auth = CallbackEndpointAuth::hmac_sha256("secret://callbacks/op-1", b"top-secret", 300_000)
         .expect("hmac auth is valid");

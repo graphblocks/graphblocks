@@ -410,6 +410,10 @@ Full example: `examples/11-coding-agent-background-callbacks.yaml`.
   async operations, with bearer-token, `hmac-sha256`, Ed25519 verifier-boundary, mTLS
   client-identity, and OIDC/JWT verifier-boundary helpers that build `AsyncCallbackSubmission` only
   after authentication succeeds.
+- Rust `CallbackEndpointRef::new_bound` now carries operation, run, node, attempt, release, and
+  tenant identity into the runtime endpoint reference, exposes the same canonical resume binding key
+  as the Python callback projection, and rejects stale or wrong-scope callback submissions before
+  they can reach journal or scheduler admission.
 - `CallbackEndpointRef` now validates `expires_at` as an ISO-8601 timestamp at creation time, so
   invalid callback endpoint deadlines are rejected before resume admission.
 - Callback rejection paths now emit durable `ExternalCallbackRejected` metadata events for stale
