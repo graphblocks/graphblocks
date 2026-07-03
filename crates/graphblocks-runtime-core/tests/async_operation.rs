@@ -863,6 +863,54 @@ fn duplicate_callback_is_idempotent_and_does_not_resume_twice() {
 }
 
 #[test]
+fn callback_for_non_waiting_operation_is_rejected_with_audit_event() {
+    let store = AsyncOperationStore::new();
+    store
+        .register(
+            AsyncOperation::new(
+                "op-1",
+                "run-1",
+                "node-ci",
+                "attempt-1",
+                AsyncOperationKind::CiJob,
+                "sha256:resume-token",
+                "idem-op-1",
+                "schemas/CICallback@1",
+                1_000,
+            )
+            .submitted("gha-run-1", 1_050),
+        )
+        .expect("operation registers");
+
+    assert_eq!(
+        store.accept_callback(
+            valid_submission("cb-not-waiting", "idem-not-waiting"),
+            &callback_schema_registry(),
+        ),
+        Err(AsyncOperationError::OperationNotWaitingCallback {
+            operation_id: "op-1".to_owned(),
+            state: AsyncOperationState::Submitted,
+        })
+    );
+    assert_eq!(
+        store.operation_state("op-1"),
+        Some(AsyncOperationState::Submitted)
+    );
+    assert!(store
+        .events_for_operation("op-1")
+        .iter()
+        .any(|event| matches!(
+            event,
+            AsyncOperationEvent::ExternalCallbackRejected {
+                callback_id,
+                reason,
+                ..
+            } if callback_id == "cb-not-waiting"
+                && reason == "operation_not_waiting_callback:submitted"
+        )));
+}
+
+#[test]
 fn early_callback_is_quarantined_until_operation_registers() {
     let store = AsyncOperationStore::new();
     let quarantined = store

@@ -1887,6 +1887,34 @@ impl AsyncOperationStore {
 
         let operation_id = operation.operation_id.clone();
         let operation_state = operation.state;
+        if !matches!(
+            operation_state,
+            AsyncOperationState::WaitingCallback
+                | AsyncOperationState::Completed
+                | AsyncOperationState::Failed
+                | AsyncOperationState::Cancelled
+                | AsyncOperationState::Expired
+        ) {
+            inner
+                .events_by_operation
+                .entry(submission.operation_id.clone())
+                .or_default()
+                .push(AsyncOperationEvent::ExternalCallbackRejected {
+                    operation_id: operation_id.clone(),
+                    callback_id: submission.callback_id,
+                    reason: format!(
+                        "operation_not_waiting_callback:{}",
+                        async_operation_state_as_str(operation_state)
+                    ),
+                    occurred_at_unix_ms: submission.received_at_unix_ms,
+                    verified_by: submission.verified_by,
+                });
+            return Err(AsyncOperationError::OperationNotWaitingCallback {
+                operation_id,
+                state: operation_state,
+            });
+        }
+
         let receipt = ExternalCallbackReceived {
             callback_id: submission.callback_id,
             operation_id: submission.operation_id.clone(),
@@ -1925,13 +1953,6 @@ impl AsyncOperationStore {
                 receipt,
                 duplicate: false,
                 should_resume: false,
-            });
-        }
-
-        if operation_state != AsyncOperationState::WaitingCallback {
-            return Err(AsyncOperationError::OperationNotWaitingCallback {
-                operation_id,
-                state: operation_state,
             });
         }
 
