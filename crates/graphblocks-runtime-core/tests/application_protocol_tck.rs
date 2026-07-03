@@ -110,6 +110,7 @@ fn run_case(case: &Value) -> Result<Value, String> {
         ApplicationProtocolError::EmptyMetadataField { .. } => "empty_metadata_field",
         ApplicationProtocolError::InvalidToolResultEvent { .. } => "invalid_tool_result_event",
         ApplicationProtocolError::NonMonotonicSequence { .. } => "non_monotonic_sequence",
+        ApplicationProtocolError::RunMismatch { .. } => "run_mismatch",
     };
     match kind {
         "kind_sets" => Ok(json!({
@@ -284,6 +285,7 @@ fn run_case(case: &Value) -> Result<Value, String> {
                 .ok_or_else(|| "protocol_log case missing operations".to_owned())?;
             let mut log = ApplicationProtocolLog::new();
             let mut append_results = Vec::new();
+            let mut append_errors = Vec::new();
             for (operation_index, operation) in operations.iter().enumerate() {
                 let metadata = operation
                     .get("metadata")
@@ -321,7 +323,29 @@ fn run_case(case: &Value) -> Result<Value, String> {
                         .unwrap_or_else(|| json!({})),
                 )
                 .map_err(|error| error.to_string())?;
-                let appended = log.append(event).map_err(|error| error.to_string())?;
+                let append_result = log.append(event);
+                if let Some(expected_error) = operation.get("expectError").and_then(Value::as_str)
+                {
+                    match append_result {
+                        Ok(_) => {
+                            return Err(format!(
+                                "protocol_log operation {operation_index} expected error {expected_error}"
+                            ));
+                        }
+                        Err(error) => {
+                            let observed_error = protocol_error_code(&error);
+                            if observed_error != expected_error {
+                                return Err(format!(
+                                    "protocol_log operation {operation_index} error mismatch: expected {expected_error}, observed {observed_error}"
+                                ));
+                            }
+                            append_results.push(false);
+                            append_errors.push(observed_error);
+                            continue;
+                        }
+                    }
+                }
+                let appended = append_result.map_err(|error| error.to_string())?;
                 let expected_appended = operation
                     .get("expectAppended")
                     .and_then(Value::as_bool)
@@ -350,6 +374,7 @@ fn run_case(case: &Value) -> Result<Value, String> {
                     .map(|event| event.metadata.event_id.as_str())
                     .collect::<Vec<_>>(),
                 "appendResults": append_results,
+                "appendErrors": append_errors,
                 "replayEventIds": replay
                     .iter()
                     .map(|event| event.metadata.event_id.as_str())

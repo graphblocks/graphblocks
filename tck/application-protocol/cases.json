@@ -151,6 +151,7 @@
       "protocolVersion": "graphblocks.app.v1",
       "runId": "run-1",
       "sequence": 10,
+      "cursor": "cursor-invalid-payload-1",
       "occurredAtUnixMs": 1765843201000
     },
     "payload": [
@@ -297,6 +298,60 @@
         "event-progress-2"
       ],
       "length": 2
+    }
+  },
+  {
+    "name": "protocol_log_rejects_events_from_another_run",
+    "kind": "protocol_log",
+    "operations": [
+      {
+        "eventKind": "RunStarted",
+        "metadata": {
+          "eventId": "event-run-1-started",
+          "protocolVersion": "graphblocks.app.v1",
+          "runId": "run-1",
+          "turnId": "turn-1",
+          "sequence": 1,
+          "cursor": "cursor-1",
+          "occurredAtUnixMs": 1765843200000
+        },
+        "payload": {},
+        "expectAppended": true
+      },
+      {
+        "eventKind": "JobProgress",
+        "metadata": {
+          "eventId": "event-run-2-progress",
+          "protocolVersion": "graphblocks.app.v1",
+          "runId": "run-2",
+          "turnId": "turn-2",
+          "sequence": 2,
+          "cursor": "cursor-2",
+          "occurredAtUnixMs": 1765843200100
+        },
+        "payload": {
+          "done": 1,
+          "total": 2
+        },
+        "expectError": "run_mismatch"
+      }
+    ],
+    "replayLimit": 10,
+    "expected": {
+      "eventIds": [
+        "event-run-1-started"
+      ],
+      "appendResults": [
+        true,
+        false
+      ],
+      "appendErrors": [
+        "run_mismatch"
+      ],
+      "replayEventIds": [
+        "event-run-1-started"
+      ],
+      "length": 1
     }
   },
   {

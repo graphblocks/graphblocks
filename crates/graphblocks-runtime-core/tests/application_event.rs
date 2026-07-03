@@ -1917,6 +1917,34 @@ fn protocol_log_suppresses_duplicate_event_ids_and_replays_after_cursor() {
 }
 
 #[test]
+fn protocol_log_rejects_events_from_another_run() {
+    let mut log = ApplicationProtocolLog::new();
+    let first = ApplicationProtocolEvent::new(
+        ApplicationProtocolEventKind::RunStarted,
+        protocol_event_metadata("event-1", 1, "cursor-1"),
+        json!({}),
+    )
+    .expect("event is valid");
+    let mut other_run_metadata = protocol_event_metadata("event-2", 2, "cursor-2");
+    other_run_metadata.run_id = "run-2".to_owned();
+    let other_run = ApplicationProtocolEvent::new(
+        ApplicationProtocolEventKind::JobProgress,
+        other_run_metadata,
+        json!({"done": 1, "total": 2}),
+    )
+    .expect("event is valid");
+
+    assert!(log.append(first).expect("first event appends"));
+    assert_eq!(
+        log.append(other_run),
+        Err(ApplicationProtocolError::RunMismatch {
+            expected_run_id: "run-1".to_owned(),
+            actual_run_id: "run-2".to_owned(),
+        })
+    );
+}
+
+#[test]
 fn protocol_log_retained_replay_reports_expired_cursor_with_nearest_available_cursor() {
     let mut log = ApplicationProtocolLog::new();
     for sequence in 1..=4 {

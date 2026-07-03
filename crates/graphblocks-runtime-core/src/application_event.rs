@@ -1042,6 +1042,10 @@ pub enum ApplicationProtocolError {
     InvalidToolResultEvent { source: ToolResultEventError },
     NonMonotonicSequence { previous: u64, next: u64 },
     ProtocolVersionMismatch { left: String, right: String },
+    RunMismatch {
+        expected_run_id: String,
+        actual_run_id: String,
+    },
 }
 
 impl fmt::Display for ApplicationProtocolError {
@@ -1077,6 +1081,13 @@ impl fmt::Display for ApplicationProtocolError {
             Self::ProtocolVersionMismatch { left, right } => {
                 write!(formatter, "protocol versions differ: {left:?} vs {right:?}")
             }
+            Self::RunMismatch {
+                expected_run_id,
+                actual_run_id,
+            } => write!(
+                formatter,
+                "application event run {actual_run_id:?} does not match log run {expected_run_id:?}"
+            ),
         }
     }
 }
@@ -1320,6 +1331,7 @@ impl ApplicationProtocolStreamState {
 pub struct ApplicationProtocolLog {
     events: Vec<ApplicationProtocolEvent>,
     event_ids: BTreeSet<String>,
+    run_id: Option<String>,
     last_sequence: Option<u64>,
 }
 
@@ -1358,6 +1370,16 @@ impl ApplicationProtocolLog {
     ) -> Result<bool, ApplicationProtocolError> {
         if self.event_ids.contains(&event.metadata.event_id) {
             return Ok(false);
+        }
+        if let Some(run_id) = &self.run_id {
+            if run_id != &event.metadata.run_id {
+                return Err(ApplicationProtocolError::RunMismatch {
+                    expected_run_id: run_id.clone(),
+                    actual_run_id: event.metadata.run_id,
+                });
+            }
+        } else {
+            self.run_id = Some(event.metadata.run_id.clone());
         }
         if let Some(previous) = self.last_sequence
             && event.metadata.sequence <= previous
