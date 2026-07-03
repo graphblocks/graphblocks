@@ -277,6 +277,12 @@ impl AsyncOperation {
                 reason: "waiting callback operations require an expiration".to_owned(),
             });
         }
+        if self.state == AsyncOperationState::Polling && self.expires_at_unix_ms.is_none() {
+            return Err(AsyncOperationError::InvalidOperation {
+                operation_id: self.operation_id.clone(),
+                reason: "polling operations require an expiration".to_owned(),
+            });
+        }
         if self.state == AsyncOperationState::Created && self.provider_operation_id.is_some() {
             return Err(AsyncOperationError::InvalidOperation {
                 operation_id: self.operation_id.clone(),
