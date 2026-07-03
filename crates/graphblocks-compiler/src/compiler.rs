@@ -240,10 +240,6 @@ impl BlockCatalog {
     }
 }
 
-fn is_positive_integer(value: Option<&Value>) -> bool {
-    value.and_then(Value::as_u64).is_some_and(|value| value > 0)
-}
-
 fn positive_integer(value: Option<&Value>) -> Option<u64> {
     value.and_then(Value::as_u64).filter(|value| *value > 0)
 }
@@ -294,19 +290,12 @@ fn duration_milliseconds(value: Option<&Value>) -> Option<u64> {
 }
 
 fn has_async_timeout(config: &Map<String, Value>) -> bool {
-    if is_positive_integer(
-        config
-            .get("timeout")
-            .or_else(|| config.get("timeoutMs"))
-            .or_else(|| config.get("timeout_ms"))
-            .or_else(|| config.get("deadline")),
-    ) || has_non_empty_string(
-        config
-            .get("timeout")
-            .or_else(|| config.get("timeoutMs"))
-            .or_else(|| config.get("timeout_ms"))
-            .or_else(|| config.get("deadline")),
-    ) {
+    let timeout = config
+        .get("timeout")
+        .or_else(|| config.get("timeoutMs"))
+        .or_else(|| config.get("timeout_ms"))
+        .or_else(|| config.get("deadline"));
+    if duration_milliseconds(timeout).is_some_and(|timeout_ms| timeout_ms > 0) {
         return true;
     }
     config

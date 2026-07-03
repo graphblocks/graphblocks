@@ -83,7 +83,8 @@ def _has_async_timeout(config: dict[str, Any]) -> bool:
         or config.get("timeout_ms")
         or config.get("deadline")
     )
-    if _has_non_empty_string(timeout) or _is_positive_integer(timeout):
+    timeout_ms = _duration_milliseconds(timeout)
+    if timeout_ms is not None and timeout_ms > 0:
         return True
     infinite_wait = config.get("infiniteWait", config.get("infinite_wait", False))
     explicit_infinite_wait_policy = config.get("infiniteWaitPolicy") or config.get("infinite_wait_policy")

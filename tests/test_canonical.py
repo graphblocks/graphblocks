@@ -1270,6 +1270,36 @@ def test_compile_reports_async_poll_operation_node_zero_timeout() -> None:
     assert _error_codes(graph) == ["GB6001"]
 
 
+def test_compile_reports_async_poll_operation_node_invalid_string_timeout() -> None:
+    for timeout in ("0ms", "soon"):
+        graph = {
+            "apiVersion": "graphblocks.ai/v1alpha3",
+            "kind": "Graph",
+            "metadata": {"name": f"async-poll-operation-invalid-timeout-{timeout}"},
+            "spec": {
+                "nodes": {
+                    "pollCI": {
+                        "block": "async.poll_operation@1",
+                        "config": {
+                            "timeout": timeout,
+                            "idempotencyKey": "$input.request_id",
+                            "callback": {"schema": "schemas/PollResult@1"},
+                            "resume": {
+                                "requirePolicyReevaluation": True,
+                                "requireBudgetReservation": True,
+                                "requireReleaseCompatibility": True,
+                                "requireOwnershipFence": True,
+                            },
+                            "attemptFencing": True,
+                        },
+                    }
+                },
+            },
+        }
+
+        assert _error_codes(graph) == ["GB6001"]
+
+
 def test_compile_reports_async_operation_missing_resume_and_fencing_contracts() -> None:
     graph = {
         "apiVersion": "graphblocks.ai/v1alpha3",
